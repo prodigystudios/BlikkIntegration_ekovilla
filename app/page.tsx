@@ -436,7 +436,7 @@ export default function Home() {
             <h3>Etapper (öppet)</h3>
             <button type="button" onClick={addEtappOpenRow}>+ Lägg till rad</button>
           </div>
-          <div style={{ width: '100%', overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+          <div style={{ width: '100%', overflowX: 'auto', overflowY: 'hidden', maxWidth: '100%', WebkitOverflowScrolling: 'touch' }}>
             <div style={{ display: 'grid', gridTemplateColumns: '140px 100px 220px 130px 240px 170px 150px 170px', gap: 8, alignItems: 'center', fontWeight: 600, fontSize: 12, padding: '6px 0', minWidth: (140 + 100 + 220 + 130 + 240 + 170 + 150 + 170) + (7 * 8) }}>
               <div>Etapp (öppet)</div>
               <div>Yta m²</div>
@@ -470,7 +470,7 @@ export default function Home() {
             <h3>Etapper (slutet)</h3>
             <button type="button" onClick={addEtappClosedRow}>+ Lägg till rad</button>
           </div>
-          <div style={{ width: '100%', overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+          <div style={{ width: '100%', overflowX: 'auto', overflowY: 'hidden', maxWidth: '100%', WebkitOverflowScrolling: 'touch' }}>
             <div style={{ display: 'grid', gridTemplateColumns: '140px 100px 160px 160px 170px 170px 170px', gap: 8, alignItems: 'center', fontWeight: 600, fontSize: 12, padding: '6px 0', minWidth: (140 + 100 + 160 + 160 + 170 + 170 + 170) + (6 * 8) }}>
               <div>Etapp (slutet)</div>
               <div>Yta m²</div>
