@@ -345,18 +345,18 @@ export default function Home() {
         )}
       </section>
 
-      <section style={{ marginTop: 24, display: 'flex', flexDirection: 'column', gap: 16}}>
+  <section style={{ marginTop: 24, display: 'flex', flexDirection: 'column', gap: 16, width: '100%', maxWidth: 720, alignSelf: 'stretch' }}>
         <h2>Order form</h2>
         <label>
           <div>Projektnummer(OBS FYLL I DETTA OM NI FÅTT ETT PROJEKT NUMMER FRÅN KUND)</div>
           <input value={projectNumber} onChange={(e) => setProjectNumber(e.target.value)} placeholder="Projektnummer" style={{ width: '100%', maxWidth: '100%', boxSizing: 'border-box', padding: 8 }} />
         </label>
-        <div style={{ display: 'grid', gap: 8 }}>
+  <div style={{ display: 'grid', gap: 8, width: '100%' }}>
           <div>Adress</div>
           <input value={workStreet} onChange={(e) => setWorkStreet(e.target.value)} placeholder="Gatuadress" style={{ width: '100%', maxWidth: '100%', boxSizing: 'border-box', padding: 8 }} />
-          <div style={{ display: 'flex', gap: 8 }}>
-            <input value={workPostalCode} onChange={(e) => setWorkPostalCode(e.target.value)} placeholder="Postnummer" style={{ flex: 1, minWidth: 0, maxWidth: '100%', boxSizing: 'border-box', padding: 8 }} />
-            <input value={workCity} onChange={(e) => setWorkCity(e.target.value)} placeholder="Stad" style={{ flex: 2, minWidth: 0, maxWidth: '100%', boxSizing: 'border-box', padding: 8 }} />
+          <div style={{ display: 'flex', gap: 8, width: '100%', alignItems: 'stretch' }}>
+            <input value={workPostalCode} onChange={(e) => setWorkPostalCode(e.target.value)} placeholder="Postnummer" style={{ flex: 1, minWidth: 0, padding: 8 }} />
+            <input value={workCity} onChange={(e) => setWorkCity(e.target.value)} placeholder="Stad" style={{ flex: 2, minWidth: 0, padding: 8 }} />
           </div>
         </div>
         <label>

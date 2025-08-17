@@ -18,6 +18,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           @supports (-webkit-touch-callout: none) {
             input, select, textarea, button { font-size: 16px; }
           }
+          /* Make text-like form controls fill their container and be consistent */
+          input:not([type='checkbox']):not([type='radio']), select, textarea {
+            width: 100%;
+            max-width: 100%;
+            box-sizing: border-box;
+          }
+          /* Ensure labels expand to container so child inputs at width:100% can fill */
+          label { display: block; width: 100%; }
         `}</style>
         {/* Fixed, full-width header */}
         <header
