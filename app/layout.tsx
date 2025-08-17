@@ -1,6 +1,9 @@
 export const viewport = {
   width: 'device-width',
   initialScale: 1,
+  // Optional: restrict pinch-zoom. Consider accessibility before using.
+  maximumScale: 1,
+  userScalable: false,
 } as const;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -8,6 +11,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <head />
   <body style={{ fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif', margin: 0, width: '100%' }}>
+        {/* Global CSS to prevent iOS zoom-on-focus by keeping form controls at 16px+ */}
+        <style>{`
+          input, select, textarea { font-size: 16px; }
+          /* Ensure iOS honors 16px on various controls */
+          @supports (-webkit-touch-callout: none) {
+            input, select, textarea, button { font-size: 16px; }
+          }
+        `}</style>
         {/* Fixed, full-width header */}
         <header
           style={{

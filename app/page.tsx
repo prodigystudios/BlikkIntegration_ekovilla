@@ -507,7 +507,7 @@ export default function Home() {
               <div style={{ border: '1px solid #d1d5db', borderRadius: 6, overflow: 'hidden', width: '100%', maxWidth: 600 }}>
                 <canvas
                   ref={signatureCanvasRef}
-                  style={{ width: 600, height: 180, display: 'block', background: '#fff' }}
+                  style={{ width: 600, height: 180, display: 'block', background: '#fff', touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none' }}
                   onMouseDown={handleStart}
                   onMouseMove={handleMove}
                   onMouseUp={handleEnd}
@@ -515,6 +515,7 @@ export default function Home() {
                   onTouchStart={handleStart}
                   onTouchMove={handleMove}
                   onTouchEnd={handleEnd}
+                  onTouchCancel={handleEnd}
                 />
               </div>
               <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
