@@ -26,7 +26,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             boxShadow: '0 2px 8px rgba(0,0,0,0.08)'
           }}
         >
-          <img src="/brand/EkovillaLoggaNoBg.png" alt="Ekovilla" height={76} style={{ display: 'block', scale: '1.5' }} />
+          <img src="/brand/EkovillaloggaNoBg.png" alt="Ekovilla" height={76} style={{ display: 'block', scale: '1.5' }} />
           <strong style={{ letterSpacing: 0.2 }}>Ekovilla Egenkontroll</strong>
         </header>
         {/* Content wrapper with top padding to avoid overlap */} 
