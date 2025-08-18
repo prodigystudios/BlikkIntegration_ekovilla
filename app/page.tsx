@@ -247,8 +247,10 @@ export default function Home() {
     setWorkCity(location?.city || '');
     // installation date -> prefer startDate, fallback to created
     const iso = (project?.startDate || project?.created || '').toString();
-    setInstallationDate(iso ? (iso.substring(0, 10) as string) : '');
+    const d = iso ? (iso.substring(0, 10) as string) : '';
+    setInstallationDate(d);
   }, [project]);
+
 
   const onLookup = async () => {
     setProject(null);
@@ -361,7 +363,12 @@ export default function Home() {
         </div>
         <label>
           <div>Installationsdatum</div>
-          <input type="date" value={installationDate} onChange={(e) => setInstallationDate(e.target.value)} style={{ width: '100%', maxWidth: '100%', boxSizing: 'border-box', padding: 8 }} />
+          <input
+            type="date"
+            value={installationDate}
+            onChange={(e) => setInstallationDate(e.target.value)}
+            style={{ width: '100%', maxWidth: '100%', boxSizing: 'border-box', padding: 8 }}
+          />
         </label>
         <label>
           <div>Projektnummer(OBS FYLL I DETTA OM NI FÅTT ETT PROJEKT NUMMER FRÅN KUND)</div>
@@ -374,7 +381,7 @@ export default function Home() {
 
         <label>
           <div>Material</div>
-          <select value={materialUsed} onChange={(e) => setMaterialUsed(e.target.value)} style={{ width: '100%', maxWidth: '100%', boxSizing: 'border-box', padding: 24, fontSize: 24 }}>
+          <select className="select-field" value={materialUsed} onChange={(e) => setMaterialUsed(e.target.value)} style={{ width: '100%', maxWidth: '100%', boxSizing: 'border-box' }}>
             <option value="">Välj material</option>
             <option value="Ekovilla Cellulosa Lösull CE ETA-09/0081">Ekovilla Cellulosa Lösull CE ETA-09/0081</option>
             <option value="Knauf Supafil Frame">Knauf Supafil Frame</option>

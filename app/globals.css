@@ -147,3 +147,35 @@ input[type="reset"]:focus-visible {
 }
 
 .text-error { color: #ef4444; }
+
+/* Plain/neutral button variant for small controls */
+.btn--plain {
+  background-color: #ffffff;
+  color: #111827;
+  border-color: #e5e7eb;
+}
+.btn--plain:hover { background-color: #f9fafb; }
+.btn--plain:active { background-color: #f3f4f6; }
+
+/* Cross-platform select styling */
+select.select-field {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  background-color: #ffffff;
+  color: #111827;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 10px 40px 10px 12px; /* room for arrow */
+  line-height: 1.2;
+  font: inherit;
+  box-shadow: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 20 20' fill='none'><path d='M5 7l5 5 5-5' stroke='%23111827' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 18px 18px;
+}
+select.select-field:hover { border-color: #d1d5db; }
+select.select-field:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; border-color: #2563eb; }
+select.select-field:disabled { opacity: 0.6; cursor: not-allowed; }
+select.select-field option { color: #111827; background-color: #ffffff; }

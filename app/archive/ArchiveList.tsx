@@ -60,7 +60,7 @@ export default function ArchiveList({ initial }: { initial: FileEntry[] }) {
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
             <span>Sortera:</span>
-            <select value={sort} onChange={(e) => setSort(e.target.value as any)} style={{ padding: 8, borderRadius: 6 }}>
+            <select className="select-field" value={sort} onChange={(e) => setSort(e.target.value as any)}>
               <option value="date">Datum</option>
               <option value="name">Namn</option>
               <option value="size">Storlek</option>
