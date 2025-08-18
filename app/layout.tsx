@@ -1,3 +1,5 @@
+import './globals.css';
+
 export const viewport = {
   width: 'device-width',
   initialScale: 1,
@@ -9,24 +11,8 @@ export const viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <head />
+    <head />
   <body style={{ fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif', margin: 0, width: '100%', overflowX: 'hidden' }}>
-        {/* Global CSS to prevent iOS zoom-on-focus by keeping form controls at 16px+ */}
-        <style>{`
-          input, select, textarea { font-size: 16px; }
-          /* Ensure iOS honors 16px on various controls */
-          @supports (-webkit-touch-callout: none) {
-            input, select, textarea, button { font-size: 16px; }
-          }
-          /* Make text-like form controls fill their container and be consistent */
-          input:not([type='checkbox']):not([type='radio']), select, textarea {
-            width: 100%;
-            max-width: 100%;
-            box-sizing: border-box;
-          }
-          /* Ensure labels expand to container so child inputs at width:100% can fill */
-          label { display: block; width: 100%; }
-        `}</style>
         {/* Fixed, full-width header */}
         <header
           style={{
