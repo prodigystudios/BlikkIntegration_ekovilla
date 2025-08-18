@@ -22,7 +22,10 @@ export async function GET(req: NextRequest) {
     const entries = await Promise.all((data || []).map(async (file) => {
       if (!file?.name) return null;
       const path = `${prefix ? prefix + '/' : ''}${file.name}`;
-      const { data: signed } = await supa.storage.from(bucket).createSignedUrl(path, 60 * 60 * 24 * 2);
+      // Use download option to force Content-Disposition=attachment
+      const { data: signed } = await supa.storage
+        .from(bucket)
+        .createSignedUrl(path, 60 * 60 * 24 * 2, { download: file.name });
   const size = (file as any)?.metadata?.size ?? undefined;
   return { path, name: file.name, size, url: signed?.signedUrl };
     }));

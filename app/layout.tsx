@@ -1,4 +1,5 @@
 import './globals.css';
+import HeaderMenu from './components/HeaderMenu';
 
 export const viewport = {
   width: 'device-width',
@@ -33,6 +34,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         >
           <img src="/brand/EkovillaloggaNoBg.png" alt="Ekovilla" height={76} style={{ display: 'block', scale: '1.5' }} />
           <strong style={{ letterSpacing: 0.2 }}>Egenkontroll</strong>
+          <div style={{ marginLeft: 'auto' }} />
+          <HeaderMenu />
         </header>
         {/* Content wrapper with top padding to avoid overlap */} 
         <div style={{ paddingTop: 64 }}>{children}</div>

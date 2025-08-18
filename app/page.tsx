@@ -346,12 +346,12 @@ export default function Home() {
       </section>
 
   <section style={{ marginTop: 24, display: 'flex', flexDirection: 'column', gap: 16, width: '100%', maxWidth: 720, alignSelf: 'stretch' }}>
-        <h2>Order form</h2>
+        <h2>Projektdetaljer</h2>
         <label>
-          <div>Projektnummer(OBS FYLL I DETTA OM NI FÅTT ETT PROJEKT NUMMER FRÅN KUND)</div>
-          <input value={projectNumber} onChange={(e) => setProjectNumber(e.target.value)} placeholder="Projektnummer" style={{ width: '100%', maxWidth: '100%', boxSizing: 'border-box', padding: 8 }} />
+          <div>Kund/Beställare</div>
+          <input value={clientName} onChange={(e) => setClientName(e.target.value)} placeholder="Kund/Beställare" style={{ width: '100%', maxWidth: '100%', boxSizing: 'border-box', padding: 8 }} />
         </label>
-  <div style={{ display: 'grid', gap: 8, width: '100%' }}>
+          <div style={{ display: 'grid', gap: 8, width: '100%' }}>
           <div>Adress</div>
           <input value={workStreet} onChange={(e) => setWorkStreet(e.target.value)} placeholder="Gatuadress" style={{ width: '100%', maxWidth: '100%', boxSizing: 'border-box', padding: 8 }} />
           <div style={{ display: 'flex', gap: 8, width: '100%', alignItems: 'stretch' }}>
@@ -364,8 +364,8 @@ export default function Home() {
           <input type="date" value={installationDate} onChange={(e) => setInstallationDate(e.target.value)} style={{ width: '100%', maxWidth: '100%', boxSizing: 'border-box', padding: 8 }} />
         </label>
         <label>
-          <div>Kund/Beställare</div>
-          <input value={clientName} onChange={(e) => setClientName(e.target.value)} placeholder="Kund/Beställare" style={{ width: '100%', maxWidth: '100%', boxSizing: 'border-box', padding: 8 }} />
+          <div>Projektnummer(OBS FYLL I DETTA OM NI FÅTT ETT PROJEKT NUMMER FRÅN KUND)</div>
+          <input value={projectNumber} onChange={(e) => setProjectNumber(e.target.value)} placeholder="Projektnummer" style={{ width: '100%', maxWidth: '100%', boxSizing: 'border-box', padding: 8 }} />
         </label>
         <label>
           <div>Installatör</div>
@@ -434,7 +434,7 @@ export default function Home() {
         <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <h3>Etapper (öppet)</h3>
-            <button type="button" onClick={addEtappOpenRow}>+ Lägg till rad</button>
+            <button className='btn--med' type="button" onClick={addEtappOpenRow}>+ Lägg till rad</button>
           </div>
           <div style={{ width: '100%', overflowX: 'auto', overflowY: 'hidden', maxWidth: '100%', WebkitOverflowScrolling: 'touch' }}>
             <div style={{ display: 'grid', gridTemplateColumns: '140px 100px 220px 130px 240px 170px 150px 170px', gap: 8, alignItems: 'center', fontWeight: 600, fontSize: 12, padding: '6px 0', minWidth: (140 + 100 + 220 + 130 + 240 + 170 + 150 + 170) + (7 * 8) }}>
@@ -458,7 +458,7 @@ export default function Home() {
                 <input value={row.installeradDensitet || ''} onChange={(e) => updateEtappOpenRow(idx, { installeradDensitet: e.target.value })} placeholder="kg/m³" style={{ padding: 6 }} />
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                   <input value={row.lambdavarde || ''} onChange={(e) => updateEtappOpenRow(idx, { lambdavarde: e.target.value })} placeholder="W/m²K" style={{ padding: 6, flex: 1 }} />
-                  <button type="button" onClick={() => removeEtappOpenRow(idx)} style={{ whiteSpace: 'nowrap' }}>Ta bort</button>
+                  <button className='btn--danger btn--sm' type="button" onClick={() => removeEtappOpenRow(idx)} style={{ whiteSpace: 'nowrap' }}>Ta bort</button>
                 </div>
               </div>
             ))}
@@ -468,7 +468,7 @@ export default function Home() {
         <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <h3>Etapper (slutet)</h3>
-            <button type="button" onClick={addEtappClosedRow}>+ Lägg till rad</button>
+            <button className='btn--med' type="button" onClick={addEtappClosedRow}>+ Lägg till rad</button>
           </div>
           <div style={{ width: '100%', overflowX: 'auto', overflowY: 'hidden', maxWidth: '100%', WebkitOverflowScrolling: 'touch' }}>
             <div style={{ display: 'grid', gridTemplateColumns: '140px 100px 160px 160px 170px 170px 170px', gap: 8, alignItems: 'center', fontWeight: 600, fontSize: 12, padding: '6px 0', minWidth: (140 + 100 + 160 + 160 + 170 + 170 + 170) + (6 * 8) }}>
@@ -490,7 +490,7 @@ export default function Home() {
                 <input value={row.installeradDensitet || ''} onChange={(e) => updateEtappClosedRow(idx, { installeradDensitet: e.target.value })} placeholder="kg/m³" style={{ padding: 6 }} />
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                   <input value={row.lambdavarde || ''} onChange={(e) => updateEtappClosedRow(idx, { lambdavarde: e.target.value })} placeholder="W/m²K" style={{ padding: 6, flex: 1 }} />
-                  <button type="button" onClick={() => removeEtappClosedRow(idx)} style={{ whiteSpace: 'nowrap' }}>Ta bort</button>
+                  <button className='btn--danger btn--sm' type="button" onClick={() => removeEtappClosedRow(idx)} style={{ whiteSpace: 'nowrap' }}>Ta bort</button>
                 </div>
               </div>
             ))}
@@ -519,208 +519,76 @@ export default function Home() {
                 />
               </div>
               <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
-                <button type="button" onClick={clearSignature}>Rensa signatur</button>
+                <button className='btn--danger btn--sm' type="button" onClick={clearSignature}>Rensa signatur</button>
               </div>
             </div>
           </section>
           <section style={{ marginTop: 24, display: 'grid', gap: 12, maxWidth: 600, minWidth: 0 }}>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button style={{ padding: 12, fontSize: 16 }} onClick={async () => {
-            setMessage(null);
-            if (!validateRows()) return;
-            const payload = {
-              orderId: orderId.trim(),
-              projectNumber,
-              installerName,
-              workAddress: {
-                streetAddress: workStreet,
-                postalCode: workPostalCode,
-                city: workCity,
-              },
-              installationDate,
-              clientName,
-              materialUsed,
-              checks: {
-                takfotsventilation: { ok: eavesVentOk, comment: eavesVentComment },
-                snickerier: { ok: carpentryOk, comment: carpentryComment },
-                tatskikt: { ok: waterproofingOk, comment: waterproofingComment },
-                genomforningar: { ok: genomforningarOk, comment: genomforningarComment },
-                grovstadning: { ok: grovstadningOk, comment: grovstadningComment },
-                markskylt: { ok: markskyltOk, comment: markskyltComment },
-                ovrigaKommentarer: { comment: ovrigaKommentarer },
-              },
-              signatureDateCity,
-              signatureTimestamp,
-              signature: signatureCanvasRef.current?.toDataURL('image/png') || null,
-              etapperOpen: etapperOpen.filter(r => Object.values(r).some(v => String(v ?? '').trim() !== '')),
-              etapperClosed: etapperClosed.filter(r => Object.values(r).some(v => String(v ?? '').trim() !== '')),
-            };
-            try {
-              const res = await fetch('/api/orders/submit', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload),
-              });
-              const data = await res.json();
-              if (!res.ok) throw new Error(data?.error || 'Submit failed');
-              setMessage('Submitted');
-            } catch (e: any) {
-              setMessage(`Failed: ${e.message}`);
-            }
-          }}>Spara till projekt</button>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <button className="btn--success btn--lg" onClick={async () => {
+                setMessage(null);
+                if (!validateRows()) return;
+                const payload = {
+                  orderId: orderId.trim(),
+                  projectNumber,
+                  installerName,
+                  workAddress: {
+                    streetAddress: workStreet,
+                    postalCode: workPostalCode,
+                    city: workCity,
+                  },
+                  installationDate,
+                  clientName,
+                  materialUsed,
+                  checks: {
+                    takfotsventilation: { ok: eavesVentOk, comment: eavesVentComment },
+                    snickerier: { ok: carpentryOk, comment: carpentryComment },
+                    tatskikt: { ok: waterproofingOk, comment: waterproofingComment },
+                    genomforningar: { ok: genomforningarOk, comment: genomforningarComment },
+                    grovstadning: { ok: grovstadningOk, comment: grovstadningComment },
+                    markskylt: { ok: markskyltOk, comment: markskyltComment },
+                    ovrigaKommentarer: { comment: ovrigaKommentarer },
+                  },
+                  signatureDateCity,
+                  signatureTimestamp,
+                  signature: signatureCanvasRef.current?.toDataURL('image/png') || null,
+                  etapperOpen: etapperOpen.filter(r => Object.values(r).some(v => String(v ?? '').trim() !== '')),
+                  etapperClosed: etapperClosed.filter(r => Object.values(r).some(v => String(v ?? '').trim() !== '')),
+                };
+                try {
+                  const res = await fetch('/api/pdf/generate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                  });
+                  if (!res.ok) throw new Error(await res.text());
+                  const arrayBuf = await res.arrayBuffer();
+                  const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuf)));
+                  const sanitize = (s: string) => String(s || '').normalize('NFKD').replace(/[^\w\-\.]+/g, '_').replace(/_+/g, '_').replace(/^_+|_+$/g, '');
+                  const clientPart = sanitize(clientName || 'client');
+                  const orderPart = sanitize(orderId || projectNumber || 'order');
+                  const filename = `Egenkontroll_${clientPart}_${orderPart}.pdf`;
+                  const save = await fetch('/api/storage/save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      fileName: filename,
+                      pdfBytesBase64: base64,
+                      folder: orderId || projectNumber || 'misc',
+                      metadata: { orderId, projectNumber, clientName },
+                    }),
+                  });
+                  const saved = await save.json();
+                  if (!save.ok) throw new Error(saved?.error || 'Upload failed');
+                  setMessage(`Sparat i arkiv: ${saved.path}`);
+                } catch (e: any) {
+                  setMessage(`Arkivering misslyckades: ${e.message}`);
+                }
+              }}>Spara till Arkiv</button>
+            </div>
 
-          <button style={{ padding: 12, fontSize: 16 }} onClick={async () => {
-            // Generate PDF first
-            setMessage(null);
-            if (!validateRows()) return;
-            const payload = {
-              orderId: orderId.trim(),
-              projectNumber,
-              installerName,
-              workAddress: {
-                streetAddress: workStreet,
-                postalCode: workPostalCode,
-                city: workCity,
-              },
-              installationDate,
-              clientName,
-              materialUsed,
-              checks: {
-                takfotsventilation: { ok: eavesVentOk, comment: eavesVentComment },
-                snickerier: { ok: carpentryOk, comment: carpentryComment },
-                tatskikt: { ok: waterproofingOk, comment: waterproofingComment },
-                genomforningar: { ok: genomforningarOk, comment: genomforningarComment },
-                grovstadning: { ok: grovstadningOk, comment: grovstadningComment },
-                markskylt: { ok: markskyltOk, comment: markskyltComment },
-                ovrigaKommentarer: { comment: ovrigaKommentarer },
-              },
-              signatureDateCity,
-              signatureTimestamp,
-              signature: signatureCanvasRef.current?.toDataURL('image/png') || null,
-              etapperOpen: etapperOpen.filter(r => Object.values(r).some(v => String(v ?? '').trim() !== '')),
-              etapperClosed: etapperClosed.filter(r => Object.values(r).some(v => String(v ?? '').trim() !== '')),
-            };
-            try {
-              const res = await fetch('/api/pdf/generate', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload),
-              });
-              if (!res.ok) throw new Error(await res.text());
-              const arrayBuf = await res.arrayBuffer();
-              const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuf)));
-              const sanitize = (s: string) => String(s || '').normalize('NFKD').replace(/[^\w\-\.]+/g, '_').replace(/_+/g, '_').replace(/^_+|_+$/g, '');
-              const clientPart = sanitize(clientName || 'client');
-              const orderPart = sanitize(orderId || projectNumber || 'order');
-              const filename = `Egenkontroll_${clientPart}_${orderPart}.pdf`;
-              const save = await fetch('/api/storage/save', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  fileName: filename,
-                  pdfBytesBase64: base64,
-                  folder: orderId || projectNumber || 'misc',
-                  metadata: { orderId, projectNumber, clientName },
-                }),
-              });
-              const saved = await save.json();
-              if (!save.ok) throw new Error(saved?.error || 'Upload failed');
-              setMessage(`Sparat i arkiv: ${saved.path}`);
-            } catch (e: any) {
-              setMessage(`Arkivering misslyckades: ${e.message}`);
-            }
-          }}>Spara till Arkiv</button>
-
-          <button style={{ padding: 12, fontSize: 16 }} onClick={async () => {
-            const payload = {
-              orderId: orderId.trim(),
-              projectNumber,
-              installerName,
-              workAddress: {
-                streetAddress: workStreet,
-                postalCode: workPostalCode,
-                city: workCity,
-              },
-              installationDate,
-              clientName,
-              materialUsed,
-              checks: {
-                takfotsventilation: { ok: eavesVentOk, comment: eavesVentComment },
-                snickerier: { ok: carpentryOk, comment: carpentryComment },
-                tatskikt: { ok: waterproofingOk, comment: waterproofingComment },
-                genomforningar: { ok: genomforningarOk, comment: genomforningarComment },
-                grovstadning: { ok: grovstadningOk, comment: grovstadningComment },
-                markskylt: { ok: markskyltOk, comment: markskyltComment },
-                ovrigaKommentarer: { comment: ovrigaKommentarer },
-              },
-              signatureDateCity,
-              signatureTimestamp,
-              signature: signatureCanvasRef.current?.toDataURL('image/png') || null,
-              etapperOpen: etapperOpen.filter(r => Object.values(r).some(v => String(v ?? '').trim() !== '')),
-              etapperClosed: etapperClosed.filter(r => Object.values(r).some(v => String(v ?? '').trim() !== '')),
-            };
-            // Validate rows before generating PDF
-            if (!validateRows()) return;
-            const res = await fetch('/api/pdf/generate', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(payload),
-            });
-            if (!res.ok) {
-              const err = await res.text();
-              setMessage(`PDF failed: ${err}`);
-              return;
-            }
-            const blob = await res.blob();
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            // Prefer server-provided filename; fallback to desired pattern
-            const dispo = res.headers.get('Content-Disposition') || '';
-            const m = dispo.match(/filename="?([^";]+)"?/i);
-            let filename = m ? m[1] : '';
-            if (!filename) {
-              const sanitize = (s: string) =>
-                String(s || '')
-                  .normalize('NFKD')
-                  .replace(/[^\w\-]+/g, '_')
-                  .replace(/_+/g, '_')
-                  .replace(/^_+|_+$/g, '');
-              const clientPart = sanitize(clientName || 'client');
-              const orderPart = sanitize(orderId || projectNumber || 'order');
-              filename = `Egenkontroll_${clientPart}_${orderPart}.pdf`;
-            }
-            a.download = filename;
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-            URL.revokeObjectURL(url);
-          }}>Spara som PDF till enhet</button>
-        </div>
-
-        {message && <div>{message}</div>}
-
-        <div style={{ marginTop: 16, display: 'flex', gap: 8 }}>
-          <button style={{ padding: 12 }} onClick={async () => {
-            try {
-              const prefix = encodeURIComponent(orderId || projectNumber || '');
-              const res = await fetch(`/api/storage/list?prefix=${prefix}`);
-              const data = await res.json();
-              if (!res.ok) throw new Error(data?.error || 'List failed');
-              const files = (data.files || []) as Array<{ name: string; url?: string; path: string }>;
-              if (!files.length) {
-                setMessage('Inga filer hittades.');
-                return;
-              }
-              // Render quick links in a basic list popup
-              const links = files.map((f) => `• ${f.name}`).join('\n');
-              setMessage(`Filer:\n${links}`);
-            } catch (e: any) {
-              setMessage(`Kunde inte hämta lista: ${e.message}`);
-            }
-          }}>Visa sparade PDF:er</button>
-        </div>
-      </section>
+            {message && <div>{message}</div>}
+          </section>
       
     </main>
   );
