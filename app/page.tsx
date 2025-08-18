@@ -570,6 +570,68 @@ export default function Home() {
           }}>Spara till projekt</button>
 
           <button style={{ padding: 12, fontSize: 16 }} onClick={async () => {
+            // Generate PDF first
+            setMessage(null);
+            if (!validateRows()) return;
+            const payload = {
+              orderId: orderId.trim(),
+              projectNumber,
+              installerName,
+              workAddress: {
+                streetAddress: workStreet,
+                postalCode: workPostalCode,
+                city: workCity,
+              },
+              installationDate,
+              clientName,
+              materialUsed,
+              checks: {
+                takfotsventilation: { ok: eavesVentOk, comment: eavesVentComment },
+                snickerier: { ok: carpentryOk, comment: carpentryComment },
+                tatskikt: { ok: waterproofingOk, comment: waterproofingComment },
+                genomforningar: { ok: genomforningarOk, comment: genomforningarComment },
+                grovstadning: { ok: grovstadningOk, comment: grovstadningComment },
+                markskylt: { ok: markskyltOk, comment: markskyltComment },
+                ovrigaKommentarer: { comment: ovrigaKommentarer },
+              },
+              signatureDateCity,
+              signatureTimestamp,
+              signature: signatureCanvasRef.current?.toDataURL('image/png') || null,
+              etapperOpen: etapperOpen.filter(r => Object.values(r).some(v => String(v ?? '').trim() !== '')),
+              etapperClosed: etapperClosed.filter(r => Object.values(r).some(v => String(v ?? '').trim() !== '')),
+            };
+            try {
+              const res = await fetch('/api/pdf/generate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+              });
+              if (!res.ok) throw new Error(await res.text());
+              const arrayBuf = await res.arrayBuffer();
+              const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuf)));
+              const sanitize = (s: string) => String(s || '').normalize('NFKD').replace(/[^\w\-\.]+/g, '_').replace(/_+/g, '_').replace(/^_+|_+$/g, '');
+              const clientPart = sanitize(clientName || 'client');
+              const orderPart = sanitize(orderId || projectNumber || 'order');
+              const filename = `Egenkontroll_${clientPart}_${orderPart}.pdf`;
+              const save = await fetch('/api/storage/save', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  fileName: filename,
+                  pdfBytesBase64: base64,
+                  folder: orderId || projectNumber || 'misc',
+                  metadata: { orderId, projectNumber, clientName },
+                }),
+              });
+              const saved = await save.json();
+              if (!save.ok) throw new Error(saved?.error || 'Upload failed');
+              setMessage(`Sparat i arkiv: ${saved.path}`);
+            } catch (e: any) {
+              setMessage(`Arkivering misslyckades: ${e.message}`);
+            }
+          }}>Spara till Arkiv</button>
+
+          <button style={{ padding: 12, fontSize: 16 }} onClick={async () => {
             const payload = {
               orderId: orderId.trim(),
               projectNumber,
@@ -637,6 +699,27 @@ export default function Home() {
         </div>
 
         {message && <div>{message}</div>}
+
+        <div style={{ marginTop: 16, display: 'flex', gap: 8 }}>
+          <button style={{ padding: 12 }} onClick={async () => {
+            try {
+              const prefix = encodeURIComponent(orderId || projectNumber || '');
+              const res = await fetch(`/api/storage/list?prefix=${prefix}`);
+              const data = await res.json();
+              if (!res.ok) throw new Error(data?.error || 'List failed');
+              const files = (data.files || []) as Array<{ name: string; url?: string; path: string }>;
+              if (!files.length) {
+                setMessage('Inga filer hittades.');
+                return;
+              }
+              // Render quick links in a basic list popup
+              const links = files.map((f) => `• ${f.name}`).join('\n');
+              setMessage(`Filer:\n${links}`);
+            } catch (e: any) {
+              setMessage(`Kunde inte hämta lista: ${e.message}`);
+            }
+          }}>Visa sparade PDF:er</button>
+        </div>
       </section>
       
     </main>
