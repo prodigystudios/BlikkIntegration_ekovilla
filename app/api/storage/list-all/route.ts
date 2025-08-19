@@ -82,7 +82,8 @@ async function listRecursive(
         if (!entry.name) continue;
         const hasSize = typeof anyEntry?.metadata?.size === 'number';
         const hasStringId = typeof anyEntry?.id === 'string' && anyEntry.id.length > 0;
-        const isFile = hasSize || hasStringId;
+        const looksLikePdf = /\.pdf$/i.test(entry.name);
+        const isFile = hasSize || hasStringId || looksLikePdf;
         if (!isFile) {
           const nextPrefix = pfx ? `${pfx}/${entry.name}` : entry.name;
           queue.push(nextPrefix);
