@@ -14,7 +14,7 @@ export async function POST(req: NextRequest) {
       fileName, // suggested name
       pdfBytesBase64, // base64 string (no data: prefix)
       metadata = {}, // optional
-      folder = '', // optional subfolder like orderId or projectId
+      // folder ignored now; we save under a single prefix to avoid listing inconsistencies
     } = body || {};
 
     if (!fileName || !pdfBytesBase64) {
@@ -22,8 +22,8 @@ export async function POST(req: NextRequest) {
     }
 
     const bytes = Buffer.from(pdfBytesBase64, 'base64');
-    const safeFolder = String(folder || '').replace(/[^\w/.-]+/g, '_');
-    const path = `${safeFolder ? safeFolder + '/' : ''}${fileName}`;
+  const fixedFolder = 'Egenkontroller';
+  const path = `${fixedFolder}/${fileName}`;
 
     const { data, error } = await supa.storage.from(bucket).upload(path, bytes, {
       contentType: 'application/pdf',
@@ -34,28 +34,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    // Best-effort: update a simple folder index to help listing discover new prefixes immediately
-    try {
-      const indexPath = '__index/folders.json';
-      const folderName = safeFolder.trim();
-      if (folderName) {
-        let folders: string[] = [];
-        const existing = await supa.storage.from(bucket).download(indexPath);
-        if (!existing.error && existing.data) {
-          try {
-            const text = await existing.data.text();
-            const json = JSON.parse(text) as { folders?: string[] };
-            if (Array.isArray(json.folders)) folders = json.folders;
-          } catch {}
-        }
-        if (!folders.includes(folderName)) {
-          folders.push(folderName);
-          folders.sort();
-          const payload = new Blob([JSON.stringify({ folders }, null, 2)], { type: 'application/json' });
-          await supa.storage.from(bucket).upload(indexPath, payload, { contentType: 'application/json', upsert: true });
-        }
-      }
-    } catch {}
+  // Index writing removed — single folder strategy keeps listing simple and consistent
 
     // Get a signed URL valid for 7 days
     const { data: signed, error: sErr } = await supa.storage.from(bucket).createSignedUrl(path, 60 * 60 * 24 * 7);
