@@ -37,6 +37,7 @@ export default function ArchiveList({ initial }: { initial?: FileEntry[] }) {
       try {
         const res = await fetch('/api/storage/list-all', { cache: 'no-store' });
         const data = await res.json();
+        console.log(data);
         if (!res.ok) throw new Error(data?.error || 'Kunde inte hämta filer');
         if (!cancelled) setFiles(data.files || []);
       } catch {
@@ -54,6 +55,7 @@ export default function ArchiveList({ initial }: { initial?: FileEntry[] }) {
     try {
       const res = await fetch(`/api/storage/list-all?ts=${Date.now()}`, { cache: 'no-store' });
       const data = await res.json();
+        console.log(data);
       if (!res.ok) throw new Error(data?.error || 'Kunde inte uppdatera');
       setFiles(data.files || []);
     } catch {
