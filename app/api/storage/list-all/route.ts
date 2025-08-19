@@ -14,13 +14,51 @@ async function listRecursive(
   diag?: PrefixDiag[]
 ) {
   const out: Array<FileRow> = [];
-  let page = 0;
   const pageSize = 100;
-  // BFS: list folder, enqueue subfolders
-  const queue: string[] = [prefix];
+  const queue: string[] = [];
+
+  // If starting from root, explicitly list root once to seed all top-level folders and files
+  if (!prefix) {
+    let page = 0;
+    let entriesCountForPrefix = 0;
+    let filesAddedForPrefix = 0;
+    let foldersAddedForPrefix = 0;
+    for (;;) {
+      const { data, error } = await supa.storage.from(bucket).list(undefined, {
+        limit: pageSize,
+        offset: page * pageSize,
+        sortBy: { column: 'name', order: 'asc' },
+      });
+      if (error) throw new Error(error.message);
+      if (!data || data.length === 0) break;
+      entriesCountForPrefix += data.length;
+      for (const entry of data) {
+        const anyEntry = entry as any;
+        const nameLower = String(entry.name || '').toLowerCase();
+        const looksLikeFileByExt = /\.(pdf|png|jpg|jpeg|gif|txt|csv|doc|docx|xlsx|json)$/i.test(nameLower);
+        const isFolder = (anyEntry?.id == null) && (anyEntry?.metadata == null) && !looksLikeFileByExt;
+        if (entry.name && isFolder) {
+          queue.push(entry.name);
+          foldersAddedForPrefix++;
+        } else if (entry.name) {
+          const size = anyEntry?.metadata?.size as number | undefined;
+          const updatedAt = (anyEntry?.updated_at || anyEntry?.created_at) as string | undefined;
+          out.push({ path: entry.name, name: entry.name, size, updatedAt });
+          filesAddedForPrefix++;
+        }
+      }
+      if (data.length < pageSize) break;
+      page++;
+    }
+    if (diag) diag.push({ prefix: '', entries: entriesCountForPrefix, filesAdded: filesAddedForPrefix, foldersAdded: foldersAddedForPrefix });
+  } else {
+    queue.push(prefix);
+  }
+
+  // BFS for all queued folders
   while (queue.length) {
     const pfx = queue.shift()!;
-    page = 0;
+    let page = 0;
     let filesAddedForPrefix = 0;
     let foldersAddedForPrefix = 0;
     let entriesCountForPrefix = 0;
@@ -35,7 +73,6 @@ async function listRecursive(
       entriesCountForPrefix += data.length;
       for (const entry of data) {
         const anyEntry = entry as any;
-        // Hardened folder detection: folders often have null id and no metadata
         const nameLower = String(entry.name || '').toLowerCase();
         const looksLikeFileByExt = /\.(pdf|png|jpg|jpeg|gif|txt|csv|doc|docx|xlsx|json)$/i.test(nameLower);
         const isFolder = (anyEntry?.id == null) && (anyEntry?.metadata == null) && !looksLikeFileByExt;
