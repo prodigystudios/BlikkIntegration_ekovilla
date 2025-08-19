@@ -32,9 +32,7 @@ async function listRecursive(
       entriesCountForPrefix += data.length;
       for (const entry of data) {
         const anyEntry = entry as any;
-        const nameLower = String(entry.name || '').toLowerCase();
-        const looksLikeFileByExt = /\.(pdf|png|jpg|jpeg|gif|txt|csv|doc|docx|xlsx|json)$/i.test(nameLower);
-        const isFolder = (anyEntry?.id == null) && (anyEntry?.metadata == null) && !looksLikeFileByExt;
+        const isFolder = anyEntry?.id == null; // Supabase list: folders have null id
         if (entry.name && isFolder) {
           queue.push(entry.name);
           foldersAddedForPrefix++;
@@ -53,9 +51,7 @@ async function listRecursive(
     const existing = new Set(queue);
     for (const entry of topOnce || []) {
       const anyEntry = entry as any;
-      const nameLower = String(entry.name || '').toLowerCase();
-      const looksLikeFileByExt = /\.(pdf|png|jpg|jpeg|gif|txt|csv|doc|docx|xlsx|json)$/i.test(nameLower);
-      const isFolder = (anyEntry?.id == null) && (anyEntry?.metadata == null) && !looksLikeFileByExt;
+      const isFolder = anyEntry?.id == null;
       if (entry.name && isFolder && !existing.has(entry.name)) {
         queue.push(entry.name);
         foldersAddedForPrefix++;
@@ -84,9 +80,7 @@ async function listRecursive(
       entriesCountForPrefix += data.length;
       for (const entry of data) {
         const anyEntry = entry as any;
-        const nameLower = String(entry.name || '').toLowerCase();
-        const looksLikeFileByExt = /\.(pdf|png|jpg|jpeg|gif|txt|csv|doc|docx|xlsx|json)$/i.test(nameLower);
-        const isFolder = (anyEntry?.id == null) && (anyEntry?.metadata == null) && !looksLikeFileByExt;
+        const isFolder = anyEntry?.id == null;
         if (entry.name && isFolder) {
           const nextPrefix = pfx ? `${pfx}/${entry.name}` : entry.name;
           queue.push(nextPrefix);
