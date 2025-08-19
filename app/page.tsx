@@ -271,7 +271,61 @@ export default function Home() {
     const iso = (project?.startDate || project?.created || '').toString();
     const d = iso ? (iso.substring(0, 10) as string) : '';
     setInstallationDate(d);
+    
+    // Prefill Etapper from description if present and tables are empty
+    try {
+      const desc: string = String(project?.description ?? '').trim();
+      if (desc && etapperOpen.length === 0 && etapperClosed.length === 0) {
+        const parsed = parseDescriptionToRows(desc);
+        if (parsed.open.length) setEtapperOpen(parsed.open);
+        if (parsed.closed.length) setEtapperClosed(parsed.closed);
+      }
+    } catch {}
   }, [project]);
+
+  // Parse helper: "Vind - 102m2x500mm - 102eko" (also supports m² and ×)
+  // Rule: only entries named "Vind" go to Etapper (öppet); all others to Etapper (slutet)
+  function parseDescriptionToRows(desc: string): { open: EtappOpenRow[]; closed: EtappClosedRow[] } {
+    const open: EtappOpenRow[] = [];
+    const closed: EtappClosedRow[] = [];
+    const re = /([A-Za-zÅÄÖåäö][A-Za-zÅÄÖåäö\s/()_-]*?)\s*-\s*(\d+[.,]?\d*)\s*m(?:2|²)\s*[x×]\s*(\d+[.,]?\d*)\s*mm\s*-\s*(\d+)\s*eko/gi;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(desc)) !== null) {
+      const rawName = (m[1] || '').trim();
+      const nameNorm = rawName.toLowerCase();
+      const areaStr = (m[2] || '').replace(',', '.');
+      const thickStr = (m[3] || '').replace(',', '.');
+      const sacksStr = (m[4] || '').trim();
+      const area = isFinite(Number(areaStr)) ? String(Number(areaStr)) : '';
+      const thickness = isFinite(Number(thickStr)) ? String(Number(thickStr)) : '';
+      const sacks = /^\d+$/.test(sacksStr) ? sacksStr : '';
+
+      const isVind = nameNorm === 'vind' || nameNorm.startsWith('vind');
+      if (isVind) {
+        open.push({
+          etapp: rawName,
+          ytaM2: area,
+          bestalldTjocklek: thickness,
+          sattningsprocent: '',
+          installeradTjocklek: '',
+          antalSack: sacks,
+          installeradDensitet: '',
+          lambdavarde: MATERIALS[materialUsed]?.lambda,
+        });
+      } else {
+        closed.push({
+          etapp: rawName,
+          ytaM2: area,
+          bestalldTjocklek: thickness,
+          uppmatTjocklek: '',
+          installeradDensitet: '',
+          antalSackKgPerSack: sacks,
+          lambdavarde: MATERIALS[materialUsed]?.lambda,
+        });
+      }
+    }
+    return { open, closed };
+  }
 
 
   const onLookup = async () => {
