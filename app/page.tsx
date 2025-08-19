@@ -27,7 +27,9 @@ export default function Home() {
   const MATERIALS: Record<string, { bagWeight: number; lambda: string }> = useMemo(
     () => ({
       'Ekovilla Cellulosa Lösull CE ETA-09/0081': { bagWeight: 14, lambda: '0.038' },
-      'Knauf Supafil Frame': { bagWeight: 16, lambda: '0.034' },
+      'Knauf Supafil Frame Lösull B0709EPCR': { bagWeight: 15.5, lambda: '0.038' },
+      'Isocell/isEco cellulosa Lösull CE ETA-06/0076': { bagWeight: 12, lambda: '0.038' },
+      'Hunton Nativo Träfiber Lösull DoP 02-04-01': { bagWeight: 14, lambda: '0.039' }
     }),
     []
   );
@@ -70,6 +72,18 @@ export default function Home() {
     setEtapperOpen((rows) => {
       const next = rows.map((r, i) => (i === idx ? { ...r, ...patch } : r));
       const row = next[idx];
+      // Auto-calc installeradTjocklek = beställd tjocklek + (beställd * sättningsprocent/100)
+      if (("bestalldTjocklek" in patch || "sattningsprocent" in patch) && !("installeradTjocklek" in patch)) {
+        const base = parseFloat(String(row.bestalldTjocklek ?? ''));
+        const perc = parseFloat(String(row.sattningsprocent ?? ''));
+        const installed = Number.isFinite(base) && Number.isFinite(perc)
+          ? base + (base * (perc / 100))
+          : NaN;
+        next[idx] = {
+          ...row,
+          installeradTjocklek: Number.isFinite(installed) && installed > 0 ? String(Math.round(installed)) : '',
+        };
+      }
       // If any inputs affecting density changed (and user isn't directly typing density), update density using the helper
       if (("ytaM2" in patch || "bestalldTjocklek" in patch || "antalSack" in patch) && !("installeradDensitet" in patch)) {
         const calc = CalculateDensityOnRow(row);
@@ -392,7 +406,9 @@ export default function Home() {
           <select className="select-field" value={materialUsed} onChange={(e) => setMaterialUsed(e.target.value)} style={{ width: '100%', maxWidth: '100%', boxSizing: 'border-box' }}>
             <option value="">Välj material</option>
             <option value="Ekovilla Cellulosa Lösull CE ETA-09/0081">Ekovilla Cellulosa Lösull CE ETA-09/0081</option>
-            <option value="Knauf Supafil Frame">Knauf Supafil Frame</option>
+            <option value="Knauf Supafil Frame Lösull B0709EPCR">Knauf Supafil Frame Lösull B0709EPCR</option>
+            <option value="Isocell/isEco cellulosa Lösull CE ETA-06/0076">Isocell/isEco cellulosa Lösull CE ETA-06/0076</option>
+            <option value="Hunton Nativo Träfiber Lösull DoP 02-04-01">Hunton Nativo Träfiber Lösull DoP 02-04-01</option>
           </select>
           {materialUsed && (
             <small style={{ color: '#6b7280' }}>
@@ -603,7 +619,7 @@ export default function Home() {
                   setMessage(`Sparat i arkiv: ${saved.path}`);
                   setToast({ text: 'Sparat i arkiv', type: 'success' });
 
-                  // Optionally add a comment to the Blikk project to note completion
+                  // Optionally add a comment to the Blikk project to note completion (with download link)
                   try {
                     const blikkProjectId = project?.id || project?.projectId; // depending on API shape
                     if (blikkProjectId) {
@@ -613,6 +629,13 @@ export default function Home() {
                       const dd = String(today.getDate()).padStart(2, '0');
                       const dateStr = `${yyyy}-${mm}-${dd}`;
                       const commentPieces = [`Egenkontroll gjord ${dateStr}.`];
+                      try {
+                        const origin = typeof window !== 'undefined' ? window.location.origin : '';
+                        if (origin && saved?.path) {
+                          const downloadUrl = `${origin}/api/storage/download?path=${encodeURIComponent(saved.path)}`;
+                          commentPieces.push(`Ladda ner PDF: ${downloadUrl}`);
+                        }
+                      } catch {}
                       // If you want to tag people, add handles here (Blikk must support @mentions in API):
                       // commentPieces.push('@patrikvall');
                       const commentText = commentPieces.join(' ');

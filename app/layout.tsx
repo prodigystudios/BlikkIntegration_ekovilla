@@ -1,6 +1,5 @@
 import './globals.css';
 import HeaderMenu from './components/HeaderMenu';
-import Image from 'next/image';
 
 export const viewport = {
   width: 'device-width',
@@ -28,12 +27,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             display: 'flex',
             alignItems: 'center',
             padding: '0 16px',
-            gap: 12,
+            gap: 25,
             zIndex: 1000,
             boxShadow: '0 2px 8px rgba(0,0,0,0.08)'
           }}
         >
-          <Image src="/brand/EkovillaloggaNoBg.png" alt="Ekovilla" width={120} height={38} priority style={{ display: 'block' }} />
+          <img src="/brand/EkovillaloggaNoBg.png" alt="Ekovilla" height={76} style={{ display: 'block', transform: 'scale(1.5)', transformOrigin: 'left center' }} />
           <strong style={{ letterSpacing: 0.2 }}>Egenkontroll</strong>
           <div style={{ marginLeft: 'auto' }} />
           <HeaderMenu />

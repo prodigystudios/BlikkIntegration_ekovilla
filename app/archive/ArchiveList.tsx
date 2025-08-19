@@ -94,7 +94,22 @@ export default function ArchiveList({ initial }: { initial?: FileEntry[] }) {
         </div>
       </div>
 
-  {loading && <p>Laddar listan…</p>}
+      {loading && (
+        <ul className="archive-list" aria-hidden style={{ opacity: 0.85 }}>
+          {Array.from({ length: 6 }).map((_, i) => (
+            <li key={i} className="archive-item" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+              <div className="archive-meta" style={{ flex: 1 }}>
+                <div style={{ height: 14, width: '50%', background: '#f3f4f6', borderRadius: 6, marginBottom: 6 }} />
+                <div style={{ height: 12, width: '35%', background: '#f3f4f6', borderRadius: 6, marginBottom: 6 }} />
+                <div style={{ height: 10, width: '25%', background: '#f3f4f6', borderRadius: 6 }} />
+              </div>
+              <div className="archive-actions">
+                <div style={{ height: 28, width: 100, background: '#e5e7eb', borderRadius: 6 }} />
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
   <ul className="archive-list">
         {filtered.map((f) => (
           <li key={f.path} className="archive-item">
