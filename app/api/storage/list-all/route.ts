@@ -24,7 +24,7 @@ async function listRecursive(
     let filesAddedForPrefix = 0;
     let foldersAddedForPrefix = 0;
     for (;;) {
-      const { data, error } = await supa.storage.from(bucket).list(undefined, {
+      const { data, error } = await supa.storage.from(bucket).list('', {
         limit: pageSize,
         offset: page * pageSize,
         sortBy: { column: 'name', order: 'asc' },
@@ -63,7 +63,7 @@ async function listRecursive(
     let foldersAddedForPrefix = 0;
     let entriesCountForPrefix = 0;
     for (;;) {
-      const { data, error } = await supa.storage.from(bucket).list(pfx || undefined, {
+      const { data, error } = await supa.storage.from(bucket).list(pfx, {
         limit: pageSize,
         offset: page * pageSize,
         sortBy: { column: 'name', order: 'asc' },
@@ -118,8 +118,8 @@ export async function GET(req: NextRequest) {
     const headers = new Headers({ 'Cache-Control': 'no-store' });
     if (debug) {
       // Gather extra diagnostics to understand prod differences
-      const { data: buckets } = await supa.storage.listBuckets();
-      const { data: top } = await supa.storage.from(bucket).list(prefix || undefined, { limit: 200, sortBy: { column: 'name', order: 'asc' } });
+  const { data: buckets } = await supa.storage.listBuckets();
+  const { data: top } = await supa.storage.from(bucket).list(prefix || '', { limit: 200, sortBy: { column: 'name', order: 'asc' } });
       const host = (process.env.SUPABASE_URL || '').replace(/^https?:\/\//, '');
       return NextResponse.json(
         {
