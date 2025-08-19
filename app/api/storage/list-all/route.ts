@@ -4,8 +4,16 @@ import { getSupabaseAdmin } from '@/lib/supabase/server';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-async function listRecursive(supa: ReturnType<typeof getSupabaseAdmin>, bucket: string, prefix = '') {
-  const out: Array<{ path: string; name: string; size?: number; updatedAt?: string }> = [];
+type FileRow = { path: string; name: string; size?: number; updatedAt?: string };
+type PrefixDiag = { prefix: string; entries: number; filesAdded: number; foldersAdded: number };
+
+async function listRecursive(
+  supa: ReturnType<typeof getSupabaseAdmin>,
+  bucket: string,
+  prefix = '',
+  diag?: PrefixDiag[]
+) {
+  const out: Array<FileRow> = [];
   let page = 0;
   const pageSize = 100;
   // BFS: list folder, enqueue subfolders
@@ -13,6 +21,9 @@ async function listRecursive(supa: ReturnType<typeof getSupabaseAdmin>, bucket: 
   while (queue.length) {
     const pfx = queue.shift()!;
     page = 0;
+    let filesAddedForPrefix = 0;
+    let foldersAddedForPrefix = 0;
+    let entriesCountForPrefix = 0;
     for (;;) {
       const { data, error } = await supa.storage.from(bucket).list(pfx || undefined, {
         limit: pageSize,
@@ -21,13 +32,17 @@ async function listRecursive(supa: ReturnType<typeof getSupabaseAdmin>, bucket: 
       });
       if (error) throw new Error(error.message);
       if (!data || data.length === 0) break;
+      entriesCountForPrefix += data.length;
       for (const entry of data) {
         const anyEntry = entry as any;
         // Hardened folder detection: folders often have null id and no metadata
-        const isFolder = (anyEntry?.id == null) && (anyEntry?.metadata == null);
+        const nameLower = String(entry.name || '').toLowerCase();
+        const looksLikeFileByExt = /\.(pdf|png|jpg|jpeg|gif|txt|csv|doc|docx|xlsx|json)$/i.test(nameLower);
+        const isFolder = (anyEntry?.id == null) && (anyEntry?.metadata == null) && !looksLikeFileByExt;
         if (entry.name && isFolder) {
           const nextPrefix = pfx ? `${pfx}/${entry.name}` : entry.name;
           queue.push(nextPrefix);
+          foldersAddedForPrefix++;
           continue;
         }
         if (entry.name && !isFolder) {
@@ -35,11 +50,13 @@ async function listRecursive(supa: ReturnType<typeof getSupabaseAdmin>, bucket: 
           const size = anyEntry?.metadata?.size as number | undefined;
           const updatedAt = (anyEntry?.updated_at || anyEntry?.created_at) as string | undefined;
           out.push({ path, name: entry.name, size, updatedAt });
+          filesAddedForPrefix++;
         }
       }
       if (data.length < pageSize) break;
       page++;
     }
+    if (diag) diag.push({ prefix: pfx, entries: entriesCountForPrefix, filesAdded: filesAddedForPrefix, foldersAdded: foldersAddedForPrefix });
   }
   return out;
 }
@@ -50,7 +67,8 @@ export async function GET(req: NextRequest) {
     const bucket = process.env.SUPABASE_BUCKET || 'pdfs';
   const url = new URL(req.url);
   const prefix = url.searchParams.get('prefix') || '';
-  const files = await listRecursive(supa, bucket, prefix);
+  const diags: PrefixDiag[] | undefined = url.searchParams.get('debug') ? [] : undefined;
+  const files = await listRecursive(supa, bucket, prefix, diags);
     // sign links
     const withLinks = await Promise.all(files.map(async (f) => {
       // Use download option to set Content-Disposition=attachment so browsers download instead of opening inline
@@ -76,6 +94,7 @@ export async function GET(req: NextRequest) {
             prefix,
             buckets,
             topLevel: top,
+            prefixes: diags,
           },
         },
         { status: 200, headers }
