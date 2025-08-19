@@ -27,6 +27,7 @@ export default function ArchiveList({ initial }: { initial?: FileEntry[] }) {
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<"name" | "date" | "size">("date");
   const [dir, setDir] = useState<"desc" | "asc">("desc");
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -47,6 +48,20 @@ export default function ArchiveList({ initial }: { initial?: FileEntry[] }) {
     run();
     return () => { cancelled = true; };
   }, [initial]);
+
+  async function refreshNow() {
+    setRefreshing(true);
+    try {
+      const res = await fetch(`/api/storage/list-all?ts=${Date.now()}`, { cache: 'no-store' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || 'Kunde inte uppdatera');
+      setFiles(data.files || []);
+    } catch {
+      // ignore, keep current state
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -90,6 +105,10 @@ export default function ArchiveList({ initial }: { initial?: FileEntry[] }) {
           </label>
           <button className="btn--plain" type="button" onClick={() => setDir(d => d === "asc" ? "desc" : "asc")}>
             {dir === "asc" ? "⬆️" : "⬇️"}
+          </button>
+          <div style={{ marginLeft: 'auto' }} />
+          <button className="btn--plain" type="button" onClick={refreshNow} disabled={refreshing}>
+            {refreshing ? 'Uppdaterar…' : 'Uppdatera'}
           </button>
         </div>
       </div>
