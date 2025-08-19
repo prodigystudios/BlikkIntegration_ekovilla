@@ -79,22 +79,24 @@ async function listRecursive(
       const pageFiles: string[] = [];
       for (const entry of data) {
         const anyEntry = entry as any;
-        const isFolder = anyEntry?.id == null; // folders have null id
         if (!entry.name) continue;
-        if (isFolder) {
+        const hasSize = typeof anyEntry?.metadata?.size === 'number';
+        const hasStringId = typeof anyEntry?.id === 'string' && anyEntry.id.length > 0;
+        const isFile = hasSize || hasStringId;
+        if (!isFile) {
           const nextPrefix = pfx ? `${pfx}/${entry.name}` : entry.name;
           queue.push(nextPrefix);
           pageFolders.push(entry.name);
-        } else {
-          // Hide placeholder/dot files (e.g., .emptyFolderPlaceholder created by dashboards)
-          const baseName = String(entry.name || '');
-          if (baseName.startsWith('.')) continue;
-          const path = pfx ? `${pfx}/${entry.name}` : entry.name;
-          const size = anyEntry?.metadata?.size as number | undefined;
-          const updatedAt = (anyEntry?.updated_at || anyEntry?.created_at) as string | undefined;
-          out.push({ path, name: entry.name, size, updatedAt });
-          pageFiles.push(entry.name);
+          continue;
         }
+        // Hide placeholder/dot files (e.g., .emptyFolderPlaceholder created by dashboards)
+        const baseName = String(entry.name || '');
+        if (baseName.startsWith('.')) continue;
+        const path = pfx ? `${pfx}/${entry.name}` : entry.name;
+        const size = anyEntry?.metadata?.size as number | undefined;
+        const updatedAt = (anyEntry?.updated_at || anyEntry?.created_at) as string | undefined;
+        out.push({ path, name: entry.name, size, updatedAt });
+        pageFiles.push(entry.name);
       }
       trace?.push({ scope: pfx, page, count: data.length, folders: pageFolders, files: pageFiles });
       if (data.length < pageSize) break;
