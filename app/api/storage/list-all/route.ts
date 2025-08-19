@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 
 export const runtime = 'nodejs';
@@ -23,7 +23,8 @@ async function listRecursive(supa: ReturnType<typeof getSupabaseAdmin>, bucket: 
       if (!data || data.length === 0) break;
       for (const entry of data) {
         const anyEntry = entry as any;
-        const isFolder = anyEntry?.id == null; // folders typically have null id
+        // Hardened folder detection: folders often have null id and no metadata
+        const isFolder = (anyEntry?.id == null) && (anyEntry?.metadata == null);
         if (entry.name && isFolder) {
           const nextPrefix = pfx ? `${pfx}/${entry.name}` : entry.name;
           queue.push(nextPrefix);
@@ -43,11 +44,13 @@ async function listRecursive(supa: ReturnType<typeof getSupabaseAdmin>, bucket: 
   return out;
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
     const supa = getSupabaseAdmin();
     const bucket = process.env.SUPABASE_BUCKET || 'pdfs';
-    const files = await listRecursive(supa, bucket, '');
+  const url = new URL(req.url);
+  const prefix = url.searchParams.get('prefix') || '';
+  const files = await listRecursive(supa, bucket, prefix);
     // sign links
     const withLinks = await Promise.all(files.map(async (f) => {
       // Use download option to set Content-Disposition=attachment so browsers download instead of opening inline
@@ -56,7 +59,29 @@ export async function GET() {
         .createSignedUrl(f.path, 60 * 60 * 24 * 2, { download: f.name });
       return { ...f, url: data?.signedUrl };
     }));
-    return NextResponse.json({ files: withLinks }, { status: 200 });
+  const debug = url.searchParams.get('debug');
+    const headers = new Headers({ 'Cache-Control': 'no-store' });
+    if (debug) {
+      // Gather extra diagnostics to understand prod differences
+      const { data: buckets } = await supa.storage.listBuckets();
+      const { data: top } = await supa.storage.from(bucket).list(prefix || undefined, { limit: 200, sortBy: { column: 'name', order: 'asc' } });
+      const host = (process.env.SUPABASE_URL || '').replace(/^https?:\/\//, '');
+      return NextResponse.json(
+        {
+          files: withLinks,
+          debug: {
+            bucket,
+            supabaseHost: host,
+            count: withLinks.length,
+            prefix,
+            buckets,
+            topLevel: top,
+          },
+        },
+        { status: 200, headers }
+      );
+    }
+    return NextResponse.json({ files: withLinks }, { status: 200, headers });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
