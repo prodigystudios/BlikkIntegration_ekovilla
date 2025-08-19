@@ -32,7 +32,7 @@ export default function ArchiveList({ initial }: { initial?: FileEntry[] }) {
   useEffect(() => {
     let cancelled = false;
     async function run() {
-      if (initial) return; // already provided by server
+      //if (initial) return; // already provided by server
       setLoading(true);
       try {
         const res = await fetch('/api/storage/list-all', { cache: 'no-store' });
