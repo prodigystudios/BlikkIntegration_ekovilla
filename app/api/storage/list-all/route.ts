@@ -24,15 +24,14 @@ async function listViaDb(
   const like = `${prefix.replace(/\/*$/, '')}/%`;
   let from = 0;
   for (;;) {
-    const q = (supa as any)
-      .schema?.('storage')
+    const { data, error } = await (supa as any)
+      .schema('storage')
       .from('objects')
       .select('name, metadata, updated_at')
       .eq('bucket_id', bucket)
       .ilike('name', like)
       .order('name', { ascending: true })
       .range(from, from + pageSize - 1);
-    const { data, error } = await q;
     if (error) throw new Error(error.message);
     if (!data || data.length === 0) break;
     const pageFiles: string[] = [];
@@ -40,6 +39,8 @@ async function listViaDb(
       const full = String(row.name || '');
       const base = full.split('/').pop() || full;
       if (!full.startsWith(prefix + '/') || base.startsWith('.')) continue;
+      const mimetype = row?.metadata?.mimetype as string | undefined;
+      if (mimetype && !/pdf|octet-stream/i.test(mimetype)) continue; // only pdf-like
       const size = row?.metadata?.size as number | undefined;
       const updatedAt = (row?.updated_at) as string | undefined;
       out.push({ path: full, name: base, size, updatedAt });
@@ -109,12 +110,19 @@ export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const prefix = url.searchParams.get('prefix') || 'Egenkontroller';
   const debug = url.searchParams.get('debug') === '1';
+  const modeParam = url.searchParams.get('mode'); // 'db' | 'bfs'
+  const envMode = process.env.SUPABASE_LIST_MODE; // 'db' | 'bfs'
+  const preferDb = modeParam ? modeParam === 'db' : envMode ? envMode !== 'bfs' : true;
   const trace: TraceEntry[] = [];
   let files: Array<FileRow> = [];
-  try {
-    files = await listViaDb(supa, bucket, prefix, debug ? trace : undefined);
-  } catch {
-    // Fallback to storage.list BFS if DB query is not available
+  if (preferDb) {
+    try {
+      files = await listViaDb(supa, bucket, prefix, debug ? trace : undefined);
+    } catch {
+      // Fallback to storage.list BFS if DB query is not available
+      files = await listRecursive(supa, bucket, prefix, debug ? trace : undefined);
+    }
+  } else {
     files = await listRecursive(supa, bucket, prefix, debug ? trace : undefined);
   }
     // sign links
