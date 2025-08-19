@@ -67,7 +67,8 @@ async function listRecursive(
     const pfx = queue.shift()!;
     let page = 0;
     for (;;) {
-      const { data, error } = await supa.storage.from(bucket).list(pfx, {
+  const listPath = pfx === '' ? undefined : pfx;
+  const { data, error } = await supa.storage.from(bucket).list(listPath as any, {
         limit: pageSize,
         offset: page * pageSize,
         sortBy: { column: 'name', order: 'asc' },
@@ -108,12 +109,26 @@ export async function GET(req: NextRequest) {
     const supa = getSupabaseAdmin();
     const bucket = process.env.SUPABASE_BUCKET || 'pdfs';
   const url = new URL(req.url);
-  const prefix = url.searchParams.get('prefix') || 'Egenkontroller';
+  const hasPrefix = url.searchParams.has('prefix');
+  const rawPrefix = url.searchParams.get('prefix');
+  let prefix = hasPrefix ? (rawPrefix ?? '') : 'Egenkontroller';
   const debug = url.searchParams.get('debug') === '1';
   const modeParam = url.searchParams.get('mode'); // 'db' | 'bfs'
   const envMode = process.env.SUPABASE_LIST_MODE; // 'db' | 'bfs'
   const preferDb = modeParam ? modeParam === 'db' : envMode ? envMode !== 'bfs' : true;
+  if (url.searchParams.get('all') === '1') prefix = '';
+  const checkPath = url.searchParams.get('check');
   const trace: TraceEntry[] = [];
+  // Targeted existence check for diagnostics
+  if (checkPath) {
+    const dir = checkPath.includes('/') ? checkPath.substring(0, checkPath.lastIndexOf('/')) : '';
+    const name = checkPath.split('/').pop() || checkPath;
+    const listPath = dir === '' ? undefined : dir;
+    const { data, error } = await supa.storage.from(bucket).list(listPath as any, { limit: 1000, sortBy: { column: 'name', order: 'asc' } });
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    const match = (data || []).find((e: any) => e?.name === name);
+    return NextResponse.json({ exists: !!match, dir, name, bucket }, { status: 200, headers: new Headers({ 'Cache-Control': 'no-store' }) });
+  }
   let files: Array<FileRow> = [];
   if (preferDb) {
     try {
@@ -126,13 +141,20 @@ export async function GET(req: NextRequest) {
     files = await listRecursive(supa, bucket, prefix, debug ? trace : undefined);
   }
     // sign links
-  const headers = new Headers({ 'Cache-Control': 'no-store' });
+  const headers = new Headers({
+    'Cache-Control': 'no-store, no-cache, max-age=0, must-revalidate',
+    'Pragma': 'no-cache',
+    'CDN-Cache-Control': 'no-store',
+    'Vercel-CDN-Cache-Control': 'no-store',
+  });
   // No need to sign here; client uses /api/storage/download
   if (debug) {
     const meta = {
       bucket,
       supabaseHost: (process.env.SUPABASE_URL || '').replace(/^(https?:\/\/)?/i, '').replace(/\/$/, ''),
       now: new Date().toISOString(),
+  effectivePrefix: prefix,
+  preferredMode: preferDb ? 'db' : 'bfs',
     };
     return NextResponse.json({ files, trace, meta }, { status: 200, headers });
   }
