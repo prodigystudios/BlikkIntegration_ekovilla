@@ -14,7 +14,7 @@ async function listRecursive(
   diag?: PrefixDiag[]
 ) {
   const out: Array<FileRow> = [];
-  const pageSize = 100;
+  const pageSize = 1000;
   const queue: string[] = [];
 
   // If starting from root, explicitly list root once to seed all top-level folders and files
@@ -49,6 +49,19 @@ async function listRecursive(
       }
       if (data.length < pageSize) break;
       page++;
+    }
+    // Fallback: do a fresh one-shot root list and ensure all folders are enqueued
+    const { data: topOnce } = await supa.storage.from(bucket).list('', { limit: 1000, sortBy: { column: 'name', order: 'asc' } });
+    const existing = new Set(queue);
+    for (const entry of topOnce || []) {
+      const anyEntry = entry as any;
+      const nameLower = String(entry.name || '').toLowerCase();
+      const looksLikeFileByExt = /\.(pdf|png|jpg|jpeg|gif|txt|csv|doc|docx|xlsx|json)$/i.test(nameLower);
+      const isFolder = (anyEntry?.id == null) && (anyEntry?.metadata == null) && !looksLikeFileByExt;
+      if (entry.name && isFolder && !existing.has(entry.name)) {
+        queue.push(entry.name);
+        foldersAddedForPrefix++;
+      }
     }
     if (diag) diag.push({ prefix: '', entries: entriesCountForPrefix, filesAdded: filesAddedForPrefix, foldersAdded: foldersAddedForPrefix });
   } else {
@@ -107,7 +120,7 @@ export async function GET(req: NextRequest) {
   const diags: PrefixDiag[] | undefined = url.searchParams.get('debug') ? [] : undefined;
   const files = await listRecursive(supa, bucket, prefix, diags);
     // sign links
-    const withLinks = await Promise.all(files.map(async (f) => {
+  const withLinks = await Promise.all(files.map(async (f) => {
       // Use download option to set Content-Disposition=attachment so browsers download instead of opening inline
       const { data } = await supa.storage
         .from(bucket)
@@ -119,7 +132,7 @@ export async function GET(req: NextRequest) {
     if (debug) {
       // Gather extra diagnostics to understand prod differences
   const { data: buckets } = await supa.storage.listBuckets();
-  const { data: top } = await supa.storage.from(bucket).list(prefix || '', { limit: 200, sortBy: { column: 'name', order: 'asc' } });
+      const { data: top } = await supa.storage.from(bucket).list(prefix || '', { limit: 1000, sortBy: { column: 'name', order: 'asc' } });
       const host = (process.env.SUPABASE_URL || '').replace(/^https?:\/\//, '');
       return NextResponse.json(
         {
