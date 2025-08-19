@@ -588,6 +588,29 @@ export default function Home() {
                   const saved = await save.json();
                   if (!save.ok) throw new Error(saved?.error || 'Upload failed');
                   setMessage(`Sparat i arkiv: ${saved.path}`);
+
+                  // Optionally add a comment to the Blikk project to note completion
+                  try {
+                    const blikkProjectId = project?.id || project?.projectId; // depending on API shape
+                    if (blikkProjectId) {
+                      const today = new Date();
+                      const yyyy = today.getFullYear();
+                      const mm = String(today.getMonth() + 1).padStart(2, '0');
+                      const dd = String(today.getDate()).padStart(2, '0');
+                      const dateStr = `${yyyy}-${mm}-${dd}`;
+                      const commentPieces = [`Egenkontroll gjord ${dateStr}.`];
+                      // If you want to tag people, add handles here (Blikk must support @mentions in API):
+                      // commentPieces.push('@patrikvall');
+                      const commentText = commentPieces.join(' ');
+                      await fetch('/api/blikk/project/comment', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ projectId: blikkProjectId, text: commentText }),
+                      });
+                    }
+                  } catch {
+                    // Non-fatal if comment fails
+                  }
                 } catch (e: any) {
                   setMessage(`Arkivering misslyckades: ${e.message}`);
                 }

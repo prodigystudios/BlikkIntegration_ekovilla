@@ -84,6 +84,20 @@ export class BlikkClient {
     const exact = (list.items || []).find((p: any) => String(p.orderNumber) === String(orderNumber));
     return exact ?? (list.items && list.items[0]) ?? null;
   }
+
+  // Add a comment/note to a project (path customizable via env)
+  async addProjectComment(projectId: number, text: string) {
+    // Allow overriding path and body key via env to match Blikk API if it differs
+    const pathTemplate = process.env.BLIKK_COMMENTS_PATH_TEMPLATE || '/v1/Core/Projects/{id}/Comments';
+    const bodyKey = process.env.BLIKK_COMMENTS_BODY_KEY || 'text';
+    const path = pathTemplate.replace('{id}', String(projectId));
+    const body: Record<string, any> = {};
+    body[bodyKey] = text;
+    return this.request(path, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  }
 }
 
 export function getBlikk() {
