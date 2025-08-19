@@ -129,6 +129,9 @@ export default function Home() {
   const [message, setMessage] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [toast, setToast] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  const [missing, setMissing] = useState<Record<string, boolean>>({});
+  const autosaveTimer = useRef<number | null>(null);
+  const restoredKeysRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     if (!toast) return;
@@ -158,6 +161,86 @@ export default function Home() {
   setSignatureTimestamp(null);
   };
   const [signatureDateCity, setSignatureDateCity] = useState('');
+  const getDraftKey = (id?: string) => `egenkontroll:draft:${(id ?? orderId) || 'no-order'}`;
+  function collectDraft() {
+    // Only persist signature if drawn; compress to JPEG to save space on mobile
+    const signatureDataUrl = signatureTimestamp ? (signatureCanvasRef.current?.toDataURL('image/jpeg', 0.8) || null) : null;
+    return {
+      orderId,
+      projectNumber,
+      installerName,
+      workStreet,
+      workPostalCode,
+      workCity,
+      installationDate,
+      clientName,
+      materialUsed,
+      checks: {
+        eavesVentOk, eavesVentComment,
+        carpentryOk, carpentryComment,
+        waterproofingOk, waterproofingComment,
+        genomforningarOk, genomforningarComment,
+        grovstadningOk, grovstadningComment,
+        markskyltOk, markskyltComment,
+        ovrigaKommentarer,
+      },
+      signatureDateCity,
+      signatureTimestamp,
+      signatureDataUrl,
+      etapperOpen,
+      etapperClosed,
+    };
+  }
+  function applyDraft(d: any) {
+    try {
+      if (!d || typeof d !== 'object') return;
+      if (typeof d.orderId === 'string') setOrderId(d.orderId);
+      if (typeof d.projectNumber === 'string') setProjectNumber(d.projectNumber);
+      if (typeof d.installerName === 'string') setInstallerName(d.installerName);
+      if (typeof d.workStreet === 'string') setWorkStreet(d.workStreet);
+      if (typeof d.workPostalCode === 'string') setWorkPostalCode(d.workPostalCode);
+      if (typeof d.workCity === 'string') setWorkCity(d.workCity);
+      if (typeof d.installationDate === 'string') setInstallationDate(d.installationDate);
+      if (typeof d.clientName === 'string') setClientName(d.clientName);
+      if (typeof d.materialUsed === 'string') setMaterialUsed(d.materialUsed);
+      if (d.checks && typeof d.checks === 'object') {
+        if ('eavesVentOk' in d.checks) setEavesVentOk(!!d.checks.eavesVentOk);
+        if ('eavesVentComment' in d.checks) setEavesVentComment(String(d.checks.eavesVentComment || ''));
+        if ('carpentryOk' in d.checks) setCarpentryOk(!!d.checks.carpentryOk);
+        if ('carpentryComment' in d.checks) setCarpentryComment(String(d.checks.carpentryComment || ''));
+        if ('waterproofingOk' in d.checks) setWaterproofingOk(!!d.checks.waterproofingOk);
+        if ('waterproofingComment' in d.checks) setWaterproofingComment(String(d.checks.waterproofingComment || ''));
+        if ('genomforningarOk' in d.checks) setGenomforningarOk(!!d.checks.genomforningarOk);
+        if ('genomforningarComment' in d.checks) setGenomforningarComment(String(d.checks.genomforningarComment || ''));
+        if ('grovstadningOk' in d.checks) setGrovstadningOk(!!d.checks.grovstadningOk);
+        if ('grovstadningComment' in d.checks) setGrovstadningComment(String(d.checks.grovstadningComment || ''));
+        if ('markskyltOk' in d.checks) setMarkskyltOk(!!d.checks.markskyltOk);
+        if ('markskyltComment' in d.checks) setMarkskyltComment(String(d.checks.markskyltComment || ''));
+        if ('ovrigaKommentarer' in d.checks) setOvrigaKommentarer(String(d.checks.ovrigaKommentarer || ''));
+      }
+      if (typeof d.signatureDateCity === 'string') setSignatureDateCity(d.signatureDateCity);
+      if (typeof d.signatureTimestamp === 'string') setSignatureTimestamp(d.signatureTimestamp);
+      if (Array.isArray(d.etapperOpen)) setEtapperOpen(d.etapperOpen);
+      if (Array.isArray(d.etapperClosed)) setEtapperClosed(d.etapperClosed);
+      // Draw signature back to canvas
+      const dataUrl: string | null = d.signatureDataUrl || null;
+      if (dataUrl && signatureCanvasRef.current) {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = signatureCanvasRef.current!;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return;
+          ctx.save();
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          ctx.restore();
+          // Canvas already scaled for DPR in effect; draw image at 0,0 with CSS size mapping
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        };
+        img.src = dataUrl;
+      }
+    } catch {}
+  }
   const getCanvasPos = (e: React.MouseEvent | React.TouchEvent) => {
     const canvas = signatureCanvasRef.current!;
     const rect = canvas.getBoundingClientRect();
@@ -228,6 +311,39 @@ export default function Home() {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }, []);
 
+  // Restore draft on mount (no-order key) and on orderId change (specific key)
+  useEffect(() => {
+    try {
+      const key = getDraftKey();
+      if (!restoredKeysRef.current.has(key)) {
+        const raw = localStorage.getItem(key);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          applyDraft(parsed);
+          restoredKeysRef.current.add(key);
+        }
+      }
+    } catch {}
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orderId]);
+
+  // Debounced autosave of draft to localStorage
+  useEffect(() => {
+    const handler = () => {
+      try {
+        const key = getDraftKey();
+        const data = collectDraft();
+        localStorage.setItem(key, JSON.stringify(data));
+      } catch {}
+    };
+    if (autosaveTimer.current) window.clearTimeout(autosaveTimer.current);
+    autosaveTimer.current = window.setTimeout(handler, 800);
+    return () => {
+      if (autosaveTimer.current) window.clearTimeout(autosaveTimer.current);
+    };
+    // Include main fields and rows; signature is read on save from canvas inside collectDraft
+  }, [orderId, projectNumber, installerName, workStreet, workPostalCode, workCity, installationDate, clientName, materialUsed, eavesVentOk, eavesVentComment, carpentryOk, carpentryComment, waterproofingOk, waterproofingComment, genomforningarOk, genomforningarComment, grovstadningOk, grovstadningComment, markskyltOk, markskyltComment, ovrigaKommentarer, signatureDateCity, signatureTimestamp, etapperOpen, etapperClosed]);
+
   // Validation helpers: require certain fields if a row has any data
   const isNonEmpty = (v: unknown) => String(v ?? '').trim() !== '';
   const REQUIRED_OPEN: (keyof EtappOpenRow)[] = ['etapp', 'ytaM2', 'bestalldTjocklek', 'antalSack', 'installeradDensitet'];
@@ -254,6 +370,41 @@ export default function Home() {
       if (openIdxs.length) parts.push(`Etapper (öppet): rader ${openIdxs.map((i) => i + 1).join(', ')}`);
       if (closedIdxs.length) parts.push(`Etapper (slutet): rader ${closedIdxs.map((i) => i + 1).join(', ')}`);
       setMessage(`Fyll i obligatoriska fält i: ${parts.join(' | ')}`);
+      return false;
+    }
+    return true;
+  }
+
+  function validateTopLevel(): boolean {
+    const m: Record<string, boolean> = {};
+    // Required top-level fields (Project number optional; Kontroll fields optional)
+    if (!isNonEmpty(clientName)) m.clientName = true;
+    if (!isNonEmpty(workStreet)) m.workStreet = true;
+    if (!isNonEmpty(workPostalCode)) m.workPostalCode = true;
+    if (!isNonEmpty(workCity)) m.workCity = true;
+    if (!isNonEmpty(installationDate)) m.installationDate = true;
+    if (!isNonEmpty(installerName)) m.installerName = true;
+    if (!isNonEmpty(materialUsed)) m.materialUsed = true;
+    if (!isNonEmpty(signatureDateCity)) m.signatureDateCity = true;
+    // Require an actual signature drawn
+    if (!signatureTimestamp) m.signature = true;
+    // Require at least one filled row between open/closed
+    const anyOpen = etapperOpen.some(r => Object.values(r).some(isNonEmpty));
+    const anyClosed = etapperClosed.some(r => Object.values(r).some(isNonEmpty));
+    if (!anyOpen && !anyClosed) m.rows = true;
+
+    setMissing(m);
+    if (Object.keys(m).length) {
+      const parts: string[] = [];
+      if (m.clientName) parts.push('Kund/Beställare');
+      if (m.workStreet || m.workPostalCode || m.workCity) parts.push('Adress');
+      if (m.installationDate) parts.push('Installationsdatum');
+      if (m.installerName) parts.push('Installatör');
+      if (m.materialUsed) parts.push('Material');
+      if (m.rows) parts.push('Minst en etapp');
+      if (m.signatureDateCity || m.signature) parts.push('Signatur (datum/ort + ritad signatur)');
+      setMessage(`Fyll i obligatoriska fält: ${parts.join(' | ')}`);
+      setToast({ text: 'Kontrollera obligatoriska fält', type: 'error' });
       return false;
     }
     return true;
@@ -425,16 +576,17 @@ export default function Home() {
 
   <section style={{ marginTop: 24, display: 'flex', flexDirection: 'column', gap: 16, width: '100%', maxWidth: 720, alignSelf: 'stretch' }}>
         <h2>Projektdetaljer</h2>
+        <h3>SE TILL ATT INFORMATIONEN SOM HÄMTATS FRÅN BLIKK STÄMMER</h3>
         <label>
           <div>Kund/Beställare</div>
-          <input value={clientName} onChange={(e) => setClientName(e.target.value)} placeholder="Kund/Beställare" style={{ width: '100%', maxWidth: '100%', boxSizing: 'border-box', padding: 8 }} />
+          <input value={clientName} onChange={(e) => { setClientName(e.target.value); if (missing.clientName) setMissing((mm) => ({ ...mm, clientName: false })); }} placeholder="Kund/Beställare" style={{ width: '100%', maxWidth: '100%', boxSizing: 'border-box', padding: 8, border: missing.clientName ? '1px solid #fca5a5' : undefined, background: missing.clientName ? '#fff1f2' : undefined }} />
         </label>
           <div style={{ display: 'grid', gap: 8, width: '100%' }}>
           <div>Adress</div>
-          <input value={workStreet} onChange={(e) => setWorkStreet(e.target.value)} placeholder="Gatuadress" style={{ width: '100%', maxWidth: '100%', boxSizing: 'border-box', padding: 8 }} />
+          <input value={workStreet} onChange={(e) => { setWorkStreet(e.target.value); if (missing.workStreet) setMissing((mm) => ({ ...mm, workStreet: false })); }} placeholder="Gatuadress" style={{ width: '100%', maxWidth: '100%', boxSizing: 'border-box', padding: 8, border: missing.workStreet ? '1px solid #fca5a5' : undefined, background: missing.workStreet ? '#fff1f2' : undefined }} />
           <div style={{ display: 'flex', gap: 8, width: '100%', alignItems: 'stretch' }}>
-            <input value={workPostalCode} onChange={(e) => setWorkPostalCode(e.target.value)} placeholder="Postnummer" style={{ flex: 1, minWidth: 0, padding: 8 }} />
-            <input value={workCity} onChange={(e) => setWorkCity(e.target.value)} placeholder="Stad" style={{ flex: 2, minWidth: 0, padding: 8 }} />
+            <input value={workPostalCode} onChange={(e) => { setWorkPostalCode(e.target.value); if (missing.workPostalCode) setMissing((mm) => ({ ...mm, workPostalCode: false })); }} placeholder="Postnummer" style={{ flex: 1, minWidth: 0, padding: 8, border: missing.workPostalCode ? '1px solid #fca5a5' : undefined, background: missing.workPostalCode ? '#fff1f2' : undefined }} />
+            <input value={workCity} onChange={(e) => { setWorkCity(e.target.value); if (missing.workCity) setMissing((mm) => ({ ...mm, workCity: false })); }} placeholder="Stad" style={{ flex: 2, minWidth: 0, padding: 8, border: missing.workCity ? '1px solid #fca5a5' : undefined, background: missing.workCity ? '#fff1f2' : undefined }} />
           </div>
         </div>
         <label>
@@ -442,8 +594,8 @@ export default function Home() {
           <input
             type="date"
             value={installationDate}
-            onChange={(e) => setInstallationDate(e.target.value)}
-            style={{ width: '100%', maxWidth: '100%', boxSizing: 'border-box', padding: 8 }}
+            onChange={(e) => { setInstallationDate(e.target.value); if (missing.installationDate) setMissing((mm) => ({ ...mm, installationDate: false })); }}
+            style={{ width: '100%', maxWidth: '100%', boxSizing: 'border-box', padding: 8, border: missing.installationDate ? '1px solid #fca5a5' : undefined, background: missing.installationDate ? '#fff1f2' : undefined }}
           />
         </label>
         <label>
@@ -452,12 +604,12 @@ export default function Home() {
         </label>
         <label>
           <div>Installatör</div>
-          <input value={installerName} onChange={(e) => setInstallerName(e.target.value)} placeholder="Namn på installatör" style={{ width: '100%', maxWidth: '100%', boxSizing: 'border-box', padding: 8 }} />
+          <input value={installerName} onChange={(e) => { setInstallerName(e.target.value); if (missing.installerName) setMissing((mm) => ({ ...mm, installerName: false })); }} placeholder="Namn på installatör" style={{ width: '100%', maxWidth: '100%', boxSizing: 'border-box', padding: 8, border: missing.installerName ? '1px solid #fca5a5' : undefined, background: missing.installerName ? '#fff1f2' : undefined }} />
         </label>
 
         <label>
           <div>Material</div>
-          <select className="select-field" value={materialUsed} onChange={(e) => setMaterialUsed(e.target.value)} style={{ width: '100%', maxWidth: '100%', boxSizing: 'border-box' }}>
+          <select className="select-field" value={materialUsed} onChange={(e) => { setMaterialUsed(e.target.value); if (missing.materialUsed) setMissing((mm) => ({ ...mm, materialUsed: false })); }} style={{ width: '100%', maxWidth: '100%', boxSizing: 'border-box', border: missing.materialUsed ? '1px solid #fca5a5' : undefined, background: missing.materialUsed ? '#fff1f2' : undefined }}>
             <option value="">Välj material</option>
             <option value="Ekovilla Cellulosa Lösull CE ETA-09/0081">Ekovilla Cellulosa Lösull CE ETA-09/0081</option>
             <option value="Knauf Supafil Frame Lösull B0709EPCR">Knauf Supafil Frame Lösull B0709EPCR</option>
@@ -587,7 +739,7 @@ export default function Home() {
             <div>
               <label style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
                 <span>Datum och ort</span>
-                <input value={signatureDateCity} onChange={(e) => setSignatureDateCity(e.target.value)} placeholder="YYYY-MM-DD, Ort" style={{ padding: 8, maxWidth: 400 }} />
+                <input value={signatureDateCity} onChange={(e) => { setSignatureDateCity(e.target.value); if (missing.signatureDateCity) setMissing((mm) => ({ ...mm, signatureDateCity: false })); }} placeholder="YYYY-MM-DD, Ort" style={{ padding: 8, maxWidth: 400, border: missing.signatureDateCity ? '1px solid #fca5a5' : undefined, background: missing.signatureDateCity ? '#fff1f2' : undefined }} />
               </label>
               <div style={{ border: '1px solid #d1d5db', borderRadius: 6, overflow: 'hidden', width: '100%', maxWidth: 600 }}>
                 <canvas
@@ -605,6 +757,9 @@ export default function Home() {
               </div>
               <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
                 <button className='btn--danger btn--sm' type="button" onClick={clearSignature}>Rensa signatur</button>
+                {missing.signature && (
+                  <span className="text-error" style={{ fontSize: 12 }}>Rita signaturen i rutan</span>
+                )}
               </div>
             </div>
           </section>
@@ -616,7 +771,10 @@ export default function Home() {
                 onClick={async () => {
                   if (isSaving) return;
                   setMessage('Sparar…');
-                  if (!validateRows()) return;
+                  // Validate rows and top-level fields
+                  const rowsOk = validateRows();
+                  const topOk = validateTopLevel();
+                  if (!rowsOk || !topOk) return;
                   setIsSaving(true);
                 const payload = {
                   orderId: orderId.trim(),
@@ -672,6 +830,8 @@ export default function Home() {
                   if (!save.ok) throw new Error(saved?.error || 'Upload failed');
                   setMessage(`Sparat i arkiv: ${saved.path}`);
                   setToast({ text: 'Sparat i arkiv', type: 'success' });
+                  // Clear draft after successful archive save
+                  try { localStorage.removeItem(getDraftKey()); localStorage.removeItem(getDraftKey('no-order')); } catch {}
 
                   // Optionally add a comment to the Blikk project to note completion (with download link)
                   try {
