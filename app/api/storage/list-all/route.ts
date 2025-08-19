@@ -13,6 +13,45 @@ type TraceEntry = {
   files: string[];
 };
 
+async function listViaDb(
+  supa: ReturnType<typeof getSupabaseAdmin>,
+  bucket: string,
+  prefix = 'Egenkontroller',
+  trace?: TraceEntry[]
+) {
+  const out: Array<FileRow> = [];
+  const pageSize = 1000;
+  const like = `${prefix.replace(/\/*$/, '')}/%`;
+  let from = 0;
+  for (;;) {
+    const q = (supa as any)
+      .schema?.('storage')
+      .from('objects')
+      .select('name, metadata, updated_at')
+      .eq('bucket_id', bucket)
+      .ilike('name', like)
+      .order('name', { ascending: true })
+      .range(from, from + pageSize - 1);
+    const { data, error } = await q;
+    if (error) throw new Error(error.message);
+    if (!data || data.length === 0) break;
+    const pageFiles: string[] = [];
+    for (const row of data as any[]) {
+      const full = String(row.name || '');
+      const base = full.split('/').pop() || full;
+      if (!full.startsWith(prefix + '/') || base.startsWith('.')) continue;
+      const size = row?.metadata?.size as number | undefined;
+      const updatedAt = (row?.updated_at) as string | undefined;
+      out.push({ path: full, name: base, size, updatedAt });
+      pageFiles.push(base);
+    }
+    trace?.push({ scope: '::db', page: Math.floor(from / pageSize), count: data.length, folders: [], files: pageFiles });
+    if (data.length < pageSize) break;
+    from += pageSize;
+  }
+  return out;
+}
+
 async function listRecursive(
   supa: ReturnType<typeof getSupabaseAdmin>,
   bucket: string,
@@ -71,7 +110,13 @@ export async function GET(req: NextRequest) {
   const prefix = url.searchParams.get('prefix') || 'Egenkontroller';
   const debug = url.searchParams.get('debug') === '1';
   const trace: TraceEntry[] = [];
-  const files = await listRecursive(supa, bucket, prefix, debug ? trace : undefined);
+  let files: Array<FileRow> = [];
+  try {
+    files = await listViaDb(supa, bucket, prefix, debug ? trace : undefined);
+  } catch {
+    // Fallback to storage.list BFS if DB query is not available
+    files = await listRecursive(supa, bucket, prefix, debug ? trace : undefined);
+  }
     // sign links
   const headers = new Headers({ 'Cache-Control': 'no-store' });
   // No need to sign here; client uses /api/storage/download
