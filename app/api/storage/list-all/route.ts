@@ -22,13 +22,15 @@ async function listRecursive(supa: ReturnType<typeof getSupabaseAdmin>, bucket: 
       if (error) throw new Error(error.message);
       if (!data || data.length === 0) break;
       for (const entry of data) {
-        // Heuristic: folders have metadata === null and may include id=null; files have metadata object
-        if (entry.name && (entry as any).metadata == null) {
-          // Supabase marks folders as entries with null metadata
-          queue.push(pfx ? `${pfx}/${entry.name}` : entry.name);
-        } else if (entry.name) {
+        const anyEntry = entry as any;
+        const isFolder = anyEntry?.id == null; // folders typically have null id
+        if (entry.name && isFolder) {
+          const nextPrefix = pfx ? `${pfx}/${entry.name}` : entry.name;
+          queue.push(nextPrefix);
+          continue;
+        }
+        if (entry.name && !isFolder) {
           const path = pfx ? `${pfx}/${entry.name}` : entry.name;
-          const anyEntry = entry as any;
           const size = anyEntry?.metadata?.size as number | undefined;
           const updatedAt = (anyEntry?.updated_at || anyEntry?.created_at) as string | undefined;
           out.push({ path, name: entry.name, size, updatedAt });
