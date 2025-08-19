@@ -5,16 +5,14 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 type FileRow = { path: string; name: string; size?: number; updatedAt?: string };
-type PrefixDiag = { prefix: string; entries: number; filesAdded: number; foldersAdded: number };
 
 async function listRecursive(
   supa: ReturnType<typeof getSupabaseAdmin>,
   bucket: string,
-  prefix = '',
-  diag?: PrefixDiag[]
+  prefix = ''
 ) {
   const out: Array<FileRow> = [];
-  const pageSize = 1000;
+  const pageSize = 100;
   const queue: string[] = [];
 
   // If starting from root, explicitly list root once to seed all top-level folders and files
@@ -63,7 +61,7 @@ async function listRecursive(
         foldersAddedForPrefix++;
       }
     }
-    if (diag) diag.push({ prefix: '', entries: entriesCountForPrefix, filesAdded: filesAddedForPrefix, foldersAdded: foldersAddedForPrefix });
+  // (no debug)
   } else {
     queue.push(prefix);
   }
@@ -106,7 +104,7 @@ async function listRecursive(
       if (data.length < pageSize) break;
       page++;
     }
-    if (diag) diag.push({ prefix: pfx, entries: entriesCountForPrefix, filesAdded: filesAddedForPrefix, foldersAdded: foldersAddedForPrefix });
+  // (no debug)
   }
   return out;
 }
@@ -117,40 +115,11 @@ export async function GET(req: NextRequest) {
     const bucket = process.env.SUPABASE_BUCKET || 'pdfs';
   const url = new URL(req.url);
   const prefix = url.searchParams.get('prefix') || '';
-  const diags: PrefixDiag[] | undefined = url.searchParams.get('debug') ? [] : undefined;
-  const files = await listRecursive(supa, bucket, prefix, diags);
+  const files = await listRecursive(supa, bucket, prefix);
     // sign links
-  const withLinks = await Promise.all(files.map(async (f) => {
-      // Use download option to set Content-Disposition=attachment so browsers download instead of opening inline
-      const { data } = await supa.storage
-        .from(bucket)
-        .createSignedUrl(f.path, 60 * 60 * 24 * 2, { download: f.name });
-      return { ...f, url: data?.signedUrl };
-    }));
-  const debug = url.searchParams.get('debug');
-    const headers = new Headers({ 'Cache-Control': 'no-store' });
-    if (debug) {
-      // Gather extra diagnostics to understand prod differences
-  const { data: buckets } = await supa.storage.listBuckets();
-      const { data: top } = await supa.storage.from(bucket).list(prefix || '', { limit: 1000, sortBy: { column: 'name', order: 'asc' } });
-      const host = (process.env.SUPABASE_URL || '').replace(/^https?:\/\//, '');
-      return NextResponse.json(
-        {
-          files: withLinks,
-          debug: {
-            bucket,
-            supabaseHost: host,
-            count: withLinks.length,
-            prefix,
-            buckets,
-            topLevel: top,
-            prefixes: diags,
-          },
-        },
-        { status: 200, headers }
-      );
-    }
-    return NextResponse.json({ files: withLinks }, { status: 200, headers });
+  const headers = new Headers({ 'Cache-Control': 'no-store' });
+  // No need to sign here; client uses /api/storage/download
+  return NextResponse.json({ files }, { status: 200, headers });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }

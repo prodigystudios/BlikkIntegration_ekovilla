@@ -21,14 +21,36 @@ function formatDateUTC(iso?: string) {
   return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
 }
 
-export default function ArchiveList({ initial }: { initial: FileEntry[] }) {
+export default function ArchiveList({ initial }: { initial?: FileEntry[] }) {
+  const [files, setFiles] = useState<FileEntry[]>(initial ?? []);
+  const [loading, setLoading] = useState(!initial);
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<"name" | "date" | "size">("date");
   const [dir, setDir] = useState<"desc" | "asc">("desc");
 
+  useEffect(() => {
+    let cancelled = false;
+    async function run() {
+      if (initial) return; // already provided by server
+      setLoading(true);
+      try {
+        const res = await fetch('/api/storage/list-all', { cache: 'no-store' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data?.error || 'Kunde inte hämta filer');
+        if (!cancelled) setFiles(data.files || []);
+      } catch {
+        if (!cancelled) setFiles([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    run();
+    return () => { cancelled = true; };
+  }, [initial]);
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    let arr = initial;
+    let arr = files;
     if (q) arr = arr.filter(f => f.name.toLowerCase().includes(q) || f.path.toLowerCase().includes(q));
     const modifier = dir === "asc" ? 1 : -1;
     const by = (a: FileEntry, b: FileEntry) => {
@@ -40,7 +62,7 @@ export default function ArchiveList({ initial }: { initial: FileEntry[] }) {
       return (ad - bd) * modifier;
     };
     return [...arr].sort(by);
-  }, [initial, query, sort, dir]);
+  }, [files, query, sort, dir]);
 
   useEffect(() => {
     // Keep desc for date/size, asc for name as a sensible default
@@ -72,7 +94,8 @@ export default function ArchiveList({ initial }: { initial: FileEntry[] }) {
         </div>
       </div>
 
-      <ul className="archive-list">
+  {loading && <p>Laddar listan…</p>}
+  <ul className="archive-list">
         {filtered.map((f) => (
           <li key={f.path} className="archive-item">
             <div className="archive-meta">
@@ -84,17 +107,13 @@ export default function ArchiveList({ initial }: { initial: FileEntry[] }) {
               </div>
             </div>
             <div className="archive-actions">
-              {f.url ? (
-                <a
-                  className="btn--success btn--sm"
-                  href={`/api/storage/download?path=${encodeURIComponent(f.path)}`}
-                  download={f.name}
-                >
-                  Ladda ned
-                </a>
-              ) : (
-                <span className="text-error">Ingen länk</span>
-              )}
+              <a
+                className="btn--success btn--sm"
+                href={`/api/storage/download?path=${encodeURIComponent(f.path)}`}
+                download={f.name}
+              >
+                Ladda ned
+              </a>
             </div>
           </li>
         ))}

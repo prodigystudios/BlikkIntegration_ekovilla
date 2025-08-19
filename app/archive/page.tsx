@@ -1,6 +1,7 @@
 export const dynamic = 'force-dynamic';
 import { headers } from 'next/headers';
-import ArchiveList from './ArchiveList';
+import nextDynamic from 'next/dynamic';
+const ArchiveList = nextDynamic(() => import('./ArchiveList'), { ssr: false });
 
 async function fetchFiles() {
   const h = headers();
@@ -20,7 +21,7 @@ export default async function ArchivePage() {
   return (
     <main className="archive">
       <h1>Egenkontroller</h1>
-      {!files?.length ? <p>Inga filer hittades.</p> : <ArchiveList initial={files as any} />}
+  <ArchiveList initial={files as any} />
     </main>
   );
 }

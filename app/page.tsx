@@ -113,6 +113,14 @@ export default function Home() {
     });
 
   const [message, setMessage] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [toast, setToast] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 3500);
+    return () => clearTimeout(t);
+  }, [toast]);
   const [orderId, setOrderId] = useState('');
   const [project, setProject] = useState<any | null>(null);
   const [openErrorIdxs, setOpenErrorIdxs] = useState<number[]>([]);
@@ -532,9 +540,14 @@ export default function Home() {
           </section>
           <section style={{ marginTop: 24, display: 'grid', gap: 12, maxWidth: 600, minWidth: 0 }}>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <button className="btn--success btn--lg" onClick={async () => {
-                setMessage(null);
-                if (!validateRows()) return;
+              <button
+                className="btn--success btn--lg"
+                disabled={isSaving}
+                onClick={async () => {
+                  if (isSaving) return;
+                  setMessage('Sparar…');
+                  if (!validateRows()) return;
+                  setIsSaving(true);
                 const payload = {
                   orderId: orderId.trim(),
                   projectNumber,
@@ -588,6 +601,7 @@ export default function Home() {
                   const saved = await save.json();
                   if (!save.ok) throw new Error(saved?.error || 'Upload failed');
                   setMessage(`Sparat i arkiv: ${saved.path}`);
+                  setToast({ text: 'Sparat i arkiv', type: 'success' });
 
                   // Optionally add a comment to the Blikk project to note completion
                   try {
@@ -613,13 +627,75 @@ export default function Home() {
                   }
                 } catch (e: any) {
                   setMessage(`Arkivering misslyckades: ${e.message}`);
+                  setToast({ text: `Arkivering misslyckades`, type: 'error' });
+                } finally {
+                  setIsSaving(false);
                 }
-              }}>Spara till Arkiv</button>
+              }}>
+                {isSaving ? (
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden>
+                      <circle cx="12" cy="12" r="10" stroke="#e5e7eb" strokeWidth="4" fill="none" />
+                      <path d="M22 12a10 10 0 0 1-10 10" stroke="#10b981" strokeWidth="4" fill="none">
+                        <animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="0.9s" repeatCount="indefinite" />
+                      </path>
+                    </svg>
+                    Sparar…
+                  </span>
+                ) : (
+                  'Spara till Arkiv'
+                )}
+              </button>
             </div>
 
-            {message && <div>{message}</div>}
+            {message && !toast && <div>{message}</div>}
           </section>
       
+    {isSaving && (
+      <div
+        style={{
+          position: 'fixed', inset: 0, background: 'rgba(255,255,255,0.7)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          zIndex: 50,
+        }}
+      >
+        <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 12, padding: 16, display: 'flex', alignItems: 'center', gap: 10, boxShadow: '0 10px 30px rgba(0,0,0,0.08)' }}>
+          <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden>
+            <circle cx="12" cy="12" r="10" stroke="#e5e7eb" strokeWidth="4" fill="none" />
+            <path d="M22 12a10 10 0 0 1-10 10" stroke="#10b981" strokeWidth="4" fill="none">
+              <animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="0.9s" repeatCount="indefinite" />
+            </path>
+          </svg>
+          <div style={{ fontWeight: 500 }}>Sparar till arkiv…</div>
+        </div>
+      </div>
+    )}
+
+    {toast && (
+      <div
+        role="status"
+        aria-live="polite"
+        style={{
+          position: 'fixed', left: '50%', bottom: 20, transform: 'translateX(-50%)',
+          background: '#fff', border: `1px solid ${toast.type === 'success' ? '#10b981' : '#ef4444'}`,
+          color: '#111827', borderRadius: 12, padding: '10px 14px',
+          display: 'flex', alignItems: 'center', gap: 8, boxShadow: '0 10px 30px rgba(0,0,0,0.08)',
+          zIndex: 60,
+        }}
+      >
+        {toast.type === 'success' ? (
+          <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden>
+            <path d="M9 12.5l2 2 4-5" fill="none" stroke="#10b981" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        ) : (
+          <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden>
+            <circle cx="12" cy="12" r="10" fill="none" stroke="#ef4444" strokeWidth="2" />
+            <path d="M12 7v6M12 17h.01" stroke="#ef4444" strokeWidth="2" strokeLinecap="round" />
+          </svg>
+        )}
+        <span style={{ fontWeight: 500 }}>{toast.text}</span>
+      </div>
+    )}
     </main>
   );
 }

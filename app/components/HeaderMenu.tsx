@@ -60,12 +60,12 @@ export default function HeaderMenu() {
             zIndex: 1100,
           }}
         >
-          <Link href="/" role="menuitem" onClick={() => setOpen(false)}
+          <Link href="/" prefetch={false} role="menuitem" onClick={() => setOpen(false)}
                 style={{ display: "block", padding: "10px 12px", borderRadius: 6, color: "#111827", textDecoration: "none" }}
           >
             Startsida
           </Link>
-          <Link href="/archive" role="menuitem" onClick={() => setOpen(false)}
+          <Link href="/archive" prefetch={false} role="menuitem" onClick={() => setOpen(false)}
                 style={{ display: "block", padding: "10px 12px", borderRadius: 6, color: "#111827", textDecoration: "none" }}
           >
             Egenkontroller
