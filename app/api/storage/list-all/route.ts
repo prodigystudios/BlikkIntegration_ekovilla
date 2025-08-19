@@ -25,6 +25,21 @@ async function listRecursive(
 
   // If starting from root, explicitly list root once to seed all top-level folders and files
   if (!prefix) {
+    // Seed from an optional index file written by save route
+    try {
+      const { data: idxBlob } = await supa.storage.from(bucket).download('__index/folders.json');
+      if (idxBlob) {
+        try {
+          const text = await idxBlob.text();
+          const json = JSON.parse(text) as { folders?: string[] };
+          if (Array.isArray(json.folders)) {
+            for (const f of json.folders) if (f && !queue.includes(f)) queue.push(f);
+            trace?.push({ scope: '::index', page: 0, count: json.folders.length, folders: [...json.folders], files: [] });
+          }
+        } catch {}
+      }
+    } catch {}
+
     let page = 0;
     let entriesCountForPrefix = 0;
     let filesAddedForPrefix = 0;
@@ -59,15 +74,43 @@ async function listRecursive(
       if (data.length < pageSize) break;
       page++;
     }
-    // Fallback: do a fresh one-shot root list and ensure all folders are enqueued
-    const { data: topOnce } = await supa.storage.from(bucket).list('', { limit: 1000, sortBy: { column: 'name', order: 'asc' } });
-    const existing = new Set(queue);
-  for (const entry of topOnce || []) {
-      const anyEntry = entry as any;
-      const isFolder = anyEntry?.id == null;
-      if (entry.name && isFolder && !existing.has(entry.name)) {
-        queue.push(entry.name);
-        foldersAddedForPrefix++;
+    // Fallback: paginate root again with a larger page size to reseed any missing folders and files
+    {
+      const existing = new Set(queue);
+      const fallbackPageSize = 1000;
+      let fpage = 0;
+      for (;;) {
+        const { data: topPage, error: topErr } = await supa.storage.from(bucket).list('', {
+          limit: fallbackPageSize,
+          offset: fpage * fallbackPageSize,
+          sortBy: { column: 'name', order: 'asc' },
+        });
+        if (topErr) throw new Error(topErr.message);
+        if (!topPage || topPage.length === 0) break;
+        const pageFolders: string[] = [];
+        const pageFiles: string[] = [];
+        for (const entry of topPage) {
+          const anyEntry = entry as any;
+          const isFolder = anyEntry?.id == null;
+          if (!entry.name) continue;
+          if (isFolder) {
+            if (!existing.has(entry.name)) {
+              queue.push(entry.name);
+              existing.add(entry.name);
+              foldersAddedForPrefix++;
+              pageFolders.push(entry.name);
+            }
+          } else {
+            const size = anyEntry?.metadata?.size as number | undefined;
+            const updatedAt = (anyEntry?.updated_at || anyEntry?.created_at) as string | undefined;
+            out.push({ path: entry.name, name: entry.name, size, updatedAt });
+            filesAddedForPrefix++;
+            pageFiles.push(entry.name);
+          }
+        }
+        trace?.push({ scope: '::root-fallback', page: fpage, count: topPage.length, folders: pageFolders, files: pageFiles });
+        if (topPage.length < fallbackPageSize) break;
+        fpage++;
       }
     }
   // (no debug)
@@ -134,7 +177,12 @@ export async function GET(req: NextRequest) {
   const headers = new Headers({ 'Cache-Control': 'no-store' });
   // No need to sign here; client uses /api/storage/download
   if (debug) {
-    return NextResponse.json({ files, trace }, { status: 200, headers });
+    const meta = {
+      bucket,
+      supabaseHost: (process.env.SUPABASE_URL || '').replace(/^(https?:\/\/)?/i, '').replace(/\/$/, ''),
+      now: new Date().toISOString(),
+    };
+    return NextResponse.json({ files, trace, meta }, { status: 200, headers });
   }
   return NextResponse.json({ files }, { status: 200, headers });
   } catch (err: any) {
