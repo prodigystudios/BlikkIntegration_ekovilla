@@ -135,7 +135,24 @@ export default function ArchiveList({ initial }: { initial?: FileEntry[] }) {
         {filtered.map((f) => (
           <li key={f.path} className="archive-item">
             <div className="archive-meta">
-              <div className="file-name">{f.name}</div>
+              <div className="file-name" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                {/* PDF icon */}
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                  aria-hidden
+                  focusable="false"
+                  style={{ color: '#dc2626' }}
+                >
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z" stroke="currentColor" strokeWidth="1.5"/>
+                  <path d="M14 2v6h6" stroke="currentColor" strokeWidth="1.5"/>
+                  <path d="M7 16h10M7 12h10" stroke="currentColor" strokeWidth="1.5"/>
+                </svg>
+                <span>{f.name}</span>
+              </div>
               <div className="file-path">{f.path}</div>
               <div style={{ color: "#6b7280", fontSize: 12 }}>
                 {formatDateUTC(f.updatedAt)}

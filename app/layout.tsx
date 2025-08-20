@@ -12,7 +12,10 @@ export const viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-    <head />
+    <head>
+      <link rel="icon" href="/brand/ekovilla-logga-transparent.png" />
+      <link rel="apple-touch-icon" href="/brand/ekovilla-logga-transparent.png" />
+    </head>
   <body style={{ fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif', margin: 0, width: '100%', overflowX: 'hidden' }}>
         {/* Fixed, full-width header */}
         <header
