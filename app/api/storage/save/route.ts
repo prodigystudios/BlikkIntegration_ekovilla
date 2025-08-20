@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { revalidateTag } from 'next/cache';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 
 export const runtime = 'nodejs';
@@ -42,7 +43,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ path: data?.path }, { status: 201 });
     }
 
-    return NextResponse.json({ path: data?.path, url: signed?.signedUrl }, { status: 201 });
+  // Invalidate archive list caches across regions so the new PDF appears immediately
+  try { revalidateTag('archive-list'); } catch {}
+  return NextResponse.json({ path: data?.path, url: signed?.signedUrl }, { status: 201 });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }

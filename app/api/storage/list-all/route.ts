@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { unstable_noStore as noStore } from 'next/cache';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 
 export const runtime = 'nodejs';
@@ -109,6 +110,8 @@ async function listRecursive(
 
 export async function GET(req: NextRequest) {
   try {
+  // Ensure this route is never cached by Vercel Data Cache
+  noStore();
     const supa = getSupabaseAdmin();
     const bucket = process.env.SUPABASE_BUCKET || 'pdfs';
   const url = new URL(req.url);
