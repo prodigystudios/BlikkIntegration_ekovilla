@@ -49,6 +49,8 @@ export default function Home() {
   const [markskyltOk, setMarkskyltOk] = useState(false); // Märkskylt OK?
   const [markskyltComment, setMarkskyltComment] = useState('');
   const [ovrigaKommentarer, setOvrigaKommentarer] = useState(''); // Övriga kommentarer (no checkbox)
+  // Additional free-form reporting that will be added to the Blikk comment under RAPPORTERING
+  const [ovrigRapportering, setOvrigRapportering] = useState('');
 
   type EtappOpenRow = {
     etapp?: string;
@@ -184,6 +186,7 @@ export default function Home() {
         markskyltOk, markskyltComment,
         ovrigaKommentarer,
       },
+  ovrigRapportering,
       signatureDateCity,
       signatureTimestamp,
       signatureDataUrl,
@@ -218,6 +221,7 @@ export default function Home() {
         if ('markskyltComment' in d.checks) setMarkskyltComment(String(d.checks.markskyltComment || ''));
         if ('ovrigaKommentarer' in d.checks) setOvrigaKommentarer(String(d.checks.ovrigaKommentarer || ''));
       }
+      if (typeof d.ovrigRapportering === 'string') setOvrigRapportering(d.ovrigRapportering);
       if (typeof d.signatureDateCity === 'string') setSignatureDateCity(d.signatureDateCity);
       if (typeof d.signatureTimestamp === 'string') setSignatureTimestamp(d.signatureTimestamp);
       if (Array.isArray(d.etapperOpen)) setEtapperOpen(d.etapperOpen);
@@ -342,7 +346,7 @@ export default function Home() {
       if (autosaveTimer.current) window.clearTimeout(autosaveTimer.current);
     };
     // Include main fields and rows; signature is read on save from canvas inside collectDraft
-  }, [orderId, projectNumber, installerName, workStreet, workPostalCode, workCity, installationDate, clientName, materialUsed, eavesVentOk, eavesVentComment, carpentryOk, carpentryComment, waterproofingOk, waterproofingComment, genomforningarOk, genomforningarComment, grovstadningOk, grovstadningComment, markskyltOk, markskyltComment, ovrigaKommentarer, signatureDateCity, signatureTimestamp, etapperOpen, etapperClosed]);
+  }, [orderId, projectNumber, installerName, workStreet, workPostalCode, workCity, installationDate, clientName, materialUsed, eavesVentOk, eavesVentComment, carpentryOk, carpentryComment, waterproofingOk, waterproofingComment, genomforningarOk, genomforningarComment, grovstadningOk, grovstadningComment, markskyltOk, markskyltComment, ovrigaKommentarer, ovrigRapportering, signatureDateCity, signatureTimestamp, etapperOpen, etapperClosed]);
 
   // Validation helpers: require certain fields if a row has any data
   const isNonEmpty = (v: unknown) => String(v ?? '').trim() !== '';
@@ -681,6 +685,21 @@ export default function Home() {
         </div>
           </section>
           
+            {/* Additional reporting field */}
+            <section style={{ borderTop: '1px solid #e5e7eb', paddingTop: 12 }}>
+              <h3>Övrig rapportering (till Blikk)</h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 720 }}>
+                <textarea
+                  value={ovrigRapportering}
+                  onChange={(e) => setOvrigRapportering(e.target.value)}
+                  placeholder="Skriv valfri extra rapportering som ska skickas till Blikk under RAPPORTERING"
+                  rows={3}
+                  style={{ padding: 8, resize: 'vertical' }}
+                />
+                <small style={{ color: '#6b7280' }}>Detta fält hamnar under "Antal säckar" i projektkommentaren i Blikk.</small>
+              </div>
+            </section>
+          
           <section style={{ borderTop: '1px solid #e5e7eb', paddingTop: 12 }}>
         <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -777,6 +796,20 @@ export default function Home() {
               </div>
             </div>
           </section>
+          {/* Additional reporting field moved under Signatur */}
+          <section style={{ borderTop: '1px solid #e5e7eb', paddingTop: 12 }}>
+            <h3>Övrig rapportering (till Blikk)</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 720 }}>
+              <textarea
+                value={ovrigRapportering}
+                onChange={(e) => setOvrigRapportering(e.target.value)}
+                placeholder="Skriv valfri extra rapportering som ska skickas till Blikk under RAPPORTERING"
+                rows={3}
+                style={{ padding: 8, resize: 'vertical' }}
+              />
+              <small style={{ color: '#6b7280' }}>Detta fält hamnar under "Antal säckar" i projektkommentaren i Blikk.</small>
+            </div>
+          </section>
           <section style={{ marginTop: 24, display: 'grid', gap: 12, maxWidth: 600, minWidth: 0 }}>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <button
@@ -864,17 +897,38 @@ export default function Home() {
                       const mm = String(today.getMonth() + 1).padStart(2, '0');
                       const dd = String(today.getDate()).padStart(2, '0');
                       const dateStr = `${yyyy}-${mm}-${dd}`;
-                      const commentPieces = [`Egenkontroll gjord ${dateStr}.`];
+                      const commentPieces: string[] = [];
+                      // Calculate total number of bags across both tables (only non-empty rows)
+                      try {
+                        const openRows = etapperOpen.filter(r => Object.values(r).some(v => String(v ?? '').trim() !== ''));
+                        const closedRows = etapperClosed.filter(r => Object.values(r).some(v => String(v ?? '').trim() !== ''));
+                        const sumOpen = openRows.reduce((acc, r: any) => acc + (Number(r.antalSack) || 0), 0);
+                        const sumClosed = closedRows.reduce((acc, r: any) => acc + (Number(r.antalSackKgPerSack) || 0), 0);
+                        const totalBags = sumOpen + sumClosed;
+                        const hasBags = Number.isFinite(totalBags) && totalBags > 0;
+                        const extra = String(ovrigRapportering || '').trim();
+                        if (hasBags || extra) {
+                          // RAPPORTERING section at the top
+                          commentPieces.push('RAPPORTERING:');
+                          if (hasBags) commentPieces.push(`Antal säckar: ${totalBags}`);
+                          if (extra) commentPieces.push(extra);
+                          // Blank line between sections
+                          commentPieces.push('');
+                        }
+                      } catch {}
+                      // Always include date line after any RAPPORTERING section
+                      commentPieces.push(`Egenkontroll gjord ${dateStr}`);
                       try {
                         const origin = typeof window !== 'undefined' ? window.location.origin : '';
                         if (origin && saved?.path) {
                           const downloadUrl = `${origin}/api/storage/download?path=${encodeURIComponent(saved.path)}`;
-                          commentPieces.push(`Ladda ner PDF: ${downloadUrl}`);
+                          commentPieces.push(`Ladda ner här: ${downloadUrl}`);
                         }
                       } catch {}
                       // If you want to tag people, add handles here (Blikk must support @mentions in API):
                       // commentPieces.push('@patrikvall');
-                      const commentText = commentPieces.join(' ');
+                      // Use explicit newlines so each part renders on its own line in Blikk
+                      const commentText = commentPieces.join('\n');
                       await fetch('/api/blikk/project/comment', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
