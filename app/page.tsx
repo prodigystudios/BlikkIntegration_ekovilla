@@ -776,7 +776,7 @@ export default function Home() {
                   onTouchCancel={handleEnd}
                 />
               </div>
-              <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
+              <div style={{ marginTop: 8, marginBottom: 16, display: 'flex', gap: 8 }}>
                 <button className='btn--danger btn--sm' type="button" onClick={clearSignature}>Rensa signatur</button>
                 {missing.signature && (
                   <span className="text-error" style={{ fontSize: 12 }}>Rita signaturen i rutan</span>
@@ -785,7 +785,7 @@ export default function Home() {
             </div>
           </section>
           {/* Additional reporting field moved under Signatur */}
-          <section style={{ borderTop: '1px solid #e5e7eb', paddingTop: 12 }}>
+          <section style={{ borderTop: '1px solid #e5e7eb', paddingTop: 2 }}>
             <h3>Övrig rapportering (till Blikk)</h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 720 }}>
               <textarea
