@@ -479,9 +479,11 @@ export default function Home() {
   }
 
 
+  const [projectLoading, setProjectLoading] = useState(false);
   const onLookup = async () => {
     setProject(null);
     if (!orderId.trim()) return;
+    setProjectLoading(true);
     try {
       const res = await fetch(`/api/projects/lookup?orderId=${encodeURIComponent(orderId.trim())}`);
       const data = await res.json();
@@ -489,6 +491,8 @@ export default function Home() {
       setProject(data);
     } catch (e: any) {
       setProject({ error: e.message });
+    } finally {
+      setProjectLoading(false);
     }
   };
   function CalculateDensityOnRow(etapp: EtappOpenRow): number {
@@ -557,8 +561,18 @@ export default function Home() {
         <label style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <div>Order nummer</div>
           <input value={orderId} onChange={(e) => setOrderId(e.target.value)} placeholder="Ange ordernummer" style={{padding: 8 }} />
-          <button style={{padding: 12 }} onClick={onLookup}>Sök projekt</button>
+          <button
+            style={{ padding: 12, opacity: projectLoading ? 0.7 : 1, cursor: projectLoading ? 'not-allowed' : 'pointer' }}
+            onClick={onLookup}
+            disabled={projectLoading}
+            aria-busy={projectLoading}
+          >
+            {projectLoading ? 'Hämtar projekt…' : 'Sök projekt'}
+          </button>
         </label>
+        {projectLoading && (
+          <div style={{ marginTop: 8, color: '#6b7280', fontSize: 14 }}>Hämtar projektdetaljer…</div>
+        )}
         {project && (
           <div style={{ border: '1px solid #ddd', padding: 12 }}>
             {project.error ? (
@@ -812,7 +826,15 @@ export default function Home() {
                   if (!res.ok) throw new Error(await res.text());
                   const arrayBuf = await res.arrayBuffer();
                   const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuf)));
-                  const sanitize = (s: string) => String(s || '').normalize('NFKD').replace(/[^\w\-\.]+/g, '_').replace(/_+/g, '_').replace(/^_+|_+$/g, '');
+                  const sanitize = (s: string) =>
+                    String(s || '')
+                      .normalize('NFKD')
+                      // remove combining diacritic marks so ä/å/ö → a/o without extra underscores
+                      .replace(/[\u0300-\u036f]/g, '')
+                      // collapse any remaining disallowed chars (including spaces) to underscore
+                      .replace(/[^\w\-\.]+/g, '_')
+                      .replace(/_+/g, '_')
+                      .replace(/^_+|_+$/g, '');
                   const clientPart = sanitize(clientName || 'client');
                   const orderPart = sanitize(orderId || projectNumber || 'order');
                   const filename = `Egenkontroll_${clientPart}_${orderPart}.pdf`;
