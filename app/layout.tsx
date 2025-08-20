@@ -13,8 +13,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
     <head>
-      <link rel="icon" href="/brand/ekovilla-logga-transparent.png" />
-      <link rel="apple-touch-icon" href="/brand/ekovilla-logga-transparent.png" />
+  <link rel="icon" href="/favicon.ico" sizes="any" />
     </head>
   <body style={{ fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif', margin: 0, width: '100%', overflowX: 'hidden' }}>
         {/* Fixed, full-width header */}
@@ -32,11 +31,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             padding: '0 16px',
             gap: 25,
             zIndex: 1000,
-            boxShadow: '0 2px 8px rgba(0,0,0,0.08)'
+            boxShadow: '0 8px 8px rgba(0,0,0,0.08)'
           }}
         >
-          <img src="/brand/EkovillaloggaNoBg.png" alt="Ekovilla" height={76} style={{ display: 'block', transform: 'scale(1.5)', transformOrigin: 'left center' }} />
-          <strong style={{ letterSpacing: 0.2 }}>Egenkontroll</strong>
+          <img src="/brand/Ekovilla_logo_Header.png" alt="Ekovilla header logo" height={18} style={{ display: 'block', transform: 'scale(1.5)', transformOrigin: 'left center' }} />
+          <strong style={{ letterSpacing: 0.2 ,marginLeft:36, marginTop:4}}>Egenkontroll</strong>
           <div style={{ marginLeft: 'auto' }} />
           <HeaderMenu />
         </header>
