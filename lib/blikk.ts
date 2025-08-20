@@ -59,6 +59,7 @@ export class BlikkClient {
 
     if (!res.ok) {
       const text = await res.text();
+      console.error('Blikk API error', { method: init.method || 'GET', path, status: res.status, text });
       throw new Error(`Blikk ${init.method || 'GET'} ${path} -> ${res.status}: ${text}`);
     }
 
@@ -88,15 +89,32 @@ export class BlikkClient {
   // Add a comment/note to a project (path customizable via env)
   async addProjectComment(projectId: number, text: string) {
     // Allow overriding path and body key via env to match Blikk API if it differs
-    const pathTemplate = process.env.BLIKK_COMMENTS_PATH_TEMPLATE || '/v1/Core/Projects/{id}/Comments';
-    const bodyKey = process.env.BLIKK_COMMENTS_BODY_KEY || 'text';
-    const path = pathTemplate.replace('{id}', String(projectId));
-    const body: Record<string, any> = {};
-    body[bodyKey] = text;
-    return this.request(path, {
-      method: 'POST',
-      body: JSON.stringify(body),
-    });
+    const envPath = process.env.BLIKK_COMMENTS_PATH_TEMPLATE || null;
+    const envBodyKey = process.env.BLIKK_COMMENTS_BODY_KEY || null;
+
+    const defaultPath = '/v1/Core/Projects/{id}/Comments';
+    const altPath = '/v1/Core/Projects/{id}/Notes';
+    const keys = envBodyKey ? [envBodyKey] : ['text', 'comment'];
+    const paths = envPath ? [envPath] : [defaultPath, altPath];
+
+    let lastErr: any = null;
+    for (const pt of paths) {
+      for (const key of keys) {
+        const path = pt.replace('{id}', String(projectId));
+        const body: Record<string, any> = {};
+        body[key] = text;
+        try {
+          return await this.request(path, {
+            method: 'POST',
+            body: JSON.stringify(body),
+          });
+        } catch (e: any) {
+          lastErr = e;
+          console.warn('Blikk addProjectComment failed, trying next combination', { path, key, error: String(e?.message || e) });
+        }
+      }
+    }
+    throw lastErr || new Error('Failed to post comment');
   }
 }
 

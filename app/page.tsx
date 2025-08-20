@@ -566,6 +566,7 @@ export default function Home() {
           <div>Order nummer</div>
           <input value={orderId} onChange={(e) => setOrderId(e.target.value)} placeholder="Ange ordernummer" style={{padding: 8 }} />
           <button
+            type="button"
             style={{ padding: 12, opacity: projectLoading ? 0.7 : 1, cursor: projectLoading ? 'not-allowed' : 'pointer' }}
             onClick={onLookup}
             disabled={projectLoading}
@@ -685,20 +686,7 @@ export default function Home() {
         </div>
           </section>
           
-            {/* Additional reporting field */}
-            <section style={{ borderTop: '1px solid #e5e7eb', paddingTop: 12 }}>
-              <h3>Övrig rapportering (till Blikk)</h3>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 720 }}>
-                <textarea
-                  value={ovrigRapportering}
-                  onChange={(e) => setOvrigRapportering(e.target.value)}
-                  placeholder="Skriv valfri extra rapportering som ska skickas till Blikk under RAPPORTERING"
-                  rows={3}
-                  style={{ padding: 8, resize: 'vertical' }}
-                />
-                <small style={{ color: '#6b7280' }}>Detta fält hamnar under "Antal säckar" i projektkommentaren i Blikk.</small>
-              </div>
-            </section>
+            
           
           <section style={{ borderTop: '1px solid #e5e7eb', paddingTop: 12 }}>
         <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: 12 }}>
@@ -911,7 +899,7 @@ export default function Home() {
                           // RAPPORTERING section at the top
                           commentPieces.push('RAPPORTERING:');
                           if (hasBags) commentPieces.push(`Antal säckar: ${totalBags}`);
-                          if (extra) commentPieces.push(extra);
+                          if (extra) commentPieces.push(`Övrig rapportering: ${extra}`);
                           // Blank line between sections
                           commentPieces.push('');
                         }
@@ -929,11 +917,18 @@ export default function Home() {
                       // commentPieces.push('@patrikvall');
                       // Use explicit newlines so each part renders on its own line in Blikk
                       const commentText = commentPieces.join('\n');
-                      await fetch('/api/blikk/project/comment', {
+                      const commentRes = await fetch('/api/blikk/project/comment', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ projectId: blikkProjectId, text: commentText }),
                       });
+                      if (!commentRes.ok) {
+                        try {
+                          const err = await commentRes.json();
+                          console.warn('Blikk comment failed:', err);
+                        } catch {}
+                        setToast({ text: 'Kommentaren till Blikk misslyckades', type: 'error' });
+                      }
                     }
                   } catch {
                     // Non-fatal if comment fails
