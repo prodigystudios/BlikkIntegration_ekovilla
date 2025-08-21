@@ -834,7 +834,20 @@ export default function Home() {
                   },
                   signatureDateCity,
                   signatureTimestamp,
-                  signature: signatureCanvasRef.current?.toDataURL('image/png') || null,
+                  // Flatten signature onto a white background and send as JPEG to avoid PNG alpha issues in some PDF viewers
+                  signature: (() => {
+                    const canvas = signatureCanvasRef.current;
+                    if (!canvas || !signatureTimestamp) return null;
+                    const tmp = document.createElement('canvas');
+                    tmp.width = canvas.width;
+                    tmp.height = canvas.height;
+                    const ctx = tmp.getContext('2d');
+                    if (!ctx) return null;
+                    ctx.fillStyle = '#ffffff';
+                    ctx.fillRect(0, 0, tmp.width, tmp.height);
+                    ctx.drawImage(canvas, 0, 0);
+                    return tmp.toDataURL('image/jpeg', 0.9);
+                  })(),
                   etapperOpen: etapperOpen.filter(r => Object.values(r).some(v => String(v ?? '').trim() !== '')),
                   etapperClosed: etapperClosed.filter(r => Object.values(r).some(v => String(v ?? '').trim() !== '')),
                 };

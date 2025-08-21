@@ -23,6 +23,7 @@ declare module 'pdf-lib' {
     addPage(size?: [number, number] | { width: number; height: number }): any;
     embedFont(font: string): Promise<any>;
   embedPng(png: Uint8Array | ArrayBuffer | Buffer): Promise<{ width: number; height: number }>;
+  embedJpg?(jpg: Uint8Array | ArrayBuffer | Buffer): Promise<{ width: number; height: number }>;
     save(): Promise<Uint8Array>;
   }
 }

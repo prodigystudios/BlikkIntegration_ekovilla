@@ -736,12 +736,18 @@ export async function POST(req: NextRequest): Promise<Response> {
     // Signature fields (always render): Datum & ort, Underskrift, Namnförtydligande
     {
       const signatureDataUrl = String((body && body.signature) || '');
-      let pngImage: { width: number; height: number } | null = null;
-      if (signatureDataUrl.startsWith('data:image/png')) {
+      let sigImage: { width: number; height: number } | null = null;
+      if (signatureDataUrl.startsWith('data:image/jpeg') || signatureDataUrl.startsWith('data:image/jpg')) {
+        try {
+          const jpgBase64 = signatureDataUrl.split(',')[1] || '';
+          const jpgBytes = Buffer.from(jpgBase64, 'base64');
+          sigImage = await (pdfDoc as any).embedJpg?.(jpgBytes);
+        } catch {}
+      } else if (signatureDataUrl.startsWith('data:image/png')) {
         try {
           const pngBase64 = signatureDataUrl.split(',')[1] || '';
           const pngBytes = Buffer.from(pngBase64, 'base64');
-          pngImage = await (pdfDoc as any).embedPng(pngBytes);
+          sigImage = await (pdfDoc as any).embedPng(pngBytes);
         } catch {}
       }
 
@@ -794,17 +800,17 @@ export async function POST(req: NextRequest): Promise<Response> {
       page.drawText('Underskrift'.toUpperCase(), { x: xLabel, y, size: labelSize, font: fontBold, color: lineColor });
       const row2Base = y - (labelSize + 4);
       drawLine(row2Base);
-      if (pngImage) {
+      if (sigImage) {
         const maxW = lineW;
         const maxH = 36;
-        const scale = Math.min(maxW / pngImage.width, maxH / pngImage.height, 1);
-        const w = pngImage.width * scale;
-        const h = pngImage.height * scale;
+        const scale = Math.min(maxW / sigImage.width, maxH / sigImage.height, 1);
+        const w = sigImage.width * scale;
+        const h = sigImage.height * scale;
         const imgX = xLine;
         // Place the image overlapping the line slightly for a natural signed look
         const baselineOffset = -h * 0.25; // tweak if needed
         const imgY = row2Base + baselineOffset;
-        page.drawImage(pngImage as any, { x: imgX, y: imgY, width: w, height: h });
+        page.drawImage(sigImage as any, { x: imgX, y: imgY, width: w, height: h });
       }
       // Render a light right-aligned timestamp as a watermark-like note
       {
@@ -1225,20 +1231,27 @@ export async function POST(req: NextRequest): Promise<Response> {
 
       // Row 2: Underskrift + image
       const signatureDataUrl = String((body && body.signature) || '');
-      if (signatureDataUrl.startsWith('data:image/png')) {
-        try {
-          const pngBase64 = signatureDataUrl.split(',')[1] || '';
-          const pngBytes = Buffer.from(pngBase64, 'base64');
-          const img = await (finalDoc as any).embedPng(pngBytes);
+      try {
+        let img: { width: number; height: number } | null = null;
+        if (signatureDataUrl.startsWith('data:image/jpeg') || signatureDataUrl.startsWith('data:image/jpg')) {
+          const base64 = signatureDataUrl.split(',')[1] || '';
+          const bytes = Buffer.from(base64, 'base64');
+          img = await (finalDoc as any).embedJpg?.(bytes);
+        } else if (signatureDataUrl.startsWith('data:image/png')) {
+          const base64 = signatureDataUrl.split(',')[1] || '';
+          const bytes = Buffer.from(base64, 'base64');
+          img = await (finalDoc as any).embedPng(bytes);
+        }
+        if (img) {
           const scale = Math.min(s.imgMaxW / img.width, s.imgMaxH / img.height, 1);
           const w = img.width * scale;
           const h = img.height * scale;
-      const sigOff = getOffset('signature.image');
-      const imgX = s.lineX + sigOff.dx;
-      const imgY = (yTop(s.signatureTopMm) - h * 0.25) + sigOff.dy; // sit on the line
+          const sigOff = getOffset('signature.image');
+          const imgX = s.lineX + sigOff.dx;
+          const imgY = (yTop(s.signatureTopMm) - h * 0.25) + sigOff.dy; // sit on the line
           tPage.drawImage(img as any, { x: imgX, y: imgY, width: w, height: h });
-        } catch {}
-      }
+        }
+      } catch {}
       // Optional right-aligned timestamp
       const tsRaw = String(body?.signatureTimestamp || '').trim();
       if (tsRaw) {
