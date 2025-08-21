@@ -1,0 +1,20 @@
+{
+  "ledning": [
+    {
+      "name": "John Doe",
+      "phone": "555-123-4567"
+    }
+  ],
+  "säljare": [
+    {
+      "name": "Jane Smith",
+      "phone": "555-987-6543"
+    }
+  ],
+  "installatörer": [
+    {
+      "name": "Peter Jones",
+      "phone": "555-111-2222"
+    }
+  ]
+}
