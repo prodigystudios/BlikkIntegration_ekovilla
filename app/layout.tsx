@@ -14,7 +14,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
     <head>
   <link rel="icon" href="/favicon.ico" sizes="any" />
-  <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes='180x180'/>
+  <link rel="apple-touch-icon" href="/Apple-icon-180x180" sizes='180x180'/>
     </head>
   <body style={{ fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif', margin: 0, width: '100%', overflowX: 'hidden' }}>
         {/* Fixed, full-width header */}
