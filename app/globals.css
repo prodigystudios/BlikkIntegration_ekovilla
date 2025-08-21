@@ -196,3 +196,14 @@ select.select-field option { color: #111827; background-color: #ffffff; }
   .contacts-name { font-weight: 600; font-size: 15px; }
   .contacts-info { color: #6b7280; }
 }
+
+/* Header slide-in drawer */
+.drawer-root { position: fixed; inset: 0; z-index: 1500; display: flex; justify-content: flex-end; transition: none; }
+.drawer-root--open { pointer-events: auto; }
+.drawer-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.0); transition: background .2s ease; }
+.drawer-backdrop--show { background: rgba(0,0,0,0.35); }
+.drawer { position: relative; height: 100%; width: min(86vw, 320px); max-width: 90vw; background: #ffffff; border-left: 1px solid #e5e7eb; transform: translateX(100%); transition: transform .25s ease; box-shadow: -8px 0 24px rgba(0,0,0,0.08); display: flex; flex-direction: column; }
+.drawer--open { transform: translateX(0); }
+.menu-link { display: flex; align-items: center; gap: 10px; padding: 12px; border-radius: 8px; color: #111827; text-decoration: none; }
+.menu-link:hover { background: #f9fafb; }
+.menu-link:active { background: #f3f4f6; }
