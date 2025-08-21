@@ -807,9 +807,8 @@ export async function POST(req: NextRequest): Promise<Response> {
         const w = sigImage.width * scale;
         const h = sigImage.height * scale;
         const imgX = xLine;
-        // Place the image overlapping the line slightly for a natural signed look
-        const baselineOffset = -h * 0.25;
-  const imgY = row2Base + baselineOffset;
+  // Keep inside the row lines: no baseline overlap
+  const imgY = row2Base;
         page.drawImage(sigImage as any, { x: imgX, y: imgY, width: w, height: h });
       }
       // Render a light right-aligned timestamp as a watermark-like note
@@ -1248,7 +1247,7 @@ export async function POST(req: NextRequest): Promise<Response> {
           const h = img.height * scale;
           const sigOff = getOffset('signature.image');
           const imgX = s.lineX + sigOff.dx;
-          const imgY = (yTop(s.signatureTopMm) - h * 0.25) + sigOff.dy; // sit on the line
+          const imgY = (yTop(s.signatureTopMm)) + sigOff.dy; // keep inside the row
           tPage.drawImage(img as any, { x: imgX, y: imgY, width: w, height: h });
         }
       } catch {}
