@@ -207,3 +207,4 @@ select.select-field option { color: #111827; background-color: #ffffff; }
 .menu-link { display: flex; align-items: center; gap: 10px; padding: 12px; border-radius: 8px; color: #111827; text-decoration: none; }
 .menu-link:hover { background: #f9fafb; }
 .menu-link:active { background: #f3f4f6; }
+.menu-link.is-active { background: #eef2ff; } /* subtle indigo-50 */

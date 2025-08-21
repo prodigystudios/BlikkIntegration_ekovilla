@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 
 function IconMenu(props: React.SVGProps<SVGSVGElement>) {
   return (
@@ -37,11 +38,35 @@ export default function HeaderMenu() {
   const [open, setOpen] = useState(false);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const firstLinkRef = useRef<HTMLAnchorElement | null>(null);
+  const pathname = usePathname();
 
   // Close on Esc and click outside; lock body scroll when open
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") setOpen(false);
+      // Focus trap when drawer open
+      if (open && e.key === 'Tab') {
+        const root = panelRef.current;
+        if (!root) return;
+        const focusables = Array.from(root.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        )).filter(el => !el.hasAttribute('inert'));
+        if (focusables.length === 0) return;
+        const first = focusables[0];
+        const last = focusables[focusables.length - 1];
+        const active = document.activeElement as HTMLElement | null;
+        if (e.shiftKey) {
+          if (!active || active === first || !root.contains(active)) {
+            last.focus();
+            e.preventDefault();
+          }
+        } else {
+          if (active === last) {
+            first.focus();
+            e.preventDefault();
+          }
+        }
+      }
     }
     function onClick(e: MouseEvent) {
       if (!open) return;
@@ -112,15 +137,20 @@ export default function HeaderMenu() {
           </div>
           <nav style={{ padding: 8 }}>
             <Link ref={firstLinkRef} href="/" prefetch={false} onClick={() => setOpen(false)}
-              className="menu-link">
+              aria-current={pathname === '/' ? 'page' : undefined}
+              className={`menu-link${pathname === '/' ? ' is-active' : ''}`}>
               <IconHome />
               <span>Startsida</span>
             </Link>
-            <Link href="/archive" prefetch={false} onClick={() => setOpen(false)} className="menu-link">
+            <Link href="/archive" prefetch={false} onClick={() => setOpen(false)}
+              aria-current={pathname?.startsWith('/archive') ? 'page' : undefined}
+              className={`menu-link${pathname?.startsWith('/archive') ? ' is-active' : ''}`}>
               <IconArchive />
               <span>Egenkontroller</span>
             </Link>
-            <Link href="/kontakt-lista" prefetch={true} onClick={() => setOpen(false)} className="menu-link">
+            <Link href="/kontakt-lista" prefetch={true} onClick={() => setOpen(false)}
+              aria-current={pathname === '/kontakt-lista' ? 'page' : undefined}
+              className={`menu-link${pathname === '/kontakt-lista' ? ' is-active' : ''}`}>
               <IconPhone />
               <span>Kontaktlista</span>
             </Link>
