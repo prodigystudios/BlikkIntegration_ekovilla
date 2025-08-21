@@ -838,6 +838,35 @@ export default function Home() {
                   etapperOpen: etapperOpen.filter(r => Object.values(r).some(v => String(v ?? '').trim() !== '')),
                   etapperClosed: etapperClosed.filter(r => Object.values(r).some(v => String(v ?? '').trim() !== '')),
                 };
+                // Helper: safe base64 conversion without spreading Uint8Array (avoids call stack overflow)
+                const arrayBufferToBase64 = async (ab: ArrayBuffer): Promise<string> => {
+                  try {
+                    const blob = new Blob([ab], { type: 'application/pdf' });
+                    const base64 = await new Promise<string>((resolve, reject) => {
+                      const reader = new FileReader();
+                      reader.onloadend = () => {
+                        try {
+                          const result = String(reader.result || '');
+                          const idx = result.indexOf(',');
+                          resolve(idx >= 0 ? result.slice(idx + 1) : result);
+                        } catch (e) { reject(e as any); }
+                      };
+                      reader.onerror = () => reject(reader.error || new Error('readAsDataURL failed'));
+                      reader.readAsDataURL(blob);
+                    });
+                    return base64;
+                  } catch {
+                    // Fallback: chunked manual conversion to avoid large argument lists
+                    const bytes = new Uint8Array(ab);
+                    let binary = '';
+                    const CHUNK = 0x8000; // 32k chunks to keep stack low
+                    for (let i = 0; i < bytes.length; i += CHUNK) {
+                      const chunk = bytes.subarray(i, i + CHUNK);
+                      binary += String.fromCharCode.apply(null, Array.from(chunk) as unknown as number[]);
+                    }
+                    return btoa(binary);
+                  }
+                };
                 try {
                   const res = await fetch('/api/pdf/generate', {
                     method: 'POST',
@@ -846,7 +875,7 @@ export default function Home() {
                   });
                   if (!res.ok) throw new Error(await res.text());
                   const arrayBuf = await res.arrayBuffer();
-                  const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuf)));
+                  const base64 = await arrayBufferToBase64(arrayBuf);
                   const sanitize = (s: string) =>
                     String(s || '')
                       .normalize('NFKD')
