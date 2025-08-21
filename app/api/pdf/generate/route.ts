@@ -802,14 +802,14 @@ export async function POST(req: NextRequest): Promise<Response> {
       drawLine(row2Base);
       if (sigImage) {
         const maxW = lineW;
-        const maxH = 36;
+        const maxH = 36; // previous generated layout cap
         const scale = Math.min(maxW / sigImage.width, maxH / sigImage.height, 1);
         const w = sigImage.width * scale;
         const h = sigImage.height * scale;
         const imgX = xLine;
         // Place the image overlapping the line slightly for a natural signed look
-        const baselineOffset = -h * 0.25; // tweak if needed
-        const imgY = row2Base + baselineOffset;
+        const baselineOffset = -h * 0.25;
+  const imgY = row2Base + baselineOffset;
         page.drawImage(sigImage as any, { x: imgX, y: imgY, width: w, height: h });
       }
       // Render a light right-aligned timestamp as a watermark-like note

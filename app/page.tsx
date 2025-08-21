@@ -834,57 +834,19 @@ export default function Home() {
                   },
                   signatureDateCity,
                   signatureTimestamp,
-                  // Crop to drawn strokes and flatten onto white JPEG to avoid PNG alpha issues and extra white margins
+                  // Flatten entire canvas to a white JPEG (no cropping) to preserve legacy sizing behavior
                   signature: (() => {
                     const canvas = signatureCanvasRef.current;
                     if (!canvas || !signatureTimestamp) return null;
-                    const srcCtx = canvas.getContext('2d');
-                    if (!srcCtx) return null;
-                    const { width, height } = canvas;
-                    try {
-                      const imgData = srcCtx.getImageData(0, 0, width, height);
-                      const data = imgData.data;
-                      let minX = width, minY = height, maxX = -1, maxY = -1;
-                      for (let y = 0; y < height; y++) {
-                        for (let x = 0; x < width; x++) {
-                          const i = (y * width + x) * 4;
-                          const a = data[i + 3];
-                          if (a > 0) { // any non-transparent pixel
-                            if (x < minX) minX = x;
-                            if (y < minY) minY = y;
-                            if (x > maxX) maxX = x;
-                            if (y > maxY) maxY = y;
-                          }
-                        }
-                      }
-                      if (maxX < 0 || maxY < 0) return null; // nothing drawn
-                      // Add small padding but keep within bounds
-                      const pad = Math.round(Math.min(width, height) * 0.02) + 6; // ~2% + 6px
-                      const sx = Math.max(0, minX - pad);
-                      const sy = Math.max(0, minY - pad);
-                      const sw = Math.min(width - sx, (maxX - minX + 1) + pad * 2);
-                      const sh = Math.min(height - sy, (maxY - minY + 1) + pad * 2);
-                      const tmp = document.createElement('canvas');
-                      tmp.width = sw;
-                      tmp.height = sh;
-                      const ctx = tmp.getContext('2d');
-                      if (!ctx) return null;
-                      ctx.fillStyle = '#ffffff';
-                      ctx.fillRect(0, 0, tmp.width, tmp.height);
-                      ctx.drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
-                      return tmp.toDataURL('image/jpeg', 0.9);
-                    } catch {
-                      // Fallback: no crop
-                      const tmp = document.createElement('canvas');
-                      tmp.width = width;
-                      tmp.height = height;
-                      const ctx = tmp.getContext('2d');
-                      if (!ctx) return null;
-                      ctx.fillStyle = '#ffffff';
-                      ctx.fillRect(0, 0, tmp.width, tmp.height);
-                      ctx.drawImage(canvas, 0, 0);
-                      return tmp.toDataURL('image/jpeg', 0.9);
-                    }
+                    const tmp = document.createElement('canvas');
+                    tmp.width = canvas.width;
+                    tmp.height = canvas.height;
+                    const ctx = tmp.getContext('2d');
+                    if (!ctx) return null;
+                    ctx.fillStyle = '#ffffff';
+                    ctx.fillRect(0, 0, tmp.width, tmp.height);
+                    ctx.drawImage(canvas, 0, 0);
+                    return tmp.toDataURL('image/png');
                   })(),
                   etapperOpen: etapperOpen.filter(r => Object.values(r).some(v => String(v ?? '').trim() !== '')),
                   etapperClosed: etapperClosed.filter(r => Object.values(r).some(v => String(v ?? '').trim() !== '')),
