@@ -1,4 +1,4 @@
-# Oscar Web App (Blikk integration)
+# Ekovilla (Blikk integration)
 
 A minimal Next.js (React + TypeScript) app to look up Blikk projects by Order ID, prefill an order form, generate a styled PDF, and optionally post a comment back to the Blikk project.
 
