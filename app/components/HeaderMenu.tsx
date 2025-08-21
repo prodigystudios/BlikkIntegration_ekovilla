@@ -70,6 +70,11 @@ export default function HeaderMenu() {
           >
             Egenkontroller
           </Link>
+          <Link href="/kontakt-lista" prefetch={false} role="menuitem" onClick={() => setOpen(false)}
+                style={{ display: "block", padding: "10px 12px", borderRadius: 6, color: "#111827", textDecoration: "none" }}
+          >
+            Kontaktlista
+          </Link>
         </div>
       )}
     </div>
