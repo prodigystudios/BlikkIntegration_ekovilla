@@ -834,20 +834,8 @@ export default function Home() {
                   },
                   signatureDateCity,
                   signatureTimestamp,
-                  // Flatten entire canvas to a white JPEG (no cropping) to preserve legacy sizing behavior
-                  signature: (() => {
-                    const canvas = signatureCanvasRef.current;
-                    if (!canvas || !signatureTimestamp) return null;
-                    const tmp = document.createElement('canvas');
-                    tmp.width = canvas.width;
-                    tmp.height = canvas.height;
-                    const ctx = tmp.getContext('2d');
-                    if (!ctx) return null;
-                    ctx.fillStyle = '#ffffff';
-                    ctx.fillRect(0, 0, tmp.width, tmp.height);
-                    ctx.drawImage(canvas, 0, 0);
-                    return tmp.toDataURL('image/png');
-                  })(),
+                  // Use transparent PNG directly from the signature canvas (no background fill)
+                  signature: signatureCanvasRef.current?.toDataURL('image/png') || null,
                   etapperOpen: etapperOpen.filter(r => Object.values(r).some(v => String(v ?? '').trim() !== '')),
                   etapperClosed: etapperClosed.filter(r => Object.values(r).some(v => String(v ?? '').trim() !== '')),
                 };
