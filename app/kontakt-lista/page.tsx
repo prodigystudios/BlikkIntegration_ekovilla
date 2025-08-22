@@ -18,10 +18,7 @@ function Section({ title, people, defaultOpen = false }: { title: string; people
   // Use <details> for native accessibility and animation
   return (
     <details className="accordion-panel" {...(defaultOpen ? { open: false } : {})}>
-      <summary className="accordion-summary">
-        {title}
-        <span className="accordion-arrow" aria-hidden>▶</span>
-      </summary>
+  <summary className="accordion-summary">{title}</summary>
       <div className="accordion-content">
         <div className="contacts-grid">
           <div className="contacts-header">
@@ -60,7 +57,7 @@ export default async function ContactsPage() {
   return (
     <main style={{ padding: 16, maxWidth: 900, margin: '0 auto' }}>
       <h1>Kontaktlista</h1>
-      <p style={{ color: '#6b7280', marginTop: -6, marginBottom: 16 }}>Snabbsök kontakt och ring direkt.</p>
+  <p style={{ color: '#6b7280', marginTop: -6, marginBottom: 16 }}>Snabbsök kontakt och ring direkt.</p>
       {/* Contact sections */}
 
       {contactSections.map(({ key, label }, idx) => (
@@ -72,10 +69,7 @@ export default async function ContactsPage() {
       {/* Company addresses */}
       {Array.isArray(Adresser) && Adresser.length > 0 && (
         <details className="accordion-panel" style={{ marginTop: 40 }}>
-          <summary className="accordion-summary">
-            Depåer
-            <span className="accordion-arrow" aria-hidden>▶</span>
-          </summary>
+          <summary className="accordion-summary">Depåer</summary>
           <div className="accordion-content">
             <div style={{ display: 'grid', gap: 16 }}>
               {Adresser.map((addr: any, i: number) => {
