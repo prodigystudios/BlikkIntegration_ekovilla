@@ -17,7 +17,7 @@ async function getPhoneList() {
 function Section({ title, people, defaultOpen = false }: { title: string; people: Array<{ name: string; phone?: string; location?: string; role?: string }>, defaultOpen?: boolean }) {
   // Use <details> for native accessibility and animation
   return (
-    <details className="accordion-panel" {...(defaultOpen ? { open: true } : {})}>
+    <details className="accordion-panel" {...(defaultOpen ? { open: false } : {})}>
       <summary className="accordion-summary">
         {title}
         <span className="accordion-arrow" aria-hidden>▶</span>

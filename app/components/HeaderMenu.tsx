@@ -26,6 +26,14 @@ function IconArchive(props: React.SVGProps<SVGSVGElement>) {
     </svg>
   );
 }
+function IconDoc(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#111827" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
+      <rect x="4" y="2" width="16" height="20" rx="2"/>
+      <path d="M9 7h6"/><path d="M9 12h6"/><path d="M9 17h2"/>
+    </svg>
+  );
+}
 function IconPhone(props: React.SVGProps<SVGSVGElement>) {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#111827" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
@@ -153,6 +161,12 @@ export default function HeaderMenu() {
               className={`menu-link${pathname === '/kontakt-lista' ? ' is-active' : ''}`}>
               <IconPhone />
               <span>Kontakt & Adresser</span>
+            </Link>
+            <Link href="/dokument-information" prefetch={true} onClick={() => setOpen(false)}
+              aria-current={pathname === '/dokument-information' ? 'page' : undefined}
+              className={`menu-link${pathname === '/dokument-information' ? ' is-active' : ''}`}>
+              <IconDoc />
+              <span>Dokument & Information</span>
             </Link>
           </nav>
         </div>
