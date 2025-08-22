@@ -189,6 +189,15 @@ select.select-field option { color: #111827; background-color: #ffffff; }
 .contacts-header .contacts-cell:not(:last-child) { border-right: 1px solid #e5e7eb; }
 .contacts-muted { color: #6b7280; }
 
+/* Accordion/collapsible sections for kontaktlista */
+.accordion-panel { border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 18px; background: #fff; overflow: hidden; transition: box-shadow .15s; }
+.accordion-panel[open] { box-shadow: 0 2px 12px rgba(0,0,0,0.04); }
+.accordion-summary { display: flex; align-items: center; gap: 10px; font-size: 17px; font-weight: 600; padding: 14px 18px; cursor: pointer; background: #f9fafb; border: none; outline: none; width: 100%; transition: background .15s; }
+.accordion-summary:hover, .accordion-summary:focus-visible { background: #f3f4f6; }
+.accordion-arrow { margin-left: auto; transition: transform .2s; }
+.accordion-panel[open] .accordion-arrow { transform: rotate(90deg); }
+.accordion-content { padding: 0 0 18px 0; }
+
 /* Mobile layout: stack rows, hide header */
 @media (max-width: 640px) {
   .contacts-header { display: none; }

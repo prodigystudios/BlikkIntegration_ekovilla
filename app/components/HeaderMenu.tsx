@@ -152,7 +152,7 @@ export default function HeaderMenu() {
               aria-current={pathname === '/kontakt-lista' ? 'page' : undefined}
               className={`menu-link${pathname === '/kontakt-lista' ? ' is-active' : ''}`}>
               <IconPhone />
-              <span>Kontaktlista</span>
+              <span>Kontakt & Adresser</span>
             </Link>
           </nav>
         </div>

@@ -103,5 +103,31 @@
             "phone": "070-694 31 30",
             "role": "Entreprenadchef / Ledning"
         }
+    ],
+    "Adresser": [
+        {
+            "name": "Rosersberg",
+            "address": "västerbytorp 111, 195 96 Rosersberg"
+        },
+        {
+            "name": "Södertälje",
+            "address": "Sydhamnsvägen 46, 15138 Södertälje"
+        },
+        {
+            "name": "Örebro",
+            "address": "vallgatan 43, 716 31 Fjugesta"
+        },
+        {
+            "name": "Borlänge",
+            "address": "Nygårdsvägen 31, 781 70 Borlänge"
+        },
+        {
+            "name": "Sandviken(Sågen)",
+            "address": "Kärråsvägen 73, 811 91 Sandviken"
+        },
+        {
+            "name": "Sandviken(kontor och lager)",
+            "address": "Spångvägen 9, 811 32 Sandviken"
+        }
     ]
 }
