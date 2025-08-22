@@ -155,11 +155,11 @@ export default function Home() {
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    // Reset transform to clear entire backing store
-    ctx.save();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.restore();
+  // Reset transform to clear entire backing store (keep transparent so PDF export remains unchanged)
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.restore();
   setSignatureTimestamp(null);
   };
   const [signatureDateCity, setSignatureDateCity] = useState('');
@@ -762,10 +762,11 @@ export default function Home() {
                 <span>Datum och ort</span>
                 <input value={signatureDateCity} onChange={(e) => { setSignatureDateCity(e.target.value); if (missing.signatureDateCity) setMissing((mm) => ({ ...mm, signatureDateCity: false })); }} placeholder="YYYY-MM-DD, Ort" style={{ padding: 8, maxWidth: 400, border: missing.signatureDateCity ? '1px solid #fca5a5' : undefined, background: missing.signatureDateCity ? '#fff1f2' : undefined }} />
               </label>
-              <div style={{ border: '1px solid #d1d5db', borderRadius: 6, overflow: 'hidden', width: '100%', maxWidth: 600 }}>
+        <div className="signature-container" style={{ border: '1px solid #d1d5db', borderRadius: 6, overflow: 'hidden', width: '100%', maxWidth: 600, background: '#fff' }}>
                 <canvas
                   ref={signatureCanvasRef}
-                  style={{ width: 600, height: 180, display: 'block', background: '#fff', touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none' }}
+          className="signature-surface"
+          style={{ width: 600, height: 180, display: 'block', background: '#fff', touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none' }}
                   onMouseDown={handleStart}
                   onMouseMove={handleMove}
                   onMouseUp={handleEnd}
