@@ -165,9 +165,8 @@ export default function Home() {
   const [signatureDateCity, setSignatureDateCity] = useState('');
   const getDraftKey = (id?: string) => `egenkontroll:draft:${(id ?? orderId) || 'no-order'}`;
   function collectDraft() {
-    // Only persist signature if drawn; compress to JPEG to save space on mobile
-    const signatureDataUrl = signatureTimestamp ? (signatureCanvasRef.current?.toDataURL('image/jpeg', 0.8) || null) : null;
-    return {
+  // Do not persist signature image or timestamp to avoid iOS black-box on reload
+  return {
       orderId,
       projectNumber,
       installerName,
@@ -188,8 +187,6 @@ export default function Home() {
       },
   ovrigRapportering,
       signatureDateCity,
-      signatureTimestamp,
-      signatureDataUrl,
       etapperOpen,
       etapperClosed,
     };
@@ -223,26 +220,11 @@ export default function Home() {
       }
       if (typeof d.ovrigRapportering === 'string') setOvrigRapportering(d.ovrigRapportering);
       if (typeof d.signatureDateCity === 'string') setSignatureDateCity(d.signatureDateCity);
-      if (typeof d.signatureTimestamp === 'string') setSignatureTimestamp(d.signatureTimestamp);
+  // Do not restore signature timestamp or image from draft
       if (Array.isArray(d.etapperOpen)) setEtapperOpen(d.etapperOpen);
       if (Array.isArray(d.etapperClosed)) setEtapperClosed(d.etapperClosed);
       // Draw signature back to canvas
-      const dataUrl: string | null = d.signatureDataUrl || null;
-      if (dataUrl && signatureCanvasRef.current) {
-        const img = new Image();
-        img.onload = () => {
-          const canvas = signatureCanvasRef.current!;
-          const ctx = canvas.getContext('2d');
-          if (!ctx) return;
-          ctx.save();
-          ctx.setTransform(1, 0, 0, 1, 0, 0);
-          ctx.clearRect(0, 0, canvas.width, canvas.height);
-          ctx.restore();
-          // Canvas already scaled for DPR in effect; draw image at 0,0 with CSS size mapping
-          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        };
-        img.src = dataUrl;
-      }
+  // Skip restoring signature image onto canvas
     } catch {}
   }
   const getCanvasPos = (e: React.MouseEvent | React.TouchEvent) => {
@@ -346,7 +328,7 @@ export default function Home() {
       if (autosaveTimer.current) window.clearTimeout(autosaveTimer.current);
     };
     // Include main fields and rows; signature is read on save from canvas inside collectDraft
-  }, [orderId, projectNumber, installerName, workStreet, workPostalCode, workCity, installationDate, clientName, materialUsed, eavesVentOk, eavesVentComment, carpentryOk, carpentryComment, waterproofingOk, waterproofingComment, genomforningarOk, genomforningarComment, grovstadningOk, grovstadningComment, markskyltOk, markskyltComment, ovrigaKommentarer, ovrigRapportering, signatureDateCity, signatureTimestamp, etapperOpen, etapperClosed]);
+  }, [orderId, projectNumber, installerName, workStreet, workPostalCode, workCity, installationDate, clientName, materialUsed, eavesVentOk, eavesVentComment, carpentryOk, carpentryComment, waterproofingOk, waterproofingComment, genomforningarOk, genomforningarComment, grovstadningOk, grovstadningComment, markskyltOk, markskyltComment, ovrigaKommentarer, ovrigRapportering, signatureDateCity, etapperOpen, etapperClosed]);
 
   // Validation helpers: require certain fields if a row has any data
   const isNonEmpty = (v: unknown) => String(v ?? '').trim() !== '';
