@@ -221,4 +221,15 @@ select.select-field option { color: #111827; background-color: #ffffff; }
 /* Ensure canvases render with a white background on iOS Safari to avoid black backing-store artifacts */
 /* Signature UI appearance: white background via CSS, not pixels, to keep PNG export transparent */
 .signature-surface { background-color: #ffffff !important; }
-.signature-container { background-color: #ffffff; }
+.signature-container { background-color: #ffffff; color-scheme: light; isolation: isolate; }
+.signature-container, .signature-surface {
+  /* Try to opt-out of Smart Invert (iOS accessibility) and dark-mode inversion */
+  filter: invert(0) hue-rotate(0deg) !important;
+}
+
+@media (prefers-color-scheme: dark) {
+  /* Keep signature UI white even in dark mode */
+  .signature-container, .signature-surface {
+    background-color: #ffffff !important;
+  }
+}
