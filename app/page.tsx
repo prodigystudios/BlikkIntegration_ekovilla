@@ -567,6 +567,7 @@ export default function Home() {
             ) : (
               <div>
                 <div><strong>Order number:</strong> {project.orderNumber}</div>
+                <div><strong>ID:</strong> {project.id}</div>
                 <div><strong>Kund/Beställare:</strong> {project?.customer?.name}</div>
                 <div><strong>Beskrivning:</strong> {String(project.description)}</div>
               </div>

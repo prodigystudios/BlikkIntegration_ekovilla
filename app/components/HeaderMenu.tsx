@@ -34,6 +34,16 @@ function IconDoc(props: React.SVGProps<SVGSVGElement>) {
     </svg>
   );
 }
+function IconShirt(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#111827" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
+      {/* Neckline */}
+      <path d="M9 4h6"/>
+      {/* Outline with sleeves */}
+      <path d="M9 4l-2 2-2 1v3h3v10h8V10h3V7l-2-1-2-2"/>
+    </svg>
+  );
+}
 function IconPhone(props: React.SVGProps<SVGSVGElement>) {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#111827" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
@@ -167,6 +177,12 @@ export default function HeaderMenu() {
               className={`menu-link${pathname === '/dokument-information' ? ' is-active' : ''}`}>
               <IconDoc />
               <span>Dokument & Information</span>
+            </Link>
+            <Link href="/bestallning-klader" prefetch={true} onClick={() => setOpen(false)}
+              aria-current={pathname === '/bestallning-klader' ? 'page' : undefined}
+              className={`menu-link${pathname === '/bestallning-klader' ? ' is-active' : ''}`}>
+              <IconShirt />
+              <span>Beställning kläder</span>
             </Link>
           </nav>
         </div>
