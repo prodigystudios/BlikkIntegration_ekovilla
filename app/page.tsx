@@ -65,10 +65,13 @@ export default function Home() {
   const [etapperOpen, setEtapperOpen] = useState<EtappOpenRow[]>([]);
 
   const addEtappOpenRow = () =>
-    setEtapperOpen((rows) => [
-      ...rows,
-      { lambdavarde: MATERIALS[materialUsed]?.lambda },
-    ]);
+    setEtapperOpen((rows) => {
+      if (rows.length >= 3) return rows; // cap at 3 rows
+      return [
+        ...rows,
+        { lambdavarde: MATERIALS[materialUsed]?.lambda },
+      ];
+    });
   const removeEtappOpenRow = (idx: number) => setEtapperOpen((rows) => rows.filter((_, i) => i !== idx));
   const updateEtappOpenRow = (idx: number, patch: Partial<EtappOpenRow>) =>
     setEtapperOpen((rows) => {
@@ -109,10 +112,13 @@ export default function Home() {
   const [etapperClosed, setEtapperClosed] = useState<EtappClosedRow[]>([]);
 
   const addEtappClosedRow = () =>
-    setEtapperClosed((rows) => [
-      ...rows,
-      { lambdavarde: MATERIALS[materialUsed]?.lambda },
-    ]);
+    setEtapperClosed((rows) => {
+      if (rows.length >= 3) return rows; // cap at 3 rows
+      return [
+        ...rows,
+        { lambdavarde: MATERIALS[materialUsed]?.lambda },
+      ];
+    });
   const removeEtappClosedRow = (idx: number) => setEtapperClosed((rows) => rows.filter((_, i) => i !== idx));
   const updateEtappClosedRow = (idx: number, patch: Partial<EtappClosedRow>) =>
     setEtapperClosed((rows) => {
@@ -221,8 +227,8 @@ export default function Home() {
       if (typeof d.ovrigRapportering === 'string') setOvrigRapportering(d.ovrigRapportering);
       if (typeof d.signatureDateCity === 'string') setSignatureDateCity(d.signatureDateCity);
   // Do not restore signature timestamp or image from draft
-      if (Array.isArray(d.etapperOpen)) setEtapperOpen(d.etapperOpen);
-      if (Array.isArray(d.etapperClosed)) setEtapperClosed(d.etapperClosed);
+  if (Array.isArray(d.etapperOpen)) setEtapperOpen(d.etapperOpen.slice(0, 3));
+  if (Array.isArray(d.etapperClosed)) setEtapperClosed(d.etapperClosed.slice(0, 3));
       // Draw signature back to canvas
   // Skip restoring signature image onto canvas
     } catch {}
@@ -413,9 +419,9 @@ export default function Home() {
     try {
       const desc: string = String(project?.description ?? '').trim();
       if (desc && etapperOpen.length === 0 && etapperClosed.length === 0) {
-        const parsed = parseDescriptionToRows(desc);
-        if (parsed.open.length) setEtapperOpen(parsed.open);
-        if (parsed.closed.length) setEtapperClosed(parsed.closed);
+  const parsed = parseDescriptionToRows(desc);
+  if (parsed.open.length) setEtapperOpen(parsed.open.slice(0, 3));
+  if (parsed.closed.length) setEtapperClosed(parsed.closed.slice(0, 3));
       }
     } catch {}
   }, [project]);
@@ -675,7 +681,16 @@ export default function Home() {
         <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <h3>Etapper (öppet)</h3>
-            <button className='btn--med' type="button" onClick={addEtappOpenRow}>+ Lägg till rad</button>
+            <button
+              className='btn--med'
+              type="button"
+              onClick={addEtappOpenRow}
+              disabled={etapperOpen.length >= 3}
+              title={etapperOpen.length >= 3 ? 'Max 3 rader' : ''}
+              style={{ opacity: etapperOpen.length >= 3 ? 0.5 : 1, cursor: etapperOpen.length >= 3 ? 'not-allowed' : 'pointer' }}
+            >
+              + Lägg till rad
+            </button>
           </div>
           <div style={{ width: '100%', overflowX: 'auto', overflowY: 'hidden', maxWidth: '100%', WebkitOverflowScrolling: 'touch' }}>
             <div style={{ display: 'grid', gridTemplateColumns: '140px 100px 220px 130px 240px 170px 150px 170px', gap: 8, alignItems: 'center', fontWeight: 600, fontSize: 12, padding: '6px 0', minWidth: (140 + 100 + 220 + 130 + 240 + 170 + 150 + 170) + (7 * 8) }}>
@@ -709,7 +724,16 @@ export default function Home() {
         <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <h3>Etapper (slutet)</h3>
-            <button className='btn--med' type="button" onClick={addEtappClosedRow}>+ Lägg till rad</button>
+            <button
+              className='btn--med'
+              type="button"
+              onClick={addEtappClosedRow}
+              disabled={etapperClosed.length >= 3}
+              title={etapperClosed.length >= 3 ? 'Max 3 rader' : ''}
+              style={{ opacity: etapperClosed.length >= 3 ? 0.5 : 1, cursor: etapperClosed.length >= 3 ? 'not-allowed' : 'pointer' }}
+            >
+              + Lägg till rad
+            </button>
           </div>
           <div style={{ width: '100%', overflowX: 'auto', overflowY: 'hidden', maxWidth: '100%', WebkitOverflowScrolling: 'touch' }}>
             <div style={{ display: 'grid', gridTemplateColumns: '140px 100px 160px 160px 170px 170px 170px', gap: 8, alignItems: 'center', fontWeight: 600, fontSize: 12, padding: '6px 0', minWidth: (140 + 100 + 160 + 160 + 170 + 170 + 170) + (6 * 8) }}>

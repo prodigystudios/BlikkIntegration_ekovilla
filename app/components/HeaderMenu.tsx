@@ -34,6 +34,44 @@ function IconDoc(props: React.SVGProps<SVGSVGElement>) {
     </svg>
   );
 }
+function IconYouTube(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg width="40" height="40" viewBox="0 0 24 24" aria-hidden focusable="false" {...props}>
+      <rect x="2" y="6" width="20" height="12" rx="3" fill="#FF0000" />
+      <path d="M10 9l5 3-5 3z" fill="#ffffff" />
+    </svg>
+  );
+}
+function IconLinkedIn(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg width="40" height="40" viewBox="0 0 24 24" aria-hidden focusable="false" {...props}>
+      <rect x="3" y="3" width="18" height="18" rx="2" fill="#0A66C2" />
+      {/* dot of i */}
+      <circle cx="8" cy="9" r="1.1" fill="#ffffff" />
+      {/* stem of i */}
+      <rect x="7.3" y="10.5" width="1.4" height="6.5" rx="0.7" fill="#ffffff" />
+      {/* simplified n */}
+      <path d="M11 11h2c1.66 0 3 1.34 3 3v3.5h-2v-3.5c0-.55-.45-1-1-1h-2V17.5h-2V11h2z" fill="#ffffff" />
+    </svg>
+  );
+}
+function IconFacebook(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg width="40" height="40" viewBox="0 0 24 24" aria-hidden focusable="false" {...props}>
+      <rect x="3" y="3" width="18" height="18" rx="3" fill="#1877F2" />
+      <path d="M14 10h2V7h-2c-1.66 0-3 1.34-3 3v2H9v3h2v6h3v-6h2l.7-3H14v-2z" fill="#ffffff" />
+    </svg>
+  );
+}
+function IconInstagram(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg width="40" height="40" viewBox="0 0 24 24" aria-hidden focusable="false" {...props}>
+      <rect x="3" y="3" width="18" height="18" rx="4" fill="#E1306C" />
+      <circle cx="12" cy="12" r="4.2" fill="none" stroke="#ffffff" strokeWidth="2" />
+      <circle cx="17" cy="7.5" r="1.2" fill="#ffffff" />
+    </svg>
+  );
+}
 function IconShirt(props: React.SVGProps<SVGSVGElement>) {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#111827" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
@@ -143,6 +181,7 @@ export default function HeaderMenu() {
           role="dialog"
           aria-modal="true"
           aria-label="Huvudmeny"
+          style={{ display: 'flex', flexDirection: 'column', height: '100%' }}
         >
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px', borderBottom: '1px solid #e5e7eb' }}>
             <strong>Meny</strong>
@@ -153,7 +192,7 @@ export default function HeaderMenu() {
               </svg>
             </button>
           </div>
-          <nav style={{ padding: 8 }}>
+          <nav style={{ padding: 8, flex: '1 1 auto', overflowY: 'auto' }}>
             <Link ref={firstLinkRef} href="/" prefetch={false} onClick={() => setOpen(false)}
               aria-current={pathname === '/' ? 'page' : undefined}
               className={`menu-link${pathname === '/' ? ' is-active' : ''}`}>
@@ -185,6 +224,25 @@ export default function HeaderMenu() {
               <span>Beställning kläder</span>
             </Link>
           </nav>
+
+          {/* Social media footer */}
+          <div style={{ padding: 8, borderTop: '1px solid #e5e7eb', marginTop: 'auto' }}>
+            <div style={{ fontSize: 12, color: '#6b7280', margin: '6px 8px' }}>Sociala medier</div>
+            <div style={{ display: 'flex', justifyContent: 'space-evenly', gap: 12, padding: '0 8px 8px 8px' }}>
+              <a href="https://www.youtube.com/@isoleringslandslaget8661" target="_blank" rel="noopener noreferrer" aria-label="YouTube" onClick={() => setOpen(false)} className="btn--plain" style={{ padding: 6, borderRadius: 6, border: '1px solid #e5e7eb', background: '#fff', display: 'inline-flex' }}>
+                <IconYouTube />
+              </a>
+              <a href="https://www.linkedin.com/company/isoleringslandslaget" target="_blank" rel="noopener noreferrer" aria-label="LinkedIn" onClick={() => setOpen(false)} className="btn--plain" style={{ padding: 6, borderRadius: 6, border: '1px solid #e5e7eb', background: '#fff', display: 'inline-flex' }}>
+                <IconLinkedIn />
+              </a>
+              <a href="https://www.facebook.com/isoleringslandslaget/" target="_blank" rel="noopener noreferrer" aria-label="Facebook" onClick={() => setOpen(false)} className="btn--plain" style={{ padding: 6, borderRadius: 6, border: '1px solid #e5e7eb', background: '#fff', display: 'inline-flex' }}>
+                <IconFacebook />
+              </a>
+              <a href="https://www.instagram.com/isoleringslandslaget/" target="_blank" rel="noopener noreferrer" aria-label="Instagram" onClick={() => setOpen(false)} className="btn--plain" style={{ padding: 6, borderRadius: 6, border: '1px solid #e5e7eb', background: '#fff', display: 'inline-flex' }}>
+                <IconInstagram />
+              </a>
+            </div>
+          </div>
         </div>
       </div>
     </div>
