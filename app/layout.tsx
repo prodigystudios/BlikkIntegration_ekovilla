@@ -34,7 +34,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           top: 0,
           left: 0,
           right: 0,
-      height: 'calc(64px + env(safe-area-inset-top))',
+          height: 'calc(42px + env(safe-area-inset-top))',
           background: '#ffffffff',
           color: '#0b0f10',
           display: 'flex',
@@ -52,8 +52,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <div style={{ marginLeft: 'auto' }} />
         <HeaderMenu />
       </header>
-  {/* Content wrapper with top padding to avoid overlap (accounts for safe area) */} 
-  <div style={{ paddingTop: 'calc(64px + env(safe-area-inset-top))' }}>{children}</div>
+  {/* Content wrapper with top padding to avoid overlap (accounts for safe area + tiny gap for shadow) */} 
+  <div style={{ paddingTop: 'calc(56px + env(safe-area-inset-top) + 8px)' }}>{children}</div>
       <Script id="sw-register" strategy="afterInteractive">
         {`
           if ('serviceWorker' in navigator) {
