@@ -34,7 +34,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           top: 0,
           left: 0,
           right: 0,
-          height: 'calc(42px + env(safe-area-inset-top))',
+          height: 'calc(18px + env(safe-area-inset-top))',
           background: '#ffffffff',
           color: '#0b0f10',
           display: 'flex',
