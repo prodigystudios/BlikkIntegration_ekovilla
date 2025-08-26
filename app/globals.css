@@ -215,12 +215,18 @@ select.select-field option { color: #111827; background-color: #ffffff; }
 .drawer-root--open { pointer-events: auto; }
 .drawer-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.0); transition: background .2s ease; }
 .drawer-backdrop--show { background: rgba(0,0,0,0.35); }
-.drawer { position: relative; height: 100%; width: min(86vw, 320px); max-width: 90vw; background: #ffffff; border-left: 1px solid #e5e7eb; transform: translateX(100%); transition: transform .25s ease; box-shadow: -8px 0 24px rgba(0,0,0,0.08); display: flex; flex-direction: column; }
+.drawer { position: relative; height: 100%; width: min(86vw, 320px); max-width: 90vw; background: #ffffff; border-left: 1px solid #e5e7eb; transform: translateX(100%); transition: transform .25s ease; box-shadow: -8px 0 24px rgba(0,0,0,0.08); display: flex; flex-direction: column; padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); padding-right: env(safe-area-inset-right); }
 .drawer--open { transform: translateX(0); }
 .menu-link { display: flex; align-items: center; gap: 10px; padding: 12px; border-radius: 8px; color: #111827; text-decoration: none; }
 .menu-link:hover { background: #f9fafb; }
 .menu-link:active { background: #f3f4f6; }
 .menu-link.is-active { background: #eef2ff; } /* subtle indigo-50 */
+
+/* Responsive header height with safe-area support */
+:root { --safe-top: env(safe-area-inset-top, 0px); --header-base: 56px; }
+@media (max-width: 640px) { :root { --header-base: 18px; } }
+.header-app { height: calc(var(--header-base) + var(--safe-top)); padding-top: var(--safe-top); }
+.content-offset { padding-top: calc(var(--header-base) + var(--safe-top) + 8px); }
 
 /* Ensure canvases render with a white background on iOS Safari to avoid black backing-store artifacts */
 /* Signature UI appearance: white background via CSS, not pixels, to keep PNG export transparent */

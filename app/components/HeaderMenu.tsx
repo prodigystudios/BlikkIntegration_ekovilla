@@ -183,7 +183,7 @@ export default function HeaderMenu() {
           aria-label="Huvudmeny"
           style={{ display: 'flex', flexDirection: 'column', height: '100%' }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px', borderBottom: '1px solid #e5e7eb' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 'calc(10px + env(safe-area-inset-top)) 16px 14px 16px', borderBottom: '1px solid #e5e7eb' }}>
             <strong>Meny</strong>
             <button aria-label="Stäng meny" onClick={() => setOpen(false)} className="btn--plain" style={{ padding: 8, borderRadius: 6 }}>
               {/* X icon */}
@@ -226,7 +226,7 @@ export default function HeaderMenu() {
           </nav>
 
           {/* Social media footer */}
-          <div style={{ padding: 8, borderTop: '1px solid #e5e7eb', marginTop: 'auto' }}>
+          <div style={{ padding: '8px calc(8px + env(safe-area-inset-right)) calc(8px + env(safe-area-inset-bottom)) 8px', borderTop: '1px solid #e5e7eb', marginTop: 'auto' }}>
             <div style={{ fontSize: 12, color: '#6b7280', margin: '6px 8px' }}>Sociala medier</div>
             <div style={{ display: 'flex', justifyContent: 'space-evenly', gap: 12, padding: '0 8px 8px 8px' }}>
               <a href="https://www.youtube.com/@isoleringslandslaget8661" target="_blank" rel="noopener noreferrer" aria-label="YouTube" onClick={() => setOpen(false)} className="btn--plain" style={{ padding: 6, borderRadius: 6, border: '1px solid #e5e7eb', background: '#fff', display: 'inline-flex' }}>

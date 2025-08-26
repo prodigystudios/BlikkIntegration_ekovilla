@@ -29,18 +29,18 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   <body style={{ fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif', margin: 0, width: '100%', overflowX: 'hidden', minHeight: '100dvh', background: '#fff', paddingBottom: 'env(safe-area-inset-bottom)' }}>
       {/* Fixed, full-width header */}
     <header
+        className="header-app"
         style={{
           position: 'fixed',
           top: 0,
           left: 0,
           right: 0,
-          height: 'calc(18px + env(safe-area-inset-top))',
           background: '#ffffffff',
           color: '#0b0f10',
           display: 'flex',
           alignItems: 'center',
-      padding: '0 16px',
-      paddingTop: 'env(safe-area-inset-top)',
+          paddingLeft: 16,
+          paddingRight: 16,
           gap: 25,
           zIndex: 1000,
           boxShadow: '0 8px 8px rgba(0,0,0,0.08)'
@@ -52,8 +52,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <div style={{ marginLeft: 'auto' }} />
         <HeaderMenu />
       </header>
-  {/* Content wrapper with top padding to avoid overlap (accounts for safe area + tiny gap for shadow) */} 
-  <div style={{ paddingTop: 'calc(56px + env(safe-area-inset-top) + 8px)' }}>{children}</div>
+  {/* Content wrapper with top padding to avoid overlap (responsive + safe area) */} 
+  <div className="content-offset">{children}</div>
       <Script id="sw-register" strategy="afterInteractive">
         {`
           if ('serviceWorker' in navigator) {
