@@ -814,13 +814,22 @@ export async function POST(req: NextRequest): Promise<Response> {
       // Render a light right-aligned timestamp as a watermark-like note
       {
         const tsRaw = String(body?.signatureTimestamp || '').trim();
+        const tz = String(body?.signatureTimeZone || '').trim();
         if (tsRaw) {
           const d = new Date(tsRaw);
           const valid = !isNaN(d.getTime());
           const pad = (n: number) => (n < 10 ? '0' + n : String(n));
-          const stamp = valid
-            ? `Signed at: ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
-            : `Signed at: ${tsRaw}`;
+          const formatWithTZ = (date: Date) => {
+            try {
+              if (tz) {
+                const fmt = new Intl.DateTimeFormat('sv-SE', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+                const parts = fmt.formatToParts(date).reduce((acc: any, p) => (acc[p.type] = p.value, acc), {} as any);
+                return `Signed at: ${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute} ${tz}`;
+              }
+            } catch {}
+            return `Signed at: ${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+          };
+          const stamp = valid ? formatWithTZ(d) : `Signed at: ${tsRaw}`;
           const noteSize = 8;
           const noteW = (font as any).widthOfTextAtSize(stamp, noteSize);
           const noteX = xLine + lineW - noteW;
@@ -1253,13 +1262,22 @@ export async function POST(req: NextRequest): Promise<Response> {
       } catch {}
       // Optional right-aligned timestamp
       const tsRaw = String(body?.signatureTimestamp || '').trim();
+      const tz = String(body?.signatureTimeZone || '').trim();
       if (tsRaw) {
         const d = new Date(tsRaw);
         const valid = !isNaN(d.getTime());
         const pad2 = (n: number) => (n < 10 ? '0' + n : String(n));
-        const stamp = valid
-          ? `Signed at: ${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`
-          : `Signed at: ${tsRaw}`;
+        const formatWithTZ = (date: Date) => {
+          try {
+            if (tz) {
+              const fmt = new Intl.DateTimeFormat('sv-SE', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+              const parts = fmt.formatToParts(date).reduce((acc: any, p) => (acc[p.type] = p.value, acc), {} as any);
+              return `Signed at: ${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute} ${tz}`;
+            }
+          } catch {}
+          return `Signed at: ${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())} ${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+        };
+        const stamp = valid ? formatWithTZ(d) : `Signed at: ${tsRaw}`;
         const noteSize = 8;
   const noteW = (tFont as any).widthOfTextAtSize(stamp, noteSize);
   const noteOff = getOffset('signature.timestamp');

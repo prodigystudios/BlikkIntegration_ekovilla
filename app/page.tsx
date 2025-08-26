@@ -258,9 +258,7 @@ export default function Home() {
     const pos = getCanvasPos(e);
     isDrawingRef.current = true;
     lastPosRef.current = pos;
-    if (!signatureTimestamp) {
-      setSignatureTimestamp(new Date().toISOString());
-    }
+  // don't timestamp on start; set it on stroke end to reflect actual sign time
     ctx.strokeStyle = '#111827';
     ctx.lineWidth = 2;
     ctx.lineCap = 'round';
@@ -285,6 +283,8 @@ export default function Home() {
     e.preventDefault();
     isDrawingRef.current = false;
     lastPosRef.current = null;
+  // set timestamp when the user completes a stroke
+  setSignatureTimestamp(new Date().toISOString());
   };
 
   // Prepare canvas for high-DPI drawing
@@ -842,6 +842,9 @@ export default function Home() {
                   },
                   signatureDateCity,
                   signatureTimestamp,
+                  signatureTimeZone: (() => {
+                    try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch { return ''; }
+                  })(),
                   // Use transparent PNG directly from the signature canvas (no background fill)
                   signature: signatureCanvasRef.current?.toDataURL('image/png') || null,
                   etapperOpen: etapperOpen.filter(r => Object.values(r).some(v => String(v ?? '').trim() !== '')),

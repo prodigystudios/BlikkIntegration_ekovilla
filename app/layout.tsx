@@ -1,5 +1,6 @@
 import './globals.css';
 import HeaderMenu from './components/HeaderMenu';
+import Script from 'next/script';
 import HeaderTitle from './components/HeaderTitle';
 
 export const viewport = {
@@ -8,6 +9,7 @@ export const viewport = {
   // Optional: restrict pinch-zoom. Consider accessibility before using.
   maximumScale: 1,
   userScalable: false,
+  viewportFit: 'cover',
 } as const;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -16,9 +18,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <head>
       <link rel="icon" href="/favicon.ico" sizes="any" />
       <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes='180x180'/>
+      <link rel="manifest" href="/manifest.webmanifest" />
+      <meta name="theme-color" content="#0ea5e9" />
+      <meta name="mobile-web-app-capable" content="yes" />
+      <meta name="apple-mobile-web-app-capable" content="yes" />
+      <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+      <meta name="apple-mobile-web-app-title" content="Egenkontroll" />
   <meta name="color-scheme" content="light" />
     </head>
-    <body style={{ fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif', margin: 0, width: '100%', overflowX: 'hidden' }}>
+    <body style={{ fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif', margin: 0, width: '100%', overflowX: 'hidden', minHeight: '100dvh', background: '#fff' }}>
       {/* Fixed, full-width header */}
       <header
         style={{
@@ -45,6 +53,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </header>
       {/* Content wrapper with top padding to avoid overlap */} 
       <div style={{ paddingTop: 64 }}>{children}</div>
+      <Script id="sw-register" strategy="afterInteractive">
+        {`
+          if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+              navigator.serviceWorker.register('/sw.js').catch(() => {});
+            });
+          }
+        `}
+      </Script>
     </body>
     </html>
   );
