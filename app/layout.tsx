@@ -26,20 +26,21 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <meta name="apple-mobile-web-app-title" content="Egenkontroll" />
   <meta name="color-scheme" content="light" />
     </head>
-    <body style={{ fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif', margin: 0, width: '100%', overflowX: 'hidden', minHeight: '100dvh', background: '#fff' }}>
+  <body style={{ fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif', margin: 0, width: '100%', overflowX: 'hidden', minHeight: '100dvh', background: '#fff', paddingBottom: 'env(safe-area-inset-bottom)' }}>
       {/* Fixed, full-width header */}
-      <header
+    <header
         style={{
           position: 'fixed',
           top: 0,
           left: 0,
           right: 0,
-          height: 64,
+      height: 'calc(64px + env(safe-area-inset-top))',
           background: '#ffffffff',
           color: '#0b0f10',
           display: 'flex',
           alignItems: 'center',
-          padding: '0 16px',
+      padding: '0 16px',
+      paddingTop: 'env(safe-area-inset-top)',
           gap: 25,
           zIndex: 1000,
           boxShadow: '0 8px 8px rgba(0,0,0,0.08)'
@@ -51,8 +52,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <div style={{ marginLeft: 'auto' }} />
         <HeaderMenu />
       </header>
-      {/* Content wrapper with top padding to avoid overlap */} 
-      <div style={{ paddingTop: 64 }}>{children}</div>
+  {/* Content wrapper with top padding to avoid overlap (accounts for safe area) */} 
+  <div style={{ paddingTop: 'calc(64px + env(safe-area-inset-top))' }}>{children}</div>
       <Script id="sw-register" strategy="afterInteractive">
         {`
           if ('serviceWorker' in navigator) {
