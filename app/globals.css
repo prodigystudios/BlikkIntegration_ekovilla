@@ -241,7 +241,11 @@ select.select-field option { color: #111827; background-color: #ffffff; }
 /* Default mobile (in browser tabs): keep desktop-like height for consistency */
 @media (max-width: 640px) { :root { --header-base: 56px; } }
 /* Home-screen (PWA standalone) on phones: use compact base height */
-@media (display-mode: standalone) and (max-width: 640px) { :root { --header-base: 18px; --content-gap: 56px; } }
+@media (display-mode: standalone) and (max-width: 640px) { :root { --header-base: 56px; --content-gap: 12px; } }
+/* Override for iOS Safari/WebApp: use compact header in standalone */
+@supports (-webkit-touch-callout: none) {
+  @media (display-mode: standalone) and (max-width: 640px) { :root { --header-base: 56px; --content-gap: 20px; } }
+}
 .header-app { height: calc(var(--header-base) + var(--safe-top)); padding-top: var(--safe-top); }
 .content-offset { padding-top: calc(var(--header-base) + var(--safe-top) + var(--content-gap)); }
 
