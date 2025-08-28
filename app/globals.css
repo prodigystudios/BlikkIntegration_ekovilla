@@ -222,6 +222,19 @@ select.select-field option { color: #111827; background-color: #ffffff; }
 .menu-link:active { background: #f3f4f6; }
 .menu-link.is-active { background: #eef2ff; } /* subtle indigo-50 */
 
+/* Horizontal scroll helper for touch devices */
+.hscroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  touch-action: pan-x;
+}
+.hscroll input,
+.hscroll select,
+.hscroll textarea {
+  touch-action: pan-x;
+}
+
 /* In standalone (home screen), start the drawer below the header and safe area */
 @media (display-mode: standalone) {
   .drawer-root {
