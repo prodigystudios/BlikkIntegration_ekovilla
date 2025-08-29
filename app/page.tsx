@@ -169,6 +169,38 @@ export default function Home() {
   setSignatureTimestamp(null);
   };
   const [signatureDateCity, setSignatureDateCity] = useState('');
+  // Optional photos (do not persist in draft)
+  const [beforePhoto, setBeforePhoto] = useState<File | null>(null);
+  const [afterPhoto, setAfterPhoto] = useState<File | null>(null);
+  const beforeInputRef = useRef<HTMLInputElement | null>(null);
+  const afterInputRef = useRef<HTMLInputElement | null>(null);
+  // PDF preview modal state
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [isPreviewing, setIsPreviewing] = useState(false);
+
+  const closePreview = () => {
+    try { if (previewUrl) URL.revokeObjectURL(previewUrl); } catch {}
+    setPreviewUrl(null);
+    setIsPreviewOpen(false);
+  };
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closePreview();
+    };
+    if (isPreviewOpen) window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isPreviewOpen]);
+
+  const fileToDataUrl = async (f: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(reader.error || new Error('Failed to read file'));
+      reader.readAsDataURL(f);
+    });
+  };
   const getDraftKey = (id?: string) => `egenkontroll:draft:${(id ?? orderId) || 'no-order'}`;
   function collectDraft() {
   // Do not persist signature image or timestamp to avoid iOS black-box on reload
@@ -762,6 +794,27 @@ export default function Home() {
           </div>
         </div>
           </section>
+          {/* Optional photos to include on page 2 of the PDF */}
+          <section style={{ borderTop: '1px solid #e5e7eb', paddingTop: 12 }}>
+            <h3>Bilder</h3>
+            <div style={{ display: 'grid', gap: 12, maxWidth: 600 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <button type="button" className="btn--primary btn--med" onClick={() => beforeInputRef.current?.click()}>Välj före-bild</button>
+                <span style={{ color: beforePhoto ? '#111827' : '#6b7280', fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '60%' }}>
+                  {beforePhoto ? beforePhoto.name : 'Ingen fil vald'}
+                </span>
+                <input ref={beforeInputRef} type="file" accept="image/*" onChange={(e) => setBeforePhoto(e.target.files?.[0] ?? null)} style={{ display: 'none' }} />
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <button type="button" className="btn--primary btn--med" onClick={() => afterInputRef.current?.click()}>Välj efter-bild</button>
+                <span style={{ color: afterPhoto ? '#111827' : '#6b7280', fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '60%' }}>
+                  {afterPhoto ? afterPhoto.name : 'Ingen fil vald'}
+                </span>
+                <input ref={afterInputRef} type="file" accept="image/*" onChange={(e) => setAfterPhoto(e.target.files?.[0] ?? null)} style={{ display: 'none' }} />
+              </div>
+              <small style={{ color: '#6b7280' }}>Om du väljer någon bild kommer en sida två läggas till i PDF:en med dessa bilder.</small>
+            </div>
+          </section>
           <section style={{ borderTop: '1px solid #e5e7eb', paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
             <h3>Signatur</h3>
             <div>
@@ -806,8 +859,90 @@ export default function Home() {
               <small style={{ color: '#6b7280' }}>Detta fält hamnar under "Antal säckar" i projektkommentaren i Blikk.</small>
             </div>
           </section>
+          {/* Preview modal */}
+          {isPreviewOpen && (
+            <div role="dialog" aria-modal="true" style={{ position: 'fixed', inset: 0, zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <div onClick={closePreview} style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.45)' }} />
+              <div style={{ position: 'relative', background: '#fff', width: 'min(96vw, 920px)', height: 'min(90vh, 760px)', borderRadius: 12, boxShadow: '0 20px 50px rgba(0,0,0,0.25)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                <div style={{ padding: '10px 12px', borderBottom: '1px solid #e5e7eb', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <strong style={{ fontSize: 14 }}>Förhandsvisning</strong>
+                  <div style={{ marginLeft: 'auto' }} />
+                  <button className="btn--danger btn--sm" onClick={closePreview}>Stäng</button>
+                </div>
+                <div style={{ flex: 1, minHeight: 0 }}>
+                  {previewUrl ? (
+                    <iframe title="PDF preview" src={previewUrl} style={{ border: 'none', width: '100%', height: '100%' }} />
+                  ) : (
+                    <div style={{ height: '100%', display: 'grid', placeItems: 'center', color: '#6b7280' }}>Ingen förhandsvisning</div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
           <section style={{ marginTop: 24, display: 'grid', gap: 12, maxWidth: 600, minWidth: 0 }}>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <button
+                className="btn--primary btn--lg"
+                disabled={isSaving}
+                onClick={async () => {
+                  if (isSaving) return;
+          setIsPreviewing(true);
+          setMessage('Genererar förhandsvisning…');
+                  // Only basic validation so users can preview earlier
+                  const topOk = validateTopLevel();
+                  if (!topOk) return;
+                  const payload: any = {
+                    orderId: orderId.trim(),
+                    projectNumber,
+                    installerName,
+                    workAddress: {
+                      streetAddress: workStreet,
+                      postalCode: workPostalCode,
+                      city: workCity,
+                    },
+                    installationDate,
+                    clientName,
+                    materialUsed,
+                    checks: {
+                      takfotsventilation: { ok: eavesVentOk, comment: eavesVentComment },
+                      snickerier: { ok: carpentryOk, comment: carpentryComment },
+                      tatskikt: { ok: waterproofingOk, comment: waterproofingComment },
+                      genomforningar: { ok: genomforningarOk, comment: genomforningarComment },
+                      grovstadning: { ok: grovstadningOk, comment: grovstadningComment },
+                      markskylt: { ok: markskyltOk, comment: markskyltComment },
+                      ovrigaKommentarer: { comment: ovrigaKommentarer },
+                    },
+                    signatureDateCity,
+                    signatureTimestamp,
+                    signatureTimeZone: (() => {
+                      try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch { return ''; }
+                    })(),
+                    signature: signatureCanvasRef.current?.toDataURL('image/png') || null,
+                    etapperOpen: etapperOpen.filter(r => Object.values(r).some(v => String(v ?? '').trim() !== '')),
+                    etapperClosed: etapperClosed.filter(r => Object.values(r).some(v => String(v ?? '').trim() !== '')),
+                  };
+                  if (beforePhoto) payload.beforeImageDataUrl = await fileToDataUrl(beforePhoto);
+                  if (afterPhoto) payload.afterImageDataUrl = await fileToDataUrl(afterPhoto);
+                  try {
+                    const res = await fetch('/api/pdf/generate', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify(payload),
+                    });
+                    if (!res.ok) throw new Error(await res.text());
+                    const blob = await res.blob();
+                    try { if (previewUrl) URL.revokeObjectURL(previewUrl); } catch {}
+                    const url = URL.createObjectURL(blob);
+                    setPreviewUrl(url);
+                    setIsPreviewOpen(true);
+                    setMessage('Förhandsvisning genererad.');
+                  } catch (e: any) {
+                    setToast({ text: e?.message || 'Misslyckades att förhandsvisa PDF', type: 'error' });
+                  } finally { setIsPreviewing(false); }
+                }}
+              >
+                Förhandsvisa
+              </button>
               <button
                 className="btn--success btn--lg"
                 disabled={isSaving}
@@ -819,7 +954,7 @@ export default function Home() {
                   const topOk = validateTopLevel();
                   if (!rowsOk || !topOk) return;
                   setIsSaving(true);
-                const payload = {
+                const payload: any = {
                   orderId: orderId.trim(),
                   projectNumber,
                   installerName,
@@ -879,6 +1014,9 @@ export default function Home() {
                     return btoa(binary);
                   }
                 };
+                // Attach optional images (as DataURLs) for the PDF second page
+                if (beforePhoto) payload.beforeImageDataUrl = await fileToDataUrl(beforePhoto);
+                if (afterPhoto) payload.afterImageDataUrl = await fileToDataUrl(afterPhoto);
                 try {
                   const res = await fetch('/api/pdf/generate', {
                     method: 'POST',

@@ -20,6 +20,8 @@ export async function POST(req: NextRequest): Promise<Response> {
   checks = {} as any,
   etapperOpen = [] as Array<any>,
   etapperClosed = [] as Array<any>,
+      beforeImageDataUrl,
+      afterImageDataUrl,
       // Optional styling/branding knobs
       branding = {} as {
         companyName?: string;
@@ -1293,6 +1295,48 @@ export async function POST(req: NextRequest): Promise<Response> {
         drawValueAt('signature.name', printedName, s.lineX + 4, yTop(s.nameTopMm));
       }
     }
+
+    // Optional photos page: add as page 2 if provided
+    try {
+      if (beforeImageDataUrl || afterImageDataUrl) {
+        const photosPage = finalDoc.addPage([595.28, 841.89]); // A4
+        const margin2 = 36;
+        const maxW = photosPage.getWidth() - margin2 * 2;
+        const slotH = (photosPage.getHeight() - margin2 * 3) / 2; // two vertical slots
+
+        const embedAndDraw = async (dataUrl: string, x: number, y: number, w: number, h: number) => {
+          const base64 = String(dataUrl || '').split(',')[1] || '';
+          if (!base64) return;
+          const bytes = Uint8Array.from(Buffer.from(base64, 'base64'));
+          let img: any = null;
+          if (/^data:image\/png/i.test(String(dataUrl))) img = await (finalDoc as any).embedPng(bytes);
+          else img = await (finalDoc as any).embedJpg?.(bytes);
+          if (!img) return;
+          const dims = img.scale(1);
+          const scale = Math.min(w / dims.width, h / dims.height);
+          const drawW = dims.width * scale;
+          const drawH = dims.height * scale;
+          const dx = x + (w - drawW) / 2;
+          const dy = y + (h - drawH) / 2;
+          photosPage.drawImage(img, { x: dx, y: dy, width: drawW, height: drawH });
+        };
+
+        const labelColor2 = rgb(0.12, 0.12, 0.14);
+        const titleSize2 = 12;
+
+        let topTitleY = photosPage.getHeight() - margin2 - titleSize2;
+        if (beforeImageDataUrl) {
+          photosPage.drawText('Före', { x: margin2, y: topTitleY, size: titleSize2, font: tBold, color: labelColor2 });
+          await embedAndDraw(beforeImageDataUrl, margin2, topTitleY - 6 - slotH, maxW, slotH - 12);
+        }
+
+        const bottomTitleY = margin2 + slotH + 12;
+        if (afterImageDataUrl) {
+          photosPage.drawText('Efter', { x: margin2, y: bottomTitleY, size: titleSize2, font: tBold, color: labelColor2 });
+          await embedAndDraw(afterImageDataUrl, margin2, margin2, maxW, slotH - 12);
+        }
+      }
+    } catch {}
 
     // NOTE: We do NOT append our generated pages here; template is the main output.
     outBytes = await finalDoc.save();
