@@ -842,7 +842,7 @@ export default function Home() {
           </section>
           {/* Optional photos to include on page 2 of the PDF */}
           <section style={{ borderTop: '1px solid #e5e7eb', paddingTop: 12 }}>
-            <h3>Bilder</h3>
+            <h3>Projektbilder</h3>
             <div style={{ display: 'grid', gap: 12, maxWidth: 600 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                 <button type="button" className="btn--primary btn--med" onClick={() => beforeInputRef.current?.click()}>Välj före-bild</button>
