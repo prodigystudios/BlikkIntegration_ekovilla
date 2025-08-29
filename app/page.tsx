@@ -193,13 +193,59 @@ export default function Home() {
     return () => window.removeEventListener('keydown', onKey);
   }, [isPreviewOpen]);
 
-  const fileToDataUrl = async (f: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result || ''));
-      reader.onerror = () => reject(reader.error || new Error('Failed to read file'));
-      reader.readAsDataURL(f);
+  const loadBitmap = async (file: File): Promise<ImageBitmap | HTMLImageElement> => {
+    try {
+      if ('createImageBitmap' in window) {
+        // Respect EXIF orientation when possible
+        // @ts-ignore
+        return await createImageBitmap(file, { imageOrientation: 'from-image' });
+      }
+    } catch {}
+    const img = new Image();
+    img.decoding = 'async';
+    img.loading = 'eager';
+    const url = URL.createObjectURL(file);
+    return await new Promise((resolve, reject) => {
+      img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+      img.onerror = (e) => { URL.revokeObjectURL(url); reject(e); };
+      img.src = url;
     });
+  };
+  const compressImageToDataUrl = async (file: File, maxDim = 1600, quality = 0.72): Promise<string> => {
+    const bmp = await loadBitmap(file);
+    const sw = 'width' in bmp ? (bmp as any).width : (bmp as any).naturalWidth;
+    const sh = 'height' in bmp ? (bmp as any).height : (bmp as any).naturalHeight;
+    const scale = Math.min(1, maxDim / Math.max(sw, sh));
+    const tw = Math.max(1, Math.round(sw * scale));
+    const th = Math.max(1, Math.round(sh * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = tw; canvas.height = th;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Canvas unsupported');
+    // High-quality scaling hints
+    ctx.imageSmoothingQuality = 'high';
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(bmp as any, 0, 0, tw, th);
+    const dataUrl = canvas.toDataURL('image/jpeg', quality);
+    try { (bmp as any).close?.(); } catch {}
+    return dataUrl;
+  };
+  const compressUnderCap = async (file: File, capBytes = 2_000_000): Promise<string> => {
+    const attempts = [
+      { maxDim: 1600, q: 0.72 },
+      { maxDim: 1280, q: 0.65 },
+      { maxDim: 1024, q: 0.6 },
+      { maxDim: 800, q: 0.6 },
+    ];
+    let last = '';
+    for (const a of attempts) {
+      const url = await compressImageToDataUrl(file, a.maxDim, a.q);
+      last = url;
+      const b64 = url.split(',')[1] || '';
+      const approxBytes = Math.floor((b64.length * 3) / 4);
+      if (approxBytes <= capBytes) return url;
+    }
+    return last;
   };
   const getDraftKey = (id?: string) => `egenkontroll:draft:${(id ?? orderId) || 'no-order'}`;
   function collectDraft() {
@@ -921,8 +967,8 @@ export default function Home() {
                     etapperOpen: etapperOpen.filter(r => Object.values(r).some(v => String(v ?? '').trim() !== '')),
                     etapperClosed: etapperClosed.filter(r => Object.values(r).some(v => String(v ?? '').trim() !== '')),
                   };
-                  if (beforePhoto) payload.beforeImageDataUrl = await fileToDataUrl(beforePhoto);
-                  if (afterPhoto) payload.afterImageDataUrl = await fileToDataUrl(afterPhoto);
+                  if (beforePhoto) payload.beforeImageDataUrl = await compressUnderCap(beforePhoto);
+                  if (afterPhoto) payload.afterImageDataUrl = await compressUnderCap(afterPhoto);
                   try {
                     const res = await fetch('/api/pdf/generate', {
                       method: 'POST',
@@ -1015,8 +1061,8 @@ export default function Home() {
                   }
                 };
                 // Attach optional images (as DataURLs) for the PDF second page
-                if (beforePhoto) payload.beforeImageDataUrl = await fileToDataUrl(beforePhoto);
-                if (afterPhoto) payload.afterImageDataUrl = await fileToDataUrl(afterPhoto);
+                if (beforePhoto) payload.beforeImageDataUrl = await compressUnderCap(beforePhoto);
+                if (afterPhoto) payload.afterImageDataUrl = await compressUnderCap(afterPhoto);
                 try {
                   const res = await fetch('/api/pdf/generate', {
                     method: 'POST',
