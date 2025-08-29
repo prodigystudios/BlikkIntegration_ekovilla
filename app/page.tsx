@@ -913,6 +913,12 @@ export default function Home() {
                 <div style={{ padding: '10px 12px', borderBottom: '1px solid #e5e7eb', display: 'flex', alignItems: 'center', gap: 8 }}>
                   <strong style={{ fontSize: 14 }}>Förhandsvisning</strong>
                   <div style={{ marginLeft: 'auto' }} />
+                  {previewUrl && (
+                    <>
+                      <a href={previewUrl} download={`Egenkontroll_forhandsvisning.pdf`} className="btn--plain btn--sm">Ladda ner</a>
+                      <button className="btn--primary btn--sm" onClick={() => previewUrl && window.open(previewUrl, '_blank')}>Öppna i ny flik</button>
+                    </>
+                  )}
                   <button className="btn--danger btn--sm" onClick={closePreview}>Stäng</button>
                 </div>
                 <div style={{ flex: 1, minHeight: 0 }}>
