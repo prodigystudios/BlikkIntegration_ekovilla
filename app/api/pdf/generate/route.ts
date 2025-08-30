@@ -1330,7 +1330,7 @@ export async function POST(req: NextRequest): Promise<Response> {
           await embedAndDraw(beforeImageDataUrl, margin2, topTitleY - 6 - slotH, maxW, slotH - 12);
         }
 
-        const bottomTitleY = margin2 + slotH + 12;
+        const bottomTitleY = margin2 + slotH + 0;
         if (afterImageDataUrl) {
           photosPage.drawText('Efter', { x: margin2, y: bottomTitleY, size: titleSize2, font: tBold, color: labelColor2 });
           await embedAndDraw(afterImageDataUrl, margin2, margin2, maxW, slotH - 12);
