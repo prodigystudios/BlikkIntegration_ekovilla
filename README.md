@@ -62,3 +62,55 @@ Legacy endpoints for contacts/users/project-creation were removed for now to kee
 - build: next build
 - start: next start
 - type-check: tsc --noEmit
+
+## Körjournal backend (Supabase)
+
+This app stores Körjournal trips in Supabase via the server API at `/api/korjournal/trips`.
+
+Environment variables required (set locally and in Vercel):
+
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- (optional) `SUPABASE_ANON_KEY` if you plan to use client-side auth later
+
+Auth
+
+- A simple email magic link sign-in is available at `/auth/sign-in`.
+- The page `/korjournal` is protected by a server layout that requires a session.
+- The API uses Supabase Auth cookies; each request is scoped to the current user and RLS ensures users only see/insert their own trips.
+
+Suggested table schema (SQL) for `korjournal_trips`:
+
+```sql
+-- Enable pgcrypto if you prefer gen_random_uuid(); in newer projects uuid_generate_v4() also works
+create extension if not exists pgcrypto;
+
+create table if not exists public.korjournal_trips (
+	id uuid primary key default gen_random_uuid(),
+	created_at timestamptz not null default now(),
+	user_id text null,
+	date date not null,
+	start_address text not null,
+	end_address text not null,
+	start_km int4 not null,
+	end_km int4 not null,
+	note text null,
+	sales_person text null
+);
+
+alter table public.korjournal_trips enable row level security;
+
+-- If you later add auth and want users to access their own rows from the client, you can add e.g.:
+-- create policy "korjournal read own" on public.korjournal_trips
+--   for select using (auth.uid()::text = user_id);
+-- create policy "korjournal write own" on public.korjournal_trips
+--   for insert with check (auth.uid()::text = user_id);
+--   
+-- NOTE: The server API here uses the Service Role key and therefore bypasses RLS. Keep the API route server-only.
+```
+
+Client behavior:
+
+- On load, it fetches trips from the API and caches them in `localStorage` as fallback.
+- Adding a trip posts to the API, then updates the list optimistically.
+- Export per-month CSV is available from the Körjournal page.

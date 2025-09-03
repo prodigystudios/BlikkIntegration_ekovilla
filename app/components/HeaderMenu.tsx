@@ -89,6 +89,16 @@ function IconPhone(props: React.SVGProps<SVGSVGElement>) {
     </svg>
   );
 }
+function IconCar(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#111827" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
+      <path d="M3 13l2-5a3 3 0 0 1 2.82-2h8.36A3 3 0 0 1 19 8l2 5"/>
+      <path d="M5 16h14"/>
+      <circle cx="7.5" cy="16.5" r="1.5"/>
+      <circle cx="16.5" cy="16.5" r="1.5"/>
+    </svg>
+  );
+}
 
 export default function HeaderMenu() {
   const [open, setOpen] = useState(false);
@@ -222,6 +232,16 @@ export default function HeaderMenu() {
               className={`menu-link${pathname === '/bestallning-klader' ? ' is-active' : ''}`}>
               <IconShirt />
               <span>Beställning kläder</span>
+            </Link>
+
+            {/* Divider before sales section */}
+            <div role="separator" aria-hidden style={{ height: 1, background: '#e5e7eb', margin: '8px 8px' }} />
+            <div style={{ fontSize: 12, color: '#6b7280', margin: '6px 8px' }}>Säljare</div>
+            <Link href="/korjournal" prefetch={true} onClick={() => setOpen(false)}
+              aria-current={pathname === '/korjournal' ? 'page' : undefined}
+              className={`menu-link${pathname === '/korjournal' ? ' is-active' : ''}`}>
+              <IconCar />
+              <span>Körjournal</span>
             </Link>
           </nav>
 
