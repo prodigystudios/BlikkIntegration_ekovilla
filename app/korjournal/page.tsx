@@ -34,6 +34,7 @@ export default function KorjournalPage() {
   const [error, setError] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState(false);
   const [editing, setEditing] = useState<Trip | null>(null);
+  const [locating, setLocating] = useState<{start?: boolean; end?: boolean}>({});
 
   // Load from API; cache to localStorage as fallback
   useEffect(() => {
@@ -189,6 +190,33 @@ export default function KorjournalPage() {
     }
   };
 
+  async function fillAddress(which: 'start' | 'end') {
+    if (!('geolocation' in navigator)) {
+      alert('Platstjänster stöds inte på den här enheten.');
+      return;
+    }
+    setLocating((s) => ({ ...s, [which]: true }));
+    try {
+      const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: true,
+          timeout: 10000,
+          maximumAge: 60000,
+        });
+      });
+      const lat = pos.coords.latitude;
+      const lon = pos.coords.longitude;
+      const res = await fetch(`/api/geocode/reverse?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}`, { cache: 'no-store' });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j?.error || 'Kunde inte hämta adress');
+      setForm((f: any) => which === 'start' ? { ...f, startAddress: j.address } : { ...f, endAddress: j.address });
+    } catch (e: any) {
+      alert(e?.message || 'Kunde inte hämta din plats');
+    } finally {
+      setLocating((s) => ({ ...s, [which]: false }));
+    }
+  }
+
   const onDelete = async (id: string) => {
     if (!confirm('Ta bort resan?')) return;
     try {
@@ -343,11 +371,21 @@ export default function KorjournalPage() {
               </label>
               <label style={{ display: 'grid', gap: 4 }}>
                 <span>Startadress</span>
-                <input value={form.startAddress} onChange={e => setForm((f:any) => ({ ...f, startAddress: e.target.value }))} placeholder="Ex: Företagsgatan 1, Stockholm" />
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 6 }}>
+                  <input value={form.startAddress} onChange={e => setForm((f:any) => ({ ...f, startAddress: e.target.value }))} placeholder="Ex: Företagsgatan 1, Stockholm" />
+                  <button type="button" className="btn--plain btn--sm" onClick={() => fillAddress('start')} disabled={!!locating.start} title="Hämta nuvarande plats">
+                    {locating.start ? 'Hämtar…' : 'Hämta plats'}
+                  </button>
+                </div>
               </label>
               <label style={{ display: 'grid', gap: 4 }}>
                 <span>Slutadress</span>
-                <input value={form.endAddress} onChange={e => setForm((f:any) => ({ ...f, endAddress: e.target.value }))} placeholder="Ex: Kundvägen 5, Uppsala" />
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 6 }}>
+                  <input value={form.endAddress} onChange={e => setForm((f:any) => ({ ...f, endAddress: e.target.value }))} placeholder="Ex: Kundvägen 5, Uppsala" />
+                  <button type="button" className="btn--plain btn--sm" onClick={() => fillAddress('end')} disabled={!!locating.end} title="Hämta nuvarande plats">
+                    {locating.end ? 'Hämtar…' : 'Hämta plats'}
+                  </button>
+                </div>
               </label>
               <div style={{ display: 'grid', gap: 10, gridTemplateColumns: '1fr 1fr' }}>
                 <label style={{ display: 'grid', gap: 4 }}>
