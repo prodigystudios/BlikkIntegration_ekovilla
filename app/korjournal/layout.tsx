@@ -9,3 +9,6 @@ export default async function KorjournalLayout({ children }: { children: ReactNo
   if (!session) redirect('/auth/sign-in');
   return <>{children}</>;
 }
+
+// Ensure this layout is always dynamic so auth state updates immediately after sign-in
+export const dynamic = 'force-dynamic';

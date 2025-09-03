@@ -18,13 +18,24 @@ export default function SignInPage() {
     }
     setLoading(true);
     setError(null);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+  const { error } = await supabase.auth.signInWithPassword({ email, password });
     setLoading(false);
     if (error) {
       setError(error.message);
       return;
     }
+  // Ensure server session cookie is synced before navigating (important for PWA)
+  try { await fetch('/api/auth/callback', { method: 'POST', cache: 'no-store' }); } catch {}
     router.replace("/korjournal");
+    // In case the app shell cached page doesn’t pick up the session instantly, do a delayed refresh once.
+    setTimeout(() => {
+      try {
+        // Only attempt if still on sign-in route
+        if (window.location.pathname.startsWith('/auth')) {
+          window.location.href = '/korjournal';
+        }
+      } catch {}
+    }, 250);
   };
 
   return (
