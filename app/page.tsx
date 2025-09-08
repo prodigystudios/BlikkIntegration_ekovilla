@@ -22,6 +22,7 @@ export default function Home() {
   const [clientName, setClientName] = useState('');
 
   const [materialUsed, setMaterialUsed] = useState('');
+  const [flufferUsed, setFlufferUsed] = useState(false); // whether fluffer used for density
 
   // Material properties: bag weight (kg/sack) and lambdavärde (W/m²K)
   const MATERIALS: Record<string, { bagWeight: number; lambda: string }> = useMemo(
@@ -51,6 +52,10 @@ export default function Home() {
   const [ovrigaKommentarer, setOvrigaKommentarer] = useState(''); // Övriga kommentarer (no checkbox)
   // Additional free-form reporting that will be added to the Blikk comment under RAPPORTERING
   const [ovrigRapportering, setOvrigRapportering] = useState('');
+  // New (not included in PDF) metadata fields
+  const [batchNumber, setBatchNumber] = useState('');
+  const [dammighet, setDammighet] = useState<string>(''); // 1-10 (optional)
+  const [klumpighet, setKlumpighet] = useState<string>(''); // 1-10 (optional)
 
   type EtappOpenRow = {
     etapp?: string;
@@ -260,6 +265,7 @@ export default function Home() {
       installationDate,
       clientName,
       materialUsed,
+  flufferUsed,
       checks: {
         eavesVentOk, eavesVentComment,
         carpentryOk, carpentryComment,
@@ -270,6 +276,9 @@ export default function Home() {
         ovrigaKommentarer,
       },
   ovrigRapportering,
+  batchNumber,
+  dammighet,
+  klumpighet,
       signatureDateCity,
       etapperOpen,
       etapperClosed,
@@ -287,6 +296,7 @@ export default function Home() {
       if (typeof d.installationDate === 'string') setInstallationDate(d.installationDate);
       if (typeof d.clientName === 'string') setClientName(d.clientName);
       if (typeof d.materialUsed === 'string') setMaterialUsed(d.materialUsed);
+  if (typeof d.flufferUsed === 'boolean') setFlufferUsed(d.flufferUsed);
       if (d.checks && typeof d.checks === 'object') {
         if ('eavesVentOk' in d.checks) setEavesVentOk(!!d.checks.eavesVentOk);
         if ('eavesVentComment' in d.checks) setEavesVentComment(String(d.checks.eavesVentComment || ''));
@@ -303,6 +313,9 @@ export default function Home() {
         if ('ovrigaKommentarer' in d.checks) setOvrigaKommentarer(String(d.checks.ovrigaKommentarer || ''));
       }
       if (typeof d.ovrigRapportering === 'string') setOvrigRapportering(d.ovrigRapportering);
+  if (typeof d.batchNumber === 'string') setBatchNumber(d.batchNumber);
+  if (typeof d.dammighet === 'string') setDammighet(d.dammighet);
+  if (typeof d.klumpighet === 'string') setKlumpighet(d.klumpighet);
       if (typeof d.signatureDateCity === 'string') setSignatureDateCity(d.signatureDateCity);
   // Do not restore signature timestamp or image from draft
   if (Array.isArray(d.etapperOpen)) setEtapperOpen(d.etapperOpen.slice(0, 3));
@@ -412,7 +425,7 @@ export default function Home() {
       if (autosaveTimer.current) window.clearTimeout(autosaveTimer.current);
     };
     // Include main fields and rows; signature is read on save from canvas inside collectDraft
-  }, [orderId, projectNumber, installerName, workStreet, workPostalCode, workCity, installationDate, clientName, materialUsed, eavesVentOk, eavesVentComment, carpentryOk, carpentryComment, waterproofingOk, waterproofingComment, genomforningarOk, genomforningarComment, grovstadningOk, grovstadningComment, markskyltOk, markskyltComment, ovrigaKommentarer, ovrigRapportering, signatureDateCity, etapperOpen, etapperClosed]);
+  }, [orderId, projectNumber, installerName, workStreet, workPostalCode, workCity, installationDate, clientName, materialUsed, flufferUsed, eavesVentOk, eavesVentComment, carpentryOk, carpentryComment, waterproofingOk, waterproofingComment, genomforningarOk, genomforningarComment, grovstadningOk, grovstadningComment, markskyltOk, markskyltComment, ovrigaKommentarer, ovrigRapportering, batchNumber, dammighet, klumpighet, signatureDateCity, etapperOpen, etapperClosed]);
 
   // Validation helpers: require certain fields if a row has any data
   const isNonEmpty = (v: unknown) => String(v ?? '').trim() !== '';
@@ -752,6 +765,64 @@ export default function Home() {
           </div>
         </div>
           </section>
+          {/* Batch & rating fields (NOT included in PDF) */}
+          <section style={{ borderTop: '1px solid #e5e7eb', paddingTop: 2 }}>
+            <h3>Batch & materialbedömning</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, maxWidth: 720 }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: '1 1 200px', minWidth: 180 }}>
+                  <span style={{ fontSize: 12, fontWeight: 600 }}>Batch / Säcksnummer (frivilligt)</span>
+                  <input
+                    value={batchNumber}
+                    onChange={(e) => setBatchNumber(e.target.value)}
+                    placeholder="Batchnummer"
+                    style={{ padding: '6px 8px' }}
+                  />
+                </label>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 4, width: 140 }}>
+                  <span style={{ fontSize: 12, fontWeight: 600 }}>Dammighet 1–10</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={10}
+                    inputMode="numeric"
+                    value={dammighet}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (v === '') return setDammighet('');
+                      const num = Number(v);
+                      if (!Number.isNaN(num) && num >= 1 && num <= 10) setDammighet(String(num));
+                    }}
+                    placeholder="-"
+                    style={{ padding: '6px 8px' }}
+                  />
+                </label>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 4, width: 140 }}>
+                  <span style={{ fontSize: 12, fontWeight: 600 }}>Klumpighet 1–10</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={10}
+                    inputMode="numeric"
+                    value={klumpighet}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (v === '') return setKlumpighet('');
+                      const num = Number(v);
+                      if (!Number.isNaN(num) && num >= 1 && num <= 10) setKlumpighet(String(num));
+                    }}
+                    placeholder="-"
+                    style={{ padding: '6px 8px' }}
+                  />
+                </label>
+              </div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input type="checkbox" checked={flufferUsed} onChange={(e) => setFlufferUsed(e.target.checked)} />
+                <span style={{ fontSize: 13 }}>Fluffer använd</span>
+              </label>
+              <small style={{ color: '#6b7280' }}>Intern uppföljning: dessa värden följer inte med till Egenkontroll.</small>
+            </div>
+          </section>
           
             
           
@@ -1018,6 +1089,7 @@ export default function Home() {
                   installationDate,
                   clientName,
                   materialUsed,
+                  flufferUsed,
                   checks: {
                     takfotsventilation: { ok: eavesVentOk, comment: eavesVentComment },
                     snickerier: { ok: carpentryOk, comment: carpentryComment },
@@ -1106,6 +1178,27 @@ export default function Home() {
                   setToast({ text: 'Sparat i arkiv', type: 'success' });
                   // Clear draft after successful archive save
                   try { localStorage.removeItem(getDraftKey()); localStorage.removeItem(getDraftKey('no-order')); } catch {}
+
+                  // Fire-and-forget ingest of internal material quality samples (not blocking UI)
+                  try {
+                    const ingestPayload = {
+                      orderId: orderId.trim(),
+                      projectNumber,
+                      installationDate,
+                      materialUsed,
+                      flufferUsed,
+                      batchNumber,
+                      dammighet,
+                      klumpighet,
+                      etapperOpen: etapperOpen.filter(r => Object.values(r).some(v => String(v ?? '').trim() !== '')),
+                      etapperClosed: etapperClosed.filter(r => Object.values(r).some(v => String(v ?? '').trim() !== '')),
+                    };
+                    fetch('/api/material-quality/ingest', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify(ingestPayload),
+                    }).catch(() => {});
+                  } catch {}
 
                   // Optionally add a comment to the Blikk project to note completion (with download link)
                   try {

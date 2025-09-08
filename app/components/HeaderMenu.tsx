@@ -233,6 +233,12 @@ export default function HeaderMenu() {
               <IconShirt />
               <span>Beställning kläder</span>
             </Link>
+            <Link href="/material-kvalitet" prefetch={false} onClick={() => setOpen(false)}
+              aria-current={pathname === '/material-kvalitet' ? 'page' : undefined}
+              className={`menu-link${pathname === '/material-kvalitet' ? ' is-active' : ''}`}>
+              <IconArchive />
+              <span>Materialkvalitet</span>
+            </Link>
 
             {/* Divider before sales section */}
             <div role="separator" aria-hidden style={{ height: 1, background: '#e5e7eb', margin: '8px 8px' }} />
