@@ -37,7 +37,9 @@ export default function MaterialKvalitetPage() {
   const [activeIndex, setActiveIndex] = useState(0); // which batch card is visible (batch grouping only)
   const [touchStartX, setTouchStartX] = useState<number | null>(null);
   const [touchDeltaX, setTouchDeltaX] = useState(0);
-  const SWIPE_THRESHOLD = 60; // px
+  // Slightly easier commit on touch devices (iOS/Android), unchanged for desktop
+  const isTouch = typeof navigator !== 'undefined' && ((navigator as any).maxTouchPoints || 0) > 0;
+  const SWIPE_THRESHOLD = isTouch ? 40 : 60; // px
 
   useEffect(() => {
     (async () => {
@@ -241,7 +243,8 @@ export default function MaterialKvalitetPage() {
                           display: 'grid',
                           gap: 12,
                           touchAction: 'pan-y',
-                          transform: translating ? `translateX(${touchDeltaX}px)` : 'translateX(0)',
+                          transform: translating ? `translate3d(${touchDeltaX}px, 0, 0)` : 'translate3d(0, 0, 0)',
+                          willChange: 'transform',
                           transition: translating ? 'none' : 'transform 160ms ease'
                         }}
                         onTouchStart={(e) => {

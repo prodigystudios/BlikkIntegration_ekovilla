@@ -35,6 +35,7 @@ export default function KorjournalPage() {
   const [isExporting, setIsExporting] = useState(false);
   const [editing, setEditing] = useState<Trip | null>(null);
   const [locating, setLocating] = useState<{start?: boolean; end?: boolean}>({});
+  const [isSaving, setIsSaving] = useState(false); // prevent double submit
 
   // Load from API; cache to localStorage as fallback
   useEffect(() => {
@@ -105,6 +106,8 @@ export default function KorjournalPage() {
   };
 
   const submit = async () => {
+    if (isSaving) return; // guard double click
+    setIsSaving(true);
     setError(null);
     const startKm = form.startKm === '' || form.startKm === null || form.startKm === undefined ? null : Number(form.startKm);
     const endKm = form.endKm === '' || form.endKm === null || form.endKm === undefined ? null : Number(form.endKm);
@@ -187,6 +190,9 @@ export default function KorjournalPage() {
       setEditing(null);
     } catch (e: any) {
       setError(e?.message || 'Kunde inte spara resan');
+    } finally {
+      // Only reset saving if modal still open (error case) – if closed, next open resets logically
+      if (open) setIsSaving(false);
     }
   };
 
@@ -402,7 +408,9 @@ export default function KorjournalPage() {
                 <input value={form.note} onChange={e => setForm((f:any) => ({ ...f, note: e.target.value }))} placeholder="Syfte med resan" />
               </label>
               <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-                <button className="btn--success btn--sm" onClick={submit}>Spara resa</button>
+                <button className="btn--success btn--sm" onClick={submit} disabled={isSaving}>
+                  {isSaving ? 'Sparar…' : 'Spara resa'}
+                </button>
                 <button className="btn--plain btn--sm" onClick={() => { resetForm(); setError(null); }}>Rensa</button>
               </div>
             </div>
