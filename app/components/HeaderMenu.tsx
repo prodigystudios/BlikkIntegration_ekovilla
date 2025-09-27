@@ -102,6 +102,16 @@ function IconCar(props: React.SVGProps<SVGSVGElement>) {
     </svg>
   );
 }
+function IconCalendar(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#111827" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
+      <rect x="3" y="4" width="18" height="18" rx="2" />
+      <line x1="16" y1="2" x2="16" y2="6" />
+      <line x1="8" y1="2" x2="8" y2="6" />
+      <line x1="3" y1="10" x2="21" y2="10" />
+    </svg>
+  );
+}
 
 export default function HeaderMenu({ role, fullName }: { role: UserRole | null, fullName?: string | null }) {
   const [open, setOpen] = useState(false);
@@ -217,43 +227,52 @@ export default function HeaderMenu({ role, fullName }: { role: UserRole | null, 
             </button>
           </div>
           <nav style={{ padding: 8, flex: '1 1 auto', overflowY: 'auto' }}>
-            {isMobile && (
-              <div style={{ padding: '6px 8px 10px' }}>
-                <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.5, color: '#6b7280', margin: '0 0 4px 2px' }}>Konto</div>
-                <div style={{ display:'flex', flexDirection:'column', gap:4, padding: '8px 10px', border: '1px solid #e5e7eb', borderRadius: 10, background:'#f9fafb' }}>
-                  <div style={{ fontSize:14, fontWeight:500, color:'#111827' }}>{fullName || 'Inget namn'}</div>
-                  <div style={{ fontSize:11, textTransform:'uppercase', letterSpacing:0.5, color:'#6b7280' }}>{role || 'ingen roll'}</div>
-                  <button onClick={async()=>{ const sup = (await import('@supabase/auth-helpers-nextjs')).createClientComponentClient(); await sup.auth.signOut(); window.location.href='/auth/sign-in'; }} style={{ alignSelf:'flex-start', padding:'6px 10px', fontSize:12, borderRadius:6, border:'1px solid #111827', background:'#111827', color:'#fff', cursor:'pointer' }}>Logga ut</button>
-                </div>
-              </div>
-            )}
-            {navLinks.map((l, i) => {
-              const href = l.href;
-              const active = pathname === href || (href !== '/' && pathname?.startsWith(href));
-              const common = {
-                href,
-                prefetch: true,
-                onClick: () => setOpen(false),
-                'aria-current': active ? 'page' : undefined,
-                className: `menu-link${active ? ' is-active' : ''}`
-              } as const;
-              const icon = href === '/' ? <IconHome />
-                : href.startsWith('/archive') ? <IconArchive />
-                : href === '/egenkontroll' ? <IconArchive />
-                : href === '/kontakt-lista' ? <IconPhone />
-                : href === '/dokument-information' ? <IconDoc />
-                : href === '/bestallning-klader' ? <IconShirt />
-                : href === '/korjournal' ? <IconCar />
-                : href === '/material-kvalitet' ? <IconArchive />
-                : href === '/planering' ? <IconArchive />
-                : <IconArchive />;
-              return (
-                <Link key={href} ref={i === 0 ? firstLinkRef : undefined} {...common}>
-                  {icon}
-                  <span>{l.label}</span>
-                </Link>
-              );
-            })}
+            <Link ref={firstLinkRef} href="/" prefetch={false} onClick={() => setOpen(false)}
+              aria-current={pathname === '/' ? 'page' : undefined}
+              className={`menu-link${pathname === '/' ? ' is-active' : ''}`}>
+              <IconHome />
+              <span>Startsida</span>
+            </Link>
+            <Link href="/archive" prefetch={false} onClick={() => setOpen(false)}
+              aria-current={pathname?.startsWith('/archive') ? 'page' : undefined}
+              className={`menu-link${pathname?.startsWith('/archive') ? ' is-active' : ''}`}>
+              <IconArchive />
+              <span>Egenkontroller</span>
+            </Link>
+            <Link href="/kontakt-lista" prefetch={true} onClick={() => setOpen(false)}
+              aria-current={pathname === '/kontakt-lista' ? 'page' : undefined}
+              className={`menu-link${pathname === '/kontakt-lista' ? ' is-active' : ''}`}>
+              <IconPhone />
+              <span>Kontakt & Adresser</span>
+            </Link>
+            <Link href="/dokument-information" prefetch={true} onClick={() => setOpen(false)}
+              aria-current={pathname === '/dokument-information' ? 'page' : undefined}
+              className={`menu-link${pathname === '/dokument-information' ? ' is-active' : ''}`}>
+              <IconDoc />
+              <span>Dokument & Information</span>
+            </Link>
+            <Link href="/bestallning-klader" prefetch={true} onClick={() => setOpen(false)}
+              aria-current={pathname === '/bestallning-klader' ? 'page' : undefined}
+              className={`menu-link${pathname === '/bestallning-klader' ? ' is-active' : ''}`}>
+              <IconShirt />
+              <span>Beställning kläder</span>
+            </Link>
+            <Link href="/material-kvalitet" prefetch={false} onClick={() => setOpen(false)}
+              aria-current={pathname === '/material-kvalitet' ? 'page' : undefined}
+              className={`menu-link${pathname === '/material-kvalitet' ? ' is-active' : ''}`}>
+              <IconArchive />
+              <span>Materialkvalitet</span>
+            </Link>
+
+            {/* Divider before sales section */}
+            <div role="separator" aria-hidden style={{ height: 1, background: '#e5e7eb', margin: '8px 8px' }} />
+            <div style={{ fontSize: 12, color: '#6b7280', margin: '6px 8px' }}>Säljare</div>
+            <Link href="/korjournal" prefetch={true} onClick={() => setOpen(false)}
+              aria-current={pathname === '/korjournal' ? 'page' : undefined}
+              className={`menu-link${pathname === '/korjournal' ? ' is-active' : ''}`}>
+              <IconCar />
+              <span>Körjournal</span>
+            </Link>
           </nav>
 
           {role === 'admin' && (
