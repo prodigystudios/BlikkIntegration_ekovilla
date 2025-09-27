@@ -2,6 +2,8 @@ import './globals.css';
 import HeaderMenu from './components/HeaderMenu';
 import Script from 'next/script';
 import HeaderTitle from './components/HeaderTitle';
+import { getUserProfile } from '../lib/getUserProfile';
+import { UserProfileProvider } from '../lib/UserProfileContext';
 
 export const viewport = {
   width: 'device-width',
@@ -12,7 +14,10 @@ export const viewport = {
   viewportFit: 'cover',
 } as const;
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  // Single consolidated profile fetch (includes role + name)
+  const profile = await getUserProfile();
+  const role = profile?.role || null;
   return (
     <html lang="en">
     <head>
@@ -50,10 +55,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   {/* Client-only header title */}
   <HeaderTitle />
         <div style={{ marginLeft: 'auto' }} />
-        <HeaderMenu />
+  <HeaderMenu role={role} fullName={profile?.full_name || null} />
       </header>
   {/* Content wrapper with top padding to avoid overlap (responsive + safe area) */} 
-  <div className="content-offset">{children}</div>
+  <UserProfileProvider profile={profile}>
+    <div className="content-offset">{children}</div>
+  </UserProfileProvider>
       <Script id="sw-register" strategy="afterInteractive">
         {`
           if ('serviceWorker' in navigator) {

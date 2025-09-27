@@ -1,7 +1,10 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
+import ProfileMenu from "./ProfileMenu";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import type { UserRole } from "../../lib/roles";
+import { filterLinks } from "../../lib/roles";
 
 function IconMenu(props: React.SVGProps<SVGSVGElement>) {
   return (
@@ -100,7 +103,7 @@ function IconCar(props: React.SVGProps<SVGSVGElement>) {
   );
 }
 
-export default function HeaderMenu() {
+export default function HeaderMenu({ role, fullName }: { role: UserRole | null, fullName?: string | null }) {
   const [open, setOpen] = useState(false);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const firstLinkRef = useRef<HTMLAnchorElement | null>(null);
@@ -159,8 +162,10 @@ export default function HeaderMenu() {
     };
   }, [open]);
 
+  const navLinks = useMemo(() => filterLinks(role), [role]);
   return (
-    <div>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+  <ProfileMenu fullName={fullName || null} role={role} />
       <button
         type="button"
         aria-haspopup="dialog"
@@ -203,52 +208,33 @@ export default function HeaderMenu() {
             </button>
           </div>
           <nav style={{ padding: 8, flex: '1 1 auto', overflowY: 'auto' }}>
-            <Link ref={firstLinkRef} href="/" prefetch={false} onClick={() => setOpen(false)}
-              aria-current={pathname === '/' ? 'page' : undefined}
-              className={`menu-link${pathname === '/' ? ' is-active' : ''}`}>
-              <IconHome />
-              <span>Startsida</span>
-            </Link>
-            <Link href="/archive" prefetch={false} onClick={() => setOpen(false)}
-              aria-current={pathname?.startsWith('/archive') ? 'page' : undefined}
-              className={`menu-link${pathname?.startsWith('/archive') ? ' is-active' : ''}`}>
-              <IconArchive />
-              <span>Egenkontroller</span>
-            </Link>
-            <Link href="/kontakt-lista" prefetch={true} onClick={() => setOpen(false)}
-              aria-current={pathname === '/kontakt-lista' ? 'page' : undefined}
-              className={`menu-link${pathname === '/kontakt-lista' ? ' is-active' : ''}`}>
-              <IconPhone />
-              <span>Kontakt & Adresser</span>
-            </Link>
-            <Link href="/dokument-information" prefetch={true} onClick={() => setOpen(false)}
-              aria-current={pathname === '/dokument-information' ? 'page' : undefined}
-              className={`menu-link${pathname === '/dokument-information' ? ' is-active' : ''}`}>
-              <IconDoc />
-              <span>Dokument & Information</span>
-            </Link>
-            <Link href="/bestallning-klader" prefetch={true} onClick={() => setOpen(false)}
-              aria-current={pathname === '/bestallning-klader' ? 'page' : undefined}
-              className={`menu-link${pathname === '/bestallning-klader' ? ' is-active' : ''}`}>
-              <IconShirt />
-              <span>Beställning kläder</span>
-            </Link>
-            <Link href="/material-kvalitet" prefetch={false} onClick={() => setOpen(false)}
-              aria-current={pathname === '/material-kvalitet' ? 'page' : undefined}
-              className={`menu-link${pathname === '/material-kvalitet' ? ' is-active' : ''}`}>
-              <IconArchive />
-              <span>Materialkvalitet</span>
-            </Link>
-
-            {/* Divider before sales section */}
-            <div role="separator" aria-hidden style={{ height: 1, background: '#e5e7eb', margin: '8px 8px' }} />
-            <div style={{ fontSize: 12, color: '#6b7280', margin: '6px 8px' }}>Säljare</div>
-            <Link href="/korjournal" prefetch={true} onClick={() => setOpen(false)}
-              aria-current={pathname === '/korjournal' ? 'page' : undefined}
-              className={`menu-link${pathname === '/korjournal' ? ' is-active' : ''}`}>
-              <IconCar />
-              <span>Körjournal</span>
-            </Link>
+            {navLinks.map((l, i) => {
+              const href = l.href;
+              const active = pathname === href || (href !== '/' && pathname?.startsWith(href));
+              const common = {
+                href,
+                prefetch: true,
+                onClick: () => setOpen(false),
+                'aria-current': active ? 'page' : undefined,
+                className: `menu-link${active ? ' is-active' : ''}`
+              } as const;
+              const icon = href === '/' ? <IconHome />
+                : href.startsWith('/archive') ? <IconArchive />
+                : href === '/egenkontroll' ? <IconArchive />
+                : href === '/kontakt-lista' ? <IconPhone />
+                : href === '/dokument-information' ? <IconDoc />
+                : href === '/bestallning-klader' ? <IconShirt />
+                : href === '/korjournal' ? <IconCar />
+                : href === '/material-kvalitet' ? <IconArchive />
+                : href === '/planering' ? <IconArchive />
+                : <IconArchive />;
+              return (
+                <Link key={href} ref={i === 0 ? firstLinkRef : undefined} {...common}>
+                  {icon}
+                  <span>{l.label}</span>
+                </Link>
+              );
+            })}
           </nav>
 
           {/* Social media footer */}
@@ -271,6 +257,6 @@ export default function HeaderMenu() {
           </div>
         </div>
       </div>
-    </div>
+  </div>
   );
 }
