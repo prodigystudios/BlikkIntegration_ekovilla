@@ -99,6 +99,16 @@ function IconCar(props: React.SVGProps<SVGSVGElement>) {
     </svg>
   );
 }
+function IconCalendar(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#111827" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
+      <rect x="3" y="4" width="18" height="18" rx="2" />
+      <line x1="16" y1="2" x2="16" y2="6" />
+      <line x1="8" y1="2" x2="8" y2="6" />
+      <line x1="3" y1="10" x2="21" y2="10" />
+    </svg>
+  );
+}
 
 export default function HeaderMenu() {
   const [open, setOpen] = useState(false);
@@ -248,6 +258,12 @@ export default function HeaderMenu() {
               className={`menu-link${pathname === '/korjournal' ? ' is-active' : ''}`}>
               <IconCar />
               <span>Körjournal</span>
+            </Link>
+            <Link href="/plannering" prefetch={false} onClick={() => setOpen(false)}
+              aria-current={pathname === '/plannering' ? 'page' : undefined}
+              className={`menu-link${pathname === '/plannering' ? ' is-active' : ''}`}>
+              <IconCalendar />
+              <span>Plannering</span>
             </Link>
           </nav>
 

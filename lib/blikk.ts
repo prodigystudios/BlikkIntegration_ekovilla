@@ -38,7 +38,7 @@ export class BlikkClient {
     return json.accessToken;
   }
 
-  private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  private async request<T>(path: string, init: RequestInit = {}, attempt = 0): Promise<T> {
     const token = await this.getToken();
     const res = await fetch(`${BASE_URL}${path}`, {
       ...init,
@@ -51,10 +51,15 @@ export class BlikkClient {
     });
 
     if (res.status === 429) {
-      // retry once using Retry-After
       const retryAfter = Number(res.headers.get('Retry-After') || '1');
       await new Promise((r) => setTimeout(r, Math.min(retryAfter, 5) * 1000));
-      return this.request<T>(path, init);
+      return this.request<T>(path, init, attempt);
+    }
+
+    if (res.status === 401 && attempt === 0) {
+      // Token likely expired early; clear cache and retry once.
+      cachedToken = null;
+      return this.request<T>(path, init, attempt + 1);
     }
 
     if (!res.ok) {
@@ -77,13 +82,182 @@ export class BlikkClient {
 
   // Convenience: try to get a project by exact order number
   async getProjectByOrderNumber(orderNumber: string) {
-    // Direct filtering via query; if API requires broader search, we still fetch the list here.
-    const page = 1, pageSize = 25;
-    const qs = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
-    qs.set('filter.query', orderNumber);
-    const list: any = await this.request(`/v1/Core/Projects?${qs.toString()}`);
-    const exact = (list.items || []).find((p: any) => String(p.orderNumber) === String(orderNumber));
-    return exact ?? (list.items && list.items[0]) ?? null;
+    const target = String(orderNumber).trim();
+    if (!target) return null;
+    // We attempt several param variants & endpoints similarly to listProjects heuristics.
+    const bases = [process.env.BLIKK_PROJECTS_PATH || '/v1/Core/Projects', '/v1/Projects'];
+    const pageSize = 50;
+    const queryKeys = ['filter.query', 'query', 'q'];
+    const numberKeys = ['filter.orderNumber', 'orderNumber', 'projectNumber', 'number'];
+    const pagingVariants: Array<Record<string,string>> = [
+      { page: '1', pageSize: String(pageSize) },
+      { page: '1', limit: String(pageSize) },
+    ];
+    const attempts: string[] = [];
+    let lastErr: any = null;
+    for (const base of bases) {
+      for (const paging of pagingVariants) {
+        // 1. Put number into dedicated number fields if accepted
+        for (const nk of numberKeys) {
+          const qs = new URLSearchParams(paging);
+          qs.set(nk, target);
+          const url = `${base}?${qs.toString()}`;
+          attempts.push(url);
+          try {
+            const data: any = await this.request(url);
+            const items = data.items || data.data || data || [];
+            const arr = Array.isArray(items) ? items : (items.items || []);
+            const found = arr.find((p: any) => [p.orderNumber, p.projectNumber, p.number].some((v: any) => String(v) === target));
+            if (found) return found;
+          } catch (e: any) {
+            lastErr = e;
+          }
+        }
+        // 2. Fallback: broad query search then filter client side
+        for (const qk of queryKeys) {
+          const qs = new URLSearchParams(paging);
+          qs.set(qk, target);
+          const url = `${base}?${qs.toString()}`;
+          attempts.push(url);
+          try {
+            const data: any = await this.request(url);
+            const items = data.items || data.data || data || [];
+            const arr = Array.isArray(items) ? items : (items.items || []);
+            const found = arr.find((p: any) => [p.orderNumber, p.projectNumber, p.number].some((v: any) => String(v) === target));
+            if (found) return found;
+          } catch (e: any) {
+            lastErr = e;
+          }
+        }
+      }
+    }
+    if (lastErr) console.warn('getProjectByOrderNumber attempts failed', { target, attempts, error: String(lastErr?.message || lastErr) });
+    return null;
+  }
+
+  // List latest projects (heuristic with env override & multiple param variants)
+  async listProjects(opts?: {
+    page?: number;
+    pageSize?: number;
+    query?: string;
+    createdFrom?: string; // ISO date
+    sortDesc?: boolean; // default true
+  }) {
+    const { data } = await this.listProjectsWithMeta(opts);
+    return data;
+  }
+
+  // Same but returns meta about which URL/params worked. Prioritizes official documented params first.
+  async listProjectsWithMeta(opts?: {
+    page?: number;
+    pageSize?: number;
+    query?: string;
+    createdFrom?: string;
+    sortDesc?: boolean;
+  }): Promise<{ data: any; usedUrl: string; attempts: string[]; officialTried: boolean }> {
+    const page = opts?.page ?? 1;
+    const pageSize = opts?.pageSize ?? 25;
+    const envPath = process.env.BLIKK_PROJECTS_PATH || null;
+  const enableLegacy = process.env.BLIKK_ENABLE_LEGACY_PROJECTS === '1';
+  const bases = envPath ? [envPath] : enableLegacy ? ['/v1/Core/Projects', '/v1/Projects'] : ['/v1/Core/Projects'];
+    const sortDesc = opts?.sortDesc ?? true;
+    const direction = sortDesc ? 'descending' : 'ascending';
+    const queryKeys = ['filter.query', 'query', 'q'];
+    const createdFromKeys = ['filter.createdDateFrom', 'filter.createdFrom', 'createdFrom'];
+
+    // Official documented first attempt
+    const officialSortParam = { sortBy: 'createdDate', sortOrder: direction };
+
+    // Legacy/fallback heuristics we used before
+    const legacySortParamSets: Array<Record<string, string>> = sortDesc ? [
+      { sort: 'createdAt:desc' },
+      { sort: 'created:desc' },
+      { orderBy: 'createdAt', orderDirection: 'desc' },
+      { sortBy: 'createdAt', direction: 'desc' },
+      { order: 'desc' },
+    ] : [
+      { sort: 'createdAt:asc' },
+      { sort: 'created:asc' },
+      { orderBy: 'createdAt', orderDirection: 'asc' },
+      { sortBy: 'createdAt', direction: 'asc' },
+      { order: 'asc' },
+    ];
+
+    const pagingVariants: Array<Record<string, string>> = [
+      { page: String(page), pageSize: String(pageSize) },
+      { page: String(page), limit: String(pageSize) },
+    ];
+
+    const attempts: string[] = [];
+  let lastErr: any = null;
+  let sawAuthError = false;
+    let officialTried = false;
+
+    for (const base of bases) {
+      for (const basePaging of pagingVariants) {
+        const baseQs = new URLSearchParams(basePaging);
+        if (opts?.query) for (const k of queryKeys) baseQs.set(k, opts.query);
+        if (opts?.createdFrom) for (const k of createdFromKeys) baseQs.set(k, opts.createdFrom);
+
+        // 1. Official
+        const officialQs = new URLSearchParams(baseQs);
+        for (const [k, v] of Object.entries(officialSortParam)) officialQs.set(k, v);
+        const officialUrl = `${base}?${officialQs.toString()}`;
+        attempts.push(officialUrl);
+        officialTried = true;
+        try {
+          const data = await this.request(officialUrl);
+          return { data, usedUrl: officialUrl, attempts, officialTried };
+        } catch (e: any) {
+          lastErr = e;
+          if (/ 401: /.test(String(e?.message))) {
+            sawAuthError = true;
+            // Stop cycling sort variants on auth issues; break to next base (will likely also fail once)
+          }
+          console.warn('Blikk listProjects official params failed, falling back', { officialUrl, error: String(e?.message || e) });
+          if (sawAuthError) break; // break legacy sort attempts for this base
+        }
+
+        // 2. Legacy sets
+        if (!sawAuthError) for (const sp of legacySortParamSets) {
+          const qs = new URLSearchParams(baseQs);
+            for (const [k, v] of Object.entries(sp)) qs.set(k, v);
+          const url = `${base}?${qs.toString()}`;
+          attempts.push(url);
+          try {
+            const data = await this.request(url);
+            return { data, usedUrl: url, attempts, officialTried };
+          } catch (e: any) {
+            lastErr = e;
+            if (/ 401: /.test(String(e?.message))) {
+              sawAuthError = true;
+              console.warn('Blikk listProjects legacy attempt auth failed', { url });
+              break; // stop more legacy attempts
+            }
+            console.warn('Blikk listProjects legacy attempt failed', { url, error: String(e?.message || e) });
+          }
+        }
+
+        if (!sawAuthError) {
+          // 3. No sort
+          const plainUrl = `${base}?${baseQs.toString()}`;
+          attempts.push(plainUrl);
+          try {
+            const data = await this.request(plainUrl);
+            return { data, usedUrl: plainUrl, attempts, officialTried };
+          } catch (e: any) {
+            lastErr = e;
+            console.warn('Blikk listProjects plain attempt failed', { plainUrl, error: String(e?.message || e) });
+          }
+        }
+        if (sawAuthError) break; // auth issue likely global, stop bases loop early
+      }
+    }
+    if (lastErr) {
+      const authHint = sawAuthError ? ' (authentication failed – check BLIKK_APP_ID / BLIKK_APP_SECRET or tenant access)' : '';
+      throw new Error((lastErr as Error).message + authHint);
+    }
+    throw new Error('Failed to list projects');
   }
 
   // Add a comment/note to a project (path customizable via env)
