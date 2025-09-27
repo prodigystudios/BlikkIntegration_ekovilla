@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from 'react';
 
-// Basic types
+// Types
 interface Project {
   id: string;
   name: string;
@@ -9,7 +9,7 @@ interface Project {
   customer: string;
   createdAt: string;
   status: string;
-  isManual?: boolean; // local only
+  isManual?: boolean; // local only flag
 }
 interface ScheduledItem extends Project {
   startDay: string; // YYYY-MM-DD
@@ -25,25 +25,27 @@ function endOfMonth(d: Date) { return new Date(d.getFullYear(), d.getMonth() + 1
 function fmtDate(d: Date) { return d.toISOString().slice(0, 10); }
 
 export default function PlanneringPage() {
-  // Data + loading
+  // Loading/data
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [source, setSource] = useState<string | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [scheduled, setScheduled] = useState<ScheduledItem[]>([]);
 
-  // UI state
+  // Calendar / UI state
   const [monthOffset, setMonthOffset] = useState(0);
   const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [editingTruckFor, setEditingTruckFor] = useState<string | null>(null);
+  const [truckFilter, setTruckFilter] = useState<string>('');
+  const [calendarSearch, setCalendarSearch] = useState('');
+  const [jumpTargetDay, setJumpTargetDay] = useState<string | null>(null);
+  const [matchIndex, setMatchIndex] = useState(-1);
+
+  // Project lookup / backlog
   const [searchOrder, setSearchOrder] = useState('');
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [recentSearchedIds, setRecentSearchedIds] = useState<string[]>([]);
-  const [editingTruckFor, setEditingTruckFor] = useState<string | null>(null);
-  const [truckFilter, setTruckFilter] = useState<string>('');
-  const [calendarSearch, setCalendarSearch] = useState<string>('');
-  const [jumpTargetDay, setJumpTargetDay] = useState<string | null>(null);
-  const [matchIndex, setMatchIndex] = useState<number>(-1);
 
   // Manual project form
   const [manualName, setManualName] = useState('');
@@ -54,7 +56,7 @@ export default function PlanneringPage() {
   const trucks = ['mb blå', 'mb vit', 'volvo blå'];
   const jobTypes = ['Ekovilla', 'Vitull', 'Leverans', 'Utsugning', 'Snickerier', 'Övrigt'];
 
-  // Truck color overrides
+  // Truck color overrides (base color for each truck -> derived palette)
   const [truckColorOverrides, setTruckColorOverrides] = useState<Record<string, string>>({
     'mb blå': '#38bdf8',
     'mb vit': '#94a3b8',
@@ -208,7 +210,7 @@ export default function PlanneringPage() {
     return map;
   }, [scheduled]);
 
-  // Calendar search matches (start days)
+  // Calendar search (only one implementation)
   const calendarMatchDays = useMemo(() => {
     const term = calendarSearch.trim().toLowerCase();
     if (!term) return [] as string[];
@@ -220,7 +222,6 @@ export default function PlanneringPage() {
     return Array.from(set).sort();
   }, [calendarSearch, scheduled]);
   const firstCalendarMatchDay = calendarMatchDays[0] || null;
-
   function navigateToMatch(idx: number) {
     const day = calendarMatchDays[idx];
     if (!day) return;
@@ -292,64 +293,66 @@ export default function PlanneringPage() {
   return (
     <div style={{ padding: 16, display: 'grid', gap: 16 }}>
       <h1 style={{ margin: 0 }}>Plannering</h1>
-      <p style={{ margin: 0, color: '#6b7280', fontSize: 14 }}>Dra projekt från listan till en dag i kalendern. Endast lokal state just nu.</p>
+      <p style={{ margin: 0, color: '#6b7280', fontSize: 14 }}>Dra projekt från listan till en dag i kalendern (lokal state).</p>
       {source && <div style={{ fontSize: 11, color: '#9ca3af' }}>Källa: {source}</div>}
       {error && <div style={{ background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c', padding: '6px 8px', borderRadius: 6, fontSize: 12 }}>Fel: {error}</div>}
 
-      <div style={{ display: 'grid', gap: 16, gridTemplateColumns: '280px 1fr', alignItems: 'start' }}>
-        {/* Backlog */}
-        <div style={{ display: 'grid', gap: 12 }}>
-          {searchedProjects.length > 0 && (
-            <div style={{ display: 'grid', gap: 8, marginBottom: 12 }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <h2 style={{ fontSize: 14, margin: 0, color: '#374151' }}>Sökresultat</h2>
-                <button type="button" className="btn--plain btn--xs" onClick={() => setRecentSearchedIds([])} style={{ fontSize: 11 }}>Rensa</button>
-              </div>
-              <div style={{ display: 'grid', gap: 8 }}>
-                {searchedProjects.map(p => (
-                  <div key={p.id} draggable onDragStart={e => onDragStart(e, p.id)} onDragEnd={onDragEnd} style={{ position: 'relative', border: '1px solid #6366f1', boxShadow: '0 0 0 3px rgba(99,102,241,0.25)', background: draggingId === p.id ? '#eef2ff' : '#ffffff', borderRadius: 8, padding: 10, cursor: 'grab', display: 'grid', gap: 4 }}>
-                    <div style={{ position: 'absolute', top: -6, right: -6, background: '#6366f1', color: '#fff', fontSize: 10, padding: '2px 6px', borderRadius: 12 }}>Hittad</div>
-                    <strong style={{ fontSize: 14 }}>
-                      {p.orderNumber ? <span style={{ fontFamily: 'ui-monospace, monospace', background: '#eef2ff', color: '#312e81', padding: '2px 6px', borderRadius: 4, marginRight: 6, fontSize: 12, border: '1px solid #c7d2fe' }}>#{p.orderNumber}</span> : null}
-                      {p.name}
-                    </strong>
-                    <span style={{ fontSize: 12, color: '#6b7280' }}>{p.customer}</span>
-                    <span style={{ fontSize: 11, color: '#9ca3af' }}>Skapad: {p.createdAt.slice(0, 10)}</span>
+      <div style={{ display: 'grid', gap: 16, gridTemplateColumns: '290px 1fr', alignItems: 'start' }}>
+        {/* Left: search / manual add / backlog */}
+        <div style={{ display: 'grid', gap: 16 }}>
+          {/* Search & manual add */}
+            <div style={{ display: 'grid', gap: 10 }}>
+              <form onSubmit={searchByOrderNumber} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <input value={searchOrder} onChange={e => setSearchOrder(e.target.value)} placeholder="Sök ordernummer..." style={{ flex: 1, border: '1px solid #d1d5db', borderRadius: 6, padding: '6px 8px', fontSize: 13 }} />
+                <button type="submit" disabled={!searchOrder.trim() || searchLoading} className="btn--plain btn--xs" style={{ border: '1px solid #d1d5db', borderRadius: 6, padding: '5px 10px', background: '#fff' }}>{searchLoading ? 'Söker…' : 'Sök'}</button>
+                {searchOrder && !searchLoading && <button type="button" className="btn--plain btn--xs" style={{ fontSize: 11 }} onClick={() => { setSearchOrder(''); setSearchError(null); }}>Rensa</button>}
+              </form>
+              {searchError && <div style={{ fontSize: 11, color: '#b91c1c' }}>{searchError}</div>}
+              <div style={{ padding: 10, border: '1px solid #e2e8f0', borderRadius: 8, background: '#f8fafc', display: 'grid', gap: 8 }}>
+                <strong style={{ fontSize: 13, color: '#1e293b' }}>Lägg till manuellt</strong>
+                <form onSubmit={addManualProject} style={{ display: 'grid', gap: 6 }}>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <input value={manualName} onChange={e => setManualName(e.target.value)} placeholder="Projektnamn" style={{ flex: 1, border: '1px solid #cbd5e1', borderRadius: 6, padding: '6px 8px', fontSize: 12 }} />
+                    <input value={manualCustomer} onChange={e => setManualCustomer(e.target.value)} placeholder="Kund" style={{ flex: 1, border: '1px solid #cbd5e1', borderRadius: 6, padding: '6px 8px', fontSize: 12 }} />
                   </div>
-                ))}
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <input value={manualOrderNumber} onChange={e => setManualOrderNumber(e.target.value)} placeholder="Ordernr (valfritt)" style={{ flex: 1, border: '1px solid #cbd5e1', borderRadius: 6, padding: '6px 8px', fontSize: 12 }} />
+                    <button type="submit" className="btn--plain btn--xs" disabled={!manualName.trim() || !manualCustomer.trim()} style={{ fontSize: 12, border: '1px solid #2563eb', color: '#1d4ed8', background: '#fff', padding: '6px 10px', borderRadius: 6 }}>Lägg till</button>
+                  </div>
+                  {manualError && <div style={{ fontSize: 11, color: '#b91c1c' }}>{manualError}</div>}
+                  <div style={{ fontSize: 10, color: '#64748b' }}>Endast lokalt tills sparfunktion finns.</div>
+                </form>
               </div>
-              <hr style={{ border: 'none', height: 1, background: '#e5e7eb', margin: '4px 0 0' }} />
+            </div>
+
+          {searchedProjects.length > 0 && (
+            <div style={{ display: 'grid', gap: 8 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <h2 style={{ fontSize: 14, margin: 0 }}>Sökresultat</h2>
+                <button type="button" className="btn--plain btn--xs" style={{ fontSize: 11 }} onClick={() => setRecentSearchedIds([])}>Rensa</button>
+              </div>
+              {searchedProjects.map(p => (
+                <div key={p.id} draggable onDragStart={e => onDragStart(e, p.id)} onDragEnd={onDragEnd} style={{ position: 'relative', border: '1px solid #6366f1', boxShadow: '0 0 0 3px rgba(99,102,241,0.25)', background: draggingId === p.id ? '#eef2ff' : '#ffffff', borderRadius: 8, padding: 10, cursor: 'grab', display: 'grid', gap: 4 }}>
+                  <div style={{ position: 'absolute', top: -6, right: -6, background: '#6366f1', color: '#fff', fontSize: 10, padding: '2px 6px', borderRadius: 12 }}>Hittad</div>
+                  <strong style={{ fontSize: 14 }}>
+                    {p.orderNumber ? <span style={{ fontFamily: 'ui-monospace, monospace', background: '#eef2ff', color: '#312e81', padding: '2px 6px', borderRadius: 4, marginRight: 6, fontSize: 12, border: '1px solid #c7d2fe' }}>#{p.orderNumber}</span> : null}
+                    {p.name}
+                  </strong>
+                  <span style={{ fontSize: 12, color: '#6b7280' }}>{p.customer}</span>
+                  <span style={{ fontSize: 11, color: '#9ca3af' }}>Skapad: {p.createdAt.slice(0, 10)}</span>
+                </div>
+              ))}
+              <hr style={{ border: 'none', height: 1, background: '#e5e7eb', margin: 0 }} />
             </div>
           )}
-          <h2 style={{ fontSize: 16, margin: '0 0 4px' }}>Nya projekt / Lägg till i kalender</h2>
-          <form onSubmit={searchByOrderNumber} style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 6 }}>
-            <input value={searchOrder} onChange={e => setSearchOrder(e.target.value)} placeholder="Sök ordernummer för att hämta..." style={{ flex: 1, border: '1px solid #d1d5db', borderRadius: 6, padding: '6px 8px', fontSize: 13 }} />
-            <button type="submit" disabled={!searchOrder.trim() || searchLoading} className="btn--plain btn--xs" style={{ border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 10px', background: '#fff', fontSize: 12 }}>{searchLoading ? 'Söker…' : 'Sök'}</button>
-            {searchOrder && !searchLoading && <button type="button" className="btn--plain btn--xs" style={{ fontSize: 11 }} onClick={() => { setSearchOrder(''); setSearchError(null); }}>Rensa</button>}
-          </form>
-          {searchError && <div style={{ fontSize: 11, color: '#b91c1c', marginTop: -4 }}>{searchError}</div>}
-          <div style={{ marginTop: 8, padding: 10, border: '1px solid #e2e8f0', borderRadius: 8, background: '#f8fafc', display: 'grid', gap: 8 }}>
-            <strong style={{ fontSize: 13, color: '#1e293b' }}>Lägg till manuellt</strong>
-            <form onSubmit={addManualProject} style={{ display: 'grid', gap: 6 }}>
-              <div style={{ display: 'flex', gap: 6 }}>
-                <input value={manualName} onChange={e => setManualName(e.target.value)} placeholder="Projektnamn" style={{ flex: 1, border: '1px solid #cbd5e1', borderRadius: 6, padding: '6px 8px', fontSize: 12 }} />
-                <input value={manualCustomer} onChange={e => setManualCustomer(e.target.value)} placeholder="Kund" style={{ flex: 1, border: '1px solid #cbd5e1', borderRadius: 6, padding: '6px 8px', fontSize: 12 }} />
-              </div>
-              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                <input value={manualOrderNumber} onChange={e => setManualOrderNumber(e.target.value)} placeholder="Ordernr (valfritt)" style={{ flex: 1, border: '1px solid #cbd5e1', borderRadius: 6, padding: '6px 8px', fontSize: 12 }} />
-                <button type="submit" className="btn--plain btn--xs" disabled={!manualName.trim() || !manualCustomer.trim()} style={{ fontSize: 12, border: '1px solid #2563eb', color: '#1d4ed8', background: '#fff', padding: '6px 10px', borderRadius: 6 }}>Lägg till</button>
-              </div>
-              {manualError && <div style={{ fontSize: 11, color: '#b91c1c' }}>{manualError}</div>}
-              <div style={{ fontSize: 10, color: '#64748b' }}>Projektet sparas endast lokalt tills det skapas i Blikk.</div>
-            </form>
-          </div>
-          <h2 style={{ fontSize: 16, margin: '0 0 4px' }}>Nya projekt</h2>
-          {loading && <div>Laddar projekt…</div>}
-          {!loading && backlog.length === 0 && <div style={{ color: '#6b7280', fontSize: 13 }}>Inga fler oschemalagda projekt.</div>}
+
           <div style={{ display: 'grid', gap: 8 }}>
+            <h2 style={{ fontSize: 15, margin: 0 }}>Backlog</h2>
+            {loading && <div style={{ fontSize: 12 }}>Laddar projekt…</div>}
+            {!loading && backlog.length === 0 && <div style={{ fontSize: 12, color: '#64748b' }}>Inga fler oschemalagda.</div>}
             {backlog.map(p => (
-              <div key={p.id} draggable onDragStart={e => onDragStart(e, p.id)} onDragEnd={onDragEnd} style={{ border: p.isManual ? '2px dashed #94a3b8' : '1px solid #e5e7eb', borderRadius: 8, padding: 10, background: draggingId === p.id ? '#eef2ff' : (p.isManual ? '#f1f5f9' : '#fff'), cursor: 'grab', display: 'grid', gap: 4, position: 'relative' }}>
-                {p.isManual && <span style={{ position: 'absolute', top: -7, left: 8, background: '#334155', color: '#fff', fontSize: 10, padding: '2px 6px', borderRadius: 12, boxShadow: '0 1px 2px rgba(0,0,0,0.15)' }}>Manuell</span>}
+              <div key={p.id} draggable onDragStart={e => onDragStart(e, p.id)} onDragEnd={onDragEnd} style={{ position: 'relative', border: p.isManual ? '2px dashed #94a3b8' : '1px solid #e5e7eb', borderRadius: 8, padding: 10, background: draggingId === p.id ? '#eef2ff' : (p.isManual ? '#f1f5f9' : '#fff'), cursor: 'grab', display: 'grid', gap: 4 }}>
+                {p.isManual && <span style={{ position: 'absolute', top: -7, left: 8, background: '#334155', color: '#fff', fontSize: 10, padding: '2px 6px', borderRadius: 12 }}>Manuell</span>}
                 <strong style={{ fontSize: 14 }}>
                   {p.orderNumber ? <span style={{ fontFamily: 'ui-monospace, monospace', background: '#f3f4f6', padding: '2px 6px', borderRadius: 4, marginRight: 6, fontSize: 12 }}>#{p.orderNumber}</span> : null}
                   {p.name}
@@ -370,12 +373,12 @@ export default function PlanneringPage() {
             {monthOffset !== 0 && <button className="btn--plain btn--sm" onClick={() => setMonthOffset(0)}>Idag</button>}
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
               <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-                <label style={{ fontSize: 12, color: '#374151' }}>Sök order i kalender</label>
-                <input aria-label="Sök i kalender" value={calendarSearch} onChange={e => setCalendarSearch(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); if (calendarMatchDays.length === 0) return; const next = (matchIndex + 1) % calendarMatchDays.length; navigateToMatch(next); } }} placeholder="#2342" style={{ border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 8px', fontSize: 12 }} />
+                <label style={{ fontSize: 12, color: '#374151' }}>Sök i kalender:</label>
+                <input value={calendarSearch} onChange={e => setCalendarSearch(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); if (calendarMatchDays.length > 0) navigateToMatch((matchIndex + 1) % calendarMatchDays.length); } }} style={{ border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 6px', fontSize: 12 }} placeholder="#1234 eller namn" />
                 {calendarSearch && <button type="button" className="btn--plain btn--xs" style={{ fontSize: 11 }} onClick={() => setCalendarSearch('')}>X</button>}
-                <button type="button" className="btn--plain btn--xs" disabled={!firstCalendarMatchDay} onClick={jumpToFirstMatch} style={{ fontSize: 11, border: '1px solid #d1d5db', borderRadius: 6, padding: '2px 8px', background: firstCalendarMatchDay ? '#fff' : '#f3f4f6', opacity: firstCalendarMatchDay ? 1 : 0.6 }} title="Hoppa till första träff">Hoppa</button>
+                <button type="button" className="btn--plain btn--xs" disabled={!firstCalendarMatchDay} onClick={jumpToFirstMatch} style={{ fontSize: 11, border: '1px solid #d1d5db', borderRadius: 6, padding: '2px 8px', background: firstCalendarMatchDay ? '#fff' : '#f3f4f6', opacity: firstCalendarMatchDay ? 1 : 0.5 }}>Hoppa</button>
               </div>
-              <label style={{ fontSize: 12, color: '#374151' }}>Filtrera lastbil:</label>
+              <label style={{ fontSize: 12, color: '#374151' }}>Lastbil:</label>
               <select value={truckFilter} onChange={e => setTruckFilter(e.target.value)} style={{ fontSize: 12, padding: '4px 6px', border: '1px solid #d1d5db', borderRadius: 6, background: '#fff' }}>
                 <option value="">Alla</option>
                 <option value="UNASSIGNED">(Ingen vald)</option>
@@ -410,7 +413,7 @@ export default function PlanneringPage() {
               const weekNum = firstDay ? isoWeekNumber(firstDay) : '';
               const weekBg = wi % 2 === 0 ? '#e0f2fe' : '#e0e7ff';
               return (
-                <div key={wi} style={{ display: 'grid', gridTemplateColumns: '60px repeat(7, 1fr)', gap: 8, background: weekBg, padding: 6, borderRadius: 12, boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.05)', position: 'relative' }}>
+                <div key={wi} style={{ display: 'grid', gridTemplateColumns: '60px repeat(7, 1fr)', gap: 8, background: weekBg, padding: 6, borderRadius: 12, boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.05)' }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, background: 'rgba(255,255,255,0.65)', backdropFilter: 'blur(2px)', border: '1px solid rgba(0,0,0,0.07)', borderRadius: 8, color: '#1e293b', boxShadow: '0 1px 2px rgba(0,0,0,0.08)' }}>{weekNum && `v${weekNum}`}</div>
                   {week.map((cell, ci) => {
                     if (!cell.date) return <div key={ci} style={{ minHeight: 160, border: '1px solid transparent', borderRadius: 8 }} />;
