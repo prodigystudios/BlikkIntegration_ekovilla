@@ -31,6 +31,12 @@ const baseExtra: Record<string, Omit<QuickLink, 'href' | 'title'>> = {
       <path d="M9 22v-7h6v7" strokeLinecap="round" />
     </svg>
   ) },
+  '/admin': { desc: 'Hantera användare & behörigheter', icon: (
+    <svg width="28" height="28" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor" fill="none" aria-hidden>
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1 1 0 0 0 .2-1l-.6-1.1a7 7 0 0 0 0-1.8l.6-1.1a1 1 0 0 0-.2-1l-1.2-1.2a1 1 0 0 0-1-.2l-1.1.6a7 7 0 0 0-1.8 0l-1.1-.6a1 1 0 0 0-1 .2L9.6 7a1 1 0 0 0-.2 1l.6 1.1a7 7 0 0 0 0 1.8L9.4 12a1 1 0 0 0 .2 1l1.2 1.2a1 1 0 0 0 1 .2l1.1-.6a7 7 0 0 0 1.8 0l1.1.6a1 1 0 0 0 1-.2Z" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  ) },
 };
 // Dashboard main component (expects role only after cleanup of deprecated userQuickHrefs prop)
 export function ClientDashboard({ role }: { role: UserRole | null }) {
@@ -47,6 +53,10 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
       if (!extra) return;
       arr.push({ href: l.href, title: l.label, ...extra });
     });
+    // Append admin dashboard quick link for admins (not part of NAV_LINKS to avoid menu duplication logic)
+    if (role === 'admin' && baseExtra['/admin']) {
+      arr.push({ href: '/admin', title: 'Admin', ...baseExtra['/admin'] });
+    }
     return arr;
   }, [role]);
   return (

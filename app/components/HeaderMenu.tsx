@@ -237,6 +237,24 @@ export default function HeaderMenu({ role, fullName }: { role: UserRole | null, 
             })}
           </nav>
 
+          {role === 'admin' && (
+            <div style={{ padding: '4px 12px 12px' }}>
+              <Link
+                href="/admin"
+                className="menu-link"
+                style={{ display: 'flex', alignItems: 'center', gap: 10, fontWeight: 500, border: '1px solid #e5e7eb', padding: '10px 12px', borderRadius: 10, background: '#f9fafb' }}
+                onClick={() => setOpen(false)}
+              >
+                {/* Simple shield icon */}
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#111827" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <path d="M12 3l7 4v5c0 5-3.5 8-7 9-3.5-1-7-4-7-9V7l7-4z" />
+                  <path d="M10 11l2 2 4-4" />
+                </svg>
+                <span>Admin</span>
+              </Link>
+            </div>
+          )}
+
           {/* Social media footer */}
           <div style={{ padding: '8px calc(8px + env(safe-area-inset-right)) calc(8px + env(safe-area-inset-bottom)) 8px', borderTop: '1px solid #e5e7eb', marginTop: 'auto' }}>
             <div style={{ fontSize: 12, color: '#6b7280', margin: '6px 8px' }}>Sociala medier</div>
