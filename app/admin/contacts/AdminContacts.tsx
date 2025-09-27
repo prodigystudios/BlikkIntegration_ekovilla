@@ -92,8 +92,16 @@ export default function AdminContacts() {
       {error && <div style={{ color:'#b91c1c', fontSize:14 }}>{error}</div>}
       <section style={{ display:'grid', gap:24 }}> 
         <div style={{ display:'flex', gap:12, flexWrap:'wrap' }}>
-          <button onClick={()=>setView('contacts')} className={view==='contacts'?'tab--active':'tab'}>Kontakter</button>
-          <button onClick={()=>setView('addresses')} className={view==='addresses'?'tab--active':'tab'}>Adresser</button>
+          <button
+            onClick={()=>setView('contacts')}
+            style={{ ...viewTab, ...(view==='contacts'? viewTabActive : {}) }}
+            aria-pressed={view==='contacts'}
+          >Kontakter</button>
+          <button
+            onClick={()=>setView('addresses')}
+            style={{ ...viewTab, ...(view==='addresses'? viewTabActive : {}) }}
+            aria-pressed={view==='addresses'}
+          >Adresser</button>
         </div>
         {view==='contacts' && (
           <div style={{ display:'grid', gap:24, gridTemplateColumns:'240px 1fr' }}>
@@ -200,5 +208,8 @@ const th: React.CSSProperties = { padding:'8px 10px', fontSize:11, textTransform
 const td: React.CSSProperties = { padding:'6px 10px', fontSize:14, borderTop:'1px solid #f1f5f9', verticalAlign:'middle' };
 const tdLast: React.CSSProperties = { ...td, width:50, textAlign:'right' };
 const tr: React.CSSProperties = { background:'#fff' };
-const catBtn: React.CSSProperties = { padding:'6px 10px', background:'#f3f4f6', border:'1px solid #e5e7eb', borderRadius:8, fontSize:13, cursor:'pointer', flexGrow:1, textAlign:'left' };
-const catBtnActive: React.CSSProperties = { background:'#111827', color:'#fff', border:'1px solid #111827' };
+// Category button base + active (high contrast & explicit text color)
+const catBtn: React.CSSProperties = { padding:'6px 10px', background:'#ffffff', color:'#111827', border:'1px solid #d1d5db', borderRadius:8, fontSize:13, cursor:'pointer', flexGrow:1, textAlign:'left', fontWeight:500, boxShadow:'0 1px 0 rgba(0,0,0,0.02)' };
+const catBtnActive: React.CSSProperties = { background:'#2563eb', color:'#ffffff', border:'1px solid #2563eb', boxShadow:'0 0 0 1px #2563eb' };
+const viewTab: React.CSSProperties = { padding:'8px 14px', background:'#ffffff', color:'#111827', border:'1px solid #d1d5db', borderRadius:999, fontSize:13, cursor:'pointer', fontWeight:500, transition:'background .15s, color .15s, border-color .15s' };
+const viewTabActive: React.CSSProperties = { background:'#2563eb', color:'#ffffff', border:'1px solid #2563eb' };
