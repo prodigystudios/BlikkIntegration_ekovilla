@@ -8,6 +8,7 @@ interface Project {
   customer: string;
   createdAt: string;
   status: string;
+  isManual?: boolean; // locally added only
 }
 
 interface ScheduledItem extends Project {
@@ -39,6 +40,37 @@ export default function PlanneringPage() {
   const jobTypes = ['Ekovilla', 'Vitull', 'Leverans', 'Utsugning', 'Snickerier', 'Övrigt'];
   const [editingTruckFor, setEditingTruckFor] = useState<string | null>(null);
   const [truckFilter, setTruckFilter] = useState<string>(''); // '' = all, 'UNASSIGNED' = utan lastbil
+  const [calendarSearch, setCalendarSearch] = useState<string>(''); // filter for already scheduled items in calendar
+  const [jumpTargetDay, setJumpTargetDay] = useState<string | null>(null); // day we navigated to
+  const [matchIndex, setMatchIndex] = useState<number>(-1); // cycling index for matches
+  // Manual project form state
+  const [manualName, setManualName] = useState('');
+  const [manualCustomer, setManualCustomer] = useState('');
+  const [manualOrderNumber, setManualOrderNumber] = useState('');
+  const [manualError, setManualError] = useState<string | null>(null);
+
+  function addManualProject(e: React.FormEvent) {
+    e.preventDefault();
+    setManualError(null);
+    const name = manualName.trim();
+    const customer = manualCustomer.trim();
+    if (!name) return setManualError('Namn krävs');
+    if (!customer) return setManualError('Kund krävs');
+    const id = 'manual-' + Date.now() + '-' + Math.random().toString(36).slice(2,8);
+    const proj: Project = {
+      id,
+      name,
+      customer,
+      orderNumber: manualOrderNumber.trim() || null,
+      createdAt: new Date().toISOString(),
+      status: 'MANUELL',
+      isManual: true
+    };
+    setProjects(prev => [proj, ...prev]);
+    setManualName('');
+    setManualCustomer('');
+    setManualOrderNumber('');
+  }
   // Per-truck color overrides (store base/border color). Initialize with defaults.
   const [truckColorOverrides, setTruckColorOverrides] = useState<Record<string,string>>({
     'mb blå': '#38bdf8',
@@ -182,6 +214,52 @@ export default function PlanneringPage() {
     return map;
   }, [scheduled]);
 
+  // Earliest matching scheduled item start day for current calendar search
+  const calendarMatchDays = useMemo(() => {
+    const term = calendarSearch.trim().toLowerCase();
+    if (!term) return [] as string[];
+    const set = new Set<string>();
+    for (const it of scheduled) {
+      const hay = [it.name, it.orderNumber || '', it.customer, it.jobType || '', (it.bagCount != null ? String(it.bagCount) : '')].join(' ').toLowerCase();
+      if (hay.includes(term)) set.add(it.startDay);
+    }
+    return Array.from(set).sort();
+  }, [calendarSearch, scheduled]);
+
+  const firstCalendarMatchDay = calendarMatchDays[0] || null;
+
+  function jumpToFirstMatch() {
+    if (!firstCalendarMatchDay) return;
+    navigateToMatch(0);
+  }
+
+  function navigateToMatch(idx: number) {
+    const day = calendarMatchDays[idx];
+    if (!day) return;
+    const target = new Date(day + 'T00:00:00');
+    const base = new Date(); base.setDate(1);
+    const desiredOffset = (target.getFullYear() - base.getFullYear()) * 12 + (target.getMonth() - base.getMonth());
+    setMonthOffset(desiredOffset);
+    setJumpTargetDay(day);
+    setMatchIndex(idx);
+  }
+
+  // Reset match index when search changes
+  useEffect(() => { setMatchIndex(-1); }, [calendarSearch]);
+
+  // After month changes & weeks render, scroll to jump target if present
+  useEffect(() => {
+    if (!jumpTargetDay) return;
+    const id = 'calday-' + jumpTargetDay;
+    const el = document.getElementById(id);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // Remove highlight after a short delay
+      const t = setTimeout(() => setJumpTargetDay(null), 2500);
+      return () => clearTimeout(t);
+    }
+  }, [weeks, jumpTargetDay]);
+
   // Remaining (unscheduled) backlog
   const backlog = useMemo(() => projects.filter(p => !scheduled.some(s => s.id === p.id) && !recentSearchedIds.includes(p.id)), [projects, scheduled, recentSearchedIds]);
   const searchedProjects = useMemo(() => recentSearchedIds.map(id => projects.find(p => p.id === id)).filter(Boolean) as Project[], [recentSearchedIds, projects]);
@@ -262,11 +340,7 @@ export default function PlanneringPage() {
       <p style={{ margin: 0, color: '#6b7280', fontSize: 14 }}>Dra projekt från listan till en dag i kalendern. Endast lokal state just nu.</p>
       {source && <div style={{ fontSize: 11, color: '#9ca3af' }}>Källa: {source}</div>}
       {error && <div style={{ background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c', padding: '6px 8px', borderRadius: 6, fontSize: 12 }}>Fel: {error}</div>}
-      <form onSubmit={searchByOrderNumber} style={{ display:'flex', gap:8, marginTop:4, alignItems:'center' }}>
-        <input value={searchOrder} onChange={e => setSearchOrder(e.target.value)} placeholder="Sök ordernummer..." style={{ flex:1, border:'1px solid #d1d5db', borderRadius:6, padding:'6px 8px', fontSize:14 }} />
-        <button type="submit" disabled={!searchOrder.trim() || searchLoading} className="btn--plain btn--sm" style={{ border:'1px solid #d1d5db', borderRadius:6, padding:'6px 10px', background:'#fff' }}>{searchLoading ? 'Söker…' : 'Sök'}</button>
-        {searchError && <span style={{ fontSize:11, color:'#b91c1c' }}>{searchError}</span>}
-      </form>
+  {/* Global order lookup search moved into backlog column below */}
 
       <div style={{ display: 'grid', gap: 16, gridTemplateColumns: '280px 1fr', alignItems: 'start' }}>
         {/* Backlog column */}
@@ -297,7 +371,28 @@ export default function PlanneringPage() {
               <hr style={{ border:'none', height:1, background:'#e5e7eb', margin:'4px 0 0' }} />
             </div>
           )}
-          <h2 style={{ fontSize: 16, margin: '0 0 4px' }}>Nya projekt</h2>
+          <h2 style={{ fontSize: 16, margin: '0 0 4px' }}>Nya projekt / Lägg till i kalender</h2>
+          <form onSubmit={searchByOrderNumber} style={{ display:'flex', gap:6, alignItems:'center', marginBottom:6 }}>
+            <input value={searchOrder} onChange={e => setSearchOrder(e.target.value)} placeholder="Sök ordernummer för att hämta..." style={{ flex:1, border:'1px solid #d1d5db', borderRadius:6, padding:'6px 8px', fontSize:13 }} />
+            <button type="submit" disabled={!searchOrder.trim() || searchLoading} className="btn--plain btn--xs" style={{ border:'1px solid #d1d5db', borderRadius:6, padding:'4px 10px', background:'#fff', fontSize:12 }}>{searchLoading ? 'Söker…' : 'Sök'}</button>
+            {searchOrder && !searchLoading && <button type="button" className="btn--plain btn--xs" style={{ fontSize:11 }} onClick={() => { setSearchOrder(''); setSearchError(null); }}>Rensa</button>}
+          </form>
+          {searchError && <div style={{ fontSize:11, color:'#b91c1c', marginTop:-4 }}>{searchError}</div>}
+          <div style={{ marginTop:8, padding:10, border:'1px solid #e2e8f0', borderRadius:8, background:'#f8fafc', display:'grid', gap:8 }}>
+            <strong style={{ fontSize:13, color:'#1e293b' }}>Lägg till manuellt</strong>
+            <form onSubmit={addManualProject} style={{ display:'grid', gap:6 }}>
+              <div style={{ display:'flex', gap:6 }}>
+                <input value={manualName} onChange={e => setManualName(e.target.value)} placeholder="Projektnamn" style={{ flex:1, border:'1px solid #cbd5e1', borderRadius:6, padding:'6px 8px', fontSize:12 }} />
+                <input value={manualCustomer} onChange={e => setManualCustomer(e.target.value)} placeholder="Kund" style={{ flex:1, border:'1px solid #cbd5e1', borderRadius:6, padding:'6px 8px', fontSize:12 }} />
+              </div>
+              <div style={{ display:'flex', gap:6, alignItems:'center' }}>
+                <input value={manualOrderNumber} onChange={e => setManualOrderNumber(e.target.value)} placeholder="Ordernr (valfritt)" style={{ flex:1, border:'1px solid #cbd5e1', borderRadius:6, padding:'6px 8px', fontSize:12 }} />
+                <button type="submit" className="btn--plain btn--xs" disabled={!manualName.trim() || !manualCustomer.trim()} style={{ fontSize:12, border:'1px solid #2563eb', color:'#1d4ed8', background:'#fff', padding:'6px 10px', borderRadius:6 }}>Lägg till</button>
+              </div>
+              {manualError && <div style={{ fontSize:11, color:'#b91c1c' }}>{manualError}</div>}
+              <div style={{ fontSize:10, color:'#64748b' }}>Projektet sparas endast lokalt tills det skapas i Blikk.</div>
+            </form>
+          </div>
           {loading && <div>Laddar projekt…</div>}
           {!loading && backlog.length === 0 && <div style={{ color: '#6b7280', fontSize: 13 }}>Inga fler oschemalagda projekt.</div>}
           <div style={{ display: 'grid', gap: 8 }}>
@@ -306,7 +401,8 @@ export default function PlanneringPage() {
                    draggable
                    onDragStart={e => onDragStart(e, p.id)}
                    onDragEnd={onDragEnd}
-                   style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: 10, background: draggingId === p.id ? '#eef2ff' : '#fff', cursor: 'grab', display: 'grid', gap: 4 }}>
+             style={{ border: p.isManual ? '2px dashed #94a3b8' : '1px solid #e5e7eb', borderRadius: 8, padding: 10, background: draggingId === p.id ? '#eef2ff' : (p.isManual ? '#f1f5f9' : '#fff'), cursor: 'grab', display: 'grid', gap: 4, position:'relative' }}>
+           {p.isManual && <span style={{ position:'absolute', top:-7, left:8, background:'#334155', color:'#fff', fontSize:10, padding:'2px 6px', borderRadius:12, boxShadow:'0 1px 2px rgba(0,0,0,0.15)' }}>Manuell</span>}
                 <strong style={{ fontSize: 14 }}>
                   {p.orderNumber ? <span style={{ fontFamily: 'ui-monospace, monospace', background:'#f3f4f6', padding:'2px 6px', borderRadius:4, marginRight:6, fontSize:12 }}>#{p.orderNumber}</span> : null}
                   {p.name}
@@ -327,7 +423,20 @@ export default function PlanneringPage() {
             </strong>
             <button className="btn--plain btn--sm" onClick={() => setMonthOffset(o => o + 1)}>▶</button>
             {monthOffset !== 0 && <button className="btn--plain btn--sm" onClick={() => setMonthOffset(0)}>Idag</button>}
-            <div style={{ marginLeft:'auto', display:'flex', gap:6, alignItems:'center' }}>
+            <div style={{ marginLeft:'auto', display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' }}>
+              <div style={{ display:'flex', gap:4, alignItems:'center' }}>
+                <label style={{ fontSize:12, color:'#374151' }}>Sök order i kalender</label>
+                <input value={calendarSearch} onChange={e => setCalendarSearch(e.target.value)} onKeyDown={e => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    if (calendarMatchDays.length === 0) return;
+                    const next = (matchIndex + 1) % calendarMatchDays.length;
+                    navigateToMatch(next);
+                  }
+                }} placeholder="#2342" style={{ border:'1px solid #d1d5db', borderRadius:6, padding:'4px 8px', fontSize:12 }} />
+                {calendarSearch && <button type="button" className="btn--plain btn--xs" style={{ fontSize:11 }} onClick={() => setCalendarSearch('')}>X</button>}
+                <button type="button" className="btn--plain btn--xs" disabled={!firstCalendarMatchDay} onClick={jumpToFirstMatch} style={{ fontSize:11, border:'1px solid #d1d5db', borderRadius:6, padding:'2px 8px', background:firstCalendarMatchDay ? '#fff' : '#f3f4f6', opacity:firstCalendarMatchDay ? 1 : 0.6 }} title="Hoppa till första träff">Hoppa</button>
+              </div>
               <label style={{ fontSize:12, color:'#374151' }}>Filtrera lastbil:</label>
               <select value={truckFilter} onChange={e => setTruckFilter(e.target.value)} style={{ fontSize:12, padding:'4px 6px', border:'1px solid #d1d5db', borderRadius:6, background:'#fff' }}>
                 <option value="">Alla</option>
@@ -362,9 +471,11 @@ export default function PlanneringPage() {
             {weeks.map((week, wi) => {
               const firstDay = week.find(c => c.date)?.date;
               const weekNum = firstDay ? isoWeekNumber(firstDay) : '';
+              // Stronger alternating background colors for clearer visual separation
+              const weekBg = wi % 2 === 0 ? '#e0f2fe' : '#e0e7ff';
               return (
-                <div key={wi} style={{ display:'grid', gridTemplateColumns:'60px repeat(7, 1fr)', gap:8 }}>
-                  <div style={{ display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, fontWeight:600, background:'#f3f4f6', border:'1px solid #e5e7eb', borderRadius:8 }}>
+                <div key={wi} style={{ display:'grid', gridTemplateColumns:'60px repeat(7, 1fr)', gap:8, background:weekBg, padding:6, borderRadius:12, boxShadow:'inset 0 0 0 1px rgba(0,0,0,0.05)', position:'relative' }}>
+                  <div style={{ display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, fontWeight:700, background:'rgba(255,255,255,0.65)', backdropFilter:'blur(2px)', border:'1px solid rgba(0,0,0,0.07)', borderRadius:8, color:'#1e293b', boxShadow:'0 1px 2px rgba(0,0,0,0.08)' }}>
                     {weekNum && `v${weekNum}`}
                   </div>
                   {week.map((cell, ci) => {
@@ -373,16 +484,24 @@ export default function PlanneringPage() {
                     }
                     const day = cell.date;
                     const rawItems = itemsByDay.get(day) || [];
+                    const searchVal = calendarSearch.trim().toLowerCase();
                     const items = rawItems.filter(it => {
-                      if (!truckFilter) return true;
-                      if (truckFilter === 'UNASSIGNED') return !it.truck;
-                      return it.truck === truckFilter;
+                      if (truckFilter) {
+                        if (truckFilter === 'UNASSIGNED') { if (it.truck) return false; }
+                        else if (it.truck !== truckFilter) return false;
+                      }
+                      if (searchVal) {
+                        const hay = [it.name, it.orderNumber || '', it.customer, it.jobType || '', (it.bagCount != null ? String(it.bagCount) : '')].join(' ').toLowerCase();
+                        if (!hay.includes(searchVal)) return false;
+                      }
+                      return true;
                     });
+                    const isJumpHighlight = day === jumpTargetDay;
                     return (
-                      <div key={day}
+          <div key={day} id={`calday-${day}`}
                            onDragOver={allowDrop}
                            onDrop={e => onDropDay(e, day)}
-                           style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: 8, minHeight: 160, background: '#fff', display: 'flex', flexDirection: 'column', gap: 8, position:'relative' }}>
+            style={{ border: isJumpHighlight ? '2px solid #f59e0b' : '1px solid rgba(148,163,184,0.4)', boxShadow: isJumpHighlight ? '0 0 0 4px rgba(245,158,11,0.35)' : '0 1px 2px rgba(0,0,0,0.05)', transition:'box-shadow 0.3s,border 0.3s', borderRadius: 10, padding: 8, minHeight: 160, background: '#ffffff', display: 'flex', flexDirection: 'column', gap: 8, position:'relative' }}>
                         <div style={{ fontSize: 12, fontWeight: 600, display:'flex', justifyContent:'space-between', alignItems:'center', color:'#111827' }}>
                           <span>{day.slice(8,10)}/{day.slice(5,7)}</span>
                           {items.length > 0 && <span style={{ fontSize:10, background:'#f3f4f6', padding:'2px 6px', borderRadius:12 }}>{items.length}</span>}
@@ -411,9 +530,10 @@ export default function PlanneringPage() {
                             const cardBg = display ? display.bg : '#eef2ff';
                             const isStart = (it as any).spanStart;
                             const isMid = (it as any).spanMiddle;
+                            const highlight = calendarSearch && (it.name.toLowerCase().includes(searchVal) || (it.orderNumber || '').toLowerCase().includes(searchVal));
                             return (
                               <div key={`${it.id}:${it.day}`} draggable onDragStart={e => onDragStart(e, it.id)} onDragEnd={onDragEnd}
-                                   style={{ position:'relative', border: `1px solid ${cardBorder}`, background: cardBg, borderRadius: 6, padding: 6, fontSize: 12, cursor: 'grab', display: 'grid', gap: 4, opacity: isMid ? 0.95 : 1 }}>
+                                   style={{ position:'relative', border: `2px solid ${highlight ? '#f59e0b' : cardBorder}`, background: cardBg, borderRadius: 6, padding: 6, fontSize: 12, cursor: 'grab', display: 'grid', gap: 4, opacity: isMid ? 0.95 : 1, boxShadow: highlight ? '0 0 0 3px rgba(245,158,11,0.35)' : 'none' }}>
                                 <div style={{ display:'flex', flexDirection:'column', gap:2 }}>
                                   <span style={{ fontWeight: 600, color: display ? display.text : '#312e81' }}>
                                     {it.orderNumber ? <span style={{ fontFamily: 'ui-monospace, monospace', background:'#ffffff', color: display ? display.text : '#312e81', border:`1px solid ${cardBorder}`, padding:'1px 4px', borderRadius:4, marginRight:4 }}>#{it.orderNumber}</span> : null}
@@ -462,7 +582,7 @@ export default function PlanneringPage() {
                                       {(it as any).totalSpan > 1 && <button type="button" title="Kortare (slut)" className="btn--plain btn--xs" onClick={() => shrinkSpan(it.id, 'end')} style={{ fontSize:11 }}>-→</button>}
                                       {(it as any).totalSpan > 1 && <button type="button" title="Kortare (start)" className="btn--plain btn--xs" onClick={() => shrinkSpan(it.id, 'start')} style={{ fontSize:11 }}>←-</button>}
                                     </div>
-                                    <button type="button" className="btn--plain btn--xs" onClick={() => unschedule(it.id)} style={{ fontSize:11 }}>Ta bort</button>
+                                    <button type="button" className="btn--plain btn--xs" onClick={() => unschedule(it.id)} style={{ fontSize:11, background:'#fee2e2', border:'1px solid #fca5a5', color:'#b91c1c', borderRadius:4, padding:'2px 6px' }}>Ta bort</button>
                                   </div>
                                 )}
                               </div>
