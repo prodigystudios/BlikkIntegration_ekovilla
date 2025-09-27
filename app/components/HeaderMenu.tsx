@@ -105,6 +105,7 @@ function IconCar(props: React.SVGProps<SVGSVGElement>) {
 
 export default function HeaderMenu({ role, fullName }: { role: UserRole | null, fullName?: string | null }) {
   const [open, setOpen] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const firstLinkRef = useRef<HTMLAnchorElement | null>(null);
   const pathname = usePathname();
@@ -163,9 +164,17 @@ export default function HeaderMenu({ role, fullName }: { role: UserRole | null, 
   }, [open]);
 
   const navLinks = useMemo(() => filterLinks(role), [role]);
+
+  // Detect mobile (simple viewport width check) – no SSR mismatch since this runs only client side.
+  useEffect(() => {
+    function update() { setIsMobile(window.innerWidth < 640); }
+    update();
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, []);
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-  <ProfileMenu fullName={fullName || null} role={role} />
+  {!isMobile && <ProfileMenu fullName={fullName || null} role={role} />}
       <button
         type="button"
         aria-haspopup="dialog"
@@ -208,6 +217,16 @@ export default function HeaderMenu({ role, fullName }: { role: UserRole | null, 
             </button>
           </div>
           <nav style={{ padding: 8, flex: '1 1 auto', overflowY: 'auto' }}>
+            {isMobile && (
+              <div style={{ padding: '6px 8px 10px' }}>
+                <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.5, color: '#6b7280', margin: '0 0 4px 2px' }}>Konto</div>
+                <div style={{ display:'flex', flexDirection:'column', gap:4, padding: '8px 10px', border: '1px solid #e5e7eb', borderRadius: 10, background:'#f9fafb' }}>
+                  <div style={{ fontSize:14, fontWeight:500, color:'#111827' }}>{fullName || 'Inget namn'}</div>
+                  <div style={{ fontSize:11, textTransform:'uppercase', letterSpacing:0.5, color:'#6b7280' }}>{role || 'ingen roll'}</div>
+                  <button onClick={async()=>{ const sup = (await import('@supabase/auth-helpers-nextjs')).createClientComponentClient(); await sup.auth.signOut(); window.location.href='/auth/sign-in'; }} style={{ alignSelf:'flex-start', padding:'6px 10px', fontSize:12, borderRadius:6, border:'1px solid #111827', background:'#111827', color:'#fff', cursor:'pointer' }}>Logga ut</button>
+                </div>
+              </div>
+            )}
             {navLinks.map((l, i) => {
               const href = l.href;
               const active = pathname === href || (href !== '/' && pathname?.startsWith(href));

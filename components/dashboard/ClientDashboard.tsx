@@ -12,6 +12,13 @@ const baseExtra: Record<string, Omit<QuickLink, 'href' | 'title'>> = {
       <rect x="4" y="3" width="16" height="18" rx="2.5" />
     </svg>
   ) },
+  '/archive': { desc: 'Arkiverade egenkontroller', icon: (
+    <svg width="28" height="28" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor" fill="none" aria-hidden>
+      <path d="M4 7h16v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7Z" />
+      <path d="M3 4h18v3H3Z" />
+      <path d="M9 11h6" strokeLinecap="round" />
+    </svg>
+  ) },
   '/korjournal': { desc: 'Registrera och granska resor', icon: (
     <svg width="28" height="28" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor" fill="none" aria-hidden>
       <path d="M4 16l2-8h12l2 8" strokeLinecap="round" strokeLinejoin="round" />
@@ -31,6 +38,26 @@ const baseExtra: Record<string, Omit<QuickLink, 'href' | 'title'>> = {
       <path d="M9 22v-7h6v7" strokeLinecap="round" />
     </svg>
   ) },
+  '/kontakt-lista': { desc: 'Kontakt & adresser', icon: (
+    <svg width="28" height="28" viewBox="0 0 24 24" strokeWidth={1.6} stroke="currentColor" fill="none" aria-hidden>
+      <path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" />
+      <path d="M4 20c0-4 4-6 8-6s8 2 8 6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  ) },
+  '/dokument-information': { desc: 'Dokument & information', icon: (
+    <svg width="28" height="28" viewBox="0 0 24 24" strokeWidth={1.6} stroke="currentColor" fill="none" aria-hidden>
+      <path d="M6 2h7l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Z" />
+      <path d="M13 2v6h6" />
+      <path d="M8 13h8M8 17h5" strokeLinecap="round" />
+    </svg>
+  ) },
+  '/bestallning-klader': { desc: 'Beställ kläder & material', icon: (
+    <svg width="28" height="28" viewBox="0 0 24 24" strokeWidth={1.6} stroke="currentColor" fill="none" aria-hidden>
+      <path d="M6 6h15l-1.2 8.5a2 2 0 0 1-2 1.7H9.3a2 2 0 0 1-2-1.6L5.2 3.7A1 1 0 0 0 4.2 3H2" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="10" cy="20" r="1" />
+      <circle cx="18" cy="20" r="1" />
+    </svg>
+  ) },
   '/admin': { desc: 'Hantera användare & behörigheter', icon: (
     <svg width="28" height="28" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor" fill="none" aria-hidden>
       <circle cx="12" cy="12" r="3" />
@@ -41,23 +68,36 @@ const baseExtra: Record<string, Omit<QuickLink, 'href' | 'title'>> = {
 // Dashboard main component (expects role only after cleanup of deprecated userQuickHrefs prop)
 export function ClientDashboard({ role }: { role: UserRole | null }) {
   const links: QuickLink[] = useMemo(() => {
-    const arr: QuickLink[] = [];
-    // Always include /egenkontroll quick link even if not in NAV_LINKS (hidden from menu)
-    if (baseExtra['/egenkontroll']) {
-      arr.push({ href: '/egenkontroll', title: 'Ny Egenkontroll', ...baseExtra['/egenkontroll'] });
+    // Explicit role-based sets as requested
+  if (role === 'member') {
+      return [
+        { href: '/egenkontroll', title: 'Skapa egenkontroll', ...baseExtra['/egenkontroll'] },
+    { href: '/bestallning-klader', title: 'Beställ kläder & annat', ...baseExtra['/bestallning-klader'] },
+        { href: '/kontakt-lista', title: 'Kontakt', ...baseExtra['/kontakt-lista'] },
+        { href: '/dokument-information', title: 'Dokument & information', ...baseExtra['/dokument-information'] },
+      ];
     }
-    // Add role-filtered links from NAV_LINKS (excluding /egenkontroll to avoid duplicate)
-    filterLinks(role).forEach(l => {
-      if (l.href === '/egenkontroll') return; // skip if ever re-added to NAV_LINKS
-      const extra = baseExtra[l.href];
-      if (!extra) return;
-      arr.push({ href: l.href, title: l.label, ...extra });
-    });
-    // Append admin dashboard quick link for admins (not part of NAV_LINKS to avoid menu duplication logic)
-    if (role === 'admin' && baseExtra['/admin']) {
-      arr.push({ href: '/admin', title: 'Admin', ...baseExtra['/admin'] });
+    if (role === 'sales') {
+      return [
+        { href: '/archive', title: 'Egenkontroll arkiv', ...baseExtra['/archive'] },
+        { href: '/korjournal', title: 'Körjournal', ...baseExtra['/korjournal'] },
+        { href: '/planering', title: 'Planering', ...baseExtra['/planering'] },
+        { href: '/kontakt-lista', title: 'Kontakt', ...baseExtra['/kontakt-lista'] },
+      ];
     }
-    return arr;
+    if (role === 'admin') {
+      return [
+        { href: '/egenkontroll', title: 'Ny egenkontroll', ...baseExtra['/egenkontroll'] },
+        { href: '/archive', title: 'Egenkontroll arkiv', ...baseExtra['/archive'] },
+        { href: '/korjournal', title: 'Körjournal', ...baseExtra['/korjournal'] },
+        { href: '/planering', title: 'Planering', ...baseExtra['/planering'] },
+        { href: '/admin', title: 'Admin', ...baseExtra['/admin'] },
+      ];
+    }
+    // Fallback before role known: minimal set
+    return [
+      { href: '/egenkontroll', title: 'Egenkontroll', ...baseExtra['/egenkontroll'] },
+    ];
   }, [role]);
   return (
     <main style={{ padding: 32, maxWidth: 1100, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 32 }}>

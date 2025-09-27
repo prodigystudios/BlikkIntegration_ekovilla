@@ -12,6 +12,7 @@ export const NAV_LINKS: RoleAwareLink[] = [
   { href: '/archive', label: 'Sparade egenkontroller' },
   { href: '/kontakt-lista', label: 'Kontakt & Adresser' },
   { href: '/dokument-information', label: 'Dokument & Information' },
+  { href: '/bestallning-klader', label: 'Beställning kläder', roles: ['member','admin'] },
   { href: '/korjournal', label: 'Körjournal', roles: ['sales','admin'] },
   { href: '/planering', label: 'Planering', roles: ['sales','admin'] },
   // Future admin-only examples:
