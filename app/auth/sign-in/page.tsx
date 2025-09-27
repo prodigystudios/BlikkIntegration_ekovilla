@@ -26,13 +26,13 @@ export default function SignInPage() {
     }
   // Ensure server session cookie is synced before navigating (important for PWA)
   try { await fetch('/api/auth/callback', { method: 'POST', cache: 'no-store' }); } catch {}
-    router.replace("/korjournal");
+  router.replace("/");
     // In case the app shell cached page doesn’t pick up the session instantly, do a delayed refresh once.
     setTimeout(() => {
       try {
         // Only attempt if still on sign-in route
         if (window.location.pathname.startsWith('/auth')) {
-          window.location.href = '/korjournal';
+          window.location.href = '/';
         }
       } catch {}
     }, 250);
