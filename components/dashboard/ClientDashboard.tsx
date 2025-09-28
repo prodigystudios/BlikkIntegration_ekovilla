@@ -1,5 +1,5 @@
 "use client";
-import React, { useMemo } from 'react';
+import React, { useMemo, useEffect, useState } from 'react';
 import { QuickLinksGrid, QuickLink } from './QuickLinks';
 import DashboardNotes from './DashboardNotes';
 import type { UserRole } from '../../lib/roles';
@@ -68,6 +68,19 @@ const baseExtra: Record<string, Omit<QuickLink, 'href' | 'title'>> = {
 };
 // Dashboard main component (expects role only after cleanup of deprecated userQuickHrefs prop)
 export function ClientDashboard({ role }: { role: UserRole | null }) {
+  // Responsive flags (client-only)
+  const [isSmall, setIsSmall] = useState(false); // <= 640px
+  const [isXS, setIsXS] = useState(false); // <= 420px
+  useEffect(() => {
+    const calc = () => {
+      const w = window.innerWidth;
+      setIsSmall(w <= 640);
+      setIsXS(w <= 420);
+    };
+    calc();
+    window.addEventListener('resize', calc);
+    return () => window.removeEventListener('resize', calc);
+  }, []);
   const links: QuickLink[] = useMemo(() => {
     // Explicit role-based sets as requested
   if (role === 'member') {
@@ -101,20 +114,45 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
     ];
   }, [role]);
   return (
-    <main style={{ padding: 32, maxWidth: 1100, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 32 }}>
-      <header style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-        <h1 style={{ margin: 0, fontSize: 30, letterSpacing: -0.5 }}>Översikt</h1>
+    <main
+      style={{
+        padding: isSmall ? (isXS ? 12 : 16) : 32,
+        maxWidth: 1100,
+        margin: '0 auto',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: isSmall ? 20 : 32,
+      }}
+    >
+      <header style={{ display: 'flex', alignItems: isSmall ? 'flex-end' : 'center', gap: 12 }}>
+        <h1 style={{ margin: 0, fontSize: isSmall ? (isXS ? 22 : 24) : 30, letterSpacing: -0.5 }}>Översikt</h1>
       </header>
-
-      <section style={{ border: '1px solid #e5e7eb', background: '#fff', borderRadius: 16, padding: 24, display: 'grid', gap: 20 }}>
+      <section
+        style={{
+          border: '1px solid #e5e7eb',
+          background: '#fff',
+          borderRadius: 16,
+          padding: isSmall ? (isXS ? 14 : 18) : 24,
+          display: 'grid',
+          gap: isSmall ? 14 : 20,
+        }}
+      >
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <h2 style={{ margin: 0, fontSize: 20 }}>Snabba genvägar</h2>
+          <h2 style={{ margin: 0, fontSize: isSmall ? 16 : 20 }}>Snabba genvägar</h2>
         </div>
-  <QuickLinksGrid links={links} />
+        <QuickLinksGrid links={links} compact={isSmall} extraCompact={isXS} />
       </section>
-
-      <section style={{ border:'1px solid #e5e7eb', background:'#fff', borderRadius:16, padding:24, display:'grid', gap:24 }}>
-        <DashboardNotes />
+      <section
+        style={{
+          border: '1px solid #e5e7eb',
+          background: '#fff',
+          borderRadius: 16,
+          padding: isSmall ? (isXS ? 14 : 18) : 24,
+          display: 'grid',
+          gap: isSmall ? 18 : 24,
+        }}
+      >
+        <DashboardNotes compact={isSmall} />
       </section>
     </main>
   );

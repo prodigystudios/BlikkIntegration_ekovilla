@@ -27,13 +27,17 @@ const baseTile: React.CSSProperties = {
   outline: 'none',
 };
 
-export function QuickLinksGrid({ links }: { links: QuickLink[] }) {
+export function QuickLinksGrid({ links, compact, extraCompact }: { links: QuickLink[]; compact?: boolean; extraCompact?: boolean }) {
   return (
     <div
       style={{
         display: 'grid',
-        gap: 16,
-        gridTemplateColumns: 'repeat(auto-fill,minmax(220px,1fr))',
+        gap: compact ? 12 : 16,
+        gridTemplateColumns: extraCompact
+          ? 'repeat(auto-fill,minmax(150px,1fr))'
+          : compact
+            ? 'repeat(auto-fill,minmax(180px,1fr))'
+            : 'repeat(auto-fill,minmax(220px,1fr))',
       }}
     >
       {links.map(link => {
@@ -41,6 +45,8 @@ export function QuickLinksGrid({ links }: { links: QuickLink[] }) {
           <div
             style={{
               ...baseTile,
+              padding: compact ? (extraCompact ? '12px 12px 14px' : '14px 14px 16px') : baseTile.padding,
+              gap: compact ? 6 : 8,
               cursor: link.disabled ? 'not-allowed' : 'pointer',
               opacity: link.disabled ? 0.55 : 1,
               filter: link.disabled ? 'grayscale(15%)' : 'none'
@@ -63,14 +69,14 @@ export function QuickLinksGrid({ links }: { links: QuickLink[] }) {
             }}>
               {link.icon}
             </div>
-            <div style={{ fontSize: 16, fontWeight: 600, letterSpacing: -0.3, display:'flex', alignItems:'center', gap:8 }}>
+      <div style={{ fontSize: compact ? 14 : 16, fontWeight: 600, letterSpacing: -0.3, display:'flex', alignItems:'center', gap:6 }}>
               {link.title}
               {link.disabled && (
-                <span style={{ fontSize:10, fontWeight:600, background:'#f1f5f9', color:'#475569', padding:'2px 6px', borderRadius:999, border:'1px solid #e2e8f0' }}>{link.disabledNote || 'Kommer snart'}</span>
+        <span style={{ fontSize:9, fontWeight:600, background:'#f1f5f9', color:'#475569', padding:'2px 5px', borderRadius:999, border:'1px solid #e2e8f0' }}>{link.disabledNote || 'Kommer snart'}</span>
               )}
             </div>
-            <div style={{ fontSize: 13, lineHeight: 1.4, color: '#475569' }}>{link.desc}</div>
-            {!link.disabled && <span aria-hidden style={{ position: 'absolute', top: 12, right: 12, fontSize: 12, color: '#6366f1', fontWeight: 600 }}>↗</span>}
+      <div style={{ fontSize: compact ? 11.5 : 13, lineHeight: 1.35, color: '#475569' }}>{link.desc}</div>
+      {!link.disabled && <span aria-hidden style={{ position: 'absolute', top: compact ? 8 : 12, right: compact ? 8 : 12, fontSize: compact ? 11 : 12, color: '#6366f1', fontWeight: 600 }}>↗</span>}
           </div>
         );
         if (link.disabled) {
