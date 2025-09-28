@@ -273,6 +273,12 @@ export default function HeaderMenu({ role, fullName }: { role: UserRole | null, 
               <IconCar />
               <span>Körjournal</span>
             </Link>
+            <Link href="/plannering" prefetch={false} onClick={() => setOpen(false)}
+              aria-current={pathname === '/plannering' ? 'page' : undefined}
+              className={`menu-link${pathname === '/plannering' ? ' is-active' : ''}`}>
+              <IconCalendar />
+              <span>Plannering</span>
+            </Link>
           </nav>
 
           {role === 'admin' && (
