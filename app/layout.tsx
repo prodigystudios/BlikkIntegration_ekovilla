@@ -18,6 +18,9 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   // Single consolidated profile fetch (includes role + name)
   const profile = await getUserProfile();
   const role = profile?.role || null;
+  const isAuthPath = typeof (global as any).window === 'undefined' ? false : false; // placeholder (SSR can't read pathname)
+  // We will do a simple runtime check client side via a data attribute to hide header on auth pages when unauthenticated.
+  // If no profile (not logged in) and path starts with /auth we suppress the header entirely via inline JS.
   return (
     <html lang="en">
     <head>
@@ -31,8 +34,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       <meta name="apple-mobile-web-app-title" content="Egenkontroll" />
   <meta name="color-scheme" content="light" />
     </head>
-  <body style={{ fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif', margin: 0, width: '100%', overflowX: 'hidden', minHeight: '100dvh', background: '#fff', paddingBottom: 'env(safe-area-inset-bottom)' }}>
-      {/* Fixed, full-width header */}
+    <body style={{ fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif', margin: 0, width: '100%', overflowX: 'hidden', minHeight: '100dvh', background: '#fff', paddingBottom: 'env(safe-area-inset-bottom)' }} data-has-user={!!profile}>
+      {/* Fixed, full-width header (hidden on auth pages when not logged in) */}
     <header
         className="header-app"
         style={{
@@ -61,6 +64,11 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   <UserProfileProvider profile={profile}>
     <div className="content-offset">{children}</div>
   </UserProfileProvider>
+      <script
+        dangerouslySetInnerHTML={{
+          __html: `(()=>{try{var hasUser=document.body.getAttribute('data-has-user')==='true';var p=location.pathname;if(!hasUser && p.startsWith('/auth')){var h=document.querySelector('header.header-app');if(h) h.style.display='none';var c=document.querySelector('.content-offset');if(c) c.style.paddingTop='0';}}catch(e){}})();`
+        }}
+      />
       <Script id="sw-register" strategy="afterInteractive">
         {`
           if ('serviceWorker' in navigator) {
