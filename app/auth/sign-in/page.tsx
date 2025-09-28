@@ -12,13 +12,14 @@ export default function SignInPage() {
   const [loading, setLoading] = useState(false);
 
   const signIn = async () => {
-    if (!email || !password) {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail || !password) {
       setError("Ange e-post och lösenord.");
       return;
     }
     setLoading(true);
     setError(null);
-  const { error } = await supabase.auth.signInWithPassword({ email, password });
+  const { error } = await supabase.auth.signInWithPassword({ email: normalizedEmail, password });
     setLoading(false);
     if (error) {
       setError(error.message);
@@ -70,7 +71,7 @@ export default function SignInPage() {
                 <input
                   type="email"
                   value={email}
-                  onChange={e=>setEmail(e.target.value)}
+                  onChange={e=>setEmail(e.target.value.toLowerCase())}
                   placeholder="din@epost.se"
                   style={inputStyle}
                   autoComplete="email"

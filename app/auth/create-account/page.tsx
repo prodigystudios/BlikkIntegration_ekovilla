@@ -24,8 +24,9 @@ export default function CreateAccountPage() {
     setSubmitting(true);
     try {
       // Sign up with metadata so profile trigger (if any) can use it
+      const normalizedEmail = email.trim().toLowerCase();
       const { data, error: signError } = await supabase.auth.signUp({
-        email: email.trim(),
+        email: normalizedEmail,
         password,
         options: { data: { full_name: fullName.trim(), display_name: fullName.trim(), role: 'member' } }
       });
@@ -68,7 +69,7 @@ export default function CreateAccountPage() {
           </label>
           <label style={labelStyle}>
             <span style={labelTxt}>E-post</span>
-            <input style={inputStyle} type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="din@epost.se" autoComplete="email" required />
+            <input style={inputStyle} type="email" value={email} onChange={e=>setEmail(e.target.value.toLowerCase())} placeholder="din@epost.se" autoComplete="email" required />
           </label>
           <label style={labelStyle}>
             <span style={labelTxt}>Lösenord</span>
