@@ -1,6 +1,7 @@
 "use client";
 import React, { useMemo } from 'react';
 import { QuickLinksGrid, QuickLink } from './QuickLinks';
+import DashboardNotes from './DashboardNotes';
 import type { UserRole } from '../../lib/roles';
 import { filterLinks, NAV_LINKS } from '../../lib/roles';
 
@@ -81,16 +82,16 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
       return [
         { href: '/archive', title: 'Egenkontroll arkiv', ...baseExtra['/archive'] },
         { href: '/korjournal', title: 'Körjournal', ...baseExtra['/korjournal'] },
-        { href: '/planering', title: 'Planering', ...baseExtra['/planering'] },
+          { href: '/planering', title: 'Planering', disabled: true, disabledNote: 'Ej aktiv', ...baseExtra['/planering'] },
         { href: '/kontakt-lista', title: 'Kontakt', ...baseExtra['/kontakt-lista'] },
       ];
     }
-    if (role === 'admin') {
+  if (role === 'admin') {
       return [
         { href: '/egenkontroll', title: 'Ny egenkontroll', ...baseExtra['/egenkontroll'] },
         { href: '/archive', title: 'Egenkontroll arkiv', ...baseExtra['/archive'] },
         { href: '/korjournal', title: 'Körjournal', ...baseExtra['/korjournal'] },
-        { href: '/planering', title: 'Planering', ...baseExtra['/planering'] },
+    { href: '/planering', title: 'Planering', disabled: true, disabledNote: 'Ej aktiv', ...baseExtra['/planering'] },
         { href: '/admin', title: 'Admin', ...baseExtra['/admin'] },
       ];
     }
@@ -112,9 +113,8 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
   <QuickLinksGrid links={links} />
       </section>
 
-      <section style={{ border: '1px solid #e5e7eb', background: '#fff', borderRadius: 16, padding: 24, display: 'grid', gap: 12 }}>
-        <h2 style={{ margin: 0, fontSize: 20 }}>Status</h2>
-        <p style={{ margin: 0, color: '#374151' }}>Detta är startsidan. Lägg till widgets såsom dagens projekt, senaste dokument och notifieringar.</p>
+      <section style={{ border:'1px solid #e5e7eb', background:'#fff', borderRadius:16, padding:24, display:'grid', gap:24 }}>
+        <DashboardNotes />
       </section>
     </main>
   );
