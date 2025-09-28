@@ -1,7 +1,10 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
+import ProfileMenu from "./ProfileMenu";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import type { UserRole } from "../../lib/roles";
+import { filterLinks } from "../../lib/roles";
 
 function IconMenu(props: React.SVGProps<SVGSVGElement>) {
   return (
@@ -100,8 +103,9 @@ function IconCar(props: React.SVGProps<SVGSVGElement>) {
   );
 }
 
-export default function HeaderMenu() {
+export default function HeaderMenu({ role, fullName }: { role: UserRole | null, fullName?: string | null }) {
   const [open, setOpen] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const firstLinkRef = useRef<HTMLAnchorElement | null>(null);
   const pathname = usePathname();
@@ -159,8 +163,18 @@ export default function HeaderMenu() {
     };
   }, [open]);
 
+  const navLinks = useMemo(() => filterLinks(role), [role]);
+
+  // Detect mobile (simple viewport width check) – no SSR mismatch since this runs only client side.
+  useEffect(() => {
+    function update() { setIsMobile(window.innerWidth < 640); }
+    update();
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, []);
   return (
-    <div>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+  {!isMobile && <ProfileMenu fullName={fullName || null} role={role} />}
       <button
         type="button"
         aria-haspopup="dialog"
@@ -203,53 +217,62 @@ export default function HeaderMenu() {
             </button>
           </div>
           <nav style={{ padding: 8, flex: '1 1 auto', overflowY: 'auto' }}>
-            <Link ref={firstLinkRef} href="/" prefetch={false} onClick={() => setOpen(false)}
-              aria-current={pathname === '/' ? 'page' : undefined}
-              className={`menu-link${pathname === '/' ? ' is-active' : ''}`}>
-              <IconHome />
-              <span>Startsida</span>
-            </Link>
-            <Link href="/archive" prefetch={false} onClick={() => setOpen(false)}
-              aria-current={pathname?.startsWith('/archive') ? 'page' : undefined}
-              className={`menu-link${pathname?.startsWith('/archive') ? ' is-active' : ''}`}>
-              <IconArchive />
-              <span>Egenkontroller</span>
-            </Link>
-            <Link href="/kontakt-lista" prefetch={true} onClick={() => setOpen(false)}
-              aria-current={pathname === '/kontakt-lista' ? 'page' : undefined}
-              className={`menu-link${pathname === '/kontakt-lista' ? ' is-active' : ''}`}>
-              <IconPhone />
-              <span>Kontakt & Adresser</span>
-            </Link>
-            <Link href="/dokument-information" prefetch={true} onClick={() => setOpen(false)}
-              aria-current={pathname === '/dokument-information' ? 'page' : undefined}
-              className={`menu-link${pathname === '/dokument-information' ? ' is-active' : ''}`}>
-              <IconDoc />
-              <span>Dokument & Information</span>
-            </Link>
-            <Link href="/bestallning-klader" prefetch={true} onClick={() => setOpen(false)}
-              aria-current={pathname === '/bestallning-klader' ? 'page' : undefined}
-              className={`menu-link${pathname === '/bestallning-klader' ? ' is-active' : ''}`}>
-              <IconShirt />
-              <span>Beställning kläder</span>
-            </Link>
-            <Link href="/material-kvalitet" prefetch={false} onClick={() => setOpen(false)}
-              aria-current={pathname === '/material-kvalitet' ? 'page' : undefined}
-              className={`menu-link${pathname === '/material-kvalitet' ? ' is-active' : ''}`}>
-              <IconArchive />
-              <span>Materialkvalitet</span>
-            </Link>
-
-            {/* Divider before sales section */}
-            <div role="separator" aria-hidden style={{ height: 1, background: '#e5e7eb', margin: '8px 8px' }} />
-            <div style={{ fontSize: 12, color: '#6b7280', margin: '6px 8px' }}>Säljare</div>
-            <Link href="/korjournal" prefetch={true} onClick={() => setOpen(false)}
-              aria-current={pathname === '/korjournal' ? 'page' : undefined}
-              className={`menu-link${pathname === '/korjournal' ? ' is-active' : ''}`}>
-              <IconCar />
-              <span>Körjournal</span>
-            </Link>
+            {isMobile && (
+              <div style={{ padding: '6px 8px 10px' }}>
+                <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.5, color: '#6b7280', margin: '0 0 4px 2px' }}>Konto</div>
+                <div style={{ display:'flex', flexDirection:'column', gap:4, padding: '8px 10px', border: '1px solid #e5e7eb', borderRadius: 10, background:'#f9fafb' }}>
+                  <div style={{ fontSize:14, fontWeight:500, color:'#111827' }}>{fullName || 'Inget namn'}</div>
+                  <div style={{ fontSize:11, textTransform:'uppercase', letterSpacing:0.5, color:'#6b7280' }}>{role || 'ingen roll'}</div>
+                  <button onClick={async()=>{ const sup = (await import('@supabase/auth-helpers-nextjs')).createClientComponentClient(); await sup.auth.signOut(); window.location.href='/auth/sign-in'; }} style={{ alignSelf:'flex-start', padding:'6px 10px', fontSize:12, borderRadius:6, border:'1px solid #111827', background:'#111827', color:'#fff', cursor:'pointer' }}>Logga ut</button>
+                </div>
+              </div>
+            )}
+            {navLinks.map((l, i) => {
+              const href = l.href;
+              const active = pathname === href || (href !== '/' && pathname?.startsWith(href));
+              const common = {
+                href,
+                prefetch: true,
+                onClick: () => setOpen(false),
+                'aria-current': active ? 'page' : undefined,
+                className: `menu-link${active ? ' is-active' : ''}`
+              } as const;
+              const icon = href === '/' ? <IconHome />
+                : href.startsWith('/archive') ? <IconArchive />
+                : href === '/egenkontroll' ? <IconArchive />
+                : href === '/kontakt-lista' ? <IconPhone />
+                : href === '/dokument-information' ? <IconDoc />
+                : href === '/bestallning-klader' ? <IconShirt />
+                : href === '/korjournal' ? <IconCar />
+                : href === '/material-kvalitet' ? <IconArchive />
+                : href === '/planering' ? <IconArchive />
+                : <IconArchive />;
+              return (
+                <Link key={href} ref={i === 0 ? firstLinkRef : undefined} {...common}>
+                  {icon}
+                  <span>{l.label}</span>
+                </Link>
+              );
+            })}
           </nav>
+
+          {role === 'admin' && (
+            <div style={{ padding: '4px 12px 12px' }}>
+              <Link
+                href="/admin"
+                className="menu-link"
+                style={{ display: 'flex', alignItems: 'center', gap: 10, fontWeight: 500, border: '1px solid #e5e7eb', padding: '10px 12px', borderRadius: 10, background: '#f9fafb' }}
+                onClick={() => setOpen(false)}
+              >
+                {/* Simple shield icon */}
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#111827" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <path d="M12 3l7 4v5c0 5-3.5 8-7 9-3.5-1-7-4-7-9V7l7-4z" />
+                  <path d="M10 11l2 2 4-4" />
+                </svg>
+                <span>Admin</span>
+              </Link>
+            </div>
+          )}
 
           {/* Social media footer */}
           <div style={{ padding: '8px calc(8px + env(safe-area-inset-right)) calc(8px + env(safe-area-inset-bottom)) 8px', borderTop: '1px solid #e5e7eb', marginTop: 'auto' }}>
@@ -271,6 +294,6 @@ export default function HeaderMenu() {
           </div>
         </div>
       </div>
-    </div>
+  </div>
   );
 }
