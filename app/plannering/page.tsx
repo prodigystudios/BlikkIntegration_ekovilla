@@ -58,6 +58,8 @@ export default function PlanneringPage() {
 
   // Fallback selection scheduling (if drag/drop misbehaves)
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  // View mode: standard month grid or weekday lanes (all Mondays in a row, etc.)
+  const [viewMode, setViewMode] = useState<'monthGrid' | 'weekdayLanes' | 'dayList'>('monthGrid');
 
   // Truck color overrides (base color for each truck -> derived palette)
   const [truckColorOverrides, setTruckColorOverrides] = useState<Record<string, string>>({
@@ -170,6 +172,36 @@ export default function PlanneringPage() {
     for (let i = 0; i < days.length; i += 7) out.push(days.slice(i, i + 7));
     return out;
   }, [monthOffset]);
+
+  // For weekday lanes view: collect all days in month grouped by weekday index (0=Mon)
+  const weekdayLanes = useMemo(() => {
+    if (viewMode !== 'weekdayLanes') return [] as Array<Array<{ date: string; inMonth: boolean }>>;
+    const base = new Date();
+    base.setDate(1);
+    base.setMonth(base.getMonth() + monthOffset);
+    const start = startOfMonth(base);
+    const end = endOfMonth(base);
+    const lanes: Array<Array<{ date: string; inMonth: boolean }>> = [[], [], [], [], [], [], []];
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+      const dateStr = fmtDate(new Date(d));
+      const weekdayIndex = (d.getDay() + 6) % 7; // Mon=0
+      lanes[weekdayIndex].push({ date: dateStr, inMonth: true });
+    }
+    return lanes;
+  }, [viewMode, monthOffset]);
+
+  // Linear list of each day (for 'dayList' view)
+  const daysOfMonth = useMemo(() => {
+    if (viewMode !== 'dayList') return [] as string[];
+    const base = new Date();
+    base.setDate(1);
+    base.setMonth(base.getMonth() + monthOffset);
+    const start = startOfMonth(base);
+    const end = endOfMonth(base);
+    const out: string[] = [];
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) out.push(fmtDate(new Date(d)));
+    return out;
+  }, [viewMode, monthOffset]);
 
   const dayNames = ['Mån', 'Tis', 'Ons', 'Tor', 'Fre', 'Lör', 'Sön'];
 
@@ -400,6 +432,33 @@ export default function PlanneringPage() {
             <strong style={{ fontSize: 16 }}>{(() => { const d = new Date(); d.setMonth(d.getMonth() + monthOffset); return d.toLocaleDateString('sv-SE', { month: 'long', year: 'numeric' }); })()}</strong>
             <button className="btn--plain btn--sm" onClick={() => setMonthOffset(o => o + 1)}>▶</button>
             {monthOffset !== 0 && <button className="btn--plain btn--sm" onClick={() => setMonthOffset(0)}>Idag</button>}
+            <div style={{ display: 'flex', gap: 4 }}>
+              {([
+                { key: 'monthGrid', label: 'Månad' },
+                { key: 'weekdayLanes', label: 'Veckodagar' },
+                { key: 'dayList', label: 'Daglista' }
+              ] as const).map(btn => {
+                const active = viewMode === btn.key;
+                return (
+                  <button
+                    key={btn.key}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() => setViewMode(btn.key)}
+                    className="btn--plain btn--sm"
+                    style={{
+                      padding: '4px 10px',
+                      borderRadius: 6,
+                      border: active ? '2px solid #6366f1' : '1px solid #d1d5db',
+                      background: active ? '#eef2ff' : '#fff',
+                      fontWeight: active ? 600 : 500,
+                      fontSize: 12,
+                      color: active ? '#312e81' : '#374151'
+                    }}
+                  >{btn.label}</button>
+                );
+              })}
+            </div>
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
               <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
                 <label style={{ fontSize: 12, color: '#374151' }}>Sök i kalender:</label>
@@ -432,121 +491,344 @@ export default function PlanneringPage() {
             })}
             <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}><span style={{ width: 14, height: 14, background: '#fff', border: '2px dashed #94a3b8', borderRadius: 4 }} /> Ingen</div>
           </div>
-          <div style={{ display: 'grid', gap: 12 }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '60px repeat(7, 1fr)', gap: 8, fontSize: 12, fontWeight: 600, color: '#374151' }}>
-              <div style={{ textAlign: 'center' }}>Vecka</div>
-              {dayNames.map(n => <div key={n} style={{ textAlign: 'center' }}>{n}</div>)}
-            </div>
-            {weeks.map((week, wi) => {
-              const firstDay = week.find(c => c.date)?.date;
-              const weekNum = firstDay ? isoWeekNumber(firstDay) : '';
-              const weekBg = wi % 2 === 0 ? '#e0f2fe' : '#e0e7ff';
-              return (
-                <div key={wi} style={{ display: 'grid', gridTemplateColumns: '60px repeat(7, 1fr)', gap: 8, background: weekBg, padding: 6, borderRadius: 12, boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.05)' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, background: 'rgba(255,255,255,0.65)', backdropFilter: 'blur(2px)', border: '1px solid rgba(0,0,0,0.07)', borderRadius: 8, color: '#1e293b', boxShadow: '0 1px 2px rgba(0,0,0,0.08)' }}>{weekNum && `v${weekNum}`}</div>
-                  {week.map((cell, ci) => {
-                    if (!cell.date) return <div key={ci} style={{ minHeight: 160, border: '1px solid transparent', borderRadius: 8 }} />;
-                    const day = cell.date;
-                    const rawItems = itemsByDay.get(day) || [];
-                    const searchVal = calendarSearch.trim().toLowerCase();
-                    const items = rawItems.filter(it => {
-                      if (truckFilter) {
-                        if (truckFilter === 'UNASSIGNED') { if (it.truck) return false; }
-                        else if (it.truck !== truckFilter) return false;
-                      }
-                      if (searchVal) {
-                        const hay = [it.name, it.orderNumber || '', it.customer, it.jobType || '', (it.bagCount != null ? String(it.bagCount) : '')].join(' ').toLowerCase();
-                        if (!hay.includes(searchVal)) return false;
-                      }
-                      return true;
-                    });
-                    const isJumpHighlight = day === jumpTargetDay;
-                    return (
-                      <div key={day}
-                           id={`calday-${day}`}
-                           onClick={() => scheduleSelectedOnDay(day)}
-                           onDragOver={allowDrop}
-                           onDrop={e => onDropDay(e, day)}
-                           style={{ border: isJumpHighlight ? '2px solid #f59e0b' : (selectedProjectId ? '2px dashed #fbbf24' : '1px solid rgba(148,163,184,0.4)'), boxShadow: isJumpHighlight ? '0 0 0 4px rgba(245,158,11,0.35)' : '0 1px 2px rgba(0,0,0,0.05)', transition: 'box-shadow 0.3s,border 0.3s', borderRadius: 10, padding: 8, minHeight: 160, background: '#ffffff', display: 'flex', flexDirection: 'column', gap: 8, position: 'relative', cursor: selectedProjectId ? 'copy' : 'default' }}>
-                        <div style={{ fontSize: 12, fontWeight: 600, display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: '#111827' }}>
-                          <span>{day.slice(8, 10)}/{day.slice(5, 7)}</span>
-                          {items.length > 0 && <span style={{ fontSize: 10, background: '#f3f4f6', padding: '2px 6px', borderRadius: 12 }}>{items.length}</span>}
-                        </div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                          {items.map(it => {
-                            let display: null | { bg: string; border: string; text: string } = null;
-                            if (it.color) {
-                              const hex = it.color.startsWith('#') ? it.color.slice(1) : it.color;
-                              if (/^[0-9a-fA-F]{6}$/.test(hex)) {
-                                const r = parseInt(hex.slice(0, 2), 16);
-                                const g = parseInt(hex.slice(2, 4), 16);
-                                const b = parseInt(hex.slice(4, 6), 16);
-                                const lighten = (ch: number) => Math.round(ch + (255 - ch) * 0.85);
-                                const lr = lighten(r), lg = lighten(g), lb = lighten(b);
-                                const bg = `#${lr.toString(16).padStart(2, '0')}${lg.toString(16).padStart(2, '0')}${lb.toString(16).padStart(2, '0')}`;
-                                const brightness = (r * 299 + g * 587 + b * 114) / 1000;
-                                const text = brightness < 110 ? '#ffffff' : '#111827';
-                                display = { bg, border: '#' + hex, text };
+          {viewMode === 'monthGrid' && (
+            <div style={{ display: 'grid', gap: 12 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '60px repeat(7, 1fr)', gap: 8, fontSize: 12, fontWeight: 600, color: '#374151' }}>
+                <div style={{ textAlign: 'center' }}>Vecka</div>
+                {dayNames.map(n => <div key={n} style={{ textAlign: 'center' }}>{n}</div>)}
+              </div>
+              {weeks.map((week, wi) => {
+                const firstDay = week.find(c => c.date)?.date;
+                const weekNum = firstDay ? isoWeekNumber(firstDay) : '';
+                const weekBg = wi % 2 === 0 ? '#e0f2fe' : '#e0e7ff';
+                return (
+                  <div key={wi} style={{ display: 'grid', gridTemplateColumns: '60px repeat(7, 1fr)', gap: 8, background: weekBg, padding: 6, borderRadius: 12, boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.05)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, background: 'rgba(255,255,255,0.65)', backdropFilter: 'blur(2px)', border: '1px solid rgba(0,0,0,0.07)', borderRadius: 8, color: '#1e293b', boxShadow: '0 1px 2px rgba(0,0,0,0.08)' }}>{weekNum && `v${weekNum}`}</div>
+                    {week.map((cell, ci) => {
+                      if (!cell.date) return <div key={ci} style={{ minHeight: 160, border: '1px solid transparent', borderRadius: 8 }} />;
+                      const day = cell.date;
+                      const rawItems = itemsByDay.get(day) || [];
+                      const searchVal = calendarSearch.trim().toLowerCase();
+                      const items = rawItems.filter(it => {
+                        if (truckFilter) {
+                          if (truckFilter === 'UNASSIGNED') { if (it.truck) return false; }
+                          else if (it.truck !== truckFilter) return false;
+                        }
+                        if (searchVal) {
+                          const hay = [it.name, it.orderNumber || '', it.customer, it.jobType || '', (it.bagCount != null ? String(it.bagCount) : '')].join(' ').toLowerCase();
+                          if (!hay.includes(searchVal)) return false;
+                        }
+                        return true;
+                      });
+                      const isJumpHighlight = day === jumpTargetDay;
+                      return (
+                        <div key={day}
+                             id={`calday-${day}`}
+                             onClick={() => scheduleSelectedOnDay(day)}
+                             onDragOver={allowDrop}
+                             onDrop={e => onDropDay(e, day)}
+                             style={{ border: isJumpHighlight ? '2px solid #f59e0b' : (selectedProjectId ? '2px dashed #fbbf24' : '1px solid rgba(148,163,184,0.4)'), boxShadow: isJumpHighlight ? '0 0 0 4px rgba(245,158,11,0.35)' : '0 1px 2px rgba(0,0,0,0.05)', transition: 'box-shadow 0.3s,border 0.3s', borderRadius: 10, padding: 8, minHeight: 160, background: '#ffffff', display: 'flex', flexDirection: 'column', gap: 8, position: 'relative', cursor: selectedProjectId ? 'copy' : 'default' }}>
+                          <div style={{ fontSize: 12, fontWeight: 600, display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: '#111827' }}>
+                            <span>{day.slice(8, 10)}/{day.slice(5, 7)}</span>
+                            {items.length > 0 && <span style={{ fontSize: 10, background: '#f3f4f6', padding: '2px 6px', borderRadius: 12 }}>{items.length}</span>}
+                          </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            {items.map(it => {
+                              let display: null | { bg: string; border: string; text: string } = null;
+                              if (it.color) {
+                                const hex = it.color.startsWith('#') ? it.color.slice(1) : it.color;
+                                if (/^[0-9a-fA-F]{6}$/.test(hex)) {
+                                  const r = parseInt(hex.slice(0, 2), 16);
+                                  const g = parseInt(hex.slice(2, 4), 16);
+                                  const b = parseInt(hex.slice(4, 6), 16);
+                                  const lighten = (ch: number) => Math.round(ch + (255 - ch) * 0.85);
+                                  const lr = lighten(r), lg = lighten(g), lb = lighten(b);
+                                  const bg = `#${lr.toString(16).padStart(2, '0')}${lg.toString(16).padStart(2, '0')}${lb.toString(16).padStart(2, '0')}`;
+                                  const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+                                  const text = brightness < 110 ? '#ffffff' : '#111827';
+                                  display = { bg, border: '#' + hex, text };
+                                }
+                              } else if (it.truck) {
+                                display = truckColors[it.truck];
                               }
-                            } else if (it.truck) {
-                              display = truckColors[it.truck];
-                            }
-                            const cardBorder = display ? display.border : '#c7d2fe';
-                            const cardBg = display ? display.bg : '#eef2ff';
-                            const highlight = calendarSearch && (it.name.toLowerCase().includes(searchVal) || (it.orderNumber || '').toLowerCase().includes(searchVal));
-                            const isMid = (it as any).spanMiddle;
-                            const isStart = (it as any).spanStart;
-                            return (
-                              <div key={`${it.id}:${it.day}`} draggable onDragStart={e => onDragStart(e, it.id)} onDragEnd={onDragEnd} style={{ position: 'relative', border: `2px solid ${highlight ? '#f59e0b' : cardBorder}`, background: cardBg, borderRadius: 6, padding: 6, fontSize: 12, cursor: 'grab', display: 'grid', gap: 4, opacity: isMid ? 0.95 : 1, boxShadow: highlight ? '0 0 0 3px rgba(245,158,11,0.35)' : 'none' }}>
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                                  <span style={{ fontWeight: 600, color: display ? display.text : '#312e81' }}>
-                                    {it.orderNumber ? <span style={{ fontFamily: 'ui-monospace, monospace', background: '#ffffff', color: display ? display.text : '#312e81', border: `1px solid ${cardBorder}`, padding: '1px 4px', borderRadius: 4, marginRight: 4 }}>#{it.orderNumber}</span> : null}
-                                    {it.name}
-                                  </span>
-                                  {isStart && <span style={{ color: display ? display.text : '#6366f1' }}>{it.customer}</span>}
-                                  {(it.bagCount != null || it.jobType) && (
-                                    <span style={{ fontSize: 11, color: display ? display.text : '#374151' }}>
-                                      {it.bagCount != null ? `${it.bagCount} säckar` : ''}
-                                      {it.bagCount != null && it.jobType ? ' • ' : ''}
-                                      {it.jobType || ''}
+                              const cardBorder = display ? display.border : '#c7d2fe';
+                              const cardBg = display ? display.bg : '#eef2ff';
+                              const searchVal2 = calendarSearch.trim().toLowerCase();
+                              const highlight = calendarSearch && (it.name.toLowerCase().includes(searchVal2) || (it.orderNumber || '').toLowerCase().includes(searchVal2));
+                              const isMid = (it as any).spanMiddle;
+                              const isStart = (it as any).spanStart;
+                              return (
+                                <div key={`${it.id}:${it.day}`} draggable onDragStart={e => onDragStart(e, it.id)} onDragEnd={onDragEnd} style={{ position: 'relative', border: `2px solid ${highlight ? '#f59e0b' : cardBorder}`, background: cardBg, borderRadius: 6, padding: 6, fontSize: 12, cursor: 'grab', display: 'grid', gap: 4, opacity: isMid ? 0.95 : 1, boxShadow: highlight ? '0 0 0 3px rgba(245,158,11,0.35)' : 'none' }}>
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                                    <span style={{ fontWeight: 600, color: display ? display.text : '#312e81' }}>
+                                      {it.orderNumber ? <span style={{ fontFamily: 'ui-monospace, monospace', background: '#ffffff', color: display ? display.text : '#312e81', border: `1px solid ${cardBorder}`, padding: '1px 4px', borderRadius: 4, marginRight: 4 }}>#{it.orderNumber}</span> : null}
+                                      {it.name}
                                     </span>
+                                    {isStart && <span style={{ color: display ? display.text : '#6366f1' }}>{it.customer}</span>}
+                                    {(it.bagCount != null || it.jobType) && (
+                                      <span style={{ fontSize: 11, color: display ? display.text : '#374151' }}>
+                                        {it.bagCount != null ? `${it.bagCount} säckar` : ''}
+                                        {it.bagCount != null && it.jobType ? ' • ' : ''}
+                                        {it.jobType || ''}
+                                      </span>
+                                    )}
+                                  </div>
+                                  {isStart && (
+                                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
+                                      {editingTruckFor === it.id ? (
+                                        <select autoFocus value={it.truck || ''} onChange={e => { const val = e.target.value || null; setScheduled(prev => prev.map(p => p.id === it.id ? { ...p, truck: val } : p)); setEditingTruckFor(null); }} onBlur={() => setEditingTruckFor(null)} style={{ fontSize: 11, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }}>
+                                          <option value="">Välj lastbil…</option>
+                                          {trucks.map(t => <option key={t} value={t}>{t}</option>)}
+                                        </select>
+                                      ) : (
+                                        <button type="button" className="btn--plain btn--xs" onClick={() => setEditingTruckFor(it.id)} style={{ fontSize: 11, border: `1px solid ${cardBorder}`, borderRadius: 4, padding: '2px 6px', background: '#fff', color: display ? display.text : '#312e81' }}>{it.truck ? `Lastbil: ${it.truck}` : 'Välj lastbil'}</button>
+                                      )}
+                                      <input type="number" min={0} placeholder="Säckar" value={it.bagCount ?? ''} onChange={e => { const v = e.target.value; setScheduled(prev => prev.map(p => p.id === it.id ? { ...p, bagCount: v === '' ? null : Math.max(0, parseInt(v, 10) || 0) } : p)); }} style={{ width: 70, fontSize: 11, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }} />
+                                      <select value={it.jobType || ''} onChange={e => { const v = e.target.value || null; setScheduled(prev => prev.map(p => p.id === it.id ? { ...p, jobType: v } : p)); }} style={{ fontSize: 11, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }}>
+                                        <option value="">Typ av jobb…</option>
+                                        {jobTypes.map(j => <option key={j} value={j}>{j}</option>)}
+                                      </select>
+                                      <div style={{ display: 'flex', gap: 2 }}>
+                                        <button type="button" title="Förläng bakåt" className="btn--plain btn--xs" onClick={() => extendSpan(it.id, 'back')} style={{ fontSize: 11 }}>←+</button>
+                                        <button type="button" title="Förläng framåt" className="btn--plain btn--xs" onClick={() => extendSpan(it.id, 'forward')} style={{ fontSize: 11 }}>+→</button>
+                                        {(it as any).totalSpan > 1 && <button type="button" title="Kortare (slut)" className="btn--plain btn--xs" onClick={() => shrinkSpan(it.id, 'end')} style={{ fontSize: 11 }}>-→</button>}
+                                        {(it as any).totalSpan > 1 && <button type="button" title="Kortare (start)" className="btn--plain btn--xs" onClick={() => shrinkSpan(it.id, 'start')} style={{ fontSize: 11 }}>←-</button>}
+                                      </div>
+                                      <button type="button" className="btn--plain btn--xs" onClick={() => unschedule(it.id)} style={{ fontSize: 11, background: '#fee2e2', border: '1px solid #fca5a5', color: '#b91c1c', borderRadius: 4, padding: '2px 6px' }}>Ta bort</button>
+                                    </div>
                                   )}
                                 </div>
-                                {isStart && (
-                                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
-                                    {editingTruckFor === it.id ? (
-                                      <select autoFocus value={it.truck || ''} onChange={e => { const val = e.target.value || null; setScheduled(prev => prev.map(p => p.id === it.id ? { ...p, truck: val } : p)); setEditingTruckFor(null); }} onBlur={() => setEditingTruckFor(null)} style={{ fontSize: 11, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }}>
-                                        <option value="">Välj lastbil…</option>
-                                        {trucks.map(t => <option key={t} value={t}>{t}</option>)}
-                                      </select>
-                                    ) : (
-                                      <button type="button" className="btn--plain btn--xs" onClick={() => setEditingTruckFor(it.id)} style={{ fontSize: 11, border: `1px solid ${cardBorder}`, borderRadius: 4, padding: '2px 6px', background: '#fff', color: display ? display.text : '#312e81' }}>{it.truck ? `Lastbil: ${it.truck}` : 'Välj lastbil'}</button>
-                                    )}
-                                    <input type="number" min={0} placeholder="Säckar" value={it.bagCount ?? ''} onChange={e => { const v = e.target.value; setScheduled(prev => prev.map(p => p.id === it.id ? { ...p, bagCount: v === '' ? null : Math.max(0, parseInt(v, 10) || 0) } : p)); }} style={{ width: 70, fontSize: 11, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }} />
-                                    <select value={it.jobType || ''} onChange={e => { const v = e.target.value || null; setScheduled(prev => prev.map(p => p.id === it.id ? { ...p, jobType: v } : p)); }} style={{ fontSize: 11, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }}>
-                                      <option value="">Typ av jobb…</option>
-                                      {jobTypes.map(j => <option key={j} value={j}>{j}</option>)}
-                                    </select>
-                                    <div style={{ display: 'flex', gap: 2 }}>
-                                      <button type="button" title="Förläng bakåt" className="btn--plain btn--xs" onClick={() => extendSpan(it.id, 'back')} style={{ fontSize: 11 }}>←+</button>
-                                      <button type="button" title="Förläng framåt" className="btn--plain btn--xs" onClick={() => extendSpan(it.id, 'forward')} style={{ fontSize: 11 }}>+→</button>
-                                      {(it as any).totalSpan > 1 && <button type="button" title="Kortare (slut)" className="btn--plain btn--xs" onClick={() => shrinkSpan(it.id, 'end')} style={{ fontSize: 11 }}>-→</button>}
-                                      {(it as any).totalSpan > 1 && <button type="button" title="Kortare (start)" className="btn--plain btn--xs" onClick={() => shrinkSpan(it.id, 'start')} style={{ fontSize: 11 }}>←-</button>}
-                                    </div>
-                                    <button type="button" className="btn--plain btn--xs" onClick={() => unschedule(it.id)} style={{ fontSize: 11, background: '#fee2e2', border: '1px solid #fca5a5', color: '#b91c1c', borderRadius: 4, padding: '2px 6px' }}>Ta bort</button>
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })}
+                              );
+                            })}
+                          </div>
                         </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              );
-            })}
-          </div>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {viewMode === 'weekdayLanes' && (
+            <div style={{ display: 'grid', gap: 16 }}>
+              {dayNames.map((name, idx) => {
+                const lane = weekdayLanes[idx] || [];
+                return (
+                  <div key={name} style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                    <div style={{ width: 60, fontSize: 12, fontWeight: 700, textAlign: 'center', padding: '6px 4px', background: '#f1f5f9', border: '1px solid #e2e8f0', borderRadius: 8 }}>{name}</div>
+                    <div style={{ flex: 1, overflowX: 'auto', display: 'flex', gap: 8 }}>
+                      {lane.map(dObj => {
+                        const day = dObj.date;
+                        const rawItems = itemsByDay.get(day) || [];
+                        const searchVal = calendarSearch.trim().toLowerCase();
+                        const items = rawItems.filter(it => {
+                          if (truckFilter) {
+                            if (truckFilter === 'UNASSIGNED') { if (it.truck) return false; }
+                            else if (it.truck !== truckFilter) return false;
+                          }
+                          if (searchVal) {
+                            const hay = [it.name, it.orderNumber || '', it.customer, it.jobType || '', (it.bagCount != null ? String(it.bagCount) : '')].join(' ').toLowerCase();
+                            if (!hay.includes(searchVal)) return false;
+                          }
+                          return true;
+                        });
+                        const isJumpHighlight = day === jumpTargetDay;
+                        return (
+                          <div key={day}
+                               id={`calday-${day}`}
+                               onClick={() => scheduleSelectedOnDay(day)}
+                               onDragOver={allowDrop}
+                               onDrop={e => onDropDay(e, day)}
+                               style={{ minWidth: 160, border: isJumpHighlight ? '2px solid #f59e0b' : (selectedProjectId ? '2px dashed #fbbf24' : '1px solid rgba(148,163,184,0.4)'), boxShadow: isJumpHighlight ? '0 0 0 4px rgba(245,158,11,0.35)' : '0 1px 2px rgba(0,0,0,0.05)', borderRadius: 10, padding: 8, background: '#ffffff', display: 'flex', flexDirection: 'column', gap: 6, position: 'relative', cursor: selectedProjectId ? 'copy' : 'default' }}>
+                            <div style={{ fontSize: 11, fontWeight: 600, display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: '#111827' }}>
+                              <span>{day.slice(8, 10)}/{day.slice(5, 7)}</span>
+                              {items.length > 0 && <span style={{ fontSize: 10, background: '#f3f4f6', padding: '2px 6px', borderRadius: 12 }}>{items.length}</span>}
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                              {items.map(it => {
+                                let display: null | { bg: string; border: string; text: string } = null;
+                                if (it.color) {
+                                  const hex = it.color.startsWith('#') ? it.color.slice(1) : it.color;
+                                  if (/^[0-9a-fA-F]{6}$/.test(hex)) {
+                                    const r = parseInt(hex.slice(0, 2), 16);
+                                    const g = parseInt(hex.slice(2, 4), 16);
+                                    const b = parseInt(hex.slice(4, 6), 16);
+                                    const lighten = (ch: number) => Math.round(ch + (255 - ch) * 0.85);
+                                    const lr = lighten(r), lg = lighten(g), lb = lighten(b);
+                                    const bg = `#${lr.toString(16).padStart(2, '0')}${lg.toString(16).padStart(2, '0')}${lb.toString(16).padStart(2, '0')}`;
+                                    const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+                                    const text = brightness < 110 ? '#ffffff' : '#111827';
+                                    display = { bg, border: '#' + hex, text };
+                                  }
+                                } else if (it.truck) {
+                                  display = truckColors[it.truck];
+                                }
+                                const cardBorder = display ? display.border : '#c7d2fe';
+                                const cardBg = display ? display.bg : '#eef2ff';
+                                const highlight = calendarSearch && (it.name.toLowerCase().includes(searchVal) || (it.orderNumber || '').toLowerCase().includes(searchVal));
+                                const isMid = (it as any).spanMiddle;
+                                const isStart = (it as any).spanStart;
+                                return (
+                                  <div key={`${it.id}:${it.day}`} draggable onDragStart={e => onDragStart(e, it.id)} onDragEnd={onDragEnd} style={{ position: 'relative', border: `2px solid ${highlight ? '#f59e0b' : cardBorder}`, background: cardBg, borderRadius: 6, padding: 6, fontSize: 11, cursor: 'grab', display: 'grid', gap: 4, opacity: isMid ? 0.95 : 1, boxShadow: highlight ? '0 0 0 3px rgba(245,158,11,0.35)' : 'none' }}>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                                      <span style={{ fontWeight: 600, color: display ? display.text : '#312e81' }}>
+                                        {it.orderNumber ? <span style={{ fontFamily: 'ui-monospace, monospace', background: '#ffffff', color: display ? display.text : '#312e81', border: `1px solid ${cardBorder}`, padding: '1px 4px', borderRadius: 4, marginRight: 4 }}>#{it.orderNumber}</span> : null}
+                                        {it.name}
+                                      </span>
+                                      {isStart && <span style={{ color: display ? display.text : '#6366f1' }}>{it.customer}</span>}
+                                      {(it.bagCount != null || it.jobType) && (
+                                        <span style={{ fontSize: 10, color: display ? display.text : '#374151' }}>
+                                          {it.bagCount != null ? `${it.bagCount} säckar` : ''}
+                                          {it.bagCount != null && it.jobType ? ' • ' : ''}
+                                          {it.jobType || ''}
+                                        </span>
+                                      )}
+                                    </div>
+                                    {isStart && (
+                                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
+                                        {editingTruckFor === it.id ? (
+                                          <select autoFocus value={it.truck || ''} onChange={e => { const val = e.target.value || null; setScheduled(prev => prev.map(p => p.id === it.id ? { ...p, truck: val } : p)); setEditingTruckFor(null); }} onBlur={() => setEditingTruckFor(null)} style={{ fontSize: 10, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }}>
+                                            <option value="">Lastbil…</option>
+                                            {trucks.map(t => <option key={t} value={t}>{t}</option>)}
+                                          </select>
+                                        ) : (
+                                          <button type="button" className="btn--plain btn--xs" onClick={() => setEditingTruckFor(it.id)} style={{ fontSize: 10, border: `1px solid ${cardBorder}`, borderRadius: 4, padding: '2px 4px', background: '#fff', color: display ? display.text : '#312e81' }}>{it.truck ? it.truck : 'Välj lastbil'}</button>
+                                        )}
+                                        <input type="number" min={0} placeholder="Säck" value={it.bagCount ?? ''} onChange={e => { const v = e.target.value; setScheduled(prev => prev.map(p => p.id === it.id ? { ...p, bagCount: v === '' ? null : Math.max(0, parseInt(v, 10) || 0) } : p)); }} style={{ width: 54, fontSize: 10, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }} />
+                                        <select value={it.jobType || ''} onChange={e => { const v = e.target.value || null; setScheduled(prev => prev.map(p => p.id === it.id ? { ...p, jobType: v } : p)); }} style={{ fontSize: 10, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }}>
+                                          <option value="">Jobb…</option>
+                                          {jobTypes.map(j => <option key={j} value={j}>{j}</option>)}
+                                        </select>
+                                        <div style={{ display: 'flex', gap: 2 }}>
+                                          <button type="button" title="Bakåt" className="btn--plain btn--xs" onClick={() => extendSpan(it.id, 'back')} style={{ fontSize: 10 }}>←+</button>
+                                          <button type="button" title="Framåt" className="btn--plain btn--xs" onClick={() => extendSpan(it.id, 'forward')} style={{ fontSize: 10 }}>+→</button>
+                                          {(it as any).totalSpan > 1 && <button type="button" title="Kort slut" className="btn--plain btn--xs" onClick={() => shrinkSpan(it.id, 'end')} style={{ fontSize: 10 }}>-→</button>}
+                                          {(it as any).totalSpan > 1 && <button type="button" title="Kort start" className="btn--plain btn--xs" onClick={() => shrinkSpan(it.id, 'start')} style={{ fontSize: 10 }}>←-</button>}
+                                        </div>
+                                        <button type="button" className="btn--plain btn--xs" onClick={() => unschedule(it.id)} style={{ fontSize: 10, background: '#fee2e2', border: '1px solid #fca5a5', color: '#b91c1c', borderRadius: 4, padding: '2px 4px' }}>X</button>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {viewMode === 'dayList' && (
+            <div style={{ display: 'grid', gap: 6 }}>
+              {daysOfMonth.map(day => {
+                const rawItems = itemsByDay.get(day) || [];
+                const searchVal = calendarSearch.trim().toLowerCase();
+                const items = rawItems.filter(it => {
+                  if (truckFilter) {
+                    if (truckFilter === 'UNASSIGNED') { if (it.truck) return false; }
+                    else if (it.truck !== truckFilter) return false;
+                  }
+                  if (searchVal) {
+                    const hay = [it.name, it.orderNumber || '', it.customer, it.jobType || '', (it.bagCount != null ? String(it.bagCount) : '')].join(' ').toLowerCase();
+                    if (!hay.includes(searchVal)) return false;
+                  }
+                  return true;
+                });
+                const isJumpHighlight = day === jumpTargetDay;
+                return (
+                  <div key={day} style={{ display: 'flex', alignItems: 'stretch', gap: 8 }}>
+                    <div
+                      id={`calday-${day}`}
+                      onClick={() => scheduleSelectedOnDay(day)}
+                      onDragOver={allowDrop}
+                      onDrop={e => onDropDay(e, day)}
+                      style={{ width: 130, flexShrink: 0, border: isJumpHighlight ? '2px solid #f59e0b' : (selectedProjectId ? '2px dashed #fbbf24' : '1px solid #cbd5e1'), background: '#f8fafc', borderRadius: 8, padding: '6px 8px', display: 'flex', flexDirection: 'column', justifyContent: 'center', cursor: selectedProjectId ? 'copy' : 'default' }}>
+                      <span style={{ fontSize: 12, fontWeight: 600 }}>{day.slice(8,10)}/{day.slice(5,7)}</span>
+                      <span style={{ fontSize: 10, color: '#64748b' }}>{new Date(day + 'T00:00:00').toLocaleDateString('sv-SE', { weekday: 'short' })}</span>
+                    </div>
+                    <div style={{ flex: 1, border: '1px solid #e2e8f0', borderRadius: 8, padding: 8, background: '#ffffff', minHeight: 54, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                      {items.length === 0 && <div style={{ fontSize: 11, color: '#94a3b8' }}>—</div>}
+                      {items.map(it => {
+                        let display: null | { bg: string; border: string; text: string } = null;
+                        if (it.color) {
+                          const hex = it.color.startsWith('#') ? it.color.slice(1) : it.color;
+                          if (/^[0-9a-fA-F]{6}$/.test(hex)) {
+                            const r = parseInt(hex.slice(0, 2), 16);
+                            const g = parseInt(hex.slice(2, 4), 16);
+                            const b = parseInt(hex.slice(4, 6), 16);
+                            const lighten = (ch: number) => Math.round(ch + (255 - ch) * 0.85);
+                            const lr = lighten(r), lg = lighten(g), lb = lighten(b);
+                            const bg = `#${lr.toString(16).padStart(2, '0')}${lg.toString(16).padStart(2, '0')}${lb.toString(16).padStart(2, '0')}`;
+                            const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+                            const text = brightness < 110 ? '#ffffff' : '#111827';
+                            display = { bg, border: '#' + hex, text };
+                          }
+                        } else if (it.truck) {
+                          display = truckColors[it.truck];
+                        }
+                        const cardBorder = display ? display.border : '#c7d2fe';
+                        const cardBg = display ? display.bg : '#eef2ff';
+                        const highlight = calendarSearch && (it.name.toLowerCase().includes(searchVal) || (it.orderNumber || '').toLowerCase().includes(searchVal));
+                        const isMid = (it as any).spanMiddle;
+                        const isStart = (it as any).spanStart;
+                        return (
+                          <div key={`${it.id}:${it.day}`}
+                               draggable
+                               onDragStart={e => onDragStart(e, it.id)}
+                               onDragEnd={onDragEnd}
+                               style={{ position: 'relative', border: `2px solid ${highlight ? '#f59e0b' : cardBorder}`, background: cardBg, borderRadius: 6, padding: 6, fontSize: 11, cursor: 'grab', display: 'grid', gap: 4, opacity: isMid ? 0.9 : 1, boxShadow: highlight ? '0 0 0 3px rgba(245,158,11,0.35)' : 'none', minWidth: 180 }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                              <span style={{ fontWeight: 600, color: display ? display.text : '#312e81', lineHeight: 1.2 }}>
+                                {it.orderNumber ? <span style={{ fontFamily: 'ui-monospace, monospace', background: '#ffffff', color: display ? display.text : '#312e81', border: `1px solid ${cardBorder}`, padding: '1px 4px', borderRadius: 4, marginRight: 4 }}>#{it.orderNumber}</span> : null}
+                                {it.name}
+                              </span>
+                              {isStart && <span style={{ color: display ? display.text : '#6366f1', fontSize: 10 }}>{it.customer}</span>}
+                              {(it.bagCount != null || it.jobType) && (
+                                <span style={{ fontSize: 10, color: display ? display.text : '#374151' }}>
+                                  {it.bagCount != null ? `${it.bagCount} säckar` : ''}
+                                  {it.bagCount != null && it.jobType ? ' • ' : ''}
+                                  {it.jobType || ''}
+                                </span>
+                              )}
+                            </div>
+                            {isStart && (
+                              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
+                                {editingTruckFor === it.id ? (
+                                  <select autoFocus value={it.truck || ''} onChange={e => { const val = e.target.value || null; setScheduled(prev => prev.map(p => p.id === it.id ? { ...p, truck: val } : p)); setEditingTruckFor(null); }} onBlur={() => setEditingTruckFor(null)} style={{ fontSize: 10, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }}>
+                                    <option value="">Lastbil…</option>
+                                    {trucks.map(t => <option key={t} value={t}>{t}</option>)}
+                                  </select>
+                                ) : (
+                                  <button type="button" className="btn--plain btn--xs" onClick={() => setEditingTruckFor(it.id)} style={{ fontSize: 10, border: `1px solid ${cardBorder}`, borderRadius: 4, padding: '2px 4px', background: '#fff', color: display ? display.text : '#312e81' }}>{it.truck ? it.truck : 'Välj lastbil'}</button>
+                                )}
+                                <input type="number" min={0} placeholder="Säck" value={it.bagCount ?? ''} onChange={e => { const v = e.target.value; setScheduled(prev => prev.map(p => p.id === it.id ? { ...p, bagCount: v === '' ? null : Math.max(0, parseInt(v, 10) || 0) } : p)); }} style={{ width: 50, fontSize: 10, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }} />
+                                <select value={it.jobType || ''} onChange={e => { const v = e.target.value || null; setScheduled(prev => prev.map(p => p.id === it.id ? { ...p, jobType: v } : p)); }} style={{ fontSize: 10, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }}>
+                                  <option value="">Jobb…</option>
+                                  {jobTypes.map(j => <option key={j} value={j}>{j}</option>)}
+                                </select>
+                                <div style={{ display: 'flex', gap: 2 }}>
+                                  <button type="button" title="Bakåt" className="btn--plain btn--xs" onClick={() => extendSpan(it.id, 'back')} style={{ fontSize: 10 }}>←+</button>
+                                  <button type="button" title="Framåt" className="btn--plain btn--xs" onClick={() => extendSpan(it.id, 'forward')} style={{ fontSize: 10 }}>+→</button>
+                                  {(it as any).totalSpan > 1 && <button type="button" title="Kort slut" className="btn--plain btn--xs" onClick={() => shrinkSpan(it.id, 'end')} style={{ fontSize: 10 }}>-→</button>}
+                                  {(it as any).totalSpan > 1 && <button type="button" title="Kort start" className="btn--plain btn--xs" onClick={() => shrinkSpan(it.id, 'start')} style={{ fontSize: 10 }}>←-</button>}
+                                </div>
+                                <button type="button" className="btn--plain btn--xs" onClick={() => unschedule(it.id)} style={{ fontSize: 10, background: '#fee2e2', border: '1px solid #fca5a5', color: '#b91c1c', borderRadius: 4, padding: '2px 4px' }}>X</button>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
     </div>
