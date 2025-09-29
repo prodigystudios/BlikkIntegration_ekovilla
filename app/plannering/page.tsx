@@ -56,6 +56,9 @@ export default function PlanneringPage() {
   const trucks = ['mb blå', 'mb vit', 'volvo blå'];
   const jobTypes = ['Ekovilla', 'Vitull', 'Leverans', 'Utsugning', 'Snickerier', 'Övrigt'];
 
+  // Fallback selection scheduling (if drag/drop misbehaves)
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+
   // Truck color overrides (base color for each truck -> derived palette)
   const [truckColorOverrides, setTruckColorOverrides] = useState<Record<string, string>>({
     'mb blå': '#38bdf8',
@@ -256,6 +259,7 @@ export default function PlanneringPage() {
     e.preventDefault();
     const id = e.dataTransfer.getData('text/plain');
     if (!id) return;
+    console.debug('[Plannering] Drop received', { id, day });
     setScheduled(prev => {
       const existing = prev.find(p => p.id === id);
       if (existing) {
@@ -263,10 +267,28 @@ export default function PlanneringPage() {
         const start = day;
         const end = new Date(day + 'T00:00:00');
         end.setDate(end.getDate() + duration);
+        console.debug('[Plannering] Moving existing scheduled item', { id, start, end: fmtDate(end) });
         return prev.map(p => p.id === id ? { ...p, startDay: start, endDay: fmtDate(end) } : p);
       }
       const proj = projects.find(p => p.id === id);
       if (!proj) return prev;
+      const newItem: ScheduledItem = { ...proj, startDay: day, endDay: day, truck: null, color: null, bagCount: null, jobType: null };
+      console.debug('[Plannering] Scheduling new item from backlog/manual', { id, day });
+      setTimeout(() => setEditingTruckFor(newItem.id), 0);
+      return [...prev, newItem];
+    });
+  }
+
+  // Click-based scheduling fallback: select a backlog project, then click a calendar day.
+  function scheduleSelectedOnDay(day: string) {
+    if (!selectedProjectId) return;
+    const id = selectedProjectId;
+    setSelectedProjectId(null);
+    setScheduled(prev => {
+      if (prev.some(p => p.id === id)) return prev; // already scheduled
+      const proj = projects.find(p => p.id === id);
+      if (!proj) return prev;
+      console.debug('[Plannering] Click-schedule new item', { id, day });
       const newItem: ScheduledItem = { ...proj, startDay: day, endDay: day, truck: null, color: null, bagCount: null, jobType: null };
       setTimeout(() => setEditingTruckFor(newItem.id), 0);
       return [...prev, newItem];
@@ -351,8 +373,14 @@ export default function PlanneringPage() {
             {loading && <div style={{ fontSize: 12 }}>Laddar projekt…</div>}
             {!loading && backlog.length === 0 && <div style={{ fontSize: 12, color: '#64748b' }}>Inga fler oschemalagda.</div>}
             {backlog.map(p => (
-              <div key={p.id} draggable onDragStart={e => onDragStart(e, p.id)} onDragEnd={onDragEnd} style={{ position: 'relative', border: p.isManual ? '2px dashed #94a3b8' : '1px solid #e5e7eb', borderRadius: 8, padding: 10, background: draggingId === p.id ? '#eef2ff' : (p.isManual ? '#f1f5f9' : '#fff'), cursor: 'grab', display: 'grid', gap: 4 }}>
+        <div key={p.id}
+           draggable
+           onDragStart={e => onDragStart(e, p.id)}
+           onDragEnd={onDragEnd}
+           onClick={() => setSelectedProjectId(prev => prev === p.id ? null : p.id)}
+           style={{ position: 'relative', border: selectedProjectId === p.id ? '2px solid #f59e0b' : (p.isManual ? '2px dashed #94a3b8' : '1px solid #e5e7eb'), borderRadius: 8, padding: 10, background: draggingId === p.id ? '#eef2ff' : (p.isManual ? '#f1f5f9' : '#fff'), cursor: 'grab', display: 'grid', gap: 4 }}>
                 {p.isManual && <span style={{ position: 'absolute', top: -7, left: 8, background: '#334155', color: '#fff', fontSize: 10, padding: '2px 6px', borderRadius: 12 }}>Manuell</span>}
+        {selectedProjectId === p.id && <span style={{ position: 'absolute', top: -7, right: 8, background: '#f59e0b', color: '#fff', fontSize: 10, padding: '2px 6px', borderRadius: 12 }}>Vald</span>}
                 <strong style={{ fontSize: 14 }}>
                   {p.orderNumber ? <span style={{ fontFamily: 'ui-monospace, monospace', background: '#f3f4f6', padding: '2px 6px', borderRadius: 4, marginRight: 6, fontSize: 12 }}>#{p.orderNumber}</span> : null}
                   {p.name}
@@ -361,6 +389,7 @@ export default function PlanneringPage() {
                 <span style={{ fontSize: 11, color: '#9ca3af' }}>Skapad: {p.createdAt.slice(0, 10)}</span>
               </div>
             ))}
+      {selectedProjectId && <div style={{ fontSize: 11, color: '#b45309', background: '#fef3c7', border: '1px solid #fcd34d', padding: '4px 6px', borderRadius: 6 }}>Klicka på en dag i kalendern för att schemalägga vald projekt (fallback).</div>}
           </div>
         </div>
 
@@ -433,7 +462,12 @@ export default function PlanneringPage() {
                     });
                     const isJumpHighlight = day === jumpTargetDay;
                     return (
-                      <div key={day} id={`calday-${day}`} onDragOver={allowDrop} onDrop={e => onDropDay(e, day)} style={{ border: isJumpHighlight ? '2px solid #f59e0b' : '1px solid rgba(148,163,184,0.4)', boxShadow: isJumpHighlight ? '0 0 0 4px rgba(245,158,11,0.35)' : '0 1px 2px rgba(0,0,0,0.05)', transition: 'box-shadow 0.3s,border 0.3s', borderRadius: 10, padding: 8, minHeight: 160, background: '#ffffff', display: 'flex', flexDirection: 'column', gap: 8, position: 'relative' }}>
+                      <div key={day}
+                           id={`calday-${day}`}
+                           onClick={() => scheduleSelectedOnDay(day)}
+                           onDragOver={allowDrop}
+                           onDrop={e => onDropDay(e, day)}
+                           style={{ border: isJumpHighlight ? '2px solid #f59e0b' : (selectedProjectId ? '2px dashed #fbbf24' : '1px solid rgba(148,163,184,0.4)'), boxShadow: isJumpHighlight ? '0 0 0 4px rgba(245,158,11,0.35)' : '0 1px 2px rgba(0,0,0,0.05)', transition: 'box-shadow 0.3s,border 0.3s', borderRadius: 10, padding: 8, minHeight: 160, background: '#ffffff', display: 'flex', flexDirection: 'column', gap: 8, position: 'relative', cursor: selectedProjectId ? 'copy' : 'default' }}>
                         <div style={{ fontSize: 12, fontWeight: 600, display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: '#111827' }}>
                           <span>{day.slice(8, 10)}/{day.slice(5, 7)}</span>
                           {items.length > 0 && <span style={{ fontSize: 10, background: '#f3f4f6', padding: '2px 6px', borderRadius: 12 }}>{items.length}</span>}
