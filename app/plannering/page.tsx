@@ -11,9 +11,16 @@ interface Project {
   status: string;
   isManual?: boolean; // local only flag
 }
-interface ScheduledItem extends Project {
-  startDay: string; // YYYY-MM-DD
-  endDay: string;   // inclusive
+// Legacy ScheduledItem replaced by segment+meta model
+interface ScheduledSegment {
+  id: string;          // unique segment id
+  projectId: string;   // reference Project.id
+  startDay: string;    // YYYY-MM-DD inclusive
+  endDay: string;      // inclusive
+}
+
+interface ProjectScheduleMeta {
+  projectId: string;
   truck?: string | null;
   color?: string | null;
   bagCount?: number | null;
@@ -22,7 +29,13 @@ interface ScheduledItem extends Project {
 
 function startOfMonth(d: Date) { return new Date(d.getFullYear(), d.getMonth(), 1); }
 function endOfMonth(d: Date) { return new Date(d.getFullYear(), d.getMonth() + 1, 0); }
-function fmtDate(d: Date) { return d.toISOString().slice(0, 10); }
+// Format date in local time (avoid UTC shift that caused off-by-one day issues)
+function fmtDate(d: Date) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
 
 export default function PlanneringPage() {
   // Loading/data
@@ -30,7 +43,10 @@ export default function PlanneringPage() {
   const [error, setError] = useState<string | null>(null);
   const [source, setSource] = useState<string | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
-  const [scheduled, setScheduled] = useState<ScheduledItem[]>([]);
+  // Segments allow non-contiguous scheduling of same project
+  const [scheduledSegments, setScheduledSegments] = useState<ScheduledSegment[]>([]);
+  // Per project scheduling metadata (shared across its segments)
+  const [scheduleMeta, setScheduleMeta] = useState<Record<string, ProjectScheduleMeta>>({});
 
   // Calendar / UI state
   const [monthOffset, setMonthOffset] = useState(0);
@@ -60,6 +76,7 @@ export default function PlanneringPage() {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   // View mode: standard month grid or weekday lanes (all Mondays in a row, etc.)
   const [viewMode, setViewMode] = useState<'monthGrid' | 'weekdayLanes' | 'dayList'>('monthGrid');
+  const [showCardControls, setShowCardControls] = useState(true);
   // UI hover state for backlog punch effect
   const [hoverBacklogId, setHoverBacklogId] = useState<string | null>(null);
 
@@ -237,37 +254,51 @@ export default function PlanneringPage() {
   }, [truckColorOverrides, trucks]);
 
   // Expand scheduled items to per-day instances
-  interface DayInstance extends ScheduledItem { day: string; spanStart: boolean; spanEnd: boolean; spanMiddle: boolean; totalSpan: number; }
+  interface DayInstance extends ProjectScheduleMeta {
+    segmentId: string;
+    project: Project;
+    day: string;
+    spanStart: boolean;
+    spanEnd: boolean;
+    spanMiddle: boolean;
+    totalSpan: number;
+  }
   const itemsByDay = useMemo(() => {
     const map = new Map<string, DayInstance[]>();
-    for (const base of scheduled) {
-      const start = new Date(base.startDay);
-      const end = new Date(base.endDay);
+    for (const seg of scheduledSegments) {
+      const project = projects.find(p => p.id === seg.projectId);
+      if (!project) continue;
+      const meta = scheduleMeta[seg.projectId] || { projectId: seg.projectId };
+      const start = new Date(seg.startDay);
+      const end = new Date(seg.endDay);
       for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
         const day = fmtDate(d);
-        const spanStart = day === base.startDay;
-        const spanEnd = day === base.endDay;
-        const totalSpan = Math.round((new Date(base.endDay).getTime() - new Date(base.startDay).getTime()) / 86400000) + 1;
-        const inst: DayInstance = { ...base, day, spanStart, spanEnd, spanMiddle: !spanStart && !spanEnd, totalSpan };
+        const spanStart = day === seg.startDay;
+        const spanEnd = day === seg.endDay;
+        const totalSpan = Math.round((new Date(seg.endDay).getTime() - new Date(seg.startDay).getTime()) / 86400000) + 1;
+        const inst: DayInstance = { ...meta, segmentId: seg.id, project, day, spanStart, spanEnd, spanMiddle: !spanStart && !spanEnd, totalSpan };
         const list = map.get(day) || [];
         list.push(inst);
         map.set(day, list);
       }
     }
     return map;
-  }, [scheduled]);
+  }, [scheduledSegments, scheduleMeta, projects]);
 
   // Calendar search (only one implementation)
   const calendarMatchDays = useMemo(() => {
     const term = calendarSearch.trim().toLowerCase();
     if (!term) return [] as string[];
     const set = new Set<string>();
-    for (const it of scheduled) {
-      const hay = [it.name, it.orderNumber || '', it.customer, it.jobType || '', (it.bagCount != null ? String(it.bagCount) : '')].join(' ').toLowerCase();
-      if (hay.includes(term)) set.add(it.startDay);
+    for (const seg of scheduledSegments) {
+      const project = projects.find(p => p.id === seg.projectId);
+      if (!project) continue;
+      const meta = scheduleMeta[seg.projectId] || {};
+      const hay = [project.name, project.orderNumber || '', project.customer, meta.jobType || '', (meta.bagCount != null ? String(meta.bagCount) : '')].join(' ').toLowerCase();
+      if (hay.includes(term)) set.add(seg.startDay);
     }
     return Array.from(set).sort();
-  }, [calendarSearch, scheduled]);
+  }, [calendarSearch, scheduledSegments, scheduleMeta, projects]);
   const firstCalendarMatchDay = calendarMatchDays[0] || null;
   function navigateToMatch(idx: number) {
     const day = calendarMatchDays[idx];
@@ -292,7 +323,7 @@ export default function PlanneringPage() {
   }, [weeks, jumpTargetDay]);
 
   // Backlog lists
-  const backlog = useMemo(() => projects.filter(p => !scheduled.some(s => s.id === p.id) && !recentSearchedIds.includes(p.id)), [projects, scheduled, recentSearchedIds]);
+  const backlog = useMemo(() => projects.filter(p => !scheduledSegments.some(s => s.projectId === p.id) && !recentSearchedIds.includes(p.id)), [projects, scheduledSegments, recentSearchedIds]);
   const searchedProjects = useMemo(() => recentSearchedIds.map(id => projects.find(p => p.id === id)).filter(Boolean) as Project[], [recentSearchedIds, projects]);
 
   // DnD handlers
@@ -303,57 +334,73 @@ export default function PlanneringPage() {
     e.preventDefault();
     const id = e.dataTransfer.getData('text/plain');
     if (!id) return;
-    console.debug('[Plannering] Drop received', { id, day });
-    setScheduled(prev => {
-      const existing = prev.find(p => p.id === id);
-      if (existing) {
-        const duration = Math.round((new Date(existing.endDay).getTime() - new Date(existing.startDay).getTime()) / 86400000);
-        const start = day;
-        const end = new Date(day + 'T00:00:00');
-        end.setDate(end.getDate() + duration);
-        console.debug('[Plannering] Moving existing scheduled item', { id, start, end: fmtDate(end) });
-        return prev.map(p => p.id === id ? { ...p, startDay: start, endDay: fmtDate(end) } : p);
+    // If dragging a segment vs a backlog project
+    const seg = scheduledSegments.find(s => s.id === id);
+    if (seg) {
+      // inclusive length
+      const startOld = new Date(seg.startDay + 'T00:00:00');
+      const endOld = new Date(seg.endDay + 'T00:00:00');
+      const lengthDays = Math.round((endOld.getTime() - startOld.getTime()) / 86400000) + 1; // >=1
+      const newStartStr = day;
+      const newStartDate = new Date(day + 'T00:00:00');
+      const newEndDate = new Date(newStartDate);
+      newEndDate.setDate(newEndDate.getDate() + (lengthDays - 1));
+      const newEndStr = fmtDate(newEndDate);
+      // Guard: never allow end < start
+      if (newEndDate < newStartDate) {
+        console.warn('[DragMove] corrected inverted range', { seg, newStartStr, attemptedEnd: newEndStr });
+        newEndDate.setTime(newStartDate.getTime());
       }
-      const proj = projects.find(p => p.id === id);
-      if (!proj) return prev;
-      const newItem: ScheduledItem = { ...proj, startDay: day, endDay: day, truck: null, color: null, bagCount: null, jobType: null };
-      console.debug('[Plannering] Scheduling new item from backlog/manual', { id, day });
-      setTimeout(() => setEditingTruckFor(newItem.id), 0);
-      return [...prev, newItem];
-    });
+      console.debug('[DragMove] segment', { id: seg.id, oldStart: seg.startDay, oldEnd: seg.endDay, newStart: newStartStr, newEnd: newEndStr, lengthDays });
+      setScheduledSegments(prev => prev.map(s => s.id === id ? { ...s, startDay: newStartStr, endDay: newEndStr } : s));
+      // Auto navigate month if moved to different month than currently shown
+      const targetDate = newStartDate;
+      const base = new Date(); base.setDate(1);
+      const newOffset = (targetDate.getFullYear() - base.getFullYear()) * 12 + (targetDate.getMonth() - base.getMonth());
+      setMonthOffset(o => o === newOffset ? o : newOffset);
+      return;
+    }
+    const proj = projects.find(p => p.id === id);
+    if (!proj) return;
+    // create meta if missing
+    setScheduleMeta(m => m[proj.id] ? m : { ...m, [proj.id]: { projectId: proj.id, truck: null, bagCount: null, jobType: null, color: null } });
+    const newSeg: ScheduledSegment = { id: 'seg-' + proj.id + '-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7), projectId: proj.id, startDay: day, endDay: day };
+    setScheduledSegments(prev => [...prev, newSeg]);
+    setTimeout(() => setEditingTruckFor(proj.id), 0);
   }
 
   // Click-based scheduling fallback: select a backlog project, then click a calendar day.
   function scheduleSelectedOnDay(day: string) {
     if (!selectedProjectId) return;
-    const id = selectedProjectId;
+    const proj = projects.find(p => p.id === selectedProjectId);
     setSelectedProjectId(null);
-    setScheduled(prev => {
-      if (prev.some(p => p.id === id)) return prev; // already scheduled
-      const proj = projects.find(p => p.id === id);
-      if (!proj) return prev;
-      console.debug('[Plannering] Click-schedule new item', { id, day });
-      const newItem: ScheduledItem = { ...proj, startDay: day, endDay: day, truck: null, color: null, bagCount: null, jobType: null };
-      setTimeout(() => setEditingTruckFor(newItem.id), 0);
-      return [...prev, newItem];
-    });
+    if (!proj) return;
+    setScheduleMeta(m => m[proj.id] ? m : { ...m, [proj.id]: { projectId: proj.id } });
+    const newSeg: ScheduledSegment = { id: 'seg-' + proj.id + '-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7), projectId: proj.id, startDay: day, endDay: day };
+    setScheduledSegments(prev => [...prev, newSeg]);
+    setTimeout(() => setEditingTruckFor(proj.id), 0);
   }
-  function unschedule(id: string) { setScheduled(prev => prev.filter(p => p.id !== id)); }
-  function extendSpan(id: string, direction: 'forward' | 'back') {
-    setScheduled(prev => prev.map(p => {
-      if (p.id !== id) return p;
-      if (direction === 'forward') { const d = new Date(p.endDay); d.setDate(d.getDate() + 1); return { ...p, endDay: fmtDate(d) }; }
-      const d = new Date(p.startDay); d.setDate(d.getDate() - 1); return { ...p, startDay: fmtDate(d) };
+  function unschedule(segmentId: string) { setScheduledSegments(prev => prev.filter(s => s.id !== segmentId)); }
+  function extendSpan(segmentId: string, direction: 'forward' | 'back') {
+    setScheduledSegments(prev => prev.map(s => {
+      if (s.id !== segmentId) return s;
+      if (direction === 'forward') { const d = new Date(s.endDay); d.setDate(d.getDate() + 1); return { ...s, endDay: fmtDate(d) }; }
+      const d = new Date(s.startDay); d.setDate(d.getDate() - 1); return { ...s, startDay: fmtDate(d) };
     }));
   }
-  function shrinkSpan(id: string, edge: 'end' | 'start') {
-    setScheduled(prev => prev.map(p => {
-      if (p.id !== id) return p;
-      const span = Math.round((new Date(p.endDay).getTime() - new Date(p.startDay).getTime()) / 86400000) + 1;
-      if (span <= 1) return p;
-      if (edge === 'end') { const d = new Date(p.endDay); d.setDate(d.getDate() - 1); return { ...p, endDay: fmtDate(d) }; }
-      const d = new Date(p.startDay); d.setDate(d.getDate() + 1); return { ...p, startDay: fmtDate(d) };
+  function shrinkSpan(segmentId: string, edge: 'end' | 'start') {
+    setScheduledSegments(prev => prev.map(s => {
+      if (s.id !== segmentId) return s;
+      const span = Math.round((new Date(s.endDay).getTime() - new Date(s.startDay).getTime()) / 86400000) + 1;
+      if (span <= 1) return s;
+      if (edge === 'end') { const d = new Date(s.endDay); d.setDate(d.getDate() - 1); return { ...s, endDay: fmtDate(d) }; }
+      const d = new Date(s.startDay); d.setDate(d.getDate() + 1); return { ...s, startDay: fmtDate(d) };
     }));
+  }
+
+  // Update project meta helpers
+  function updateMeta(projectId: string, patch: Partial<ProjectScheduleMeta>) {
+    setScheduleMeta(m => ({ ...m, [projectId]: { ...m[projectId], projectId, ...patch } }));
   }
 
   return (
@@ -473,18 +520,14 @@ export default function PlanneringPage() {
             <button className="btn--plain btn--sm" onClick={() => setMonthOffset(o => o + 1)}>▶</button>
             {monthOffset !== 0 && <button className="btn--plain btn--sm" onClick={() => setMonthOffset(0)}>Idag</button>}
             <div style={{ display: 'flex', gap: 4 }}>
-              {([
-                { key: 'monthGrid', label: 'Månad' },
-                { key: 'weekdayLanes', label: 'Veckodagar' },
-                { key: 'dayList', label: 'Daglista' }
-              ] as const).map(btn => {
-                const active = viewMode === btn.key;
+              {(['monthGrid','weekdayLanes','dayList'] as const).map(modeKey => {
+                const active = viewMode === modeKey;
                 return (
                   <button
-                    key={btn.key}
+                    key={modeKey}
                     type="button"
                     aria-pressed={active}
-                    onClick={() => setViewMode(btn.key)}
+                    onClick={() => setViewMode(modeKey)}
                     className="btn--plain btn--sm"
                     style={{
                       padding: '4px 10px',
@@ -495,17 +538,21 @@ export default function PlanneringPage() {
                       fontSize: 12,
                       color: active ? '#312e81' : '#374151'
                     }}
-                  >{btn.label}</button>
+                  >{modeKey === 'monthGrid' ? 'Månad' : modeKey === 'weekdayLanes' ? 'Veckodagar' : 'Daglista'}</button>
                 );
               })}
             </div>
-            <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-                <label style={{ fontSize: 12, color: '#374151' }}>Sök i kalender:</label>
-                <input value={calendarSearch} onChange={e => setCalendarSearch(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); if (calendarMatchDays.length > 0) navigateToMatch((matchIndex + 1) % calendarMatchDays.length); } }} style={{ border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 6px', fontSize: 12 }} placeholder="#1234 eller namn" />
-                {calendarSearch && <button type="button" className="btn--plain btn--xs" style={{ fontSize: 11 }} onClick={() => setCalendarSearch('')}>X</button>}
-                <button type="button" className="btn--plain btn--xs" disabled={!firstCalendarMatchDay} onClick={jumpToFirstMatch} style={{ fontSize: 11, border: '1px solid #d1d5db', borderRadius: 6, padding: '2px 8px', background: firstCalendarMatchDay ? '#fff' : '#f3f4f6', opacity: firstCalendarMatchDay ? 1 : 0.5 }}>Hoppa</button>
-              </div>
+            <button type="button" className="btn--plain btn--sm" onClick={() => setShowCardControls(v => !v)} style={{ border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 10px', fontSize: 12 }}>{showCardControls ? 'Dölj kontroller' : 'Visa kontroller'}</button>
+          </div>
+          {/* Legend */}
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+              <label style={{ fontSize: 12, color: '#374151' }}>Sök i kalender:</label>
+              <input value={calendarSearch} onChange={e => setCalendarSearch(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); if (calendarMatchDays.length > 0) navigateToMatch((matchIndex + 1) % calendarMatchDays.length); } }} style={{ border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 6px', fontSize: 12 }} placeholder="#1234 eller namn" />
+              {calendarSearch && <button type="button" className="btn--plain btn--xs" style={{ fontSize: 11 }} onClick={() => setCalendarSearch('')}>X</button>}
+              <button type="button" className="btn--plain btn--xs" disabled={!firstCalendarMatchDay} onClick={jumpToFirstMatch} style={{ fontSize: 11, border: '1px solid #d1d5db', borderRadius: 6, padding: '2px 8px', background: firstCalendarMatchDay ? '#fff' : '#f3f4f6', opacity: firstCalendarMatchDay ? 1 : 0.5 }}>Hoppa</button>
+            </div>
+            <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
               <label style={{ fontSize: 12, color: '#374151' }}>Lastbil:</label>
               <select value={truckFilter} onChange={e => setTruckFilter(e.target.value)} style={{ fontSize: 12, padding: '4px 6px', border: '1px solid #d1d5db', borderRadius: 6, background: '#fff' }}>
                 <option value="">Alla</option>
@@ -515,7 +562,6 @@ export default function PlanneringPage() {
               {truckFilter && <button type="button" className="btn--plain btn--xs" style={{ fontSize: 11 }} onClick={() => setTruckFilter('')}>Rensa</button>}
             </div>
           </div>
-          {/* Legend */}
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 11, alignItems: 'center' }}>
             {trucks.map(t => {
               const c = truckColors[t];
@@ -555,7 +601,7 @@ export default function PlanneringPage() {
                           else if (it.truck !== truckFilter) return false;
                         }
                         if (searchVal) {
-                          const hay = [it.name, it.orderNumber || '', it.customer, it.jobType || '', (it.bagCount != null ? String(it.bagCount) : '')].join(' ').toLowerCase();
+                          const hay = [it.project.name, it.project.orderNumber || '', it.project.customer, it.jobType || '', (it.bagCount != null ? String(it.bagCount) : '')].join(' ').toLowerCase();
                           if (!hay.includes(searchVal)) return false;
                         }
                         return true;
@@ -594,17 +640,17 @@ export default function PlanneringPage() {
                               const cardBorder = display ? display.border : '#c7d2fe';
                               const cardBg = display ? display.bg : '#eef2ff';
                               const searchVal2 = calendarSearch.trim().toLowerCase();
-                              const highlight = calendarSearch && (it.name.toLowerCase().includes(searchVal2) || (it.orderNumber || '').toLowerCase().includes(searchVal2));
+                              const highlight = calendarSearch && (it.project.name.toLowerCase().includes(searchVal2) || (it.project.orderNumber || '').toLowerCase().includes(searchVal2));
                               const isMid = (it as any).spanMiddle;
                               const isStart = (it as any).spanStart;
                               return (
-                                <div key={`${it.id}:${it.day}`} draggable onDragStart={e => onDragStart(e, it.id)} onDragEnd={onDragEnd} style={{ position: 'relative', border: `2px solid ${highlight ? '#f59e0b' : cardBorder}`, background: cardBg, borderRadius: 6, padding: 6, fontSize: 12, cursor: 'grab', display: 'grid', gap: 4, opacity: isMid ? 0.95 : 1, boxShadow: highlight ? '0 0 0 3px rgba(245,158,11,0.35)' : 'none' }}>
+                                <div key={`${it.segmentId}:${it.day}`} draggable onDragStart={e => onDragStart(e, it.segmentId)} onDragEnd={onDragEnd} style={{ position: 'relative', border: `2px solid ${highlight ? '#f59e0b' : cardBorder}`, background: cardBg, borderRadius: 6, padding: 6, fontSize: 12, cursor: 'grab', display: 'grid', gap: 4, opacity: isMid ? 0.95 : 1, boxShadow: highlight ? '0 0 0 3px rgba(245,158,11,0.35)' : 'none' }}>
                                   <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                                     <span style={{ fontWeight: 600, color: display ? display.text : '#312e81' }}>
-                                      {it.orderNumber ? <span style={{ fontFamily: 'ui-monospace, monospace', background: '#ffffff', color: display ? display.text : '#312e81', border: `1px solid ${cardBorder}`, padding: '1px 4px', borderRadius: 4, marginRight: 4 }}>#{it.orderNumber}</span> : null}
-                                      {it.name}
+                                      {it.project.orderNumber ? <span style={{ fontFamily: 'ui-monospace, monospace', background: '#ffffff', color: display ? display.text : '#312e81', border: `1px solid ${cardBorder}`, padding: '1px 4px', borderRadius: 4, marginRight: 4 }}>#{it.project.orderNumber}</span> : null}
+                                      {it.project.name}
                                     </span>
-                                    {isStart && <span style={{ color: display ? display.text : '#6366f1' }}>{it.customer}</span>}
+                                    {isStart && <span style={{ color: display ? display.text : '#6366f1' }}>{it.project.customer}</span>}
                                     {(it.bagCount != null || it.jobType) && (
                                       <span style={{ fontSize: 11, color: display ? display.text : '#374151' }}>
                                         {it.bagCount != null ? `${it.bagCount} säckar` : ''}
@@ -613,28 +659,33 @@ export default function PlanneringPage() {
                                       </span>
                                     )}
                                   </div>
-                                  {isStart && (
+                                  {isStart && showCardControls && (
                                     <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
-                                      {editingTruckFor === it.id ? (
-                                        <select autoFocus value={it.truck || ''} onChange={e => { const val = e.target.value || null; setScheduled(prev => prev.map(p => p.id === it.id ? { ...p, truck: val } : p)); setEditingTruckFor(null); }} onBlur={() => setEditingTruckFor(null)} style={{ fontSize: 11, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }}>
+                                      {editingTruckFor === it.project.id ? (
+                                        <select autoFocus value={it.truck || ''} onChange={e => { const val = e.target.value || null; updateMeta(it.project.id, { truck: val }); setEditingTruckFor(null); }} onBlur={() => setEditingTruckFor(null)} style={{ fontSize: 11, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }}>
                                           <option value="">Välj lastbil…</option>
                                           {trucks.map(t => <option key={t} value={t}>{t}</option>)}
                                         </select>
                                       ) : (
-                                        <button type="button" className="btn--plain btn--xs" onClick={() => setEditingTruckFor(it.id)} style={{ fontSize: 11, border: `1px solid ${cardBorder}`, borderRadius: 4, padding: '2px 6px', background: '#fff', color: display ? display.text : '#312e81' }}>{it.truck ? `Lastbil: ${it.truck}` : 'Välj lastbil'}</button>
+                                        <button type="button" className="btn--plain btn--xs" onClick={() => setEditingTruckFor(it.project.id)} style={{ fontSize: 11, border: `1px solid ${cardBorder}`, borderRadius: 4, padding: '2px 6px', background: '#fff', color: display ? display.text : '#312e81' }}>{it.truck ? `Lastbil: ${it.truck}` : 'Välj lastbil'}</button>
                                       )}
-                                      <input type="number" min={0} placeholder="Säckar" value={it.bagCount ?? ''} onChange={e => { const v = e.target.value; setScheduled(prev => prev.map(p => p.id === it.id ? { ...p, bagCount: v === '' ? null : Math.max(0, parseInt(v, 10) || 0) } : p)); }} style={{ width: 70, fontSize: 11, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }} />
-                                      <select value={it.jobType || ''} onChange={e => { const v = e.target.value || null; setScheduled(prev => prev.map(p => p.id === it.id ? { ...p, jobType: v } : p)); }} style={{ fontSize: 11, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }}>
+                                      <input type="number" min={0} placeholder="Säckar" value={it.bagCount ?? ''} onChange={e => { const v = e.target.value; updateMeta(it.project.id, { bagCount: v === '' ? null : Math.max(0, parseInt(v, 10) || 0) }); }} style={{ width: 70, fontSize: 11, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }} />
+                                      <select value={it.jobType || ''} onChange={e => { const v = e.target.value || null; updateMeta(it.project.id, { jobType: v }); }} style={{ fontSize: 11, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }}>
                                         <option value="">Typ av jobb…</option>
                                         {jobTypes.map(j => <option key={j} value={j}>{j}</option>)}
                                       </select>
-                                      <div style={{ display: 'flex', gap: 2 }}>
-                                        <button type="button" title="Förläng bakåt" className="btn--plain btn--xs" onClick={() => extendSpan(it.id, 'back')} style={{ fontSize: 11 }}>←+</button>
-                                        <button type="button" title="Förläng framåt" className="btn--plain btn--xs" onClick={() => extendSpan(it.id, 'forward')} style={{ fontSize: 11 }}>+→</button>
-                                        {(it as any).totalSpan > 1 && <button type="button" title="Kortare (slut)" className="btn--plain btn--xs" onClick={() => shrinkSpan(it.id, 'end')} style={{ fontSize: 11 }}>-→</button>}
-                                        {(it as any).totalSpan > 1 && <button type="button" title="Kortare (start)" className="btn--plain btn--xs" onClick={() => shrinkSpan(it.id, 'start')} style={{ fontSize: 11 }}>←-</button>}
+                                      <div style={{ display: 'grid', gap: 4 }}>
+                                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                                          <strong style={{ fontSize: 10 }}>Längd:</strong>
+                                          <button type="button" className="btn--plain btn--xs" title="Förläng med föregående dag" onClick={() => extendSpan(it.segmentId, 'back')} style={{ fontSize: 10, padding: '6px 6px' }}>Förläng föregående</button>
+                                          <button type="button" className="btn--plain btn--xs" title="Förläng med nästkommande dag" onClick={() => extendSpan(it.segmentId, 'forward')} style={{ fontSize: 10, padding: '6px 6px' }}>Förläng nästa</button>
+                                          <button type="button" className="btn--plain btn--xs" title="Ta bort första dagen" disabled={(it as any).totalSpan <= 1} onClick={() => shrinkSpan(it.segmentId, 'start')} style={{ fontSize: 10, padding: '6px 6px', opacity: (it as any).totalSpan <= 1 ? 0.35 : 1 }}>Ta bort första</button>
+                                          <button type="button" className="btn--plain btn--xs" title="Ta bort sista dagen" disabled={(it as any).totalSpan <= 1} onClick={() => shrinkSpan(it.segmentId, 'end')} style={{ fontSize: 10, padding: '6px 6px', opacity: (it as any).totalSpan <= 1 ? 0.35 : 1 }}>Ta bort sista</button>
+                                          <span style={{ fontSize: 10, background: '#f1f5f9', padding: '2px 6px', borderRadius: 12, border: '1px solid #e2e8f0' }}>{(it as any).totalSpan} dagar</span>
+                                        </div>
                                       </div>
-                                      <button type="button" className="btn--plain btn--xs" onClick={() => unschedule(it.id)} style={{ fontSize: 11, background: '#fee2e2', border: '1px solid #fca5a5', color: '#b91c1c', borderRadius: 4, padding: '2px 6px' }}>Ta bort</button>
+                                      <button type="button" className="btn--plain btn--xs" onClick={() => unschedule(it.segmentId)} style={{ fontSize: 11, background: '#fee2e2', border: '1px solid #fca5a5', color: '#b91c1c', borderRadius: 4, padding: '2px 6px' }}>Ta bort</button>
+                                      <button type="button" className="btn--plain btn--xs" title="Ny separat dag" onClick={() => setSelectedProjectId(it.project.id)} style={{ fontSize: 11, background: '#ecfdf5', border: '1px solid #6ee7b7', color: '#047857', borderRadius: 4, padding: '2px 6px' }}>Ny dag</button>
                                     </div>
                                   )}
                                 </div>
@@ -668,7 +719,7 @@ export default function PlanneringPage() {
                             else if (it.truck !== truckFilter) return false;
                           }
                           if (searchVal) {
-                            const hay = [it.name, it.orderNumber || '', it.customer, it.jobType || '', (it.bagCount != null ? String(it.bagCount) : '')].join(' ').toLowerCase();
+                            const hay = [it.project.name, it.project.orderNumber || '', it.project.customer, it.jobType || '', (it.bagCount != null ? String(it.bagCount) : '')].join(' ').toLowerCase();
                             if (!hay.includes(searchVal)) return false;
                           }
                           return true;
@@ -706,17 +757,17 @@ export default function PlanneringPage() {
                                 }
                                 const cardBorder = display ? display.border : '#c7d2fe';
                                 const cardBg = display ? display.bg : '#eef2ff';
-                                const highlight = calendarSearch && (it.name.toLowerCase().includes(searchVal) || (it.orderNumber || '').toLowerCase().includes(searchVal));
+                                const highlight = calendarSearch && (it.project.name.toLowerCase().includes(searchVal) || (it.project.orderNumber || '').toLowerCase().includes(searchVal));
                                 const isMid = (it as any).spanMiddle;
                                 const isStart = (it as any).spanStart;
                                 return (
-                                  <div key={`${it.id}:${it.day}`} draggable onDragStart={e => onDragStart(e, it.id)} onDragEnd={onDragEnd} style={{ position: 'relative', border: `2px solid ${highlight ? '#f59e0b' : cardBorder}`, background: cardBg, borderRadius: 6, padding: 6, fontSize: 11, cursor: 'grab', display: 'grid', gap: 4, opacity: isMid ? 0.95 : 1, boxShadow: highlight ? '0 0 0 3px rgba(245,158,11,0.35)' : 'none' }}>
+                                  <div key={`${it.segmentId}:${it.day}`} draggable onDragStart={e => onDragStart(e, it.segmentId)} onDragEnd={onDragEnd} style={{ position: 'relative', border: `2px solid ${highlight ? '#f59e0b' : cardBorder}`, background: cardBg, borderRadius: 6, padding: 6, fontSize: 11, cursor: 'grab', display: 'grid', gap: 4, opacity: isMid ? 0.95 : 1, boxShadow: highlight ? '0 0 0 3px rgba(245,158,11,0.35)' : 'none' }}>
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                                       <span style={{ fontWeight: 600, color: display ? display.text : '#312e81' }}>
-                                        {it.orderNumber ? <span style={{ fontFamily: 'ui-monospace, monospace', background: '#ffffff', color: display ? display.text : '#312e81', border: `1px solid ${cardBorder}`, padding: '1px 4px', borderRadius: 4, marginRight: 4 }}>#{it.orderNumber}</span> : null}
-                                        {it.name}
+                                        {it.project.orderNumber ? <span style={{ fontFamily: 'ui-monospace, monospace', background: '#ffffff', color: display ? display.text : '#312e81', border: `1px solid ${cardBorder}`, padding: '1px 4px', borderRadius: 4, marginRight: 4 }}>#{it.project.orderNumber}</span> : null}
+                                        {it.project.name}
                                       </span>
-                                      {isStart && <span style={{ color: display ? display.text : '#6366f1' }}>{it.customer}</span>}
+                                      {isStart && <span style={{ color: display ? display.text : '#6366f1' }}>{it.project.customer}</span>}
                                       {(it.bagCount != null || it.jobType) && (
                                         <span style={{ fontSize: 10, color: display ? display.text : '#374151' }}>
                                           {it.bagCount != null ? `${it.bagCount} säckar` : ''}
@@ -725,28 +776,33 @@ export default function PlanneringPage() {
                                         </span>
                                       )}
                                     </div>
-                                    {isStart && (
+                                    {isStart && showCardControls && (
                                       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
-                                        {editingTruckFor === it.id ? (
-                                          <select autoFocus value={it.truck || ''} onChange={e => { const val = e.target.value || null; setScheduled(prev => prev.map(p => p.id === it.id ? { ...p, truck: val } : p)); setEditingTruckFor(null); }} onBlur={() => setEditingTruckFor(null)} style={{ fontSize: 10, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }}>
+                                        {editingTruckFor === it.project.id ? (
+                                          <select autoFocus value={it.truck || ''} onChange={e => { const val = e.target.value || null; updateMeta(it.project.id, { truck: val }); setEditingTruckFor(null); }} onBlur={() => setEditingTruckFor(null)} style={{ fontSize: 10, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }}>
                                             <option value="">Lastbil…</option>
                                             {trucks.map(t => <option key={t} value={t}>{t}</option>)}
                                           </select>
                                         ) : (
-                                          <button type="button" className="btn--plain btn--xs" onClick={() => setEditingTruckFor(it.id)} style={{ fontSize: 10, border: `1px solid ${cardBorder}`, borderRadius: 4, padding: '2px 4px', background: '#fff', color: display ? display.text : '#312e81' }}>{it.truck ? it.truck : 'Välj lastbil'}</button>
+                                          <button type="button" className="btn--plain btn--xs" onClick={() => setEditingTruckFor(it.project.id)} style={{ fontSize: 10, border: `1px solid ${cardBorder}`, borderRadius: 4, padding: '2px 4px', background: '#fff', color: display ? display.text : '#312e81' }}>{it.truck ? it.truck : 'Välj lastbil'}</button>
                                         )}
-                                        <input type="number" min={0} placeholder="Säck" value={it.bagCount ?? ''} onChange={e => { const v = e.target.value; setScheduled(prev => prev.map(p => p.id === it.id ? { ...p, bagCount: v === '' ? null : Math.max(0, parseInt(v, 10) || 0) } : p)); }} style={{ width: 54, fontSize: 10, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }} />
-                                        <select value={it.jobType || ''} onChange={e => { const v = e.target.value || null; setScheduled(prev => prev.map(p => p.id === it.id ? { ...p, jobType: v } : p)); }} style={{ fontSize: 10, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }}>
+                                        <input type="number" min={0} placeholder="Säck" value={it.bagCount ?? ''} onChange={e => { const v = e.target.value; updateMeta(it.project.id, { bagCount: v === '' ? null : Math.max(0, parseInt(v, 10) || 0) }); }} style={{ width: 54, fontSize: 10, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }} />
+                                        <select value={it.jobType || ''} onChange={e => { const v = e.target.value || null; updateMeta(it.project.id, { jobType: v }); }} style={{ fontSize: 10, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }}>
                                           <option value="">Jobb…</option>
                                           {jobTypes.map(j => <option key={j} value={j}>{j}</option>)}
                                         </select>
-                                        <div style={{ display: 'flex', gap: 2 }}>
-                                          <button type="button" title="Bakåt" className="btn--plain btn--xs" onClick={() => extendSpan(it.id, 'back')} style={{ fontSize: 10 }}>←+</button>
-                                          <button type="button" title="Framåt" className="btn--plain btn--xs" onClick={() => extendSpan(it.id, 'forward')} style={{ fontSize: 10 }}>+→</button>
-                                          {(it as any).totalSpan > 1 && <button type="button" title="Kort slut" className="btn--plain btn--xs" onClick={() => shrinkSpan(it.id, 'end')} style={{ fontSize: 10 }}>-→</button>}
-                                          {(it as any).totalSpan > 1 && <button type="button" title="Kort start" className="btn--plain btn--xs" onClick={() => shrinkSpan(it.id, 'start')} style={{ fontSize: 10 }}>←-</button>}
+                                        <div style={{ display: 'grid', gap: 4 }}>
+                                          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                                            <strong style={{ fontSize: 10 }}>Längd:</strong>
+                                            <button type="button" className="btn--plain btn--xs" title="Förläng med föregående dag" onClick={() => extendSpan(it.segmentId, 'back')} style={{ fontSize: 10, padding: '2px 6px' }}>Förläng föregående</button>
+                                            <button type="button" className="btn--plain btn--xs" title="Förläng med nästkommande dag" onClick={() => extendSpan(it.segmentId, 'forward')} style={{ fontSize: 10, padding: '2px 6px' }}>Förläng nästa</button>
+                                            <button type="button" className="btn--plain btn--xs" title="Ta bort första dagen" disabled={(it as any).totalSpan <= 1} onClick={() => shrinkSpan(it.segmentId, 'start')} style={{ fontSize: 10, padding: '2px 6px', opacity: (it as any).totalSpan <= 1 ? 0.35 : 1 }}>Ta bort första</button>
+                                            <button type="button" className="btn--plain btn--xs" title="Ta bort sista dagen" disabled={(it as any).totalSpan <= 1} onClick={() => shrinkSpan(it.segmentId, 'end')} style={{ fontSize: 10, padding: '2px 6px', opacity: (it as any).totalSpan <= 1 ? 0.35 : 1 }}>Ta bort sista</button>
+                                            <span style={{ fontSize: 10, background: '#f1f5f9', padding: '2px 6px', borderRadius: 12, border: '1px solid #e2e8f0' }}>{(it as any).totalSpan} dagar</span>
+                                          </div>
                                         </div>
-                                        <button type="button" className="btn--plain btn--xs" onClick={() => unschedule(it.id)} style={{ fontSize: 10, background: '#fee2e2', border: '1px solid #fca5a5', color: '#b91c1c', borderRadius: 4, padding: '2px 4px' }}>X</button>
+                                        <button type="button" className="btn--plain btn--xs" onClick={() => unschedule(it.segmentId)} style={{ fontSize: 10, background: '#fee2e2', border: '1px solid #fca5a5', color: '#b91c1c', borderRadius: 4, padding: '2px 4px' }}>X</button>
+                                        <button type="button" className="btn--plain btn--xs" title="Ny separat dag" onClick={() => setSelectedProjectId(it.project.id)} style={{ fontSize: 10, background: '#ecfdf5', border: '1px solid #6ee7b7', color: '#047857', borderRadius: 4, padding: '2px 4px' }}>+Dag</button>
                                       </div>
                                     )}
                                   </div>
@@ -769,12 +825,12 @@ export default function PlanneringPage() {
                 const rawItems = itemsByDay.get(day) || [];
                 const searchVal = calendarSearch.trim().toLowerCase();
                 const items = rawItems.filter(it => {
-                  if (truckFilter) {
-                    if (truckFilter === 'UNASSIGNED') { if (it.truck) return false; }
-                    else if (it.truck !== truckFilter) return false;
+                        if (truckFilter) {
+                          if (truckFilter === 'UNASSIGNED') { if (it.truck) return false; }
+                          else if (it.truck !== truckFilter) return false;
                   }
                   if (searchVal) {
-                    const hay = [it.name, it.orderNumber || '', it.customer, it.jobType || '', (it.bagCount != null ? String(it.bagCount) : '')].join(' ').toLowerCase();
+                    const hay = [it.project.name, it.project.orderNumber || '', it.project.customer, it.jobType || '', (it.bagCount != null ? String(it.bagCount) : '')].join(' ').toLowerCase();
                     if (!hay.includes(searchVal)) return false;
                   }
                   return true;
@@ -813,21 +869,21 @@ export default function PlanneringPage() {
                         }
                         const cardBorder = display ? display.border : '#c7d2fe';
                         const cardBg = display ? display.bg : '#eef2ff';
-                        const highlight = calendarSearch && (it.name.toLowerCase().includes(searchVal) || (it.orderNumber || '').toLowerCase().includes(searchVal));
+                        const highlight = calendarSearch && (it.project.name.toLowerCase().includes(searchVal) || (it.project.orderNumber || '').toLowerCase().includes(searchVal));
                         const isMid = (it as any).spanMiddle;
                         const isStart = (it as any).spanStart;
                         return (
-                          <div key={`${it.id}:${it.day}`}
+                          <div key={`${it.segmentId}:${it.day}`}
                                draggable
-                               onDragStart={e => onDragStart(e, it.id)}
+                               onDragStart={e => onDragStart(e, it.segmentId)}
                                onDragEnd={onDragEnd}
                                style={{ position: 'relative', border: `2px solid ${highlight ? '#f59e0b' : cardBorder}`, background: cardBg, borderRadius: 6, padding: 6, fontSize: 11, cursor: 'grab', display: 'grid', gap: 4, opacity: isMid ? 0.9 : 1, boxShadow: highlight ? '0 0 0 3px rgba(245,158,11,0.35)' : 'none', minWidth: 180 }}>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                               <span style={{ fontWeight: 600, color: display ? display.text : '#312e81', lineHeight: 1.2 }}>
-                                {it.orderNumber ? <span style={{ fontFamily: 'ui-monospace, monospace', background: '#ffffff', color: display ? display.text : '#312e81', border: `1px solid ${cardBorder}`, padding: '1px 4px', borderRadius: 4, marginRight: 4 }}>#{it.orderNumber}</span> : null}
-                                {it.name}
+                                {it.project.orderNumber ? <span style={{ fontFamily: 'ui-monospace, monospace', background: '#ffffff', color: display ? display.text : '#312e81', border: `1px solid ${cardBorder}`, padding: '1px 4px', borderRadius: 4, marginRight: 4 }}>#{it.project.orderNumber}</span> : null}
+                                {it.project.name}
                               </span>
-                              {isStart && <span style={{ color: display ? display.text : '#6366f1', fontSize: 10 }}>{it.customer}</span>}
+                              {isStart && <span style={{ color: display ? display.text : '#6366f1', fontSize: 10 }}>{it.project.customer}</span>}
                               {(it.bagCount != null || it.jobType) && (
                                 <span style={{ fontSize: 10, color: display ? display.text : '#374151' }}>
                                   {it.bagCount != null ? `${it.bagCount} säckar` : ''}
@@ -836,28 +892,33 @@ export default function PlanneringPage() {
                                 </span>
                               )}
                             </div>
-                            {isStart && (
+                            {isStart && showCardControls && (
                               <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
-                                {editingTruckFor === it.id ? (
-                                  <select autoFocus value={it.truck || ''} onChange={e => { const val = e.target.value || null; setScheduled(prev => prev.map(p => p.id === it.id ? { ...p, truck: val } : p)); setEditingTruckFor(null); }} onBlur={() => setEditingTruckFor(null)} style={{ fontSize: 10, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }}>
+                                {editingTruckFor === it.project.id ? (
+                                  <select autoFocus value={it.truck || ''} onChange={e => { const val = e.target.value || null; updateMeta(it.project.id, { truck: val }); setEditingTruckFor(null); }} onBlur={() => setEditingTruckFor(null)} style={{ fontSize: 10, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }}>
                                     <option value="">Lastbil…</option>
                                     {trucks.map(t => <option key={t} value={t}>{t}</option>)}
                                   </select>
                                 ) : (
-                                  <button type="button" className="btn--plain btn--xs" onClick={() => setEditingTruckFor(it.id)} style={{ fontSize: 10, border: `1px solid ${cardBorder}`, borderRadius: 4, padding: '2px 4px', background: '#fff', color: display ? display.text : '#312e81' }}>{it.truck ? it.truck : 'Välj lastbil'}</button>
+                                  <button type="button" className="btn--plain btn--xs" onClick={() => setEditingTruckFor(it.project.id)} style={{ fontSize: 10, border: `1px solid ${cardBorder}`, borderRadius: 4, padding: '2px 4px', background: '#fff', color: display ? display.text : '#312e81' }}>{it.truck ? it.truck : 'Välj lastbil'}</button>
                                 )}
-                                <input type="number" min={0} placeholder="Säck" value={it.bagCount ?? ''} onChange={e => { const v = e.target.value; setScheduled(prev => prev.map(p => p.id === it.id ? { ...p, bagCount: v === '' ? null : Math.max(0, parseInt(v, 10) || 0) } : p)); }} style={{ width: 50, fontSize: 10, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }} />
-                                <select value={it.jobType || ''} onChange={e => { const v = e.target.value || null; setScheduled(prev => prev.map(p => p.id === it.id ? { ...p, jobType: v } : p)); }} style={{ fontSize: 10, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }}>
+                                <input type="number" min={0} placeholder="Säck" value={it.bagCount ?? ''} onChange={e => { const v = e.target.value; updateMeta(it.project.id, { bagCount: v === '' ? null : Math.max(0, parseInt(v, 10) || 0) }); }} style={{ width: 50, fontSize: 10, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }} />
+                                <select value={it.jobType || ''} onChange={e => { const v = e.target.value || null; updateMeta(it.project.id, { jobType: v }); }} style={{ fontSize: 10, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }}>
                                   <option value="">Jobb…</option>
                                   {jobTypes.map(j => <option key={j} value={j}>{j}</option>)}
                                 </select>
-                                <div style={{ display: 'flex', gap: 2 }}>
-                                  <button type="button" title="Bakåt" className="btn--plain btn--xs" onClick={() => extendSpan(it.id, 'back')} style={{ fontSize: 10 }}>←+</button>
-                                  <button type="button" title="Framåt" className="btn--plain btn--xs" onClick={() => extendSpan(it.id, 'forward')} style={{ fontSize: 10 }}>+→</button>
-                                  {(it as any).totalSpan > 1 && <button type="button" title="Kort slut" className="btn--plain btn--xs" onClick={() => shrinkSpan(it.id, 'end')} style={{ fontSize: 10 }}>-→</button>}
-                                  {(it as any).totalSpan > 1 && <button type="button" title="Kort start" className="btn--plain btn--xs" onClick={() => shrinkSpan(it.id, 'start')} style={{ fontSize: 10 }}>←-</button>}
+                                <div style={{ display: 'grid', gap: 4 }}>
+                                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                                    <strong style={{ fontSize: 10 }}>Längd:</strong>
+                                    <button type="button" className="btn--plain btn--xs" title="Förläng med föregående dag" onClick={() => extendSpan(it.segmentId, 'back')} style={{ fontSize: 10, padding: '2px 6px' }}>Förläng föregående</button>
+                                    <button type="button" className="btn--plain btn--xs" title="Förläng med nästkommande dag" onClick={() => extendSpan(it.segmentId, 'forward')} style={{ fontSize: 10, padding: '2px 6px' }}>Förläng nästa</button>
+                                    <button type="button" className="btn--plain btn--xs" title="Ta bort första dagen" disabled={(it as any).totalSpan <= 1} onClick={() => shrinkSpan(it.segmentId, 'start')} style={{ fontSize: 10, padding: '2px 6px', opacity: (it as any).totalSpan <= 1 ? 0.35 : 1 }}>Ta bort första</button>
+                                    <button type="button" className="btn--plain btn--xs" title="Ta bort sista dagen" disabled={(it as any).totalSpan <= 1} onClick={() => shrinkSpan(it.segmentId, 'end')} style={{ fontSize: 10, padding: '2px 6px', opacity: (it as any).totalSpan <= 1 ? 0.35 : 1 }}>Ta bort sista</button>
+                                    <span style={{ fontSize: 10, background: '#f1f5f9', padding: '2px 6px', borderRadius: 12, border: '1px solid #e2e8f0' }}>{(it as any).totalSpan} dagar</span>
+                                  </div>
                                 </div>
-                                <button type="button" className="btn--plain btn--xs" onClick={() => unschedule(it.id)} style={{ fontSize: 10, background: '#fee2e2', border: '1px solid #fca5a5', color: '#b91c1c', borderRadius: 4, padding: '2px 4px' }}>X</button>
+                                <button type="button" className="btn--plain btn--xs" onClick={() => unschedule(it.segmentId)} style={{ fontSize: 10, background: '#fee2e2', border: '1px solid #fca5a5', color: '#b91c1c', borderRadius: 4, padding: '2px 4px' }}>X</button>
+                                <button type="button" className="btn--plain btn--xs" title="Ny separat dag" onClick={() => setSelectedProjectId(it.project.id)} style={{ fontSize: 10, background: '#ecfdf5', border: '1px solid #6ee7b7', color: '#047857', borderRadius: 4, padding: '2px 4px' }}>+Dag</button>
                               </div>
                             )}
                           </div>
