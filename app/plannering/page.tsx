@@ -60,6 +60,18 @@ export default function PlanneringPage() {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   // View mode: standard month grid or weekday lanes (all Mondays in a row, etc.)
   const [viewMode, setViewMode] = useState<'monthGrid' | 'weekdayLanes' | 'dayList'>('monthGrid');
+  // UI hover state for backlog punch effect
+  const [hoverBacklogId, setHoverBacklogId] = useState<string | null>(null);
+
+  // Accent color generator for backlog cards (deterministic palette)
+  function backlogAccent(p: Project) {
+    if (p.isManual) return '#334155';
+    const seed = p.name || p.id;
+    let hash = 0;
+    for (let i = 0; i < seed.length; i++) hash = (hash * 31 + seed.charCodeAt(i)) | 0;
+    const palette = ['#6366f1', '#0ea5e9', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6'];
+    return palette[Math.abs(hash) % palette.length];
+  }
 
   // Truck color overrides (base color for each truck -> derived palette)
   const [truckColorOverrides, setTruckColorOverrides] = useState<Record<string, string>>({
@@ -401,26 +413,54 @@ export default function PlanneringPage() {
           )}
 
           <div style={{ display: 'grid', gap: 8 }}>
-            <h2 style={{ fontSize: 15, margin: 0 }}>Backlog</h2>
+            <h2 style={{ fontSize: 15, margin: 0 }}>Projekt</h2>
             {loading && <div style={{ fontSize: 12 }}>Laddar projekt…</div>}
             {!loading && backlog.length === 0 && <div style={{ fontSize: 12, color: '#64748b' }}>Inga fler oschemalagda.</div>}
-            {backlog.map(p => (
-        <div key={p.id}
-           draggable
-           onDragStart={e => onDragStart(e, p.id)}
-           onDragEnd={onDragEnd}
-           onClick={() => setSelectedProjectId(prev => prev === p.id ? null : p.id)}
-           style={{ position: 'relative', border: selectedProjectId === p.id ? '2px solid #f59e0b' : (p.isManual ? '2px dashed #94a3b8' : '1px solid #e5e7eb'), borderRadius: 8, padding: 10, background: draggingId === p.id ? '#eef2ff' : (p.isManual ? '#f1f5f9' : '#fff'), cursor: 'grab', display: 'grid', gap: 4 }}>
-                {p.isManual && <span style={{ position: 'absolute', top: -7, left: 8, background: '#334155', color: '#fff', fontSize: 10, padding: '2px 6px', borderRadius: 12 }}>Manuell</span>}
-        {selectedProjectId === p.id && <span style={{ position: 'absolute', top: -7, right: 8, background: '#f59e0b', color: '#fff', fontSize: 10, padding: '2px 6px', borderRadius: 12 }}>Vald</span>}
-                <strong style={{ fontSize: 14 }}>
-                  {p.orderNumber ? <span style={{ fontFamily: 'ui-monospace, monospace', background: '#f3f4f6', padding: '2px 6px', borderRadius: 4, marginRight: 6, fontSize: 12 }}>#{p.orderNumber}</span> : null}
-                  {p.name}
-                </strong>
-                <span style={{ fontSize: 12, color: '#6b7280' }}>{p.customer}</span>
-                <span style={{ fontSize: 11, color: '#9ca3af' }}>Skapad: {p.createdAt.slice(0, 10)}</span>
-              </div>
-            ))}
+            {backlog.map(p => {
+              const accent = backlogAccent(p);
+              const active = selectedProjectId === p.id;
+              const hovered = hoverBacklogId === p.id;
+              const baseBg = p.isManual ? '#f1f5f9' : '#ffffff';
+              const elevated = draggingId === p.id || hovered || active;
+              const gradient = `linear-gradient(135deg, ${accent}18, ${baseBg})`;
+              return (
+                <div key={p.id}
+                     draggable
+                     onDragStart={e => onDragStart(e, p.id)}
+                     onDragEnd={onDragEnd}
+                     onMouseEnter={() => setHoverBacklogId(p.id)}
+                     onMouseLeave={() => setHoverBacklogId(prev => prev === p.id ? null : prev)}
+                     onClick={() => setSelectedProjectId(prev => prev === p.id ? null : p.id)}
+                     style={{
+                       position: 'relative',
+                       border: active ? `2px solid ${accent}` : `1px solid ${p.isManual ? '#94a3b8' : '#e2e8f0'}`,
+                       boxShadow: elevated ? `0 4px 10px -2px ${accent}55, 0 0 0 1px ${accent}40` : '0 1px 2px rgba(0,0,0,0.05)',
+                       borderRadius: 10,
+                       padding: '12px 12px 12px 14px',
+                       background: elevated ? gradient : baseBg,
+                       cursor: 'grab',
+                       display: 'grid',
+                       gap: 4,
+                       transition: 'box-shadow 0.25s, transform 0.2s, background 0.3s, border 0.25s',
+                       transform: elevated ? 'translateY(-2px)' : 'translateY(0)'
+                     }}>
+                  <span style={{ position: 'absolute', inset: 0, borderRadius: 10, pointerEvents: 'none', boxShadow: active ? `0 0 0 2px ${accent}` : 'none' }} />
+                  <span style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 5, borderTopLeftRadius: 10, borderBottomLeftRadius: 10, background: accent, opacity: 0.9 }} />
+                  {p.isManual && <span style={{ position: 'absolute', top: -7, left: 10, background: '#334155', color: '#fff', fontSize: 10, padding: '2px 6px', borderRadius: 12 }}>Manuell</span>}
+                  {active && <span style={{ position: 'absolute', top: -7, right: 10, background: accent, color: '#fff', fontSize: 10, padding: '2px 6px', borderRadius: 12 }}>Vald</span>}
+                  <strong style={{ fontSize: 14, lineHeight: 1.25, color: '#111827', display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: 4 }}>
+                    {p.orderNumber && (
+                      <span style={{ fontFamily: 'ui-monospace, monospace', background: '#ffffff', padding: '2px 6px', borderRadius: 4, fontSize: 12, border: `1px solid ${accent}55`, color: '#334155' }}>#{p.orderNumber}</span>
+                    )}
+                    <span>{p.name}</span>
+                  </strong>
+                  <div style={{ fontSize: 12, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', color: '#475569' }}>
+                    <span style={{ fontWeight: 500 }}>{p.customer}</span>
+                    <span style={{ fontSize: 10, color: '#64748b', background: '#f1f5f9', padding: '2px 6px', borderRadius: 12 }}>Skapad {p.createdAt.slice(0,10)}</span>
+                  </div>
+                </div>
+              );
+            })}
       {selectedProjectId && <div style={{ fontSize: 11, color: '#b45309', background: '#fef3c7', border: '1px solid #fcd34d', padding: '4px 6px', borderRadius: 6 }}>Klicka på en dag i kalendern för att schemalägga vald projekt (fallback).</div>}
           </div>
         </div>
