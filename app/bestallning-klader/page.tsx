@@ -79,16 +79,26 @@ export default function BestallningKladerPage() {
     );
   }
 
+  // Single select handler (only one size per garment)
+  function setSectionSelectedSize(sectionIndex: number, size: string | '') {
+    setSections(prev => prev.map((sec, si) => (
+      si === sectionIndex
+        ? { ...sec, rows: sec.rows.map(r => ({ ...r, selected: r.size === size && size !== '' })) }
+        : sec
+    )));
+  }
+
   function buildOrderSummary() {
     const lines: string[] = [];
     for (const sec of sections) {
-      const picked = sec.rows.filter((r) => r.selected);
-      if (!picked.length) continue;
-      const sizesLine = picked.map((r) => `${r.size} x${sec.qty}`).join(", ");
-      lines.push(`- ${sec.title}: ${sizesLine}`);
+      const picked = sec.rows.find(r => r.selected);
+      if (!picked) continue;
+      // Only show quantity if > 1 (even though UI sets 1)
+      const part = sec.qty > 1 ? `${picked.size} x${sec.qty}` : picked.size;
+      lines.push(`- ${sec.title}: ${part}`);
     }
-    if (!lines.length) return "";
-    return `Beställning:\n${lines.join("\n")}`;
+    if (!lines.length) return '';
+    return `Beställning:\n${lines.join('\n')}`;
   }
 
   async function onSubmit(e: React.FormEvent) {
@@ -162,49 +172,54 @@ export default function BestallningKladerPage() {
           />
         </label>
 
-        {sections.map((sec, si) => (
-          <section
-            key={sec.key}
-            style={{ display: "flex", flexDirection: "column", gap: 10 }}
-          >
-            <h2 style={{ fontSize: 18, margin: 0 }}>{sec.title}</h2>
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-              {sec.rows.map((row, ri) => (
-                <label
-                  key={`${sec.key}-${row.size}`}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 10,
-                    border: "1px solid #e5e7eb",
-                    padding: 10,
-                    borderRadius: 8,
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={row.selected}
-                    onChange={(e) => toggleSize(si, ri, e.target.checked)}
-                  />
-                  <span style={{ width: 42 }}>{row.size}</span>
+        {sections.map((sec, si) => {
+          const picked = sec.rows.find(r => r.selected)?.size || '';
+          return (
+            <section
+              key={sec.key}
+              style={{ display: 'flex', flexDirection: 'column', gap: 10 }}
+            >
+              <h2 style={{ fontSize: 18, margin: 0 }}>{sec.title}</h2>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}>
+                <label style={{ display: 'grid', gap: 4 }}>
+                  <span style={{ fontWeight: 600 }}>Storlek</span>
+                  <select
+                    value={picked}
+                    onChange={(e) => setSectionSelectedSize(si, e.target.value)}
+                    style={{
+                      padding: '6px 10px',
+                      border: '1px solid #e5e7eb',
+                      borderRadius: 6,
+                      background: '#fff',
+                      fontSize: 14,
+                      minWidth: 130,
+                    }}
+                  >
+                    <option value=''>Välj storlek…</option>
+                    {sec.rows.map(r => (
+                      <option key={`${sec.key}-${r.size}`} value={r.size}>{r.size}</option>
+                    ))}
+                  </select>
                 </label>
-              ))}
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <span style={{ fontWeight: 600 }}>Antal per vald storlek</span>
-              <input
-                type="number"
-                min={1}
-                value={sec.qty}
-                onChange={(e) => updateSectionQty(si, Number(e.target.value))}
-                className="text-field"
-                style={{ width: 120 }}
-                disabled={!sec.rows.some((r) => r.selected)}
-              />
-              <span>st</span>
-            </div>
-          </section>
-        ))}
+                {picked && (
+                  <button
+                    type='button'
+                    onClick={() => setSectionSelectedSize(si, '')}
+                    className='text-field'
+                    style={{
+                      background: '#f3f4f6',
+                      border: '1px solid #e5e7eb',
+                      padding: '6px 10px',
+                      borderRadius: 6,
+                      fontSize: 12,
+                    }}
+                  >Rensa</button>
+                )}
+              </div>
+              {/* Quantity retained internally (always 1) in case future expansion needed; input hidden */}
+            </section>
+          );
+        })}
 
         <label style={{ display: "grid", gap: 6 }}>
           <span style={{ fontWeight: 600 }}>Övrig beskrivning (valfritt)</span>
