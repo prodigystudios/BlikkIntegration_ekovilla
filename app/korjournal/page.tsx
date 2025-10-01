@@ -244,14 +244,38 @@ export default function KorjournalPage() {
     }
     try {
       setIsExporting(true);
-      // Build CSV-like content and let the existing PDF endpoint be extended later if desired
+      // CSV formatting improvements:
+      // 1. Add UTF-8 BOM so Excel (especially on Windows) correctly detects encoding (å, ä, ö etc.).
+      // 2. Quote and escape fields containing special chars (semicolon, quotes, newlines, leading/trailing spaces).
+      // 3. Keep semicolon delimiter (common in Swedish locale) so Excel auto-splits without changing delimiter settings.
+      const esc = (val: any): string => {
+        if (val === null || val === undefined) return '';
+        let s = String(val);
+        // Normalize CRLF -> LF for consistency
+        s = s.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        const needsQuote = /[;"\n]|(^\s)|($\s)/.test(s);
+        if (s.includes('"')) s = s.replace(/"/g, '""');
+        return needsQuote ? `"${s}"` : s;
+      };
+      const header = ['Datum','Startadress','Slutadress','Start km','Slut km','Distans','Anteckning'];
+      const dataLines = arr.map(t => [
+        t.date, // YYYY-MM-DD (Excel will usually parse automatically). User can widen column manually.
+        t.startAddress,
+        t.endAddress,
+        t.startKm ?? '',
+        t.endKm ?? '',
+        diffKm(t),
+        t.note || ''
+      ].map(esc).join(';'));
       const lines = [
-        `Körjournal ${ym}`,
-        `Datum;Startadress;Slutadress;Start km;Slut km;Distans;Anteckning`,
-        ...arr.map(t => `${t.date};${t.startAddress};${t.endAddress};${t.startKm};${t.endKm};${diffKm(t)};${t.note || ''}`),
-        `Total km;${monthKm(arr)}`,
+        esc(`Körjournal ${ym}`),
+        header.map(esc).join(';'),
+        ...dataLines,
+        ['Total km', monthKm(arr)].map(esc).join(';')
       ];
-      const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+      // Prepend BOM for Excel UTF-8 recognition
+      const content = '\uFEFF' + lines.join('\n');
+      const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
