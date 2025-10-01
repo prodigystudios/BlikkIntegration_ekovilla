@@ -283,6 +283,18 @@ select.select-field option { color: #111827; background-color: #ffffff; }
 .journal-meta { display: flex; gap: 12px; color: #374151; font-size: 13px; flex-wrap: wrap; }
 .journal-note { color: #374151; font-size: 13px; }
 
+/* Dashboard quick links minimization animations */
+.dash-layout { transition: max-width .35s ease, padding .25s ease; }
+.dash-main-col { transition: gap .25s ease; }
+.dash-sidebar { transition: width .3s ease, opacity .2s ease, transform .35s ease; }
+.dash-sidebar-enter { opacity: 0; transform: translateX(-8px); }
+.dash-sidebar-enter-active { opacity: 1; transform: translateX(0); }
+.dash-sidebar-exit { opacity: 1; transform: translateX(0); }
+.dash-sidebar-exit-active { opacity: 0; transform: translateX(-8px); }
+.dash-card { transition: box-shadow .25s ease, border-color .25s ease; }
+.dash-fade-move { transition: transform .35s ease, opacity .25s ease; }
+.dash-notes-priority { transition: order .3s step-end; }
+
 /* In standalone (home screen), start the drawer below the header and safe area */
 @media (display-mode: standalone) {
   .drawer-root {

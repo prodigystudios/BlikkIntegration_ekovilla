@@ -91,3 +91,46 @@ export function QuickLinksGrid({ links, compact, extraCompact }: { links: QuickL
     </div>
   );
 }
+
+// Icon-only vertical bar (used when dashboard quick links minimized)
+export function QuickLinksIconBar({ links, activeHref }: { links: QuickLink[]; activeHref?: string }) {
+  return (
+    <nav aria-label="Snabba genvägar" style={{ display:'flex', flexDirection:'column', gap:8 }}>
+      {links.map(l => {
+        const disabled = !!l.disabled;
+        const base: React.CSSProperties = {
+          width:56,
+          height:56,
+          border:'1px solid #e5e7eb',
+          borderRadius:14,
+          background: activeHref === l.href ? 'linear-gradient(135deg,#eef2ff,#e0e7ff)' : '#fff',
+          color:'#4f46e5',
+          display:'flex',
+          alignItems:'center',
+          justifyContent:'center',
+          position:'relative',
+          cursor: disabled ? 'not-allowed' : 'pointer',
+          opacity: disabled ? .55 : 1,
+          textDecoration:'none',
+          transition:'border-color .15s, box-shadow .15s, background .15s'
+        };
+        const inner = (
+          <div
+            style={base}
+            onMouseEnter={e=>{ if(disabled) return; e.currentTarget.style.borderColor = '#6366f1'; e.currentTarget.style.boxShadow='0 4px 10px rgba(99,102,241,0.25)'; }}
+            onMouseLeave={e=>{ e.currentTarget.style.borderColor = '#e5e7eb'; e.currentTarget.style.boxShadow='none'; }}
+            aria-disabled={disabled || undefined}
+            title={l.title + (disabled && l.disabledNote ? ` – ${l.disabledNote}` : '')}
+          >
+            <span style={{ display:'inline-flex', width:30, height:30, alignItems:'center', justifyContent:'center' }}>{l.icon}</span>
+            {disabled && (
+              <span style={{ position:'absolute', bottom:4, right:4, fontSize:9, fontWeight:600, background:'#f1f5f9', padding:'2px 4px', borderRadius:6, border:'1px solid #e2e8f0', color:'#475569' }}>✕</span>
+            )}
+          </div>
+        );
+        if (disabled) return <div key={l.href}>{inner}</div>;
+        return <Link key={l.href} href={l.href} style={{ textDecoration:'none' }}>{inner}</Link>;
+      })}
+    </nav>
+  );
+}

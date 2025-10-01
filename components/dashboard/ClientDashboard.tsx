@@ -1,6 +1,6 @@
 "use client";
 import React, { useMemo, useEffect, useState } from 'react';
-import { QuickLinksGrid, QuickLink } from './QuickLinks';
+import { QuickLinksGrid, QuickLink, QuickLinksIconBar } from './QuickLinks';
 import DashboardNotes from './DashboardNotes';
 import type { UserRole } from '../../lib/roles';
 import { filterLinks, NAV_LINKS } from '../../lib/roles';
@@ -113,47 +113,90 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
       { href: '/egenkontroll', title: 'Egenkontroll', ...baseExtra['/egenkontroll'] },
     ];
   }, [role]);
+  const [mini, setMini] = useState(false);
+  // Persist mini preference in localStorage
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('dashboard.quicklinks.mini');
+      if (raw === '1') setMini(true);
+    } catch {}
+  }, []);
+  useEffect(() => {
+    try { localStorage.setItem('dashboard.quicklinks.mini', mini ? '1' : '0'); } catch {}
+  }, [mini]);
+
   return (
     <main
+      className="dash-layout"
       style={{
-        padding: isSmall ? (isXS ? 12 : 16) : 32,
-        maxWidth: 1100,
+        padding: isSmall ? (isXS ? 10 : 14) : 24,
+        maxWidth: mini ? 1400 : 1200,
         margin: '0 auto',
         display: 'flex',
-        flexDirection: 'column',
-        gap: isSmall ? 20 : 32,
+        flexDirection: mini ? 'row' : 'column',
+        gap: mini ? 24 : (isSmall ? 20 : 32),
+        alignItems: mini ? 'flex-start' : 'stretch'
       }}
     >
-      <header style={{ display: 'flex', alignItems: isSmall ? 'flex-end' : 'center', gap: 12 }}>
-        <h1 style={{ margin: 0, fontSize: isSmall ? (isXS ? 22 : 24) : 30, letterSpacing: -0.5 }}>Översikt</h1>
-      </header>
-      <section
-        style={{
-          border: '1px solid #e5e7eb',
-          background: '#fff',
-          borderRadius: 16,
-          padding: isSmall ? (isXS ? 14 : 18) : 24,
-          display: 'grid',
-          gap: isSmall ? 14 : 20,
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <h2 style={{ margin: 0, fontSize: isSmall ? 16 : 20 }}>Snabba genvägar</h2>
-        </div>
-        <QuickLinksGrid links={links} compact={isSmall} extraCompact={isXS} />
-      </section>
-      <section
-        style={{
-          border: '1px solid #e5e7eb',
-          background: '#fff',
-          borderRadius: 16,
-          padding: isSmall ? (isXS ? 14 : 18) : 24,
-          display: 'grid',
-          gap: isSmall ? 18 : 24,
-        }}
-      >
-        <DashboardNotes compact={isSmall} />
-      </section>
+      {mini && (
+        <aside className="dash-sidebar" style={{ position:'sticky', top: 12, display:'flex', flexDirection:'column', gap:14, minWidth:72 }}>
+          <div style={{ display:'flex', justifyContent:'center' }}>
+            <button onClick={()=>setMini(false)} style={miniToggleBtn} aria-label="Expandera genvägar">»</button>
+          </div>
+          <QuickLinksIconBar links={links} />
+        </aside>
+      )}
+      <div className="dash-main-col" style={{ flex:1, display:'flex', flexDirection:'column', gap: mini ? 24 : (isSmall ? 20 : 32) }}>
+        <header style={{ display: 'flex', alignItems: isSmall ? 'flex-end' : 'center', gap: 12 }}>
+          <h1 style={{ margin: 0, fontSize: isSmall ? (isXS ? 22 : 24) : 30, letterSpacing: -0.5 }}>Översikt</h1>
+        </header>
+        {!mini && (
+          <section
+            style={{
+              border: '1px solid #e5e7eb',
+              background: '#fff',
+              borderRadius: 16,
+              padding: isSmall ? (isXS ? 14 : 18) : 24,
+              display: 'grid',
+              gap: isSmall ? 14 : 20,
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap:12 }}>
+              <h2 style={{ margin: 0, fontSize: isSmall ? 16 : 20 }}>Snabba genvägar</h2>
+              <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                <button onClick={()=>setMini(true)} style={miniToggleBtn} aria-label="Minimera och visa endast ikoner" title="Minimera och visa endast ikoner">Minimera</button>
+              </div>
+            </div>
+            <QuickLinksGrid links={links} compact={isSmall} extraCompact={isXS} />
+          </section>
+        )}
+        {/* Notes always visible; floats to top when mini */}
+        <section
+          style={{
+            border: '1px solid #e5e7eb',
+            background: '#fff',
+            borderRadius: 16,
+            padding: isSmall ? (isXS ? 14 : 18) : 24,
+            display: 'grid',
+            gap: isSmall ? 18 : 24,
+            order: mini ? -1 : 0
+          }}
+        >
+          <DashboardNotes compact={isSmall || mini} />
+        </section>
+      </div>
     </main>
   );
 }
+
+const miniToggleBtn: React.CSSProperties = {
+  border:'1px solid #e5e7eb',
+  background:'#fff',
+  borderRadius:8,
+  padding:'6px 10px',
+  cursor:'pointer',
+  fontSize:14,
+  lineHeight:1,
+  boxShadow:'0 2px 4px rgba(0,0,0,0.06)',
+  color:'#374151',
+};
