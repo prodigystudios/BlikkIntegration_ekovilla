@@ -1,4 +1,5 @@
 "use client";
+export const dynamic = 'force-dynamic';
 import { useEffect, useMemo, useState } from 'react';
 
 // Shape returned by API route
