@@ -86,7 +86,7 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
   if (role === 'member') {
       return [
         { href: '/egenkontroll', title: 'Skapa egenkontroll', ...baseExtra['/egenkontroll'] },
-    { href: '/bestallning-klader', title: 'Beställ kläder & annat', ...baseExtra['/bestallning-klader'] },
+        { href: '/bestallning-klader', title: 'Beställ kläder & annat', ...baseExtra['/bestallning-klader'] },
         { href: '/kontakt-lista', title: 'Kontakt', ...baseExtra['/kontakt-lista'] },
         { href: '/dokument-information', title: 'Dokument & information', ...baseExtra['/dokument-information'] },
       ];
@@ -95,7 +95,7 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
       return [
         { href: '/archive', title: 'Egenkontroll arkiv', ...baseExtra['/archive'] },
         { href: '/korjournal', title: 'Körjournal', ...baseExtra['/korjournal'] },
-        { href: '/planering', title: 'Planering', ...baseExtra['/planering'] },
+        { href: '/plannering', title: 'Planering', ...baseExtra['/planering'] },
         { href: '/kontakt-lista', title: 'Kontakt', ...baseExtra['/kontakt-lista'] },
       ];
     }
@@ -104,7 +104,7 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
         { href: '/egenkontroll', title: 'Ny egenkontroll', ...baseExtra['/egenkontroll'] },
         { href: '/archive', title: 'Egenkontroll arkiv', ...baseExtra['/archive'] },
         { href: '/korjournal', title: 'Körjournal', ...baseExtra['/korjournal'] },
-        { href: '/planering', title: 'Planering', ...baseExtra['/planering'] },
+        { href: '/plannering', title: 'Planering', ...baseExtra['/planering'] },
         { href: '/admin', title: 'Admin', ...baseExtra['/admin'] },
       ];
     }
