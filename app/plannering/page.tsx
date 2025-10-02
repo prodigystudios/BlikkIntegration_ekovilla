@@ -84,7 +84,19 @@ export default function PlanneringPage() {
   const [manualOrderNumber, setManualOrderNumber] = useState('');
   const [manualError, setManualError] = useState<string | null>(null);
 
-  const trucks = ['mb blå', 'mb vit', 'volvo blå'];
+  // Dynamic trucks (DB backed). Fallback to legacy static list until table populated.
+  interface TruckRec { id: string; name: string; color?: string | null; team_member1_name?: string | null; team_member2_name?: string | null; }
+  const defaultTrucks = ['mb blå', 'mb vit', 'volvo blå'];
+  const defaultTruckColors: Record<string, string> = {
+    'mb blå': '#38bdf8',
+    'mb vit': '#94a3b8',
+    'volvo blå': '#6366f1'
+  };
+  const [planningTrucks, setPlanningTrucks] = useState<TruckRec[]>([]);
+  // Derived list of truck names for existing logic
+  const trucks = planningTrucks.length ? planningTrucks.map(t => t.name) : defaultTrucks;
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [newTruckName, setNewTruckName] = useState('');
   const jobTypes = ['Ekovilla', 'Vitull', 'Leverans', 'Utsugning', 'Snickerier', 'Övrigt'];
 
   // Fallback selection scheduling (if drag/drop misbehaves)
@@ -107,9 +119,7 @@ export default function PlanneringPage() {
 
   // Truck color overrides (base color for each truck -> derived palette)
   const [truckColorOverrides, setTruckColorOverrides] = useState<Record<string, string>>({
-    'mb blå': '#38bdf8',
-    'mb vit': '#94a3b8',
-    'volvo blå': '#6366f1'
+    ...defaultTruckColors
   });
 
   function deriveColors(baseHex: string) {
@@ -217,9 +227,12 @@ export default function PlanneringPage() {
           setCurrentUserId(user.id);
           // Try profile table for display name
           let resolvedName: string | null = null;
-          const { data: profile } = await supabase.from('profiles').select('full_name').eq('id', user.id).maybeSingle();
-          if (profile && (profile as any).full_name) {
-            resolvedName = (profile as any).full_name as string;
+          const { data: profile } = await supabase.from('profiles').select('full_name, role').eq('id', user.id).maybeSingle();
+          if (profile) {
+            if ((profile as any).full_name) {
+              resolvedName = (profile as any).full_name as string;
+            }
+            if ((profile as any).role === 'admin') setIsAdmin(true);
           }
           if (!resolvedName) {
             const meta: any = user.user_metadata || {};
@@ -234,6 +247,19 @@ export default function PlanneringPage() {
         if (segErr) throw segErr;
         const { data: metas, error: metaErr } = await supabase.from('planning_project_meta').select('*');
         if (metaErr) throw metaErr;
+        // Load dynamic trucks (open select) - team names are free text
+        try {
+          const { data: trucksData, error: trucksErr } = await supabase.from('planning_trucks').select('*').order('name');
+          if (trucksErr) console.warn('[planning] trucks load error', trucksErr);
+          else if (Array.isArray(trucksData)) {
+            setPlanningTrucks(trucksData.map(t => ({ id: t.id, name: t.name, color: t.color, team_member1_name: t.team_member1_name, team_member2_name: t.team_member2_name })));
+            setTruckColorOverrides(prev => {
+              const c = { ...prev };
+              for (const t of trucksData) if (t.color) c[t.name] = t.color;
+              return c;
+            });
+          }
+        } catch (e) { console.warn('[planning] could not load trucks', e); }
         // Normalize into local shapes
         if (Array.isArray(segs)) {
           setScheduledSegments(segs.map(s => ({ id: s.id, projectId: s.project_id, startDay: s.start_day, endDay: s.end_day, createdBy: s.created_by, createdByName: s.created_by_name })));
@@ -334,6 +360,18 @@ export default function PlanneringPage() {
           setScheduleMeta(prev => ({ ...prev, [row.project_id]: { projectId: row.project_id, truck: row.truck, bagCount: row.bag_count, jobType: row.job_type, color: row.color } }));
         } else if (payload.eventType === 'DELETE') {
           setScheduleMeta(prev => { const c = { ...prev }; delete c[row.project_id]; return c; });
+        }
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'planning_trucks' }, payload => {
+        const row: any = payload.new || payload.old;
+        if (payload.eventType === 'INSERT') {
+          setPlanningTrucks(prev => prev.some(t => t.id === row.id) ? prev : [...prev, { id: row.id, name: row.name, color: row.color, team_member1_name: row.team_member1_name, team_member2_name: row.team_member2_name }]);
+          if (row.color) setTruckColorOverrides(prev => ({ ...prev, [row.name]: row.color }));
+        } else if (payload.eventType === 'UPDATE') {
+          setPlanningTrucks(prev => prev.map(t => t.id === row.id ? { id: row.id, name: row.name, color: row.color, team_member1_name: row.team_member1_name, team_member2_name: row.team_member2_name } : t));
+          if (row.color) setTruckColorOverrides(prev => ({ ...prev, [row.name]: row.color }));
+        } else if (payload.eventType === 'DELETE') {
+          setPlanningTrucks(prev => prev.filter(t => t.id !== row.id));
         }
       })
       .subscribe(status => {
@@ -479,6 +517,41 @@ export default function PlanneringPage() {
     enqueue(supabase.from('planning_segments').delete().eq('id', segmentId).select('id').then(({ data, error }) => { if (error) console.warn('[persist delete seg] error', error); else console.debug('[planning] delete ok', data); }));
   }, [supabase]);
 
+  // Truck helpers (admin guarded by RLS; UI also hides for non-admin)
+  const createTruck = useCallback(async () => {
+    const name = newTruckName.trim();
+    if (!name) return;
+    setNewTruckName('');
+    const payload: any = { name };
+    if (currentUserId) payload.created_by = currentUserId;
+    enqueue(
+      supabase.from('planning_trucks')
+        .insert(payload)
+        .select('id,name')
+        .then(({ data, error }) => {
+          if (error) console.warn('[planning] createTruck error', error);
+          else console.debug('[planning] createTruck ok', data);
+        })
+    );
+  }, [newTruckName, supabase, currentUserId]);
+
+  const updateTruckColor = useCallback((truck: TruckRec, color: string) => {
+    setTruckColorOverrides(prev => ({ ...prev, [truck.name]: color }));
+    enqueue(supabase.from('planning_trucks').update({ color }).eq('id', truck.id));
+  }, [supabase]);
+
+  const updateTruckTeamName = useCallback((truck: TruckRec, idx: 1 | 2, value: string) => {
+    const field = idx === 1 ? 'team_member1_name' : 'team_member2_name';
+    setPlanningTrucks(prev => prev.map(t => t.id === truck.id ? { ...t, [field]: value } as any : t));
+    enqueue(
+      supabase.from('planning_trucks')
+        .update({ [field]: value || null })
+        .eq('id', truck.id)
+        .select('id')
+        .then(({ error }) => { if (error) console.warn('[planning] updateTruckTeamName error', error); })
+    );
+  }, [supabase]);
+
   const persistMetaUpsert = useCallback((projectId: string, meta: ProjectScheduleMeta) => {
     enqueue(supabase.from('planning_project_meta').upsert({
       project_id: projectId,
@@ -575,9 +648,24 @@ export default function PlanneringPage() {
   // Truck colors
   const truckColors = useMemo(() => {
     const map: Record<string, { bg: string; border: string; text: string }> = {};
-    for (const t of trucks) map[t] = deriveColors(truckColorOverrides[t]);
+    for (const t of trucks) {
+      let base = truckColorOverrides[t];
+      if (!base) base = defaultTruckColors[t] || '#6366f1';
+      map[t] = deriveColors(base);
+    }
     return map;
   }, [truckColorOverrides, trucks]);
+
+  // Resolve free-text team names
+  const truckTeamNames = useCallback((truckName?: string | null) => {
+    if (!truckName) return [] as string[];
+    const rec = planningTrucks.find(t => t.name === truckName);
+    if (!rec) return [];
+    const out: string[] = [];
+    if (rec.team_member1_name) out.push(rec.team_member1_name);
+    if (rec.team_member2_name) out.push(rec.team_member2_name);
+    return out;
+  }, [planningTrucks]);
 
   // Expand scheduled items to per-day instances
   interface DayInstance extends ProjectScheduleMeta {
@@ -1032,20 +1120,48 @@ export default function PlanneringPage() {
               {salesFilter && <button type="button" className="btn--plain btn--xs" style={{ fontSize: 11 }} onClick={() => setSalesFilter('')}>Rensa</button>}
             </div>
           </div>
-          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 11, alignItems: 'center' }}>
-            {trucks.map(t => {
-              const c = truckColors[t];
-              const current = truckColorOverrides[t];
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 11, alignItems: 'stretch' }}>
+            {trucks.map(tName => {
+              const tRec = planningTrucks.find(pt => pt.name === tName);
+              const c = truckColors[tName];
+              const current = truckColorOverrides[tName] || defaultTruckColors[tName] || '#6366f1';
+              const team1 = tRec?.team_member1_name || '';
+              const team2 = tRec?.team_member2_name || '';
               return (
-                <div key={t} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 6px', border: '1px solid #e5e7eb', borderRadius: 8, background: '#fff' }}>
-                  <span style={{ width: 16, height: 16, background: c.bg, border: `3px solid ${c.border}`, borderRadius: 6, display: 'inline-block' }} />
-                  <span style={{ fontWeight: 600, color: c.text }}>{t}</span>
-                  <input type="color" value={current} aria-label={`Ändra färg för ${t}`} onChange={e => setTruckColorOverrides(o => ({ ...o, [t]: e.target.value }))} style={{ width: 28, height: 28, padding: 0, border: '1px solid #cbd5e1', borderRadius: 6, cursor: 'pointer', background: '#fff' }} />
-                  <button type="button" className="btn--plain btn--xs" style={{ fontSize: 11 }} title="Återställ" onClick={() => setTruckColorOverrides(o => ({ ...o, [t]: ({ 'mb blå': '#38bdf8', 'mb vit': '#94a3b8', 'volvo blå': '#6366f1' } as any)[t] }))}>↺</button>
+                <div key={tName} style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 8px', border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff', minWidth: 170 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ width: 16, height: 16, background: c.bg, border: `3px solid ${c.border}`, borderRadius: 6, display: 'inline-block' }} />
+                    <span style={{ fontWeight: 600, color: c.text }}>{tName}</span>
+                    {isAdmin && tRec && (
+                      <input type="color" value={current} aria-label={`Ändra färg för ${tName}`} onChange={e => updateTruckColor(tRec, e.target.value)} style={{ width: 26, height: 26, padding: 0, border: '1px solid #cbd5e1', borderRadius: 6, cursor: 'pointer', background: '#fff', marginLeft: 'auto' }} />
+                    )}
+                  </div>
+                  {tRec && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                        <label style={{ fontSize: 10, color: '#475569' }}>Team 1</label>
+                        <input disabled={!isAdmin} value={team1} onChange={e => updateTruckTeamName(tRec, 1, e.target.value)} placeholder="Namn" style={{ fontSize: 11, padding: '4px 6px', border: '1px solid #cbd5e1', borderRadius: 6 }} />
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                        <label style={{ fontSize: 10, color: '#475569' }}>Team 2</label>
+                        <input disabled={!isAdmin} value={team2} onChange={e => updateTruckTeamName(tRec, 2, e.target.value)} placeholder="Namn" style={{ fontSize: 11, padding: '4px 6px', border: '1px solid #cbd5e1', borderRadius: 6 }} />
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}><span style={{ width: 14, height: 14, background: '#fff', border: '2px dashed #94a3b8', borderRadius: 4 }} /> Ingen</div>
+            <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 4, padding: '6px 8px', border: '1px dashed #94a3b8', borderRadius: 10, background: '#f8fafc', minWidth: 140 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: '#475569' }}>
+                <span style={{ width: 14, height: 14, background: '#fff', border: '2px dashed #94a3b8', borderRadius: 4 }} /> Ingen
+              </div>
+              {isAdmin && (
+                <form onSubmit={e => { e.preventDefault(); createTruck(); }} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <input value={newTruckName} onChange={e => setNewTruckName(e.target.value)} placeholder="Ny lastbil" style={{ fontSize: 11, padding: '4px 6px', border: '1px solid #cbd5e1', borderRadius: 6 }} />
+                  <button type="submit" disabled={!newTruckName.trim()} className="btn--plain btn--xs" style={{ fontSize: 11, background: '#e0f2fe', border: '1px solid #7dd3fc', color: '#0369a1', borderRadius: 6, padding: '4px 6px' }}>Lägg till</button>
+                </form>
+              )}
+            </div>
           </div>
           {viewMode === 'monthGrid' && (
             <div style={{ display: 'grid', gap: 12 }}>
@@ -1136,6 +1252,7 @@ export default function PlanneringPage() {
                                         {it.jobType || ''}
                                       </span>
                                     )}
+                                    {isStart && it.truck && (() => { const team = truckTeamNames(it.truck); return team.length ? <span style={{ fontSize: 10, color: display ? display.text : '#334155', background:'#ffffff40', padding:'2px 6px', borderRadius: 10, border:`1px solid ${cardBorder}40` }}>Team: {team.join(', ')}</span> : null; })()}
                                   </div>
                                   {isStart && showCardControls && (
                                     <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -1270,6 +1387,7 @@ export default function PlanneringPage() {
                                           {it.jobType || ''}
                                         </span>
                                       )}
+                                      {isStart && it.truck && (() => { const team = truckTeamNames(it.truck); return team.length ? <span style={{ fontSize: 9, color: display ? display.text : '#334155', background:'#ffffff30', padding:'1px 5px', borderRadius: 10, border:`1px solid ${cardBorder}40` }}>Team: {team.join(', ')}</span> : null; })()}
                                     </div>
                                     {isStart && showCardControls && (
                                       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -1403,6 +1521,7 @@ export default function PlanneringPage() {
                                   {it.jobType || ''}
                                 </span>
                               )}
+                              {isStart && it.truck && (() => { const team = truckTeamNames(it.truck); return team.length ? <span style={{ fontSize: 9, color: display ? display.text : '#334155', background:'#ffffff40', padding:'1px 5px', borderRadius: 10, border:`1px solid ${cardBorder}40` }}>Team: {team.join(', ')}</span> : null; })()}
                             </div>
                             {isStart && showCardControls && (
                               <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
