@@ -1,6 +1,7 @@
 "use client";
 export const dynamic = 'force-dynamic';
-import { useEffect, useMemo, useState } from 'react';
+import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
+import { useEffect, useMemo, useState, useRef, useCallback } from 'react';
 
 // Types
 interface Project {
@@ -11,6 +12,7 @@ interface Project {
   createdAt: string;
   status: string;
   isManual?: boolean; // local only flag
+  salesResponsible?: string | null; // from Blikk API (who created / sales responsible)
 }
 // Legacy ScheduledItem replaced by segment+meta model
 interface ScheduledSegment {
@@ -18,6 +20,8 @@ interface ScheduledSegment {
   projectId: string;   // reference Project.id
   startDay: string;    // YYYY-MM-DD inclusive
   endDay: string;      // inclusive
+  createdBy?: string | null;
+  createdByName?: string | null;
 }
 
 interface ProjectScheduleMeta {
@@ -48,6 +52,14 @@ export default function PlanneringPage() {
   const [scheduledSegments, setScheduledSegments] = useState<ScheduledSegment[]>([]);
   // Per project scheduling metadata (shared across its segments)
   const [scheduleMeta, setScheduleMeta] = useState<Record<string, ProjectScheduleMeta>>({});
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [currentUserName, setCurrentUserName] = useState<string | null>(null);
+  // Presence (who is currently viewing)
+  const [presenceUsers, setPresenceUsers] = useState<Array<{ id?: string | null; name?: string | null; joinedAt?: string; presence_ref?: string }>>([]);
+  // Editing presence (other users editing fields for a project/segment)
+  interface RemoteEditEntry { userId: string | null | undefined; userName: string | null | undefined; projectId: string; segmentId?: string; field: string; ts: number; }
+  const [remoteEditing, setRemoteEditing] = useState<Record<string, RemoteEditEntry>>({});
+  const localEditingKeysRef = useRef<Set<string>>(new Set());
 
   // Calendar / UI state
   const [monthOffset, setMonthOffset] = useState(0);
@@ -122,7 +134,7 @@ export default function PlanneringPage() {
       const res = await fetch(`/api/blikk/projects?orderNumber=${encodeURIComponent(val)}`);
       const j = await res.json();
       if (!res.ok) throw new Error(j.error || 'Fel vid sökning');
-      const normalized: Project[] = (j.projects || []).map((p: any) => ({ ...p, id: String(p.id), orderNumber: p.orderNumber ?? null }));
+  const normalized: Project[] = (j.projects || []).map((p: any) => ({ ...p, id: String(p.id), orderNumber: p.orderNumber ?? null, salesResponsible: p.salesResponsible ?? null }));
       if (!normalized.length) {
         setSearchError('Inget projekt hittades');
       } else {
@@ -175,7 +187,7 @@ export default function PlanneringPage() {
         const res = await fetch('/api/blikk/projects');
         const j = await res.json();
         if (!res.ok) setError(j.error || 'Fel vid hämtning');
-        const normalized: Project[] = (j.projects || []).map((p: any) => ({ ...p, id: String(p.id), orderNumber: p.orderNumber ?? null }));
+  const normalized: Project[] = (j.projects || []).map((p: any) => ({ ...p, id: String(p.id), orderNumber: p.orderNumber ?? null, salesResponsible: p.salesResponsible ?? null }));
         setProjects(normalized);
         setSource(j.source || null);
       } catch (e: any) {
@@ -185,6 +197,302 @@ export default function PlanneringPage() {
       }
     })();
   }, []);
+
+  // Load persisted schedule + meta
+  const supabase = createClientComponentClient();
+  const [syncing, setSyncing] = useState(false);
+  const [realtimeStatus, setRealtimeStatus] = useState<'connecting'|'live'|'error'>('connecting');
+  const pendingOps = useRef<Promise<any>[]>([]);
+  const createdIdsRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    (async () => {
+      try {
+        setSyncing(true);
+        // Load user first (client-side auth context)
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          setCurrentUserId(user.id);
+          // Try profile table for display name
+          let resolvedName: string | null = null;
+          const { data: profile } = await supabase.from('profiles').select('full_name').eq('id', user.id).maybeSingle();
+          if (profile && (profile as any).full_name) {
+            resolvedName = (profile as any).full_name as string;
+          }
+          if (!resolvedName) {
+            const meta: any = user.user_metadata || {};
+            resolvedName = meta.full_name || meta.name || null;
+          }
+            if (!resolvedName && user.email) {
+              resolvedName = user.email.split('@')[0];
+            }
+          if (resolvedName) setCurrentUserName(resolvedName);
+        }
+        const { data: segs, error: segErr } = await supabase.from('planning_segments').select('*');
+        if (segErr) throw segErr;
+        const { data: metas, error: metaErr } = await supabase.from('planning_project_meta').select('*');
+        if (metaErr) throw metaErr;
+        // Normalize into local shapes
+        if (Array.isArray(segs)) {
+          setScheduledSegments(segs.map(s => ({ id: s.id, projectId: s.project_id, startDay: s.start_day, endDay: s.end_day, createdBy: s.created_by, createdByName: s.created_by_name })));
+          // Inject projects from segments if not already present
+          setProjects(prev => {
+            const map = new Map(prev.map(p => [p.id, p]));
+            for (const s of segs) {
+              if (!map.has(s.project_id)) {
+                map.set(s.project_id, {
+                  id: s.project_id,
+                  name: s.project_name,
+                  customer: s.customer || '',
+                  orderNumber: s.order_number || null,
+                  createdAt: s.created_at || new Date().toISOString(),
+                  status: s.is_manual ? 'MANUELL' : 'PLAN',
+                  isManual: s.is_manual
+                });
+              }
+            }
+            return Array.from(map.values());
+          });
+        }
+        if (Array.isArray(metas)) {
+          const metaObj: any = {};
+            for (const m of metas) metaObj[m.project_id] = { projectId: m.project_id, truck: m.truck, bagCount: m.bag_count, jobType: m.job_type, color: m.color };
+          setScheduleMeta(metaObj);
+        }
+      } catch (e) {
+        console.warn('[planning] initial load failed', e);
+      } finally { setSyncing(false); }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Realtime subscription + presence tracking (recreate when auth identity changes so presence key updates)
+  useEffect(() => {
+    const presenceKey = currentUserId || 'anon-' + Math.random().toString(36).slice(2, 8);
+    const channel = supabase.channel('planning-sync', { config: { presence: { key: presenceKey } } })
+      // Presence events
+      .on('presence', { event: 'sync' }, () => {
+        const state = channel.presenceState();
+        const users: any[] = [];
+        for (const key of Object.keys(state)) {
+          const entries = (state as any)[key];
+            for (const entry of entries) users.push(entry);
+        }
+        setPresenceUsers(users);
+      })
+      .on('presence', { event: 'join' }, ({ newPresences }) => {
+        setPresenceUsers(prev => {
+          const map = new Map<string, any>();
+          for (const p of prev) map.set(p.presence_ref || p.id || Math.random().toString(36), p);
+          for (const np of newPresences) map.set(np.presence_ref || np.id || Math.random().toString(36), np);
+          return Array.from(map.values());
+        });
+      })
+      .on('presence', { event: 'leave' }, ({ leftPresences }) => {
+        setPresenceUsers(prev => prev.filter(p => !leftPresences.some(lp => lp.presence_ref === p.presence_ref)));
+      })
+      // Data changes
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'planning_segments' }, payload => {
+        const row: any = payload.new || payload.old;
+        if (payload.eventType === 'INSERT') {
+          setScheduledSegments(prev => prev.some(s => s.id === row.id) ? prev : [...prev, { id: row.id, projectId: row.project_id, startDay: row.start_day, endDay: row.end_day, createdBy: row.created_by, createdByName: row.created_by_name }]);
+          setProjects(prev => prev.some(p => p.id === row.project_id) ? prev : [...prev, {
+            id: row.project_id,
+            name: row.project_name,
+            customer: row.customer || '',
+            orderNumber: row.order_number || null,
+            createdAt: row.created_at || new Date().toISOString(),
+            status: row.is_manual ? 'MANUELL' : 'PLAN',
+            isManual: row.is_manual
+          }]);
+        } else if (payload.eventType === 'UPDATE') {
+          setScheduledSegments(prev => prev.map(s => s.id === row.id ? { ...s, startDay: row.start_day, endDay: row.end_day, createdByName: row.created_by_name ?? s.createdByName } : s));
+        } else if (payload.eventType === 'DELETE') {
+          setScheduledSegments(prev => prev.filter(s => s.id !== row.id));
+        }
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'planning_project_meta' }, payload => {
+        const row: any = payload.new || payload.old;
+        if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+          setScheduleMeta(prev => ({ ...prev, [row.project_id]: { projectId: row.project_id, truck: row.truck, bagCount: row.bag_count, jobType: row.job_type, color: row.color } }));
+        } else if (payload.eventType === 'DELETE') {
+          setScheduleMeta(prev => { const c = { ...prev }; delete c[row.project_id]; return c; });
+        }
+      })
+      .subscribe(status => {
+        if (status === 'SUBSCRIBED') {
+          setRealtimeStatus('live');
+          // Track current viewer with metadata
+          channel.track({ id: currentUserId, name: currentUserName, joinedAt: new Date().toISOString() });
+        }
+      });
+    return () => { supabase.removeChannel(channel); };
+  }, [supabase, currentUserId, currentUserName]);
+
+  // Secondary channel for editing broadcast events
+  useEffect(() => {
+    const editingChannel = supabase.channel('planning-edit');
+    editingChannel
+      .on('broadcast', { event: 'editing_start' }, payload => {
+        const p: any = payload.payload;
+        const key = `${p.userId || 'anon'}:${p.projectId}`;
+        setRemoteEditing(prev => ({ ...prev, [key]: { userId: p.userId, userName: p.userName, projectId: p.projectId, segmentId: p.segmentId, field: p.field, ts: Date.now() } }));
+      })
+      .on('broadcast', { event: 'editing_stop' }, payload => {
+        const p: any = payload.payload;
+        const key = `${p.userId || 'anon'}:${p.projectId}`;
+        setRemoteEditing(prev => { const c = { ...prev }; delete c[key]; return c; });
+      })
+      .subscribe(status => {
+        if (status === 'SUBSCRIBED') {
+          // Nothing initial to send
+        }
+      });
+    const interval = setInterval(() => {
+      // Expire stale entries ( > 45s )
+      const cutoff = Date.now() - 45000;
+      setRemoteEditing(prev => {
+        let changed = false; const c: typeof prev = { ...prev };
+        for (const [k, v] of Object.entries(prev)) {
+          if (v.ts < cutoff) { delete c[k]; changed = true; }
+        }
+        return changed ? c : prev;
+      });
+    }, 10000);
+    return () => { clearInterval(interval); supabase.removeChannel(editingChannel); };
+  }, [supabase]);
+
+  function broadcastEditStart(projectId: string, field: string, segmentId?: string) {
+    if (!currentUserId && !currentUserName) return; // optional: allow anon but skip for noise
+    const key = `${currentUserId || 'anon'}:${projectId}`;
+    if (localEditingKeysRef.current.has(key)) return; // already broadcasting
+    localEditingKeysRef.current.add(key);
+    supabase.channel('planning-edit').send({ type: 'broadcast', event: 'editing_start', payload: { userId: currentUserId, userName: currentUserName, projectId, segmentId, field } });
+  }
+  function broadcastEditStop(projectId: string) {
+    const key = `${currentUserId || 'anon'}:${projectId}`;
+    if (!localEditingKeysRef.current.has(key)) return;
+    localEditingKeysRef.current.delete(key);
+    supabase.channel('planning-edit').send({ type: 'broadcast', event: 'editing_stop', payload: { userId: currentUserId, projectId } });
+  }
+
+  function getRemoteEditorsForProject(projectId: string) {
+    return Object.values(remoteEditing).filter(e => e.projectId === projectId && e.userId !== currentUserId);
+  }
+
+  function getRemoteEditorsForField(projectId: string, field: string) {
+    return Object.values(remoteEditing).filter(e => e.projectId === projectId && e.field === field && e.userId !== currentUserId);
+  }
+
+  function FieldPresence({ projectId, field, size = 14 }: { projectId: string; field: string; size?: number }) {
+    const editors = getRemoteEditorsForField(projectId, field);
+    if (editors.length === 0) return null;
+    const shown = editors.slice(0, 3);
+    return (
+      <span title={"Redigerar: " + editors.map(e => e.userName || e.userId || 'Okänd').join(', ')} style={{ position: 'absolute', top: -6, right: -6, display: 'flex', gap: 2 }}>
+        {shown.map(ed => {
+          const name = (ed.userName || ed.userId || '?') as string;
+          const initials = creatorInitials(name);
+          const { bg } = creatorColor(name);
+          return (
+            <span key={(ed.userId || 'anon') + ed.field}
+                  style={{ width: size, height: size, background: bg, color: '#fff', fontSize: size * 0.45, fontWeight: 600, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 0 2px #fff, 0 0 0 3px rgba(0,0,0,0.15)' }}>{initials}</span>
+          );
+        })}
+        {editors.length > shown.length && (
+          <span style={{ width: size, height: size, borderRadius: '50%', background: '#334155', color: '#fff', fontSize: size * 0.5, fontWeight: 600, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 0 2px #fff, 0 0 0 3px rgba(0,0,0,0.15)' }}>+{editors.length - shown.length}</span>
+        )}
+      </span>
+    );
+  }
+
+  // Ensure we stop broadcasting edits on unmount
+  useEffect(() => {
+    return () => {
+      for (const key of Array.from(localEditingKeysRef.current)) {
+        const [, projectId] = key.split(':');
+        supabase.channel('planning-edit').send({ type: 'broadcast', event: 'editing_stop', payload: { userId: currentUserId, projectId } });
+      }
+    };
+  }, [currentUserId, supabase]);
+
+  // Helper to queue writes (single definition)
+  function enqueue(pLike: Promise<any> | PromiseLike<any>) {
+    const p = Promise.resolve(pLike);
+    pendingOps.current.push(p);
+    p.finally(() => { pendingOps.current = pendingOps.current.filter(x => x !== p); });
+  }
+
+  // Persist segment create/update/delete
+  const persistSegmentCreate = useCallback((seg: ScheduledSegment, project: Project) => {
+    // Avoid duplicate attempts if local diff logic fires twice before realtime echo
+    const payload = {
+      id: seg.id,
+      project_id: project.id,
+      project_name: project.name,
+      customer: project.customer,
+      order_number: project.orderNumber,
+      source: project.isManual ? 'manual' : 'blikk',
+      is_manual: project.isManual,
+      start_day: seg.startDay,
+      end_day: seg.endDay,
+      created_by: currentUserId,
+      created_by_name: currentUserName || currentUserId || project.customer || 'Okänd'
+    } as const;
+    if (createdIdsRef.current.has(seg.id)) {
+      return; // already attempted
+    }
+    createdIdsRef.current.add(seg.id);
+    console.debug('[planning] upserting segment', payload);
+    enqueue(supabase.from('planning_segments')
+      .upsert(payload, { onConflict: 'id', ignoreDuplicates: true })
+      .select('id')
+      .then(({ data, error }) => {
+        if (error && error.code !== '23505') console.warn('[persist create seg] error', error);
+        else if (!error) console.debug('[planning] upsert ok', data);
+      })
+    );
+  }, [supabase, currentUserId, currentUserName]);
+
+  const persistSegmentUpdate = useCallback((seg: ScheduledSegment) => {
+    enqueue(supabase.from('planning_segments').update({ start_day: seg.startDay, end_day: seg.endDay }).eq('id', seg.id).select('id').then(({ data, error }) => { if (error) console.warn('[persist update seg] error', error); else console.debug('[planning] update ok', data); }));
+  }, [supabase]);
+
+  const persistSegmentDelete = useCallback((segmentId: string) => {
+    enqueue(supabase.from('planning_segments').delete().eq('id', segmentId).select('id').then(({ data, error }) => { if (error) console.warn('[persist delete seg] error', error); else console.debug('[planning] delete ok', data); }));
+  }, [supabase]);
+
+  const persistMetaUpsert = useCallback((projectId: string, meta: ProjectScheduleMeta) => {
+    enqueue(supabase.from('planning_project_meta').upsert({
+      project_id: projectId,
+      truck: meta.truck,
+      bag_count: meta.bagCount,
+      job_type: meta.jobType,
+      color: meta.color
+    }).then(({ error }) => { if (error) console.warn('[persist meta upsert] error', error); }));
+  }, [supabase]);
+
+  // Capture original setter once
+  const applyScheduledSegments = useCallback((updater: (prev: ScheduledSegment[]) => ScheduledSegment[]) => {
+    setScheduledSegments(prev => {
+      const next = updater(prev);
+      // Diff for persistence
+      const prevMap = new Map<string, ScheduledSegment>(prev.map(s => [s.id, s]));
+      for (const seg of next) {
+        const before = prevMap.get(seg.id);
+        if (!before) {
+          const project = projects.find(p => p.id === seg.projectId);
+          if (project) persistSegmentCreate(seg, project);
+        } else if (before.startDay !== seg.startDay || before.endDay !== seg.endDay) {
+          persistSegmentUpdate(seg);
+        }
+        prevMap.delete(seg.id);
+      }
+      // Deletions
+      for (const segId of prevMap.keys()) persistSegmentDelete(segId);
+      return next;
+    });
+  }, [projects, persistSegmentCreate, persistSegmentDelete, persistSegmentUpdate]);
 
   // Calendar grid weeks
   const weeks = useMemo(() => {
@@ -286,6 +594,57 @@ export default function PlanneringPage() {
     return map;
   }, [scheduledSegments, scheduleMeta, projects]);
 
+  function rowCreatorLabel(segmentId: string) {
+    const seg = scheduledSegments.find(s => s.id === segmentId);
+    return seg?.createdByName || null;
+  }
+
+  // Avatar helpers
+  function creatorInitials(name: string) {
+    const parts = name.trim().split(/\s+/).filter(Boolean);
+    if (parts.length === 0) return '?';
+    if (parts.length === 1) {
+      const p = parts[0];
+      if (p.length >= 2) return (p[0] + p[1]).toUpperCase();
+      return p[0].toUpperCase();
+    }
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  }
+  function creatorColor(key: string) {
+    let hash = 0;
+    for (let i = 0; i < key.length; i++) hash = (hash * 31 + key.charCodeAt(i)) | 0;
+    const hue = Math.abs(hash) % 360;
+    // Two tones: solid + subtle ring
+    return {
+      bg: `hsl(${hue} 70% 42%)`,
+      ring: `hsl(${hue} 75% 60% / 0.65)`
+    };
+  }
+  function CreatorAvatar({ segmentId, textColorOverride }: { segmentId: string; textColorOverride?: string }) {
+    const name = rowCreatorLabel(segmentId);
+    if (!name) return null;
+    const { bg, ring } = creatorColor(name);
+    const initials = creatorInitials(name);
+    return (
+      <span title={`Skapad av ${name}`}
+            style={{
+              width: 18,
+              height: 18,
+              borderRadius: '50%',
+              background: bg,
+              color: '#fff',
+              fontSize: 9.5,
+              fontWeight: 600,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              boxShadow: `0 0 0 1px rgba(0,0,0,0.18), 0 0 0 2px ${ring}`,
+              letterSpacing: .5,
+              flexShrink: 0
+            }}>{initials}</span>
+    );
+  }
+
   // Calendar search (only one implementation)
   const calendarMatchDays = useMemo(() => {
     const term = calendarSearch.trim().toLowerCase();
@@ -353,7 +712,7 @@ export default function PlanneringPage() {
         newEndDate.setTime(newStartDate.getTime());
       }
       console.debug('[DragMove] segment', { id: seg.id, oldStart: seg.startDay, oldEnd: seg.endDay, newStart: newStartStr, newEnd: newEndStr, lengthDays });
-      setScheduledSegments(prev => prev.map(s => s.id === id ? { ...s, startDay: newStartStr, endDay: newEndStr } : s));
+      applyScheduledSegments(prev => prev.map(s => s.id === id ? { ...s, startDay: newStartStr, endDay: newEndStr } : s));
       // Auto navigate month if moved to different month than currently shown
       const targetDate = newStartDate;
       const base = new Date(); base.setDate(1);
@@ -365,8 +724,8 @@ export default function PlanneringPage() {
     if (!proj) return;
     // create meta if missing
     setScheduleMeta(m => m[proj.id] ? m : { ...m, [proj.id]: { projectId: proj.id, truck: null, bagCount: null, jobType: null, color: null } });
-    const newSeg: ScheduledSegment = { id: 'seg-' + proj.id + '-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7), projectId: proj.id, startDay: day, endDay: day };
-    setScheduledSegments(prev => [...prev, newSeg]);
+  const newSeg: ScheduledSegment = { id: (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? (crypto as any).randomUUID() : Math.random().toString(36).slice(2) ), projectId: proj.id, startDay: day, endDay: day };
+    applyScheduledSegments(prev => [...prev, newSeg]);
     setTimeout(() => setEditingTruckFor(proj.id), 0);
   }
 
@@ -377,20 +736,20 @@ export default function PlanneringPage() {
     setSelectedProjectId(null);
     if (!proj) return;
     setScheduleMeta(m => m[proj.id] ? m : { ...m, [proj.id]: { projectId: proj.id } });
-    const newSeg: ScheduledSegment = { id: 'seg-' + proj.id + '-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7), projectId: proj.id, startDay: day, endDay: day };
-    setScheduledSegments(prev => [...prev, newSeg]);
+  const newSeg: ScheduledSegment = { id: (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? (crypto as any).randomUUID() : Math.random().toString(36).slice(2)), projectId: proj.id, startDay: day, endDay: day };
+    applyScheduledSegments(prev => [...prev, newSeg]);
     setTimeout(() => setEditingTruckFor(proj.id), 0);
   }
-  function unschedule(segmentId: string) { setScheduledSegments(prev => prev.filter(s => s.id !== segmentId)); }
+  function unschedule(segmentId: string) { applyScheduledSegments(prev => prev.filter(s => s.id !== segmentId)); }
   function extendSpan(segmentId: string, direction: 'forward' | 'back') {
-    setScheduledSegments(prev => prev.map(s => {
+    applyScheduledSegments(prev => prev.map(s => {
       if (s.id !== segmentId) return s;
       if (direction === 'forward') { const d = new Date(s.endDay); d.setDate(d.getDate() + 1); return { ...s, endDay: fmtDate(d) }; }
       const d = new Date(s.startDay); d.setDate(d.getDate() - 1); return { ...s, startDay: fmtDate(d) };
     }));
   }
   function shrinkSpan(segmentId: string, edge: 'end' | 'start') {
-    setScheduledSegments(prev => prev.map(s => {
+    applyScheduledSegments(prev => prev.map(s => {
       if (s.id !== segmentId) return s;
       const span = Math.round((new Date(s.endDay).getTime() - new Date(s.startDay).getTime()) / 86400000) + 1;
       if (span <= 1) return s;
@@ -401,12 +760,71 @@ export default function PlanneringPage() {
 
   // Update project meta helpers
   function updateMeta(projectId: string, patch: Partial<ProjectScheduleMeta>) {
-    setScheduleMeta(m => ({ ...m, [projectId]: { ...m[projectId], projectId, ...patch } }));
+    // Debounced meta writes: update local state immediately for UI, but delay DB upsert
+    setScheduleMeta(m => {
+      const merged = { ...(m[projectId] || { projectId }), ...patch } as ProjectScheduleMeta;
+      scheduleMetaDebounced(projectId, merged);
+      return { ...m, [projectId]: merged };
+    });
   }
+
+  // --- Debounce infrastructure for meta upserts ---
+  const metaDebounceTimers = useRef<Record<string, any>>({});
+  const latestMetaCache = useRef<Record<string, ProjectScheduleMeta>>({});
+  const DEBOUNCE_MS = 450;
+
+  function scheduleMetaDebounced(projectId: string, meta: ProjectScheduleMeta) {
+    latestMetaCache.current[projectId] = meta;
+    const existing = metaDebounceTimers.current[projectId];
+    if (existing) clearTimeout(existing);
+    metaDebounceTimers.current[projectId] = setTimeout(() => {
+      const finalMeta = latestMetaCache.current[projectId];
+      if (finalMeta) persistMetaUpsert(projectId, finalMeta);
+      delete metaDebounceTimers.current[projectId];
+    }, DEBOUNCE_MS);
+  }
+
+  // Flush debounced writes on unmount / page hide to avoid losing last edits
+  useEffect(() => {
+    function flushAll() {
+      for (const [pid, timer] of Object.entries(metaDebounceTimers.current)) {
+        clearTimeout(timer);
+        const finalMeta = latestMetaCache.current[pid];
+        if (finalMeta) persistMetaUpsert(pid, finalMeta);
+        delete metaDebounceTimers.current[pid];
+      }
+    }
+    window.addEventListener('beforeunload', flushAll);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushAll(); });
+    return () => {
+      flushAll();
+      window.removeEventListener('beforeunload', flushAll);
+    };
+  }, [persistMetaUpsert]);
 
   return (
     <div style={{ padding: 16, display: 'grid', gap: 16 }}>
-      <h1 style={{ margin: 0 }}>Plannering</h1>
+      <h1 style={{ margin: 0 }}>Plannering {realtimeStatus === 'live' ? '🟢' : realtimeStatus === 'connecting' ? '🟡' : '🔴'}</h1>
+      {presenceUsers.length > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 11, color: '#64748b' }}>Online:</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+            {presenceUsers.slice(0, 12).map(u => {
+              const name = (u.name || u.id || 'Okänd') as string;
+              const initials = creatorInitials(name);
+              const { bg, ring } = creatorColor(name);
+              return (
+                <span key={u.presence_ref || (u.id + '-' + u.joinedAt) || Math.random().toString(36)} title={name}
+                      style={{
+                        width: 18, height: 18, borderRadius: '50%', background: bg, color: '#fff', fontSize: 10, fontWeight: 600, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', boxShadow: `0 0 0 1px rgba(0,0,0,0.25), 0 0 0 2px ${ring}`, letterSpacing: .5
+                      }}>{initials}</span>
+              );
+            })}
+            {presenceUsers.length > 12 && <span style={{ fontSize: 10, color: '#475569' }}>+{presenceUsers.length - 12}</span>}
+          </div>
+        </div>
+      )}
+      {syncing && <div style={{ fontSize: 11, color: '#64748b' }}>Synkar…</div>}
       <p style={{ margin: 0, color: '#6b7280', fontSize: 14 }}>Dra projekt från listan till en dag i kalendern (lokal state).</p>
       {source && <div style={{ fontSize: 11, color: '#9ca3af' }}>Källa: {source}</div>}
       {error && <div style={{ background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c', padding: '6px 8px', borderRadius: 6, fontSize: 12 }}>Fel: {error}</div>}
@@ -453,6 +871,7 @@ export default function PlanneringPage() {
                     {p.name}
                   </strong>
                   <span style={{ fontSize: 12, color: '#6b7280' }}>{p.customer}</span>
+                  {p.salesResponsible && <span style={{ fontSize: 10, color: '#475569', background:'#f1f5f9', padding:'2px 6px', borderRadius:12, border:'1px solid #e2e8f0' }}>Sälj: {p.salesResponsible}</span>}
                   <span style={{ fontSize: 11, color: '#9ca3af' }}>Skapad: {p.createdAt.slice(0, 10)}</span>
                 </div>
               ))}
@@ -504,6 +923,7 @@ export default function PlanneringPage() {
                   </strong>
                   <div style={{ fontSize: 12, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', color: '#475569' }}>
                     <span style={{ fontWeight: 500 }}>{p.customer}</span>
+                    {p.salesResponsible && <span style={{ fontSize: 10, color: '#475569', background:'#f1f5f9', padding:'2px 6px', borderRadius:12, border:'1px solid #e2e8f0' }}>Sälj: {p.salesResponsible}</span>}
                     <span style={{ fontSize: 10, color: '#64748b', background: '#f1f5f9', padding: '2px 6px', borderRadius: 12 }}>Skapad {p.createdAt.slice(0,10)}</span>
                   </div>
                 </div>
@@ -652,6 +1072,10 @@ export default function PlanneringPage() {
                                       {it.project.name}
                                     </span>
                                     {isStart && <span style={{ color: display ? display.text : '#6366f1' }}>{it.project.customer}</span>}
+                                    {isStart && it.project.salesResponsible && <span style={{ fontSize: 10, color: display ? display.text : '#334155', background:'#ffffff30', padding:'2px 6px', borderRadius: 12, border:`1px solid ${cardBorder}55` }}>Sälj: {it.project.salesResponsible}</span>}
+                                    {isStart && rowCreatorLabel(it.segmentId) && (
+                                      <CreatorAvatar segmentId={it.segmentId} />
+                                    )}
                                     {(it.bagCount != null || it.jobType) && (
                                       <span style={{ fontSize: 11, color: display ? display.text : '#374151' }}>
                                         {it.bagCount != null ? `${it.bagCount} säckar` : ''}
@@ -662,19 +1086,28 @@ export default function PlanneringPage() {
                                   </div>
                                   {isStart && showCardControls && (
                                     <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
-                                      {editingTruckFor === it.project.id ? (
-                                        <select autoFocus value={it.truck || ''} onChange={e => { const val = e.target.value || null; updateMeta(it.project.id, { truck: val }); setEditingTruckFor(null); }} onBlur={() => setEditingTruckFor(null)} style={{ fontSize: 11, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }}>
+                                      <div style={{ position: 'relative', display: 'inline-block' }}>
+                                        <FieldPresence projectId={it.project.id} field="truck" />
+                                        {editingTruckFor === it.project.id ? (
+                                        <select autoFocus value={it.truck || ''} onChange={e => { const val = e.target.value || null; updateMeta(it.project.id, { truck: val }); setEditingTruckFor(null); broadcastEditStop(it.project.id); }} onBlur={() => { setEditingTruckFor(null); broadcastEditStop(it.project.id); }} style={{ fontSize: 11, padding: '2px 6px', border: `1px solid ${cardBorder}`, borderRadius: 6 }}>
                                           <option value="">Välj lastbil…</option>
                                           {trucks.map(t => <option key={t} value={t}>{t}</option>)}
                                         </select>
                                       ) : (
-                                        <button type="button" className="btn--plain btn--xs" onClick={() => setEditingTruckFor(it.project.id)} style={{ fontSize: 11, border: `1px solid ${cardBorder}`, borderRadius: 4, padding: '2px 6px', background: '#fff', color: display ? display.text : '#312e81' }}>{it.truck ? `Lastbil: ${it.truck}` : 'Välj lastbil'}</button>
+                                        <button type="button" className="btn--plain btn--xs" onClick={() => { setEditingTruckFor(it.project.id); broadcastEditStart(it.project.id, 'truck', it.segmentId); }} style={{ fontSize: 11, border: `1px solid ${cardBorder}`, borderRadius: 4, padding: '2px 6px', background: '#fff', color: display ? display.text : '#312e81' }}>{it.truck ? `Lastbil: ${it.truck}` : 'Välj lastbil'}</button>
                                       )}
-                                      <input type="number" min={0} placeholder="Säckar" value={it.bagCount ?? ''} onChange={e => { const v = e.target.value; updateMeta(it.project.id, { bagCount: v === '' ? null : Math.max(0, parseInt(v, 10) || 0) }); }} style={{ width: 70, fontSize: 11, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }} />
-                                      <select value={it.jobType || ''} onChange={e => { const v = e.target.value || null; updateMeta(it.project.id, { jobType: v }); }} style={{ fontSize: 11, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }}>
+                                      </div>
+                                      <div style={{ position: 'relative', display: 'inline-block' }}>
+                                        <FieldPresence projectId={it.project.id} field="bagCount" />
+                                      <input type="number" min={0} placeholder="Säckar" value={it.bagCount ?? ''} onFocus={() => broadcastEditStart(it.project.id, 'bagCount', it.segmentId)} onBlur={() => broadcastEditStop(it.project.id)} onChange={e => { const v = e.target.value; updateMeta(it.project.id, { bagCount: v === '' ? null : Math.max(0, parseInt(v, 10) || 0) }); }} style={{ width: 70, fontSize: 11, padding: '4px 6px', border: `1px solid ${cardBorder}`, borderRadius: 6 }} />
+                                      </div>
+                                      <div style={{ position: 'relative', display: 'inline-block' }}>
+                                        <FieldPresence projectId={it.project.id} field="jobType" />
+                                      <select value={it.jobType || ''} onFocus={() => broadcastEditStart(it.project.id, 'jobType', it.segmentId)} onBlur={() => broadcastEditStop(it.project.id)} onChange={e => { const v = e.target.value || null; updateMeta(it.project.id, { jobType: v }); }} style={{ fontSize: 11, padding: '4px 6px', border: `1px solid ${cardBorder}`, borderRadius: 6 }}>
                                         <option value="">Typ av jobb…</option>
                                         {jobTypes.map(j => <option key={j} value={j}>{j}</option>)}
                                       </select>
+                                      </div>
                                       <div style={{ display: 'grid', gap: 4 }}>
                                         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
                                           <strong style={{ fontSize: 10 }}>Längd:</strong>
@@ -769,6 +1202,10 @@ export default function PlanneringPage() {
                                         {it.project.name}
                                       </span>
                                       {isStart && <span style={{ color: display ? display.text : '#6366f1' }}>{it.project.customer}</span>}
+                                      {isStart && it.project.salesResponsible && <span style={{ fontSize: 9, color: display ? display.text : '#334155', background:'#ffffff40', padding:'1px 5px', borderRadius: 10, border:`1px solid ${cardBorder}55` }}>Sälj: {it.project.salesResponsible}</span>}
+                                      {isStart && rowCreatorLabel(it.segmentId) && (
+                                        <CreatorAvatar segmentId={it.segmentId} />
+                                      )}
                                       {(it.bagCount != null || it.jobType) && (
                                         <span style={{ fontSize: 10, color: display ? display.text : '#374151' }}>
                                           {it.bagCount != null ? `${it.bagCount} säckar` : ''}
@@ -779,19 +1216,28 @@ export default function PlanneringPage() {
                                     </div>
                                     {isStart && showCardControls && (
                                       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
-                                        {editingTruckFor === it.project.id ? (
-                                          <select autoFocus value={it.truck || ''} onChange={e => { const val = e.target.value || null; updateMeta(it.project.id, { truck: val }); setEditingTruckFor(null); }} onBlur={() => setEditingTruckFor(null)} style={{ fontSize: 10, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }}>
+                                        <div style={{ position: 'relative', display: 'inline-block' }}>
+                                          <FieldPresence projectId={it.project.id} field="truck" size={12} />
+                                          {editingTruckFor === it.project.id ? (
+                                          <select autoFocus value={it.truck || ''} onChange={e => { const val = e.target.value || null; updateMeta(it.project.id, { truck: val }); setEditingTruckFor(null); broadcastEditStop(it.project.id); }} onBlur={() => { setEditingTruckFor(null); broadcastEditStop(it.project.id); }} style={{ fontSize: 10, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }}>
                                             <option value="">Lastbil…</option>
                                             {trucks.map(t => <option key={t} value={t}>{t}</option>)}
                                           </select>
                                         ) : (
-                                          <button type="button" className="btn--plain btn--xs" onClick={() => setEditingTruckFor(it.project.id)} style={{ fontSize: 10, border: `1px solid ${cardBorder}`, borderRadius: 4, padding: '2px 4px', background: '#fff', color: display ? display.text : '#312e81' }}>{it.truck ? it.truck : 'Välj lastbil'}</button>
+                                          <button type="button" className="btn--plain btn--xs" onClick={() => { setEditingTruckFor(it.project.id); broadcastEditStart(it.project.id, 'truck', it.segmentId); }} style={{ fontSize: 10, border: `1px solid ${cardBorder}`, borderRadius: 4, padding: '2px 4px', background: '#fff', color: display ? display.text : '#312e81' }}>{it.truck ? it.truck : 'Välj lastbil'}</button>
                                         )}
-                                        <input type="number" min={0} placeholder="Säck" value={it.bagCount ?? ''} onChange={e => { const v = e.target.value; updateMeta(it.project.id, { bagCount: v === '' ? null : Math.max(0, parseInt(v, 10) || 0) }); }} style={{ width: 54, fontSize: 10, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }} />
-                                        <select value={it.jobType || ''} onChange={e => { const v = e.target.value || null; updateMeta(it.project.id, { jobType: v }); }} style={{ fontSize: 10, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }}>
+                                        </div>
+                                        <div style={{ position: 'relative', display: 'inline-block' }}>
+                                          <FieldPresence projectId={it.project.id} field="bagCount" size={12} />
+                                        <input type="number" min={0} placeholder="Säck" value={it.bagCount ?? ''} onFocus={() => broadcastEditStart(it.project.id, 'bagCount', it.segmentId)} onBlur={() => broadcastEditStop(it.project.id)} onChange={e => { const v = e.target.value; updateMeta(it.project.id, { bagCount: v === '' ? null : Math.max(0, parseInt(v, 10) || 0) }); }} style={{ width: 50, fontSize: 10, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }} />
+                                        </div>
+                                        <div style={{ position: 'relative', display: 'inline-block' }}>
+                                          <FieldPresence projectId={it.project.id} field="jobType" size={12} />
+                                        <select value={it.jobType || ''} onFocus={() => broadcastEditStart(it.project.id, 'jobType', it.segmentId)} onBlur={() => broadcastEditStop(it.project.id)} onChange={e => { const v = e.target.value || null; updateMeta(it.project.id, { jobType: v }); }} style={{ fontSize: 10, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }}>
                                           <option value="">Jobb…</option>
                                           {jobTypes.map(j => <option key={j} value={j}>{j}</option>)}
                                         </select>
+                                        </div>
                                         <div style={{ display: 'grid', gap: 4 }}>
                                           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
                                             <strong style={{ fontSize: 10 }}>Längd:</strong>
@@ -885,6 +1331,10 @@ export default function PlanneringPage() {
                                 {it.project.name}
                               </span>
                               {isStart && <span style={{ color: display ? display.text : '#6366f1', fontSize: 10 }}>{it.project.customer}</span>}
+                              {isStart && it.project.salesResponsible && <span style={{ fontSize: 9, color: display ? display.text : '#334155', background:'#ffffff50', padding:'1px 5px', borderRadius: 10, border:`1px solid ${cardBorder}55` }}>Sälj: {it.project.salesResponsible}</span>}
+                              {isStart && rowCreatorLabel(it.segmentId) && (
+                                <CreatorAvatar segmentId={it.segmentId} />
+                              )}
                               {(it.bagCount != null || it.jobType) && (
                                 <span style={{ fontSize: 10, color: display ? display.text : '#374151' }}>
                                   {it.bagCount != null ? `${it.bagCount} säckar` : ''}
@@ -895,19 +1345,28 @@ export default function PlanneringPage() {
                             </div>
                             {isStart && showCardControls && (
                               <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
-                                {editingTruckFor === it.project.id ? (
-                                  <select autoFocus value={it.truck || ''} onChange={e => { const val = e.target.value || null; updateMeta(it.project.id, { truck: val }); setEditingTruckFor(null); }} onBlur={() => setEditingTruckFor(null)} style={{ fontSize: 10, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }}>
+                                <div style={{ position: 'relative', display: 'inline-block' }}>
+                                  <FieldPresence projectId={it.project.id} field="truck" size={12} />
+                                  {editingTruckFor === it.project.id ? (
+                                  <select autoFocus value={it.truck || ''} onChange={e => { const val = e.target.value || null; updateMeta(it.project.id, { truck: val }); setEditingTruckFor(null); broadcastEditStop(it.project.id); }} onBlur={() => { setEditingTruckFor(null); broadcastEditStop(it.project.id); }} style={{ fontSize: 10, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }}>
                                     <option value="">Lastbil…</option>
                                     {trucks.map(t => <option key={t} value={t}>{t}</option>)}
                                   </select>
                                 ) : (
-                                  <button type="button" className="btn--plain btn--xs" onClick={() => setEditingTruckFor(it.project.id)} style={{ fontSize: 10, border: `1px solid ${cardBorder}`, borderRadius: 4, padding: '2px 4px', background: '#fff', color: display ? display.text : '#312e81' }}>{it.truck ? it.truck : 'Välj lastbil'}</button>
+                                  <button type="button" className="btn--plain btn--xs" onClick={() => { setEditingTruckFor(it.project.id); broadcastEditStart(it.project.id, 'truck', it.segmentId); }} style={{ fontSize: 10, border: `1px solid ${cardBorder}`, borderRadius: 4, padding: '2px 4px', background: '#fff', color: display ? display.text : '#312e81' }}>{it.truck ? it.truck : 'Välj lastbil'}</button>
                                 )}
-                                <input type="number" min={0} placeholder="Säck" value={it.bagCount ?? ''} onChange={e => { const v = e.target.value; updateMeta(it.project.id, { bagCount: v === '' ? null : Math.max(0, parseInt(v, 10) || 0) }); }} style={{ width: 50, fontSize: 10, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }} />
-                                <select value={it.jobType || ''} onChange={e => { const v = e.target.value || null; updateMeta(it.project.id, { jobType: v }); }} style={{ fontSize: 10, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }}>
+                                </div>
+                                <div style={{ position: 'relative', display: 'inline-block' }}>
+                                  <FieldPresence projectId={it.project.id} field="bagCount" size={12} />
+                                <input type="number" min={0} placeholder="Säck" value={it.bagCount ?? ''} onFocus={() => broadcastEditStart(it.project.id, 'bagCount', it.segmentId)} onBlur={() => broadcastEditStop(it.project.id)} onChange={e => { const v = e.target.value; updateMeta(it.project.id, { bagCount: v === '' ? null : Math.max(0, parseInt(v, 10) || 0) }); }} style={{ width: 50, fontSize: 10, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }} />
+                                </div>
+                                <div style={{ position: 'relative', display: 'inline-block' }}>
+                                  <FieldPresence projectId={it.project.id} field="jobType" size={12} />
+                                <select value={it.jobType || ''} onFocus={() => broadcastEditStart(it.project.id, 'jobType', it.segmentId)} onBlur={() => broadcastEditStop(it.project.id)} onChange={e => { const v = e.target.value || null; updateMeta(it.project.id, { jobType: v }); }} style={{ fontSize: 10, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }}>
                                   <option value="">Jobb…</option>
                                   {jobTypes.map(j => <option key={j} value={j}>{j}</option>)}
                                 </select>
+                                </div>
                                 <div style={{ display: 'grid', gap: 4 }}>
                                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
                                     <strong style={{ fontSize: 10 }}>Längd:</strong>
