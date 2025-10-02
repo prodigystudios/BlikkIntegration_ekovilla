@@ -66,6 +66,8 @@ export default function PlanneringPage() {
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [editingTruckFor, setEditingTruckFor] = useState<string | null>(null);
   const [truckFilter, setTruckFilter] = useState<string>('');
+  const [salesFilter, setSalesFilter] = useState<string>('');
+  const [salesDirectory, setSalesDirectory] = useState<string[]>([]); // all sales/admin names from profiles
   const [calendarSearch, setCalendarSearch] = useState('');
   const [jumpTargetDay, setJumpTargetDay] = useState<string | null>(null);
   const [matchIndex, setMatchIndex] = useState(-1);
@@ -258,6 +260,21 @@ export default function PlanneringPage() {
           const metaObj: any = {};
             for (const m of metas) metaObj[m.project_id] = { projectId: m.project_id, truck: m.truck, bagCount: m.bag_count, jobType: m.job_type, color: m.color };
           setScheduleMeta(metaObj);
+        }
+        // Fetch complete sales/admin directory via internal API (service role backed)
+        try {
+          const dirRes = await fetch('/api/planning/sales-directory');
+          if (dirRes.ok) {
+            const j = await dirRes.json();
+            const names: string[] = Array.isArray(j.users) ? j.users.map((u: any) => u.name).filter((v: any): v is string => typeof v === 'string' && v.trim().length > 0) : [];
+            const trimmed = names.map(n => n.trim());
+            const unique: string[] = Array.from(new Set(trimmed)).filter(n => n.length > 0).sort((a,b)=>a.localeCompare(b));
+            setSalesDirectory(unique);
+          } else {
+            console.warn('[planning] directory fetch failed status', dirRes.status);
+          }
+        } catch (e) {
+          console.warn('[planning] could not load sales directory', e);
         }
       } catch (e) {
         console.warn('[planning] initial load failed', e);
@@ -684,6 +701,29 @@ export default function PlanneringPage() {
 
   // Backlog lists
   const backlog = useMemo(() => projects.filter(p => !scheduledSegments.some(s => s.projectId === p.id) && !recentSearchedIds.includes(p.id)), [projects, scheduledSegments, recentSearchedIds]);
+  const filteredBacklog = useMemo(() => {
+    if (!salesFilter) return backlog;
+    if (salesFilter === '__NONE__') return backlog.filter(p => !p.salesResponsible);
+    return backlog.filter(p => (p.salesResponsible || '').toLowerCase() === salesFilter.toLowerCase());
+  }, [backlog, salesFilter]);
+  const distinctSales = useMemo(() => {
+    // Helper: normalize name (trim, collapse inner spaces, lowercase for key)
+    const norm = (raw: string) => raw.trim().replace(/\s+/g, ' ').toLowerCase();
+    // Prefer directory canonical names; only add project names if not present
+    const map = new Map<string, string>();
+    for (const n of salesDirectory) {
+      if (!n) continue;
+      const key = norm(n);
+      if (!map.has(key)) map.set(key, n.trim().replace(/\s+/g, ' '));
+    }
+    for (const p of projects) {
+      if (!p.salesResponsible) continue;
+      const cleaned = p.salesResponsible.trim().replace(/\s+/g, ' ');
+      const key = norm(cleaned);
+      if (!map.has(key)) map.set(key, cleaned); // only add if not already from directory
+    }
+    return Array.from(map.values()).sort((a,b)=>a.localeCompare(b,'sv-SE',{ sensitivity: 'base' }));
+  }, [projects, salesDirectory]);
   const searchedProjects = useMemo(() => recentSearchedIds.map(id => projects.find(p => p.id === id)).filter(Boolean) as Project[], [recentSearchedIds, projects]);
 
   // DnD handlers
@@ -883,7 +923,7 @@ export default function PlanneringPage() {
             <h2 style={{ fontSize: 15, margin: 0 }}>Projekt</h2>
             {loading && <div style={{ fontSize: 12 }}>Laddar projekt…</div>}
             {!loading && backlog.length === 0 && <div style={{ fontSize: 12, color: '#64748b' }}>Inga fler oschemalagda.</div>}
-            {backlog.map(p => {
+            {filteredBacklog.map(p => {
               const accent = backlogAccent(p);
               const active = selectedProjectId === p.id;
               const hovered = hoverBacklogId === p.id;
@@ -966,7 +1006,7 @@ export default function PlanneringPage() {
             <button type="button" className="btn--plain btn--sm" onClick={() => setShowCardControls(v => !v)} style={{ border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 10px', fontSize: 12 }}>{showCardControls ? 'Dölj kontroller' : 'Visa kontroller'}</button>
           </div>
           {/* Legend */}
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
             <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
               <label style={{ fontSize: 12, color: '#374151' }}>Sök i kalender:</label>
               <input value={calendarSearch} onChange={e => setCalendarSearch(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); if (calendarMatchDays.length > 0) navigateToMatch((matchIndex + 1) % calendarMatchDays.length); } }} style={{ border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 6px', fontSize: 12 }} placeholder="#1234 eller namn" />
@@ -981,6 +1021,15 @@ export default function PlanneringPage() {
                 {trucks.map(t => <option key={t} value={t}>{t}</option>)}
               </select>
               {truckFilter && <button type="button" className="btn--plain btn--xs" style={{ fontSize: 11 }} onClick={() => setTruckFilter('')}>Rensa</button>}
+            </div>
+            <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+              <label style={{ fontSize: 12, color: '#374151' }}>Sälj:</label>
+              <select value={salesFilter} onChange={e => setSalesFilter(e.target.value)} style={{ fontSize: 12, padding: '4px 6px', border: '1px solid #d1d5db', borderRadius: 6, background: '#fff' }}>
+                <option value="">Alla</option>
+                <option value="__NONE__">(Ingen)</option>
+                {distinctSales.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+              {salesFilter && <button type="button" className="btn--plain btn--xs" style={{ fontSize: 11 }} onClick={() => setSalesFilter('')}>Rensa</button>}
             </div>
           </div>
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 11, alignItems: 'center' }}>
@@ -1020,6 +1069,10 @@ export default function PlanneringPage() {
                         if (truckFilter) {
                           if (truckFilter === 'UNASSIGNED') { if (it.truck) return false; }
                           else if (it.truck !== truckFilter) return false;
+                        }
+                        if (salesFilter) {
+                          if (salesFilter === '__NONE__') { if (it.project.salesResponsible) return false; }
+                          else if ((it.project.salesResponsible || '').toLowerCase() !== salesFilter.toLowerCase()) return false;
                         }
                         if (searchVal) {
                           const hay = [it.project.name, it.project.orderNumber || '', it.project.customer, it.jobType || '', (it.bagCount != null ? String(it.bagCount) : '')].join(' ').toLowerCase();
@@ -1152,6 +1205,10 @@ export default function PlanneringPage() {
                             if (truckFilter === 'UNASSIGNED') { if (it.truck) return false; }
                             else if (it.truck !== truckFilter) return false;
                           }
+                          if (salesFilter) {
+                            if (salesFilter === '__NONE__') { if (it.project.salesResponsible) return false; }
+                            else if ((it.project.salesResponsible || '').toLowerCase() !== salesFilter.toLowerCase()) return false;
+                          }
                           if (searchVal) {
                             const hay = [it.project.name, it.project.orderNumber || '', it.project.customer, it.jobType || '', (it.bagCount != null ? String(it.bagCount) : '')].join(' ').toLowerCase();
                             if (!hay.includes(searchVal)) return false;
@@ -1275,6 +1332,10 @@ export default function PlanneringPage() {
                         if (truckFilter) {
                           if (truckFilter === 'UNASSIGNED') { if (it.truck) return false; }
                           else if (it.truck !== truckFilter) return false;
+                  }
+                  if (salesFilter) {
+                    if (salesFilter === '__NONE__') { if (it.project.salesResponsible) return false; }
+                    else if ((it.project.salesResponsible || '').toLowerCase() !== salesFilter.toLowerCase()) return false;
                   }
                   if (searchVal) {
                     const hay = [it.project.name, it.project.orderNumber || '', it.project.customer, it.jobType || '', (it.bagCount != null ? String(it.bagCount) : '')].join(' ').toLowerCase();

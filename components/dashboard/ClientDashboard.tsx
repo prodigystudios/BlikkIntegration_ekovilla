@@ -95,16 +95,16 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
       return [
         { href: '/archive', title: 'Egenkontroll arkiv', ...baseExtra['/archive'] },
         { href: '/korjournal', title: 'Körjournal', ...baseExtra['/korjournal'] },
-          { href: '/planering', title: 'Planering', disabled: true, disabledNote: 'Ej aktiv', ...baseExtra['/planering'] },
+        { href: '/planering', title: 'Planering', ...baseExtra['/planering'] },
         { href: '/kontakt-lista', title: 'Kontakt', ...baseExtra['/kontakt-lista'] },
       ];
     }
-  if (role === 'admin') {
+    if (role === 'admin') {
       return [
         { href: '/egenkontroll', title: 'Ny egenkontroll', ...baseExtra['/egenkontroll'] },
         { href: '/archive', title: 'Egenkontroll arkiv', ...baseExtra['/archive'] },
         { href: '/korjournal', title: 'Körjournal', ...baseExtra['/korjournal'] },
-    { href: '/planering', title: 'Planering', disabled: true, disabledNote: 'Ej aktiv', ...baseExtra['/planering'] },
+        { href: '/planering', title: 'Planering', ...baseExtra['/planering'] },
         { href: '/admin', title: 'Admin', ...baseExtra['/admin'] },
       ];
     }
