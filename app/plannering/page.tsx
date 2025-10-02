@@ -953,7 +953,7 @@ export default function PlanneringPage() {
         </div>
       )}
       {syncing && <div style={{ fontSize: 11, color: '#64748b' }}>Synkar…</div>}
-      <p style={{ margin: 0, color: '#6b7280', fontSize: 14 }}>Dra projekt från listan till en dag i kalendern (lokal state).</p>
+      <p style={{ margin: 0, color: '#6b7280', fontSize: 14 }}>Dra projekt från listan till en dag i kalendern.</p>
       {source && <div style={{ fontSize: 11, color: '#9ca3af' }}>Källa: {source}</div>}
       {error && <div style={{ background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c', padding: '6px 8px', borderRadius: 6, fontSize: 12 }}>Fel: {error}</div>}
 
@@ -1049,10 +1049,10 @@ export default function PlanneringPage() {
                     )}
                     <span>{p.name}</span>
                   </strong>
-                  <div style={{ fontSize: 12, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', color: '#475569' }}>
+                  <div style={{ fontSize: 12, display: 'flex', gap: 6, flexDirection: 'column', alignItems: 'flex-start', color: '#475569' }}>
                     <span style={{ fontWeight: 500 }}>{p.customer}</span>
-                    {p.salesResponsible && <span style={{ fontSize: 10, color: '#475569', background:'#f1f5f9', padding:'2px 6px', borderRadius:12, border:'1px solid #e2e8f0' }}>Sälj: {p.salesResponsible}</span>}
-                    <span style={{ fontSize: 10, color: '#64748b', background: '#f1f5f9', padding: '2px 6px', borderRadius: 12 }}>Skapad {p.createdAt.slice(0,10)}</span>
+                    {p.salesResponsible && <span style={{ fontSize: 10, color: '#475569', background:'#f1f5f9', padding:'2px 6px', borderRadius:12, border:'1px solid #e2e8f0' }}>Säljare: {p.salesResponsible}</span>}
+                    <span style={{ fontSize: 10, color: '#64748b', background: '#f1f5f9', padding: '2px 6px', borderRadius: 12, border:'1px solid #e2e8f0' }}>Skapad {p.createdAt.slice(0,10)}</span>
                   </div>
                 </div>
               );

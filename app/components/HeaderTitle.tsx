@@ -11,7 +11,7 @@ export default function HeaderTitle() {
   else if (pathname.startsWith('/dokument-information')) title = 'Dokument & Information';
   else if (pathname.startsWith('/bestallning-klader')) title = 'Beställa kläder';
   else if (pathname.startsWith('/korjournal')) title = 'Körjournal';
-  else if (pathname.startsWith('/planering')) title = 'Planering';
+  else if (pathname.startsWith('/plannering')) title = 'Planering';
   else if (pathname.startsWith('/auth/sign-in')) title = 'Logga in';
   else if (pathname.startsWith('/auth/create-account')) title = 'Skapa konto';
   else if (pathname.startsWith('/admin')) title = 'Admin';
