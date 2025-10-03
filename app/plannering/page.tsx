@@ -121,6 +121,9 @@ export default function PlanneringPage() {
   const [truckColorOverrides, setTruckColorOverrides] = useState<Record<string, string>>({
     ...defaultTruckColors
   });
+  // Explicit save workflow for team names
+  const [editingTeamNames, setEditingTeamNames] = useState<Record<string, { team1: string; team2: string }>>({});
+  const [truckSaveStatus, setTruckSaveStatus] = useState<Record<string, { status: 'idle' | 'saving' | 'saved' | 'error'; ts: number }>>({});
 
   function deriveColors(baseHex: string) {
     let hex = baseHex.startsWith('#') ? baseHex.slice(1) : baseHex;
@@ -540,17 +543,49 @@ export default function PlanneringPage() {
     enqueue(supabase.from('planning_trucks').update({ color }).eq('id', truck.id));
   }, [supabase]);
 
-  const updateTruckTeamName = useCallback((truck: TruckRec, idx: 1 | 2, value: string) => {
-    const field = idx === 1 ? 'team_member1_name' : 'team_member2_name';
-    setPlanningTrucks(prev => prev.map(t => t.id === truck.id ? { ...t, [field]: value } as any : t));
+  const deleteTruck = useCallback((truck: TruckRec) => {
+    if (!window.confirm(`Ta bort lastbil "${truck.name}"?\nDetta går inte att ångra.`)) return;
+    // Optimistic removal
+    setPlanningTrucks(prev => prev.filter(t => t.id !== truck.id));
+    setEditingTeamNames(prev => { const { [truck.id]: _, ...rest } = prev; return rest; });
+    setTruckSaveStatus(prev => { const { [truck.id]: _, ...rest } = prev; return rest; });
+    setTruckColorOverrides(prev => { const { [truck.name]: _, ...rest } = prev; return rest; });
     enqueue(
       supabase.from('planning_trucks')
-        .update({ [field]: value || null })
+        .delete()
         .eq('id', truck.id)
         .select('id')
-        .then(({ error }) => { if (error) console.warn('[planning] updateTruckTeamName error', error); })
+        .then(({ error }) => {
+          if (error) console.warn('[planning] deleteTruck error', error);
+        })
     );
   }, [supabase]);
+
+  // Explicit save workflow states
+  const updateTruckTeamName = useCallback((truck: TruckRec, idx: 1 | 2, value: string) => {
+    setEditingTeamNames(prev => {
+      const cur = prev[truck.id] || { team1: truck.team_member1_name || '', team2: truck.team_member2_name || '' };
+      return { ...prev, [truck.id]: { ...cur, [idx === 1 ? 'team1' : 'team2']: value } };
+    });
+  }, []);
+
+  const saveTruckTeamNames = useCallback((truck: TruckRec) => {
+    const draft = editingTeamNames[truck.id] || { team1: truck.team_member1_name || '', team2: truck.team_member2_name || '' };
+    setTruckSaveStatus(prev => ({ ...prev, [truck.id]: { status: 'saving', ts: Date.now() } }));
+    enqueue(
+      supabase.from('planning_trucks')
+        .update({ team_member1_name: draft.team1 || null, team_member2_name: draft.team2 || null })
+        .eq('id', truck.id)
+        .select('id, team_member1_name, team_member2_name')
+        .then(({ data, error }) => {
+          setTruckSaveStatus(prev => ({ ...prev, [truck.id]: { status: error ? 'error' : 'saved', ts: Date.now() } }));
+          if (error) console.warn('[planning] saveTruckTeamNames error', error);
+          if (!error && data && data[0]) {
+            setPlanningTrucks(prev => prev.map(t => t.id === truck.id ? { ...t, team_member1_name: data[0].team_member1_name, team_member2_name: data[0].team_member2_name } : t));
+          }
+        })
+    );
+  }, [editingTeamNames, supabase]);
 
   const persistMetaUpsert = useCallback((projectId: string, meta: ProjectScheduleMeta) => {
     enqueue(supabase.from('planning_project_meta').upsert({
@@ -1125,29 +1160,50 @@ export default function PlanneringPage() {
               const tRec = planningTrucks.find(pt => pt.name === tName);
               const c = truckColors[tName];
               const current = truckColorOverrides[tName] || defaultTruckColors[tName] || '#6366f1';
-              const team1 = tRec?.team_member1_name || '';
-              const team2 = tRec?.team_member2_name || '';
+              if (!tRec) {
+                return (
+                  <div key={tName} style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 8px', border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff', minWidth: 170 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ width: 16, height: 16, background: c.bg, border: `3px solid ${c.border}`, borderRadius: 6 }} />
+                      <span style={{ fontWeight: 600, color: c.text }}>{tName}</span>
+                    </div>
+                  </div>
+                );
+              }
+              const edit = editingTeamNames[tRec.id] || { team1: tRec.team_member1_name || '', team2: tRec.team_member2_name || '' };
+              const changed = edit.team1 !== (tRec.team_member1_name || '') || edit.team2 !== (tRec.team_member2_name || '');
+              const status = truckSaveStatus[tRec.id];
               return (
-                <div key={tName} style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 8px', border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff', minWidth: 170 }}>
+                <div key={tName} style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 8px', border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff', minWidth: 180, position: 'relative' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ width: 16, height: 16, background: c.bg, border: `3px solid ${c.border}`, borderRadius: 6, display: 'inline-block' }} />
+                    <span style={{ width: 16, height: 16, background: c.bg, border: `3px solid ${c.border}`, borderRadius: 6 }} />
                     <span style={{ fontWeight: 600, color: c.text }}>{tName}</span>
-                    {isAdmin && tRec && (
+                    {isAdmin && (
                       <input type="color" value={current} aria-label={`Ändra färg för ${tName}`} onChange={e => updateTruckColor(tRec, e.target.value)} style={{ width: 26, height: 26, padding: 0, border: '1px solid #cbd5e1', borderRadius: 6, cursor: 'pointer', background: '#fff', marginLeft: 'auto' }} />
                     )}
+                    {isAdmin && (
+                      <button type="button" onClick={() => deleteTruck(tRec)} title="Ta bort" style={{ marginLeft: 4, background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c', fontSize: 10, padding: '4px 6px', borderRadius: 6, cursor: 'pointer' }}>✕</button>
+                    )}
                   </div>
-                  {tRec && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                        <label style={{ fontSize: 10, color: '#475569' }}>Team 1</label>
-                        <input disabled={!isAdmin} value={team1} onChange={e => updateTruckTeamName(tRec, 1, e.target.value)} placeholder="Namn" style={{ fontSize: 11, padding: '4px 6px', border: '1px solid #cbd5e1', borderRadius: 6 }} />
-                      </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                        <label style={{ fontSize: 10, color: '#475569' }}>Team 2</label>
-                        <input disabled={!isAdmin} value={team2} onChange={e => updateTruckTeamName(tRec, 2, e.target.value)} placeholder="Namn" style={{ fontSize: 11, padding: '4px 6px', border: '1px solid #cbd5e1', borderRadius: 6 }} />
-                      </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      <label style={{ fontSize: 10, color: '#475569' }}>Team 1</label>
+                      <input disabled={!isAdmin} value={edit.team1} onChange={e => updateTruckTeamName(tRec, 1, e.target.value)} placeholder="Namn" style={{ fontSize: 11, padding: '4px 6px', border: '1px solid #cbd5e1', borderRadius: 6 }} />
                     </div>
-                  )}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      <label style={{ fontSize: 10, color: '#475569' }}>Team 2</label>
+                      <input disabled={!isAdmin} value={edit.team2} onChange={e => updateTruckTeamName(tRec, 2, e.target.value)} placeholder="Namn" style={{ fontSize: 11, padding: '4px 6px', border: '1px solid #cbd5e1', borderRadius: 6 }} />
+                    </div>
+                    {isAdmin && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        <button type="button" disabled={!changed || status?.status === 'saving'} onClick={() => saveTruckTeamNames(tRec)} className="btn--plain btn--xs" style={{ fontSize: 10, padding: '4px 8px', background: changed ? '#e0f2fe' : '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: 6, color: '#0369a1', opacity: changed ? 1 : 0.6 }}>Spara</button>
+                        {status?.status === 'saving' && <span style={{ fontSize: 10, color: '#64748b' }}>Sparar…</span>}
+                        {status?.status === 'saved' && <span style={{ fontSize: 10, color: '#059669' }}>✓ Sparad</span>}
+                        {status?.status === 'error' && <span style={{ fontSize: 10, color: '#b91c1c' }}>Fel</span>}
+                        {changed && !status && <span style={{ fontSize: 10, color: '#b45309' }}>Ej sparad</span>}
+                      </div>
+                    )}
+                  </div>
                 </div>
               );
             })}
