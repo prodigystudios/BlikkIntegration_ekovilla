@@ -124,6 +124,50 @@ export default function PlanneringPage() {
   // Explicit save workflow for team names
   const [editingTeamNames, setEditingTeamNames] = useState<Record<string, { team1: string; team2: string }>>({});
   const [truckSaveStatus, setTruckSaveStatus] = useState<Record<string, { status: 'idle' | 'saving' | 'saved' | 'error'; ts: number }>>({});
+  // Egenkontroll linkage state: order numbers that have a saved report PDF
+  const [egenkontrollOrderNumbers, setEgenkontrollOrderNumbers] = useState<Set<string>>(new Set());
+  // Map normalized orderNumber -> one representative storage path (latest encountered)
+  const [egenkontrollPaths, setEgenkontrollPaths] = useState<Record<string, string>>({});
+  const [egenkontrollLoading, setEgenkontrollLoading] = useState(false);
+  const [egenkontrollError, setEgenkontrollError] = useState<string | null>(null);
+  const refreshEgenkontroller = useCallback(async () => {
+    try {
+      setEgenkontrollLoading(true);
+      setEgenkontrollError(null);
+      const res = await fetch('/api/storage/list-all?prefix=Egenkontroller');
+      if (!res.ok) throw new Error('Kunde inte hämta egenkontroller');
+      const j = await res.json();
+      const files: Array<{ name: string; path: string; updatedAt?: string }> = (j.files || []).map((f: any) => ({ name: f.name || f.path || '', path: f.path || f.name || '', updatedAt: f.updatedAt }));
+      const found = new Set<string>();
+      const pathMap: Record<string, { path: string; updatedAt?: string }> = {};
+      for (const f of files) {
+        const base = f.name.toLowerCase();
+        const matches = base.match(/\d{3,10}/g) || [];
+        for (const m of matches) {
+          const norm = m.replace(/^0+/, '') || m; // trim leading zeros
+          found.add(norm);
+          const prev = pathMap[norm];
+          if (!prev) pathMap[norm] = { path: f.path, updatedAt: f.updatedAt };
+          else {
+            // Prefer newer updatedAt if available
+            if (f.updatedAt && (!prev.updatedAt || f.updatedAt > prev.updatedAt)) pathMap[norm] = { path: f.path, updatedAt: f.updatedAt };
+          }
+        }
+      }
+      setEgenkontrollOrderNumbers(found);
+      setEgenkontrollPaths(() => {
+        const out: Record<string,string> = {};
+        for (const [k,v] of Object.entries(pathMap)) out[k] = v.path;
+        return out;
+      });
+    } catch (e: any) {
+      setEgenkontrollError(e.message || 'Fel vid laddning');
+    } finally {
+      setEgenkontrollLoading(false);
+    }
+  }, []);
+
+  // (moved below supabase declaration)
 
   function deriveColors(baseHex: string) {
     let hex = baseHex.startsWith('#') ? baseHex.slice(1) : baseHex;
@@ -137,6 +181,18 @@ export default function PlanneringPage() {
     const brightness = (r * 299 + g * 587 + b * 114) / 1000;
     const text = brightness < 110 ? '#ffffff' : '#111827';
     return { border: '#' + hex, bg, text };
+  }
+
+  // Helper: does a given order number have an egenkontroll report?
+  function hasEgenkontroll(orderNumber?: string | null) {
+    if (!orderNumber) return false;
+    const norm = orderNumber.replace(/^0+/, '') || orderNumber;
+    return egenkontrollOrderNumbers.has(orderNumber) || egenkontrollOrderNumbers.has(norm);
+  }
+  function egenkontrollPath(orderNumber?: string | null) {
+    if (!orderNumber) return null;
+    const norm = orderNumber.replace(/^0+/, '') || orderNumber;
+    return egenkontrollPaths[norm] || egenkontrollPaths[orderNumber] || null;
   }
 
   async function searchByOrderNumber(e?: React.FormEvent) {
@@ -203,7 +259,14 @@ export default function PlanneringPage() {
         const j = await res.json();
         if (!res.ok) setError(j.error || 'Fel vid hämtning');
   const normalized: Project[] = (j.projects || []).map((p: any) => ({ ...p, id: String(p.id), orderNumber: p.orderNumber ?? null, salesResponsible: p.salesResponsible ?? null }));
-        setProjects(normalized);
+        // Merge with any projects already injected from segments to avoid overwriting
+        setProjects(prev => {
+          if (prev.length === 0) return normalized; // fast path
+          const map = new Map<string, Project>();
+          for (const p of prev) map.set(p.id, p);
+          for (const p of normalized) map.set(p.id, p); // API data wins for overlapping ids
+          return Array.from(map.values());
+        });
         setSource(j.source || null);
       } catch (e: any) {
         setError(String(e?.message || e));
@@ -211,6 +274,8 @@ export default function PlanneringPage() {
         setLoading(false);
       }
     })();
+    // Also load existing egenkontroll list
+    refreshEgenkontroller();
   }, []);
 
   // Load persisted schedule + meta
@@ -219,6 +284,46 @@ export default function PlanneringPage() {
   const [realtimeStatus, setRealtimeStatus] = useState<'connecting'|'live'|'error'>('connecting');
   const pendingOps = useRef<Promise<any>[]>([]);
   const createdIdsRef = useRef<Set<string>>(new Set());
+
+  // Realtime + periodic refresh for egenkontroll report detection
+  useEffect(() => {
+    const bucket = (process.env.NEXT_PUBLIC_SUPABASE_BUCKET || process.env.SUPABASE_BUCKET || 'pdfs');
+    const channel = supabase.channel('egenkontroll-watch')
+      .on('postgres_changes', { event: 'INSERT', schema: 'storage', table: 'objects' }, payload => {
+        try {
+          const row: any = payload.new;
+          if (!row) return;
+          if (row.bucket_id !== bucket) return;
+          const fullName: string = row.name || '';
+          if (!fullName.startsWith('Egenkontroller/')) return;
+          const base = fullName.split('/').pop()?.toLowerCase() || '';
+          const matches = base.match(/\d{3,10}/g) || [];
+          if (matches.length === 0) return;
+          setEgenkontrollOrderNumbers(prev => {
+            const next = new Set(prev);
+            for (const m of matches) {
+              const norm = m.replace(/^0+/, '') || m;
+              next.add(norm);
+            }
+            return next;
+          });
+          // Store a representative path for each matched order number if not already present
+          setEgenkontrollPaths(prev => {
+            const out = { ...prev };
+            for (const m of matches) {
+              const norm = m.replace(/^0+/, '') || m;
+              if (!out[norm]) out[norm] = fullName; // keep first seen; full refresh later may choose a newer one
+            }
+            return out;
+          });
+        } catch (e) {
+          console.warn('[egenkontroll realtime parse error]', e);
+        }
+      })
+      .subscribe();
+    const interval = setInterval(() => { refreshEgenkontroller(); }, 5 * 60 * 1000);
+    return () => { clearInterval(interval); supabase.removeChannel(channel); };
+  }, [supabase, refreshEgenkontroller]);
 
   useEffect(() => {
     (async () => {
@@ -517,7 +622,21 @@ export default function PlanneringPage() {
   }, [supabase]);
 
   const persistSegmentDelete = useCallback((segmentId: string) => {
-    enqueue(supabase.from('planning_segments').delete().eq('id', segmentId).select('id').then(({ data, error }) => { if (error) console.warn('[persist delete seg] error', error); else console.debug('[planning] delete ok', data); }));
+    if (typeof window !== 'undefined') {
+      const ok = window.confirm('Är du säker på att du vill ta bort detta projekt från planeringen? Detta går inte att ångra.');
+      if (!ok) return;
+    }
+    enqueue(
+      supabase
+        .from('planning_segments')
+        .delete()
+        .eq('id', segmentId)
+        .select('id')
+        .then(({ data, error }) => {
+          if (error) console.warn('[persist delete seg] error', error);
+          else console.debug('[planning] delete ok', data);
+        })
+    );
   }, [supabase]);
 
   // Truck helpers (admin guarded by RLS; UI also hides for non-admin)
@@ -1029,6 +1148,9 @@ export default function PlanneringPage() {
               {searchedProjects.map(p => (
                 <div key={p.id} draggable onDragStart={e => onDragStart(e, p.id)} onDragEnd={onDragEnd} style={{ position: 'relative', border: '1px solid #6366f1', boxShadow: '0 0 0 3px rgba(99,102,241,0.25)', background: draggingId === p.id ? '#eef2ff' : '#ffffff', borderRadius: 8, padding: 10, cursor: 'grab', display: 'grid', gap: 4 }}>
                   <div style={{ position: 'absolute', top: -6, right: -6, background: '#6366f1', color: '#fff', fontSize: 10, padding: '2px 6px', borderRadius: 12 }}>Hittad</div>
+                  {p.orderNumber && (egenkontrollOrderNumbers.has(p.orderNumber) || egenkontrollOrderNumbers.has(p.orderNumber.replace(/^0+/, '') || p.orderNumber)) && (
+                    <div style={{ position: 'absolute', top: -6, left: -6, background: '#059669', color: '#fff', fontSize: 10, padding: '2px 6px', borderRadius: 12, boxShadow:'0 0 0 2px #fff' }} title="Egenkontroll finns">EK</div>
+                  )}
                   <strong style={{ fontSize: 14 }}>
                     {p.orderNumber ? <span style={{ fontFamily: 'ui-monospace, monospace', background: '#eef2ff', color: '#312e81', padding: '2px 6px', borderRadius: 4, marginRight: 6, fontSize: 12, border: '1px solid #c7d2fe' }}>#{p.orderNumber}</span> : null}
                     {p.name}
@@ -1078,6 +1200,9 @@ export default function PlanneringPage() {
                   <span style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 5, borderTopLeftRadius: 10, borderBottomLeftRadius: 10, background: accent, opacity: 0.9 }} />
                   {p.isManual && <span style={{ position: 'absolute', top: -7, left: 10, background: '#334155', color: '#fff', fontSize: 10, padding: '2px 6px', borderRadius: 12 }}>Manuell</span>}
                   {active && <span style={{ position: 'absolute', top: -7, right: 10, background: accent, color: '#fff', fontSize: 10, padding: '2px 6px', borderRadius: 12 }}>Vald</span>}
+                  {p.orderNumber && (egenkontrollOrderNumbers.has(p.orderNumber) || egenkontrollOrderNumbers.has(p.orderNumber.replace(/^0+/, '') || p.orderNumber)) && (
+                    <span style={{ position: 'absolute', top: -7, left: p.isManual ? 70 : 10, background: '#059669', color: '#fff', fontSize: 10, padding: '2px 6px', borderRadius: 12 }}>EK</span>
+                  )}
                   <strong style={{ fontSize: 14, lineHeight: 1.25, color: '#111827', display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: 4 }}>
                     {p.orderNumber && (
                       <span style={{ fontFamily: 'ui-monospace, monospace', background: '#ffffff', padding: '2px 6px', borderRadius: 4, fontSize: 12, border: `1px solid ${accent}55`, color: '#334155' }}>#{p.orderNumber}</span>
@@ -1127,6 +1252,11 @@ export default function PlanneringPage() {
               })}
             </div>
             <button type="button" className="btn--plain btn--sm" onClick={() => setShowCardControls(v => !v)} style={{ border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 10px', fontSize: 12 }}>{showCardControls ? 'Dölj kontroller' : 'Visa kontroller'}</button>
+            <button type="button" className="btn--plain btn--sm" onClick={() => refreshEgenkontroller()} style={{ border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 10px', fontSize: 12 }}>
+              {egenkontrollLoading ? 'Laddar EK…' : 'Uppdatera EK'}
+            </button>
+            {egenkontrollError && <span style={{ fontSize:10, color:'#b91c1c' }} title={egenkontrollError}>Fel EK</span>}
+            {!egenkontrollLoading && egenkontrollOrderNumbers.size > 0 && <span style={{ fontSize:10, background:'#ecfdf5', color:'#047857', padding:'2px 6px', borderRadius:12, border:'1px solid #6ee7b7' }} title="Antal matchade egenkontroller">EK: {egenkontrollOrderNumbers.size}</span>}
           </div>
           {/* Legend */}
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -1182,7 +1312,20 @@ export default function PlanneringPage() {
                       <input type="color" value={current} aria-label={`Ändra färg för ${tName}`} onChange={e => updateTruckColor(tRec, e.target.value)} style={{ width: 26, height: 26, padding: 0, border: '1px solid #cbd5e1', borderRadius: 6, cursor: 'pointer', background: '#fff', marginLeft: 'auto' }} />
                     )}
                     {isAdmin && (
-                      <button type="button" onClick={() => deleteTruck(tRec)} title="Ta bort" style={{ marginLeft: 4, background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c', fontSize: 10, padding: '4px 6px', borderRadius: 6, cursor: 'pointer' }}>✕</button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (typeof window !== 'undefined') {
+                            const ok = window.confirm(`Är du säker på att du vill ta bort lastbil "${tRec.name}"? Detta går inte att ångra.`);
+                            if (!ok) return;
+                          }
+                          deleteTruck(tRec);
+                        }}
+                        title="Ta bort"
+                        style={{ marginLeft: 4, background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c', fontSize: 10, padding: '4px 6px', borderRadius: 6, cursor: 'pointer' }}
+                      >
+                        ✕
+                      </button>
                     )}
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -1295,6 +1438,7 @@ export default function PlanneringPage() {
                                     <span style={{ fontWeight: 600, color: display ? display.text : '#312e81' }}>
                                       {it.project.orderNumber ? <span style={{ fontFamily: 'ui-monospace, monospace', background: '#ffffff', color: display ? display.text : '#312e81', border: `1px solid ${cardBorder}`, padding: '1px 4px', borderRadius: 4, marginRight: 4 }}>#{it.project.orderNumber}</span> : null}
                                       {it.project.name}
+                                      {/* EK badge moved to bottom */}
                                     </span>
                                     {isStart && <span style={{ color: display ? display.text : '#6366f1' }}>{it.project.customer}</span>}
                                     {isStart && it.project.salesResponsible && <span style={{ fontSize: 10, color: display ? display.text : '#334155', background:'#ffffff30', padding:'2px 6px', borderRadius: 12, border:`1px solid ${cardBorder}55` }}>Sälj: {it.project.salesResponsible}</span>}
@@ -1309,6 +1453,12 @@ export default function PlanneringPage() {
                                       </span>
                                     )}
                                     {isStart && it.truck && (() => { const team = truckTeamNames(it.truck); return team.length ? <span style={{ fontSize: 10, color: display ? display.text : '#334155', background:'#ffffff40', padding:'2px 6px', borderRadius: 10, border:`1px solid ${cardBorder}40` }}>Team: {team.join(', ')}</span> : null; })()}
+                                    {isStart && hasEgenkontroll(it.project.orderNumber) && (() => { const pth = egenkontrollPath(it.project.orderNumber); return (
+                                      <a href={pth ? `/api/storage/download?path=${encodeURIComponent(pth)}` : '#'} target="_blank" rel="noopener noreferrer" style={{ textDecoration:'none', fontSize:10, background:'#059669', color:'#fff', padding:'2px 6px', borderRadius:8, alignSelf:'flex-start', border:'1px solid #047857', display:'inline-flex', gap:4, alignItems:'center', cursor:'pointer' }} title={pth ? 'Öppna egenkontroll (PDF)' : 'Egenkontroll hittad'}>
+                                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ display:'block' }}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M12 12v6"/><path d="M9 15l3 3 3-3"/></svg>
+                                        Rapporterad
+                                      </a>
+                                    ); })()}
                                   </div>
                                   {isStart && showCardControls && (
                                     <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -1430,6 +1580,7 @@ export default function PlanneringPage() {
                                       <span style={{ fontWeight: 600, color: display ? display.text : '#312e81' }}>
                                         {it.project.orderNumber ? <span style={{ fontFamily: 'ui-monospace, monospace', background: '#ffffff', color: display ? display.text : '#312e81', border: `1px solid ${cardBorder}`, padding: '1px 4px', borderRadius: 4, marginRight: 4 }}>#{it.project.orderNumber}</span> : null}
                                         {it.project.name}
+                                        {/* EK badge moved to bottom */}
                                       </span>
                                       {isStart && <span style={{ color: display ? display.text : '#6366f1' }}>{it.project.customer}</span>}
                                       {isStart && it.project.salesResponsible && <span style={{ fontSize: 9, color: display ? display.text : '#334155', background:'#ffffff40', padding:'1px 5px', borderRadius: 10, border:`1px solid ${cardBorder}55` }}>Sälj: {it.project.salesResponsible}</span>}
@@ -1444,6 +1595,12 @@ export default function PlanneringPage() {
                                         </span>
                                       )}
                                       {isStart && it.truck && (() => { const team = truckTeamNames(it.truck); return team.length ? <span style={{ fontSize: 9, color: display ? display.text : '#334155', background:'#ffffff30', padding:'1px 5px', borderRadius: 10, border:`1px solid ${cardBorder}40` }}>Team: {team.join(', ')}</span> : null; })()}
+                                      {isStart && hasEgenkontroll(it.project.orderNumber) && (() => { const pth = egenkontrollPath(it.project.orderNumber); return (
+                                        <a href={pth ? `/api/storage/download?path=${encodeURIComponent(pth)}` : '#'} target="_blank" rel="noopener noreferrer" style={{ textDecoration:'none', fontSize:9, background:'#059669', color:'#fff', padding:'1px 5px', borderRadius:8, alignSelf:'flex-start', border:'1px solid #047857', display:'inline-flex', gap:4, alignItems:'center', cursor:'pointer' }} title={pth ? 'Öppna egenkontroll (PDF)' : 'Egenkontroll hittad'}>
+                                          <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ display:'block' }}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M12 12v6"/><path d="M9 15l3 3 3-3"/></svg>
+                                          Rapporterad
+                                        </a>
+                                      ); })()}
                                     </div>
                                     {isStart && showCardControls && (
                                       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -1578,6 +1735,12 @@ export default function PlanneringPage() {
                                 </span>
                               )}
                               {isStart && it.truck && (() => { const team = truckTeamNames(it.truck); return team.length ? <span style={{ fontSize: 9, color: display ? display.text : '#334155', background:'#ffffff40', padding:'1px 5px', borderRadius: 10, border:`1px solid ${cardBorder}40` }}>Team: {team.join(', ')}</span> : null; })()}
+                              {isStart && hasEgenkontroll(it.project.orderNumber) && (() => { const pth = egenkontrollPath(it.project.orderNumber); return (
+                                <a href={pth ? `/api/storage/download?path=${encodeURIComponent(pth)}` : '#'} target="_blank" rel="noopener noreferrer" style={{ textDecoration:'none', fontSize:9, background:'#059669', color:'#fff', padding:'1px 5px', borderRadius:8, alignSelf:'flex-start', border:'1px solid #047857', display:'inline-flex', gap:4, alignItems:'center', cursor:'pointer' }} title={pth ? 'Öppna egenkontroll (PDF)' : 'Egenkontroll hittad'}>
+                                  <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ display:'block' }}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M12 12v6"/><path d="M9 15l3 3 3-3"/></svg>
+                                  Rapporterad
+                                </a>
+                              ); })()}
                             </div>
                             {isStart && showCardControls && (
                               <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
