@@ -621,10 +621,15 @@ export default function PlanneringPage() {
     enqueue(supabase.from('planning_segments').update({ start_day: seg.startDay, end_day: seg.endDay }).eq('id', seg.id).select('id').then(({ data, error }) => { if (error) console.warn('[persist update seg] error', error); else console.debug('[planning] update ok', data); }));
   }, [supabase]);
 
+  const deletedSegConfirmRef = useRef<Set<string>>(new Set());
   const persistSegmentDelete = useCallback((segmentId: string) => {
-    if (typeof window !== 'undefined') {
-      const ok = window.confirm('Är du säker på att du vill ta bort detta projekt från planeringen? Detta går inte att ångra.');
-      if (!ok) return;
+    // Only ask confirmation the first time user requests deletion for this segment id in this render lifecycle
+    if (!deletedSegConfirmRef.current.has(segmentId)) {
+      if (typeof window !== 'undefined') {
+        const ok = window.confirm('Ta bort detta projekt från planeringen? Detta går inte att ångra.');
+        if (!ok) return; // abort deletion
+      }
+      deletedSegConfirmRef.current.add(segmentId);
     }
     enqueue(
       supabase
