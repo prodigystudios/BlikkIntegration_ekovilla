@@ -1,6 +1,7 @@
 "use client";
 export const dynamic = 'force-dynamic';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 
 // Reconstructed Egenkontroll form (migrated from historical root page)
 // NOTE: Consider refactoring into smaller components later for maintainability.
@@ -15,6 +16,14 @@ type PagedList<T> = {
 };
 
 export default function EgenkontrollPage() {
+  // Supabase client (used to persist actual_bags_used to planning_project_meta)
+  const supabase = useMemo(() => createClientComponentClient(), []);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    supabase.auth.getUser().then(r => { if (!cancelled) setCurrentUserId(r.data.user?.id || null); });
+    return () => { cancelled = true; };
+  }, [supabase]);
   // Form state
   const [projectNumber, setProjectNumber] = useState('');
   const [installerName, setInstallerName] = useState('');
@@ -1093,6 +1102,30 @@ export default function EgenkontrollPage() {
                   if (!commentRes.ok) {
                     try { console.warn('Blikk comment failed:', await commentRes.json()); } catch {}
                     setToast({ text: 'Kommentaren till Blikk misslyckades', type: 'error' });
+                  }
+                  // Persist actual_bags_used to planning_project_meta so planner updates automatically
+                  try {
+                    const openRows2 = etapperOpen.filter(r => Object.values(r).some(v => String(v ?? '').trim() !== ''));
+                    const closedRows2 = etapperClosed.filter(r => Object.values(r).some(v => String(v ?? '').trim() !== ''));
+                    const sumOpen2 = openRows2.reduce((acc, r: any) => acc + (Number(r.antalSack) || 0), 0);
+                    const sumClosed2 = closedRows2.reduce((acc, r: any) => acc + (Number(r.antalSackKgPerSack) || 0), 0);
+                    const totalBags2 = sumOpen2 + sumClosed2;
+                    if (Number.isFinite(totalBags2) && totalBags2 > 0) {
+                      const { error: bagsErr } = await supabase.from('planning_project_meta').upsert({
+                        project_id: String(blikkProjectId),
+                        actual_bags_used: totalBags2,
+                        actual_bags_set_at: new Date().toISOString(),
+                        actual_bags_set_by: currentUserId,
+                      });
+                      if (bagsErr) {
+                        if (/projectId/i.test(bagsErr.message)) {
+                          setToast({ text: 'Fel i kolumnnamn (project_id vs projectId). Kontakta admin.', type: 'error' });
+                        }
+                        console.warn('Failed to persist actual_bags_used', bagsErr);
+                      }
+                    }
+                  } catch (e) {
+                    try { console.warn('Failed to persist actual_bags_used', e); } catch {}
                   }
                 }
               } catch {}

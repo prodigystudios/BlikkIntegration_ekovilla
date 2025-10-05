@@ -35,6 +35,9 @@ interface ProjectScheduleMeta {
   client_notified?: boolean | null;
   client_notified_at?: string | null;
   client_notified_by?: string | null;
+  actual_bags_used?: number | null;
+  actual_bags_set_at?: string | null;
+  actual_bags_set_by?: string | null;
 }
 
 // Normalize a raw project from /api/blikk/projects into our Project shape
@@ -653,7 +656,19 @@ export default function PlanneringPage() {
         }
         if (Array.isArray(metas)) {
           const metaObj: any = {};
-          for (const m of metas) metaObj[m.project_id] = { projectId: m.project_id, truck: m.truck, bagCount: m.bag_count, jobType: m.job_type, color: m.color, client_notified: m.client_notified, client_notified_at: m.client_notified_at, client_notified_by: m.client_notified_by };
+          for (const m of metas) metaObj[m.project_id] = {
+            projectId: m.project_id,
+            truck: m.truck,
+            bagCount: m.bag_count,
+            jobType: m.job_type,
+            color: m.color,
+            client_notified: m.client_notified,
+            client_notified_at: m.client_notified_at,
+            client_notified_by: m.client_notified_by,
+            actual_bags_used: m.actual_bags_used,
+            actual_bags_set_at: m.actual_bags_set_at,
+            actual_bags_set_by: m.actual_bags_set_by,
+          };
           setScheduleMeta(metaObj);
         }
         // Fetch complete sales/admin directory via internal API (service role backed)
@@ -726,7 +741,19 @@ export default function PlanneringPage() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'planning_project_meta' }, payload => {
         const row: any = payload.new || payload.old;
         if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
-          setScheduleMeta(prev => ({ ...prev, [row.project_id]: { projectId: row.project_id, truck: row.truck, bagCount: row.bag_count, jobType: row.job_type, color: row.color, client_notified: row.client_notified, client_notified_at: row.client_notified_at, client_notified_by: row.client_notified_by } }));
+          setScheduleMeta(prev => ({ ...prev, [row.project_id]: {
+            projectId: row.project_id,
+            truck: row.truck,
+            bagCount: row.bag_count,
+            jobType: row.job_type,
+            color: row.color,
+            client_notified: row.client_notified,
+            client_notified_at: row.client_notified_at,
+            client_notified_by: row.client_notified_by,
+            actual_bags_used: (row as any).actual_bags_used,
+            actual_bags_set_at: (row as any).actual_bags_set_at,
+            actual_bags_set_by: (row as any).actual_bags_set_by,
+          } }));
         } else if (payload.eventType === 'DELETE') {
           setScheduleMeta(prev => { const c = { ...prev }; delete c[row.project_id]; return c; });
         }
@@ -981,7 +1008,10 @@ export default function PlanneringPage() {
       color: meta.color,
       client_notified: meta.client_notified ?? null,
       client_notified_at: meta.client_notified_at ?? null,
-      client_notified_by: meta.client_notified_by ?? null
+  client_notified_by: meta.client_notified_by ?? null,
+      actual_bags_used: meta.actual_bags_used ?? null,
+      actual_bags_set_at: meta.actual_bags_set_at ?? null,
+      actual_bags_set_by: meta.actual_bags_set_by ?? null
     }).then(({ error }) => { if (error) console.warn('[persist meta upsert] error', error); }));
   }, [supabase]);
 
@@ -1413,7 +1443,6 @@ export default function PlanneringPage() {
                   <button type="button" onClick={() => { undoClientNotified(project.id); setPendingNotifyProjectId(null); }} style={{ flex:'1 1 100%', background:'#fee2e2', color:'#b91c1c', border:'1px solid #fca5a5', borderRadius:8, padding:'8px 12px', fontSize:12, fontWeight:600, cursor:'pointer' }}>Ångra tidigare markering</button>
                 )}
               </div>
-              <div style={{ fontSize:10, color:'#94a3b8', textAlign:'center' }}>Denna status sparas bara lokalt i din webbläsare just nu.</div>
             </div>
           </div>
         );
@@ -1786,6 +1815,11 @@ export default function PlanneringPage() {
                                         {it.jobType || ''}
                                       </span>
                                     )}
+                                      {isStart && scheduleMeta[it.project.id]?.actual_bags_used != null && (
+                                        <span style={{ fontSize: 10, color: display ? display.text : '#1e293b', background:'#ffffff50', padding:'4px 6px', borderRadius:10, border:`1px solid ${cardBorder}55` }} title={`Rapporterat: ${scheduleMeta[it.project.id]?.actual_bags_used} säckar`}>
+                                          säckar blåsta {scheduleMeta[it.project.id]!.actual_bags_used} st
+                                        </span>
+                                      )}
                                     {isStart && it.truck && (() => { const team = truckTeamNames(it.truck); return team.length ? <span style={{ fontSize: 10, color: display ? display.text : '#334155', background:'#ffffff40', padding:'2px 6px', borderRadius: 10, border:`1px solid ${cardBorder}40` }}>Team: {team.join(', ')}</span> : null; })()}
                                     {isStart && hasEgenkontroll(it.project.orderNumber) && (() => { const pth = egenkontrollPath(it.project.orderNumber); return (
                                       <a href={pth ? `/api/storage/download?path=${encodeURIComponent(pth)}` : '#'} target="_blank" rel="noopener noreferrer" style={{ textDecoration:'none', fontSize:10, background:'#059669', color:'#fff', padding:'2px 6px', borderRadius:8, alignSelf:'flex-start', border:'1px solid #047857', display:'inline-flex', gap:4, alignItems:'center', cursor:'pointer' }} title={pth ? 'Öppna egenkontroll (PDF)' : 'Egenkontroll hittad'}>
@@ -1827,6 +1861,15 @@ export default function PlanneringPage() {
                                           <button type="button" className="btn--plain btn--xs" title="Ta bort sista dagen" disabled={(it as any).totalSpan <= 1} onClick={() => shrinkSpan(it.segmentId, 'end')} style={{ fontSize: 10, padding: '6px 6px', opacity: (it as any).totalSpan <= 1 ? 0.35 : 1 }}>Ta bort sista</button>
                                           <span style={{ fontSize: 10, background: '#f1f5f9', padding: '2px 6px', borderRadius: 12, border: '1px solid #e2e8f0' }}>{(it as any).totalSpan} dagar</span>
                                         </div>
+                                          {/* Actual bags used editor (inline small) */}
+                                          <span style={{ display:'inline-flex', alignItems:'center', gap:4 }}>
+                                            <label style={{ fontSize:10, color: display ? display.text : '#334155' }}>Faktiska:</label>
+                                            <input type="number" min={0} value={scheduleMeta[it.project.id]?.actual_bags_used ?? ''} onChange={e => {
+                                              const val = e.target.value === '' ? null : Math.max(0, parseInt(e.target.value,10)||0);
+                                              const actor = currentUserName || currentUserId || 'okänd';
+                                              updateMeta(it.project.id, { actual_bags_used: val, actual_bags_set_at: new Date().toISOString(), actual_bags_set_by: actor });
+                                            }} style={{ width: 60, fontSize:10, padding:'2px 4px', border:`1px solid ${cardBorder}`, borderRadius:4 }} placeholder="Säck" />
+                                          </span>
                                       </div>
                                       <button type="button" className="btn--plain btn--xs" onClick={() => unschedule(it.segmentId)} style={{ fontSize: 11, background: '#fee2e2', border: '1px solid #fca5a5', color: '#b91c1c', borderRadius: 4, padding: '2px 6px' }}>Ta bort</button>
                                       <button type="button" className="btn--plain btn--xs" title="Ny separat dag" onClick={() => setSelectedProjectId(it.project.id)} style={{ fontSize: 11, background: '#ecfdf5', border: '1px solid #6ee7b7', color: '#047857', borderRadius: 4, padding: '2px 6px' }}>Ny dag</button>

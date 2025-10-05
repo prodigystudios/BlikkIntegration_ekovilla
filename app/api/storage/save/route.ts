@@ -8,6 +8,21 @@ export const dynamic = 'force-dynamic';
 export async function POST(req: NextRequest) {
   try {
     const supa = getSupabaseAdmin();
+    // Diagnostics: capture env presence (not values) for debugging intermittent 'No API key' issues
+    try {
+      const dbg = {
+        hasServiceKey: !!process.env.SUPABASE_SERVICE_ROLE_KEY && process.env.SUPABASE_SERVICE_ROLE_KEY.length > 10,
+        hasAnonKey: !!process.env.SUPABASE_ANON_KEY && process.env.SUPABASE_ANON_KEY.length > 10,
+        hasUrl: !!process.env.SUPABASE_URL && /https?:\/\//.test(process.env.SUPABASE_URL),
+        bucketEnv: process.env.SUPABASE_BUCKET || 'pdfs',
+        runtime: process.env.NEXT_RUNTIME || 'node',
+        nodeVersion: process.version,
+      };
+      // Only log in development to avoid noisy production logs; toggle by env if needed
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('[storage/save] env diagnostics', dbg);
+      }
+    } catch {}
     const bucket = process.env.SUPABASE_BUCKET || 'pdfs';
 
     const body = await req.json();
@@ -31,8 +46,9 @@ export async function POST(req: NextRequest) {
 
     let finalPath = '';
     let lastErr: any = null;
-    for (let i = 0; i < 10; i++) {
-      const suffix = i === 0 ? '' : `-${i + 1}`;
+    const MAX_SUFFIX_TRIES = 15; // a few more than before
+    for (let i = 0; i < MAX_SUFFIX_TRIES; i++) {
+      const suffix = i === 0 ? '' : `-${i}`; // now -1, -2 etc (i=1 => -1)
       const candidateName = `${stem}${suffix}${ext}`;
       const candidatePath = `${fixedFolder}/${candidateName}`;
       const { data, error } = await supa.storage.from(bucket).upload(candidatePath, bytes, {
@@ -45,15 +61,35 @@ export async function POST(req: NextRequest) {
         break;
       }
       lastErr = error;
-  const msg = String((error as any)?.message || '').toLowerCase();
-  const isConflict = msg.includes('exists') || msg.includes('duplicate') || msg.includes('409');
-      if (!isConflict) {
-        return NextResponse.json({ error: error.message }, { status: 500 });
-      }
-      // else continue to try a new suffix
+      try {
+        const msg = String(error?.message || '').toLowerCase();
+        if (msg.includes('no api key')) {
+          console.error('[storage/save] Upload attempt failed due to missing API key header. Attempt index:', i, 'candidatePath:', candidatePath, 'rawError:', error);
+        }
+        const isConflict = msg.includes('exists') || msg.includes('duplicate') || msg.includes('409');
+        if (!isConflict) {
+          return NextResponse.json({ error: error.message }, { status: 500 });
+        }
+        // else loop to try next suffix
+      } catch {}
     }
     if (!finalPath) {
-      return NextResponse.json({ error: lastErr?.message || 'Kunde inte spara filen (namnkonflikt)' }, { status: 500 });
+      // All suffixes taken — fall back to a timestamp + random segment to guarantee uniqueness
+      try {
+        const uniqueName = `${stem}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`;
+        const uniquePath = `${fixedFolder}/${uniqueName}`;
+        const { data: uData, error: uErr } = await supa.storage.from(bucket).upload(uniquePath, bytes, {
+          contentType: 'application/pdf',
+          upsert: false,
+          metadata: metadata as any,
+        });
+        if (uErr) {
+          return NextResponse.json({ error: uErr.message || lastErr?.message || 'Kunde inte spara filen (namnkonflikt)' }, { status: 500 });
+        }
+        finalPath = uData?.path || uniquePath;
+      } catch (e: any) {
+        return NextResponse.json({ error: e.message || lastErr?.message || 'Kunde inte spara filen (namnkonflikt)' }, { status: 500 });
+      }
     }
 
   // Index writing removed — single folder strategy keeps listing simple and consistent
