@@ -2075,35 +2075,36 @@ export default function PlanneringPage() {
                     </div>
                     <div style={{ flex: 1, display: 'grid', gap: 10 }}>
                       {(() => {
-                        // Group items by truck (or unassigned)
-                        if (items.length === 0) return <div style={{ fontSize: 11, color: '#94a3b8', border: '1px solid #e2e8f0', borderRadius: 8, padding: 8, background: '#fff' }}>—</div>;
+                        // Always show every truck strip (even with 0 items) + optional unassigned group (if any unassigned items).
                         const grouped: Record<string, typeof items> = {};
                         for (const it of items) {
                           const key = it.truck || '__UNASSIGNED__';
                           (grouped[key] ||= []).push(it);
                         }
+                        // Ensure every known truck has an entry (could be empty)
+                        for (const t of trucks) {
+                          if (!grouped[t]) grouped[t] = [];
+                        }
+                        const hasUnassigned = !!grouped['__UNASSIGNED__'];
                         const truckOrder = trucks;
-                        const keys = Object.keys(grouped).sort((a, b) => {
-                          if (a === '__UNASSIGNED__') return 1;
-                          if (b === '__UNASSIGNED__') return -1;
-                          const ia = truckOrder.indexOf(a);
-                          const ib = truckOrder.indexOf(b);
-                          if (ia === -1 && ib === -1) return a.localeCompare(b);
-                          if (ia === -1) return 1;
-                          if (ib === -1) return -1;
-                          return ia - ib;
-                        });
+                        const keys = [
+                          ...truckOrder,
+                          ...(hasUnassigned ? ['__UNASSIGNED__'] : [])
+                        ];
                         return keys.map(k => {
-                          const list = grouped[k];
+                          const list = grouped[k] || [];
                           const sackSum = list.reduce((acc, it) => acc + (it.bagCount || 0), 0);
                           const label = k === '__UNASSIGNED__' ? 'Ingen lastbil' : k;
                           return (
-                            <div key={k} style={{ border: '1px solid #e2e8f0', borderRadius: 8, padding: 8, background: '#ffffff', display: 'grid', gap: 6 }}>
+                            <div key={k} style={{ border: '1px solid #e2e8f0', borderRadius: 8, padding: 8, background: '#ffffff', display: 'grid', gap: 6, opacity: list.length === 0 ? 0.75 : 1 }}>
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
                                 <span style={{ fontSize: 11, fontWeight: 600 }}>{label} ({list.length})</span>
                                 {sackSum > 0 && <span style={{ fontSize: 10, color: '#64748b' }}>{sackSum} säckar</span>}
                               </div>
-                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, minHeight: 10 }}>
+                                {list.length === 0 && (
+                                  <span style={{ fontSize: 10, color: '#94a3b8' }}>—</span>
+                                )}
                                 {list.map(it => {
                                   let display: null | { bg: string; border: string; text: string } = null;
                                   if (it.color) {
