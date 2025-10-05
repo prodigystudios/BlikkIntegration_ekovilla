@@ -32,6 +32,9 @@ interface ProjectScheduleMeta {
   color?: string | null;
   bagCount?: number | null;
   jobType?: string | null;
+  client_notified?: boolean | null;
+  client_notified_at?: string | null;
+  client_notified_by?: string | null;
 }
 
 // Normalize a raw project from /api/blikk/projects into our Project shape
@@ -327,6 +330,29 @@ export default function PlanneringPage() {
   const secondPassScheduledRef = useRef<boolean>(false);
   const passCounterRef = useRef<number>(0);
   const [contactEnrichStatus, setContactEnrichStatus] = useState<'idle' | 'running' | 'second-pass-wait' | 'done' | 'not-needed'>('idle');
+  // Client notification tracking (local only for now)
+  const [pendingNotifyProjectId, setPendingNotifyProjectId] = useState<string | null>(null);
+  function markClientNotified(pid: string) {
+    const actor = currentUserName || currentUserId || 'okänd';
+    const ts = new Date().toISOString();
+    // optimistic update
+    setScheduleMeta(prev => ({ ...prev, [pid]: { ...(prev[pid] || { projectId: pid }), client_notified: true, client_notified_at: ts, client_notified_by: actor } }));
+    enqueue(supabase.from('planning_project_meta').upsert({
+      project_id: pid,
+      client_notified: true,
+      client_notified_at: ts,
+      client_notified_by: actor
+    }).then(({ error }) => { if (error) console.warn('[notify] upsert error', error); }));
+  }
+  function undoClientNotified(pid: string) {
+    setScheduleMeta(prev => ({ ...prev, [pid]: { ...(prev[pid] || { projectId: pid }), client_notified: false, client_notified_at: null, client_notified_by: null } }));
+    enqueue(supabase.from('planning_project_meta').upsert({
+      project_id: pid,
+      client_notified: false,
+      client_notified_at: null,
+      client_notified_by: null
+    }).then(({ error }) => { if (error) console.warn('[notify] undo error', error); }));
+  }
 
   // Derive enrichment progress for overlay
   const enrichmentProgress = useMemo(() => {
@@ -588,7 +614,7 @@ export default function PlanneringPage() {
         }
         const { data: segs, error: segErr } = await supabase.from('planning_segments').select('*');
         if (segErr) throw segErr;
-        const { data: metas, error: metaErr } = await supabase.from('planning_project_meta').select('*');
+  const { data: metas, error: metaErr } = await supabase.from('planning_project_meta').select('*');
         if (metaErr) throw metaErr;
         // Load dynamic trucks (open select) - team names are free text
         try {
@@ -627,7 +653,7 @@ export default function PlanneringPage() {
         }
         if (Array.isArray(metas)) {
           const metaObj: any = {};
-            for (const m of metas) metaObj[m.project_id] = { projectId: m.project_id, truck: m.truck, bagCount: m.bag_count, jobType: m.job_type, color: m.color };
+          for (const m of metas) metaObj[m.project_id] = { projectId: m.project_id, truck: m.truck, bagCount: m.bag_count, jobType: m.job_type, color: m.color, client_notified: m.client_notified, client_notified_at: m.client_notified_at, client_notified_by: m.client_notified_by };
           setScheduleMeta(metaObj);
         }
         // Fetch complete sales/admin directory via internal API (service role backed)
@@ -700,7 +726,7 @@ export default function PlanneringPage() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'planning_project_meta' }, payload => {
         const row: any = payload.new || payload.old;
         if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
-          setScheduleMeta(prev => ({ ...prev, [row.project_id]: { projectId: row.project_id, truck: row.truck, bagCount: row.bag_count, jobType: row.job_type, color: row.color } }));
+          setScheduleMeta(prev => ({ ...prev, [row.project_id]: { projectId: row.project_id, truck: row.truck, bagCount: row.bag_count, jobType: row.job_type, color: row.color, client_notified: row.client_notified, client_notified_at: row.client_notified_at, client_notified_by: row.client_notified_by } }));
         } else if (payload.eventType === 'DELETE') {
           setScheduleMeta(prev => { const c = { ...prev }; delete c[row.project_id]; return c; });
         }
@@ -952,7 +978,10 @@ export default function PlanneringPage() {
       truck: meta.truck,
       bag_count: meta.bagCount,
       job_type: meta.jobType,
-      color: meta.color
+      color: meta.color,
+      client_notified: meta.client_notified ?? null,
+      client_notified_at: meta.client_notified_at ?? null,
+      client_notified_by: meta.client_notified_by ?? null
     }).then(({ error }) => { if (error) console.warn('[persist meta upsert] error', error); }));
   }, [supabase]);
 
@@ -1368,6 +1397,27 @@ export default function PlanneringPage() {
           </div>
         </div>
       )}
+      {pendingNotifyProjectId && (() => {
+        const project = projects.find(p => p.id === pendingNotifyProjectId);
+        return (
+          <div style={{ position: 'fixed', inset:0, zIndex: 210, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+            <div style={{ background:'#fff', border:'1px solid #e2e8f0', borderRadius: 12, padding: '20px 22px', width: 'min(420px,90%)', display:'grid', gap:16, boxShadow:'0 8px 30px -6px rgba(0,0,0,0.25)' }}>
+              <div style={{ display:'flex', flexDirection:'column', gap:4 }}>
+                <h3 style={{ margin:0, fontSize:18, color:'#0f172a' }}>Har kunden notifierats?</h3>
+                <p style={{ margin:0, fontSize:13, color:'#475569' }}>Bekräfta att du skickade eller informerade kunden om <strong>{project?.name}</strong>.</p>
+              </div>
+              <div style={{ display:'flex', gap:10, flexWrap:'wrap' }}>
+                <button type="button" onClick={() => { if (project) markClientNotified(project.id); setPendingNotifyProjectId(null); }} style={{ flex:'1 1 120px', background:'#059669', color:'#fff', border:'1px solid #047857', borderRadius:8, padding:'10px 14px', fontSize:13, fontWeight:600, cursor:'pointer' }}>Ja, notifierad</button>
+                <button type="button" onClick={() => { setPendingNotifyProjectId(null); }} style={{ flex:'1 1 120px', background:'#f1f5f9', color:'#334155', border:'1px solid #cbd5e1', borderRadius:8, padding:'10px 14px', fontSize:13, fontWeight:600, cursor:'pointer' }}>Nej / Avbryt</button>
+                {project && scheduleMeta[project.id]?.client_notified && (
+                  <button type="button" onClick={() => { undoClientNotified(project.id); setPendingNotifyProjectId(null); }} style={{ flex:'1 1 100%', background:'#fee2e2', color:'#b91c1c', border:'1px solid #fca5a5', borderRadius:8, padding:'8px 12px', fontSize:12, fontWeight:600, cursor:'pointer' }}>Ångra tidigare markering</button>
+                )}
+              </div>
+              <div style={{ fontSize:10, color:'#94a3b8', textAlign:'center' }}>Denna status sparas bara lokalt i din webbläsare just nu.</div>
+            </div>
+          </div>
+        );
+      })()}
       {/* Email summary panel */}
       <EmailSummaryPanel projects={projects} />
       <h1 style={{ margin: 0 }}>Plannering {realtimeStatus === 'live' ? '🟢' : realtimeStatus === 'connecting' ? '🟡' : '🔴'}</h1>
@@ -1769,7 +1819,7 @@ export default function PlanneringPage() {
                                       </select>
                                       </div>
                                       <div style={{ display: 'grid', gap: 4 }}>
-                                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', flexDirection: 'column', alignItems: 'flex-start' }}>
                                           <strong style={{ fontSize: 10 }}>Längd:</strong>
                                           <button type="button" className="btn--plain btn--xs" title="Förläng med föregående dag" onClick={() => extendSpan(it.segmentId, 'back')} style={{ fontSize: 10, padding: '6px 6px' }}>Förläng föregående</button>
                                           <button type="button" className="btn--plain btn--xs" title="Förläng med nästkommande dag" onClick={() => extendSpan(it.segmentId, 'forward')} style={{ fontSize: 10, padding: '6px 6px' }}>Förläng nästa</button>
@@ -1785,29 +1835,32 @@ export default function PlanneringPage() {
                                         const endDay = (it as any).spanEndDate || it.day;
                                         const single = startDay === endDay;
                                         const dateText = single ? startDay : `${startDay} – ${endDay}`;
-                                        const subject = encodeURIComponent(`Planerad isolering ${dateText} (${it.project.orderNumber ? '#' + it.project.orderNumber + ' ' : ''}${it.project.name})`);
+                                        const subject = encodeURIComponent(`Planerad isolering ${dateText} (${it.project.name})`);
                                         // Simple line with truck identifier (previous working behavior)
                                         const bodyLines = [
-                                          `Hej ${it.project.customer},`,
+                                          `Hej,`,
                                           '',
                                           'Vi vill informera att arbetet är planerat:',
                                           `Projekt: ${it.project.name}`,
-                                          it.project.orderNumber ? `Ordernummer: ${it.project.orderNumber}` : null,
                                           `Datum: ${dateText}`,
-                                          it.jobType ? `Typ av jobb: ${it.jobType}` : null,
-                                          (it.bagCount != null) ? `Antal säckar: ${it.bagCount}` : null,
-                                          it.truck ? `Lastbil/Team: ${it.truck}` : null,
+                                          // it.truck ? `Lastbil/Team: ${it.truck}` : null,
                                           '',
                                           'Återkom gärna om något behöver justeras.',
                                           '',
                                           'Vänligen',
+                                          '',
+                                          // 2nd line with sales responsible if any, otherwise default to "Ekovilla"
                                           (it.project.salesResponsible ? it.project.salesResponsible : 'Ekovilla')
                                         ].filter(Boolean).join('\n');
                                         const href = `mailto:${encodeURIComponent(it.project.customerEmail)}?subject=${subject}&body=${encodeURIComponent(bodyLines)}`;
+                                        const meta = scheduleMeta[it.project.id];
+                                        const notified = meta?.client_notified;
                                         return (
-                                          <a href={href} style={{ fontSize:11, background:'#e0f2fe', border:'1px solid #7dd3fc', color:'#0369a1', borderRadius:4, padding:'2px 6px', textDecoration:'none' }} title="Skicka planeringsmail">
-                                            Maila kund
-                                          </a>
+                                          <span style={{ display:'inline-flex', alignItems:'center', gap:6 }}>
+                                            <a href={href} onClick={() => { setTimeout(()=> setPendingNotifyProjectId(it.project.id), 200); }} style={{ fontSize:11, background: notified ? '#059669' : '#e0f2fe', border: notified ? '1px solid #047857' : '1px solid #7dd3fc', color: notified ? '#fff' : '#0369a1', borderRadius:4, padding:'2px 6px', textDecoration:'none', position:'relative' }} title={notified ? (meta?.client_notified_by ? `Notifierad av ${meta.client_notified_by}` : 'Kund markerad som notifierad') : 'Skicka planeringsmail'}>
+                                              {notified ? 'Notifierad ✓' : 'Maila kund'}
+                                            </a>
+                                          </span>
                                         );
                                       })()}
                                     </div>
@@ -1941,7 +1994,7 @@ export default function PlanneringPage() {
                                         </select>
                                         </div>
                                         <div style={{ display: 'grid', gap: 4 }}>
-                                          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                                          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', flexDirection: 'row', alignItems: 'flex-start' }}>
                                             <strong style={{ fontSize: 10 }}>Längd:</strong>
                                             <button type="button" className="btn--plain btn--xs" title="Förläng med föregående dag" onClick={() => extendSpan(it.segmentId, 'back')} style={{ fontSize: 10, padding: '2px 6px' }}>Förläng föregående</button>
                                             <button type="button" className="btn--plain btn--xs" title="Förläng med nästkommande dag" onClick={() => extendSpan(it.segmentId, 'forward')} style={{ fontSize: 10, padding: '2px 6px' }}>Förläng nästa</button>
@@ -2081,7 +2134,7 @@ export default function PlanneringPage() {
                                 </select>
                                 </div>
                                 <div style={{ display: 'grid', gap: 4 }}>
-                                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', flexDirection: 'row', alignItems: 'center' }}>
                                     <strong style={{ fontSize: 10 }}>Längd:</strong>
                                     <button type="button" className="btn--plain btn--xs" title="Förläng med föregående dag" onClick={() => extendSpan(it.segmentId, 'back')} style={{ fontSize: 10, padding: '2px 6px' }}>Förläng föregående</button>
                                     <button type="button" className="btn--plain btn--xs" title="Förläng med nästkommande dag" onClick={() => extendSpan(it.segmentId, 'forward')} style={{ fontSize: 10, padding: '2px 6px' }}>Förläng nästa</button>
