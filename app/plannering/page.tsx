@@ -1480,7 +1480,13 @@ export default function PlanneringPage() {
                 <button type="button" className="btn--plain btn--xs" style={{ fontSize: 11 }} onClick={() => setRecentSearchedIds([])}>Rensa</button>
               </div>
               {searchedProjects.map(p => (
-                <div key={p.id} draggable onDragStart={e => onDragStart(e, p.id)} onDragEnd={onDragEnd} style={{ position: 'relative', border: '1px solid #6366f1', boxShadow: '0 0 0 3px rgba(99,102,241,0.25)', background: draggingId === p.id ? '#eef2ff' : '#ffffff', borderRadius: 8, padding: 10, cursor: 'grab', display: 'grid', gap: 4 }}>
+                <div
+                  key={p.id}
+                  draggable
+                  onDragStart={e => onDragStart(e, p.id)}
+                  onDragEnd={onDragEnd}
+                  onClick={() => setSelectedProjectId(prev => prev === p.id ? null : p.id)}
+                  style={{ position: 'relative', border: selectedProjectId === p.id ? '2px solid #6366f1' : '1px solid #6366f1', boxShadow: selectedProjectId === p.id ? '0 0 0 3px rgba(99,102,241,0.35)' : '0 0 0 3px rgba(99,102,241,0.25)', background: draggingId === p.id ? '#eef2ff' : '#ffffff', borderRadius: 8, padding: 10, cursor: 'grab', display: 'grid', gap: 4 }}>
                   <div style={{ position: 'absolute', top: -6, right: -6, background: '#6366f1', color: '#fff', fontSize: 10, padding: '2px 6px', borderRadius: 12 }}>Hittad</div>
                   {p.orderNumber && (egenkontrollOrderNumbers.has(p.orderNumber) || egenkontrollOrderNumbers.has(p.orderNumber.replace(/^0+/, '') || p.orderNumber)) && (
                     <div style={{ position: 'absolute', top: -6, left: -6, background: '#059669', color: '#fff', fontSize: 10, padding: '2px 6px', borderRadius: 12, boxShadow:'0 0 0 2px #fff' }} title="Egenkontroll finns">EK</div>
