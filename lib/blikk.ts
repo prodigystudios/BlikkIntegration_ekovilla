@@ -3,6 +3,7 @@ import assert from 'node:assert';
 const BASE_URL = process.env.BLIKK_BASE_URL || 'https://publicapi.blikk.com';
 
 let cachedToken: { token: string; expires: number } | null = null;
+let inFlightTokenPromise: Promise<void> | null = null;
 
 export class BlikkClient {
   private appId: string;
@@ -17,25 +18,35 @@ export class BlikkClient {
 
   private async getToken(): Promise<string> {
     const now = Date.now();
-    if (cachedToken && cachedToken.expires - 30_000 > now) {
-      return cachedToken.token;
+    // Reuse valid token (keep 30s buffer)
+    if (cachedToken && cachedToken.expires - 30_000 > now) return cachedToken.token;
+    // If a fetch is already in progress, await it
+    if (inFlightTokenPromise) {
+      await inFlightTokenPromise;
+      if (cachedToken) return cachedToken.token; // after wait
     }
-    const basic = Buffer.from(`${this.appId}:${this.appSecret}`).toString('base64');
-    const res = await fetch(`${BASE_URL}/v1/Auth/Token`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Basic ${basic}`,
-      },
-      // body not required by docs
-    });
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`Failed to get token: ${res.status} ${res.statusText} - ${text}`);
-    }
-    const json = (await res.json()) as { accessToken: string; expires: string };
-    const expiresMs = new Date(json.expires).getTime();
-    cachedToken = { token: json.accessToken, expires: expiresMs };
-    return json.accessToken;
+    // Start a new token fetch
+    inFlightTokenPromise = (async () => {
+      try {
+        const basic = Buffer.from(`${this.appId}:${this.appSecret}`).toString('base64');
+        const res = await fetch(`${BASE_URL}/v1/Auth/Token`, {
+          method: 'POST',
+          headers: { Authorization: `Basic ${basic}` },
+        });
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(`Failed to get token: ${res.status} ${res.statusText} - ${text}`);
+        }
+        const json = (await res.json()) as { accessToken: string; expires: string };
+        const expiresMs = new Date(json.expires).getTime();
+        cachedToken = { token: json.accessToken, expires: expiresMs };
+      } finally {
+        inFlightTokenPromise = null;
+      }
+    })();
+    await inFlightTokenPromise;
+    if (!cachedToken) throw new Error('Token fetch failed (no token set)');
+    return cachedToken.token;
   }
 
   private async request<T>(path: string, init: RequestInit = {}, attempt = 0): Promise<T> {
@@ -674,6 +685,124 @@ export class BlikkClient {
       }
     }
     throw lastErr || new Error('Failed to list users');
+  }
+
+  // Minimal contact fetch by id (kept lean for current enrichment need)
+  async getContactById(id: number, opts?: { debug?: boolean }) {
+    if (!Number.isFinite(id)) throw new Error('Invalid contact id');
+    const envPath = process.env.BLIKK_CONTACTS_PATH || null;
+    // Build explicit candidate full paths (detail variants first) to maximize chance of retrieving full contact including email
+    const baseFamilies = envPath ? [envPath] : [
+      '/v1/Core/Contacts',
+      '/v1/Contacts',
+      '/v1/Core/Customers',
+      '/v1/Customers',
+    ];
+    const paths: string[] = [];
+    for (const b of baseFamilies) {
+      const clean = b.replace(/\/$/, '');
+      paths.push(`${clean}/${id}/Details`); // potential detail endpoint
+      paths.push(`${clean}/${id}`);         // base endpoint
+    }
+    // Remove duplicates while preserving order
+    const seenPath = new Set<string>();
+    const uniquePaths = paths.filter(p => { if (seenPath.has(p)) return false; seenPath.add(p); return true; });
+    type Attempt = { path: string; ok: boolean; status?: number; error?: string };
+    const attempts: Attempt[] = [];
+    const emailRegex = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i;
+    const extractEmailCandidates = (obj: any, limit = 8): string[] => {
+      const out: string[] = [];
+      const visit = (val: any, depth: number) => {
+        if (out.length >= limit) return;
+        if (!val || depth > 4) return;
+        if (typeof val === 'string') {
+          if (emailRegex.test(val) && !out.includes(val)) out.push(val);
+          return;
+        }
+        if (Array.isArray(val)) {
+          for (const v of val) visit(v, depth + 1);
+          return;
+        }
+        if (typeof val === 'object') {
+          for (const k of Object.keys(val)) {
+            const v = val[k];
+            if (/mail/i.test(k) && typeof v === 'string' && emailRegex.test(v) && !out.includes(v)) out.push(v);
+            visit(v, depth + 1);
+            if (out.length >= limit) break;
+          }
+        }
+      };
+      visit(obj, 0);
+      return out;
+    };
+    let lastErr: any = null;
+    for (const path of uniquePaths) {
+      try {
+        let attemptRes: Response | null = null;
+        let rateRetryCount = 0;
+        // Inline loop to transparently handle 429 without counting as separate base attempts
+        let authRetried = false;
+        while (true) {
+          attemptRes = await fetch(`${BASE_URL}${path}`, {
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${await this.getToken()}` },
+            cache: 'no-store'
+          });
+          if (attemptRes.status === 401 && !authRetried) {
+            // Clear token & retry once immediately
+            cachedToken = null;
+            authRetried = true;
+            continue;
+          }
+          if (attemptRes.status !== 429) break;
+          // Parse wait seconds from header or body
+          let waitSec = Number(attemptRes.headers.get('Retry-After') || '0');
+          if (!waitSec) {
+            try {
+              const clone = await attemptRes.clone().json();
+              if (clone && typeof clone.waitInSeconds === 'number') waitSec = clone.waitInSeconds;
+            } catch {/* ignore parse */}
+          }
+            if (!waitSec || waitSec < 0) waitSec = 1;
+          attempts.push({ path, ok: false, status: attemptRes.status, error: `rate_limited_wait_${waitSec}s` });
+          rateRetryCount++;
+          if (rateRetryCount > 5) break; // safeguard
+          await new Promise(r => setTimeout(r, Math.min(waitSec, 5) * 1000));
+        }
+        const res = attemptRes!;
+        if (!res.ok) {
+          attempts.push({ path, ok: false, status: res.status, error: res.statusText });
+          if (res.status === 404) {
+            continue; // try next base
+          }
+          const text = await res.text();
+            lastErr = new Error(`Blikk GET ${path} -> ${res.status}: ${text}`);
+          break;
+        }
+        const data: any = await res.json();
+        attempts.push({ path, ok: true, status: 200 });
+        const name = data.name || data.fullName || [data.firstName, data.lastName].filter(Boolean).join(' ').trim() || data.contactName || null;
+        const primaryEmail = data.email || data.Email || data.contactEmail || (data.contact && data.contact.email) || null;
+        const candidates = extractEmailCandidates(data);
+        const email = primaryEmail || candidates[0] || null;
+        if (!email && opts?.debug) {
+          // Provide some diagnostic keys to help see where email might hide
+          const topKeys = Object.keys(data || {});
+          console.warn('Contact email not found', { id, path, topKeys, candidateCount: candidates.length });
+        }
+        return { contact: { raw: data, id, email, name, emailCandidates: candidates }, usedPath: path, attempts };
+      } catch (e: any) {
+        lastErr = e;
+        attempts.push({ path, ok: false, error: String(e?.message || e) });
+        if (!/ 404: /.test(String(e?.message || e))) break; // non-404 break
+      }
+    }
+    if (lastErr) {
+      (lastErr as any).attempts = attempts;
+      throw lastErr;
+    }
+    const nf = new Error('Contact not found');
+    (nf as any).attempts = attempts;
+    throw nf;
   }
 }
 

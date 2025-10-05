@@ -10,6 +10,7 @@ export async function POST() {
 export async function GET(req: NextRequest) {
   const useMock = req.nextUrl.searchParams.get('mock') === '1';
   const orderNumberQuery = req.nextUrl.searchParams.get('orderNumber') || req.nextUrl.searchParams.get('ordernumber');
+  const includeRaw = req.nextUrl.searchParams.get('raw') === '1' || req.nextUrl.searchParams.get('includeraw') === '1';
   if (useMock) {
     const now = Date.now();
     const projects = Array.from({ length: 10 }).map((_, i) => ({
@@ -19,13 +20,13 @@ export async function GET(req: NextRequest) {
       customer: `Kund ${i + 1}`,
       createdAt: new Date(now - i * 86400000).toISOString(),
       status: 'new',
+      ...(includeRaw ? { _raw: { mock: true } } : {}),
     }));
     return NextResponse.json({ projects, source: 'mock' });
   }
 
   try {
     const blikk = getBlikk();
-    const debug = req.nextUrl.searchParams.get('debug') === '1';
     // If specific order number requested, attempt direct lookup first
     if (orderNumberQuery) {
       const found = await blikk.getProjectByOrderNumber(orderNumberQuery);
@@ -45,9 +46,11 @@ export async function GET(req: NextRequest) {
           name: found.title || found.name || found.projectName || found.orderName || `Projekt ${found.id}`,
           orderNumber: found.orderNumber || found.projectNumber || found.number || null,
           customer: (found.customer && (found.customer.name || found.customer.title)) || found.customerName || found.clientName || found.customer || 'Okänd kund',
+          customerId: (found.customer && (found.customer.id || found.customer.Id)) || found.customerId || found.contactId || null,
           createdAt: found.createdDate || found.created || found.createdAt || found.creationDate || new Date().toISOString(),
           status: (found.status && (found.status.name || found.status.title)) || found.status || found.state || 'unknown',
           salesResponsible: salesResponsible,
+          ...(includeRaw ? { _raw: found } : {}),
         };
         return NextResponse.json({ projects: [mapped], source: 'blikk:orderNumber' });
       }
@@ -72,15 +75,17 @@ export async function GET(req: NextRequest) {
         name: p.title || p.name || p.projectName || p.orderName || `Projekt ${p.id}`,
         orderNumber: p.orderNumber || p.projectNumber || p.number || null,
         customer: (p.customer && (p.customer.name || p.customer.title)) || p.customerName || p.clientName || p.customer || 'Okänd kund',
+        customerId: (p.customer && (p.customer.id || p.customer.Id)) || p.customerId || p.contactId || null,
         createdAt: p.createdDate || p.created || p.createdAt || p.creationDate || new Date().toISOString(),
         status: (p.status && (p.status.name || p.status.title)) || p.status || p.state || 'unknown',
         salesResponsible: salesResponsible,
+        ...(includeRaw ? { _raw: p } : {}),
       };
     });
     // Client-side stable sort by createdAt desc if present
     mapped.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
     const projects = mapped.slice(0, 10);
-    return NextResponse.json({ projects, source: 'blikk', ...(debug ? { debug: { usedUrl: meta.usedUrl, attempts: meta.attempts, officialTried: meta.officialTried } } : {}) });
+  return NextResponse.json({ projects, source: 'blikk' });
   } catch (e: any) {
     console.error('GET /api/blikk/projects failed, falling back to mock', e);
     const now = Date.now();
@@ -91,6 +96,7 @@ export async function GET(req: NextRequest) {
       customer: `Kund ${i + 1}`,
       createdAt: new Date(now - i * 86400000).toISOString(),
       status: 'new',
+      ...(includeRaw ? { _raw: { mock: true } } : {}),
     }));
     return NextResponse.json({ projects, source: 'mock', error: String(e?.message || e) }, { status: 200 });
   }

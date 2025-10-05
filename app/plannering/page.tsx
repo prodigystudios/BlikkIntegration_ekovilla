@@ -9,6 +9,8 @@ interface Project {
   name: string;
   orderNumber?: string | null;
   customer: string;
+  customerId?: number | null;
+  customerEmail?: string | null;
   createdAt: string;
   status: string;
   isManual?: boolean; // local only flag
@@ -30,6 +32,22 @@ interface ProjectScheduleMeta {
   color?: string | null;
   bagCount?: number | null;
   jobType?: string | null;
+}
+
+// Normalize a raw project from /api/blikk/projects into our Project shape
+function normalizeProject(p: any): Project {
+  return {
+    id: String(p.id),
+    name: p.name || 'Okänt namn',
+    orderNumber: p.orderNumber ?? null,
+    customer: p.customer || 'Okänd kund',
+    customerId: p.customerId != null && p.customerId !== '' ? Number(p.customerId) : null,
+    customerEmail: p.customerEmail ?? null,
+    createdAt: p.createdAt || new Date().toISOString(),
+    status: p.status || 'unknown',
+    salesResponsible: p.salesResponsible ?? null,
+    isManual: p.isManual || false,
+  };
 }
 
 function startOfMonth(d: Date) { return new Date(d.getFullYear(), d.getMonth(), 1); }
@@ -205,7 +223,7 @@ export default function PlanneringPage() {
       const res = await fetch(`/api/blikk/projects?orderNumber=${encodeURIComponent(val)}`);
       const j = await res.json();
       if (!res.ok) throw new Error(j.error || 'Fel vid sökning');
-  const normalized: Project[] = (j.projects || []).map((p: any) => ({ ...p, id: String(p.id), orderNumber: p.orderNumber ?? null, salesResponsible: p.salesResponsible ?? null }));
+  const normalized: Project[] = (j.projects || []).map(normalizeProject);
       if (!normalized.length) {
         setSearchError('Inget projekt hittades');
       } else {
@@ -258,7 +276,17 @@ export default function PlanneringPage() {
         const res = await fetch('/api/blikk/projects');
         const j = await res.json();
         if (!res.ok) setError(j.error || 'Fel vid hämtning');
-  const normalized: Project[] = (j.projects || []).map((p: any) => ({ ...p, id: String(p.id), orderNumber: p.orderNumber ?? null, salesResponsible: p.salesResponsible ?? null }));
+  const normalized: Project[] = (j.projects || []).map(normalizeProject);
+        // Optional debug: count how many missing customerId
+        try {
+          const dbg = localStorage.getItem('contactFetchDebug') === '1' || (window as any).__contactFetchDebug;
+          if (dbg) {
+            const missing = normalized.filter(p => !p.customerId);
+            if (missing.length) {
+              console.debug('[projects][normalize] missing customerId count', missing.length, missing.map(m => ({ id: m.id, name: m.name, customer: m.customer })));
+            }
+          }
+        } catch { /* ignore */ }
         // Merge with any projects already injected from segments to avoid overwriting
         setProjects(prev => {
           if (prev.length === 0) return normalized; // fast path
@@ -284,6 +312,213 @@ export default function PlanneringPage() {
   const [realtimeStatus, setRealtimeStatus] = useState<'connecting'|'live'|'error'>('connecting');
   const pendingOps = useRef<Promise<any>[]>([]);
   const createdIdsRef = useRef<Set<string>>(new Set());
+
+  // Minimal scheduled-only contact enrichment (phase 1):
+  // For each scheduled project lacking customerEmail but having a numeric customerId, fetch contact once.
+  const enrichmentAttemptedRef = useRef<Set<number>>(new Set());
+  // Cache customerId -> email (or null if definitively none) to propagate across multiple projects
+  const contactEmailCacheRef = useRef<Map<number, string | null>>(new Map());
+  // Live reference to latest projects to avoid stale closure when summarizing
+  const projectsRef = useRef<Project[]>(projects);
+  useEffect(() => { projectsRef.current = projects; }, [projects]);
+  // Adaptive rate limiting state (starts ~320ms, expands on 429, decays slowly on success)
+  const rateDelayRef = useRef<number>(320);
+  const lastContactRequestAtRef = useRef<number>(0);
+  const secondPassScheduledRef = useRef<boolean>(false);
+  const passCounterRef = useRef<number>(0);
+  const [contactEnrichStatus, setContactEnrichStatus] = useState<'idle' | 'running' | 'second-pass-wait' | 'done' | 'not-needed'>('idle');
+
+  // Derive enrichment progress for overlay
+  const enrichmentProgress = useMemo(() => {
+    const scheduledIds = new Set(scheduledSegments.map(s => s.projectId));
+    const scheduledProjects = projects.filter(p => scheduledIds.has(p.id));
+    const withCustomerId = scheduledProjects.filter(p => Number.isFinite(p.customerId));
+    const total = withCustomerId.length;
+    const withEmail = withCustomerId.filter(p => p.customerEmail).length;
+    return { total, withEmail };
+  }, [scheduledSegments, projects]);
+
+  // Determine if enrichment is needed and adjust initial status
+  useEffect(() => {
+    if (contactEnrichStatus === 'idle') {
+      if (enrichmentProgress.total === 0) {
+        setContactEnrichStatus('not-needed');
+      } else if (enrichmentProgress.withEmail < enrichmentProgress.total) {
+        // We will start running as soon as effect kicks in
+        // (safety: set to running so overlay does not dismiss prematurely)
+        setContactEnrichStatus('running');
+      } else if (enrichmentProgress.withEmail === enrichmentProgress.total) {
+        setContactEnrichStatus('done');
+      }
+    }
+  }, [contactEnrichStatus, enrichmentProgress]);
+
+  // Debug logic removed (previously used localStorage/contactDebug flag)
+
+    const debug = false;
+  useEffect(() => {
+    if (!scheduledSegments.length) return;
+    const scheduledProjectIds = new Set(scheduledSegments.map(s => s.projectId));
+    const currentProjects = projectsRef.current; // always latest
+    const missingId = currentProjects.filter(p => scheduledProjectIds.has(p.id) && !p.customerId);
+    const withIdsInitial = currentProjects.filter(p => scheduledProjectIds.has(p.id) && p.customerId && Number.isFinite(p.customerId));
+    let targets: Project[] = withIdsInitial.filter(p => !p.customerEmail);
+    if (!missingId.length && !targets.length) return;
+    let cancelled = false;
+    let any429 = false;
+    passCounterRef.current += 1;
+    if ((contactEnrichStatus === 'idle' || contactEnrichStatus === 'second-pass-wait' || contactEnrichStatus === 'not-needed') && targets.length) {
+      setContactEnrichStatus('running');
+    }
+    // Helper: robust fetch with retries (handles 429 + transient network)
+    async function fetchContactEmail(cid: number): Promise<string | null> {
+      const maxAttempts = 3;
+      let attempt = 0;
+      while (!cancelled && attempt < maxAttempts) {
+        attempt++;
+        try {
+          // Rate limit pacing: ensure delay from previous request
+          const now = Date.now();
+          const since = now - lastContactRequestAtRef.current;
+          const baseDelay = rateDelayRef.current;
+          if (since < baseDelay) {
+            await new Promise(r => setTimeout(r, baseDelay - since));
+          }
+          const res = await fetch(`/api/blikk/contacts/${cid}`);
+          lastContactRequestAtRef.current = Date.now();
+          if (res.status === 404) return null; // terminal (no contact)
+          if (res.status === 429) {
+            any429 = true;
+            // Escalate base delay aggressively to avoid repeated limits
+            rateDelayRef.current = Math.min(rateDelayRef.current * 1.6 + 120, 2500);
+            let wait = 1; // server suggested extra wait
+            try {
+              const body = await res.json().catch(() => ({}));
+              wait = body?.waitInSeconds || Number(res.headers.get('Retry-After')) || 1;
+            } catch {/* ignore */}
+            await new Promise(r => setTimeout(r, Math.min(wait, 5) * 1000));
+            continue; // retry without counting terminal
+          }
+          if (!res.ok) {
+            // transient? exponential backoff; also slightly raise delay to be safe
+            rateDelayRef.current = Math.min(rateDelayRef.current + 80, 2500);
+            if (attempt < maxAttempts) {
+              await new Promise(r => setTimeout(r, 250 * attempt));
+              continue;
+            }
+            return null;
+          }
+          // Successful call: gently decay delay towards floor (300ms)
+          rateDelayRef.current = Math.max(300, Math.round(rateDelayRef.current * 0.9));
+          const json = await res.json();
+          const email = json?.contact?.email || json?.contact?.emailCandidates?.[0] || null;
+          return email || null; // even if null, treat as terminal for now
+        } catch {
+          if (attempt < maxAttempts) {
+            await new Promise(r => setTimeout(r, 200 * attempt));
+            continue;
+          }
+          return null;
+        }
+      }
+      return null;
+    }
+    (async () => {
+      // 1. Backfill customerId for those missing
+      for (const proj of missingId) {
+        if (cancelled) break;
+        try {
+          const r = await fetch(`/api/blikk/projects/${proj.id}?debug=0`);
+          if (!r.ok) continue;
+          const pj = await r.json();
+          if (pj.customerId) {
+            setProjects(prev => prev.map(p => p.id === proj.id ? { ...p, customerId: pj.customerId } : p));
+          }
+        } catch { /* ignore */ }
+      }
+      // Recompute targets using freshest projects after any backfill
+      if (missingId.length) {
+        const latest = projectsRef.current;
+        targets = latest.filter(p => scheduledProjectIds.has(p.id) && p.customerId && Number.isFinite(p.customerId) && !p.customerEmail);
+      }
+      for (const proj of targets) {
+        if (cancelled) break;
+        const cid = proj.customerId as number;
+        // Propagate from cache if available
+        if (contactEmailCacheRef.current.has(cid) && contactEmailCacheRef.current.get(cid)) {
+          const cachedEmail = contactEmailCacheRef.current.get(cid)!;
+          setProjects(prev => prev.map(p => (p.customerId === cid && !p.customerEmail) ? { ...p, customerEmail: cachedEmail } : p));
+          continue;
+        }
+        if (enrichmentAttemptedRef.current.has(cid)) continue; // already terminally processed
+        const email = await fetchContactEmail(cid);
+        enrichmentAttemptedRef.current.add(cid); // mark done (success OR exhausted attempts)
+        if (cancelled) break;
+        if (email) {
+          contactEmailCacheRef.current.set(cid, email);
+          setProjects(prev => prev.map(p => (p.customerId === cid && !p.customerEmail) ? { ...p, customerEmail: email } : p));
+        }
+        // Light jitter between iterations to avoid alignment
+        await new Promise(r => setTimeout(r, 40 + Math.random() * 70));
+      }
+      // Schedule a cooled-off second sweep if we hit rate limits and still have unresolved emails
+      if (!cancelled && any429 && !secondPassScheduledRef.current) {
+        const remaining = projectsRef.current.filter(p => scheduledProjectIds.has(p.id) && p.customerId && !p.customerEmail);
+        if (remaining.length) {
+          secondPassScheduledRef.current = true;
+          setTimeout(() => {
+            if (cancelled) return;
+            // Allow a second attempt: clear attempted flags for remaining ids only
+            for (const p of remaining) {
+              if (p.customerId != null) enrichmentAttemptedRef.current.delete(p.customerId);
+            }
+            // Trigger effect again by updating a dummy state (reuse monthOffset toggle)
+            setMonthOffset(o => o); // noop state update to ensure React sees dependency? (scheduledSegments/projects changes will also trigger when we setProjects below)
+            // Force a minimal change to projects to retrigger effect if dependencies stable
+            setProjects(prev => [...prev]);
+          }, 4000); // cool-off window
+        }
+      }
+      // Mark status according to pass results
+      if (!cancelled) {
+        if (targets.length === 0) {
+          // No targets -> either not-needed or already handled earlier
+          if (enrichmentProgress.total === 0) setContactEnrichStatus('not-needed');
+          else setContactEnrichStatus('done');
+        } else if (any429 && passCounterRef.current < 2 && secondPassScheduledRef.current) {
+          setContactEnrichStatus('second-pass-wait');
+        } else if (!any429 || passCounterRef.current >= 2) {
+          setContactEnrichStatus('done');
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [scheduledSegments, projects]);
+
+  // Global overlay readiness: wait until core data + enrichment done (or timeout)
+  const [gateReleased, setGateReleased] = useState(false);
+  const globalReady = (!loading && !syncing && !egenkontrollLoading && (contactEnrichStatus === 'done' || contactEnrichStatus === 'not-needed')) || gateReleased;
+  useEffect(() => {
+    if (globalReady) return;
+    const t = setTimeout(() => setGateReleased(true), 15000); // safety timeout after 15s
+    return () => clearTimeout(t);
+  }, [globalReady]);
+
+  const overlayDetails = useMemo(() => {
+    const steps: Array<{ label: string; state: 'pending' | 'done' | 'running'; note?: string }> = [];
+    steps.push({ label: 'Projekt', state: loading ? 'pending' : 'done' });
+    steps.push({ label: 'Planering', state: syncing ? 'running' : 'done' });
+    steps.push({ label: 'Egenkontroll', state: egenkontrollLoading ? 'pending' : 'done' });
+    const { total, withEmail } = enrichmentProgress;
+    if (total > 0) {
+      let state: 'pending' | 'done' | 'running' = 'pending';
+      if (contactEnrichStatus === 'running') state = 'running';
+      else if (withEmail === total || contactEnrichStatus === 'done') state = 'done';
+      else if (contactEnrichStatus === 'second-pass-wait') state = 'running';
+      steps.push({ label: 'Kontakter', state, note: `${withEmail}/${total}` });
+    }
+    return steps;
+  }, [loading, syncing, egenkontrollLoading, enrichmentProgress, contactEnrichStatus]);
 
   // Realtime + periodic refresh for egenkontroll report detection
   useEffect(() => {
@@ -948,6 +1183,12 @@ export default function PlanneringPage() {
 
   // Backlog lists
   const backlog = useMemo(() => projects.filter(p => !scheduledSegments.some(s => s.projectId === p.id) && !recentSearchedIds.includes(p.id)), [projects, scheduledSegments, recentSearchedIds]);
+
+  // NOTE: Contact enrichment removed in this fresh baseline because Project no longer includes customerId/customerEmail.
+  // Once we reintroduce those fields from the Blikk project API response, we can add a minimal effect here that:
+  // 1. Collects scheduled project ids.
+  // 2. Filters projects missing customerEmail with a numeric customerId.
+  // 3. Sequentially fetches /api/blikk/contacts/{customerId} with light throttling.
   const filteredBacklog = useMemo(() => {
     if (!salesFilter) return backlog;
     if (salesFilter === '__NONE__') return backlog.filter(p => !p.salesResponsible);
@@ -1090,7 +1331,45 @@ export default function PlanneringPage() {
   }, [persistMetaUpsert]);
 
   return (
-    <div style={{ padding: 16, display: 'grid', gap: 16 }}>
+    <div style={{ padding: 16, display: 'grid', gap: 16, position: 'relative' }}>
+      {!globalReady && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'linear-gradient(135deg,#f8fafc,#e0f2fe)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, fontFamily: 'system-ui, sans-serif' }} aria-busy="true" aria-live="polite">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 20, width: 'min(420px,90%)' }}>
+            <div style={{ textAlign: 'center' }}>
+              <h2 style={{ margin: 0, fontSize: 20, color: '#0f172a' }}>Förbereder planering…</h2>
+              <p style={{ margin: '4px 0 0', fontSize: 13, color: '#475569' }}>Laddar data och kontaktuppgifter. Vänta innan du gör ändringar.</p>
+            </div>
+            <div style={{ display: 'grid', gap: 10 }}>
+              {overlayDetails.map(step => {
+                const color = step.state === 'done' ? '#059669' : step.state === 'running' ? '#2563eb' : '#334155';
+                const icon = step.state === 'done' ? '✓' : step.state === 'running' ? '…' : '•';
+                return (
+                  <div key={step.label} style={{ display: 'flex', alignItems: 'center', gap: 10, background: '#ffffffdd', border: '1px solid #e2e8f0', padding: '10px 14px', borderRadius: 10, boxShadow: '0 1px 2px rgba(0,0,0,0.08)' }}>
+                    <div style={{ width: 22, height: 22, borderRadius: 22, background: color, color: '#fff', fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{icon}</div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: '#0f172a', letterSpacing: '.2px' }}>{step.label}{step.note ? ` (${step.note})` : ''}</div>
+                      {step.label === 'Kontakter' && step.state !== 'done' && enrichmentProgress.total > 0 && (
+                        <div style={{ marginTop: 4, height: 6, background: '#e2e8f0', borderRadius: 4, overflow: 'hidden' }}>
+                          <div style={{ width: `${(enrichmentProgress.withEmail / Math.max(1, enrichmentProgress.total)) * 100}%`, background: '#2563eb', height: '100%', transition: 'width .4s ease' }} />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: 11, color: '#64748b' }}>{contactEnrichStatus === 'second-pass-wait' ? 'Väntar på andra försök efter begränsning…' : 'Detta kan ta några sekunder.'}</div>
+              <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 4 }}>Om detta inte stänger inom 15 sekunder kan du börja ändå.</div>
+            </div>
+            <button type="button" disabled={globalReady} onClick={() => setGateReleased(true)} style={{ marginTop: 4, fontSize: 12, padding: '8px 14px', background: globalReady ? '#059669' : '#e2e8f0', color: globalReady ? '#fff' : '#334155', border: '1px solid #cbd5e1', borderRadius: 8, cursor: 'pointer', fontWeight: 600 }}>
+              {globalReady ? 'Klar' : 'Fortsätt ändå'}
+            </button>
+          </div>
+        </div>
+      )}
+      {/* Email summary panel */}
+      <EmailSummaryPanel projects={projects} />
       <h1 style={{ margin: 0 }}>Plannering {realtimeStatus === 'live' ? '🟢' : realtimeStatus === 'connecting' ? '🟡' : '🔴'}</h1>
       {presenceUsers.length > 0 && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
@@ -1501,6 +1780,36 @@ export default function PlanneringPage() {
                                       </div>
                                       <button type="button" className="btn--plain btn--xs" onClick={() => unschedule(it.segmentId)} style={{ fontSize: 11, background: '#fee2e2', border: '1px solid #fca5a5', color: '#b91c1c', borderRadius: 4, padding: '2px 6px' }}>Ta bort</button>
                                       <button type="button" className="btn--plain btn--xs" title="Ny separat dag" onClick={() => setSelectedProjectId(it.project.id)} style={{ fontSize: 11, background: '#ecfdf5', border: '1px solid #6ee7b7', color: '#047857', borderRadius: 4, padding: '2px 6px' }}>Ny dag</button>
+                                      {it.project.customerEmail && (() => {
+                                        const startDay = (it as any).spanStartDate || it.day;
+                                        const endDay = (it as any).spanEndDate || it.day;
+                                        const single = startDay === endDay;
+                                        const dateText = single ? startDay : `${startDay} – ${endDay}`;
+                                        const subject = encodeURIComponent(`Planerad isolering ${dateText} (${it.project.orderNumber ? '#' + it.project.orderNumber + ' ' : ''}${it.project.name})`);
+                                        // Simple line with truck identifier (previous working behavior)
+                                        const bodyLines = [
+                                          `Hej ${it.project.customer},`,
+                                          '',
+                                          'Vi vill informera att arbetet är planerat:',
+                                          `Projekt: ${it.project.name}`,
+                                          it.project.orderNumber ? `Ordernummer: ${it.project.orderNumber}` : null,
+                                          `Datum: ${dateText}`,
+                                          it.jobType ? `Typ av jobb: ${it.jobType}` : null,
+                                          (it.bagCount != null) ? `Antal säckar: ${it.bagCount}` : null,
+                                          it.truck ? `Lastbil/Team: ${it.truck}` : null,
+                                          '',
+                                          'Återkom gärna om något behöver justeras.',
+                                          '',
+                                          'Vänligen',
+                                          (it.project.salesResponsible ? it.project.salesResponsible : 'Ekovilla')
+                                        ].filter(Boolean).join('\n');
+                                        const href = `mailto:${encodeURIComponent(it.project.customerEmail)}?subject=${subject}&body=${encodeURIComponent(bodyLines)}`;
+                                        return (
+                                          <a href={href} style={{ fontSize:11, background:'#e0f2fe', border:'1px solid #7dd3fc', color:'#0369a1', borderRadius:4, padding:'2px 6px', textDecoration:'none' }} title="Skicka planeringsmail">
+                                            Maila kund
+                                          </a>
+                                        );
+                                      })()}
                                     </div>
                                   )}
                                 </div>
@@ -1795,6 +2104,56 @@ export default function PlanneringPage() {
             </div>
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// Small floating panel showing all found distinct customer emails
+function EmailSummaryPanel({ projects }: { projects: Project[] }) {
+  const [open, setOpen] = useState(false);
+  const emails = useMemo(() => {
+    const map = new Map<string, { email: string; customers: Set<string>; projectIds: Set<string> }>();
+    for (const p of projects) {
+      if (!p.customerEmail) continue;
+      const key = p.customerEmail.toLowerCase();
+      if (!map.has(key)) map.set(key, { email: p.customerEmail, customers: new Set(), projectIds: new Set() });
+      const entry = map.get(key)!;
+      entry.customers.add(p.customer);
+      entry.projectIds.add(p.id);
+    }
+    return Array.from(map.values()).sort((a, b) => a.email.localeCompare(b.email));
+  }, [projects]);
+  const total = emails.length;
+  const copyAll = () => {
+    const list = emails.map(e => e.email).join(', ');
+    navigator.clipboard.writeText(list).catch(() => {});
+  };
+  if (!total) return null;
+  return (
+    <div style={{ position: 'absolute', top: 8, right: 8, zIndex: 20, maxWidth: 320, fontFamily: 'system-ui, sans-serif' }}>
+      <div style={{ background: '#ffffffdd', backdropFilter: 'blur(4px)', border: '1px solid #e2e8f0', borderRadius: 8, padding: 8, boxShadow: '0 4px 12px rgba(0,0,0,0.08)', display: 'grid', gap: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: '#0f172a' }}>E‑post ({total})</div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button onClick={() => setOpen(o => !o)} style={{ fontSize: 11, border: '1px solid #cbd5e1', background: '#fff', padding: '2px 6px', borderRadius: 4, cursor: 'pointer' }}>{open ? 'Göm' : 'Visa'}</button>
+            <button onClick={copyAll} disabled={!total} title="Kopiera alla" style={{ fontSize: 11, border: '1px solid #2563eb', background: '#1d4ed8', color: '#fff', padding: '2px 6px', borderRadius: 4, cursor: 'pointer' }}>Kopiera</button>
+          </div>
+        </div>
+        {open && (
+          <div style={{ maxHeight: 240, overflowY: 'auto', display: 'grid', gap: 4 }}>
+            {emails.map(e => (
+              <div key={e.email} style={{ border: '1px solid #e2e8f0', borderRadius: 6, padding: '4px 6px', background: '#f8fafc', display: 'grid', gap: 2 }}>
+                <div style={{ fontSize: 12, fontWeight: 500, color: '#1e293b', wordBreak: 'break-all' }}>{e.email}</div>
+                <div style={{ fontSize: 10, color: '#475569', display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                  <span style={{ background: '#e2e8f0', padding: '1px 4px', borderRadius: 4 }}>{e.customers.size} kund</span>
+                  <span style={{ background: '#e2e8f0', padding: '1px 4px', borderRadius: 4 }}>{e.projectIds.size} proj</span>
+                  <button onClick={() => navigator.clipboard.writeText(e.email).catch(() => {})} style={{ fontSize: 10, border: '1px solid #cbd5e1', background: '#fff', padding: '0 4px', borderRadius: 4, cursor: 'pointer' }}>kopiera</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
