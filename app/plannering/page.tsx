@@ -1734,6 +1734,24 @@ export default function PlanneringPage() {
                           if (!hay.includes(searchVal)) return false;
                         }
                         return true;
+                      })
+                      // Sort by truck order (known trucks first in trucks[] order), unassigned last, then project/order
+                      .sort((a, b) => {
+                        if (a.truck === b.truck) {
+                          const ao = a.project.orderNumber || '';
+                          const bo = b.project.orderNumber || '';
+                          if (ao && bo && ao !== bo) return ao.localeCompare(bo, 'sv');
+                          return a.project.name.localeCompare(b.project.name, 'sv');
+                        }
+                        const ia = a.truck ? trucks.indexOf(a.truck) : -1;
+                        const ib = b.truck ? trucks.indexOf(b.truck) : -1;
+                        const aUn = ia === -1 || !a.truck;
+                        const bUn = ib === -1 || !b.truck;
+                        if (aUn && !bUn) return 1; // unassigned/unknown last
+                        if (bUn && !aUn) return -1;
+                        if (!aUn && !bUn && ia !== ib) return ia - ib;
+                        // both unassigned or unknown trucks: alphabetical by name
+                        return (a.truck || '').localeCompare(b.truck || '', 'sv');
                       });
                       const isJumpHighlight = day === jumpTargetDay;
                       return (
@@ -1924,6 +1942,22 @@ export default function PlanneringPage() {
                             if (!hay.includes(searchVal)) return false;
                           }
                           return true;
+                        })
+                        .sort((a, b) => {
+                          if (a.truck === b.truck) {
+                            const ao = a.project.orderNumber || '';
+                            const bo = b.project.orderNumber || '';
+                            if (ao && bo && ao !== bo) return ao.localeCompare(bo, 'sv');
+                            return a.project.name.localeCompare(b.project.name, 'sv');
+                          }
+                          const ia = a.truck ? trucks.indexOf(a.truck) : -1;
+                          const ib = b.truck ? trucks.indexOf(b.truck) : -1;
+                          const aUn = ia === -1 || !a.truck;
+                          const bUn = ib === -1 || !b.truck;
+                          if (aUn && !bUn) return 1;
+                          if (bUn && !aUn) return -1;
+                          if (!aUn && !bUn && ia !== ib) return ia - ib;
+                          return (a.truck || '').localeCompare(b.truck || '', 'sv');
                         });
                         const isJumpHighlight = day === jumpTargetDay;
                         return (
