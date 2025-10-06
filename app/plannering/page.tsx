@@ -220,8 +220,53 @@ export default function PlanneringPage() {
     setManualOrderNumber('');
   }
 
-  // Placeholder for refreshEgenkontroller if not yet defined earlier in file (prevents reference errors)
-  function refreshEgenkontroller() { /* implementation defined further down or intentionally omitted in simplified view */ }
+  // Load & parse existing egenkontroll PDF files from storage and map to order numbers
+  // Stable identity so effects depending on it do not re-run every render
+  const refreshEgenkontroller = useCallback(async () => {
+    // Prevent overlapping loads
+    if (egenkontrollLoading) return;
+    setEgenkontrollLoading(true);
+    setEgenkontrollError(null);
+    try {
+      const res = await fetch('/api/storage/list-all?prefix=Egenkontroller');
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || 'Kunde inte hämta egenkontroller');
+      const files: Array<{ path: string; name: string }> = j.files || [];
+      const orderSet = new Set<string>();
+      const paths: Record<string, string> = {};
+      for (const f of files) {
+        const name = f.name || '';
+        if (!/\.pdf$/i.test(name)) continue;
+        // Expected patterns (flexible):
+        //  Egenkontroll_<kund>_<ordernr>.pdf
+        //  Egenkontroll_<ordernr>.pdf
+        //  Egenkontroll-<kund>-<ordernr>.pdf (fallback)
+        // Extract last numeric token (>= 2 digits) before .pdf
+        const base = name.replace(/\.pdf$/i, '');
+        // Split on underscores & dashes to be tolerant
+        const parts = base.split(/[_-]+/);
+        let candidate = '';
+        for (let i = parts.length - 1; i >= 0; i--) {
+          const digits = parts[i].replace(/[^0-9]/g, '');
+          if (digits.length >= 2) { candidate = digits; break; }
+        }
+        if (!candidate) continue;
+        const norm = candidate.replace(/^0+/, '') || candidate; // preserve both with & without leading zeros
+        const fullPath = f.path || `${'Egenkontroller'}/${name}`;
+        orderSet.add(candidate);
+        orderSet.add(norm);
+        paths[candidate] = fullPath;
+        paths[norm] = fullPath;
+      }
+      setEgenkontrollOrderNumbers(orderSet);
+      setEgenkontrollPaths(paths);
+    } catch (e: any) {
+      setEgenkontrollError(String(e?.message || e));
+      console.warn('[egenkontroll] refresh error', e);
+    } finally {
+      setEgenkontrollLoading(false);
+    }
+  }, [egenkontrollLoading]);
 
   // Initial fetch
   useEffect(() => {
