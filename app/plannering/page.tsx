@@ -128,7 +128,7 @@ export default function PlanneringPage() {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   // View mode: standard month grid or weekday lanes (all Mondays in a row, etc.)
   const [viewMode, setViewMode] = useState<'monthGrid' | 'weekdayLanes' | 'dayList'>('monthGrid');
-  const [showCardControls, setShowCardControls] = useState(true);
+  const [showCardControls, setShowCardControls] = useState(false);
   // UI hover state for backlog punch effect
   const [hoverBacklogId, setHoverBacklogId] = useState<string | null>(null);
 
@@ -523,7 +523,7 @@ export default function PlanneringPage() {
   const globalReady = (!loading && !syncing && !egenkontrollLoading && (contactEnrichStatus === 'done' || contactEnrichStatus === 'not-needed')) || gateReleased;
   useEffect(() => {
     if (globalReady) return;
-    const t = setTimeout(() => setGateReleased(true), 15000); // safety timeout after 15s
+    const t = setTimeout(() => setGateReleased(true), 20000); // safety timeout after 20s
     return () => clearTimeout(t);
   }, [globalReady]);
 
