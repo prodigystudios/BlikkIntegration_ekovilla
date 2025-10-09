@@ -2024,69 +2024,161 @@ export default function PlanneringPage() {
           )}
 
           {viewMode === 'dayList' && (
-            <div style={{ display: 'grid', gap: 6 }}>
-              {daysOfMonth.map(day => {
-                const rawItems = itemsByDay.get(day) || [];
+            <div style={{ display: 'grid', gap: 16 }}>
+              {/* Weekly truck grid: for each week, render header and rows per truck */}
+              {weeks.map((week, wi) => {
+                // Collect all items for days in this week for filtering and deciding unassigned row
+                const weekDays = week.map(c => c.date).filter(Boolean) as string[];
                 const searchVal = calendarSearch.trim().toLowerCase();
-                const items = rawItems.filter(it => {
-                        if (truckFilter) {
-                          if (truckFilter === 'UNASSIGNED') { if (it.truck) return false; }
-                          else if (it.truck !== truckFilter) return false;
-                  }
-                  if (salesFilter) {
-                    if (salesFilter === '__NONE__') { if (it.project.salesResponsible) return false; }
-                    else if ((it.project.salesResponsible || '').toLowerCase() !== salesFilter.toLowerCase()) return false;
-                  }
-                  if (searchVal) {
-                    const hay = [it.project.name, it.project.orderNumber || '', it.project.customer, it.jobType || '', (it.bagCount != null ? String(it.bagCount) : '')].join(' ').toLowerCase();
-                    if (!hay.includes(searchVal)) return false;
-                  }
-                  return true;
-                });
-                const isJumpHighlight = day === jumpTargetDay;
+                const dayHeaderBg = wi % 2 === 0 ? '#f1f5f9' : '#e5e7eb';
+                // Determine which weekend days to include based on whether they have any filtered items
+                const dayHasAny = (weekdayIdx: number) => {
+                  const cell = week[weekdayIdx];
+                  const day = cell?.date;
+                  if (!day) return false;
+                  const raw = itemsByDay.get(day) || [];
+                  const filtered = raw.filter(it => {
+                    if (truckFilter) {
+                      if (truckFilter === 'UNASSIGNED') { if (it.truck) return false; }
+                      else if (it.truck !== truckFilter) return false;
+                    }
+                    if (salesFilter) {
+                      if (salesFilter === '__NONE__') { if (it.project.salesResponsible) return false; }
+                      else if ((it.project.salesResponsible || '').toLowerCase() !== salesFilter.toLowerCase()) return false;
+                    }
+                    if (searchVal) {
+                      const hay = [it.project.name, it.project.orderNumber || '', it.project.customer, it.jobType || '', (it.bagCount != null ? String(it.bagCount) : '')].join(' ').toLowerCase();
+                      if (!hay.includes(searchVal)) return false;
+                    }
+                    return true;
+                  });
+                  return filtered.length > 0;
+                };
+                const includeSat = dayHasAny(5);
+                const includeSun = dayHasAny(6);
+                const visibleIndices = [0,1,2,3,4].concat(includeSat ? [5] : []).concat(includeSun ? [6] : []);
+                // Determine if there is any unassigned item in this week
+                let hasUnassigned = false;
+                for (const day of weekDays) {
+                  const raw = itemsByDay.get(day) || [];
+                  const filtered = raw.filter(it => {
+                    if (truckFilter) {
+                      if (truckFilter === 'UNASSIGNED') { if (it.truck) return false; }
+                      else if (it.truck !== truckFilter) return false;
+                    }
+                    if (salesFilter) {
+                      if (salesFilter === '__NONE__') { if (it.project.salesResponsible) return false; }
+                      else if ((it.project.salesResponsible || '').toLowerCase() !== salesFilter.toLowerCase()) return false;
+                    }
+                    if (searchVal) {
+                      const hay = [it.project.name, it.project.orderNumber || '', it.project.customer, it.jobType || '', (it.bagCount != null ? String(it.bagCount) : '')].join(' ').toLowerCase();
+                      if (!hay.includes(searchVal)) return false;
+                    }
+                    return true;
+                  });
+                  if (filtered.some(it => !it.truck)) { hasUnassigned = true; break; }
+                }
+                const rows = [...trucks, ...(hasUnassigned ? ['__UNASSIGNED__'] : [])];
+                const rowCount = rows.length;
+                const firstDay = week.find(c => c.date)?.date;
+                const weekNum = firstDay ? isoWeekNumber(firstDay) : '';
                 return (
-                  <div key={day} style={{ display: 'flex', alignItems: 'stretch', gap: 8 }}>
-                    <div
-                      id={`calday-${day}`}
-                      onClick={() => scheduleSelectedOnDay(day)}
-                      onDragOver={allowDrop}
-                      onDrop={e => onDropDay(e, day)}
-                      style={{ width: 130, flexShrink: 0, border: isJumpHighlight ? '2px solid #f59e0b' : (selectedProjectId ? '2px dashed #fbbf24' : '1px solid #cbd5e1'), background: '#f8fafc', borderRadius: 8, padding: '6px 8px', display: 'flex', flexDirection: 'column', justifyContent: 'center', cursor: selectedProjectId ? 'copy' : 'default' }}>
-                      <span style={{ fontSize: 12, fontWeight: 600 }}>{day.slice(8,10)}/{day.slice(5,7)}</span>
-                      <span style={{ fontSize: 10, color: '#64748b' }}>{new Date(day + 'T00:00:00').toLocaleDateString('sv-SE', { weekday: 'short' })}</span>
+                  <div key={wi} style={{ display: 'grid', gap: 8, border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff', padding: 8 }}>
+                    {/* Compact week label header */}
+                    <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color:'#0f172a', background:'#f1f5f9', border:'1px solid #e2e8f0', borderRadius: 999, padding: '2px 8px' }}>{weekNum && `v${weekNum}`}</span>
                     </div>
-                    <div style={{ flex: 1, display: 'grid', gap: 10 }}>
-                      {(() => {
-                        // Always show every truck strip (even with 0 items) + optional unassigned group (if any unassigned items).
-                        const grouped: Record<string, typeof items> = {};
-                        for (const it of items) {
-                          const key = it.truck || '__UNASSIGNED__';
-                          (grouped[key] ||= []).push(it);
-                        }
-                        // Ensure every known truck has an entry (could be empty)
-                        for (const t of trucks) {
-                          if (!grouped[t]) grouped[t] = [];
-                        }
-                        const hasUnassigned = !!grouped['__UNASSIGNED__'];
-                        const truckOrder = trucks;
-                        const keys = [
-                          ...truckOrder,
-                          ...(hasUnassigned ? ['__UNASSIGNED__'] : [])
-                        ];
-                        return keys.map(k => {
-                          const list = grouped[k] || [];
-                          const sackSum = list.reduce((acc, it) => acc + (it.bagCount || 0), 0);
-                          const label = k === '__UNASSIGNED__' ? 'Ingen lastbil' : k;
-                          return (
-                            <div key={k} style={{ border: '1px solid #e2e8f0', borderRadius: 8, padding: 8, background: '#ffffff', display: 'grid', gap: 6, opacity: list.length === 0 ? 0.75 : 1 }}>
-                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
-                                <span style={{ fontSize: 11, fontWeight: 600 }}>{label} ({list.length})</span>
-                                {sackSum > 0 && <span style={{ fontSize: 10, color: '#64748b' }}>{sackSum} säckar</span>}
-                              </div>
-                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, minHeight: 10 }}>
-                                {list.length === 0 && (
-                                  <span style={{ fontSize: 10, color: '#94a3b8' }}>—</span>
-                                )}
+                    <div style={{ display: 'grid', gridTemplateColumns: `140px repeat(${visibleIndices.length}, 1fr)`, alignItems: 'center', gap: 6 }}>
+                      {/* Header row: truck label col + 7 weekday headers */}
+                      <div style={{ gridColumn: '1 / 2', fontSize: 12, fontWeight: 600, color:'#374151', textAlign:'left' }}>Lastbil</div>
+                      {visibleIndices.map((idx, vi) => (
+                        <div key={`hdr-${idx}`} style={{ gridColumn: `${2 + vi} / ${3 + vi}`, background: dayHeaderBg, border: '1px solid #e5e7eb', borderRadius: 8, textAlign: 'center', padding: '4px 0', fontSize: 12, fontWeight: 600, color: '#374151' }}>{dayNames[idx]}</div>
+                      ))}
+                      {/* Rows per truck */}
+                      {rows.map((rowKey, ri) => (
+                        <>
+                          {/* Row background band with zebra striping and truck color accent */}
+                          {(() => { const disp = rowKey !== '__UNASSIGNED__' ? truckColors[rowKey] : null; const laneColor = disp?.border || '#cbd5e1'; const zebra = ri % 2 === 0 ? '#ffffff' : '#f9fafb'; const endCol = 2 + visibleIndices.length; const style: React.CSSProperties = { gridColumn: `1 / ${endCol}`, gridRow: `${ri + 2} / ${ri + 3}`, background: zebra, borderLeft: `4px solid ${rowKey === '__UNASSIGNED__' ? '#cbd5e1' : laneColor}`, borderRadius: 8, opacity: 0.9 }; return <div key={`bg-${rowKey}`} style={style} />; })()}
+                          <div key={`lbl-${rowKey}`} style={{ gridColumn: '1 / 2', gridRow: `${ri + 2} / ${ri + 3}`, fontSize: 12, fontWeight: 600, color:'#111827', display:'flex', alignItems:'center', gap: 8, flexWrap: 'wrap', paddingLeft: 8 }}>
+                            {(() => { const disp = rowKey !== '__UNASSIGNED__' ? truckColors[rowKey] : null; const sw = { width: 12, height: 12, borderRadius: 4, border: `2px solid ${disp?.border || '#94a3b8'}`, background: '#fff' } as React.CSSProperties; return <span key={`sw-${rowKey}`} style={sw} />; })()}
+                            <span>{rowKey === '__UNASSIGNED__' ? 'Ingen lastbil' : rowKey}</span>
+                            {rowKey !== '__UNASSIGNED__' && (() => { const team = truckTeamNames(rowKey); return team.length ? (
+                              <span style={{ fontSize: 10, fontWeight: 500, color: '#475569', background: '#f1f5f9', border: '1px solid #e2e8f0', borderRadius: 999, padding: '1px 8px' }} title={`Team: ${team.join(', ')}`}>
+                                Team: {team.join(', ')}
+                              </span>
+                            ) : null; })()}
+                            {(() => {
+                              // Weekly total bags for this truck: count only span starts within this week
+                              let sum = 0;
+                              for (const day of weekDays) {
+                                const raw = itemsByDay.get(day) || [];
+                                const list = raw.filter(it => {
+                                  const matchTruck = rowKey === '__UNASSIGNED__' ? !it.truck : it.truck === rowKey;
+                                  if (!matchTruck) return false;
+                                  if (truckFilter) {
+                                    if (truckFilter === 'UNASSIGNED') { if (it.truck) return false; }
+                                    else if (it.truck !== truckFilter) return false;
+                                  }
+                                  if (salesFilter) {
+                                    if (salesFilter === '__NONE__') { if (it.project.salesResponsible) return false; }
+                                    else if ((it.project.salesResponsible || '').toLowerCase() !== salesFilter.toLowerCase()) return false;
+                                  }
+                                  if (searchVal) {
+                                    const hay = [it.project.name, it.project.orderNumber || '', it.project.customer, it.jobType || '', (it.bagCount != null ? String(it.bagCount) : '')].join(' ').toLowerCase();
+                                    if (!hay.includes(searchVal)) return false;
+                                  }
+                                  return true;
+                                });
+                                for (const it of list) {
+                                  const isStart = (it as any).spanStart;
+                                  if (!isStart) continue; // only count the start day of a span
+                                  if (typeof it.bagCount === 'number' && it.bagCount > 0) sum += it.bagCount;
+                                }
+                              }
+                              return sum > 0 ? (
+                                <span style={{ fontSize: 10, fontWeight: 600, color: '#334155', background: '#f1f5f9', border: '1px solid #e2e8f0', borderRadius: 999, padding: '1px 8px' }} title={`Totalt säckar denna vecka: ${sum}`}>
+                                  {sum} säckar
+                                </span>
+                              ) : null;
+                            })()}
+                          </div>
+                          {visibleIndices.map((weekdayIdx, vi) => {
+                            const day = week[weekdayIdx]?.date || null;
+                            const raw = day ? (itemsByDay.get(day) || []) : [];
+                            const list = raw.filter(it => {
+                              const matchTruck = rowKey === '__UNASSIGNED__' ? !it.truck : it.truck === rowKey;
+                              if (!matchTruck) return false;
+                              if (truckFilter) {
+                                if (truckFilter === 'UNASSIGNED') { if (it.truck) return false; }
+                                else if (it.truck !== truckFilter) return false;
+                              }
+                              if (salesFilter) {
+                                if (salesFilter === '__NONE__') { if (it.project.salesResponsible) return false; }
+                                else if ((it.project.salesResponsible || '').toLowerCase() !== salesFilter.toLowerCase()) return false;
+                              }
+                              if (searchVal) {
+                                const hay = [it.project.name, it.project.orderNumber || '', it.project.customer, it.jobType || '', (it.bagCount != null ? String(it.bagCount) : '')].join(' ').toLowerCase();
+                                if (!hay.includes(searchVal)) return false;
+                              }
+                              return true;
+                            })
+                            .sort((a, b) => {
+                              const ao = a.project.orderNumber || '';
+                              const bo = b.project.orderNumber || '';
+                              if (ao && bo && ao !== bo) return ao.localeCompare(bo, 'sv');
+                              return a.project.name.localeCompare(b.project.name, 'sv');
+                            });
+                            const isJumpHighlight = !!day && day === jumpTargetDay;
+                            const disp = rowKey !== '__UNASSIGNED__' ? truckColors[rowKey] : null;
+                            const laneColor = disp?.border || '#cbd5e1';
+                            const gridCol = 2 + vi;
+                            return (
+                              <div key={`cell-${rowKey}-${weekdayIdx}-${day || 'x'}`} id={day ? `calday-${day}` : undefined}
+                                   onClick={day ? () => scheduleSelectedOnDay(day) : undefined}
+                                   onDragOver={allowDrop}
+                                   onDrop={day ? (e => onDropDay(e, day)) : undefined}
+                                   style={{ gridColumn: `${gridCol} / ${gridCol + 1}`, gridRow: `${ri + 2} / ${ri + 3}`, minHeight: 48, border: isJumpHighlight ? '2px solid #f59e0b' : (selectedProjectId ? '2px dashed #fbbf24' : '1px solid rgba(148,163,184,0.35)'), borderRadius: 8, padding: 6, background: '#ffffff', display: 'flex', flexDirection: 'column', gap: 4, borderLeft: `4px solid ${rowKey === '__UNASSIGNED__' ? '#cbd5e1' : laneColor}` }}>
+                                {list.length === 0 && <span style={{ fontSize: 11, color: '#94a3b8' }}>—</span>}
                                 {list.map(it => {
                                   let display: null | { bg: string; border: string; text: string } = null;
                                   if (it.color) {
@@ -2108,14 +2200,12 @@ export default function PlanneringPage() {
                                   const cardBorder = display ? display.border : '#c7d2fe';
                                   const cardBg = display ? display.bg : '#eef2ff';
                                   const highlight = calendarSearch && (it.project.name.toLowerCase().includes(searchVal) || (it.project.orderNumber || '').toLowerCase().includes(searchVal));
-                                  const isMid = (it as any).spanMiddle; // we still dim mid-span slightly
+                                  const isMid = (it as any).spanMiddle;
+                                  const isStart = (it as any).spanStart;
                                   return (
-                                    <div key={`${it.segmentId}:${it.day}`}
-                                         draggable
-                                         onDragStart={e => onDragStart(e, it.segmentId)}
-                                         onDragEnd={onDragEnd}
-                                         style={{ position: 'relative', border: `2px solid ${highlight ? '#f59e0b' : cardBorder}`, background: cardBg, borderRadius: 6, padding: 6, fontSize: 11, cursor: 'grab', display: 'flex', flexDirection: 'column', gap: 4, opacity: isMid ? 0.9 : 1, boxShadow: highlight ? '0 0 0 3px rgba(245,158,11,0.35)' : 'none', minWidth: 160 }}>
-                                      <span style={{ fontWeight: 600, color: display ? display.text : '#312e81', lineHeight: 1.2 }}>
+                                    <div key={`${it.segmentId}:${it.day}`} draggable onDragStart={e => onDragStart(e, it.segmentId)} onDragEnd={onDragEnd}
+                                         style={{ position: 'relative', border: `2px solid ${highlight ? '#f59e0b' : cardBorder}`, background: cardBg, borderRadius: 6, padding: 6, fontSize: 11, cursor: 'grab', display: 'grid', gap: 4, opacity: isMid ? 0.95 : 1 }}>
+                                      <span style={{ fontWeight: 600, color: display ? display.text : '#312e81' }}>
                                         {it.project.orderNumber ? <span style={{ fontFamily: 'ui-monospace, monospace', background: '#ffffff', color: display ? display.text : '#312e81', border: `1px solid ${cardBorder}`, padding: '1px 4px', borderRadius: 4, marginRight: 4 }}>#{it.project.orderNumber}</span> : null}
                                         {it.project.name}
                                       </span>
@@ -2126,14 +2216,24 @@ export default function PlanneringPage() {
                                           {it.jobType || ''}
                                         </span>
                                       )}
+                                      {isStart && scheduleMeta[it.project.id]?.actual_bags_used != null && (
+                                        <span style={{ fontSize: 9, color: display ? display.text : '#1e293b', background:'#ffffff50', padding:'2px 5px', borderRadius:10, border:`1px solid ${cardBorder}55` }} title={`Rapporterat: ${scheduleMeta[it.project.id]?.actual_bags_used} säckar`}>
+                                          säckar blåsta {scheduleMeta[it.project.id]!.actual_bags_used} st
+                                        </span>
+                                      )}
+                                      {isStart && hasEgenkontroll(it.project.orderNumber) && (() => { const pth = egenkontrollPath(it.project.orderNumber); return (
+                                        <a href={pth ? `/api/storage/download?path=${encodeURIComponent(pth)}` : '#'} target="_blank" rel="noopener noreferrer" style={{ textDecoration:'none', fontSize:9, background:'#059669', color:'#fff', padding:'1px 5px', borderRadius:8, alignSelf:'flex-start', border:'1px solid #047857', display:'inline-flex', gap:4, alignItems:'center', cursor:'pointer' }} title={pth ? 'Öppna egenkontroll (PDF)' : 'Egenkontroll hittad'}>
+                                          Rapporterad
+                                        </a>
+                                      ); })()}
                                     </div>
                                   );
                                 })}
                               </div>
-                            </div>
-                          );
-                        });
-                      })()}
+                            );
+                          })}
+                        </>
+                      ))}
                     </div>
                   </div>
                 );
