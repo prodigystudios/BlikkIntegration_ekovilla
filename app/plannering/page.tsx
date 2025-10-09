@@ -1477,7 +1477,7 @@ export default function PlanneringPage() {
         const seller = deriveSeller(raw) || base?.salesResponsible || null;
         return (
           <div style={{ position: 'fixed', inset:0, zIndex: 260, background: 'rgba(15,23,42,0.5)', backdropFilter:'blur(3px)', display:'flex', alignItems:'center', justifyContent:'center', padding:16 }} onClick={closeProjectModal}>
-            <div role="dialog" aria-modal="true" onClick={e => e.stopPropagation()} style={{ width: 'min(720px, 92vw)', maxHeight: '80vh', overflowY: 'auto', background:'#fff', border:'1px solid #e2e8f0', borderRadius:12, boxShadow:'0 12px 30px rgba(0,0,0,0.25)', display:'grid', gap:12, padding:16 }}>
+            <div role="dialog" aria-modal="true" aria-busy={detailLoading ? true : undefined} onClick={e => e.stopPropagation()} style={{ width: 'min(720px, 92vw)', maxHeight: '80vh', overflowY: 'auto', background:'#fff', border:'1px solid #e2e8f0', borderRadius:12, boxShadow:'0 12px 30px rgba(0,0,0,0.25)', display:'grid', gap:12, padding:16 }}>
               <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
                 <div style={{ display:'grid', gap:8 }}>
                   <strong style={{ fontSize:18, color:'#0f172a' }}>
@@ -1488,7 +1488,25 @@ export default function PlanneringPage() {
                 </div>
                 <button onClick={closeProjectModal} className="btn--plain btn--sm" style={{ background:'#fee2e2', border:'1px solid #fca5a5', color:'#b91c1c', borderRadius:6, padding:'6px 10px', fontSize:12 }}>Stäng</button>
               </div>
-              {detailLoading && <div style={{ fontSize:12, color:'#475569' }}>Laddar detaljer…</div>}
+              {detailLoading && (
+                <div role="status" aria-live="polite" style={{ display:'grid', gap:10, padding:'8px 0' }}>
+                  <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                      <circle cx="12" cy="12" r="9" stroke="#cbd5e1" strokeWidth="3" opacity="0.35" />
+                      <path d="M21 12a9 9 0 0 0-9-9" stroke="#0ea5e9" strokeWidth="3" strokeLinecap="round">
+                        <animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="0.8s" repeatCount="indefinite" />
+                      </path>
+                    </svg>
+                    <span style={{ fontSize:12, color:'#475569' }}>Hämtar detaljer…</span>
+                  </div>
+                  <div style={{ display:'grid', gap:6 }}>
+                    <div style={{ height:12, background:'#e5e7eb', borderRadius:6 }} />
+                    <div style={{ height:12, width:'85%', background:'#e5e7eb', borderRadius:6 }} />
+                    <div style={{ height:12, width:'70%', background:'#e5e7eb', borderRadius:6 }} />
+                    <div style={{ height:80, background:'#f8fafc', border:'1px solid #e2e8f0', borderRadius:8 }} />
+                  </div>
+                </div>
+              )}
               {detailError && <div style={{ fontSize:12, color:'#b91c1c', background:'#fef2f2', border:'1px solid #fecaca', padding:'6px 8px', borderRadius:8 }}>Fel: {detailError}</div>}
               <div style={{ display:'grid', gap:12 }}>
                 <div style={{ display:'grid', gap:6 }}>
