@@ -313,20 +313,9 @@ export default function PlanneringPage() {
   const pendingOps = useRef<Promise<any>[]>([]);
   const createdIdsRef = useRef<Set<string>>(new Set());
 
-  // Minimal scheduled-only contact enrichment (phase 1):
-  // For each scheduled project lacking customerEmail but having a numeric customerId, fetch contact once.
-  const enrichmentAttemptedRef = useRef<Set<number>>(new Set());
-  // Cache customerId -> email (or null if definitively none) to propagate across multiple projects
-  const contactEmailCacheRef = useRef<Map<number, string | null>>(new Map());
-  // Live reference to latest projects to avoid stale closure when summarizing
-  const projectsRef = useRef<Project[]>(projects);
-  useEffect(() => { projectsRef.current = projects; }, [projects]);
-  // Adaptive rate limiting state (starts ~320ms, expands on 429, decays slowly on success)
-  const rateDelayRef = useRef<number>(320);
-  const lastContactRequestAtRef = useRef<number>(0);
-  const secondPassScheduledRef = useRef<boolean>(false);
-  const passCounterRef = useRef<number>(0);
-  const [contactEnrichStatus, setContactEnrichStatus] = useState<'idle' | 'running' | 'second-pass-wait' | 'done' | 'not-needed'>('idle');
+  // On-demand client email fetch: status map per project
+  const [emailFetchStatus, setEmailFetchStatus] = useState<Record<string, 'idle' | 'loading' | 'error'>>({});
+  const [emailToast, setEmailToast] = useState<{ pid: string; msg: string } | null>(null);
   // Client notification tracking (local only for now)
   const [pendingNotifyProjectId, setPendingNotifyProjectId] = useState<string | null>(null);
   function markClientNotified(pid: string) {
@@ -351,176 +340,108 @@ export default function PlanneringPage() {
     }).then(({ error }) => { if (error) console.warn('[notify] undo error', error); }));
   }
 
-  // Derive enrichment progress for overlay
-  const enrichmentProgress = useMemo(() => {
-    const scheduledIds = new Set(scheduledSegments.map(s => s.projectId));
-    const scheduledProjects = projects.filter(p => scheduledIds.has(p.id));
-    const withCustomerId = scheduledProjects.filter(p => Number.isFinite(p.customerId));
-    const total = withCustomerId.length;
-    const withEmail = withCustomerId.filter(p => p.customerEmail).length;
-    return { total, withEmail };
-  }, [scheduledSegments, projects]);
-
-  // Determine if enrichment is needed and adjust initial status
-  useEffect(() => {
-    if (contactEnrichStatus === 'idle') {
-      if (enrichmentProgress.total === 0) {
-        setContactEnrichStatus('not-needed');
-      } else if (enrichmentProgress.withEmail < enrichmentProgress.total) {
-        // We will start running as soon as effect kicks in
-        // (safety: set to running so overlay does not dismiss prematurely)
-        setContactEnrichStatus('running');
-      } else if (enrichmentProgress.withEmail === enrichmentProgress.total) {
-        setContactEnrichStatus('done');
+  // On-demand helpers for email fetching
+  const ensureCustomerIdForProject = useCallback(async (projectId: string): Promise<number | null> => {
+    const proj = projects.find(p => p.id === projectId);
+    if (!proj) return null;
+    if (proj.customerId != null) return proj.customerId as number;
+    try {
+      const r = await fetch(`/api/blikk/projects/${projectId}`);
+      if (!r.ok) return null;
+      const pj = await r.json();
+      if (pj?.customerId != null) {
+        const cid = Number(pj.customerId);
+        setProjects(prev => prev.map(p => p.id === projectId ? { ...p, customerId: cid } : p));
+        return cid;
       }
-    }
-  }, [contactEnrichStatus, enrichmentProgress]);
+    } catch { /* ignore */ }
+    return null;
+  }, [projects]);
 
-  // Debug logic removed (previously used localStorage/contactDebug flag)
-
-    const debug = false;
-  useEffect(() => {
-    if (!scheduledSegments.length) return;
-    const scheduledProjectIds = new Set(scheduledSegments.map(s => s.projectId));
-    const currentProjects = projectsRef.current; // always latest
-    const missingId = currentProjects.filter(p => scheduledProjectIds.has(p.id) && !p.customerId);
-    const withIdsInitial = currentProjects.filter(p => scheduledProjectIds.has(p.id) && p.customerId && Number.isFinite(p.customerId));
-    let targets: Project[] = withIdsInitial.filter(p => !p.customerEmail);
-    if (!missingId.length && !targets.length) return;
-    let cancelled = false;
-    let any429 = false;
-    passCounterRef.current += 1;
-    if ((contactEnrichStatus === 'idle' || contactEnrichStatus === 'second-pass-wait' || contactEnrichStatus === 'not-needed') && targets.length) {
-      setContactEnrichStatus('running');
-    }
-    // Helper: robust fetch with retries (handles 429 + transient network)
-    async function fetchContactEmail(cid: number): Promise<string | null> {
-      const maxAttempts = 3;
-      let attempt = 0;
-      while (!cancelled && attempt < maxAttempts) {
-        attempt++;
+  const fetchContactEmailByCustomerId = useCallback(async (customerId: number): Promise<string | null> => {
+    let attempt = 0;
+    while (attempt < 3) {
+      attempt++;
+      const res = await fetch(`/api/blikk/contacts/${customerId}`);
+      if (res.status === 404) return null;
+      if (res.status === 429) {
+        let waitMs = 1000;
         try {
-          // Rate limit pacing: ensure delay from previous request
-          const now = Date.now();
-          const since = now - lastContactRequestAtRef.current;
-          const baseDelay = rateDelayRef.current;
-          if (since < baseDelay) {
-            await new Promise(r => setTimeout(r, baseDelay - since));
-          }
-          const res = await fetch(`/api/blikk/contacts/${cid}`);
-          lastContactRequestAtRef.current = Date.now();
-          if (res.status === 404) return null; // terminal (no contact)
-          if (res.status === 429) {
-            any429 = true;
-            // Escalate base delay aggressively to avoid repeated limits
-            rateDelayRef.current = Math.min(rateDelayRef.current * 1.6 + 120, 2500);
-            let wait = 1; // server suggested extra wait
-            try {
-              const body = await res.json().catch(() => ({}));
-              wait = body?.waitInSeconds || Number(res.headers.get('Retry-After')) || 1;
-            } catch {/* ignore */}
-            await new Promise(r => setTimeout(r, Math.min(wait, 5) * 1000));
-            continue; // retry without counting terminal
-          }
-          if (!res.ok) {
-            // transient? exponential backoff; also slightly raise delay to be safe
-            rateDelayRef.current = Math.min(rateDelayRef.current + 80, 2500);
-            if (attempt < maxAttempts) {
-              await new Promise(r => setTimeout(r, 250 * attempt));
-              continue;
-            }
-            return null;
-          }
-          // Successful call: gently decay delay towards floor (300ms)
-          rateDelayRef.current = Math.max(300, Math.round(rateDelayRef.current * 0.9));
-          const json = await res.json();
-          const email = json?.contact?.email || json?.contact?.emailCandidates?.[0] || null;
-          return email || null; // even if null, treat as terminal for now
-        } catch {
-          if (attempt < maxAttempts) {
-            await new Promise(r => setTimeout(r, 200 * attempt));
-            continue;
-          }
-          return null;
-        }
-      }
-      return null;
-    }
-    (async () => {
-      // 1. Backfill customerId for those missing
-      for (const proj of missingId) {
-        if (cancelled) break;
-        try {
-          const r = await fetch(`/api/blikk/projects/${proj.id}?debug=0`);
-          if (!r.ok) continue;
-          const pj = await r.json();
-          if (pj.customerId) {
-            setProjects(prev => prev.map(p => p.id === proj.id ? { ...p, customerId: pj.customerId } : p));
+          const body = await res.json().catch(() => ({}));
+          if (typeof body?.waitInSeconds === 'number') waitMs = Math.min(body.waitInSeconds, 5) * 1000;
+          else {
+            const ra = Number(res.headers.get('Retry-After'));
+            if (Number.isFinite(ra)) waitMs = Math.max(ra, 1) * 1000;
           }
         } catch { /* ignore */ }
+        await new Promise(r => setTimeout(r, waitMs));
+        continue;
       }
-      // Recompute targets using freshest projects after any backfill
-      if (missingId.length) {
-        const latest = projectsRef.current;
-        targets = latest.filter(p => scheduledProjectIds.has(p.id) && p.customerId && Number.isFinite(p.customerId) && !p.customerEmail);
-      }
-      for (const proj of targets) {
-        if (cancelled) break;
-        const cid = proj.customerId as number;
-        // Propagate from cache if available
-        if (contactEmailCacheRef.current.has(cid) && contactEmailCacheRef.current.get(cid)) {
-          const cachedEmail = contactEmailCacheRef.current.get(cid)!;
-          setProjects(prev => prev.map(p => (p.customerId === cid && !p.customerEmail) ? { ...p, customerEmail: cachedEmail } : p));
+      if (!res.ok) {
+        if (attempt < 3) {
+          await new Promise(r => setTimeout(r, 200 * attempt));
           continue;
         }
-        if (enrichmentAttemptedRef.current.has(cid)) continue; // already terminally processed
-        const email = await fetchContactEmail(cid);
-        enrichmentAttemptedRef.current.add(cid); // mark done (success OR exhausted attempts)
-        if (cancelled) break;
-        if (email) {
-          contactEmailCacheRef.current.set(cid, email);
-          setProjects(prev => prev.map(p => (p.customerId === cid && !p.customerEmail) ? { ...p, customerEmail: email } : p));
-        }
-        // Light jitter between iterations to avoid alignment
-        await new Promise(r => setTimeout(r, 40 + Math.random() * 70));
+        return null;
       }
-      // Schedule a cooled-off second sweep if we hit rate limits and still have unresolved emails
-      if (!cancelled && any429 && !secondPassScheduledRef.current) {
-        const remaining = projectsRef.current.filter(p => scheduledProjectIds.has(p.id) && p.customerId && !p.customerEmail);
-        if (remaining.length) {
-          secondPassScheduledRef.current = true;
-          setTimeout(() => {
-            if (cancelled) return;
-            // Allow a second attempt: clear attempted flags for remaining ids only
-            for (const p of remaining) {
-              if (p.customerId != null) enrichmentAttemptedRef.current.delete(p.customerId);
-            }
-            // Trigger effect again by updating a dummy state (reuse monthOffset toggle)
-            setMonthOffset(o => o); // noop state update to ensure React sees dependency? (scheduledSegments/projects changes will also trigger when we setProjects below)
-            // Force a minimal change to projects to retrigger effect if dependencies stable
-            setProjects(prev => [...prev]);
-          }, 4000); // cool-off window
-        }
-      }
-      // Mark status according to pass results
-      if (!cancelled) {
-        if (targets.length === 0) {
-          // No targets -> either not-needed or already handled earlier
-          if (enrichmentProgress.total === 0) setContactEnrichStatus('not-needed');
-          else setContactEnrichStatus('done');
-        } else if (any429 && passCounterRef.current < 2 && secondPassScheduledRef.current) {
-          setContactEnrichStatus('second-pass-wait');
-        } else if (!any429 || passCounterRef.current >= 2) {
-          setContactEnrichStatus('done');
-        }
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [scheduledSegments, projects]);
+      const j = await res.json();
+      const email = j?.contact?.email || j?.contact?.emailCandidates?.[0] || null;
+      return email || null;
+    }
+    return null;
+  }, []);
 
-  // Global overlay readiness: wait until core data + enrichment done (or timeout)
+  const openMailForSegment = useCallback((it: any, email: string) => {
+    const seg = scheduledSegments.find(s => s.id === it.segmentId);
+    const startDay = (seg?.startDay) || it.day;
+    const endDay = (seg?.endDay) || it.day;
+    const single = startDay === endDay;
+    const dateText = single ? startDay : `${startDay} – ${endDay}`;
+    const subject = encodeURIComponent(`Planerad isolering ${dateText} (${it.project.name})`);
+    const bodyLines = [
+      'Hej,',
+      '',
+      'Vi vill informera att arbetet är planerat:',
+      `Projekt: ${it.project.name}`,
+      `Datum: ${dateText}`,
+      '',
+      'Återkom gärna om något behöver justeras.',
+      '',
+      'Vänligen',
+      '',
+      (it.project.salesResponsible ? it.project.salesResponsible : 'Ekovilla')
+    ].join('\n');
+    const href = `mailto:${encodeURIComponent(email)}?subject=${subject}&body=${encodeURIComponent(bodyLines)}`;
+    if (typeof window !== 'undefined') window.location.href = href;
+    setTimeout(() => setPendingNotifyProjectId(it.project.id), 200);
+  }, [scheduledSegments]);
+
+  const handleEmailClick = useCallback(async (it: any) => {
+    const pid = it.project.id as string;
+    const current = projects.find(p => p.id === pid);
+    if (!current) return;
+    if (emailFetchStatus[pid] === 'loading') return; // de-dup
+    if (current.customerEmail) { openMailForSegment(it, current.customerEmail); return; }
+    setEmailFetchStatus(prev => ({ ...prev, [pid]: 'loading' }));
+    setEmailToast({ pid, msg: 'Förbereder mail…' });
+    try {
+      const cid = await ensureCustomerIdForProject(pid);
+      if (!cid) { alert('Kunde inte hitta kund-id för detta projekt.'); setEmailFetchStatus(prev => ({ ...prev, [pid]: 'error' })); setEmailToast(null); return; }
+      const email = await fetchContactEmailByCustomerId(cid);
+      if (!email) { alert('Ingen e‑postadress hittades för kunden.'); setEmailFetchStatus(prev => ({ ...prev, [pid]: 'error' })); setEmailToast(null); return; }
+      setProjects(prev => prev.map(p => p.id === pid ? { ...p, customerEmail: email } : p));
+      openMailForSegment(it, email);
+      setEmailFetchStatus(prev => ({ ...prev, [pid]: 'idle' }));
+      setEmailToast(null);
+    } catch {
+      setEmailFetchStatus(prev => ({ ...prev, [pid]: 'error' }));
+      setEmailToast(null);
+    }
+  }, [projects, emailFetchStatus, ensureCustomerIdForProject, fetchContactEmailByCustomerId, openMailForSegment]);
+
+  // Global overlay readiness: wait until core data ready (or timeout)
   const [gateReleased, setGateReleased] = useState(false);
-  const globalReady = (!loading && !syncing && !egenkontrollLoading && (contactEnrichStatus === 'done' || contactEnrichStatus === 'not-needed')) || gateReleased;
+  const globalReady = (!loading && !syncing && !egenkontrollLoading) || gateReleased;
   useEffect(() => {
     if (globalReady) return;
     const t = setTimeout(() => setGateReleased(true), 20000); // safety timeout after 20s
@@ -532,16 +453,8 @@ export default function PlanneringPage() {
     steps.push({ label: 'Projekt', state: loading ? 'pending' : 'done' });
     steps.push({ label: 'Planering', state: syncing ? 'running' : 'done' });
     steps.push({ label: 'Egenkontroll', state: egenkontrollLoading ? 'pending' : 'done' });
-    const { total, withEmail } = enrichmentProgress;
-    if (total > 0) {
-      let state: 'pending' | 'done' | 'running' = 'pending';
-      if (contactEnrichStatus === 'running') state = 'running';
-      else if (withEmail === total || contactEnrichStatus === 'done') state = 'done';
-      else if (contactEnrichStatus === 'second-pass-wait') state = 'running';
-      steps.push({ label: 'Kontakter', state, note: `${withEmail}/${total}` });
-    }
     return steps;
-  }, [loading, syncing, egenkontrollLoading, enrichmentProgress, contactEnrichStatus]);
+  }, [loading, syncing, egenkontrollLoading]);
 
   // Realtime + periodic refresh for egenkontroll report detection
   useEffect(() => {
@@ -1407,12 +1320,22 @@ export default function PlanneringPage() {
 
   return (
     <div style={{ padding: 16, display: 'grid', gap: 16, position: 'relative' }}>
+      {emailToast && (
+        <>
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.35)', backdropFilter: 'blur(1px)', zIndex: 240, pointerEvents: 'none' }} />
+          <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', background: '#111827', color: '#fff', padding: '10px 14px', borderRadius: 999, display: 'inline-flex', alignItems: 'center', gap: 8, boxShadow: '0 6px 20px rgba(0,0,0,0.25)', zIndex: 250 }}>
+            <span style={{ width: 12, height: 12, borderRadius: 12, border: '2px solid #93c5fd', borderTopColor: '#1d4ed8', display: 'inline-block', animation: 'spin 1s linear infinite' }} />
+            <span style={{ fontSize: 12 }}>{emailToast.msg}</span>
+            <style>{`@keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}`}</style>
+          </div>
+        </>
+      )}
       {!globalReady && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'linear-gradient(135deg,#f8fafc,#e0f2fe)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, fontFamily: 'system-ui, sans-serif' }} aria-busy="true" aria-live="polite">
           <div style={{ display: 'flex', flexDirection: 'column', gap: 20, width: 'min(420px,90%)' }}>
             <div style={{ textAlign: 'center' }}>
               <h2 style={{ margin: 0, fontSize: 20, color: '#0f172a' }}>Förbereder planering…</h2>
-              <p style={{ margin: '4px 0 0', fontSize: 13, color: '#475569' }}>Laddar data och kontaktuppgifter. Vänta innan du gör ändringar.</p>
+              <p style={{ margin: '4px 0 0', fontSize: 13, color: '#475569' }}>Laddar data. Vänta innan du gör ändringar.</p>
             </div>
             <div style={{ display: 'grid', gap: 10 }}>
               {overlayDetails.map(step => {
@@ -1423,18 +1346,14 @@ export default function PlanneringPage() {
                     <div style={{ width: 22, height: 22, borderRadius: 22, background: color, color: '#fff', fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{icon}</div>
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: 13, fontWeight: 600, color: '#0f172a', letterSpacing: '.2px' }}>{step.label}{step.note ? ` (${step.note})` : ''}</div>
-                      {step.label === 'Kontakter' && step.state !== 'done' && enrichmentProgress.total > 0 && (
-                        <div style={{ marginTop: 4, height: 6, background: '#e2e8f0', borderRadius: 4, overflow: 'hidden' }}>
-                          <div style={{ width: `${(enrichmentProgress.withEmail / Math.max(1, enrichmentProgress.total)) * 100}%`, background: '#2563eb', height: '100%', transition: 'width .4s ease' }} />
-                        </div>
-                      )}
+                      {/* no contact enrichment progress bar */}
                     </div>
                   </div>
                 );
               })}
             </div>
             <div style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: 11, color: '#64748b' }}>{contactEnrichStatus === 'second-pass-wait' ? 'Väntar på andra försök efter begränsning…' : 'Detta kan ta några sekunder.'}</div>
+              <div style={{ fontSize: 11, color: '#64748b' }}>Detta kan ta några sekunder.</div>
               <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 4 }}>Om detta inte stänger inom 15 sekunder kan du börja ändå.</div>
             </div>
             <button type="button" disabled={globalReady} onClick={() => setGateReleased(true)} style={{ marginTop: 4, fontSize: 12, padding: '8px 14px', background: globalReady ? '#059669' : '#e2e8f0', color: globalReady ? '#fff' : '#334155', border: '1px solid #cbd5e1', borderRadius: 8, cursor: 'pointer', fontWeight: 600 }}>
@@ -1913,39 +1832,13 @@ export default function PlanneringPage() {
                                       </div>
                                       <button type="button" className="btn--plain btn--xs" onClick={() => unschedule(it.segmentId)} style={{ fontSize: 11, background: '#fee2e2', border: '1px solid #fca5a5', color: '#b91c1c', borderRadius: 4, padding: '2px 6px' }}>Ta bort</button>
                                       <button type="button" className="btn--plain btn--xs" title="Ny separat dag" onClick={() => setSelectedProjectId(it.project.id)} style={{ fontSize: 11, background: '#ecfdf5', border: '1px solid #6ee7b7', color: '#047857', borderRadius: 4, padding: '2px 6px' }}>Ny dag</button>
-                                      {it.project.customerEmail && (() => {
-                                        const startDay = (it as any).spanStartDate || it.day;
-                                        const endDay = (it as any).spanEndDate || it.day;
-                                        const single = startDay === endDay;
-                                        const dateText = single ? startDay : `${startDay} – ${endDay}`;
-                                        const subject = encodeURIComponent(`Planerad isolering ${dateText} (${it.project.name})`);
-                                        // Simple line with truck identifier (previous working behavior)
-                                        const bodyLines = [
-                                          `Hej,`,
-                                          '',
-                                          'Vi vill informera att arbetet är planerat:',
-                                          `Projekt: ${it.project.name}`,
-                                          `Datum: ${dateText}`,
-                                          // it.truck ? `Lastbil/Team: ${it.truck}` : null,
-                                          '',
-                                          'Återkom gärna om något behöver justeras.',
-                                          '',
-                                          'Vänligen',
-                                          '',
-                                          // 2nd line with sales responsible if any, otherwise default to "Ekovilla"
-                                          (it.project.salesResponsible ? it.project.salesResponsible : 'Ekovilla')
-                                        ].filter(Boolean).join('\n');
-                                        const href = `mailto:${encodeURIComponent(it.project.customerEmail)}?subject=${subject}&body=${encodeURIComponent(bodyLines)}`;
-                                        const meta = scheduleMeta[it.project.id];
-                                        const notified = meta?.client_notified;
-                                        return (
-                                          <span style={{ display:'inline-flex', alignItems:'center', gap:6 }}>
-                                            <a href={href} onClick={() => { setTimeout(()=> setPendingNotifyProjectId(it.project.id), 200); }} style={{ fontSize:11, background: notified ? '#059669' : '#e0f2fe', border: notified ? '1px solid #047857' : '1px solid #7dd3fc', color: notified ? '#fff' : '#0369a1', borderRadius:4, padding:'2px 6px', textDecoration:'none', position:'relative' }} title={notified ? (meta?.client_notified_by ? `Notifierad av ${meta.client_notified_by}` : 'Kund markerad som notifierad') : 'Skicka planeringsmail'}>
-                                              {notified ? 'Notifierad ✓' : 'Maila kund'}
-                                            </a>
-                                          </span>
-                                        );
-                                      })()}
+                                      <span style={{ display:'inline-flex', alignItems:'center', gap:6 }}>
+                                        <button type="button" onClick={() => handleEmailClick(it)} disabled={emailFetchStatus[it.project.id] === 'loading'}
+                                          style={{ fontSize:11, background: scheduleMeta[it.project.id]?.client_notified ? '#059669' : '#e0f2fe', border: scheduleMeta[it.project.id]?.client_notified ? '1px solid #047857' : '1px solid #7dd3fc', color: scheduleMeta[it.project.id]?.client_notified ? '#fff' : '#0369a1', borderRadius:4, padding:'2px 6px', position:'relative' }}
+                                          title={scheduleMeta[it.project.id]?.client_notified ? (scheduleMeta[it.project.id]?.client_notified_by ? `Notifierad av ${scheduleMeta[it.project.id]!.client_notified_by}` : 'Kund markerad som notifierad') : 'Skicka planeringsmail'}>
+                                          {scheduleMeta[it.project.id]?.client_notified ? 'Notifierad ✓' : 'Maila kund'}
+                                        </button>
+                                      </span>
                                     </div>
                                   )}
                                 </div>
@@ -2104,6 +1997,16 @@ export default function PlanneringPage() {
                                         </div>
                                         <button type="button" className="btn--plain btn--xs" onClick={() => unschedule(it.segmentId)} style={{ fontSize: 10, background: '#fee2e2', border: '1px solid #fca5a5', color: '#b91c1c', borderRadius: 4, padding: '2px 4px' }}>X</button>
                                         <button type="button" className="btn--plain btn--xs" title="Ny separat dag" onClick={() => setSelectedProjectId(it.project.id)} style={{ fontSize: 10, background: '#ecfdf5', border: '1px solid #6ee7b7', color: '#047857', borderRadius: 4, padding: '2px 4px' }}>+Dag</button>
+                                        <span style={{ display:'inline-flex', alignItems:'center', gap:4 }}>
+                                          <button disabled={emailFetchStatus[it.project.id] === 'loading'}
+                                            type="button"
+                                            onClick={() => handleEmailClick(it)}
+                                            style={{ fontSize:10, background: scheduleMeta[it.project.id]?.client_notified ? '#059669' : '#e0f2fe', border: scheduleMeta[it.project.id]?.client_notified ? '1px solid #047857' : '1px solid #7dd3fc', color: scheduleMeta[it.project.id]?.client_notified ? '#fff' : '#0369a1', borderRadius: 4, padding: '2px 4px' }}
+                                            title={scheduleMeta[it.project.id]?.client_notified ? (scheduleMeta[it.project.id]?.client_notified_by ? `Notifierad av ${scheduleMeta[it.project.id]!.client_notified_by}` : 'Kund markerad som notifierad') : 'Skicka planeringsmail'}
+                                          >
+                                            {scheduleMeta[it.project.id]?.client_notified ? 'Notifierad ✓' : 'Maila kund'}
+                                          </button>
+                                        </span>
                                       </div>
                                     )}
                                   </div>
