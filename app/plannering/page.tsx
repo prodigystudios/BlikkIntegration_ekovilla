@@ -129,6 +129,17 @@ export default function PlanneringPage() {
   // View mode: standard month grid or weekday lanes (all Mondays in a row, etc.)
   const [viewMode, setViewMode] = useState<'monthGrid' | 'weekdayLanes' | 'dayList'>('monthGrid');
   const [showCardControls, setShowCardControls] = useState(false);
+  // Collapsible left sidebar (search/manual add/backlog)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem('planner.sidebarCollapsed');
+      if (v === '1') setSidebarCollapsed(true);
+    } catch { /* ignore */ }
+  }, []);
+  useEffect(() => {
+    try { localStorage.setItem('planner.sidebarCollapsed', sidebarCollapsed ? '1' : '0'); } catch { /* ignore */ }
+  }, [sidebarCollapsed]);
   // UI hover state for backlog punch effect
   const [hoverBacklogId, setHoverBacklogId] = useState<string | null>(null);
 
@@ -1409,9 +1420,10 @@ export default function PlanneringPage() {
       {source && <div style={{ fontSize: 11, color: '#9ca3af' }}>Källa: {source}</div>}
       {error && <div style={{ background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c', padding: '6px 8px', borderRadius: 6, fontSize: 12 }}>Fel: {error}</div>}
 
-      <div style={{ display: 'grid', gap: 16, gridTemplateColumns: '290px 1fr', alignItems: 'start' }}>
+  <div style={{ display: 'grid', gap: 16, gridTemplateColumns: sidebarCollapsed ? '1fr' : '290px 1fr', alignItems: 'start' }}>
         {/* Left: search / manual add / backlog */}
-        <div style={{ display: 'grid', gap: 16 }}>
+  {sidebarCollapsed ? null : (
+  <div style={{ display: 'grid', gap: 16 }}>
           {/* Search & manual add */}
             <div style={{ display: 'grid', gap: 10 }}>
               <form onSubmit={searchByOrderNumber} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
@@ -1523,7 +1535,8 @@ export default function PlanneringPage() {
             })}
       {selectedProjectId && <div style={{ fontSize: 11, color: '#b45309', background: '#fef3c7', border: '1px solid #fcd34d', padding: '4px 6px', borderRadius: 6 }}>Klicka på en dag i kalendern för att schemalägga vald projekt (fallback).</div>}
           </div>
-        </div>
+  </div>
+  )}
 
         {/* Calendar */}
         <div style={{ display: 'grid', gap: 12 }}>
@@ -1564,6 +1577,10 @@ export default function PlanneringPage() {
           </div>
           {/* Legend */}
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            <button type="button" className="btn--plain btn--sm" onClick={() => setSidebarCollapsed(s => !s)}
+              style={{ border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 10px', fontSize: 12 }}>
+              {sidebarCollapsed ? 'Visa projektpanel' : 'Dölj projektpanel'}
+            </button>
             <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
               <label style={{ fontSize: 12, color: '#374151' }}>Sök i kalender:</label>
               <input value={calendarSearch} onChange={e => setCalendarSearch(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); if (calendarMatchDays.length > 0) navigateToMatch((matchIndex + 1) % calendarMatchDays.length); } }} style={{ border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 6px', fontSize: 12 }} placeholder="#1234 eller namn" />
