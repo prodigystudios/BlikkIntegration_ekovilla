@@ -41,6 +41,12 @@ export async function GET(req: NextRequest) {
           const alt = (found as any).salesResponsibleName || (found as any).salesResponsibleFullName;
           return alt || null;
         })();
+        const addressObj: any = (found as any).address || (found as any).Address || null;
+        const street = addressObj?.street || addressObj?.Street || (found as any).street || (found as any).addressLine1 || (found as any).Address1 || (found as any).line1 || null;
+        const postalCode = addressObj?.postalCode || addressObj?.Zip || (found as any).postalCode || (found as any).zip || (found as any).zipCode || (found as any).postal || null;
+        const city = addressObj?.city || addressObj?.City || (found as any).city || (found as any).town || (found as any).locality || null;
+        const address = [street, postalCode, city].filter(Boolean).join(', ') || null;
+        const description = (found as any).description || (found as any).notes || (found as any).note || (found as any).comment || (found as any).projectDescription || null;
         const mapped = {
           id: String(found.id ?? found.projectId ?? found.orderNumber ?? found.Id ?? found.ProjectId ?? 'unknown'),
           name: found.title || found.name || found.projectName || found.orderName || `Projekt ${found.id}`,
@@ -50,6 +56,11 @@ export async function GET(req: NextRequest) {
           createdAt: found.createdDate || found.created || found.createdAt || found.creationDate || new Date().toISOString(),
           status: (found.status && (found.status.name || found.status.title)) || found.status || found.state || 'unknown',
           salesResponsible: salesResponsible,
+          street,
+          postalCode,
+          city,
+          address,
+          description,
           ...(includeRaw ? { _raw: found } : {}),
         };
         return NextResponse.json({ projects: [mapped], source: 'blikk:orderNumber' });

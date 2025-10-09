@@ -450,6 +450,63 @@ export default function PlanneringPage() {
     }
   }, [projects, emailFetchStatus, ensureCustomerIdForProject, fetchContactEmailByCustomerId, openMailForSegment]);
 
+  // Project detail modal
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [detailProjectId, setDetailProjectId] = useState<string | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const [detailCache, setDetailCache] = useState<Record<string, any>>({});
+  const openProjectModal = useCallback(async (projectId: string) => {
+    setDetailOpen(true);
+    setDetailProjectId(projectId);
+    setDetailError(null);
+    const base = projects.find(p => p.id === projectId);
+    const fetchViaLookup = async (): Promise<any | null> => {
+      try {
+        // Prefer order number query (Blikk uses it commonly); fallback to ID if numeric
+        if (base?.orderNumber) {
+          const r = await fetch(`/api/projects/lookup?orderId=${encodeURIComponent(base.orderNumber)}`);
+          const j = await r.json();
+          if (r.ok) return { source: 'lookup:order', project: j };
+        }
+        const idNum = Number(projectId);
+        if (Number.isFinite(idNum) && idNum > 0) {
+          const r = await fetch(`/api/projects/lookup?id=${idNum}`);
+          const j = await r.json();
+          if (r.ok) return { source: 'lookup:id', project: j };
+        }
+      } catch { /* ignore */ }
+      return null;
+    };
+
+    const cache = detailCache[projectId];
+    if (cache) {
+      const hasAddress = !!(cache?.project?.address || cache?.project?.street || cache?.project?.city);
+      const hasDesc = !!cache?.project?.description;
+      const hasSeller = !!cache?.project?.salesResponsible || !!base?.salesResponsible;
+      if (!(hasAddress && hasDesc && hasSeller)) {
+        setDetailLoading(true);
+        try {
+          const enriched = await fetchViaLookup();
+          if (enriched) setDetailCache(prev => ({ ...prev, [projectId]: enriched }));
+        } finally { setDetailLoading(false); }
+      }
+      return;
+    }
+
+    setDetailLoading(true);
+    try {
+      const j = await fetchViaLookup();
+      if (!j) throw new Error('Kunde inte hämta projektdetaljer');
+      setDetailCache(prev => ({ ...prev, [projectId]: j }));
+    } catch (e: any) {
+      setDetailError(String(e?.message || e));
+    } finally {
+      setDetailLoading(false);
+    }
+  }, [detailCache, projects]);
+  const closeProjectModal = useCallback(() => { setDetailOpen(false); setDetailProjectId(null); setDetailError(null); }, []);
+
   // Global overlay readiness: wait until core data ready (or timeout)
   const [gateReleased, setGateReleased] = useState(false);
   const globalReady = (!loading && !syncing && !egenkontrollLoading) || gateReleased;
@@ -1393,6 +1450,95 @@ export default function PlanneringPage() {
           </div>
         );
       })()}
+      {/* Project Detail Modal */}
+      {detailOpen && (() => {
+        const pid = detailProjectId!;
+        const base = projects.find(p => p.id === pid);
+        const api = detailCache[pid];
+        const raw = api?.project || api; // lookup returns full raw project
+        const location = raw?.workSiteAddress || raw?.location || null;
+        const street = location?.streetAddress || raw?.street || raw?.addressLine1 || null;
+        const postalCode = location?.postalCode || raw?.postalCode || raw?.zip || null;
+        const city = location?.city || raw?.city || null;
+        const address = [street, postalCode, city].filter(Boolean).join(', ');
+        const description = raw?.description || raw?.notes || raw?.note || null;
+        const segs = scheduledSegments.filter(s => s.projectId === pid);
+        const meta = scheduleMeta[pid];
+        const ekPath = egenkontrollPath(base?.orderNumber || null);
+        const mapsHref = address ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}` : null;
+        const team = meta?.truck ? truckTeamNames(meta.truck) : [];
+        const deriveSeller = (p: any): string | null => {
+          const sr = p?.salesResponsible || p?.salesResponsibleUser || p?.salesUser || p?.salesRep || p?.responsibleSalesUser;
+          if (Array.isArray(sr)) return sr.map((s: any) => (s && (s.name || s.fullName || s.title)) || '').filter(Boolean).join(', ') || null;
+          if (typeof sr === 'string') return sr;
+          if (sr && typeof sr === 'object') return sr.name || sr.fullName || sr.title || null;
+          return p?.salesResponsibleName || p?.salesResponsibleFullName || null;
+        };
+        const seller = deriveSeller(raw) || base?.salesResponsible || null;
+        return (
+          <div style={{ position: 'fixed', inset:0, zIndex: 260, background: 'rgba(15,23,42,0.5)', backdropFilter:'blur(3px)', display:'flex', alignItems:'center', justifyContent:'center', padding:16 }} onClick={closeProjectModal}>
+            <div role="dialog" aria-modal="true" onClick={e => e.stopPropagation()} style={{ width: 'min(720px, 92vw)', maxHeight: '80vh', overflowY: 'auto', background:'#fff', border:'1px solid #e2e8f0', borderRadius:12, boxShadow:'0 12px 30px rgba(0,0,0,0.25)', display:'grid', gap:12, padding:16 }}>
+              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+                <div style={{ display:'grid', gap:8 }}>
+                  <strong style={{ fontSize:18, color:'#0f172a' }}>
+                    {base?.orderNumber ? <span style={{ fontFamily:'ui-monospace,monospace', fontSize:13, background:'#eef2ff', border:'1px solid #c7d2fe', color:'#312e81', padding:'2px 6px', borderRadius:6, marginRight:8 }}>#{base.orderNumber}</span> : null}
+                    {base?.name || 'Projekt'}
+                  </strong>
+                  <span style={{ fontSize:12, color:'#475569' }}>{base?.customer}</span>
+                </div>
+                <button onClick={closeProjectModal} className="btn--plain btn--sm" style={{ background:'#fee2e2', border:'1px solid #fca5a5', color:'#b91c1c', borderRadius:6, padding:'6px 10px', fontSize:12 }}>Stäng</button>
+              </div>
+              {detailLoading && <div style={{ fontSize:12, color:'#475569' }}>Laddar detaljer…</div>}
+              {detailError && <div style={{ fontSize:12, color:'#b91c1c', background:'#fef2f2', border:'1px solid #fecaca', padding:'6px 8px', borderRadius:8 }}>Fel: {detailError}</div>}
+              <div style={{ display:'grid', gap:12 }}>
+                <div style={{ display:'grid', gap:6 }}>
+                  {mapsHref && (
+                    <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
+                      <span style={{ fontSize:12, color:'#334155', fontWeight:600 }}>Adress:</span>
+                      <span style={{ fontSize:12, color:'#334155' }}>{address}</span>
+                      <a href={mapsHref} target="_blank" rel="noopener noreferrer" className="btn--plain btn--xs" style={{ fontSize:11, border:'1px solid #cbd5e1', borderRadius:6, padding:'2px 8px', color:'#0369a1', background:'#e0f2fe' }}>Öppna i Kartor</a>
+                    </div>
+                  )}
+                  {description && (
+                    <div style={{ display:'grid', gap:4 }}>
+                      <span style={{ fontSize:12, color:'#334155', fontWeight:600 }}>Beskrivning</span>
+                      <p style={{ fontSize:12, color:'#475569', whiteSpace:'pre-wrap', margin:0 }}>{description}</p>
+                    </div>
+                  )}
+                  <div style={{ display:'flex', gap:8, flexWrap:'wrap', alignItems:'center' }}>
+                    {seller && <span style={{ fontSize:11, color:'#475569', background:'#f1f5f9', border:'1px solid #e2e8f0', padding:'2px 6px', borderRadius: 999 }}>Sälj: {seller}</span>}
+                    {meta?.truck && <span style={{ fontSize:11, color:'#475569', background:'#f1f5f9', border:'1px solid #e2e8f0', padding:'2px 6px', borderRadius: 999 }}>Lastbil: {meta.truck}</span>}
+                    {team.length > 0 && <span style={{ fontSize:11, color:'#475569', background:'#f1f5f9', border:'1px solid #e2e8f0', padding:'2px 6px', borderRadius: 999 }}>Team: {team.join(', ')}</span>}
+                    {typeof meta?.bagCount === 'number' && <span style={{ fontSize:11, color:'#475569', background:'#f1f5f9', border:'1px solid #e2e8f0', padding:'2px 6px', borderRadius: 999 }}>Plan: {meta.bagCount} säckar</span>}
+                    {typeof meta?.actual_bags_used === 'number' && <span style={{ fontSize:11, color:'#1e293b', background:'#ecfeff', border:'1px solid #bae6fd', padding:'2px 6px', borderRadius: 999 }}>Rapporterat: {meta.actual_bags_used} säckar</span>}
+                    {meta?.jobType && <span style={{ fontSize:11, color:'#475569', background:'#f1f5f9', border:'1px solid #e2e8f0', padding:'2px 6px', borderRadius: 999 }}>{meta.jobType}</span>}
+                    {base?.createdAt && <span style={{ fontSize:11, color:'#64748b' }}>Skapad {base.createdAt.slice(0,10)}</span>}
+                  </div>
+                </div>
+                {(segs.length > 0) && (
+                  <div style={{ display:'grid', gap:6 }}>
+                    <strong style={{ fontSize:13, color:'#0f172a' }}>Planerade dagar</strong>
+                    <div style={{ display:'grid', gap:6 }}>
+                      {segs.map(s => (
+                        <div key={s.id} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', border:'1px solid #e5e7eb', background:'#f8fafc', borderRadius:8, padding:'6px 8px' }}>
+                          <div style={{ display:'grid' }}>
+                            <span style={{ fontSize:12, color:'#0f172a', fontWeight:600 }}>{s.startDay}{s.endDay !== s.startDay ? ` – ${s.endDay}` : ''}</span>
+                            <span style={{ fontSize:11, color:'#475569' }}>{base?.customer}</span>
+                          </div>
+                          <div style={{ display:'flex', gap:6, alignItems:'center' }}>
+                            <button type="button" className="btn--plain btn--xs" onClick={() => handleEmailClick({ segmentId: s.id, project: base })} style={{ fontSize:11, border:'1px solid #7dd3fc', background:'#e0f2fe', color:'#0369a1', borderRadius:6, padding:'2px 8px' }}>Maila kund</button>
+                            {ekPath && <a href={`/api/storage/download?path=${encodeURIComponent(ekPath)}`} target="_blank" rel="noopener noreferrer" className="btn--plain btn--xs" style={{ fontSize:11, border:'1px solid #047857', background:'#059669', color:'#fff', borderRadius:6, padding:'2px 8px' }}>Egenkontroll</a>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
       {/* Email summary panel */}
       <EmailSummaryPanel projects={projects} />
       <h1 style={{ margin: 0 }}>Plannering {realtimeStatus === 'live' ? '🟢' : realtimeStatus === 'connecting' ? '🟡' : '🔴'}</h1>
@@ -1772,7 +1918,7 @@ export default function PlanneringPage() {
                               const isMid = (it as any).spanMiddle;
                               const isStart = (it as any).spanStart;
                               return (
-                                <div key={`${it.segmentId}:${it.day}`} draggable onDragStart={e => onDragStart(e, it.segmentId)} onDragEnd={onDragEnd} style={{ position: 'relative', border: `2px solid ${highlight ? '#f59e0b' : cardBorder}`, background: cardBg, borderRadius: 6, padding: 6, fontSize: 12, cursor: 'grab', display: 'grid', gap: 4, opacity: isMid ? 0.95 : 1, boxShadow: highlight ? '0 0 0 3px rgba(245,158,11,0.35)' : 'none' }}>
+                                <div key={`${it.segmentId}:${it.day}`} draggable onDragStart={e => onDragStart(e, it.segmentId)} onDragEnd={onDragEnd} onClick={(e) => { e.stopPropagation(); openProjectModal(it.project.id); }} style={{ position: 'relative', border: `2px solid ${highlight ? '#f59e0b' : cardBorder}`, background: cardBg, borderRadius: 6, padding: 6, fontSize: 12, cursor: 'grab', display: 'grid', gap: 4, opacity: isMid ? 0.95 : 1, boxShadow: highlight ? '0 0 0 3px rgba(245,158,11,0.35)' : 'none' }}>
                                   <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                                     <span style={{ fontWeight: 600, color: display ? display.text : '#312e81' }}>
                                       {it.project.orderNumber ? <span style={{ fontFamily: 'ui-monospace, monospace', background: '#ffffff', color: display ? display.text : '#312e81', border: `1px solid ${cardBorder}`, padding: '1px 4px', borderRadius: 4, marginRight: 4 }}>#{it.project.orderNumber}</span> : null}
@@ -1951,7 +2097,7 @@ export default function PlanneringPage() {
                                 const isMid = (it as any).spanMiddle;
                                 const isStart = (it as any).spanStart;
                                 return (
-                                  <div key={`${it.segmentId}:${it.day}`} draggable onDragStart={e => onDragStart(e, it.segmentId)} onDragEnd={onDragEnd} style={{ position: 'relative', border: `2px solid ${highlight ? '#f59e0b' : cardBorder}`, background: cardBg, borderRadius: 6, padding: 6, fontSize: 11, cursor: 'grab', display: 'grid', gap: 4, opacity: isMid ? 0.95 : 1, boxShadow: highlight ? '0 0 0 3px rgba(245,158,11,0.35)' : 'none' }}>
+                                  <div key={`${it.segmentId}:${it.day}`} draggable onDragStart={e => onDragStart(e, it.segmentId)} onDragEnd={onDragEnd} onClick={(e) => { e.stopPropagation(); openProjectModal(it.project.id); }} style={{ position: 'relative', border: `2px solid ${highlight ? '#f59e0b' : cardBorder}`, background: cardBg, borderRadius: 6, padding: 6, fontSize: 11, cursor: 'grab', display: 'grid', gap: 4, opacity: isMid ? 0.95 : 1, boxShadow: highlight ? '0 0 0 3px rgba(245,158,11,0.35)' : 'none' }}>
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                                       <span style={{ fontWeight: 600, color: display ? display.text : '#312e81' }}>
                                         {it.project.orderNumber ? <span style={{ fontFamily: 'ui-monospace, monospace', background: '#ffffff', color: display ? display.text : '#312e81', border: `1px solid ${cardBorder}`, padding: '1px 4px', borderRadius: 4, marginRight: 4 }}>#{it.project.orderNumber}</span> : null}
@@ -2220,7 +2366,7 @@ export default function PlanneringPage() {
                                   const isMid = (it as any).spanMiddle;
                                   const isStart = (it as any).spanStart;
                                   return (
-                                    <div key={`${it.segmentId}:${it.day}`} draggable onDragStart={e => onDragStart(e, it.segmentId)} onDragEnd={onDragEnd}
+               <div key={`${it.segmentId}:${it.day}`} draggable onDragStart={e => onDragStart(e, it.segmentId)} onDragEnd={onDragEnd} onClick={(e) => { e.stopPropagation(); openProjectModal(it.project.id); }}
                                          style={{ position: 'relative', border: `2px solid ${highlight ? '#f59e0b' : cardBorder}`, background: cardBg, borderRadius: 6, padding: 6, fontSize: 11, cursor: 'grab', display: 'grid', gap: 4, opacity: isMid ? 0.95 : 1 }}>
                                       <span style={{ fontWeight: 600, color: display ? display.text : '#312e81' }}>
                                         {it.project.orderNumber ? <span style={{ fontFamily: 'ui-monospace, monospace', background: '#ffffff', color: display ? display.text : '#312e81', border: `1px solid ${cardBorder}`, padding: '1px 4px', borderRadius: 4, marginRight: 4 }}>#{it.project.orderNumber}</span> : null}

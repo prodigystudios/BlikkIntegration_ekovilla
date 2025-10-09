@@ -13,28 +13,60 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     const data: any = await blikk.getProjectById(idNum);
     // Heuristic extraction for customerId across multiple possible shapes
     const candidates: Array<any> = [];
-    const push = (v: any) => { if (v != null && v !== '' && Number.isFinite(Number(v))) candidates.push(Number(v)); };
+    const pushNum = (v: any) => { if (v != null && v !== '' && Number.isFinite(Number(v))) candidates.push(Number(v)); };
     if (data) {
-      push(data.customerId);
-      push(data.contactId);
-      push(data.clientId);
-      push(data.ClientId);
-      push(data.CustomerId);
-      push(data.customerID);
-      push(data.CustomerID);
-      push(data.customer_id);
-      push(data.contact_id);
+      pushNum(data.customerId);
+      pushNum(data.contactId);
+      pushNum(data.clientId);
+      pushNum(data.ClientId);
+      pushNum(data.CustomerId);
+      pushNum(data.customerID);
+      pushNum(data.CustomerID);
+      pushNum(data.customer_id);
+      pushNum(data.contact_id);
       // nested objects
       const nestedObjs = [data.customer, data.contact, data.client, data.owner, data.company, data.organisation, data.organization];
       for (const o of nestedObjs) {
         if (!o || typeof o !== 'object') continue;
-        push(o.id);
-        push(o.Id);
-        push(o.customerId);
+        pushNum(o.id);
+        pushNum(o.Id);
+        pushNum(o.customerId);
       }
     }
     const customerId = candidates.find(v => v > 0) ?? null;
-    const response: any = { customerId };
+
+    // Extract address and description fields (tolerant to schema variants)
+    const addressObj = data?.address || data?.Address || null;
+    const street = addressObj?.street || addressObj?.Street || data?.street || data?.addressLine1 || data?.Address1 || data?.line1 || null;
+    const postalCode = addressObj?.postalCode || addressObj?.Zip || data?.postalCode || data?.zip || data?.zipCode || data?.postal || null;
+    const city = addressObj?.city || addressObj?.City || data?.city || data?.town || data?.locality || null;
+    const address = [street, postalCode, city].filter(Boolean).join(', ') || null;
+    const description = data?.description || data?.notes || data?.note || data?.comment || data?.projectDescription || null;
+    const salesResponsible = (() => {
+      const sr: any = data?.salesResponsible || data?.salesResponsibleUser || data?.salesUser || data?.salesRep || data?.responsibleSalesUser;
+      if (Array.isArray(sr)) return sr.map(s => (s && (s.name || s.fullName || s.title)) || '').filter(Boolean).join(', ') || null;
+      if (typeof sr === 'string') return sr;
+      if (sr && typeof sr === 'object') return sr.name || sr.fullName || sr.title || null;
+      const alt = data?.salesResponsibleName || data?.salesResponsibleFullName;
+      return alt || null;
+    })();
+    const orderNumber = data?.orderNumber || data?.projectNumber || data?.number || null;
+    const name = data?.title || data?.name || data?.projectName || data?.orderName || null;
+
+    const response: any = {
+      customerId,
+      project: {
+        id: String(idNum),
+        name,
+        orderNumber,
+        salesResponsible,
+        street,
+        postalCode,
+        city,
+        address,
+        description,
+      }
+    };
     if (debug) response.raw = data;
     return NextResponse.json(response);
   } catch (e: any) {
