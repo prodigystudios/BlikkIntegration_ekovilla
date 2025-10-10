@@ -88,6 +88,8 @@ export default function PlanneringPage() {
 
   // Calendar / UI state
   const [monthOffset, setMonthOffset] = useState(0);
+  // Week selection (ISO week key: YYYY-Www). Empty = all weeks
+  const [selectedWeekKey, setSelectedWeekKey] = useState<string>('');
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [editingTruckFor, setEditingTruckFor] = useState<string | null>(null);
   const [truckFilter, setTruckFilter] = useState<string>('');
@@ -1095,6 +1097,62 @@ export default function PlanneringPage() {
     return 1 + Math.round(diff / (7 * 24 * 3600 * 1000));
   }
 
+  // ISO week year helper (year that the ISO week belongs to)
+  function isoWeekYear(dateStr: string) {
+    const d = new Date(dateStr + 'T00:00:00');
+    const target = new Date(d.valueOf());
+    const dayNr = (d.getDay() + 6) % 7;
+    target.setDate(target.getDate() - dayNr + 3); // shift to Thursday
+    return target.getFullYear();
+  }
+
+  function isoWeekKey(dateStr: string) {
+    const y = isoWeekYear(dateStr);
+    const w = isoWeekNumber(dateStr);
+    return `${y}-W${String(w).padStart(2, '0')}`;
+  }
+
+  function startOfIsoWeek(dateStr: string) {
+    const d = new Date(dateStr + 'T00:00:00');
+    const dayNr = (d.getDay() + 6) % 7; // Mon=0
+    const start = new Date(d);
+    start.setDate(start.getDate() - dayNr);
+    return start;
+  }
+
+  function endOfIsoWeek(dateStr: string) {
+    const start = startOfIsoWeek(dateStr);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 6);
+    return end;
+  }
+
+  // Parse ISO week key (YYYY-Www) to Monday date
+  function mondayFromIsoWeekKey(key: string): Date | null {
+    const m = key.match(/^(\d{4})-W(\d{2})$/);
+    if (!m) return null;
+    const year = parseInt(m[1], 10);
+    const week = parseInt(m[2], 10);
+    if (!Number.isFinite(year) || !Number.isFinite(week) || week < 1 || week > 53) return null;
+    const jan4 = new Date(year, 0, 4);
+    const dayNr = (jan4.getDay() + 6) % 7; // Mon=0
+    const week1Monday = new Date(jan4);
+    week1Monday.setDate(jan4.getDate() - dayNr);
+    const monday = new Date(week1Monday);
+    monday.setDate(week1Monday.getDate() + (week - 1) * 7);
+    return monday;
+  }
+
+  // When selecting a week, auto jump to that month so it becomes visible
+  useEffect(() => {
+    if (!selectedWeekKey) return;
+    const monday = mondayFromIsoWeekKey(selectedWeekKey);
+    if (!monday) return;
+    const today = new Date();
+    const desiredOffset = (monday.getFullYear() - today.getFullYear()) * 12 + (monday.getMonth() - today.getMonth());
+    setMonthOffset(desiredOffset);
+  }, [selectedWeekKey]);
+
   // Truck colors
   const truckColors = useMemo(() => {
     const map: Record<string, { bg: string; border: string; text: string }> = {};
@@ -1236,6 +1294,38 @@ export default function PlanneringPage() {
       return () => clearTimeout(t);
     }
   }, [weeks, jumpTargetDay]);
+
+  // Build week dropdown options based on currently visible month weeks
+  const weekOptions = useMemo(() => {
+    const opts: Array<{ key: string; label: string }> = [];
+    const seen = new Set<string>();
+    for (const week of weeks) {
+      const firstDay = week.find(c => c.date)?.date;
+      if (!firstDay) continue;
+      const key = isoWeekKey(firstDay);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const s = startOfIsoWeek(firstDay);
+      const e = endOfIsoWeek(firstDay);
+      const sLabel = s.toLocaleDateString('sv-SE', { day: '2-digit', month: 'short' });
+      const eLabel = e.toLocaleDateString('sv-SE', { day: '2-digit', month: 'short' });
+      const w = isoWeekNumber(firstDay);
+      const label = `v${w} (${sLabel} – ${eLabel})`;
+      opts.push({ key, label });
+    }
+    return opts;
+  }, [weeks]);
+
+  // Persist selected week key between sessions
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem('planner.selectedWeekKey');
+      if (v) setSelectedWeekKey(v);
+    } catch { /* ignore */ }
+  }, []);
+  useEffect(() => {
+    try { localStorage.setItem('planner.selectedWeekKey', selectedWeekKey); } catch { /* ignore */ }
+  }, [selectedWeekKey]);
 
   // Backlog lists
   const backlog = useMemo(() => projects.filter(p => !scheduledSegments.some(s => s.projectId === p.id) && !recentSearchedIds.includes(p.id)), [projects, scheduledSegments, recentSearchedIds]);
@@ -1745,30 +1835,6 @@ export default function PlanneringPage() {
               style={{ border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 10px', fontSize: 12 }}>
               {sidebarCollapsed ? 'Visa projektpanel' : 'Dölj projektpanel'}
             </button>
-            <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-              <label style={{ fontSize: 12, color: '#374151' }}>Sök i kalender:</label>
-              <input value={calendarSearch} onChange={e => setCalendarSearch(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); if (calendarMatchDays.length > 0) navigateToMatch((matchIndex + 1) % calendarMatchDays.length); } }} style={{ border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 6px', fontSize: 12 }} placeholder="#1234 eller namn" />
-              {calendarSearch && <button type="button" className="btn--plain btn--xs" style={{ fontSize: 11 }} onClick={() => setCalendarSearch('')}>X</button>}
-              <button type="button" className="btn--plain btn--xs" disabled={!firstCalendarMatchDay} onClick={jumpToFirstMatch} style={{ fontSize: 11, border: '1px solid #d1d5db', borderRadius: 6, padding: '2px 8px', background: firstCalendarMatchDay ? '#fff' : '#f3f4f6', opacity: firstCalendarMatchDay ? 1 : 0.5 }}>Hoppa</button>
-            </div>
-            <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-              <label style={{ fontSize: 12, color: '#374151' }}>Lastbil:</label>
-              <select value={truckFilter} onChange={e => setTruckFilter(e.target.value)} style={{ fontSize: 12, padding: '4px 6px', border: '1px solid #d1d5db', borderRadius: 6, background: '#fff' }}>
-                <option value="">Alla</option>
-                <option value="UNASSIGNED">(Ingen vald)</option>
-                {trucks.map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
-              {truckFilter && <button type="button" className="btn--plain btn--xs" style={{ fontSize: 11 }} onClick={() => setTruckFilter('')}>Rensa</button>}
-            </div>
-            <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-              <label style={{ fontSize: 12, color: '#374151' }}>Sälj:</label>
-              <select value={salesFilter} onChange={e => setSalesFilter(e.target.value)} style={{ fontSize: 12, padding: '4px 6px', border: '1px solid #d1d5db', borderRadius: 6, background: '#fff' }}>
-                <option value="">Alla</option>
-                <option value="__NONE__">(Ingen)</option>
-                {distinctSales.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
-              {salesFilter && <button type="button" className="btn--plain btn--xs" style={{ fontSize: 11 }} onClick={() => setSalesFilter('')}>Rensa</button>}
-            </div>
           </div>
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 11, alignItems: 'stretch' }}>
             {trucks.map(tName => {
@@ -1847,6 +1913,43 @@ export default function PlanneringPage() {
               )}
             </div>
           </div>
+          {/* Filters below truck cards */}
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center', padding: '8px 10px', border: '1px solid #e5e7eb', borderRadius: 10, background: '#ffffff' }}>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <label style={{ fontSize: 12, color: '#374151', display: 'inline-block', width: 'auto' }}>Sök i kalender:</label>
+              <input value={calendarSearch} onChange={e => setCalendarSearch(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); if (calendarMatchDays.length > 0) navigateToMatch((matchIndex + 1) % calendarMatchDays.length); } }} style={{ width: 190, border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 6px', fontSize: 12 }} placeholder="#1234 eller namn" />
+              {calendarSearch && <button type="button" className="btn--plain btn--xs" style={{ fontSize: 11 }} onClick={() => setCalendarSearch('')}>X</button>}
+              <button type="button" className="btn--plain btn--xs" disabled={!firstCalendarMatchDay} onClick={jumpToFirstMatch} style={{ fontSize: 11, border: '1px solid #d1d5db', borderRadius: 6, padding: '2px 8px', background: firstCalendarMatchDay ? '#fff' : '#f3f4f6', opacity: firstCalendarMatchDay ? 1 : 0.5 }}>Hoppa</button>
+            </div>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <label style={{ fontSize: 12, color: '#374151', display: 'inline-block', width: 'auto' }}>Visa vecka:</label>
+              <select value={selectedWeekKey} onChange={e => setSelectedWeekKey(e.target.value)} style={{ width: 200, fontSize: 12, padding: '4px 6px', border: '1px solid #d1d5db', borderRadius: 6, background: '#fff' }}>
+                <option value="">Alla veckor</option>
+                {weekOptions.map(o => (
+                  <option key={o.key} value={o.key}>{o.label}</option>
+                ))}
+              </select>
+              {selectedWeekKey && <button type="button" className="btn--plain btn--xs" style={{ fontSize: 11 }} onClick={() => setSelectedWeekKey('')}>Rensa</button>}
+            </div>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <label style={{ fontSize: 12, color: '#374151', display: 'inline-block', width: 'auto' }}>Lastbil:</label>
+              <select value={truckFilter} onChange={e => setTruckFilter(e.target.value)} style={{ width: 170, fontSize: 12, padding: '4px 6px', border: '1px solid #d1d5db', borderRadius: 6, background: '#fff' }}>
+                <option value="">Alla</option>
+                <option value="UNASSIGNED">(Ingen vald)</option>
+                {trucks.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+              {truckFilter && <button type="button" className="btn--plain btn--xs" style={{ fontSize: 11 }} onClick={() => setTruckFilter('')}>Rensa</button>}
+            </div>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <label style={{ fontSize: 12, color: '#374151', display: 'inline-block', width: 'auto' }}>Sälj:</label>
+              <select value={salesFilter} onChange={e => setSalesFilter(e.target.value)} style={{ width: 190, fontSize: 12, padding: '4px 6px', border: '1px solid #d1d5db', borderRadius: 6, background: '#fff' }}>
+                <option value="">Alla</option>
+                <option value="__NONE__">(Ingen)</option>
+                {distinctSales.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+              {salesFilter && <button type="button" className="btn--plain btn--xs" style={{ fontSize: 11 }} onClick={() => setSalesFilter('')}>Rensa</button>}
+            </div>
+          </div>
           {viewMode === 'monthGrid' && (
             <div style={{ display: 'grid', gap: 12 }}>
               <div style={{ display: 'grid', gridTemplateColumns: '60px repeat(7, 1fr)', gap: 8, fontSize: 12, fontWeight: 600, color: '#374151' }}>
@@ -1857,11 +1960,19 @@ export default function PlanneringPage() {
                 const firstDay = week.find(c => c.date)?.date;
                 const weekNum = firstDay ? isoWeekNumber(firstDay) : '';
                 const weekBg = wi % 2 === 0 ? '#e0f2fe' : '#e0e7ff';
+                // When a week is selected, only render the matching week row
+                if (selectedWeekKey) {
+                  if (!firstDay || isoWeekKey(firstDay) !== selectedWeekKey) return null;
+                }
                 return (
                   <div key={wi} style={{ display: 'grid', gridTemplateColumns: '60px repeat(7, 1fr)', gap: 8, background: weekBg, padding: 6, borderRadius: 12, boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.05)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, background: 'rgba(255,255,255,0.65)', backdropFilter: 'blur(2px)', border: '1px solid rgba(0,0,0,0.07)', borderRadius: 8, color: '#1e293b', boxShadow: '0 1px 2px rgba(0,0,0,0.08)' }}>{weekNum && `v${weekNum}`}</div>
                     {week.map((cell, ci) => {
                       if (!cell.date) return <div key={ci} style={{ minHeight: 160, border: '1px solid transparent', borderRadius: 8 }} />;
+                      if (selectedWeekKey && isoWeekKey(cell.date) !== selectedWeekKey) {
+                        // Hide days outside the selected ISO week (can happen for leading/trailing days in a month row)
+                        return <div key={ci} style={{ minHeight: 160, border: '1px solid transparent', borderRadius: 8 }} />;
+                      }
                       const day = cell.date;
                       const rawItems = itemsByDay.get(day) || [];
                       const searchVal = calendarSearch.trim().toLowerCase();
@@ -2039,11 +2150,13 @@ export default function PlanneringPage() {
             <div style={{ display: 'grid', gap: 16 }}>
               {dayNames.map((name, idx) => {
                 const lane = weekdayLanes[idx] || [];
+                const laneDays = selectedWeekKey ? lane.filter(dObj => isoWeekKey(dObj.date) === selectedWeekKey) : lane;
+                if (selectedWeekKey && laneDays.length === 0) return null;
                 return (
                   <div key={name} style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
                     <div style={{ width: 60, fontSize: 12, fontWeight: 700, textAlign: 'center', padding: '6px 4px', background: '#f1f5f9', border: '1px solid #e2e8f0', borderRadius: 8 }}>{name}</div>
                     <div style={{ flex: 1, overflowX: 'auto', display: 'flex', gap: 8 }}>
-                      {lane.map(dObj => {
+                      {(selectedWeekKey ? laneDays : lane).map(dObj => {
                         const day = dObj.date;
                         const rawItems = itemsByDay.get(day) || [];
                         const searchVal = calendarSearch.trim().toLowerCase();
@@ -2212,6 +2325,10 @@ export default function PlanneringPage() {
                 const weekDays = week.map(c => c.date).filter(Boolean) as string[];
                 const searchVal = calendarSearch.trim().toLowerCase();
                 const dayHeaderBg = wi % 2 === 0 ? '#f1f5f9' : '#e5e7eb';
+                const firstDay = week.find(c => c.date)?.date;
+                if (selectedWeekKey) {
+                  if (!firstDay || isoWeekKey(firstDay) !== selectedWeekKey) return null;
+                }
                 // Determine which weekend days to include based on whether they have any filtered items
                 const dayHasAny = (weekdayIdx: number) => {
                   const cell = week[weekdayIdx];
@@ -2261,7 +2378,6 @@ export default function PlanneringPage() {
                 }
                 const rows = [...trucks, ...(hasUnassigned ? ['__UNASSIGNED__'] : [])];
                 const rowCount = rows.length;
-                const firstDay = week.find(c => c.date)?.date;
                 const weekNum = firstDay ? isoWeekNumber(firstDay) : '';
                 return (
                   <div key={wi} style={{ display: 'grid', gap: 8, border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff', padding: 8 }}>
