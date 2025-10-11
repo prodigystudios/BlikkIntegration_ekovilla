@@ -132,10 +132,10 @@ export default function PlanneringPage() {
   const jobTypes = ['Ekovilla', 'Vitull', 'Leverans', 'Utsugning', 'Snickerier', 'Övrigt'];
 
   // Depåer (loading sites)
-  interface DepotRec { id: string; name: string; material_total: number | null; }
+  interface DepotRec { id: string; name: string; material_total: number | null; material_ekovilla_total?: number | null; material_vitull_total?: number | null; }
   const [depots, setDepots] = useState<DepotRec[]>([]);
   const [newDepotName, setNewDepotName] = useState('');
-  const [depotEdits, setDepotEdits] = useState<Record<string, { material_total: string }>>({});
+  const [depotEdits, setDepotEdits] = useState<Record<string, { material_ekovilla_total?: string; material_vitull_total?: string }>>({});
 
   // Fallback selection scheduling (if drag/drop misbehaves)
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
@@ -828,9 +828,9 @@ export default function PlanneringPage() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'planning_depots' }, payload => {
         const row: any = payload.new || payload.old;
         if (payload.eventType === 'INSERT') {
-          setDepots(prev => prev.some(d => d.id === row.id) ? prev : [...prev, { id: row.id, name: row.name, material_total: row.material_total }]);
+          setDepots(prev => prev.some(d => d.id === row.id) ? prev : [...prev, { id: row.id, name: row.name, material_total: row.material_total, material_ekovilla_total: row.material_ekovilla_total, material_vitull_total: row.material_vitull_total }]);
         } else if (payload.eventType === 'UPDATE') {
-          setDepots(prev => prev.map(d => d.id === row.id ? { id: row.id, name: row.name, material_total: row.material_total } : d));
+          setDepots(prev => prev.map(d => d.id === row.id ? { id: row.id, name: row.name, material_total: row.material_total, material_ekovilla_total: row.material_ekovilla_total, material_vitull_total: row.material_vitull_total } : d));
         } else if (payload.eventType === 'DELETE') {
           setDepots(prev => prev.filter(d => d.id !== row.id));
         }
@@ -998,14 +998,20 @@ export default function PlanneringPage() {
   }, [supabase]);
 
   // Depå helpers (admin guarded by RLS; UI also hides for non-admin)
-  const upsertDepotTotal = useCallback((id: string, totalStr: string) => {
-    const norm = (totalStr ?? '').trim();
-    const total = norm === '' ? null : Number(norm);
-    if (norm !== '' && !Number.isFinite(total)) return; // ignore invalid
-    setDepots(prev => prev.map(d => d.id === id ? { ...d, material_total: total as any } : d));
+  const upsertDepotTotals = useCallback((id: string, ekoStr?: string, vitStr?: string) => {
+    const normEko = (ekoStr ?? '').trim();
+    const normVit = (vitStr ?? '').trim();
+    const eko = normEko === '' ? null : Number(normEko);
+    const vit = normVit === '' ? null : Number(normVit);
+    if (normEko !== '' && !Number.isFinite(eko)) return;
+    if (normVit !== '' && !Number.isFinite(vit)) return;
+    setDepots(prev => prev.map(d => d.id === id ? { ...d, material_ekovilla_total: eko as any, material_vitull_total: vit as any } : d));
+    const payload: any = {};
+    if (ekoStr !== undefined) payload.material_ekovilla_total = eko as any;
+    if (vitStr !== undefined) payload.material_vitull_total = vit as any;
     enqueue(
       supabase.from('planning_depots')
-        .update({ material_total: total as any })
+        .update(payload)
         .eq('id', id)
         .select('id')
         .then(({ error }) => { if (error) console.warn('[depots] update error', error); })
@@ -1386,9 +1392,9 @@ export default function PlanneringPage() {
     return seg?.createdByName || null;
   }
 
-  // Planned consumption per depå for the selected week (sum of bagCount for spans starting that week)
+  // Planned consumption per depå for the selected week (per material)
   const weeklyPlannedByDepot = useMemo(() => {
-    const out: Record<string, number> = {};
+    const out: Record<string, { ekovilla: number; vitull: number }> = {};
     if (!selectedWeekKey) return out; // only compute when a week is selected
     for (const seg of scheduledSegments) {
       // Count only segments whose start day is in the selected week to avoid double-counting per-day instances
@@ -1406,14 +1412,18 @@ export default function PlanneringPage() {
         }
       }
       if (!effectiveDepotId) continue; // skip if no depot can be resolved
-      out[effectiveDepotId] = (out[effectiveDepotId] || 0) + bag;
+      const jt = (meta?.jobType || '').toLowerCase();
+      const key = jt.startsWith('eko') ? 'ekovilla' : jt.startsWith('vit') ? 'vitull' : null;
+      if (!key) continue;
+      if (!out[effectiveDepotId]) out[effectiveDepotId] = { ekovilla: 0, vitull: 0 };
+      out[effectiveDepotId][key] += bag;
     }
     return out;
   }, [selectedWeekKey, scheduledSegments, scheduleMeta, planningTrucks]);
 
-  // Planned consumption per depå for the visible month (only used when no week is selected)
+  // Planned consumption per depå for the visible month (per material; only used when no week is selected)
   const monthlyPlannedByDepot = useMemo(() => {
-    const out: Record<string, number> = {};
+    const out: Record<string, { ekovilla: number; vitull: number }> = {};
     if (selectedWeekKey) return out; // prefer weekly view when a week is chosen
     // Determine the current visible month from monthOffset
     const base = new Date();
@@ -1438,7 +1448,11 @@ export default function PlanneringPage() {
         }
       }
       if (!effectiveDepotId) continue;
-      out[effectiveDepotId] = (out[effectiveDepotId] || 0) + bag;
+      const jt = (meta?.jobType || '').toLowerCase();
+      const key = jt.startsWith('eko') ? 'ekovilla' : jt.startsWith('vit') ? 'vitull' : null;
+      if (!key) continue;
+      if (!out[effectiveDepotId]) out[effectiveDepotId] = { ekovilla: 0, vitull: 0 };
+      out[effectiveDepotId][key] += bag;
     }
     return out;
   }, [selectedWeekKey, monthOffset, scheduledSegments, scheduleMeta, planningTrucks]);
@@ -2135,12 +2149,16 @@ export default function PlanneringPage() {
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginTop: 6 }}>
               <span style={{ fontSize: 11, color: '#6b7280' }}>Depåer:</span>
               {depots.map(d => {
-                const planned = (selectedWeekKey ? weeklyPlannedByDepot[d.id] : monthlyPlannedByDepot[d.id]) || 0;
+                const planned = selectedWeekKey ? weeklyPlannedByDepot[d.id] : monthlyPlannedByDepot[d.id];
+                const eko = d.material_ekovilla_total ?? d.material_total ?? 0;
+                const vit = d.material_vitull_total ?? 0;
                 return (
-                  <span key={d.id} style={{ fontSize: 11, color: '#111827', background: '#f8fafc', border: '1px solid #e5e7eb', padding: '2px 8px', borderRadius: 999 }}>
-                    {d.name}: {d.material_total ?? 0}
-                    {planned > 0 ? (
-                      <span style={{ marginLeft: 6, color: '#0369a1' }}>(Planerad: {planned})</span>
+                  <span key={d.id} style={{ fontSize: 11, color: '#111827', background: '#f8fafc', border: '1px solid #e5e7eb', padding: '2px 8px', borderRadius: 999, display:'inline-flex', gap:8, alignItems:'center' }}>
+                    <span>{d.name}</span>
+                    <span style={{ color:'#334155' }}>Eko: {eko}</span>
+                    <span style={{ color:'#334155' }}>Vit: {vit}</span>
+                    {planned && (planned.ekovilla > 0 || planned.vitull > 0) ? (
+                      <span style={{ marginLeft: 4, color: '#0369a1' }}>(Planerad: E {planned.ekovilla || 0} • V {planned.vitull || 0})</span>
                     ) : null}
                   </span>
                 );
@@ -2160,22 +2178,37 @@ export default function PlanneringPage() {
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   {depots.map(dep => {
-                    const editVal = depotEdits[dep.id]?.material_total ?? (dep.material_total == null ? '' : String(dep.material_total));
-                    const save = () => upsertDepotTotal(dep.id, editVal);
+                    const edit = depotEdits[dep.id] || {};
+                    const ekoVal = edit.material_ekovilla_total ?? (dep.material_ekovilla_total == null ? '' : String(dep.material_ekovilla_total));
+                    const vitVal = edit.material_vitull_total ?? (dep.material_vitull_total == null ? '' : String(dep.material_vitull_total));
+                    const saveBoth = () => upsertDepotTotals(dep.id, ekoVal, vitVal);
                     return (
-                      <div key={dep.id} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', alignItems: 'center', gap: 8 }}>
+                      <div key={dep.id} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto auto', alignItems: 'center', gap: 8 }}>
                         <div style={{ fontSize: 12, fontWeight: 600, color: '#374151' }}>{dep.name}</div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <label style={{ fontSize: 11, color: '#475569', display: 'inline-block' }}>Material:</label>
+                          <label style={{ fontSize: 11, color: '#475569', display: 'inline-block' }}>Eko:</label>
                           <input
                             inputMode="numeric"
                             pattern="[0-9]*"
-                            value={editVal}
-                            onChange={e => setDepotEdits(prev => ({ ...prev, [dep.id]: { material_total: e.target.value } }))}
-                            onBlur={save}
+                            value={ekoVal}
+                            onChange={e => setDepotEdits(prev => ({ ...prev, [dep.id]: { ...prev[dep.id], material_ekovilla_total: e.target.value } }))}
+                            onBlur={saveBoth}
                             disabled={!isAdmin}
                             placeholder="Antal"
-                            style={{ width: 80, fontSize: 12, padding: '4px 6px', border: '1px solid #d1d5db', borderRadius: 6 }}
+                            style={{ width: 70, fontSize: 12, padding: '4px 6px', border: '1px solid #d1d5db', borderRadius: 6 }}
+                          />
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <label style={{ fontSize: 11, color: '#475569', display: 'inline-block' }}>Vit:</label>
+                          <input
+                            inputMode="numeric"
+                            pattern="[0-9]*"
+                            value={vitVal}
+                            onChange={e => setDepotEdits(prev => ({ ...prev, [dep.id]: { ...prev[dep.id], material_vitull_total: e.target.value } }))}
+                            onBlur={saveBoth}
+                            disabled={!isAdmin}
+                            placeholder="Antal"
+                            style={{ width: 70, fontSize: 12, padding: '4px 6px', border: '1px solid #d1d5db', borderRadius: 6 }}
                           />
                         </div>
                         <button type="button" onClick={() => deleteDepot(dep)} className="btn--plain btn--xs" title="Ta bort depå" style={{ fontSize: 10, background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c', borderRadius: 6, padding: '2px 6px' }}>✕</button>
@@ -2302,14 +2335,20 @@ export default function PlanneringPage() {
                       </form>
                       <div style={{ display:'grid', gap:8 }}>
                         {depots.map(dep => {
-                          const editVal = depotEdits[dep.id]?.material_total ?? (dep.material_total == null ? '' : String(dep.material_total));
-                          const save = () => upsertDepotTotal(dep.id, editVal);
+                          const edit = depotEdits[dep.id] || {};
+                          const ekoVal = edit.material_ekovilla_total ?? (dep.material_ekovilla_total == null ? '' : String(dep.material_ekovilla_total));
+                          const vitVal = edit.material_vitull_total ?? (dep.material_vitull_total == null ? '' : String(dep.material_vitull_total));
+                          const saveBoth = () => upsertDepotTotals(dep.id, ekoVal, vitVal);
                           return (
-                            <div key={dep.id} style={{ display:'grid', gridTemplateColumns:'1fr auto auto', alignItems:'center', gap:10, padding:'6px 8px', border:'1px solid #e5e7eb', borderRadius:8 }}>
+                            <div key={dep.id} style={{ display:'grid', gridTemplateColumns:'1fr auto auto auto', alignItems:'center', gap:10, padding:'6px 8px', border:'1px solid #e5e7eb', borderRadius:8 }}>
                               <div style={{ fontWeight:600 }}>{dep.name}</div>
                               <div style={{ display:'flex', gap:8, alignItems:'center' }}>
-                                <label style={{ fontSize:12 }}>Material</label>
-                                <input inputMode="numeric" pattern="[0-9]*" value={editVal} onChange={e=>setDepotEdits(prev=>({ ...prev, [dep.id]: { material_total: e.target.value } }))} onBlur={save} placeholder="Antal" style={{ width:100, padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }} />
+                                <label style={{ fontSize:12 }}>Eko</label>
+                                <input inputMode="numeric" pattern="[0-9]*" value={ekoVal} onChange={e=>setDepotEdits(prev=>({ ...prev, [dep.id]: { ...prev[dep.id], material_ekovilla_total: e.target.value } }))} onBlur={saveBoth} placeholder="Antal" style={{ width:90, padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }} />
+                              </div>
+                              <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+                                <label style={{ fontSize:12 }}>Vit</label>
+                                <input inputMode="numeric" pattern="[0-9]*" value={vitVal} onChange={e=>setDepotEdits(prev=>({ ...prev, [dep.id]: { ...prev[dep.id], material_vitull_total: e.target.value } }))} onBlur={saveBoth} placeholder="Antal" style={{ width:90, padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }} />
                               </div>
                               <button type="button" onClick={()=>deleteDepot(dep)} className="btn--plain btn--xs" style={{ fontSize:12, padding:'6px 10px', border:'1px solid #fecaca', background:'#fef2f2', color:'#b91c1c', borderRadius:8 }}>Ta bort</button>
                             </div>

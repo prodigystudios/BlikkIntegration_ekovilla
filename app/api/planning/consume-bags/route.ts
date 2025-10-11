@@ -7,6 +7,7 @@ type Body = {
   totalBags: number;
   reportKey?: string; // unique key to avoid double-decrement, e.g. archive path
   segmentId?: string;
+  materialKind?: 'Ekovilla' | 'Vitull';
 };
 
 export async function POST(req: NextRequest) {
@@ -18,7 +19,8 @@ export async function POST(req: NextRequest) {
       ? json.installationDate
       : undefined;
     const segmentId = json.segmentId && String(json.segmentId).trim() ? String(json.segmentId).trim() : undefined;
-    const reportKey = json.reportKey && String(json.reportKey).trim() ? String(json.reportKey).trim() : undefined;
+  const reportKey = json.reportKey && String(json.reportKey).trim() ? String(json.reportKey).trim() : undefined;
+  const materialKind = json.materialKind && String(json.materialKind).trim() ? (String(json.materialKind).trim() as 'Ekovilla'|'Vitull') : undefined;
 
     if (!projectId || !Number.isFinite(totalBags) || totalBags <= 0) {
       return NextResponse.json({ ok: false, error: 'Missing projectId or invalid totalBags' }, { status: 400 });
@@ -79,6 +81,21 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, skipped: 'no-depot' });
     }
 
+    // Resolve material kind: prefer explicit; else infer from job_type on meta
+    let mat: 'Ekovilla' | 'Vitull' | null = materialKind ?? null;
+    if (!mat) {
+      try {
+        const { data: meta2 } = await admin
+          .from('planning_project_meta')
+          .select('job_type')
+          .eq('project_id', projectId)
+          .maybeSingle();
+        const jt = (meta2 as any)?.job_type ? String((meta2 as any).job_type).toLowerCase() : '';
+        if (jt.startsWith('eko')) mat = 'Ekovilla';
+        else if (jt.startsWith('vit')) mat = 'Vitull';
+      } catch {}
+    }
+
     // Idempotency: record a usage row keyed by reportKey if provided
     if (reportKey) {
       try {
@@ -87,7 +104,8 @@ export async function POST(req: NextRequest) {
           installation_date: installationDate || null,
           depot_id: depotId,
           bags_used: Math.round(totalBags),
-          source_key: reportKey,
+          material_kind: mat,
+          source_key: mat ? `${reportKey}:${mat}` : reportKey,
         }).select('*').single();
         if (ins.error) {
           // If already recorded (unique violation), treat as already processed
@@ -106,41 +124,22 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Decrement depot stock atomically at the row level
-    const { data: updated, error: updErr } = await admin
-      .from('planning_depots')
-      .update({}) // dummy to enable returning with calculated expression
-      .eq('id', depotId)
-      .select('*')
-      .single();
-
-    if (updErr) {
-      // Some drivers require a concrete update; do a proper arithmetic update
-      const { data: decRow, error: decErr } = await admin.rpc('exec_sql', {
-        sql: `update public.planning_depots set material_total = greatest(0, coalesce(material_total,0) - $1) where id = $2 returning *`,
-        params: [Math.round(totalBags), depotId],
-      } as any);
-      if (decErr) {
-        // Fallback to regular update if rpc isn't available
-        const { data: curRow, error: curErr } = await admin.from('planning_depots').select('material_total').eq('id', depotId).maybeSingle();
-        if (curErr) return NextResponse.json({ ok: false, error: 'depot-load-failed', detail: curErr.message }, { status: 500 });
-        const current = Number(curRow?.material_total || 0);
-        const next = Math.max(0, Math.round(current) - Math.round(totalBags));
-        const { data: finalRow, error: finalErr } = await admin.from('planning_depots').update({ material_total: next }).eq('id', depotId).select('*').single();
-        if (finalErr) return NextResponse.json({ ok: false, error: 'depot-update-failed', detail: finalErr.message }, { status: 500 });
-        return NextResponse.json({ ok: true, depotId, material_total: finalRow?.material_total ?? next });
-      }
-      // If rpc worked, return its result (some drivers return array)
-      const row = Array.isArray(updated) ? (updated[0] as any) : (updated as any);
-      return NextResponse.json({ ok: true, depotId, material_total: (row as any)?.material_total });
+    // Decrement correct material column
+    const col = mat === 'Vitull' ? 'material_vitull_total' : 'material_ekovilla_total';
+    // Prefer SQL update to avoid race conditions
+    const { error: sqlErr } = await admin.rpc('exec_sql', {
+      sql: `update public.planning_depots set ${col} = greatest(0, coalesce(${col},0) - $1) where id = $2`,
+      params: [Math.round(totalBags), depotId],
+    } as any);
+    if (sqlErr) {
+      // Fallback to JS-side read-modify-write
+      const { data: curRow } = await admin.from('planning_depots').select(`${col}`).eq('id', depotId).maybeSingle();
+      const current = Number((curRow as any)?.[col] || 0);
+      const next = Math.max(0, Math.round(current) - Math.round(totalBags));
+      const updatePayload: any = {}; updatePayload[col] = next;
+      await admin.from('planning_depots').update(updatePayload).eq('id', depotId);
     }
-
-    // If the noop update unexpectedly succeeded without decrement, perform explicit decrement now
-    const { data: curRow2 } = await admin.from('planning_depots').select('material_total').eq('id', depotId).maybeSingle();
-    const current2 = Number(curRow2?.material_total || 0);
-    const next2 = Math.max(0, Math.round(current2) - Math.round(totalBags));
-    await admin.from('planning_depots').update({ material_total: next2 }).eq('id', depotId);
-    return NextResponse.json({ ok: true, depotId, material_total: next2 });
+    return NextResponse.json({ ok: true, depotId, material_kind: mat ?? 'Ekovilla' });
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: 'unexpected', detail: String(e?.message || e) }, { status: 500 });
   }
