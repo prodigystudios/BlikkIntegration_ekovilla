@@ -26,6 +26,7 @@ interface ScheduledSegment {
   createdBy?: string | null;
   createdByName?: string | null;
   depotId?: string | null; // optional per-segment depot override
+  sortIndex?: number | null; // explicit order within a truck/day
 }
 
 interface ProjectScheduleMeta {
@@ -421,18 +422,64 @@ export default function PlanneringPage() {
   }, []);
 
   const openMailForSegment = useCallback((it: any, email: string) => {
+    // Resolve segment + date span
     const seg = scheduledSegments.find(s => s.id === it.segmentId);
     const startDay = (seg?.startDay) || it.day;
     const endDay = (seg?.endDay) || it.day;
     const single = startDay === endDay;
     const dateText = single ? startDay : `${startDay} – ${endDay}`;
-    const subject = encodeURIComponent(`Planerad isolering ${dateText} (${it.project.name})`);
+
+    // Resolve truck for messaging: prefer the card's truck, else project meta's truck
+    const metaTruck = scheduleMeta[it.project.id]?.truck || null;
+    const effectiveTruck: string | null = (it.truck ?? metaTruck) || null;
+
+    // Determine reference day to compute order-in-day (use the clicked card's day, else startDay)
+    const refDay = it.day || startDay;
+
+    // Compute position within same-truck jobs for that day, following the same sort logic as UI
+    let orderInDay: number | null = null;
+    let totalInDay = 0;
+    if (refDay) {
+      const sameDaySegs = scheduledSegments.filter(s => s.startDay <= refDay && s.endDay >= refDay);
+      const sameTruckItems = sameDaySegs
+        .map(s => {
+          const p = projects.find(pp => pp.id === s.projectId);
+          const t = scheduleMeta[s.projectId]?.truck || null;
+          return p ? { segmentId: s.id, project: p, truck: t, sortIndex: s.sortIndex ?? null } : null;
+        })
+        .filter((x): x is { segmentId: string; project: any; truck: string | null; sortIndex: number | null } => !!x)
+        .filter(x => (x.truck || null) === (effectiveTruck || null));
+      const sorted = sameTruckItems.sort((a, b) => {
+        const sa = a.sortIndex;
+        const sb = b.sortIndex;
+        if (sa != null && sb != null && sa !== sb) return sa - sb;
+        if (sa != null && sb == null) return -1;
+        if (sb != null && sa == null) return 1;
+        const ao = a.project.orderNumber || '';
+        const bo = b.project.orderNumber || '';
+        if (ao && bo && ao !== bo) return ao.localeCompare(bo, 'sv');
+        return a.project.name.localeCompare(b.project.name, 'sv');
+      });
+      totalInDay = sorted.length;
+      const idx = sorted.findIndex(x => x.segmentId === it.segmentId);
+      orderInDay = idx >= 0 ? idx + 1 : null;
+    }
+
+    const subject = encodeURIComponent(`Planerad isolering ${dateText} (${it.project.name}) Ordernummer #${it.project.orderNumber}`);
+    const orderLine = (orderInDay && totalInDay)
+      ? `du är planerad som Nr: ${orderInDay} av ${totalInDay} på lastbilen "${effectiveTruck || 'Ej tilldelad'}"`
+      : `Lastbil: ${effectiveTruck || 'Ej tilldelad'}`;
     const bodyLines = [
+      'ORDERBEKRÄFTELSE',
+      '',
+
       'Hej,',
       '',
       'Vi vill informera att arbetet är planerat:',
       `Projekt: ${it.project.name}`,
       `Datum: ${dateText}`,
+      `Ordernummer: ${it.project.orderNumber}`,
+      orderLine,
       '',
       'Återkom gärna om något behöver justeras.',
       '',
@@ -443,7 +490,7 @@ export default function PlanneringPage() {
     const href = `mailto:${encodeURIComponent(email)}?subject=${subject}&body=${encodeURIComponent(bodyLines)}`;
     if (typeof window !== 'undefined') window.location.href = href;
     setTimeout(() => setPendingNotifyProjectId(it.project.id), 200);
-  }, [scheduledSegments]);
+  }, [scheduledSegments, scheduleMeta, projects]);
 
   const handleEmailClick = useCallback(async (it: any) => {
     const pid = it.project.id as string;
@@ -636,7 +683,7 @@ export default function PlanneringPage() {
         }
         // Normalize into local shapes
         if (Array.isArray(segs)) {
-          setScheduledSegments(segs.map(s => ({ id: s.id, projectId: s.project_id, startDay: s.start_day, endDay: s.end_day, createdBy: s.created_by, createdByName: s.created_by_name, depotId: (s as any).depot_id ?? null })));
+          setScheduledSegments(segs.map(s => ({ id: s.id, projectId: s.project_id, startDay: s.start_day, endDay: s.end_day, createdBy: s.created_by, createdByName: s.created_by_name, depotId: (s as any).depot_id ?? null, sortIndex: (s as any).sort_index ?? null })));
           // Inject projects from segments if not already present
           setProjects(prev => {
             const map = new Map(prev.map(p => [p.id, p]));
@@ -727,7 +774,7 @@ export default function PlanneringPage() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'planning_segments' }, payload => {
         const row: any = payload.new || payload.old;
         if (payload.eventType === 'INSERT') {
-          setScheduledSegments(prev => prev.some(s => s.id === row.id) ? prev : [...prev, { id: row.id, projectId: row.project_id, startDay: row.start_day, endDay: row.end_day, createdBy: row.created_by, createdByName: row.created_by_name, depotId: row.depot_id ?? null }]);
+          setScheduledSegments(prev => prev.some(s => s.id === row.id) ? prev : [...prev, { id: row.id, projectId: row.project_id, startDay: row.start_day, endDay: row.end_day, createdBy: row.created_by, createdByName: row.created_by_name, depotId: row.depot_id ?? null, sortIndex: row.sort_index ?? null }]);
           setProjects(prev => prev.some(p => p.id === row.project_id) ? prev : [...prev, {
             id: row.project_id,
             name: row.project_name,
@@ -741,7 +788,7 @@ export default function PlanneringPage() {
             salesResponsible: row.sales_responsible ?? null
           }]);
         } else if (payload.eventType === 'UPDATE') {
-          setScheduledSegments(prev => prev.map(s => s.id === row.id ? { ...s, startDay: row.start_day, endDay: row.end_day, createdByName: row.created_by_name ?? s.createdByName, depotId: row.depot_id ?? s.depotId ?? null } : s));
+          setScheduledSegments(prev => prev.map(s => s.id === row.id ? { ...s, startDay: row.start_day, endDay: row.end_day, createdByName: row.created_by_name ?? s.createdByName, depotId: row.depot_id ?? s.depotId ?? null, sortIndex: row.sort_index ?? s.sortIndex ?? null } : s));
         } else if (payload.eventType === 'DELETE') {
           setScheduledSegments(prev => prev.filter(s => s.id !== row.id));
         }
@@ -1037,6 +1084,25 @@ export default function PlanneringPage() {
         .then(({ error }) => { if (error) console.warn('[planning] update segment depot error', error); })
     );
   }, [supabase]);
+
+  const updateSegmentSortIndex = useCallback((segmentId: string, sortIndex: number | null) => {
+    setScheduledSegments(prev => prev.map(s => s.id === segmentId ? { ...s, sortIndex } : s));
+    enqueue(
+      supabase.from('planning_segments')
+        .update({ sort_index: sortIndex })
+        .eq('id', segmentId)
+        .select('id')
+        .then(({ error }) => { if (error) console.warn('[planning] update segment sort_index error', error); })
+    );
+  }, [supabase]);
+
+  // Persist a sequential order (0..n-1) for the given segments using their current visual order
+  const setSequentialSortForSegments = useCallback((orderedSegmentIds: string[]) => {
+    orderedSegmentIds.forEach((id, idx) => {
+      const current = scheduledSegments.find(s => s.id === id)?.sortIndex ?? null;
+      if (current !== idx) updateSegmentSortIndex(id, idx);
+    });
+  }, [scheduledSegments, updateSegmentSortIndex]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { setOpenDepotMenuTruckId(null); setOpenDepotMenuSegmentId(null); } };
@@ -2298,9 +2364,15 @@ export default function PlanneringPage() {
                         }
                         return true;
                       })
-                      // Sort by truck order (known trucks first in trucks[] order), unassigned last, then project/order
+                      // Sort by truck order (known trucks first in trucks[] order), unassigned last,
+                      // and within the same truck use explicit sortIndex when set, then orderNumber/name
                       .sort((a, b) => {
                         if (a.truck === b.truck) {
+                          const sa = scheduledSegments.find(s => s.id === a.segmentId)?.sortIndex ?? null;
+                          const sb = scheduledSegments.find(s => s.id === b.segmentId)?.sortIndex ?? null;
+                          if (sa != null && sb != null && sa !== sb) return sa - sb;
+                          if (sa != null && sb == null) return -1;
+                          if (sb != null && sa == null) return 1;
                           const ao = a.project.orderNumber || '';
                           const bo = b.project.orderNumber || '';
                           if (ao && bo && ao !== bo) return ao.localeCompare(bo, 'sv');
@@ -2419,6 +2491,44 @@ export default function PlanneringPage() {
                                   </div>
                                   {isStart && showCardControls && (
                                     <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
+                                      {(() => {
+                                        const groupSameTruck = items.filter(x => x.truck === it.truck);
+                                        const groupSorted = [...groupSameTruck].sort((a2, b2) => {
+                                          const sa2 = scheduledSegments.find(s => s.id === a2.segmentId)?.sortIndex ?? null;
+                                          const sb2 = scheduledSegments.find(s => s.id === b2.segmentId)?.sortIndex ?? null;
+                                          if (sa2 != null && sb2 != null && sa2 !== sb2) return sa2 - sb2;
+                                          if (sa2 != null && sb2 == null) return -1;
+                                          if (sb2 != null && sa2 == null) return 1;
+                                          const ao2 = a2.project.orderNumber || '';
+                                          const bo2 = b2.project.orderNumber || '';
+                                          if (ao2 && bo2 && ao2 !== bo2) return ao2.localeCompare(bo2, 'sv');
+                                          return a2.project.name.localeCompare(b2.project.name, 'sv');
+                                        });
+                                        const pos = groupSorted.findIndex(x => x.segmentId === it.segmentId);
+                                        if (!it.truck || groupSorted.length < 2 || pos < 0) return null;
+                                        const current = pos + 1;
+                                        const total = groupSorted.length;
+                                        const changePos = (newPos1: number) => {
+                                          const next = [...groupSorted.map(x => x.segmentId)];
+                                          const from = pos;
+                                          const to = Math.max(0, Math.min(total - 1, newPos1 - 1));
+                                          if (to === from) return;
+                                          const [moved] = next.splice(from, 1);
+                                          next.splice(to, 0, moved);
+                                          setSequentialSortForSegments(next);
+                                        };
+                                        return (
+                                          <label style={{ display:'inline-flex', alignItems:'center', gap:6, border:`1px solid ${cardBorder}`, borderRadius:6, padding:'2px 6px', background:'#fff' }}>
+                                            <span style={{ fontSize:10, color:'#334155' }}>Ordning</span>
+                                            <select value={current} onChange={e => changePos(parseInt(e.target.value,10)||current)} style={{ fontSize:11, padding:'2px 4px', border:'1px solid #cbd5e1', borderRadius:4 }}>
+                                              {Array.from({ length: total }, (_, i) => i + 1).map(n => (
+                                                <option key={n} value={n}>{n}</option>
+                                              ))}
+                                            </select>
+                                            <span style={{ fontSize:10, color:'#6b7280' }}>/ {total}</span>
+                                          </label>
+                                        );
+                                      })()}
                                       <div style={{ position: 'relative', display: 'inline-block' }}>
                                         <FieldPresence projectId={it.project.id} field="truck" />
                                         {editingTruckFor === it.project.id ? (
@@ -2515,6 +2625,11 @@ export default function PlanneringPage() {
                         })
                         .sort((a, b) => {
                           if (a.truck === b.truck) {
+                            const sa = scheduledSegments.find(s => s.id === a.segmentId)?.sortIndex ?? null;
+                            const sb = scheduledSegments.find(s => s.id === b.segmentId)?.sortIndex ?? null;
+                            if (sa != null && sb != null && sa !== sb) return sa - sb;
+                            if (sa != null && sb == null) return -1;
+                            if (sb != null && sa == null) return 1;
                             const ao = a.project.orderNumber || '';
                             const bo = b.project.orderNumber || '';
                             if (ao && bo && ao !== bo) return ao.localeCompare(bo, 'sv');
@@ -2565,8 +2680,34 @@ export default function PlanneringPage() {
                                 const highlight = calendarSearch && (it.project.name.toLowerCase().includes(searchVal) || (it.project.orderNumber || '').toLowerCase().includes(searchVal));
                                 const isMid = (it as any).spanMiddle;
                                 const isStart = (it as any).spanStart;
+                                // Compute ordering position and controls for this card within same-truck group
+                                const groupSameTruck = items.filter(x => x.truck === it.truck);
+                                const groupSorted = [...groupSameTruck].sort((a2, b2) => {
+                                  const sa2 = scheduledSegments.find(s => s.id === a2.segmentId)?.sortIndex ?? null;
+                                  const sb2 = scheduledSegments.find(s => s.id === b2.segmentId)?.sortIndex ?? null;
+                                  if (sa2 != null && sb2 != null && sa2 !== sb2) return sa2 - sb2;
+                                  if (sa2 != null && sb2 == null) return -1;
+                                  if (sb2 != null && sa2 == null) return 1;
+                                  const ao2 = a2.project.orderNumber || '';
+                                  const bo2 = b2.project.orderNumber || '';
+                                  if (ao2 && bo2 && ao2 !== bo2) return ao2.localeCompare(bo2, 'sv');
+                                  return a2.project.name.localeCompare(b2.project.name, 'sv');
+                                });
+                                const pos = groupSorted.findIndex(x => x.segmentId === it.segmentId);
+                                const canShowOrder = isStart && it.truck && groupSorted.length > 1 && pos >= 0;
+                                const moveWithinGroup = (delta: number) => {
+                                  if (!canShowOrder) return;
+                                  const next = [...groupSorted.map(x => x.segmentId)];
+                                  const from = pos;
+                                  const to = from + delta;
+                                  if (to < 0 || to >= next.length) return;
+                                  const [moved] = next.splice(from, 1);
+                                  next.splice(to, 0, moved);
+                                  setSequentialSortForSegments(next);
+                                };
                                 return (
                                   <div key={`${it.segmentId}:${it.day}`} draggable onDragStart={e => onDragStart(e, it.segmentId)} onDragEnd={onDragEnd} onClick={() => setOpenDepotMenuSegmentId(null)} style={{ position: 'relative', border: `2px solid ${highlight ? '#f59e0b' : cardBorder}`, background: cardBg, borderRadius: 6, padding: 6, fontSize: 11, cursor: 'grab', display: 'grid', gap: 4, opacity: isMid ? 0.95 : 1, boxShadow: highlight ? '0 0 0 3px rgba(245,158,11,0.35)' : 'none' }}>
+                                    {/* order controls moved to bottom control section */}
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                                       <span style={{ fontWeight: 600, color: display ? display.text : '#312e81', display: 'flex', alignItems: 'center', columnGap: 6, rowGap: 2, flexWrap: 'wrap' }}>
                                         {it.project.orderNumber ? (
@@ -2626,6 +2767,31 @@ export default function PlanneringPage() {
                                     </div>
                                     {isStart && showCardControls && (
                                       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
+                                        {(() => {
+                                          if (!canShowOrder) return null;
+                                          const current = pos + 1;
+                                          const total = groupSorted.length;
+                                          const changePos = (newPos1: number) => {
+                                            const next = [...groupSorted.map(x => x.segmentId)];
+                                            const from = pos;
+                                            const to = Math.max(0, Math.min(total - 1, newPos1 - 1));
+                                            if (to === from) return;
+                                            const [moved] = next.splice(from, 1);
+                                            next.splice(to, 0, moved);
+                                            setSequentialSortForSegments(next);
+                                          };
+                                          return (
+                                            <label style={{ display:'inline-flex', alignItems:'center', gap:6, border:`1px solid ${cardBorder}`, borderRadius:6, padding:'1px 5px', background:'#fff' }}>
+                                              <span style={{ fontSize:10, color:'#334155' }}>Ordning</span>
+                                              <select value={current} onChange={e => changePos(parseInt(e.target.value,10)||current)} style={{ fontSize:10, padding:'1px 3px', border:'1px solid #cbd5e1', borderRadius:4 }}>
+                                                {Array.from({ length: total }, (_, i) => i + 1).map(n => (
+                                                  <option key={n} value={n}>{n}</option>
+                                                ))}
+                                              </select>
+                                              <span style={{ fontSize:10, color:'#6b7280' }}>/ {total}</span>
+                                            </label>
+                                          );
+                                        })()}
                                         <div style={{ position: 'relative', display: 'inline-block' }}>
                                           <FieldPresence projectId={it.project.id} field="truck" size={12} />
                                           {editingTruckFor === it.project.id ? (
@@ -2829,6 +2995,11 @@ export default function PlanneringPage() {
                               return true;
                             })
                             .sort((a, b) => {
+                              const sa = scheduledSegments.find(s => s.id === a.segmentId)?.sortIndex ?? null;
+                              const sb = scheduledSegments.find(s => s.id === b.segmentId)?.sortIndex ?? null;
+                              if (sa != null && sb != null && sa !== sb) return sa - sb;
+                              if (sa != null && sb == null) return -1;
+                              if (sb != null && sa == null) return 1;
                               const ao = a.project.orderNumber || '';
                               const bo = b.project.orderNumber || '';
                               if (ao && bo && ao !== bo) return ao.localeCompare(bo, 'sv');
