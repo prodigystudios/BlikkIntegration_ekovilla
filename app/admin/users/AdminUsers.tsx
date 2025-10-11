@@ -9,6 +9,7 @@ interface AdminUserRow {
   role: string;
   full_name: string | null;
   created_at: string;
+  tags?: string[];
 }
 
 export default function AdminUsers() {
@@ -96,6 +97,7 @@ export default function AdminUsers() {
                   <th style={thCell}>E-post</th>
                   <th style={thCell}>Namn</th>
                   <th style={thCell}>Roll</th>
+                  <th style={thCell}>Taggar</th>
                   <th style={thCell}>Skapad</th>
                 </tr>
               </thead>
@@ -157,11 +159,20 @@ function UserRow({ user, onChanged, onDeleted }: { user: AdminUserRow; onChanged
   const [saving, setSaving] = React.useState(false);
   const [busyDelete, setBusyDelete] = React.useState(false);
   const [confirmDelete, setConfirmDelete] = React.useState(false);
+  const [tagsDraft, setTagsDraft] = React.useState((user.tags || []).join(', '));
 
   async function saveChanges() {
     setSaving(true);
-    await fetch(`/api/admin/users/${user.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ full_name: nameDraft, role: roleDraft }) });
-    onChanged({ ...user, full_name: nameDraft || null, role: roleDraft });
+    const tags = tagsDraft.split(',').map(s=>s.trim()).filter(Boolean);
+    const payload: any = {};
+    if (nameDraft !== user.full_name) payload.full_name = nameDraft;
+    if (roleDraft !== user.role) payload.role = roleDraft;
+    payload.tags = tags; // always send tags from this input
+    const res = await fetch(`/api/admin/users/${user.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    if (!res.ok) {
+      try { const j = await res.json(); console.warn('saveChanges failed', j); } catch {}
+    }
+    onChanged({ ...user, full_name: nameDraft || null, role: roleDraft, tags });
     setEditingName(false);
     setSaving(false);
   }
@@ -193,6 +204,15 @@ function UserRow({ user, onChanged, onDeleted }: { user: AdminUserRow; onChanged
             <option value="sales">sales</option>
             <option value="admin">admin</option>
         </select>
+      </td>
+      <td style={tdCell}>
+        <input
+          value={tagsDraft}
+          onChange={e=>setTagsDraft(e.target.value)}
+          onBlur={saveChanges}
+          placeholder="t.ex. crew, trainee"
+          style={{ ...fieldStyle, padding: '4px 6px', fontSize: 13, minWidth: 220 }}
+        />
       </td>
       <td style={tdCell}>
         <div style={{ display:'flex', alignItems:'center', gap:8, position:'relative' }}>

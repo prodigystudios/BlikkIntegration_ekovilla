@@ -15,7 +15,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
   const { id } = params;
   const body = await req.json();
-  const { role, full_name, disabled } = body as { role?: string; full_name?: string; disabled?: boolean };
+  const { role, full_name, disabled, tags } = body as { role?: string; full_name?: string; disabled?: boolean; tags?: string[] };
 
   // Update profile name if provided
   let nameUpdated = false;
@@ -31,12 +31,19 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     if (roleErr) return NextResponse.json({ error: 'failed updating role', details: roleErr.message }, { status: 500 });
     roleUpdated = true;
   }
+  // Update tags directly with service role (bypasses RLS); server already validated admin
+  let tagsUpdated = false;
+  if (Array.isArray(tags)) {
+    const { error: tagErr } = await adminSupabase.from('profiles').update({ tags }).eq('id', id);
+    if (tagErr) return NextResponse.json({ error: 'failed updating tags', details: tagErr.message }, { status: 500 });
+    tagsUpdated = true;
+  }
   // Disable/enable user (Supabase: update user) if requested
   if (typeof disabled === 'boolean') {
     // Supabase JS v2 doesn't expose direct 'banned' flag; placeholder for future
   }
 
-  return NextResponse.json({ ok: true, nameUpdated, roleUpdated });
+  return NextResponse.json({ ok: true, nameUpdated, roleUpdated, tagsUpdated });
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {

@@ -130,6 +130,28 @@ export default function PlanneringPage() {
   const [openDepotMenuTruckId, setOpenDepotMenuTruckId] = useState<string | null>(null);
   const [openDepotMenuSegmentId, setOpenDepotMenuSegmentId] = useState<string | null>(null);
   const jobTypes = ['Ekovilla', 'Vitull', 'Leverans', 'Utsugning', 'Snickerier', 'Övrigt'];
+  // Crew directory suggestions (profiles with tag "Entreprenad") for team name inputs
+  const [crewNames, setCrewNames] = useState<string[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadCrewByTag() {
+      if (!isAdmin) return; // admin-only endpoint
+      try {
+        const res = await fetch('/api/profiles/by-tag?tag=' + encodeURIComponent('Entreprenad'));
+        if (!res.ok) return;
+        const j = await res.json();
+        const items: Array<{ full_name?: string | null }> = Array.isArray(j.items) ? j.items : [];
+        const names = Array.from(new Set(items
+          .map((it) => (it.full_name ?? '').trim())
+          .filter((s): s is string => typeof s === 'string' && s.length > 0)
+        ));
+        if (!cancelled) setCrewNames(names);
+      } catch (_) { /* ignore */ }
+    }
+    loadCrewByTag();
+    return () => { cancelled = true; };
+  }, [isAdmin]);
 
   // Depåer (loading sites)
   interface DepotRec { id: string; name: string; material_total: number | null; material_ekovilla_total?: number | null; material_vitull_total?: number | null; }
@@ -2423,6 +2445,11 @@ export default function PlanneringPage() {
                 <div style={{ padding:14, display:'grid', gap:12 }}>
                   {adminModalTab==='trucks' && (
                     <div style={{ display:'grid', gap: 12 }}>
+                      {crewNames.length > 0 && (
+                        <datalist id="crew-suggestions">
+                          {crewNames.map(n => <option key={n} value={n} />)}
+                        </datalist>
+                      )}
                       <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(260px, 1fr))', gap:12 }}>
                         {planningTrucks.map(tRec => {
                           const currentColor = truckColorOverrides[tRec.name] || tRec.color || defaultTruckColors[tRec.name] || '#6366f1';
@@ -2439,11 +2466,11 @@ export default function PlanneringPage() {
                               <div style={{ display:'grid', gap:8 }}>
                                 <label style={{ display:'grid', gap:4, fontSize:12 }}>
                                   <span>Team 1</span>
-                                  <input value={edit.team1} onChange={e=>updateTruckTeamName(tRec, 1, e.target.value)} placeholder="Namn" style={{ padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }} />
+                                  <input value={edit.team1} onChange={e=>updateTruckTeamName(tRec, 1, e.target.value)} placeholder="Namn" list={crewNames.length ? 'crew-suggestions' : undefined} style={{ padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }} />
                                 </label>
                                 <label style={{ display:'grid', gap:4, fontSize:12 }}>
                                   <span>Team 2</span>
-                                  <input value={edit.team2} onChange={e=>updateTruckTeamName(tRec, 2, e.target.value)} placeholder="Namn" style={{ padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }} />
+                                  <input value={edit.team2} onChange={e=>updateTruckTeamName(tRec, 2, e.target.value)} placeholder="Namn" list={crewNames.length ? 'crew-suggestions' : undefined} style={{ padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }} />
                                 </label>
                                 <label style={{ display:'grid', gap:4, fontSize:12 }}>
                                   <span>Depå</span>

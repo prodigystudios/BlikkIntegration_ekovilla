@@ -24,10 +24,10 @@ export async function GET() {
   if (ids.length > 0) {
     const { data: profRows, error: profErr } = await adminSupabase
       .from('profiles')
-      .select('id, role, full_name')
+      .select('id, role, full_name, tags')
       .in('id', ids);
     if (!profErr && profRows) {
-      profRows.forEach(r => { profiles[r.id] = { role: r.role, full_name: (r as any).full_name ?? null }; });
+      profRows.forEach(r => { profiles[r.id] = { role: r.role, full_name: (r as any).full_name ?? null } as any; (profiles as any)[r.id].tags = (r as any).tags || []; });
     }
   }
 
@@ -36,7 +36,8 @@ export async function GET() {
     email: u.email,
     created_at: u.created_at,
     role: profiles[u.id]?.role || 'member',
-    full_name: profiles[u.id]?.full_name || null
+    full_name: profiles[u.id]?.full_name || null,
+    tags: (profiles as any)[u.id]?.tags || []
   }));
 
   return NextResponse.json({ users });
