@@ -32,59 +32,109 @@ export function QuickLinksGrid({ links, compact, extraCompact }: { links: QuickL
     <div
       style={{
         display: 'grid',
-        gap: compact ? 12 : 16,
+        gap: 12,
         gridTemplateColumns: extraCompact
-          ? 'repeat(auto-fill,minmax(150px,1fr))'
+          ? 'repeat(auto-fill,minmax(110px,1fr))'
           : compact
-            ? 'repeat(auto-fill,minmax(180px,1fr))'
-            : 'repeat(auto-fill,minmax(220px,1fr))',
+            ? 'repeat(auto-fill,minmax(120px,1fr))'
+            : 'repeat(auto-fill,minmax(140px,1fr))',
+        alignItems: 'start'
       }}
     >
       {links.map(link => {
-        const content = (
+        const inner = (
           <div
             style={{
-              ...baseTile,
-              padding: compact ? (extraCompact ? '12px 12px 14px' : '14px 14px 16px') : baseTile.padding,
-              gap: compact ? 6 : 8,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'flex-start',
+              gap: 6,
+              padding: extraCompact ? 6 : 8,
+              background: 'transparent',
+              border: 'none',
+              outline: 'none',
               cursor: link.disabled ? 'not-allowed' : 'pointer',
-              opacity: link.disabled ? 0.55 : 1,
-              filter: link.disabled ? 'grayscale(15%)' : 'none'
+              opacity: link.disabled ? 0.6 : 1,
+              textDecoration: 'none',
             }}
-            onMouseEnter={e => { if(link.disabled) return; e.currentTarget.style.borderColor = '#6366f1'; e.currentTarget.style.boxShadow = '0 6px 16px rgba(99,102,241,0.18)'; }}
-            onMouseLeave={e => { e.currentTarget.style.borderColor = '#e5e7eb'; e.currentTarget.style.boxShadow = '0 4px 10px rgba(0,0,0,0.03)'; }}
-            onFocus={e => { if(link.disabled) return; e.currentTarget.style.borderColor = '#6366f1'; e.currentTarget.style.boxShadow = '0 0 0 3px rgba(99,102,241,0.35)'; }}
-            onBlur={e => { e.currentTarget.style.borderColor = '#e5e7eb'; e.currentTarget.style.boxShadow = '0 4px 10px rgba(0,0,0,0.03)'; }}
             aria-disabled={link.disabled || undefined}
           >
-            <div style={{
-              width: 48,
-              height: 48,
-              display: 'grid',
-              placeItems: 'center',
-              borderRadius: 14,
-              background: 'linear-gradient(135deg,#eef2ff,#e0e7ff)',
-              color: '#4f46e5',
-              boxShadow: 'inset 0 0 0 1px #c7d2fe'
-            }}>
+            <span style={{ display:'inline-flex', width: extraCompact ? 28 : 32, height: extraCompact ? 28 : 32, alignItems:'center', justifyContent:'center', color:'#4f46e5' }}>
               {link.icon}
-            </div>
-      <div style={{ fontSize: compact ? 14 : 16, fontWeight: 600, letterSpacing: -0.3, display:'flex', alignItems:'center', gap:6 }}>
+            </span>
+            <div style={{ fontSize: extraCompact ? 12 : 13, fontWeight: 600, letterSpacing: -0.2, textAlign: 'center', color:'#111827' }}>
               {link.title}
-              {link.disabled && (
-        <span style={{ fontSize:9, fontWeight:600, background:'#f1f5f9', color:'#475569', padding:'2px 5px', borderRadius:999, border:'1px solid #e2e8f0' }}>{link.disabledNote || 'Kommer snart'}</span>
-              )}
             </div>
-      <div style={{ fontSize: compact ? 11.5 : 13, lineHeight: 1.35, color: '#475569' }}>{link.desc}</div>
-      {!link.disabled && <span aria-hidden style={{ position: 'absolute', top: compact ? 8 : 12, right: compact ? 8 : 12, fontSize: compact ? 11 : 12, color: '#6366f1', fontWeight: 600 }}>↗</span>}
+            {link.disabled && (
+              <span style={{ fontSize:9, fontWeight:600, background:'#f1f5f9', color:'#475569', padding:'2px 5px', borderRadius:999, border:'1px solid #e2e8f0' }}>{link.disabledNote || 'Kommer snart'}</span>
+            )}
           </div>
         );
-        if (link.disabled) {
-          return <div key={link.href}>{content}</div>;
-        }
+        if (link.disabled) return <div key={link.href}>{inner}</div>;
         return (
           <Link key={link.href} href={link.href} style={{ textDecoration:'none' }}>
-            {content}
+            {inner}
+          </Link>
+        );
+      })}
+    </div>
+  );
+}
+
+// Horizontal scroll strip for mobile (saves vertical space)
+export function QuickLinksStrip({ links, compact, extraCompact }: { links: QuickLink[]; compact?: boolean; extraCompact?: boolean }) {
+  const tileMin = extraCompact ? 100 : (compact ? 110 : 140);
+  return (
+    <div
+      role="navigation"
+      aria-label="Snabba genvägar"
+      style={{
+        display: 'flex',
+        gap: 12,
+        overflowX: 'auto',
+        WebkitOverflowScrolling: 'touch',
+        paddingBottom: 4,
+        scrollSnapType: 'x proximity',
+        scrollbarWidth: 'thin',
+      }}
+    >
+      {links.map(link => {
+        const inner = (
+          <div
+            style={{
+              minWidth: tileMin,
+              flex: '0 0 auto',
+              scrollSnapAlign: 'start',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: 6,
+              padding: extraCompact ? 6 : 8,
+              background: 'transparent',
+              border: 'none',
+              outline: 'none',
+              cursor: link.disabled ? 'not-allowed' : 'pointer',
+              opacity: link.disabled ? 0.55 : 1,
+              textDecoration: 'none',
+            }}
+            aria-disabled={link.disabled || undefined}
+          >
+            <span style={{ display:'inline-flex', width: extraCompact ? 28 : 30, height: extraCompact ? 28 : 30, alignItems:'center', justifyContent:'center', color:'#4f46e5' }}>
+              {link.icon}
+            </span>
+            <div style={{ fontSize: extraCompact ? 12 : 13, fontWeight: 600, letterSpacing: -0.2, textAlign: 'center', color:'#111827', maxWidth: tileMin }}>
+              {link.title}
+            </div>
+            {link.disabled && (
+              <span style={{ fontSize:9, fontWeight:600, background:'#f1f5f9', color:'#475569', padding:'2px 5px', borderRadius:999, border:'1px solid #e2e8f0' }}>{link.disabledNote || 'Kommer snart'}</span>
+            )}
+          </div>
+        );
+        if (link.disabled) return <div key={link.href}>{inner}</div>;
+        return (
+          <Link key={link.href} href={link.href} style={{ textDecoration:'none' }}>
+            {inner}
           </Link>
         );
       })}

@@ -1,7 +1,9 @@
 "use client";
 import React, { useMemo, useEffect, useState } from 'react';
-import { QuickLinksGrid, QuickLink, QuickLinksIconBar } from './QuickLinks';
+import { QuickLinksGrid, QuickLink, QuickLinksIconBar, QuickLinksStrip } from './QuickLinks';
 import DashboardNotes from './DashboardNotes';
+import dynamic from 'next/dynamic';
+const DashboardSchedule = dynamic(() => import('./DashboardSchedule'));
 import DashboardTasks from './DashboardTasks';
 import type { UserRole } from '../../lib/roles';
 import { filterLinks, NAV_LINKS } from '../../lib/roles';
@@ -75,8 +77,8 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
   useEffect(() => {
     const calc = () => {
       const w = window.innerWidth;
-      setIsSmall(w <= 640);
-      setIsXS(w <= 420);
+      setIsSmall(w <= 768);
+      setIsXS(w <= 460);
     };
     calc();
     window.addEventListener('resize', calc);
@@ -120,6 +122,11 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
     try {
       const raw = localStorage.getItem('dashboard.quicklinks.mini');
       if (raw === '1') setMini(true);
+      // On first visit or no preference, auto-compact on very small screens
+      if (raw == null) {
+        const w = window.innerWidth;
+        if (w <= 480) setMini(true);
+      }
     } catch {}
   }, []);
   useEffect(() => {
@@ -157,9 +164,9 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
               border: '1px solid #e5e7eb',
               background: '#fff',
               borderRadius: 16,
-              padding: isSmall ? (isXS ? 14 : 18) : 24,
+              padding: isSmall ? (isXS ? 10 : 14) : 24,
               display: 'grid',
-              gap: isSmall ? 14 : 20,
+              gap: isSmall ? 10 : 20,
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap:12 }}>
@@ -168,7 +175,11 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
                 <button onClick={()=>setMini(true)} style={miniToggleBtn} aria-label="Minimera och visa endast ikoner" title="Minimera och visa endast ikoner">Minimera</button>
               </div>
             </div>
-            <QuickLinksGrid links={links} compact={isSmall} extraCompact={isXS} />
+            {isSmall ? (
+              <QuickLinksStrip links={links} compact={true} extraCompact={isXS} />
+            ) : (
+              <QuickLinksGrid links={links} compact={false} extraCompact={false} />
+            )}
           </section>
         )}
         {/* Tasks section */}
@@ -200,6 +211,13 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
         >
           <DashboardNotes compact={isSmall || mini} />
         </section>
+
+        {/* Admin-only: Work schedule for current/next week */}
+        {role === 'admin' && (
+          <div style={{ order: isSmall ? -2 as any : 0 }}>
+            <DashboardSchedule compact={isSmall || mini} />
+          </div>
+        )}
       </div>
     </main>
   );
