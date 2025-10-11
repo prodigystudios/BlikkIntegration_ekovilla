@@ -1320,6 +1320,63 @@ export default function PlanneringPage() {
     return seg?.createdByName || null;
   }
 
+  // Planned consumption per depå for the selected week (sum of bagCount for spans starting that week)
+  const weeklyPlannedByDepot = useMemo(() => {
+    const out: Record<string, number> = {};
+    if (!selectedWeekKey) return out; // only compute when a week is selected
+    for (const seg of scheduledSegments) {
+      // Count only segments whose start day is in the selected week to avoid double-counting per-day instances
+      if (isoWeekKey(seg.startDay) !== selectedWeekKey) continue;
+      const meta = scheduleMeta[seg.projectId];
+      const bag = meta?.bagCount;
+      if (!(typeof bag === 'number' && bag > 0)) continue;
+      // Resolve effective depot: segment override > truck's depot
+      let effectiveDepotId: string | null = seg.depotId || null;
+      if (!effectiveDepotId) {
+        const truckName = meta?.truck || null;
+        if (truckName) {
+          const truckRec = planningTrucks.find(t => t.name === truckName) || null;
+          effectiveDepotId = truckRec?.depot_id ?? null;
+        }
+      }
+      if (!effectiveDepotId) continue; // skip if no depot can be resolved
+      out[effectiveDepotId] = (out[effectiveDepotId] || 0) + bag;
+    }
+    return out;
+  }, [selectedWeekKey, scheduledSegments, scheduleMeta, planningTrucks]);
+
+  // Planned consumption per depå for the visible month (only used when no week is selected)
+  const monthlyPlannedByDepot = useMemo(() => {
+    const out: Record<string, number> = {};
+    if (selectedWeekKey) return out; // prefer weekly view when a week is chosen
+    // Determine the current visible month from monthOffset
+    const base = new Date();
+    base.setDate(1);
+    base.setMonth(base.getMonth() + monthOffset);
+    const y = base.getFullYear();
+    const m = String(base.getMonth() + 1).padStart(2, '0');
+    const visibleMonthKey = `${y}-${m}`; // 'YYYY-MM'
+    for (const seg of scheduledSegments) {
+      // Only count segments whose start day is within the visible month
+      if (!seg.startDay.startsWith(visibleMonthKey + '-')) continue;
+      const meta = scheduleMeta[seg.projectId];
+      const bag = meta?.bagCount;
+      if (!(typeof bag === 'number' && bag > 0)) continue;
+      // Resolve effective depot: segment override > truck's depot
+      let effectiveDepotId: string | null = seg.depotId || null;
+      if (!effectiveDepotId) {
+        const truckName = meta?.truck || null;
+        if (truckName) {
+          const truckRec = planningTrucks.find(t => t.name === truckName) || null;
+          effectiveDepotId = truckRec?.depot_id ?? null;
+        }
+      }
+      if (!effectiveDepotId) continue;
+      out[effectiveDepotId] = (out[effectiveDepotId] || 0) + bag;
+    }
+    return out;
+  }, [selectedWeekKey, monthOffset, scheduledSegments, scheduleMeta, planningTrucks]);
+
   // Avatar helpers
   function creatorInitials(name: string) {
     const parts = name.trim().split(/\s+/).filter(Boolean);
@@ -2007,6 +2064,23 @@ export default function PlanneringPage() {
             </div>
             )}
           </div>
+          {/* Read-only depå overview under trucks */}
+          {depots.length > 0 && (
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginTop: 6 }}>
+              <span style={{ fontSize: 11, color: '#6b7280' }}>Depåer:</span>
+              {depots.map(d => {
+                const planned = (selectedWeekKey ? weeklyPlannedByDepot[d.id] : monthlyPlannedByDepot[d.id]) || 0;
+                return (
+                  <span key={d.id} style={{ fontSize: 11, color: '#111827', background: '#f8fafc', border: '1px solid #e5e7eb', padding: '2px 8px', borderRadius: 999 }}>
+                    {d.name}: {d.material_total ?? 0}
+                    {planned > 0 ? (
+                      <span style={{ marginLeft: 6, color: '#0369a1' }}>(Planerad: {planned})</span>
+                    ) : null}
+                  </span>
+                );
+              })}
+            </div>
+          )}
           {/* Depåer panel moved to Admin modal to declutter main page */}
           {isAdmin && showInlineAdminPanels && (
             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'stretch' }}>
