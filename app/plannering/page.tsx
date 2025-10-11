@@ -136,6 +136,11 @@ export default function PlanneringPage() {
   const [depots, setDepots] = useState<DepotRec[]>([]);
   const [newDepotName, setNewDepotName] = useState('');
   const [depotEdits, setDepotEdits] = useState<Record<string, { material_ekovilla_total?: string; material_vitull_total?: string }>>({});
+  // New delivery (admin: planera leverans)
+  const [newDelivery, setNewDelivery] = useState<{ depotId: string; materialKind: 'Ekovilla' | 'Vitull'; amount: string; date: string }>({ depotId: '', materialKind: 'Ekovilla', amount: '', date: '' });
+  const [savingDelivery, setSavingDelivery] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [deliveries, setDeliveries] = useState<Array<{ id: string; depot_id: string; material_kind: 'Ekovilla' | 'Vitull'; amount: number; delivery_date: string; created_by: string | null; created_at: string }>>([]);
+  const [editingDeliveries, setEditingDeliveries] = useState<Record<string, { depotId?: string; materialKind?: 'Ekovilla' | 'Vitull'; amount?: string; date?: string }>>({});
 
   // Fallback selection scheduling (if drag/drop misbehaves)
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
@@ -163,7 +168,7 @@ export default function PlanneringPage() {
 
   // Admin config modal (to declutter main page)
   const [adminModalOpen, setAdminModalOpen] = useState(false);
-  const [adminModalTab, setAdminModalTab] = useState<'trucks' | 'depots'>('trucks');
+  const [adminModalTab, setAdminModalTab] = useState<'trucks' | 'depots' | 'deliveries'>('trucks');
   // Hide inline admin panels on main page (creation and depot totals) – manage via modal instead
   const showInlineAdminPanels = false;
 
@@ -681,6 +686,14 @@ export default function PlanneringPage() {
         } catch (e) {
           console.warn('[planning] depots load exception', e);
         }
+        // Load planned deliveries
+        try {
+          const { data: delRows, error: delErr } = await supabase.from('planning_depot_deliveries').select('*').order('delivery_date');
+          if (delErr) console.warn('[planning] deliveries load error', delErr);
+          else if (Array.isArray(delRows)) setDeliveries(delRows as any);
+        } catch (e) {
+          console.warn('[planning] deliveries load exception', e);
+        }
         // Normalize into local shapes
         if (Array.isArray(segs)) {
           setScheduledSegments(segs.map(s => ({ id: s.id, projectId: s.project_id, startDay: s.start_day, endDay: s.end_day, createdBy: s.created_by, createdByName: s.created_by_name, depotId: (s as any).depot_id ?? null, sortIndex: (s as any).sort_index ?? null })));
@@ -833,6 +846,16 @@ export default function PlanneringPage() {
           setDepots(prev => prev.map(d => d.id === row.id ? { id: row.id, name: row.name, material_total: row.material_total, material_ekovilla_total: row.material_ekovilla_total, material_vitull_total: row.material_vitull_total } : d));
         } else if (payload.eventType === 'DELETE') {
           setDepots(prev => prev.filter(d => d.id !== row.id));
+        }
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'planning_depot_deliveries' }, payload => {
+        const row: any = payload.new || payload.old;
+        if (payload.eventType === 'INSERT') {
+          setDeliveries(prev => prev.some(d => d.id === row.id) ? prev : [...prev, row]);
+        } else if (payload.eventType === 'UPDATE') {
+          setDeliveries(prev => prev.map(d => d.id === row.id ? { ...d, ...row } : d));
+        } else if (payload.eventType === 'DELETE') {
+          setDeliveries(prev => prev.filter(d => d.id !== row.id));
         }
       })
       .subscribe(status => {
@@ -1049,6 +1072,111 @@ export default function PlanneringPage() {
         .then(({ error }) => { if (error) console.warn('[depots] delete error', error); })
     );
   }, [supabase]);
+
+  // Create a planned delivery for a depot (material + amount + date)
+  const createPlannedDelivery = useCallback(async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const depotId = newDelivery.depotId;
+    const materialKind = newDelivery.materialKind;
+    const amountNum = Number((newDelivery.amount || '').trim());
+    const date = (newDelivery.date || '').trim();
+    if (!depotId) { if (typeof window !== 'undefined') alert('Välj depå.'); return; }
+    if (!date) { if (typeof window !== 'undefined') alert('Välj datum.'); return; }
+    if (!Number.isFinite(amountNum) || amountNum <= 0) { if (typeof window !== 'undefined') alert('Ange ett antal > 0.'); return; }
+    setSavingDelivery('saving');
+    const payload: any = { depot_id: depotId, material_kind: materialKind, amount: amountNum, delivery_date: date };
+    if (currentUserId) payload.created_by = currentUserId;
+    try {
+      const { error } = await supabase.from('planning_depot_deliveries').insert(payload).select('id').single();
+      if (error) { console.warn('[deliveries] create error', error); setSavingDelivery('error'); return; }
+      setSavingDelivery('saved');
+      setNewDelivery({ depotId: '', materialKind: 'Ekovilla', amount: '', date: '' });
+      setTimeout(() => setSavingDelivery('idle'), 1200);
+    } catch (err) {
+      console.warn('[deliveries] create exception', err);
+      setSavingDelivery('error');
+    }
+  }, [newDelivery, supabase, currentUserId]);
+
+  const updatePlannedDelivery = useCallback(async (id: string) => {
+    const edit = editingDeliveries[id] || {};
+    const payload: any = {};
+    if (edit.depotId !== undefined) payload.depot_id = edit.depotId || null;
+    if (edit.materialKind !== undefined) payload.material_kind = edit.materialKind;
+    if (edit.amount !== undefined) {
+      const num = Number((edit.amount || '').trim());
+      if (!Number.isFinite(num) || num <= 0) { if (typeof window !== 'undefined') alert('Ange ett antal > 0.'); return; }
+      payload.amount = num;
+    }
+    if (edit.date !== undefined) payload.delivery_date = (edit.date || '').trim();
+    if (Object.keys(payload).length === 0) return;
+    try {
+      const { error } = await supabase.from('planning_depot_deliveries').update(payload).eq('id', id);
+      if (error) { console.warn('[deliveries] update error', error); return; }
+      setEditingDeliveries(prev => { const c = { ...prev }; delete c[id]; return c; });
+    } catch (err) {
+      console.warn('[deliveries] update exception', err);
+    }
+  }, [editingDeliveries, supabase]);
+
+  const deletePlannedDelivery = useCallback(async (id: string) => {
+    if (typeof window !== 'undefined') {
+      const ok = window.confirm('Ta bort denna leverans?');
+      if (!ok) return;
+    }
+    try {
+      const { error } = await supabase.from('planning_depot_deliveries').delete().eq('id', id);
+      if (error) console.warn('[deliveries] delete error', error);
+    } catch (err) {
+      console.warn('[deliveries] delete exception', err);
+    }
+  }, [supabase]);
+
+  const groupedDeliveries = useMemo(() => {
+    const byKey: Record<string, { depotId: string; material: 'Ekovilla'|'Vitull'; date: string; items: typeof deliveries } > = {} as any;
+    const sorted = [...deliveries].sort((a,b)=> (a.delivery_date||'').localeCompare(b.delivery_date||'') || (a.depot_id||'').localeCompare(b.depot_id||'') || (a.material_kind||'').localeCompare(b.material_kind||''));
+    for (const d of sorted) {
+      const key = `${d.depot_id}|${d.delivery_date}|${d.material_kind}`;
+      if (!byKey[key]) byKey[key] = { depotId: d.depot_id, material: d.material_kind, date: d.delivery_date, items: [] as any };
+      byKey[key].items.push(d as any);
+    }
+    return Object.values(byKey);
+  }, [deliveries]);
+
+  // Upcoming deliveries for current view (selected week or visible month)
+  const upcomingDeliveriesForView = useMemo(() => {
+    if (!deliveries || deliveries.length === 0) return [] as Array<{ id: string; depot_id: string; material_kind: 'Ekovilla'|'Vitull'; amount: number; delivery_date: string }>;
+    let start: string | null = null;
+    let end: string | null = null;
+    if (selectedWeekKey) {
+      const monday = mondayFromIsoWeekKey(selectedWeekKey);
+      if (monday) {
+        const sunday = new Date(monday);
+        sunday.setDate(sunday.getDate() + 6);
+        start = fmtDate(monday);
+        end = fmtDate(sunday);
+      }
+    } else {
+      const base = new Date();
+      base.setDate(1);
+      base.setMonth(base.getMonth() + monthOffset);
+      const s = startOfMonth(base);
+      const e = endOfMonth(base);
+      start = fmtDate(s);
+      end = fmtDate(e);
+    }
+    const inRange = deliveries.filter(d => {
+      const dt = d.delivery_date;
+      if (!dt) return false;
+      if (start && dt < start) return false;
+      if (end && dt > end) return false;
+      return true;
+    });
+    // Sort ascending by date then depot then material
+    inRange.sort((a,b)=> (a.delivery_date||'').localeCompare(b.delivery_date||'') || (a.depot_id||'').localeCompare(b.depot_id||'') || (a.material_kind||'').localeCompare(b.material_kind||''));
+    // Limit to avoid clutter
+    return inRange.slice(0, 12);
+  }, [deliveries, selectedWeekKey, monthOffset]);
 
   // Truck helpers (admin guarded by RLS; UI also hides for non-admin)
   const createTruck = useCallback(async () => {
@@ -2165,6 +2293,26 @@ export default function PlanneringPage() {
               })}
             </div>
           )}
+          {/* Upcoming deliveries under depå overview */}
+          {upcomingDeliveriesForView.length > 0 && (
+            <div style={{ marginTop: 6, display:'flex', gap:6, alignItems:'center', flexWrap:'wrap' }}>
+              <span style={{ fontSize: 11, color: '#6b7280' }}>Kommande leveranser:</span>
+              {/* Render as compact chips per delivery: YYYY-MM-DD • Depå • Material × Antal */}
+              {upcomingDeliveriesForView.map(d => {
+                const dep = depots.find(x => x.id === d.depot_id);
+                const depName = dep ? dep.name : 'Okänd depå';
+                return (
+                  <span key={d.id} style={{ fontSize: 11, color:'#111827', background:'#fff', border:'1px solid #e5e7eb', padding:'2px 8px', borderRadius:999, display:'inline-flex', gap:8, alignItems:'center' }}>
+                    <span>{d.delivery_date}</span>
+                    <span>•</span>
+                    <span>{depName}</span>
+                    <span>•</span>
+                    <span>{d.material_kind} × {d.amount} antal säckar</span>
+                  </span>
+                );
+              })}
+            </div>
+          )}
           {/* Depåer panel moved to Admin modal to declutter main page */}
           {isAdmin && showInlineAdminPanels && (
             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'stretch' }}>
@@ -2268,6 +2416,7 @@ export default function PlanneringPage() {
                   <div style={{ display:'flex', gap:8 }}>
                     <button onClick={()=>setAdminModalTab('trucks')} style={{ padding:'6px 10px', border:'1px solid '+(adminModalTab==='trucks'?'#111827':'#e5e7eb'), borderRadius:8, background: adminModalTab==='trucks'?'#111827':'#fff', color: adminModalTab==='trucks'?'#fff':'#111827', fontSize:13, fontWeight:600 }}>Lastbilar</button>
                     <button onClick={()=>setAdminModalTab('depots')} style={{ padding:'6px 10px', border:'1px solid '+(adminModalTab==='depots'?'#111827':'#e5e7eb'), borderRadius:8, background: adminModalTab==='depots'?'#111827':'#fff', color: adminModalTab==='depots'?'#fff':'#111827', fontSize:13, fontWeight:600 }}>Depåer</button>
+                    <button onClick={()=>setAdminModalTab('deliveries')} style={{ padding:'6px 10px', border:'1px solid '+(adminModalTab==='deliveries'?'#111827':'#e5e7eb'), borderRadius:8, background: adminModalTab==='deliveries'?'#111827':'#fff', color: adminModalTab==='deliveries'?'#fff':'#111827', fontSize:13, fontWeight:600 }}>Leveranser</button>
                   </div>
                   <button onClick={()=>setAdminModalOpen(false)} className="btn--plain" aria-label="Stäng" style={{ border:'1px solid #e5e7eb', borderRadius:8, padding:'6px 10px', background:'#fff' }}>Stäng</button>
                 </div>
@@ -2355,6 +2504,82 @@ export default function PlanneringPage() {
                           );
                         })}
                         {depots.length === 0 && <div style={{ color:'#6b7280' }}>Inga depåer</div>}
+                      </div>
+                    </div>
+                  )}
+                  {adminModalTab==='deliveries' && (
+                    <div style={{ display:'grid', gap:12 }}>
+                      <div style={{ display:'grid', gap:8, padding:'8px 10px', border:'1px dashed #cbd5e1', borderRadius:10, background:'#f8fafc' }}>
+                        <div style={{ fontWeight:700, color:'#0f172a' }}>Planera leverans</div>
+                        <div style={{ display:'grid', gridTemplateColumns:'repeat(4, minmax(160px, 1fr))', gap:8, alignItems:'center' }}>
+                          <label style={{ display:'grid', gap:4, fontSize:12 }}>
+                            <span>Depå</span>
+                            <select value={newDelivery.depotId} onChange={e=>setNewDelivery(prev=>({ ...prev, depotId: e.target.value }))} style={{ padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }}>
+                              <option value="">Välj depå</option>
+                              {depots.map(d => (<option key={d.id} value={d.id}>{d.name}</option>))}
+                            </select>
+                          </label>
+                          <label style={{ display:'grid', gap:4, fontSize:12 }}>
+                            <span>Material</span>
+                            <select value={newDelivery.materialKind} onChange={e=>setNewDelivery(prev=>({ ...prev, materialKind: e.target.value as any }))} style={{ padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }}>
+                              <option value="Ekovilla">Ekovilla</option>
+                              <option value="Vitull">Vitull</option>
+                            </select>
+                          </label>
+                          <label style={{ display:'grid', gap:4, fontSize:12 }}>
+                            <span>Antal</span>
+                            <input inputMode="numeric" pattern="[0-9]*" value={newDelivery.amount} onChange={e=>setNewDelivery(prev=>({ ...prev, amount: e.target.value }))} placeholder="t.ex. 30" style={{ padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }} />
+                          </label>
+                          <label style={{ display:'grid', gap:4, fontSize:12 }}>
+                            <span>Datum</span>
+                            <input type="date" value={newDelivery.date} onChange={e=>setNewDelivery(prev=>({ ...prev, date: e.target.value }))} style={{ padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }} />
+                          </label>
+                        </div>
+                        <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+                          <button type="button" onClick={createPlannedDelivery} disabled={savingDelivery==='saving'} className="btn--plain btn--xs" style={{ fontSize:12, padding:'6px 10px', border:'1px solid #16a34a', background:'#dcfce7', color:'#166534', borderRadius:8 }}>Spara leverans</button>
+                          {savingDelivery==='saving' && <span style={{ fontSize:12, color:'#64748b' }}>Sparar…</span>}
+                          {savingDelivery==='saved' && <span style={{ fontSize:12, color:'#059669' }}>✓ Sparad</span>}
+                          {savingDelivery==='error' && <span style={{ fontSize:12, color:'#b91c1c' }}>Fel</span>}
+                        </div>
+                      </div>
+                      <div style={{ display:'grid', gap:10 }}>
+                        <div style={{ fontWeight:700 }}>Kommande leveranser</div>
+                        {groupedDeliveries.length === 0 && (
+                          <div style={{ color:'#6b7280' }}>Inga planerade leveranser</div>
+                        )}
+                        {groupedDeliveries.map(group => {
+                          const dep = depots.find(d => d.id === group.depotId);
+                          const header = `${group.date} • ${dep ? dep.name : 'Okänd depå'} • ${group.material}`;
+                          return (
+                            <div key={`${group.depotId}|${group.date}|${group.material}`} style={{ border:'1px solid #e5e7eb', borderRadius:10, padding:8, background:'#fff', display:'grid', gap:6 }}>
+                              <div style={{ fontWeight:600 }}>{header}</div>
+                              <div style={{ display:'grid', gap:6 }}>
+                                {group.items.map(item => {
+                                  const edit = editingDeliveries[item.id] || { depotId: item.depot_id, materialKind: item.material_kind, amount: String(item.amount), date: item.delivery_date };
+                                  return (
+                                    <div key={item.id} style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr auto', gap:8, alignItems:'center' }}>
+                                      <select value={edit.depotId} onChange={e=>setEditingDeliveries(prev=>({ ...prev, [item.id]: { ...edit, depotId: e.target.value } }))} style={{ padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }}>
+                                        {depots.map(d => (<option key={d.id} value={d.id}>{d.name}</option>))}
+                                      </select>
+                                      <select value={edit.materialKind} onChange={e=>setEditingDeliveries(prev=>({ ...prev, [item.id]: { ...edit, materialKind: e.target.value as any } }))} style={{ padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }}>
+                                        <option value="Ekovilla">Ekovilla</option>
+                                        <option value="Vitull">Vitull</option>
+                                      </select>
+                                      <div style={{ display:'flex', gap:6, alignItems:'center' }}>
+                                        <input inputMode="numeric" pattern="[0-9]*" value={edit.amount} onChange={e=>setEditingDeliveries(prev=>({ ...prev, [item.id]: { ...edit, amount: e.target.value } }))} style={{ width:80, padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }} />
+                                        <input type="date" value={edit.date} onChange={e=>setEditingDeliveries(prev=>({ ...prev, [item.id]: { ...edit, date: e.target.value } }))} style={{ padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }} />
+                                      </div>
+                                      <div style={{ display:'flex', gap:6, justifyContent:'flex-end' }}>
+                                        <button type="button" onClick={()=>updatePlannedDelivery(item.id)} className="btn--plain btn--xs" style={{ fontSize:12, padding:'6px 10px', border:'1px solid #cbd5e1', background:'#fff', borderRadius:8 }}>Spara</button>
+                                        <button type="button" onClick={()=>deletePlannedDelivery(item.id)} className="btn--plain btn--xs" style={{ fontSize:12, padding:'6px 10px', border:'1px solid #fecaca', background:'#fef2f2', color:'#b91c1c', borderRadius:8 }}>Ta bort</button>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
                   )}
