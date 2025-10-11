@@ -1122,6 +1122,28 @@ export default function EgenkontrollPage() {
                           setToast({ text: 'Fel i kolumnnamn (project_id vs projectId). Kontakta admin.', type: 'error' });
                         }
                         console.warn('Failed to persist actual_bags_used', bagsErr);
+                      } else {
+                        // Also decrement depot stock for the effective depot of this project/segment
+                        try {
+                          // Build a stable idempotency key from saved archive path and date
+                          const origin = typeof window !== 'undefined' ? window.location.origin : '';
+                          const reportKey = (saved?.path ? String(saved.path) : `${blikkProjectId}-${dateStr}`);
+                          const resp = await fetch('/api/planning/consume-bags', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              projectId: String(blikkProjectId),
+                              installationDate: installationDate || undefined,
+                              totalBags: totalBags2,
+                              reportKey,
+                            }),
+                          });
+                          if (!resp.ok) {
+                            try { console.warn('consume-bags failed', await resp.json()); } catch {}
+                          }
+                        } catch (e) {
+                          try { console.warn('consume-bags exception', e); } catch {}
+                        }
                       }
                     }
                   } catch (e) {

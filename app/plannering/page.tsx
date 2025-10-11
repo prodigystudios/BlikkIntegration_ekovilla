@@ -25,6 +25,7 @@ interface ScheduledSegment {
   endDay: string;    // 'YYYY-MM-DD'
   createdBy?: string | null;
   createdByName?: string | null;
+  depotId?: string | null; // optional per-segment depot override
 }
 
 interface ProjectScheduleMeta {
@@ -112,7 +113,7 @@ export default function PlanneringPage() {
   const [manualError, setManualError] = useState<string | null>(null);
 
   // Dynamic trucks (DB backed). Fallback to legacy static list until table populated.
-  interface TruckRec { id: string; name: string; color?: string | null; team_member1_name?: string | null; team_member2_name?: string | null; }
+  interface TruckRec { id: string; name: string; color?: string | null; team_member1_name?: string | null; team_member2_name?: string | null; depot_id?: string | null; }
   const defaultTrucks = ['mb blå', 'mb vit', 'volvo blå'];
   const defaultTruckColors: Record<string, string> = {
     'mb blå': '#38bdf8',
@@ -124,7 +125,16 @@ export default function PlanneringPage() {
   const trucks = planningTrucks.length ? planningTrucks.map(t => t.name) : defaultTrucks;
   const [isAdmin, setIsAdmin] = useState(false);
   const [newTruckName, setNewTruckName] = useState('');
+  const [newTruckDepotId, setNewTruckDepotId] = useState<string>('');
+  const [openDepotMenuTruckId, setOpenDepotMenuTruckId] = useState<string | null>(null);
+  const [openDepotMenuSegmentId, setOpenDepotMenuSegmentId] = useState<string | null>(null);
   const jobTypes = ['Ekovilla', 'Vitull', 'Leverans', 'Utsugning', 'Snickerier', 'Övrigt'];
+
+  // Depåer (loading sites)
+  interface DepotRec { id: string; name: string; material_total: number | null; }
+  const [depots, setDepots] = useState<DepotRec[]>([]);
+  const [newDepotName, setNewDepotName] = useState('');
+  const [depotEdits, setDepotEdits] = useState<Record<string, { material_total: string }>>({});
 
   // Fallback selection scheduling (if drag/drop misbehaves)
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
@@ -601,7 +611,7 @@ export default function PlanneringPage() {
           const { data: trucksData, error: trucksErr } = await supabase.from('planning_trucks').select('*').order('name');
           if (trucksErr) console.warn('[planning] trucks load error', trucksErr);
           else if (Array.isArray(trucksData)) {
-            setPlanningTrucks(trucksData.map(t => ({ id: t.id, name: t.name, color: t.color, team_member1_name: t.team_member1_name, team_member2_name: t.team_member2_name })));
+            setPlanningTrucks(trucksData.map(t => ({ id: t.id, name: t.name, color: t.color, team_member1_name: t.team_member1_name, team_member2_name: t.team_member2_name, depot_id: (t as any).depot_id || null })));
             setTruckColorOverrides(prev => {
               const c = { ...prev };
               for (const t of trucksData) if (t.color) c[t.name] = t.color;
@@ -609,9 +619,18 @@ export default function PlanneringPage() {
             });
           }
         } catch (e) { console.warn('[planning] could not load trucks', e); }
+
+        // Load depåer (loading sites)
+        try {
+          const { data: depRows, error: depErr } = await supabase.from('planning_depots').select('*').order('name');
+          if (depErr) console.warn('[planning] depots load error', depErr);
+          else if (Array.isArray(depRows)) setDepots(depRows as any);
+        } catch (e) {
+          console.warn('[planning] depots load exception', e);
+        }
         // Normalize into local shapes
         if (Array.isArray(segs)) {
-          setScheduledSegments(segs.map(s => ({ id: s.id, projectId: s.project_id, startDay: s.start_day, endDay: s.end_day, createdBy: s.created_by, createdByName: s.created_by_name })));
+          setScheduledSegments(segs.map(s => ({ id: s.id, projectId: s.project_id, startDay: s.start_day, endDay: s.end_day, createdBy: s.created_by, createdByName: s.created_by_name, depotId: (s as any).depot_id ?? null })));
           // Inject projects from segments if not already present
           setProjects(prev => {
             const map = new Map(prev.map(p => [p.id, p]));
@@ -702,7 +721,7 @@ export default function PlanneringPage() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'planning_segments' }, payload => {
         const row: any = payload.new || payload.old;
         if (payload.eventType === 'INSERT') {
-          setScheduledSegments(prev => prev.some(s => s.id === row.id) ? prev : [...prev, { id: row.id, projectId: row.project_id, startDay: row.start_day, endDay: row.end_day, createdBy: row.created_by, createdByName: row.created_by_name }]);
+          setScheduledSegments(prev => prev.some(s => s.id === row.id) ? prev : [...prev, { id: row.id, projectId: row.project_id, startDay: row.start_day, endDay: row.end_day, createdBy: row.created_by, createdByName: row.created_by_name, depotId: row.depot_id ?? null }]);
           setProjects(prev => prev.some(p => p.id === row.project_id) ? prev : [...prev, {
             id: row.project_id,
             name: row.project_name,
@@ -716,7 +735,7 @@ export default function PlanneringPage() {
             salesResponsible: row.sales_responsible ?? null
           }]);
         } else if (payload.eventType === 'UPDATE') {
-          setScheduledSegments(prev => prev.map(s => s.id === row.id ? { ...s, startDay: row.start_day, endDay: row.end_day, createdByName: row.created_by_name ?? s.createdByName } : s));
+          setScheduledSegments(prev => prev.map(s => s.id === row.id ? { ...s, startDay: row.start_day, endDay: row.end_day, createdByName: row.created_by_name ?? s.createdByName, depotId: row.depot_id ?? s.depotId ?? null } : s));
         } else if (payload.eventType === 'DELETE') {
           setScheduledSegments(prev => prev.filter(s => s.id !== row.id));
         }
@@ -744,13 +763,23 @@ export default function PlanneringPage() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'planning_trucks' }, payload => {
         const row: any = payload.new || payload.old;
         if (payload.eventType === 'INSERT') {
-          setPlanningTrucks(prev => prev.some(t => t.id === row.id) ? prev : [...prev, { id: row.id, name: row.name, color: row.color, team_member1_name: row.team_member1_name, team_member2_name: row.team_member2_name }]);
+          setPlanningTrucks(prev => prev.some(t => t.id === row.id) ? prev : [...prev, { id: row.id, name: row.name, color: row.color, team_member1_name: row.team_member1_name, team_member2_name: row.team_member2_name, depot_id: row.depot_id || null }]);
           if (row.color) setTruckColorOverrides(prev => ({ ...prev, [row.name]: row.color }));
         } else if (payload.eventType === 'UPDATE') {
-          setPlanningTrucks(prev => prev.map(t => t.id === row.id ? { id: row.id, name: row.name, color: row.color, team_member1_name: row.team_member1_name, team_member2_name: row.team_member2_name } : t));
+          setPlanningTrucks(prev => prev.map(t => t.id === row.id ? { id: row.id, name: row.name, color: row.color, team_member1_name: row.team_member1_name, team_member2_name: row.team_member2_name, depot_id: row.depot_id || null } : t));
           if (row.color) setTruckColorOverrides(prev => ({ ...prev, [row.name]: row.color }));
         } else if (payload.eventType === 'DELETE') {
           setPlanningTrucks(prev => prev.filter(t => t.id !== row.id));
+        }
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'planning_depots' }, payload => {
+        const row: any = payload.new || payload.old;
+        if (payload.eventType === 'INSERT') {
+          setDepots(prev => prev.some(d => d.id === row.id) ? prev : [...prev, { id: row.id, name: row.name, material_total: row.material_total }]);
+        } else if (payload.eventType === 'UPDATE') {
+          setDepots(prev => prev.map(d => d.id === row.id ? { id: row.id, name: row.name, material_total: row.material_total } : d));
+        } else if (payload.eventType === 'DELETE') {
+          setDepots(prev => prev.filter(d => d.id !== row.id));
         }
       })
       .subscribe(status => {
@@ -915,6 +944,53 @@ export default function PlanneringPage() {
     );
   }, [supabase]);
 
+  // Depå helpers (admin guarded by RLS; UI also hides for non-admin)
+  const upsertDepotTotal = useCallback((id: string, totalStr: string) => {
+    const norm = (totalStr ?? '').trim();
+    const total = norm === '' ? null : Number(norm);
+    if (norm !== '' && !Number.isFinite(total)) return; // ignore invalid
+    setDepots(prev => prev.map(d => d.id === id ? { ...d, material_total: total as any } : d));
+    enqueue(
+      supabase.from('planning_depots')
+        .update({ material_total: total as any })
+        .eq('id', id)
+        .select('id')
+        .then(({ error }) => { if (error) console.warn('[depots] update error', error); })
+    );
+  }, [supabase]);
+
+  const createDepot = useCallback((e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const name = newDepotName.trim();
+    if (!name) return;
+    setNewDepotName('');
+    const payload: any = { name };
+    if (currentUserId) payload.created_by = currentUserId;
+    enqueue(
+      supabase.from('planning_depots')
+        .insert(payload)
+        .select('*')
+        .then(({ data, error }) => {
+          if (error) { console.warn('[depots] create error', error); return; }
+          if (Array.isArray(data) && data[0]) setDepots(prev => [...prev, data[0] as any]);
+        })
+    );
+  }, [supabase, newDepotName, currentUserId]);
+
+  const deleteDepot = useCallback((dep: DepotRec) => {
+    if (typeof window !== 'undefined') {
+      const ok = window.confirm(`Ta bort depå "${dep.name}"?`);
+      if (!ok) return;
+    }
+    setDepots(prev => prev.filter(d => d.id !== dep.id));
+    enqueue(
+      supabase.from('planning_depots')
+        .delete()
+        .eq('id', dep.id)
+        .then(({ error }) => { if (error) console.warn('[depots] delete error', error); })
+    );
+  }, [supabase]);
+
   // Truck helpers (admin guarded by RLS; UI also hides for non-admin)
   const createTruck = useCallback(async () => {
     const name = newTruckName.trim();
@@ -922,6 +998,7 @@ export default function PlanneringPage() {
     setNewTruckName('');
     const payload: any = { name };
     if (currentUserId) payload.created_by = currentUserId;
+    if (newTruckDepotId) payload.depot_id = newTruckDepotId; else payload.depot_id = null;
     enqueue(
       supabase.from('planning_trucks')
         .insert(payload)
@@ -929,6 +1006,7 @@ export default function PlanneringPage() {
         .then(({ data, error }) => {
           if (error) console.warn('[planning] createTruck error', error);
           else console.debug('[planning] createTruck ok', data);
+          setNewTruckDepotId('');
         })
     );
   }, [newTruckName, supabase, currentUserId]);
@@ -937,6 +1015,30 @@ export default function PlanneringPage() {
     setTruckColorOverrides(prev => ({ ...prev, [truck.name]: color }));
     enqueue(supabase.from('planning_trucks').update({ color }).eq('id', truck.id));
   }, [supabase]);
+
+  const updateTruckDepot = useCallback((truck: TruckRec, depotId: string | null) => {
+    setPlanningTrucks(prev => prev.map(t => t.id === truck.id ? { ...t, depot_id: depotId } : t));
+    enqueue(supabase.from('planning_trucks').update({ depot_id: depotId }).eq('id', truck.id));
+  }, [supabase]);
+
+  const updateSegmentDepot = useCallback((segmentId: string, depotId: string | null) => {
+    setScheduledSegments(prev => prev.map(s => s.id === segmentId ? { ...s, depotId } : s));
+    enqueue(
+      supabase.from('planning_segments')
+        .update({ depot_id: depotId })
+        .eq('id', segmentId)
+        .select('id')
+        .then(({ error }) => { if (error) console.warn('[planning] update segment depot error', error); })
+    );
+  }, [supabase]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { setOpenDepotMenuTruckId(null); setOpenDepotMenuSegmentId(null); } };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('keydown', onKey);
+      return () => window.removeEventListener('keydown', onKey);
+    }
+  }, []);
 
   const deleteTruck = useCallback((truck: TruckRec) => {
     if (!window.confirm(`Ta bort lastbil "${truck.name}"?\nDetta går inte att ångra.`)) return;
@@ -1855,12 +1957,45 @@ export default function PlanneringPage() {
               const changed = edit.team1 !== (tRec.team_member1_name || '') || edit.team2 !== (tRec.team_member2_name || '');
               const status = truckSaveStatus[tRec.id];
               return (
-                <div key={tName} style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 8px', border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff', minWidth: 180, position: 'relative' }}>
+                <div key={tName} onClick={() => setOpenDepotMenuTruckId(null)} style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 8px', border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff', minWidth: 180, position: 'relative' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     <span style={{ width: 16, height: 16, background: c.bg, border: `3px solid ${c.border}`, borderRadius: 6 }} />
                     <span style={{ fontWeight: 600, color: c.text }}>{tName}</span>
+                    {/* depot label moved from header to save row for compact header */}
                     {isAdmin && (
                       <input type="color" value={current} aria-label={`Ändra färg för ${tName}`} onChange={e => updateTruckColor(tRec, e.target.value)} style={{ width: 26, height: 26, padding: 0, border: '1px solid #cbd5e1', borderRadius: 6, cursor: 'pointer', background: '#fff', marginLeft: 'auto' }} />
+                    )}
+                    {isAdmin && depots.length > 0 && (
+                      <button
+                        type="button"
+                        title="Välj depå"
+                        aria-haspopup="menu"
+                        aria-expanded={openDepotMenuTruckId === tRec.id}
+                        onClick={(e) => { e.stopPropagation(); setOpenDepotMenuTruckId(prev => prev === tRec.id ? null : tRec.id); }}
+                        style={{ marginLeft: 4, width: 26, height: 26, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #cbd5e1', borderRadius: 6, background: '#fff', color: '#475569', cursor: 'pointer' }}
+                      >
+                        <span aria-hidden="true" style={{ fontSize: 24, lineHeight: 1 }}>⚙</span>
+                      </button>
+                    )}
+                    {isAdmin && openDepotMenuTruckId === tRec.id && (
+                      <div onClick={(e) => e.stopPropagation()} role="menu" aria-label="Välj depå"
+                        style={{ position: 'absolute', top: 34, right: 8, minWidth: 160, background: '#ffffff', border: '1px solid #e5e7eb', borderRadius: 10, boxShadow: '0 10px 20px rgba(0,0,0,0.08)', padding: 6, zIndex: 50 }}>
+                        <div style={{ padding: '6px 8px', fontSize: 11, color: '#6b7280' }}>Depå</div>
+                        <button type="button" role="menuitem"
+                          onClick={() => { updateTruckDepot(tRec, null); setOpenDepotMenuTruckId(null); }}
+                          style={{ width: '100%', textAlign: 'left', fontSize: 12, padding: '6px 8px', borderRadius: 8, border: '1px solid transparent', background: 'transparent', cursor: 'pointer', color: tRec.depot_id ? '#374151' : '#111827', fontWeight: tRec.depot_id ? 500 : 700 }}>
+                          Ingen depå
+                        </button>
+                        <div style={{ maxHeight: 200, overflowY: 'auto' }}>
+                          {depots.map(d => (
+                            <button key={d.id} type="button" role="menuitem"
+                              onClick={() => { updateTruckDepot(tRec, d.id); setOpenDepotMenuTruckId(null); }}
+                              style={{ width: '100%', textAlign: 'left', fontSize: 12, padding: '6px 8px', borderRadius: 8, border: '1px solid transparent', background: tRec.depot_id === d.id ? '#eef2ff' : 'transparent', cursor: 'pointer', color: '#111827', fontWeight: tRec.depot_id === d.id ? 700 : 500 }}>
+                              {d.name}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
                     )}
                     {isAdmin && (
                       <button
@@ -1888,6 +2023,7 @@ export default function PlanneringPage() {
                       <label style={{ fontSize: 10, color: '#475569' }}>Team 2</label>
                       <input disabled={!isAdmin} value={edit.team2} onChange={e => updateTruckTeamName(tRec, 2, e.target.value)} placeholder="Namn" style={{ fontSize: 11, padding: '4px 6px', border: '1px solid #cbd5e1', borderRadius: 6 }} />
                     </div>
+                    
                     {isAdmin && (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                         <button type="button" disabled={!changed || status?.status === 'saving'} onClick={() => saveTruckTeamNames(tRec)} className="btn--plain btn--xs" style={{ fontSize: 10, padding: '4px 8px', background: changed ? '#e0f2fe' : '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: 6, color: '#0369a1', opacity: changed ? 1 : 0.6 }}>Spara</button>
@@ -1895,6 +2031,9 @@ export default function PlanneringPage() {
                         {status?.status === 'saved' && <span style={{ fontSize: 10, color: '#059669' }}>✓ Sparad</span>}
                         {status?.status === 'error' && <span style={{ fontSize: 10, color: '#b91c1c' }}>Fel</span>}
                         {changed && !status && <span style={{ fontSize: 10, color: '#b45309' }}>Ej sparad</span>}
+                        {(() => { const dep = depots.find(d => d.id === tRec.depot_id); return (
+                          <span style={{ fontSize: 10, color: '#475569', background:'#f1f5f9', padding:'2px 6px', borderRadius:12, border:'1px solid #e2e8f0' }}>Depå: {dep ? dep.name : 'Ingen'}</span>
+                        ); })()}
                       </div>
                     )}
                   </div>
@@ -1906,13 +2045,65 @@ export default function PlanneringPage() {
                 <span style={{ width: 14, height: 14, background: '#fff', border: '2px dashed #94a3b8', borderRadius: 4 }} /> Ingen
               </div>
               {isAdmin && (
-                <form onSubmit={e => { e.preventDefault(); createTruck(); }} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <form onSubmit={e => { e.preventDefault(); createTruck(); }} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   <input value={newTruckName} onChange={e => setNewTruckName(e.target.value)} placeholder="Ny lastbil" style={{ fontSize: 11, padding: '4px 6px', border: '1px solid #cbd5e1', borderRadius: 6 }} />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <label style={{ fontSize: 11, color: '#475569', display: 'inline-block', width: 'auto' }}>Depå:</label>
+                    <select value={newTruckDepotId} onChange={e => setNewTruckDepotId(e.target.value)} style={{ width: 160, fontSize: 11, padding: '4px 6px', border: '1px solid #cbd5e1', borderRadius: 6, background: '#fff' }}>
+                      <option value="">Välj depå (valfritt)</option>
+                      {depots.map(d => (
+                        <option key={d.id} value={d.id}>{d.name}</option>
+                      ))}
+                    </select>
+                  </div>
                   <button type="submit" disabled={!newTruckName.trim()} className="btn--plain btn--xs" style={{ fontSize: 11, background: '#e0f2fe', border: '1px solid #7dd3fc', color: '#0369a1', borderRadius: 6, padding: '4px 6px' }}>Lägg till</button>
                 </form>
               )}
             </div>
           </div>
+          {/* Depåer (loading sites) - admin editable material totals */}
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'stretch' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '8px 10px', border: '1px solid #e5e7eb', borderRadius: 10, background: '#ffffff', minWidth: 260 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#111827' }}>Depåer</div>
+                {isAdmin && (
+                  <form onSubmit={createDepot} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <input value={newDepotName} onChange={e => setNewDepotName(e.target.value)} placeholder="Ny depå" style={{ width: 150, fontSize: 12, padding: '4px 6px', border: '1px solid #cbd5e1', borderRadius: 6 }} />
+                    <button type="submit" disabled={!newDepotName.trim()} className="btn--plain btn--xs" style={{ fontSize: 11, background: '#e0f2fe', border: '1px solid #7dd3fc', color: '#0369a1', borderRadius: 6, padding: '4px 6px' }}>Lägg till</button>
+                  </form>
+                )}
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {depots.map(dep => {
+                  const editVal = depotEdits[dep.id]?.material_total ?? (dep.material_total == null ? '' : String(dep.material_total));
+                  const save = () => upsertDepotTotal(dep.id, editVal);
+                  return (
+                    <div key={dep.id} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', alignItems: 'center', gap: 8 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: '#374151' }}>{dep.name}</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <label style={{ fontSize: 11, color: '#475569', display: 'inline-block' }}>Material:</label>
+                        <input
+                          inputMode="numeric"
+                          pattern="[0-9]*"
+                          value={editVal}
+                          onChange={e => setDepotEdits(prev => ({ ...prev, [dep.id]: { material_total: e.target.value } }))}
+                          onBlur={save}
+                          disabled={!isAdmin}
+                          placeholder="Antal"
+                          style={{ width: 80, fontSize: 12, padding: '4px 6px', border: '1px solid #d1d5db', borderRadius: 6 }}
+                        />
+                      </div>
+                      {isAdmin && (
+                        <button type="button" onClick={() => deleteDepot(dep)} className="btn--plain btn--xs" title="Ta bort depå" style={{ fontSize: 10, background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c', borderRadius: 6, padding: '2px 6px' }}>✕</button>
+                      )}
+                    </div>
+                  );
+                })}
+                {depots.length === 0 && <div style={{ fontSize: 12, color: '#6b7280' }}>Inga depåer</div>}
+              </div>
+            </div>
+          </div>
+
           {/* Filters below truck cards */}
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center', padding: '8px 10px', border: '1px solid #e5e7eb', borderRadius: 10, background: '#ffffff' }}>
             <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
@@ -2047,7 +2238,7 @@ export default function PlanneringPage() {
                               const isMid = (it as any).spanMiddle;
                               const isStart = (it as any).spanStart;
                               return (
-                                <div key={`${it.segmentId}:${it.day}`} draggable onDragStart={e => onDragStart(e, it.segmentId)} onDragEnd={onDragEnd} style={{ position: 'relative', border: `2px solid ${highlight ? '#f59e0b' : cardBorder}`, background: cardBg, borderRadius: 6, padding: 6, fontSize: 12, cursor: 'grab', display: 'grid', gap: 4, opacity: isMid ? 0.95 : 1, boxShadow: highlight ? '0 0 0 3px rgba(245,158,11,0.35)' : 'none' }}>
+                                <div key={`${it.segmentId}:${it.day}`} draggable onDragStart={e => onDragStart(e, it.segmentId)} onDragEnd={onDragEnd} onClick={() => setOpenDepotMenuSegmentId(null)} style={{ position: 'relative', border: `2px solid ${highlight ? '#f59e0b' : cardBorder}`, background: cardBg, borderRadius: 6, padding: 6, fontSize: 12, cursor: 'grab', display: 'grid', gap: 4, opacity: isMid ? 0.95 : 1, boxShadow: highlight ? '0 0 0 3px rgba(245,158,11,0.35)' : 'none' }}>
                                   <div style={{ display: 'flex', flexDirection: 'column', gap: 2}}>
                                     <span style={{ fontWeight: 600, color: display ? display.text : '#312e81', display: 'flex', alignItems: 'center', columnGap: 6, rowGap: 2, flexWrap: 'wrap' }}>
                                       {it.project.orderNumber ? (
@@ -2084,6 +2275,31 @@ export default function PlanneringPage() {
                                         Rapporterad
                                       </a>
                                     ); })()}
+                                    {/* Depot info + override */}
+                                    {(() => {
+                                      const seg = scheduledSegments.find(s => s.id === it.segmentId);
+                                      const overrideId = seg?.depotId || null;
+                                      const truckRec = it.truck ? planningTrucks.find(t => t.name === it.truck) : null;
+                                      const effectiveId = overrideId ?? (truckRec?.depot_id ?? null);
+                                      const eff = effectiveId ? depots.find(d => d.id === effectiveId) : null;
+                                      return (
+                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                                          <span style={{ fontSize: 10, color: display ? display.text : '#475569', background:'#f1f5f9', padding:'2px 6px', borderRadius:12, border:`1px solid ${cardBorder}55` }}>Depå: {eff ? eff.name : 'Ingen'}</span>
+                                          {isAdmin && depots.length > 0 && (
+                                            <button type="button" title="Välj depå för detta projekt" aria-expanded={openDepotMenuSegmentId === it.segmentId} onMouseDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); setOpenDepotMenuSegmentId(prev => prev === it.segmentId ? null : it.segmentId); }} style={{ fontSize: 11, lineHeight: 1, padding: '2px 6px', border: `1px solid ${cardBorder}`, borderRadius: 6, background: '#fff', color: display ? display.text : '#111827', cursor: 'pointer' }}>⚙</button>
+                                          )}
+                                          {isAdmin && openDepotMenuSegmentId === it.segmentId && (
+                                            <div onClick={(e) => e.stopPropagation()} role="menu" aria-label="Välj depå" style={{ position: 'absolute', zIndex: 50, top: 6, right: 6, background:'#fff', border:`1px solid ${cardBorder}`, borderRadius:8, boxShadow:'0 8px 24px rgba(0,0,0,0.12)', padding:6, minWidth: 200 }}>
+                                              <div style={{ padding: '6px 8px', fontSize: 11, color: '#6b7280' }}>Depå (segment)</div>
+                                              <button type="button" onClick={() => { updateSegmentDepot(it.segmentId, null); setOpenDepotMenuSegmentId(null); }} style={{ width: '100%', textAlign: 'left', fontSize: 12, padding: '6px 8px', borderRadius: 8, border: '1px solid transparent', background: 'transparent', cursor: 'pointer', color: overrideId ? '#374151' : '#111827', fontWeight: overrideId ? 500 : 700 }}>Ingen (använd lastbilens)</button>
+                                              {depots.map(d => (
+                                                <button key={d.id} type="button" onClick={() => { updateSegmentDepot(it.segmentId, d.id); setOpenDepotMenuSegmentId(null); }} style={{ width: '100%', textAlign: 'left', fontSize: 12, padding: '6px 8px', borderRadius: 8, border: '1px solid transparent', background: overrideId === d.id ? '#eef2ff' : 'transparent', cursor: 'pointer', color: '#111827', fontWeight: overrideId === d.id ? 700 : 500 }}>{d.name}</button>
+                                              ))}
+                                            </div>
+                                          )}
+                                        </span>
+                                      );
+                                    })()}
                                   </div>
                                   {isStart && showCardControls && (
                                     <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -2234,7 +2450,7 @@ export default function PlanneringPage() {
                                 const isMid = (it as any).spanMiddle;
                                 const isStart = (it as any).spanStart;
                                 return (
-                                  <div key={`${it.segmentId}:${it.day}`} draggable onDragStart={e => onDragStart(e, it.segmentId)} onDragEnd={onDragEnd} style={{ position: 'relative', border: `2px solid ${highlight ? '#f59e0b' : cardBorder}`, background: cardBg, borderRadius: 6, padding: 6, fontSize: 11, cursor: 'grab', display: 'grid', gap: 4, opacity: isMid ? 0.95 : 1, boxShadow: highlight ? '0 0 0 3px rgba(245,158,11,0.35)' : 'none' }}>
+                                  <div key={`${it.segmentId}:${it.day}`} draggable onDragStart={e => onDragStart(e, it.segmentId)} onDragEnd={onDragEnd} onClick={() => setOpenDepotMenuSegmentId(null)} style={{ position: 'relative', border: `2px solid ${highlight ? '#f59e0b' : cardBorder}`, background: cardBg, borderRadius: 6, padding: 6, fontSize: 11, cursor: 'grab', display: 'grid', gap: 4, opacity: isMid ? 0.95 : 1, boxShadow: highlight ? '0 0 0 3px rgba(245,158,11,0.35)' : 'none' }}>
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                                       <span style={{ fontWeight: 600, color: display ? display.text : '#312e81', display: 'flex', alignItems: 'center', columnGap: 6, rowGap: 2, flexWrap: 'wrap' }}>
                                         {it.project.orderNumber ? (
@@ -2266,6 +2482,31 @@ export default function PlanneringPage() {
                                           Rapporterad
                                         </a>
                                       ); })()}
+                                      {/* Depot info + override */}
+                                      {(() => {
+                                        const seg = scheduledSegments.find(s => s.id === it.segmentId);
+                                        const overrideId = seg?.depotId || null;
+                                        const truckRec = it.truck ? planningTrucks.find(t => t.name === it.truck) : null;
+                                        const effectiveId = overrideId ?? (truckRec?.depot_id ?? null);
+                                        const eff = effectiveId ? depots.find(d => d.id === effectiveId) : null;
+                                        return (
+                                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                                            <span style={{ fontSize: 9, color: display ? display.text : '#475569', background:'#f1f5f9', padding:'1px 5px', borderRadius:12, border:`1px solid ${cardBorder}55` }}>Depå: {eff ? eff.name : 'Ingen'}</span>
+                                            {isAdmin && depots.length > 0 && (
+                                              <button type="button" title="Välj depå för detta projekt" aria-expanded={openDepotMenuSegmentId === it.segmentId} onMouseDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); setOpenDepotMenuSegmentId(prev => prev === it.segmentId ? null : it.segmentId); }} style={{ fontSize: 10, lineHeight: 1, padding: '1px 5px', border: `1px solid ${cardBorder}`, borderRadius: 6, background: '#fff', color: display ? display.text : '#111827', cursor: 'pointer' }}>⚙</button>
+                                            )}
+                                            {isAdmin && openDepotMenuSegmentId === it.segmentId && (
+                                              <div onClick={(e) => e.stopPropagation()} role="menu" aria-label="Välj depå" style={{ position: 'absolute', zIndex: 50, top: 6, right: 6, background:'#fff', border:`1px solid ${cardBorder}`, borderRadius:8, boxShadow:'0 8px 24px rgba(0,0,0,0.12)', padding:6, minWidth: 200 }}>
+                                                <div style={{ padding: '6px 8px', fontSize: 11, color: '#6b7280' }}>Depå (segment)</div>
+                                                <button type="button" onClick={() => { updateSegmentDepot(it.segmentId, null); setOpenDepotMenuSegmentId(null); }} style={{ width: '100%', textAlign: 'left', fontSize: 12, padding: '6px 8px', borderRadius: 8, border: '1px solid transparent', background: 'transparent', cursor: 'pointer', color: overrideId ? '#374151' : '#111827', fontWeight: overrideId ? 500 : 700 }}>Ingen (använd lastbilens)</button>
+                                                {depots.map(d => (
+                                                  <button key={d.id} type="button" onClick={() => { updateSegmentDepot(it.segmentId, d.id); setOpenDepotMenuSegmentId(null); }} style={{ width: '100%', textAlign: 'left', fontSize: 12, padding: '6px 8px', borderRadius: 8, border: '1px solid transparent', background: overrideId === d.id ? '#eef2ff' : 'transparent', cursor: 'pointer', color: '#111827', fontWeight: overrideId === d.id ? 700 : 500 }}>{d.name}</button>
+                                                ))}
+                                              </div>
+                                            )}
+                                          </span>
+                                        );
+                                      })()}
                                     </div>
                                     {isStart && showCardControls && (
                                       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>

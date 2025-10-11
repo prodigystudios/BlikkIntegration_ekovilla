@@ -4,18 +4,21 @@ import AdminUsers from './users/AdminUsers';
 import dynamic from 'next/dynamic';
 
 const AdminContacts = dynamic(() => import('./contacts/AdminContacts'), { ssr: false });
+const AdminDepotUsage = dynamic(() => import('./depots/AdminDepotUsage'), { ssr: false });
 
 export default function AdminTabsClient() {
-  const [tab, setTab] = React.useState<'users'|'contacts'>('users');
+  const [tab, setTab] = React.useState<'users'|'contacts'|'depots'>('users');
   return (
     <div style={{ display:'flex', flexDirection:'column' }}>
       <div style={{ display:'flex', gap:8, padding:24, paddingBottom:8 }}>
         <button onClick={()=>setTab('users')} style={tabBtn(tab==='users')}>Användare</button>
         <button onClick={()=>setTab('contacts')} style={tabBtn(tab==='contacts')}>Kontakter</button>
+        <button onClick={()=>setTab('depots')} style={tabBtn(tab==='depots')}>Depå-uttag</button>
       </div>
       <div>
         {tab==='users' && <AdminUsers />}
         {tab==='contacts' && <AdminContacts />}
+        {tab==='depots' && <AdminDepotUsage />}
       </div>
     </div>
   );
