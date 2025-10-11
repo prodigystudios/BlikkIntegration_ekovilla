@@ -29,6 +29,12 @@ npm run dev
 
 By default the app runs on http://localhost:3000 (or 3001 if busy).
 
+Required environment variables for internal tasks
+
+- NEXT_PUBLIC_SUPABASE_URL
+- SUPABASE_SERVICE_ROLE_KEY
+- TASKS_DEFAULT_ASSIGNEE_UUID — UUID of the default assignee for clothing orders (e.g., Patrik Valls). You can find this in Supabase auth.users. Set it in .env.local and in your deployment environment.
+
 ## Try it
 - Open the app, enter an Order ID, and click "Lookup Project"
 - Confirm the project data shows up

@@ -2,6 +2,7 @@
 import React, { useMemo, useEffect, useState } from 'react';
 import { QuickLinksGrid, QuickLink, QuickLinksIconBar } from './QuickLinks';
 import DashboardNotes from './DashboardNotes';
+import DashboardTasks from './DashboardTasks';
 import type { UserRole } from '../../lib/roles';
 import { filterLinks, NAV_LINKS } from '../../lib/roles';
 
@@ -170,6 +171,21 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
             <QuickLinksGrid links={links} compact={isSmall} extraCompact={isXS} />
           </section>
         )}
+        {/* Tasks section */}
+        <section
+          style={{
+            border: '1px solid #e5e7eb',
+            background: '#fff',
+            borderRadius: 16,
+            padding: isSmall ? (isXS ? 14 : 18) : 24,
+            display: 'grid',
+            gap: isSmall ? 18 : 24,
+            order: mini ? -1 : 0
+          }}
+        >
+          <DashboardTasks compact={isSmall || mini} />
+        </section>
+
         {/* Notes always visible; floats to top when mini */}
         <section
           style={{

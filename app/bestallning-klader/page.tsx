@@ -1,19 +1,28 @@
 "use client";
 export const dynamic = 'force-dynamic';
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useUserProfile } from "@/lib/UserProfileContext";
 
 export default function BestallningKladerPage() {
+  const profile = useUserProfile();
   const [title, setTitle] = useState("Beställning kläder");
   const [description, setDescription] = useState("");
-  const [comment, setComment] = useState("");
+  const [comment, setComment] = useState(profile?.full_name ?? "");
   const [dueDate, setDueDate] = useState<string>("");
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(
     null
   );
 
+  // If user has a profile name, prefill the requester name once (user can still edit)
+  useEffect(() => {
+    if (!comment && profile?.full_name) {
+      setComment(profile.full_name);
+    }
+  }, [profile?.full_name]);
+
   // Common sizes
-  const SIZES = ["XS", "S", "M", "L", "XL", "XXL", "3XL"] as const;
+  const SIZES = ["XS", "S", "M", "L", "XL", "XXL", "3XL", "4XL"] as const;
   const SIZESPants = [
     "40",
     "42",
@@ -25,6 +34,8 @@ export default function BestallningKladerPage() {
     "54",
     "56",
     "58",
+    "60",
+    "62",
   ] as const;
   type SizeRow = { size: string; selected: boolean };
   type SectionState = {
@@ -111,14 +122,16 @@ export default function BestallningKladerPage() {
       const finalDescription = [description?.trim(), orderSummary]
         .filter(Boolean)
         .join("\n\n");
-      const res = await fetch("/api/blikk/tasks/create", {
+      const res = await fetch("/api/tasks/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title,
           description: finalDescription,
           dueDate: dueDate || undefined,
-          comment: comment || undefined,
+          requesterName: comment || undefined,
+          source: 'clothing_order',
+          metadata: { sections },
         }),
       });
       const json = await res.json();
@@ -148,18 +161,9 @@ export default function BestallningKladerPage() {
     <main style={{ padding: 16, maxWidth: 800, margin: "0 auto" }}>
       <h1>Beställning kläder</h1>
       <p style={{ color: "#6b7280", marginTop: -6, marginBottom: 16 }}>
-        Skicka in behov av kläder så skapas en uppgift i Blikk.
+        Skicka in behov av kläder så skapas en intern uppgift till ansvarig.
       </p>
-      <p
-        style={{
-          color: "#6b7280",
-          marginTop: -6,
-          marginBottom: 16,
-          fontSize: 13,
-        }}
-      >
-        Obs: Uppgiften kopplas automatiskt till projekt 230354.
-      </p>
+      
 
       <form onSubmit={onSubmit} style={{ display: "grid", gap: 14 }}>
         <label style={{ display: "grid", gap: 6 }}>
@@ -208,6 +212,7 @@ export default function BestallningKladerPage() {
                     onClick={() => setSectionSelectedSize(si, '')}
                     className='text-field'
                     style={{
+                      color: '#090f1aff',
                       background: '#f3f4f6',
                       border: '1px solid #e5e7eb',
                       padding: '6px 10px',
