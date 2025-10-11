@@ -36,13 +36,14 @@ export function QuickLinksGrid({ links, compact, extraCompact }: { links: QuickL
         gridTemplateColumns: extraCompact
           ? 'repeat(auto-fill,minmax(110px,1fr))'
           : compact
-            ? 'repeat(auto-fill,minmax(120px,1fr))'
-            : 'repeat(auto-fill,minmax(140px,1fr))',
+            ? 'repeat(auto-fill,minmax(130px,1fr))'
+            : 'repeat(auto-fill,minmax(160px,1fr))',
         alignItems: 'start'
       }}
     >
       {links.map(link => {
-        const inner = (
+        const isDesktopy = !compact && !extraCompact;
+        const content = (
           <div
             style={{
               display: 'flex',
@@ -50,8 +51,8 @@ export function QuickLinksGrid({ links, compact, extraCompact }: { links: QuickL
               alignItems: 'center',
               justifyContent: 'flex-start',
               gap: 6,
-              padding: extraCompact ? 6 : 8,
-              background: 'transparent',
+              padding: extraCompact ? 6 : compact ? 8 : 10,
+              background: isDesktopy ? 'transparent' : 'transparent',
               border: 'none',
               outline: 'none',
               cursor: link.disabled ? 'not-allowed' : 'pointer',
@@ -60,10 +61,10 @@ export function QuickLinksGrid({ links, compact, extraCompact }: { links: QuickL
             }}
             aria-disabled={link.disabled || undefined}
           >
-            <span style={{ display:'inline-flex', width: extraCompact ? 28 : 32, height: extraCompact ? 28 : 32, alignItems:'center', justifyContent:'center', color:'#4f46e5' }}>
+            <span style={{ display:'inline-flex', width: extraCompact ? 28 : compact ? 32 : 36, height: extraCompact ? 28 : compact ? 32 : 36, alignItems:'center', justifyContent:'center', color:'#4f46e5' }}>
               {link.icon}
             </span>
-            <div style={{ fontSize: extraCompact ? 12 : 13, fontWeight: 600, letterSpacing: -0.2, textAlign: 'center', color:'#111827' }}>
+            <div style={{ fontSize: extraCompact ? 12 : compact ? 13 : 14, fontWeight: 700, letterSpacing: -0.2, textAlign: 'center', color:'#111827' }}>
               {link.title}
             </div>
             {link.disabled && (
@@ -71,10 +72,38 @@ export function QuickLinksGrid({ links, compact, extraCompact }: { links: QuickL
             )}
           </div>
         );
-        if (link.disabled) return <div key={link.href}>{inner}</div>;
+
+        // For desktop-sized tiles, wrap with a bordered card to bring back visual affordance
+        if (isDesktopy) {
+          const tile: React.CSSProperties = {
+            ...baseTile,
+            padding: '14px 14px 16px',
+            borderRadius: 16,
+            cursor: link.disabled ? 'not-allowed' : 'pointer',
+            opacity: link.disabled ? 0.7 : 1,
+          };
+          const wrapper = (
+            <div
+              style={tile}
+              onMouseEnter={e=>{ if(link.disabled) return; e.currentTarget.style.borderColor = '#6366f1'; e.currentTarget.style.boxShadow='0 8px 18px rgba(99,102,241,0.18)'; }}
+              onMouseLeave={e=>{ e.currentTarget.style.borderColor = '#e5e7eb'; e.currentTarget.style.boxShadow='0 4px 10px rgba(0,0,0,0.03)'; }}
+            >
+              {content}
+            </div>
+          );
+          if (link.disabled) return <div key={link.href}>{wrapper}</div>;
+          return (
+            <Link key={link.href} href={link.href} style={{ textDecoration:'none' }}>
+              {wrapper}
+            </Link>
+          );
+        }
+
+        // Compact/extra-compact: keep minimal, no outer card
+        if (link.disabled) return <div key={link.href}>{content}</div>;
         return (
           <Link key={link.href} href={link.href} style={{ textDecoration:'none' }}>
-            {inner}
+            {content}
           </Link>
         );
       })}

@@ -175,6 +175,12 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
                 <button onClick={()=>setMini(true)} style={miniToggleBtn} aria-label="Minimera och visa endast ikoner" title="Minimera och visa endast ikoner">Minimera</button>
               </div>
             </div>
+            {isSmall && (
+              <div style={{ display:'flex', alignItems:'center', gap:6, color:'#64748b', fontSize:11 }}>
+                <span>Svep i sidled för fler genvägar</span>
+                <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path fill="#94a3b8" d="M8 5l7 7-7 7"/></svg>
+              </div>
+            )}
             {isSmall ? (
               <QuickLinksStrip links={links} compact={true} extraCompact={isXS} />
             ) : (

@@ -164,6 +164,23 @@ export default function EgenkontrollPage() {
     return () => clearTimeout(t);
   }, [toast]);
   const [orderId, setOrderId] = useState('');
+  // Read orderId from query (e.g., /egenkontroll?orderId=1234) and auto-lookup once
+  useEffect(() => {
+    try {
+      const url = new URL(window.location.href);
+      const initial = url.searchParams.get('orderId') || url.searchParams.get('order') || '';
+      if (initial && !orderId) {
+        setOrderId(initial);
+        // defer lookup slightly to allow state to flush
+        setTimeout(() => {
+          const btn = document.querySelector('button[aria-busy]') as HTMLButtonElement | null;
+          // fallback: call onLookup directly if available in closure scope later
+        }, 0);
+      }
+    } catch {}
+    // run only on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [project, setProject] = useState<any | null>(null);
   const [openErrorIdxs, setOpenErrorIdxs] = useState<number[]>([]);
   const [closedErrorIdxs, setClosedErrorIdxs] = useState<number[]>([]);
@@ -569,6 +586,14 @@ export default function EgenkontrollPage() {
       setProjectLoading(false);
     }
   };
+  // If orderId was provided from URL, auto-run lookup once it becomes non-empty
+  const didAutoRef = useRef(false);
+  useEffect(() => {
+    if (!didAutoRef.current && orderId && orderId.trim()) {
+      didAutoRef.current = true;
+      onLookup();
+    }
+  }, [orderId]);
   function CalculateDensityOnRow(etapp: EtappOpenRow): number {
     const { ytaM2, bestalldTjocklek, antalSack } = etapp;
     const bagWeight = MATERIALS[materialUsed]?.bagWeight ?? 0;

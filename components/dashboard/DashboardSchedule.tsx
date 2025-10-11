@@ -123,6 +123,14 @@ export default function DashboardSchedule({ compact = false }: { compact?: boole
     return Array.from(map.entries()).sort(([a],[b]) => a.localeCompare(b, 'sv')).map(([day, arr]) => ({ day, arr }));
   }, [items, dayIdx, range.days]);
 
+  // Visual theme based on job type/material
+  const getMaterialTheme = useCallback((jobType?: string) => {
+    const jt = (jobType || '').toLowerCase();
+    if (jt.startsWith('eko')) return { accent: '#16a34a', badgeBg: '#dcfce7', badgeFg: '#166534', label: 'Ekovilla' };
+    if (jt.startsWith('vit')) return { accent: '#0284c7', badgeBg: '#e0f2fe', badgeFg: '#075985', label: 'Vitull' };
+    return { accent: '#64748b', badgeBg: '#f1f5f9', badgeFg: '#334155', label: null as string | null };
+  }, []);
+
   return (
     <section
       style={{
@@ -170,40 +178,50 @@ export default function DashboardSchedule({ compact = false }: { compact?: boole
       </div>
 
       {/* Mon–Fri selector */}
-      <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
-        <span style={{ fontSize:12, color:'#64748b', alignSelf:'center' }}>Visa dag:</span>
-        {['Mån','Tis','Ons','Tor','Fre'].map((label, idx) => (
-          <button
-            key={label}
-            type="button"
-            onClick={() => setDayIdx(idx)}
-            aria-pressed={dayIdx===idx}
-            style={{
-              fontSize: compact ? 11 : 12,
-              padding: compact ? '2px 7px' : '4px 10px',
-              border:'1px solid ' + (dayIdx===idx ? '#111827' : '#e5e7eb'),
-              borderRadius:999,
-              background:'#fff',
-              color:'#111827',
-              fontWeight: dayIdx===idx ? 600 : 500,
-            }}
-            title={range.days[idx]}
-          >{label}</button>
-        ))}
-        <button
-          type="button"
-          onClick={() => setDayIdx(null)}
-          aria-pressed={dayIdx==null}
-          style={{
-            fontSize: compact ? 11 : 12,
-            padding: compact ? '2px 7px' : '4px 10px',
-            border:'1px solid ' + (dayIdx==null ? '#111827' : '#e5e7eb'),
-            borderRadius:999,
-            background:'#fff',
-            color:'#111827',
-            fontWeight: dayIdx==null ? 600 : 500,
-          }}
-        >Alla</button>
+      <div style={{ display:'flex', gap:6, flexWrap:'wrap', alignItems:'center' }}>
+        <span style={{ fontSize:12, color:'#64748b' }}>Visa dag:</span>
+        {['Mån','Tis','Ons','Tor','Fre'].map((label, idx) => {
+          const active = dayIdx===idx;
+          return (
+            <button
+              key={label}
+              type="button"
+              onClick={() => setDayIdx(idx)}
+              aria-pressed={active}
+              style={{
+                fontSize: compact ? 11 : 12,
+                padding: compact ? '4px 9px' : '6px 12px',
+                border:'1px solid ' + (active ? '#0284c7' : '#e2e8f0'),
+                borderRadius:999,
+                background: active ? '#0284c7' : '#f8fafc',
+                color: active ? '#ffffff' : '#334155',
+                fontWeight: active ? 700 : 500,
+                boxShadow: active ? '0 1px 1px rgba(2,132,199,0.25)' : '0 1px 1px rgba(0,0,0,0.02)'
+              }}
+              title={range.days[idx]}
+            >{label}</button>
+          );
+        })}
+        {(() => {
+          const active = dayIdx==null;
+          return (
+            <button
+              type="button"
+              onClick={() => setDayIdx(null)}
+              aria-pressed={active}
+              style={{
+                fontSize: compact ? 11 : 12,
+                padding: compact ? '4px 9px' : '6px 12px',
+                border:'1px solid ' + (active ? '#0284c7' : '#e2e8f0'),
+                borderRadius:999,
+                background: active ? '#0284c7' : '#f8fafc',
+                color: active ? '#ffffff' : '#334155',
+                fontWeight: active ? 700 : 500,
+                boxShadow: active ? '0 1px 1px rgba(2,132,199,0.25)' : '0 1px 1px rgba(0,0,0,0.02)'
+              }}
+            >Alla</button>
+          );
+        })()}
       </div>
 
       {loading && <div style={{ fontSize:12, color:'#64748b' }}>Laddar…</div>}
@@ -214,32 +232,56 @@ export default function DashboardSchedule({ compact = false }: { compact?: boole
           {grouped.map(({ day, arr }) => (
             <div key={day} style={{ display:'grid', gap: compact ? 4 : 6 }}>
               <div style={{ fontWeight:600, fontSize: compact ? 11 : 12, color:'#0f172a' }}>{day}</div>
-              <div style={{ display:'grid', gap: compact ? 4 : 6 }}>
+              <div style={{ display:'grid', gap: compact ? 6 : 8 }}>
                 {arr.map((it: any) => {
                   const title = [it.order_number ? String(it.order_number) : null, it.project_name].filter(Boolean).join(' - ');
-                  const parts: string[] = [];
-                  if (typeof it.bag_count === 'number') {
-                    const jt = (it.job_type || '').toString().toLowerCase();
-                    const material = jt.startsWith('eko') ? 'Ekovilla' : jt.startsWith('vit') ? 'Vitull' : null;
-                    const bagPiece = material ? `${it.bag_count} säckar ${material}` : `${it.bag_count} säckar`;
-                    parts.push(bagPiece);
-                  }
-                  if (it.truck) parts.push(it.truck as string);
-                  const sub = parts.join(' - ');
+                  const theme = getMaterialTheme(it.job_type);
+                  const bagLabel = typeof it.bag_count === 'number' ? `${it.bag_count} säckar${theme.label ? ' ' + theme.label : ''}` : null;
                   return (
                     <div
                       key={it.segment_id || `${it.project_id}|${it.start_day}`}
                       onClick={() => openDetail(it)}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(it); } }}
                       role="button"
                       tabIndex={0}
-                      style={{ border:'1px solid #e5e7eb', borderRadius:8, padding: compact ? 5 : 8, cursor:'pointer' }}
+                      style={{
+                        border:'1px solid #e5e7eb',
+                        borderLeft: `4px solid ${theme.accent}`,
+                        borderRadius:10,
+                        padding: compact ? 8 : 10,
+                        cursor:'pointer',
+                        background:'#ffffff',
+                        boxShadow:'0 1px 2px rgba(0,0,0,0.04)'
+                      }}
                     >
-                      <div style={{ display:'flex', alignItems:'center' }}>
-                        <span style={{ fontWeight:600, fontSize: compact ? 12 : 13, color:'#0f172a' }}>{title}</span>
+                      <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                        <div style={{ width:8, height:8, borderRadius:999, background: theme.accent, opacity:0.9 }} />
+                        <span style={{ fontWeight:700, letterSpacing:0.1, fontSize: compact ? 12 : 13, color:'#0f172a', flex:1, minWidth:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{title}</span>
+                        {/* Chevron */}
+                        <svg width={16} height={16} viewBox="0 0 24 24" aria-hidden="true" focusable="false" style={{ color:'#94a3b8' }}>
+                          <path fill="currentColor" d="M9 18l6-6-6-6" />
+                        </svg>
                       </div>
-                      {sub && (
-                        <div style={{ fontSize: compact ? 10.5 : 11, color:'#64748b', marginTop: compact ? 2 : 3 }}>{sub}</div>
-                      )}
+                      <div style={{ display:'flex', gap:6, flexWrap:'wrap', marginTop: compact ? 6 : 8 }}>
+                        {bagLabel && (
+                          <span style={{ display:'inline-flex', alignItems:'center', gap:6, fontSize: compact ? 10.5 : 11, color: theme.badgeFg, background: theme.badgeBg, border:`1px solid ${theme.accent}30`, padding:'3px 8px', borderRadius:999 }}>
+                            {/* Bag icon */}
+                            <svg width={14} height={14} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                              <path fill="currentColor" d="M7 6h10l1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L7 6zm1-2a4 4 0 0 1 8 0v2H8V4zm2 0a2 2 0 1 1 4 0v2h-4V4z" />
+                            </svg>
+                            {bagLabel}
+                          </span>
+                        )}
+                        {it.truck && (
+                          <span style={{ display:'inline-flex', alignItems:'center', gap:6, fontSize: compact ? 10.5 : 11, color:'#334155', background:'#f1f5f9', border:'1px solid #e2e8f0', padding:'3px 8px', borderRadius:999 }}>
+                            {/* Truck icon */}
+                            <svg width={14} height={14} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                              <path fill="currentColor" d="M3 4h11v8h-1.5a2.5 2.5 0 0 0-2.45 2H8A3 3 0 0 0 5 17H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zm13 5h2.586A2 2 0 0 1 20 9.586L21.414 11A2 2 0 0 1 22 12.414V16a1 1 0 0 1-1 1h-1a3 3 0 0 0-3-3h-1V9zM7 18a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm10 0a2 2 0 1 0 0-4 2 2 0 0 0 0 4z" />
+                            </svg>
+                            {it.truck}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   );
                 })}
@@ -258,16 +300,39 @@ export default function DashboardSchedule({ compact = false }: { compact?: boole
         const address = [street, postalCode, city].filter(Boolean).join(', ');
         const mapsHref = address ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}` : null;
         const description = raw?.description || raw?.notes || raw?.note || null;
+        // Extract potential phone numbers from description
+        const phoneList: Array<{ display: string; tel: string }> = (() => {
+          if (!description || typeof description !== 'string') return [];
+          const rx = /(\+?46|0)[\s\-]?(?:\d[\s\-]?){6,12}\d/g; // simple Swedish-friendly matcher
+          const found = description.match(rx) || [];
+          const norm = (s: string) => {
+            const cleaned = s.replace(/[^\d+]/g, '');
+            if (cleaned.startsWith('+')) return cleaned;
+            if (cleaned.startsWith('0')) return '+46' + cleaned.slice(1);
+            return cleaned.startsWith('46') ? ('+' + cleaned) : cleaned;
+          };
+          const uniq = Array.from(new Set(found.map(f => f.trim())));
+          return uniq.map(display => ({ display, tel: norm(display) }));
+        })();
         const headerTitle = [detailBase?.order_number ? `#${detailBase.order_number}` : null, detailBase?.project_name || 'Projekt'].filter(Boolean).join(' ');
         return (
           <div style={{ position: 'fixed', inset:0, zIndex: 260, background: 'rgba(15,23,42,0.5)', backdropFilter:'blur(3px)', display:'flex', alignItems:'center', justifyContent:'center', padding:16 }} onClick={closeDetail}>
             <div role="dialog" aria-modal="true" aria-busy={detailLoading ? true : undefined} onClick={e => e.stopPropagation()} style={{ width: 'min(720px, 92vw)', maxHeight: '80vh', overflowY: 'auto', background:'#fff', border:'1px solid #e2e8f0', borderRadius:12, boxShadow:'0 12px 30px rgba(0,0,0,0.25)', display:'grid', gap:12, padding:16 }}>
-              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
-                <div style={{ display:'grid', gap:6 }}>
+              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:8, flexWrap:'wrap' }}>
+                <div style={{ display:'grid', gap:6, minWidth:0 }}>
                   <strong style={{ fontSize:16, color:'#0f172a' }}>{headerTitle}</strong>
                   {detailBase?.customer && <span style={{ fontSize:12, color:'#475569' }}>{detailBase.customer}</span>}
                 </div>
-                <button onClick={closeDetail} className="btn--plain btn--sm" style={{ background:'#fee2e2', border:'1px solid #fca5a5', color:'#b91c1c', borderRadius:6, padding:'6px 10px', fontSize:12 }}>Stäng</button>
+                <div style={{ display:'inline-flex', gap:8, alignItems:'center' }}>
+                  {detailBase?.order_number && (
+                    <a
+                      href={`/egenkontroll?orderId=${encodeURIComponent(String(detailBase.order_number))}`}
+                      className="btn--plain btn--sm"
+                      style={{ background:'#dcfce7', border:'1px solid #86efac', color:'#166534', borderRadius:6, padding:'6px 10px', fontSize:12 }}
+                    >Starta egenkontroll</a>
+                  )}
+                  <button onClick={closeDetail} className="btn--plain btn--sm" style={{ background:'#fee2e2', border:'1px solid #fca5a5', color:'#b91c1c', borderRadius:6, padding:'6px 10px', fontSize:12 }}>Stäng</button>
+                </div>
               </div>
               {detailLoading && (
                 <div role="status" aria-live="polite" style={{ display:'grid', gap:10, padding:'8px 0' }}>
@@ -295,6 +360,14 @@ export default function DashboardSchedule({ compact = false }: { compact?: boole
                     <span style={{ fontSize:12, color:'#334155', fontWeight:600 }}>Adress:</span>
                     <span style={{ fontSize:12, color:'#334155' }}>{address}</span>
                     <a href={mapsHref} target="_blank" rel="noopener noreferrer" className="btn--plain btn--xs" style={{ fontSize:11, border:'1px solid #cbd5e1', borderRadius:6, padding:'2px 8px', color:'#0369a1', background:'#e0f2fe' }}>Öppna i Kartor</a>
+                  </div>
+                )}
+                {phoneList.length > 0 && (
+                  <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
+                    <span style={{ fontSize:12, color:'#334155', fontWeight:600 }}>Kontakt:</span>
+                    {phoneList.map(p => (
+                      <a key={p.display} href={`tel:${p.tel}`} style={{ fontSize:12, color:'#0369a1', textDecoration:'none', border:'1px solid #cbd5e1', background:'#f0f9ff', padding:'2px 8px', borderRadius:6 }}>{p.display}</a>
+                    ))}
                   </div>
                 )}
                 {description && (
