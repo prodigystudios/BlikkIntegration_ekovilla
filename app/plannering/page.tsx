@@ -160,6 +160,12 @@ export default function PlanneringPage() {
   const [editingTeamNames, setEditingTeamNames] = useState<Record<string, { team1: string; team2: string }>>({});
   const [truckSaveStatus, setTruckSaveStatus] = useState<Record<string, { status: 'idle' | 'saving' | 'saved' | 'error'; ts: number }>>({});
 
+  // Admin config modal (to declutter main page)
+  const [adminModalOpen, setAdminModalOpen] = useState(false);
+  const [adminModalTab, setAdminModalTab] = useState<'trucks' | 'depots'>('trucks');
+  // Hide inline admin panels on main page (creation and depot totals) – manage via modal instead
+  const showInlineAdminPanels = false;
+
   // Accent color generator for backlog cards (deterministic palette)
   function backlogAccent(p: Project) {
     if (p.isManual) return '#334155';
@@ -1930,6 +1936,12 @@ export default function PlanneringPage() {
             </button>
             {egenkontrollError && <span style={{ fontSize:10, color:'#b91c1c' }} title={egenkontrollError}>Fel EK</span>}
             {!egenkontrollLoading && egenkontrollOrderNumbers.size > 0 && <span style={{ fontSize:10, background:'#ecfdf5', color:'#047857', padding:'2px 6px', borderRadius:12, border:'1px solid #6ee7b7' }} title="Antal matchade egenkontroller">EK: {egenkontrollOrderNumbers.size}</span>}
+            {isAdmin && (
+              <button type="button" className="btn--plain btn--sm" onClick={() => setAdminModalOpen(true)}
+                style={{ marginLeft: 'auto', border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 10px', fontSize: 12, background:'#fff' }}>
+                Admin‑inställningar
+              </button>
+            )}
           </div>
           {/* Legend */}
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -1942,7 +1954,6 @@ export default function PlanneringPage() {
             {trucks.map(tName => {
               const tRec = planningTrucks.find(pt => pt.name === tName);
               const c = truckColors[tName];
-              const current = truckColorOverrides[tName] || defaultTruckColors[tName] || '#6366f1';
               if (!tRec) {
                 return (
                   <div key={tName} style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 8px', border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff', minWidth: 170 }}>
@@ -1953,98 +1964,33 @@ export default function PlanneringPage() {
                   </div>
                 );
               }
-              const edit = editingTeamNames[tRec.id] || { team1: tRec.team_member1_name || '', team2: tRec.team_member2_name || '' };
-              const changed = edit.team1 !== (tRec.team_member1_name || '') || edit.team2 !== (tRec.team_member2_name || '');
-              const status = truckSaveStatus[tRec.id];
+              const teamNames = [tRec.team_member1_name, tRec.team_member2_name].filter(Boolean).join(', ');
+              const depotName = (() => {
+                const dep = depots.find(d => d.id === tRec.depot_id);
+                return dep ? dep.name : 'Ingen';
+              })();
               return (
-                <div key={tName} onClick={() => setOpenDepotMenuTruckId(null)} style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 8px', border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff', minWidth: 180, position: 'relative' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <div key={tName} style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 10px', border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff', minWidth: 200 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <span style={{ width: 16, height: 16, background: c.bg, border: `3px solid ${c.border}`, borderRadius: 6 }} />
-                    <span style={{ fontWeight: 600, color: c.text }}>{tName}</span>
-                    {/* depot label moved from header to save row for compact header */}
-                    {isAdmin && (
-                      <input type="color" value={current} aria-label={`Ändra färg för ${tName}`} onChange={e => updateTruckColor(tRec, e.target.value)} style={{ width: 26, height: 26, padding: 0, border: '1px solid #cbd5e1', borderRadius: 6, cursor: 'pointer', background: '#fff', marginLeft: 'auto' }} />
-                    )}
-                    {isAdmin && depots.length > 0 && (
-                      <button
-                        type="button"
-                        title="Välj depå"
-                        aria-haspopup="menu"
-                        aria-expanded={openDepotMenuTruckId === tRec.id}
-                        onClick={(e) => { e.stopPropagation(); setOpenDepotMenuTruckId(prev => prev === tRec.id ? null : tRec.id); }}
-                        style={{ marginLeft: 4, width: 26, height: 26, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #cbd5e1', borderRadius: 6, background: '#fff', color: '#475569', cursor: 'pointer' }}
-                      >
-                        <span aria-hidden="true" style={{ fontSize: 24, lineHeight: 1 }}>⚙</span>
-                      </button>
-                    )}
-                    {isAdmin && openDepotMenuTruckId === tRec.id && (
-                      <div onClick={(e) => e.stopPropagation()} role="menu" aria-label="Välj depå"
-                        style={{ position: 'absolute', top: 34, right: 8, minWidth: 160, background: '#ffffff', border: '1px solid #e5e7eb', borderRadius: 10, boxShadow: '0 10px 20px rgba(0,0,0,0.08)', padding: 6, zIndex: 50 }}>
-                        <div style={{ padding: '6px 8px', fontSize: 11, color: '#6b7280' }}>Depå</div>
-                        <button type="button" role="menuitem"
-                          onClick={() => { updateTruckDepot(tRec, null); setOpenDepotMenuTruckId(null); }}
-                          style={{ width: '100%', textAlign: 'left', fontSize: 12, padding: '6px 8px', borderRadius: 8, border: '1px solid transparent', background: 'transparent', cursor: 'pointer', color: tRec.depot_id ? '#374151' : '#111827', fontWeight: tRec.depot_id ? 500 : 700 }}>
-                          Ingen depå
-                        </button>
-                        <div style={{ maxHeight: 200, overflowY: 'auto' }}>
-                          {depots.map(d => (
-                            <button key={d.id} type="button" role="menuitem"
-                              onClick={() => { updateTruckDepot(tRec, d.id); setOpenDepotMenuTruckId(null); }}
-                              style={{ width: '100%', textAlign: 'left', fontSize: 12, padding: '6px 8px', borderRadius: 8, border: '1px solid transparent', background: tRec.depot_id === d.id ? '#eef2ff' : 'transparent', cursor: 'pointer', color: '#111827', fontWeight: tRec.depot_id === d.id ? 700 : 500 }}>
-                              {d.name}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    {isAdmin && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (typeof window !== 'undefined') {
-                            const ok = window.confirm(`Är du säker på att du vill ta bort lastbil "${tRec.name}"? Detta går inte att ångra.`);
-                            if (!ok) return;
-                          }
-                          deleteTruck(tRec);
-                        }}
-                        title="Ta bort"
-                        style={{ marginLeft: 4, background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c', fontSize: 10, padding: '4px 6px', borderRadius: 6, cursor: 'pointer' }}
-                      >
-                        ✕
-                      </button>
-                    )}
+                    <span style={{ fontWeight: 700, color: c.text }}>{tName}</span>
                   </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                      <label style={{ fontSize: 10, color: '#475569' }}>Team 1</label>
-                      <input disabled={!isAdmin} value={edit.team1} onChange={e => updateTruckTeamName(tRec, 1, e.target.value)} placeholder="Namn" style={{ fontSize: 11, padding: '4px 6px', border: '1px solid #cbd5e1', borderRadius: 6 }} />
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                      <label style={{ fontSize: 10, color: '#475569' }}>Team 2</label>
-                      <input disabled={!isAdmin} value={edit.team2} onChange={e => updateTruckTeamName(tRec, 2, e.target.value)} placeholder="Namn" style={{ fontSize: 11, padding: '4px 6px', border: '1px solid #cbd5e1', borderRadius: 6 }} />
-                    </div>
-                    
-                    {isAdmin && (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                        <button type="button" disabled={!changed || status?.status === 'saving'} onClick={() => saveTruckTeamNames(tRec)} className="btn--plain btn--xs" style={{ fontSize: 10, padding: '4px 8px', background: changed ? '#e0f2fe' : '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: 6, color: '#0369a1', opacity: changed ? 1 : 0.6 }}>Spara</button>
-                        {status?.status === 'saving' && <span style={{ fontSize: 10, color: '#64748b' }}>Sparar…</span>}
-                        {status?.status === 'saved' && <span style={{ fontSize: 10, color: '#059669' }}>✓ Sparad</span>}
-                        {status?.status === 'error' && <span style={{ fontSize: 10, color: '#b91c1c' }}>Fel</span>}
-                        {changed && !status && <span style={{ fontSize: 10, color: '#b45309' }}>Ej sparad</span>}
-                        {(() => { const dep = depots.find(d => d.id === tRec.depot_id); return (
-                          <span style={{ fontSize: 10, color: '#475569', background:'#f1f5f9', padding:'2px 6px', borderRadius:12, border:'1px solid #e2e8f0' }}>Depå: {dep ? dep.name : 'Ingen'}</span>
-                        ); })()}
-                      </div>
-                    )}
+                  <div style={{ fontSize: 12, color: '#475569' }}>
+                    <span style={{ fontWeight: 600, color: '#374151' }}>Team: </span>
+                    {teamNames || 'Ej tilldelad'}
+                  </div>
+                  <div style={{ fontSize: 12, color: '#475569' }}>
+                    <span style={{ fontWeight: 600, color: '#374151' }}>Depå: </span>
+                    {depotName}
                   </div>
                 </div>
               );
             })}
+            {isAdmin && showInlineAdminPanels && (
             <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 4, padding: '6px 8px', border: '1px dashed #94a3b8', borderRadius: 10, background: '#f8fafc', minWidth: 140 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: '#475569' }}>
                 <span style={{ width: 14, height: 14, background: '#fff', border: '2px dashed #94a3b8', borderRadius: 4 }} /> Ingen
               </div>
-              {isAdmin && (
                 <form onSubmit={e => { e.preventDefault(); createTruck(); }} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   <input value={newTruckName} onChange={e => setNewTruckName(e.target.value)} placeholder="Ny lastbil" style={{ fontSize: 11, padding: '4px 6px', border: '1px solid #cbd5e1', borderRadius: 6 }} />
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -2058,51 +2004,49 @@ export default function PlanneringPage() {
                   </div>
                   <button type="submit" disabled={!newTruckName.trim()} className="btn--plain btn--xs" style={{ fontSize: 11, background: '#e0f2fe', border: '1px solid #7dd3fc', color: '#0369a1', borderRadius: 6, padding: '4px 6px' }}>Lägg till</button>
                 </form>
-              )}
             </div>
+            )}
           </div>
-          {/* Depåer (loading sites) - admin editable material totals */}
-          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'stretch' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '8px 10px', border: '1px solid #e5e7eb', borderRadius: 10, background: '#ffffff', minWidth: 260 }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: '#111827' }}>Depåer</div>
-                {isAdmin && (
+          {/* Depåer panel moved to Admin modal to declutter main page */}
+          {isAdmin && showInlineAdminPanels && (
+            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'stretch' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '8px 10px', border: '1px solid #e5e7eb', borderRadius: 10, background: '#ffffff', minWidth: 260 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: '#111827' }}>Depåer</div>
                   <form onSubmit={createDepot} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     <input value={newDepotName} onChange={e => setNewDepotName(e.target.value)} placeholder="Ny depå" style={{ width: 150, fontSize: 12, padding: '4px 6px', border: '1px solid #cbd5e1', borderRadius: 6 }} />
                     <button type="submit" disabled={!newDepotName.trim()} className="btn--plain btn--xs" style={{ fontSize: 11, background: '#e0f2fe', border: '1px solid #7dd3fc', color: '#0369a1', borderRadius: 6, padding: '4px 6px' }}>Lägg till</button>
                   </form>
-                )}
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {depots.map(dep => {
-                  const editVal = depotEdits[dep.id]?.material_total ?? (dep.material_total == null ? '' : String(dep.material_total));
-                  const save = () => upsertDepotTotal(dep.id, editVal);
-                  return (
-                    <div key={dep.id} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', alignItems: 'center', gap: 8 }}>
-                      <div style={{ fontSize: 12, fontWeight: 600, color: '#374151' }}>{dep.name}</div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <label style={{ fontSize: 11, color: '#475569', display: 'inline-block' }}>Material:</label>
-                        <input
-                          inputMode="numeric"
-                          pattern="[0-9]*"
-                          value={editVal}
-                          onChange={e => setDepotEdits(prev => ({ ...prev, [dep.id]: { material_total: e.target.value } }))}
-                          onBlur={save}
-                          disabled={!isAdmin}
-                          placeholder="Antal"
-                          style={{ width: 80, fontSize: 12, padding: '4px 6px', border: '1px solid #d1d5db', borderRadius: 6 }}
-                        />
-                      </div>
-                      {isAdmin && (
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {depots.map(dep => {
+                    const editVal = depotEdits[dep.id]?.material_total ?? (dep.material_total == null ? '' : String(dep.material_total));
+                    const save = () => upsertDepotTotal(dep.id, editVal);
+                    return (
+                      <div key={dep.id} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', alignItems: 'center', gap: 8 }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: '#374151' }}>{dep.name}</div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <label style={{ fontSize: 11, color: '#475569', display: 'inline-block' }}>Material:</label>
+                          <input
+                            inputMode="numeric"
+                            pattern="[0-9]*"
+                            value={editVal}
+                            onChange={e => setDepotEdits(prev => ({ ...prev, [dep.id]: { material_total: e.target.value } }))}
+                            onBlur={save}
+                            disabled={!isAdmin}
+                            placeholder="Antal"
+                            style={{ width: 80, fontSize: 12, padding: '4px 6px', border: '1px solid #d1d5db', borderRadius: 6 }}
+                          />
+                        </div>
                         <button type="button" onClick={() => deleteDepot(dep)} className="btn--plain btn--xs" title="Ta bort depå" style={{ fontSize: 10, background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c', borderRadius: 6, padding: '2px 6px' }}>✕</button>
-                      )}
-                    </div>
-                  );
-                })}
-                {depots.length === 0 && <div style={{ fontSize: 12, color: '#6b7280' }}>Inga depåer</div>}
+                      </div>
+                    );
+                  })}
+                  {depots.length === 0 && <div style={{ fontSize: 12, color: '#6b7280' }}>Inga depåer</div>}
+                </div>
               </div>
             </div>
-          </div>
+          )}
 
           {/* Filters below truck cards */}
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center', padding: '8px 10px', border: '1px solid #e5e7eb', borderRadius: 10, background: '#ffffff' }}>
@@ -2141,6 +2085,104 @@ export default function PlanneringPage() {
               {salesFilter && <button type="button" className="btn--plain btn--xs" style={{ fontSize: 11 }} onClick={() => setSalesFilter('')}>Rensa</button>}
             </div>
           </div>
+
+          {/* Admin settings modal */}
+          {isAdmin && adminModalOpen && (
+            <div role="dialog" aria-modal="true" aria-label="Admin-inställningar" onClick={() => setAdminModalOpen(false)}
+              style={{ position:'fixed', inset:0, background:'rgba(15,23,42,0.35)', zIndex:1000, display:'flex', alignItems:'center', justifyContent:'center', padding:16 }}>
+              <div onClick={e=>e.stopPropagation()} style={{ width:'min(100%, 980px)', maxHeight:'85vh', overflow:'auto', background:'#fff', border:'1px solid #e5e7eb', borderRadius:12, boxShadow:'0 20px 40px rgba(0,0,0,0.15)' }}>
+                <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'12px 14px', borderBottom:'1px solid #e5e7eb' }}>
+                  <div style={{ display:'flex', gap:8 }}>
+                    <button onClick={()=>setAdminModalTab('trucks')} style={{ padding:'6px 10px', border:'1px solid '+(adminModalTab==='trucks'?'#111827':'#e5e7eb'), borderRadius:8, background: adminModalTab==='trucks'?'#111827':'#fff', color: adminModalTab==='trucks'?'#fff':'#111827', fontSize:13, fontWeight:600 }}>Lastbilar</button>
+                    <button onClick={()=>setAdminModalTab('depots')} style={{ padding:'6px 10px', border:'1px solid '+(adminModalTab==='depots'?'#111827':'#e5e7eb'), borderRadius:8, background: adminModalTab==='depots'?'#111827':'#fff', color: adminModalTab==='depots'?'#fff':'#111827', fontSize:13, fontWeight:600 }}>Depåer</button>
+                  </div>
+                  <button onClick={()=>setAdminModalOpen(false)} className="btn--plain" aria-label="Stäng" style={{ border:'1px solid #e5e7eb', borderRadius:8, padding:'6px 10px', background:'#fff' }}>Stäng</button>
+                </div>
+                <div style={{ padding:14, display:'grid', gap:12 }}>
+                  {adminModalTab==='trucks' && (
+                    <div style={{ display:'grid', gap: 12 }}>
+                      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(260px, 1fr))', gap:12 }}>
+                        {planningTrucks.map(tRec => {
+                          const currentColor = truckColorOverrides[tRec.name] || tRec.color || defaultTruckColors[tRec.name] || '#6366f1';
+                          const edit = editingTeamNames[tRec.id] || { team1: tRec.team_member1_name || '', team2: tRec.team_member2_name || '' };
+                          const changed = edit.team1 !== (tRec.team_member1_name || '') || edit.team2 !== (tRec.team_member2_name || '');
+                          const status = truckSaveStatus[tRec.id];
+                          return (
+                            <div key={tRec.id} style={{ display:'flex', flexDirection:'column', gap:10, padding:10, border:'1px solid #e5e7eb', borderRadius:10, background:'#fff' }}>
+                              <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                                <span style={{ width: 16, height: 16, background: currentColor, border: '3px solid #cbd5e1', borderRadius: 6 }} />
+                                <strong>{tRec.name}</strong>
+                                <input type="color" value={currentColor as string} onChange={e=>updateTruckColor(tRec, e.target.value)} style={{ marginLeft:'auto', width: 28, height: 28, border:'1px solid #cbd5e1', borderRadius:6, background:'#fff' }} />
+                              </div>
+                              <div style={{ display:'grid', gap:8 }}>
+                                <label style={{ display:'grid', gap:4, fontSize:12 }}>
+                                  <span>Team 1</span>
+                                  <input value={edit.team1} onChange={e=>updateTruckTeamName(tRec, 1, e.target.value)} placeholder="Namn" style={{ padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }} />
+                                </label>
+                                <label style={{ display:'grid', gap:4, fontSize:12 }}>
+                                  <span>Team 2</span>
+                                  <input value={edit.team2} onChange={e=>updateTruckTeamName(tRec, 2, e.target.value)} placeholder="Namn" style={{ padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }} />
+                                </label>
+                                <label style={{ display:'grid', gap:4, fontSize:12 }}>
+                                  <span>Depå</span>
+                                  <select value={tRec.depot_id || ''} onChange={e=>updateTruckDepot(tRec, e.target.value || null)} style={{ padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }}>
+                                    <option value="">Ingen depå</option>
+                                    {depots.map(d => (<option key={d.id} value={d.id}>{d.name}</option>))}
+                                  </select>
+                                </label>
+                              </div>
+                              <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+                                <button type="button" disabled={!changed || status?.status === 'saving'} onClick={()=>saveTruckTeamNames(tRec)} className="btn--plain btn--xs" style={{ fontSize:12, padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8, background:'#fff' }}>Spara</button>
+                                <button type="button" onClick={()=>{ if (typeof window!=='undefined'){ const ok = window.confirm(`Ta bort lastbil \"${tRec.name}\"?`); if (!ok) return;} deleteTruck(tRec); }} className="btn--plain btn--xs" style={{ fontSize:12, padding:'6px 8px', border:'1px solid #fecaca', background:'#fef2f2', color:'#b91c1c', borderRadius:8 }}>Ta bort</button>
+                                {status?.status === 'saving' && <span style={{ fontSize: 12, color: '#64748b' }}>Sparar…</span>}
+                                {status?.status === 'saved' && <span style={{ fontSize: 12, color: '#059669' }}>✓ Sparad</span>}
+                                {status?.status === 'error' && <span style={{ fontSize: 12, color: '#b91c1c' }}>Fel</span>}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div style={{ paddingTop:6, borderTop:'1px dashed #e5e7eb' }}>
+                        <form onSubmit={e=>{e.preventDefault(); createTruck();}} style={{ display:'flex', gap:8, flexWrap:'wrap', alignItems:'center' }}>
+                          <input value={newTruckName} onChange={e=>setNewTruckName(e.target.value)} placeholder="Ny lastbil" style={{ minWidth:220, padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }} />
+                          <select value={newTruckDepotId} onChange={e=>setNewTruckDepotId(e.target.value)} style={{ minWidth:200, padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }}>
+                            <option value="">Välj depå (valfritt)</option>
+                            {depots.map(d => (<option key={d.id} value={d.id}>{d.name}</option>))}
+                          </select>
+                          <button type="submit" disabled={!newTruckName.trim()} className="btn--plain btn--xs" style={{ fontSize:12, padding:'6px 10px', border:'1px solid #7dd3fc', background:'#e0f2fe', color:'#0369a1', borderRadius:8 }}>Lägg till</button>
+                        </form>
+                      </div>
+                    </div>
+                  )}
+                  {adminModalTab==='depots' && (
+                    <div style={{ display:'grid', gap:12 }}>
+                      <form onSubmit={createDepot} style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' }}>
+                        <input value={newDepotName} onChange={e=>setNewDepotName(e.target.value)} placeholder="Ny depå" style={{ minWidth:240, padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }} />
+                        <button type="submit" disabled={!newDepotName.trim()} className="btn--plain btn--xs" style={{ fontSize:12, padding:'6px 10px', border:'1px solid #7dd3fc', background:'#e0f2fe', color:'#0369a1', borderRadius:8 }}>Lägg till</button>
+                      </form>
+                      <div style={{ display:'grid', gap:8 }}>
+                        {depots.map(dep => {
+                          const editVal = depotEdits[dep.id]?.material_total ?? (dep.material_total == null ? '' : String(dep.material_total));
+                          const save = () => upsertDepotTotal(dep.id, editVal);
+                          return (
+                            <div key={dep.id} style={{ display:'grid', gridTemplateColumns:'1fr auto auto', alignItems:'center', gap:10, padding:'6px 8px', border:'1px solid #e5e7eb', borderRadius:8 }}>
+                              <div style={{ fontWeight:600 }}>{dep.name}</div>
+                              <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+                                <label style={{ fontSize:12 }}>Material</label>
+                                <input inputMode="numeric" pattern="[0-9]*" value={editVal} onChange={e=>setDepotEdits(prev=>({ ...prev, [dep.id]: { material_total: e.target.value } }))} onBlur={save} placeholder="Antal" style={{ width:100, padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }} />
+                              </div>
+                              <button type="button" onClick={()=>deleteDepot(dep)} className="btn--plain btn--xs" style={{ fontSize:12, padding:'6px 10px', border:'1px solid #fecaca', background:'#fef2f2', color:'#b91c1c', borderRadius:8 }}>Ta bort</button>
+                            </div>
+                          );
+                        })}
+                        {depots.length === 0 && <div style={{ color:'#6b7280' }}>Inga depåer</div>}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
           {viewMode === 'monthGrid' && (
             <div style={{ display: 'grid', gap: 12 }}>
               <div style={{ display: 'grid', gridTemplateColumns: '60px repeat(7, 1fr)', gap: 8, fontSize: 12, fontWeight: 600, color: '#374151' }}>
