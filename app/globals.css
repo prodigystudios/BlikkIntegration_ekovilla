@@ -283,6 +283,23 @@ select.select-field option { color: #111827; background-color: #ffffff; }
 .journal-meta { display: flex; gap: 12px; color: #374151; font-size: 13px; flex-wrap: wrap; }
 .journal-note { color: #374151; font-size: 13px; }
 
+/* Planner: compact icon button with hover reveal */
+.icon-btn {
+  background: transparent;
+  border: none;
+  padding: 4px 3px;
+  margin: 0;
+  cursor: pointer;
+  opacity: .7;
+  transition: opacity .15s ease;
+  color: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.icon-btn:hover { opacity: 1; background-color: #eef2ff; zoom: 102%;}
+.icon-btn:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; border-radius: 4px; }
+
 /* Dashboard quick links minimization animations */
 .dash-layout { transition: max-width .35s ease, padding .25s ease; }
 .dash-main-col { transition: gap .25s ease; }

@@ -2047,11 +2047,17 @@ export default function PlanneringPage() {
                               const isMid = (it as any).spanMiddle;
                               const isStart = (it as any).spanStart;
                               return (
-                                <div key={`${it.segmentId}:${it.day}`} draggable onDragStart={e => onDragStart(e, it.segmentId)} onDragEnd={onDragEnd} onClick={(e) => { e.stopPropagation(); openProjectModal(it.project.id); }} style={{ position: 'relative', border: `2px solid ${highlight ? '#f59e0b' : cardBorder}`, background: cardBg, borderRadius: 6, padding: 6, fontSize: 12, cursor: 'grab', display: 'grid', gap: 4, opacity: isMid ? 0.95 : 1, boxShadow: highlight ? '0 0 0 3px rgba(245,158,11,0.35)' : 'none' }}>
-                                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                                    <span style={{ fontWeight: 600, color: display ? display.text : '#312e81' }}>
-                                      {it.project.orderNumber ? <span style={{ fontFamily: 'ui-monospace, monospace', background: '#ffffff', color: display ? display.text : '#312e81', border: `1px solid ${cardBorder}`, padding: '1px 4px', borderRadius: 4, marginRight: 4 }}>#{it.project.orderNumber}</span> : null}
-                                      {it.project.name}
+                                <div key={`${it.segmentId}:${it.day}`} draggable onDragStart={e => onDragStart(e, it.segmentId)} onDragEnd={onDragEnd} style={{ position: 'relative', border: `2px solid ${highlight ? '#f59e0b' : cardBorder}`, background: cardBg, borderRadius: 6, padding: 6, fontSize: 12, cursor: 'grab', display: 'grid', gap: 4, opacity: isMid ? 0.95 : 1, boxShadow: highlight ? '0 0 0 3px rgba(245,158,11,0.35)' : 'none' }}>
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2}}>
+                                    <span style={{ fontWeight: 600, color: display ? display.text : '#312e81', display: 'flex', alignItems: 'center', columnGap: 6, rowGap: 2, flexWrap: 'wrap' }}>
+                                      {it.project.orderNumber ? (
+                                        <span style={{ fontFamily: 'ui-monospace, monospace', background: '#ffffff', color: display ? display.text : '#312e81', border: `1px solid ${cardBorder}`, padding: '1px 4px', borderRadius: 4, whiteSpace: 'nowrap' }} title="Ordernummer">#{it.project.orderNumber}</span>
+                                      ) : null}
+                                      <span style={{ color: display ? display.text : '#312e81', fontWeight: 600, minWidth: 0, overflowWrap: 'anywhere' }}>{it.project.name}</span>
+                                      <button type="button" onClick={(e) => { e.stopPropagation(); openProjectModal(it.project.id); }} className="icon-btn" title="Öppna projekt" aria-label="Öppna projekt" style={{ display: 'inline-flex', alignItems: 'center', flex: '0 0 auto' }}>
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+                                        <span style={{ fontWeight: 600, fontSize: 10 }}>Öppna projekt</span>
+                                      </button>
                                       {/* EK badge moved to bottom */}
                                     </span>
                                     {isStart && <span style={{ color: display ? display.text : '#6366f1' }}>{it.project.customer}</span>}
@@ -2228,11 +2234,17 @@ export default function PlanneringPage() {
                                 const isMid = (it as any).spanMiddle;
                                 const isStart = (it as any).spanStart;
                                 return (
-                                  <div key={`${it.segmentId}:${it.day}`} draggable onDragStart={e => onDragStart(e, it.segmentId)} onDragEnd={onDragEnd} onClick={(e) => { e.stopPropagation(); openProjectModal(it.project.id); }} style={{ position: 'relative', border: `2px solid ${highlight ? '#f59e0b' : cardBorder}`, background: cardBg, borderRadius: 6, padding: 6, fontSize: 11, cursor: 'grab', display: 'grid', gap: 4, opacity: isMid ? 0.95 : 1, boxShadow: highlight ? '0 0 0 3px rgba(245,158,11,0.35)' : 'none' }}>
+                                  <div key={`${it.segmentId}:${it.day}`} draggable onDragStart={e => onDragStart(e, it.segmentId)} onDragEnd={onDragEnd} style={{ position: 'relative', border: `2px solid ${highlight ? '#f59e0b' : cardBorder}`, background: cardBg, borderRadius: 6, padding: 6, fontSize: 11, cursor: 'grab', display: 'grid', gap: 4, opacity: isMid ? 0.95 : 1, boxShadow: highlight ? '0 0 0 3px rgba(245,158,11,0.35)' : 'none' }}>
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                                      <span style={{ fontWeight: 600, color: display ? display.text : '#312e81' }}>
-                                        {it.project.orderNumber ? <span style={{ fontFamily: 'ui-monospace, monospace', background: '#ffffff', color: display ? display.text : '#312e81', border: `1px solid ${cardBorder}`, padding: '1px 4px', borderRadius: 4, marginRight: 4 }}>#{it.project.orderNumber}</span> : null}
-                                        {it.project.name}
+                                      <span style={{ fontWeight: 600, color: display ? display.text : '#312e81', display: 'flex', alignItems: 'center', columnGap: 6, rowGap: 2, flexWrap: 'wrap' }}>
+                                        {it.project.orderNumber ? (
+                                          <span style={{ fontFamily: 'ui-monospace, monospace', background: '#ffffff', color: display ? display.text : '#312e81', border: `1px solid ${cardBorder}`, padding: '1px 4px', borderRadius: 4, whiteSpace: 'nowrap' }} title="Ordernummer">#{it.project.orderNumber}</span>
+                                        ) : null}
+                                        <span style={{ color: display ? display.text : '#312e81', fontWeight: 600, minWidth: 0, overflowWrap: 'anywhere' }}>{it.project.name}</span>
+                                        <button type="button" onClick={(e) => { e.stopPropagation(); openProjectModal(it.project.id); }} className="icon-btn" title="Öppna projekt" aria-label="Öppna projekt" style={{ display: 'inline-flex', alignItems: 'center', flex: '0 0 auto' }}>
+                                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+                                          <span style={{ fontWeight: 600, fontSize: 12 }}>Öppna projekt</span>
+                                        </button>
                                         {/* EK badge moved to bottom */}
                                       </span>
                                       {isStart && <span style={{ color: display ? display.text : '#6366f1' }}>{it.project.customer}</span>}
@@ -2500,11 +2512,17 @@ export default function PlanneringPage() {
                                   const isMid = (it as any).spanMiddle;
                                   const isStart = (it as any).spanStart;
                                   return (
-               <div key={`${it.segmentId}:${it.day}`} draggable onDragStart={e => onDragStart(e, it.segmentId)} onDragEnd={onDragEnd} onClick={(e) => { e.stopPropagation(); openProjectModal(it.project.id); }}
+               <div key={`${it.segmentId}:${it.day}`} draggable onDragStart={e => onDragStart(e, it.segmentId)} onDragEnd={onDragEnd}
                                          style={{ position: 'relative', border: `2px solid ${highlight ? '#f59e0b' : cardBorder}`, background: cardBg, borderRadius: 6, padding: 6, fontSize: 11, cursor: 'grab', display: 'grid', gap: 4, opacity: isMid ? 0.95 : 1 }}>
-                                      <span style={{ fontWeight: 600, color: display ? display.text : '#312e81' }}>
-                                        {it.project.orderNumber ? <span style={{ fontFamily: 'ui-monospace, monospace', background: '#ffffff', color: display ? display.text : '#312e81', border: `1px solid ${cardBorder}`, padding: '1px 4px', borderRadius: 4, marginRight: 4 }}>#{it.project.orderNumber}</span> : null}
-                                        {it.project.name}
+                                      <span style={{ fontWeight: 600, color: display ? display.text : '#312e81', display: 'flex', alignItems: 'center', columnGap: 6, rowGap: 2, flexWrap: 'wrap' }}>
+                                        {it.project.orderNumber ? (
+                                            <span style={{ fontFamily: 'ui-monospace, monospace', background: '#ffffff', color: display ? display.text : '#312e81', border: `1px solid ${cardBorder}`, padding: '1px 4px', borderRadius: 4, whiteSpace: 'nowrap' }} title="Ordernummer">#{it.project.orderNumber}</span>
+                                          ) : null}
+                                          <span style={{ color: display ? display.text : '#312e81', fontWeight: 600, minWidth: 0, overflowWrap: 'anywhere' }}>{it.project.name}</span>
+                                          <button type="button" onClick={(e) => { e.stopPropagation(); openProjectModal(it.project.id); }} className="icon-btn" title="Öppna projekt" aria-label="Öppna projekt" style={{ display: 'inline-flex', alignItems: 'center', flex: '0 0 auto' }}>
+                                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+                                            <span style={{ fontWeight: 600, fontSize: 12 }}>Öppna projekt</span>
+                                          </button>
                                       </span>
                                       {(it.bagCount != null || it.jobType) && (
                                         <span style={{ fontSize: 10, color: display ? display.text : '#374151' }}>
