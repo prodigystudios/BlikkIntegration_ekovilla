@@ -114,7 +114,7 @@ export default function PlanneringPage() {
   const [manualError, setManualError] = useState<string | null>(null);
 
   // Dynamic trucks (DB backed). Fallback to legacy static list until table populated.
-  interface TruckRec { id: string; name: string; color?: string | null; team_member1_name?: string | null; team_member2_name?: string | null; depot_id?: string | null; }
+  interface TruckRec { id: string; name: string; color?: string | null; team_member1_name?: string | null; team_member2_name?: string | null; depot_id?: string | null; team1_id?: string | null; team2_id?: string | null; }
   const defaultTrucks = ['mb blå', 'mb vit', 'volvo blå'];
   const defaultTruckColors: Record<string, string> = {
     'mb blå': '#38bdf8',
@@ -131,7 +131,8 @@ export default function PlanneringPage() {
   const [openDepotMenuSegmentId, setOpenDepotMenuSegmentId] = useState<string | null>(null);
   const jobTypes = ['Ekovilla', 'Vitull', 'Leverans', 'Utsugning', 'Snickerier', 'Övrigt'];
   // Crew directory suggestions (profiles with tag "Entreprenad") for team name inputs
-  const [crewNames, setCrewNames] = useState<string[]>([]);
+  const [crewList, setCrewList] = useState<Array<{ id: string; name: string }>>([]);
+  const crewNames = useMemo(() => crewList.map(c => c.name), [crewList]);
 
   useEffect(() => {
     let cancelled = false;
@@ -141,12 +142,11 @@ export default function PlanneringPage() {
         const res = await fetch('/api/profiles/by-tag?tag=' + encodeURIComponent('Entreprenad'));
         if (!res.ok) return;
         const j = await res.json();
-        const items: Array<{ full_name?: string | null }> = Array.isArray(j.items) ? j.items : [];
-        const names = Array.from(new Set(items
-          .map((it) => (it.full_name ?? '').trim())
-          .filter((s): s is string => typeof s === 'string' && s.length > 0)
-        ));
-        if (!cancelled) setCrewNames(names);
+        const items: Array<{ id: string; full_name?: string | null }> = Array.isArray(j.items) ? j.items : [];
+        const list = items
+          .map((it) => ({ id: it.id, name: (it.full_name ?? '').trim() }))
+          .filter((it) => it.name.length > 0);
+        if (!cancelled) setCrewList(list);
       } catch (_) { /* ignore */ }
     }
     loadCrewByTag();
@@ -185,7 +185,7 @@ export default function PlanneringPage() {
 
   // Missing state (reintroduced after earlier cleanup)
   const [truckColorOverrides, setTruckColorOverrides] = useState<Record<string, string>>({});
-  const [editingTeamNames, setEditingTeamNames] = useState<Record<string, { team1: string; team2: string }>>({});
+  const [editingTeamNames, setEditingTeamNames] = useState<Record<string, { team1: string; team2: string; team1Id?: string | null; team2Id?: string | null }>>({});
   const [truckSaveStatus, setTruckSaveStatus] = useState<Record<string, { status: 'idle' | 'saving' | 'saved' | 'error'; ts: number }>>({});
 
   // Admin config modal (to declutter main page)
@@ -691,7 +691,7 @@ export default function PlanneringPage() {
           const { data: trucksData, error: trucksErr } = await supabase.from('planning_trucks').select('*').order('name');
           if (trucksErr) console.warn('[planning] trucks load error', trucksErr);
           else if (Array.isArray(trucksData)) {
-            setPlanningTrucks(trucksData.map(t => ({ id: t.id, name: t.name, color: t.color, team_member1_name: t.team_member1_name, team_member2_name: t.team_member2_name, depot_id: (t as any).depot_id || null })));
+            setPlanningTrucks(trucksData.map(t => ({ id: t.id, name: t.name, color: t.color, team_member1_name: t.team_member1_name, team_member2_name: t.team_member2_name, depot_id: (t as any).depot_id || null, team1_id: (t as any).team1_id || null, team2_id: (t as any).team2_id || null })));
             setTruckColorOverrides(prev => {
               const c = { ...prev };
               for (const t of trucksData) if (t.color) c[t.name] = t.color;
@@ -851,10 +851,10 @@ export default function PlanneringPage() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'planning_trucks' }, payload => {
         const row: any = payload.new || payload.old;
         if (payload.eventType === 'INSERT') {
-          setPlanningTrucks(prev => prev.some(t => t.id === row.id) ? prev : [...prev, { id: row.id, name: row.name, color: row.color, team_member1_name: row.team_member1_name, team_member2_name: row.team_member2_name, depot_id: row.depot_id || null }]);
+          setPlanningTrucks(prev => prev.some(t => t.id === row.id) ? prev : [...prev, { id: row.id, name: row.name, color: row.color, team_member1_name: row.team_member1_name, team_member2_name: row.team_member2_name, depot_id: row.depot_id || null, team1_id: row.team1_id || null, team2_id: row.team2_id || null }]);
           if (row.color) setTruckColorOverrides(prev => ({ ...prev, [row.name]: row.color }));
         } else if (payload.eventType === 'UPDATE') {
-          setPlanningTrucks(prev => prev.map(t => t.id === row.id ? { id: row.id, name: row.name, color: row.color, team_member1_name: row.team_member1_name, team_member2_name: row.team_member2_name, depot_id: row.depot_id || null } : t));
+          setPlanningTrucks(prev => prev.map(t => t.id === row.id ? { id: row.id, name: row.name, color: row.color, team_member1_name: row.team_member1_name, team_member2_name: row.team_member2_name, depot_id: row.depot_id || null, team1_id: row.team1_id || null, team2_id: row.team2_id || null } : t));
           if (row.color) setTruckColorOverrides(prev => ({ ...prev, [row.name]: row.color }));
         } else if (payload.eventType === 'DELETE') {
           setPlanningTrucks(prev => prev.filter(t => t.id !== row.id));
@@ -1289,28 +1289,107 @@ export default function PlanneringPage() {
   // Explicit save workflow states
   const updateTruckTeamName = useCallback((truck: TruckRec, idx: 1 | 2, value: string) => {
     setEditingTeamNames(prev => {
-      const cur = prev[truck.id] || { team1: truck.team_member1_name || '', team2: truck.team_member2_name || '' };
+      const cur = prev[truck.id] || { team1: truck.team_member1_name || '', team2: truck.team_member2_name || '', team1Id: truck.team1_id || null, team2Id: truck.team2_id || null };
       return { ...prev, [truck.id]: { ...cur, [idx === 1 ? 'team1' : 'team2']: value } };
     });
   }, []);
 
+  const updateTruckTeamId = useCallback((truck: TruckRec, idx: 1 | 2, id: string | null) => {
+    setEditingTeamNames(prev => {
+      const cur = prev[truck.id] || { team1: truck.team_member1_name || '', team2: truck.team_member2_name || '', team1Id: truck.team1_id || null, team2Id: truck.team2_id || null } as any;
+      const next = { ...cur } as any;
+      if (idx === 1) next.team1Id = id; else next.team2Id = id;
+      return { ...prev, [truck.id]: next };
+    });
+  }, []);
+
   const saveTruckTeamNames = useCallback((truck: TruckRec) => {
-    const draft = editingTeamNames[truck.id] || { team1: truck.team_member1_name || '', team2: truck.team_member2_name || '' };
+    const draft = editingTeamNames[truck.id] || { team1: truck.team_member1_name || '', team2: truck.team_member2_name || '', team1Id: truck.team1_id || null, team2Id: truck.team2_id || null };
     setTruckSaveStatus(prev => ({ ...prev, [truck.id]: { status: 'saving', ts: Date.now() } }));
-    enqueue(
-      supabase.from('planning_trucks')
-        .update({ team_member1_name: draft.team1 || null, team_member2_name: draft.team2 || null })
-        .eq('id', truck.id)
-        .select('id, team_member1_name, team_member2_name')
-        .then(({ data, error }) => {
-          setTruckSaveStatus(prev => ({ ...prev, [truck.id]: { status: error ? 'error' : 'saved', ts: Date.now() } }));
-          if (error) console.warn('[planning] saveTruckTeamNames error', error);
-          if (!error && data && data[0]) {
-            setPlanningTrucks(prev => prev.map(t => t.id === truck.id ? { ...t, team_member1_name: data[0].team_member1_name, team_member2_name: data[0].team_member2_name } : t));
+    // Resolve target values
+    const draftTeam1Id = (draft as any).team1Id ?? null;
+    const draftTeam2Id = (draft as any).team2Id ?? null;
+  let nm1 = draftTeam1Id ? (crewList.find(c => c.id === draftTeam1Id)?.name || draft.team1 || null) : (draft.team1 || null);
+  let nm2 = draftTeam2Id ? (crewList.find(c => c.id === draftTeam2Id)?.name || draft.team2 || null) : (draft.team2 || null);
+
+    // Optimistic UI: reflect both name and id locally
+    setPlanningTrucks(prev => prev.map(t => t.id === truck.id ? { ...t, team_member1_name: nm1 ?? t.team_member1_name ?? null, team_member2_name: nm2 ?? t.team_member2_name ?? null, team1_id: draftTeam1Id, team2_id: draftTeam2Id } : t));
+
+    // Prepare column-diff updates
+    const idUpdate: any = {};
+    const nameUpdate: any = {};
+    if ((truck.team_member1_name || null) !== (nm1 || null)) nameUpdate.team_member1_name = nm1;
+    if ((truck.team_member2_name || null) !== (nm2 || null)) nameUpdate.team_member2_name = nm2;
+
+    async function reloadFromServer() {
+      const { data: rows } = await supabase.from('planning_trucks').select('*').order('name');
+      if (Array.isArray(rows)) setPlanningTrucks(rows.map(t => ({ id: t.id, name: t.name, color: t.color, team_member1_name: t.team_member1_name, team_member2_name: t.team_member2_name, depot_id: (t as any).depot_id || null, team1_id: (t as any).team1_id || null, team2_id: (t as any).team2_id || null })) as any);
+    }
+
+    enqueue((async () => {
+      // Resolve missing names from profiles if needed before sending
+      if (draftTeam1Id && !nm1) {
+        const { data: p1 } = await supabase.from('profiles').select('full_name').eq('id', draftTeam1Id).maybeSingle();
+        if (p1 && p1.full_name) nm1 = (p1 as any).full_name as string;
+      }
+      if (draftTeam2Id && !nm2) {
+        const { data: p2 } = await supabase.from('profiles').select('full_name').eq('id', draftTeam2Id).maybeSingle();
+        if (p2 && p2.full_name) nm2 = (p2 as any).full_name as string;
+      }
+
+      if ((truck.team1_id ?? null) !== (draftTeam1Id ?? null)) {
+        idUpdate.team1_id = draftTeam1Id;
+        if (nm1) idUpdate.team_member1_name = nm1; // only include if known
+      }
+      if ((truck.team2_id ?? null) !== (draftTeam2Id ?? null)) {
+        idUpdate.team2_id = draftTeam2Id;
+        if (nm2) idUpdate.team_member2_name = nm2;
+      }
+
+      // Prefer updating IDs first so DB trigger syncs names, if policy allows
+      if (Object.keys(idUpdate).length > 0) {
+        const { data: idRows, error: idErr } = await supabase.from('planning_trucks').update(idUpdate).eq('id', truck.id).select('*');
+        if (!idErr && idRows && idRows[0]) {
+          setPlanningTrucks(prev => prev.map(t => t.id === truck.id ? { ...t, team1_id: (idRows[0] as any).team1_id || null, team2_id: (idRows[0] as any).team2_id || null, team_member1_name: (idRows[0] as any).team_member1_name ?? t.team_member1_name, team_member2_name: (idRows[0] as any).team_member2_name ?? t.team_member2_name } : t));
+        } else {
+          // If updating IDs is not permitted/available, try updating names only
+          if (Object.keys(nameUpdate).length > 0) {
+            const { data: nameRows, error: nameErr } = await supabase.from('planning_trucks').update(nameUpdate).eq('id', truck.id).select('*');
+            if (nameErr) {
+              console.warn('[planning] saveTruckTeamNames fallback(name) error', nameErr);
+              await reloadFromServer();
+              setTruckSaveStatus(prev => ({ ...prev, [truck.id]: { status: 'error', ts: Date.now() } }));
+              return;
+            }
+            if (nameRows && nameRows[0]) {
+              setPlanningTrucks(prev => prev.map(t => t.id === truck.id ? { ...t, team_member1_name: (nameRows[0] as any).team_member1_name, team_member2_name: (nameRows[0] as any).team_member2_name } : t));
+            }
+          } else {
+            // Nothing else to change and ID update failed
+            await reloadFromServer();
+            setTruckSaveStatus(prev => ({ ...prev, [truck.id]: { status: 'error', ts: Date.now() } }));
+            return;
           }
-        })
-    );
-  }, [editingTeamNames, supabase]);
+        }
+      } else if (Object.keys(nameUpdate).length > 0) {
+        // Only names changed
+        const { data: nameRows, error: nameErr } = await supabase.from('planning_trucks').update(nameUpdate).eq('id', truck.id).select('*');
+        if (nameErr) {
+          console.warn('[planning] saveTruckTeamNames(name only) error', nameErr);
+          await reloadFromServer();
+          setTruckSaveStatus(prev => ({ ...prev, [truck.id]: { status: 'error', ts: Date.now() } }));
+          return;
+        }
+        if (nameRows && nameRows[0]) {
+          setPlanningTrucks(prev => prev.map(t => t.id === truck.id ? { ...t, team_member1_name: (nameRows[0] as any).team_member1_name, team_member2_name: (nameRows[0] as any).team_member2_name } : t));
+        }
+      }
+
+      // Clear edit draft and mark saved
+      setEditingTeamNames(prev => { const { [truck.id]: _, ...rest } = prev; return rest; });
+      setTruckSaveStatus(prev => ({ ...prev, [truck.id]: { status: 'saved', ts: Date.now() } }));
+    })());
+  }, [editingTeamNames, supabase, crewList]);
 
   const persistMetaUpsert = useCallback((projectId: string, meta: ProjectScheduleMeta) => {
     enqueue(supabase.from('planning_project_meta').upsert({
@@ -2445,16 +2524,16 @@ export default function PlanneringPage() {
                 <div style={{ padding:14, display:'grid', gap:12 }}>
                   {adminModalTab==='trucks' && (
                     <div style={{ display:'grid', gap: 12 }}>
-                      {crewNames.length > 0 && (
-                        <datalist id="crew-suggestions">
-                          {crewNames.map(n => <option key={n} value={n} />)}
-                        </datalist>
-                      )}
                       <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(260px, 1fr))', gap:12 }}>
                         {planningTrucks.map(tRec => {
                           const currentColor = truckColorOverrides[tRec.name] || tRec.color || defaultTruckColors[tRec.name] || '#6366f1';
-                          const edit = editingTeamNames[tRec.id] || { team1: tRec.team_member1_name || '', team2: tRec.team_member2_name || '' };
-                          const changed = edit.team1 !== (tRec.team_member1_name || '') || edit.team2 !== (tRec.team_member2_name || '');
+                          const edit = editingTeamNames[tRec.id] || { team1: tRec.team_member1_name || '', team2: tRec.team_member2_name || '', team1Id: tRec.team1_id || null, team2Id: tRec.team2_id || null };
+                          const changed = (
+                            edit.team1 !== (tRec.team_member1_name || '') ||
+                            edit.team2 !== (tRec.team_member2_name || '') ||
+                            ((edit as any).team1Id ?? null) !== (tRec.team1_id ?? null) ||
+                            ((edit as any).team2Id ?? null) !== (tRec.team2_id ?? null)
+                          );
                           const status = truckSaveStatus[tRec.id];
                           return (
                             <div key={tRec.id} style={{ display:'flex', flexDirection:'column', gap:10, padding:10, border:'1px solid #e5e7eb', borderRadius:10, background:'#fff' }}>
@@ -2466,11 +2545,31 @@ export default function PlanneringPage() {
                               <div style={{ display:'grid', gap:8 }}>
                                 <label style={{ display:'grid', gap:4, fontSize:12 }}>
                                   <span>Team 1</span>
-                                  <input value={edit.team1} onChange={e=>updateTruckTeamName(tRec, 1, e.target.value)} placeholder="Namn" list={crewNames.length ? 'crew-suggestions' : undefined} style={{ padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }} />
+                                  <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+                                    <select
+                                      value={edit.team1Id || tRec.team1_id || ''}
+                                      onChange={e=>{ const val = e.target.value || null; updateTruckTeamId(tRec, 1, val); const nm = crewList.find(c=>c.id===val)?.name || ''; if (nm) updateTruckTeamName(tRec, 1, nm); }}
+                                      style={{ flex:1, padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }}
+                                    >
+                                      <option value="">Ej tilldelad</option>
+                                      {crewList.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                    </select>
+                                    <span style={{ fontSize:11, color:'#6b7280' }}>{(edit.team1 ?? tRec.team_member1_name) || ''}</span>
+                                  </div>
                                 </label>
                                 <label style={{ display:'grid', gap:4, fontSize:12 }}>
                                   <span>Team 2</span>
-                                  <input value={edit.team2} onChange={e=>updateTruckTeamName(tRec, 2, e.target.value)} placeholder="Namn" list={crewNames.length ? 'crew-suggestions' : undefined} style={{ padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }} />
+                                  <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+                                    <select
+                                      value={edit.team2Id || tRec.team2_id || ''}
+                                      onChange={e=>{ const val = e.target.value || null; updateTruckTeamId(tRec, 2, val); const nm = crewList.find(c=>c.id===val)?.name || ''; if (nm) updateTruckTeamName(tRec, 2, nm); }}
+                                      style={{ flex:1, padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }}
+                                    >
+                                      <option value="">Ej tilldelad</option>
+                                      {crewList.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                    </select>
+                                    <span style={{ fontSize:11, color:'#6b7280' }}>{(edit.team2 ?? tRec.team_member2_name) || ''}</span>
+                                  </div>
                                 </label>
                                 <label style={{ display:'grid', gap:4, fontSize:12 }}>
                                   <span>Depå</span>
