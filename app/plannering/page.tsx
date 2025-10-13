@@ -99,9 +99,9 @@ export default function PlanneringPage() {
   const [hoveredTruck, setHoveredTruck] = useState<string | null>(null);
   const [expandedTrucks, setExpandedTrucks] = useState<Record<string, boolean>>({});
   // Collapsible Depåer section (entire section collapses)
-  const [depotsCollapsed, setDepotsCollapsed] = useState<boolean>(false);
+  const [depotsCollapsed, setDepotsCollapsed] = useState<boolean>(true);
   // Collapsible deliveries section
-  const [deliveriesCollapsed, setDeliveriesCollapsed] = useState<boolean>(false);
+  const [deliveriesCollapsed, setDeliveriesCollapsed] = useState<boolean>(true);
   const [salesFilter, setSalesFilter] = useState<string>('');
   const [salesDirectory, setSalesDirectory] = useState<string[]>([]); // all sales/admin names from profiles
   const [calendarSearch, setCalendarSearch] = useState('');
@@ -1484,6 +1484,8 @@ export default function PlanneringPage() {
   }, [viewMode, monthOffset]);
 
   const dayNames = ['Mån', 'Tis', 'Ons', 'Tor', 'Fre', 'Lör', 'Sön'];
+  // Today marker (local date)
+  const todayISO = useMemo(() => fmtDate(new Date()), []);
 
   // Helper to derive light background + contrast text from base color
   function deriveColors(base: string): { bg: string; border: string; text: string } {
@@ -2984,15 +2986,21 @@ export default function PlanneringPage() {
                         return (a.truck || '').localeCompare(b.truck || '', 'sv');
                       });
                       const isJumpHighlight = day === jumpTargetDay;
+                      const isToday = day === todayISO;
                       return (
                         <div key={day}
                              id={`calday-${day}`}
                              onClick={() => scheduleSelectedOnDay(day)}
                              onDragOver={allowDrop}
                              onDrop={e => onDropDay(e, day)}
-                             style={{ border: isJumpHighlight ? '2px solid #f59e0b' : (selectedProjectId ? '2px dashed #fbbf24' : '1px solid rgba(148,163,184,0.4)'), boxShadow: isJumpHighlight ? '0 0 0 4px rgba(245,158,11,0.35)' : '0 1px 2px rgba(0,0,0,0.05)', transition: 'box-shadow 0.3s,border 0.3s', borderRadius: 10, padding: 8, minHeight: 160, background: '#ffffff', display: 'flex', flexDirection: 'column', gap: 8, position: 'relative', cursor: selectedProjectId ? 'copy' : 'default' }}>
+                             style={{ border: isJumpHighlight ? '2px solid #f59e0b' : (selectedProjectId ? '2px dashed #fbbf24' : (isToday ? '2px solid #60a5fa' : '1px solid rgba(148,163,184,0.4)')), boxShadow: isJumpHighlight ? '0 0 0 4px rgba(245,158,11,0.35)' : (isToday ? '0 0 0 3px rgba(59,130,246,0.25)' : '0 1px 2px rgba(0,0,0,0.05)'), transition: 'box-shadow 0.3s,border 0.3s', borderRadius: 10, padding: 8, minHeight: 160, background: '#ffffff', display: 'flex', flexDirection: 'column', gap: 8, position: 'relative', cursor: selectedProjectId ? 'copy' : 'default' }}>
                           <div style={{ fontSize: 12, fontWeight: 600, display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: '#111827' }}>
-                            <span>{day.slice(8, 10)}/{day.slice(5, 7)}</span>
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                              <span>{day.slice(8, 10)}/{day.slice(5, 7)}</span>
+                              {isToday && (
+                                <span aria-label="Idag" title="Idag" style={{ fontSize: 10, color: '#1d4ed8', background: '#dbeafe', border: '1px solid #93c5fd', padding: '0px 6px', borderRadius: 999 }}>Idag</span>
+                              )}
+                            </span>
                             {items.length > 0 && <span style={{ fontSize: 10, background: '#f3f4f6', padding: '2px 6px', borderRadius: 12 }}>{items.length}</span>}
                           </div>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -3240,15 +3248,21 @@ export default function PlanneringPage() {
                           return (a.truck || '').localeCompare(b.truck || '', 'sv');
                         });
                         const isJumpHighlight = day === jumpTargetDay;
+                        const isToday = day === todayISO;
                         return (
                           <div key={day}
                                id={`calday-${day}`}
                                onClick={() => scheduleSelectedOnDay(day)}
                                onDragOver={allowDrop}
                                onDrop={e => onDropDay(e, day)}
-                               style={{ minWidth: 160, border: isJumpHighlight ? '2px solid #f59e0b' : (selectedProjectId ? '2px dashed #fbbf24' : '1px solid rgba(148,163,184,0.4)'), boxShadow: isJumpHighlight ? '0 0 0 4px rgba(245,158,11,0.35)' : '0 1px 2px rgba(0,0,0,0.05)', borderRadius: 10, padding: 8, background: '#ffffff', display: 'flex', flexDirection: 'column', gap: 6, position: 'relative', cursor: selectedProjectId ? 'copy' : 'default' }}>
+                               style={{ minWidth: 160, border: isJumpHighlight ? '2px solid #f59e0b' : (selectedProjectId ? '2px dashed #fbbf24' : (isToday ? '2px solid #60a5fa' : '1px solid rgba(148,163,184,0.4)')), boxShadow: isJumpHighlight ? '0 0 0 4px rgba(245,158,11,0.35)' : (isToday ? '0 0 0 3px rgba(59,130,246,0.25)' : '0 1px 2px rgba(0,0,0,0.05)'), borderRadius: 10, padding: 8, background: '#ffffff', display: 'flex', flexDirection: 'column', gap: 6, position: 'relative', cursor: selectedProjectId ? 'copy' : 'default' }}>
                             <div style={{ fontSize: 11, fontWeight: 600, display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: '#111827' }}>
-                              <span>{day.slice(8, 10)}/{day.slice(5, 7)}</span>
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                                <span>{day.slice(8, 10)}/{day.slice(5, 7)}</span>
+                                {isToday && (
+                                  <span aria-label="Idag" title="Idag" style={{ fontSize: 9, color: '#1d4ed8', background: '#dbeafe', border: '1px solid #93c5fd', padding: '0px 6px', borderRadius: 999 }}>Idag</span>
+                                )}
+                              </span>
                               {items.length > 0 && <span style={{ fontSize: 10, background: '#f3f4f6', padding: '2px 6px', borderRadius: 12 }}>{items.length}</span>}
                             </div>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -3509,18 +3523,28 @@ export default function PlanneringPage() {
                 const rows = [...trucks, ...(hasUnassigned ? ['__UNASSIGNED__'] : [])];
                 const rowCount = rows.length;
                 const weekNum = firstDay ? isoWeekNumber(firstDay) : '';
+                const weekContainsToday = week.some(c => c.date === todayISO);
                 return (
                   <div key={wi} style={{ display: 'grid', gap: 8, border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff', padding: 8 }}>
                     {/* Compact week label header */}
                     <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
-                      <span style={{ fontSize: 12, fontWeight: 700, color:'#0f172a', background:'#f1f5f9', border:'1px solid #e2e8f0', borderRadius: 999, padding: '2px 8px' }}>{weekNum && `v${weekNum}`}</span>
+                      <span style={{ display:'inline-flex', alignItems:'center', gap:8 }}>
+                        <span style={{ fontSize: 12, fontWeight: 700, color:'#0f172a', background:'#f1f5f9', border:'1px solid #e2e8f0', borderRadius: 999, padding: '2px 8px' }}>{weekNum && `v${weekNum}`}</span>
+                        {weekContainsToday && (
+                          <span aria-label="Denna vecka innehåller idag" title="Denna vecka innehåller idag" style={{ fontSize: 10, color:'#1d4ed8', background:'#dbeafe', border:'1px solid #93c5fd', borderRadius:999, padding:'1px 6px' }}>Idag</span>
+                        )}
+                      </span>
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: `140px repeat(${visibleIndices.length}, 1fr)`, alignItems: 'center', gap: 6 }}>
                       {/* Header row: truck label col + 7 weekday headers */}
                       <div style={{ gridColumn: '1 / 2', fontSize: 12, fontWeight: 600, color:'#374151', textAlign:'left' }}>Lastbil</div>
-                      {visibleIndices.map((idx, vi) => (
-                        <div key={`hdr-${idx}`} style={{ gridColumn: `${2 + vi} / ${3 + vi}`, background: dayHeaderBg, border: '1px solid #e5e7eb', borderRadius: 8, textAlign: 'center', padding: '4px 0', fontSize: 12, fontWeight: 600, color: '#374151' }}>{dayNames[idx]}</div>
-                      ))}
+                      {visibleIndices.map((idx, vi) => {
+                        const cellDate = week[idx]?.date;
+                        const isTodayHeader = cellDate === todayISO;
+                        return (
+                          <div key={`hdr-${idx}`} style={{ gridColumn: `${2 + vi} / ${3 + vi}`, background: dayHeaderBg, border: isTodayHeader ? '2px solid #60a5fa' : '1px solid #e5e7eb', boxShadow: isTodayHeader ? '0 0 0 3px rgba(59,130,246,0.25)' : undefined, borderRadius: 8, textAlign: 'center', padding: '4px 0', fontSize: 12, fontWeight: 600, color: '#374151' }}>{dayNames[idx]}</div>
+                        );
+                      })}
                       {/* Rows per truck */}
                       {rows.map((rowKey, ri) => (
                         <>
@@ -3603,13 +3627,14 @@ export default function PlanneringPage() {
                             const isJumpHighlight = !!day && day === jumpTargetDay;
                             const disp = rowKey !== '__UNASSIGNED__' ? truckColors[rowKey] : null;
                             const laneColor = disp?.border || '#cbd5e1';
-                            const gridCol = 2 + vi;
+        const gridCol = 2 + vi;
+        const isTodayCell = !!day && day === todayISO;
                             return (
                               <div key={`cell-${rowKey}-${weekdayIdx}-${day || 'x'}`} id={day ? `calday-${day}` : undefined}
                                    onClick={day ? () => scheduleSelectedOnDay(day) : undefined}
                                    onDragOver={allowDrop}
                                    onDrop={day ? (e => onDropDay(e, day)) : undefined}
-                                   style={{ gridColumn: `${gridCol} / ${gridCol + 1}`, gridRow: `${ri + 2} / ${ri + 3}`, minHeight: 48, border: isJumpHighlight ? '2px solid #f59e0b' : (selectedProjectId ? '2px dashed #fbbf24' : '1px solid rgba(148,163,184,0.35)'), borderRadius: 8, padding: 6, background: '#ffffff', display: 'flex', flexDirection: 'column', gap: 4, borderLeft: `4px solid ${rowKey === '__UNASSIGNED__' ? '#cbd5e1' : laneColor}` }}>
+          style={{ gridColumn: `${gridCol} / ${gridCol + 1}`, gridRow: `${ri + 2} / ${ri + 3}`, minHeight: 48, border: isJumpHighlight ? '2px solid #f59e0b' : (selectedProjectId ? '2px dashed #fbbf24' : (isTodayCell ? '2px solid #60a5fa' : '1px solid rgba(148,163,184,0.35)')), boxShadow: isTodayCell ? '0 0 0 2px rgba(59,130,246,0.18)' : undefined, borderRadius: 8, padding: 6, background: '#ffffff', display: 'flex', flexDirection: 'column', gap: 4, borderLeft: `4px solid ${rowKey === '__UNASSIGNED__' ? '#cbd5e1' : laneColor}` }}>
                                 {list.length === 0 && <span style={{ fontSize: 11, color: '#94a3b8' }}>—</span>}
                                 {list.map(it => {
                                   let display: null | { bg: string; border: string; text: string } = null;
