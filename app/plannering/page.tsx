@@ -95,6 +95,13 @@ export default function PlanneringPage() {
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [editingTruckFor, setEditingTruckFor] = useState<string | null>(null);
   const [truckFilter, setTruckFilter] = useState<string>('');
+  // Hover/expand UI state for truck cards
+  const [hoveredTruck, setHoveredTruck] = useState<string | null>(null);
+  const [expandedTrucks, setExpandedTrucks] = useState<Record<string, boolean>>({});
+  // Collapsible Depåer section (entire section collapses)
+  const [depotsCollapsed, setDepotsCollapsed] = useState<boolean>(false);
+  // Collapsible deliveries section
+  const [deliveriesCollapsed, setDeliveriesCollapsed] = useState<boolean>(false);
   const [salesFilter, setSalesFilter] = useState<string>('');
   const [salesDirectory, setSalesDirectory] = useState<string[]>([]); // all sales/admin names from profiles
   const [calendarSearch, setCalendarSearch] = useState('');
@@ -2398,8 +2405,8 @@ export default function PlanneringPage() {
   )}
 
         {/* Calendar */}
-        <div style={{ display: 'grid', gap: 12 }}>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <div style={{ display: 'grid', gap: 8 }}>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
             <button className="btn--plain btn--sm" onClick={() => setMonthOffset(o => o - 1)}>◀</button>
             <strong style={{ fontSize: 16 }}>{(() => { const d = new Date(); d.setMonth(d.getMonth() + monthOffset); return d.toLocaleDateString('sv-SE', { month: 'long', year: 'numeric' }); })()}</strong>
             <button className="btn--plain btn--sm" onClick={() => setMonthOffset(o => o + 1)}>▶</button>
@@ -2433,6 +2440,11 @@ export default function PlanneringPage() {
             </button>
             {egenkontrollError && <span style={{ fontSize:10, color:'#b91c1c' }} title={egenkontrollError}>Fel EK</span>}
             {!egenkontrollLoading && egenkontrollOrderNumbers.size > 0 && <span style={{ fontSize:10, background:'#ecfdf5', color:'#047857', padding:'2px 6px', borderRadius:12, border:'1px solid #6ee7b7' }} title="Antal matchade egenkontroller">EK: {egenkontrollOrderNumbers.size}</span>}
+            <span style={{ flex: 1 }} />
+            <button type="button" className="btn--plain btn--sm" onClick={() => setSidebarCollapsed(s => !s)}
+              style={{ border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 10px', fontSize: 12 }}>
+              {sidebarCollapsed ? 'Visa projektpanel' : 'Dölj projektpanel'}
+            </button>
             {isAdmin && (
               <button type="button" className="btn--plain btn--sm" onClick={() => setAdminModalOpen(true)}
                 style={{ marginLeft: 'auto', border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 10px', fontSize: 12, background:'#fff' }}>
@@ -2440,23 +2452,19 @@ export default function PlanneringPage() {
               </button>
             )}
           </div>
-          {/* Legend */}
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-            <button type="button" className="btn--plain btn--sm" onClick={() => setSidebarCollapsed(s => !s)}
-              style={{ border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 10px', fontSize: 12 }}>
-              {sidebarCollapsed ? 'Visa projektpanel' : 'Dölj projektpanel'}
-            </button>
-          </div>
-          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 11, alignItems: 'stretch' }}>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', fontSize: 11, alignItems: 'stretch' }}>
             {trucks.map(tName => {
               const tRec = planningTrucks.find(pt => pt.name === tName);
               const c = truckColors[tName];
+              const isOpen = hoveredTruck === tName || !!expandedTrucks[tName];
               if (!tRec) {
+                // For legacy/default trucks without DB record, render compact only
                 return (
-                  <div key={tName} style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 8px', border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff', minWidth: 170 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <div key={tName}
+                       style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 10px', border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff', minWidth: 170 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <span style={{ width: 16, height: 16, background: c.bg, border: `3px solid ${c.border}`, borderRadius: 6 }} />
-                      <span style={{ fontWeight: 600, color: c.text }}>{tName}</span>
+                      <span style={{ fontWeight: 700, color: c.text }}>{tName}</span>
                     </div>
                   </div>
                 );
@@ -2467,18 +2475,48 @@ export default function PlanneringPage() {
                 return dep ? dep.name : 'Ingen';
               })();
               return (
-                <div key={tName} style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 10px', border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff', minWidth: 200 }}>
+                <div
+                  key={tName}
+                  role="button"
+                  tabIndex={0}
+                  aria-expanded={isOpen}
+                  onMouseEnter={() => setHoveredTruck(tName)}
+                  onMouseLeave={() => setHoveredTruck(prev => (prev === tName ? null : prev))}
+                  onFocus={() => setHoveredTruck(tName)}
+                  onBlur={() => setHoveredTruck(prev => (prev === tName ? null : prev))}
+                  onClick={() => setExpandedTrucks(prev => ({ ...prev, [tName]: !prev[tName] }))}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setExpandedTrucks(prev => ({ ...prev, [tName]: !prev[tName] })); } }}
+                  style={{
+                    display: 'flex', flexDirection: 'column', gap: 4,
+                    padding: '8px 10px',
+                    border: `1px solid ${isOpen ? '#cbd5e1' : '#e5e7eb'}`,
+                    borderRadius: 10,
+                    background: '#fff',
+                    minWidth: 180,
+                    boxShadow: isOpen ? '0 6px 16px rgba(2,6,23,0.06)' : 'none',
+                    transition: 'box-shadow 150ms ease, border-color 150ms ease'
+                  }}
+                >
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <span style={{ width: 16, height: 16, background: c.bg, border: `3px solid ${c.border}`, borderRadius: 6 }} />
                     <span style={{ fontWeight: 700, color: c.text }}>{tName}</span>
+                    <span aria-hidden style={{ marginLeft: 'auto', fontSize: 12, color: '#64748b' }}>{isOpen ? '▲' : '▼'}</span>
                   </div>
-                  <div style={{ fontSize: 12, color: '#475569' }}>
-                    <span style={{ fontWeight: 600, color: '#374151' }}>Team: </span>
-                    {teamNames || 'Ej tilldelad'}
-                  </div>
-                  <div style={{ fontSize: 12, color: '#475569' }}>
-                    <span style={{ fontWeight: 600, color: '#374151' }}>Depå: </span>
-                    {depotName}
+                  <div aria-hidden={!isOpen} style={{
+                    overflow: 'hidden',
+                    maxHeight: isOpen ? 200 : 0,
+                    opacity: isOpen ? 1 : 0,
+                    transition: 'max-height 200ms ease, opacity 150ms ease',
+                    display: 'grid', gap: 6, paddingTop: isOpen ? 6 : 0
+                  }}>
+                    <div style={{ fontSize: 12, color: '#475569' }}>
+                      <span style={{ fontWeight: 600, color: '#374151' }}>Team: </span>
+                      {teamNames || 'Ej tilldelad'}
+                    </div>
+                    <div style={{ fontSize: 12, color: '#475569' }}>
+                      <span style={{ fontWeight: 600, color: '#374151' }}>Depå: </span>
+                      {depotName}
+                    </div>
                   </div>
                 </div>
               );
@@ -2504,53 +2542,81 @@ export default function PlanneringPage() {
             </div>
             )}
           </div>
-          {/* Read-only depå overview under trucks */}
-          {depots.length > 0 && (
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginTop: 6 }}>
-              <span style={{ fontSize: 11, color: '#6b7280' }}>Depåer:</span>
-              {depots.map(d => {
-                const planned = selectedWeekKey ? weeklyPlannedByDepot[d.id] : monthlyPlannedByDepot[d.id];
-                const eko = d.material_ekovilla_total ?? d.material_total ?? 0;
-                const vit = d.material_vitull_total ?? 0;
-                const risk = stockCheckByDepot[d.id];
-                const ekoRisk = risk?.Ekovilla && !risk.Ekovilla.ok ? `E -${risk.Ekovilla.needed} ${risk.Ekovilla.firstShortageDate}` : null;
-                const vitRisk = risk?.Vitull && !risk.Vitull.ok ? `V -${risk.Vitull.needed} ${risk.Vitull.firstShortageDate}` : null;
-                return (
-                  <span key={d.id} style={{ fontSize: 11, color: '#111827', background: '#f8fafc', border: '1px solid #e5e7eb', padding: '2px 8px', borderRadius: 999, display:'inline-flex', gap:8, alignItems:'center' }}>
-                    <span>{d.name}</span>
-                    <span style={{ color:'#334155' }}>Eko: {eko}</span>
-                    <span style={{ color:'#334155' }}>Vit: {vit}</span>
-                    {planned && (planned.ekovilla > 0 || planned.vitull > 0) ? (
-                      <span style={{ marginLeft: 4, color: '#0369a1' }}>(Planerad: E {planned.ekovilla || 0} • V {planned.vitull || 0})</span>
-                    ) : null}
-                    {(ekoRisk || vitRisk) && (
-                      <span style={{ marginLeft: 4, color:'#b91c1c', background:'#fef2f2', border:'1px solid #fecaca', padding:'0 6px', borderRadius: 999 }}>
-                        Risk: {ekoRisk}{ekoRisk && vitRisk ? ' • ' : ''}{vitRisk}
-                      </span>
-                    )}
-                  </span>
-                );
-              })}
-            </div>
-          )}
-          {/* Upcoming deliveries under depå overview */}
-          {upcomingDeliveriesForView.length > 0 && (
-            <div style={{ marginTop: 6, display:'flex', gap:6, alignItems:'center', flexWrap:'wrap' }}>
-              <span style={{ fontSize: 11, color: '#6b7280' }}>Kommande leveranser:</span>
-              {/* Render as compact chips per delivery: YYYY-MM-DD • Depå • Material × Antal */}
-              {upcomingDeliveriesForView.map(d => {
-                const dep = depots.find(x => x.id === d.depot_id);
-                const depName = dep ? dep.name : 'Okänd depå';
-                return (
-                  <span key={d.id} style={{ fontSize: 11, color:'#111827', background:'#fff', border:'1px solid #e5e7eb', padding:'2px 8px', borderRadius:999, display:'inline-flex', gap:8, alignItems:'center' }}>
-                    <span>{d.delivery_date}</span>
-                    <span>•</span>
-                    <span>{depName}</span>
-                    <span>•</span>
-                    <span>{d.material_kind} × {d.amount} antal säckar</span>
-                  </span>
-                );
-              })}
+          {/* Depå overview + Leveranser as cards */}
+          {(depots.length > 0 || upcomingDeliveriesForView.length > 0) && (
+            <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', alignItems: 'start', marginTop: 6 }}>
+              {depots.length > 0 && (
+                <div style={{ border: '1px solid #e5e7eb', borderRadius: 12, background: '#ffffff' }}>
+                  <button type="button" onClick={() => setDepotsCollapsed(v => !v)} aria-expanded={!depotsCollapsed}
+                    style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 10px', borderBottom: '1px solid #e5e7eb', background: '#fff', cursor: 'pointer' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: '#111827' }}>Depåer</div>
+                      <span style={{ fontSize: 11, color: '#6b7280' }}>Från idag</span>
+                    </div>
+                    <span aria-hidden style={{ fontSize: 12, color: '#64748b' }}>{depotsCollapsed ? '▼' : '▲'}</span>
+                  </button>
+                  <div aria-hidden={depotsCollapsed} style={{ display: depotsCollapsed ? 'none' : 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', padding: '8px' }}>
+                    {depots.map(d => {
+                      const planned = selectedWeekKey ? weeklyPlannedByDepot[d.id] : monthlyPlannedByDepot[d.id];
+                      const eko = d.material_ekovilla_total ?? d.material_total ?? 0;
+                      const vit = d.material_vitull_total ?? 0;
+                      const risk = stockCheckByDepot[d.id];
+                      const ekoRisk = risk?.Ekovilla && !risk.Ekovilla.ok ? `E -${risk.Ekovilla.needed} ${risk.Ekovilla.firstShortageDate}` : null;
+                      const vitRisk = risk?.Vitull && !risk.Vitull.ok ? `V -${risk.Vitull.needed} ${risk.Vitull.firstShortageDate}` : null;
+                      return (
+                        <div key={d.id} style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: '8px 10px', background: '#fff', display: 'grid', gap: 6 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                            <div style={{ fontSize: 12, fontWeight: 700, color: '#111827' }}>{d.name}</div>
+                            {(ekoRisk || vitRisk) && (
+                              <span style={{ fontSize: 11, color:'#b91c1c', background:'#fef2f2', border:'1px solid #fecaca', padding:'1px 6px', borderRadius: 999 }}>
+                                Risk: {ekoRisk}{ekoRisk && vitRisk ? ' • ' : ''}{vitRisk}
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: 11, color:'#047857', background:'#ecfdf5', border:'1px solid #6ee7b7', padding:'1px 7px', borderRadius: 999 }}>Ekovilla: {eko}</span>
+                            <span style={{ fontSize: 11, color:'#1d4ed8', background:'#eff6ff', border:'1px solid #93c5fd', padding:'1px 7px', borderRadius: 999 }}>Vitull: {vit}</span>
+                            {planned && (planned.ekovilla > 0 || planned.vitull > 0) ? (
+                              <span style={{ fontSize: 11, color:'#0369a1', background:'#f0f9ff', border:'1px solid #bae6fd', padding:'1px 7px', borderRadius: 999 }}>Plan: E {planned.ekovilla || 0} • V {planned.vitull || 0}</span>
+                            ) : null}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {upcomingDeliveriesForView.length > 0 && (
+                <div style={{ border: '1px solid #e5e7eb', borderRadius: 12, background: '#ffffff' }}>
+                  <button type="button" onClick={() => setDeliveriesCollapsed(v => !v)} aria-expanded={!deliveriesCollapsed}
+                    style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 10px', borderBottom: '1px solid #e5e7eb', background: '#fff', cursor: 'pointer' }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: '#111827' }}>Kommande leveranser</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 11, color: '#6b7280' }}>{upcomingDeliveriesForView.length}</span>
+                      <span aria-hidden style={{ fontSize: 12, color: '#64748b' }}>{deliveriesCollapsed ? '▼' : '▲'}</span>
+                    </div>
+                  </button>
+                  <div aria-hidden={deliveriesCollapsed} style={{ display: deliveriesCollapsed ? 'none' : 'grid', gap: 6, padding: '8px' }}>
+                    {upcomingDeliveriesForView.map(d => {
+                      const dep = depots.find(x => x.id === d.depot_id);
+                      const depName = dep ? dep.name : 'Okänd depå';
+                      const isEko = d.material_kind === 'Ekovilla';
+                      const matStyle = isEko
+                        ? { bg: '#ecfdf5', border: '#6ee7b7', text: '#047857' }
+                        : { bg: '#eff6ff', border: '#93c5fd', text: '#1d4ed8' };
+                      return (
+                        <div key={d.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', border: '1px solid #f1f5f9', borderRadius: 8, background: '#fff' }}>
+                          <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: 11, color: '#334155', background:'#f8fafc', border:'1px solid #e5e7eb', padding:'1px 6px', borderRadius: 6 }}>{d.delivery_date}</span>
+                          <span style={{ color: '#64748b' }}>•</span>
+                          <span style={{ fontSize: 12, color: '#111827' }}>{depName}</span>
+                          <span style={{ marginLeft: 'auto', fontSize: 11, color: matStyle.text as any, background: matStyle.bg as any, border: `1px solid ${matStyle.border}`, padding:'1px 7px', borderRadius: 999 }}>{d.material_kind} × {d.amount} säckar</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           )}
           {/* Depåer panel moved to Admin modal to declutter main page */}
