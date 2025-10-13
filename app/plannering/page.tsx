@@ -494,7 +494,7 @@ export default function PlanneringPage() {
 
     const subject = encodeURIComponent(`Planerad isolering ${dateText} (${it.project.name}) Ordernummer #${it.project.orderNumber}`);
     const orderLine = (orderInDay && totalInDay)
-      ? `du är planerad som Nr: ${orderInDay} av ${totalInDay} på lastbilen "${effectiveTruck || 'Ej tilldelad'}"`
+      ? `du är planerad som Nr: ${orderInDay} av ${totalInDay} på lastbilen "${effectiveTruck || 'Ej tilldelad'}". Installatören kommer ringa dig på morgon vid installations tillfälle och meddela ungefärlig ankomst tid.`
       : `Lastbil: ${effectiveTruck || 'Ej tilldelad'}`;
     const bodyLines = [
       'ORDERBEKRÄFTELSE',
@@ -1686,6 +1686,137 @@ export default function PlanneringPage() {
     return out;
   }, [selectedWeekKey, monthOffset, scheduledSegments, scheduleMeta, planningTrucks]);
 
+  // Map job type to material kind used in planning
+  function materialFromJobType(jt?: string | null): 'Ekovilla' | 'Vitull' | null {
+    const s = (jt || '').trim().toLowerCase();
+    if (!s) return null;
+    if (s.startsWith('eko')) return 'Ekovilla';
+    if (s.startsWith('vit')) return 'Vitull';
+    return null;
+  }
+
+  // Resolve effective depot for a segment: segment override > truck's depot
+  function resolveEffectiveDepotId(seg: ScheduledSegment, meta: ProjectScheduleMeta | undefined, trucksList: TruckRec[]): string | null {
+    if (seg.depotId) return seg.depotId;
+    const tName = meta?.truck || null;
+    if (!tName) return null;
+    const t = trucksList.find(tt => tt.name === tName);
+    return (t?.depot_id ?? null) as string | null;
+  }
+
+  // Stock projection for current view range (selected week or visible month)
+  type MatStatus = { ok: boolean; minBalance: number; firstShortageDate?: string; needed?: number };
+  type DepotStatus = { Ekovilla: MatStatus; Vitull: MatStatus };
+  const stockCheckByDepot = useMemo(() => {
+    const out: Record<string, DepotStatus> = {};
+    if (!depots.length) return out;
+
+    // Determine inclusive date range (we'll simulate from TODAY forward only)
+    let startISO: string;
+    let endISO: string;
+    if (selectedWeekKey) {
+      const mon = mondayFromIsoWeekKey(selectedWeekKey);
+      if (!mon) return out;
+      const sun = new Date(mon); sun.setDate(sun.getDate() + 6);
+      startISO = fmtDate(mon);
+      endISO = fmtDate(sun);
+    } else {
+      const base = new Date();
+      base.setDate(1);
+      base.setMonth(base.getMonth() + monthOffset);
+      const start = startOfMonth(base);
+      const end = endOfMonth(base);
+      startISO = fmtDate(start);
+      endISO = fmtDate(end);
+    }
+
+    // We do not care about past days: start simulation from today
+    const todayISO = fmtDate(new Date());
+    const simStartISO = todayISO; // always from today, regardless of view start
+    if (simStartISO > endISO) {
+      // View ends before today; no future days to simulate
+      for (const d of depots) {
+        const startEko = (d.material_ekovilla_total ?? d.material_total ?? 0) || 0;
+        const startVit = (d.material_vitull_total ?? 0) || 0;
+        out[d.id] = {
+          Ekovilla: { ok: true, minBalance: startEko, needed: 0 },
+          Vitull: { ok: true, minBalance: startVit, needed: 0 },
+        } as DepotStatus;
+      }
+      return out;
+    }
+
+    // Build day list
+    const days: string[] = [];
+    const d0 = new Date(simStartISO + 'T00:00:00');
+    const d1 = new Date(endISO + 'T00:00:00');
+    for (let d = new Date(d0); d <= d1; d.setDate(d.getDate() + 1)) days.push(fmtDate(new Date(d)));
+
+    // Event buckets per depot/material/day
+    type DayEvents = { in: number; out: number };
+    const ev: Record<string, { Ekovilla: Record<string, DayEvents>; Vitull: Record<string, DayEvents> }> = {};
+    const ensure = (depotId: string, mat: 'Ekovilla' | 'Vitull', day: string) => {
+      if (!ev[depotId]) ev[depotId] = { Ekovilla: {}, Vitull: {} };
+      const bucket = ev[depotId][mat];
+      if (!bucket[day]) bucket[day] = { in: 0, out: 0 };
+      return bucket[day];
+    };
+
+    // Add deliveries within [today .. end] (arrive at start of day)
+    for (const del of deliveries) {
+      if (!del.depot_id || !del.delivery_date || !del.material_kind) continue;
+      if (del.delivery_date < simStartISO || del.delivery_date > endISO) continue;
+      ensure(del.depot_id, del.material_kind, del.delivery_date).in += Math.max(0, del.amount || 0);
+    }
+
+    // Add planned consumption on segment start day, future only
+    for (const seg of scheduledSegments) {
+      if (seg.startDay < simStartISO || seg.startDay > endISO) continue;
+      const meta = scheduleMeta[seg.projectId];
+      const bag = meta?.bagCount;
+      if (!(typeof bag === 'number' && bag > 0)) continue;
+      const mat = materialFromJobType(meta?.jobType);
+      if (!mat) continue;
+      const depotId = resolveEffectiveDepotId(seg, meta, planningTrucks);
+      if (!depotId) continue;
+      ensure(depotId, mat, seg.startDay).out += bag;
+    }
+
+    // Simulate balances per depot/material
+    for (const d of depots) {
+      const startEko = (d.material_ekovilla_total ?? d.material_total ?? 0) || 0;
+      const startVit = (d.material_vitull_total ?? 0) || 0;
+
+      const sim = (mat: 'Ekovilla' | 'Vitull', startStock: number): MatStatus => {
+        let stock = startStock;
+        let minBal = startStock;
+        let firstShort: string | undefined;
+        for (const day of days) {
+          const dayEv = ev[d.id]?.[mat]?.[day];
+          if (dayEv) {
+            stock += dayEv.in;
+            stock -= dayEv.out;
+          }
+          if (stock < minBal) minBal = stock;
+          if (stock < 0 && !firstShort) firstShort = day;
+        }
+        return {
+          ok: minBal >= 0,
+          minBalance: minBal,
+          firstShortageDate: firstShort,
+          needed: minBal < 0 ? Math.ceil(-minBal) : 0,
+        };
+      };
+
+      out[d.id] = {
+        Ekovilla: sim('Ekovilla', startEko),
+        Vitull: sim('Vitull', startVit),
+      };
+    }
+
+    return out;
+  }, [depots, deliveries, scheduledSegments, scheduleMeta, planningTrucks, selectedWeekKey, monthOffset, /* today */ (new Date()).toDateString()]);
+
   // Avatar helpers
   function creatorInitials(name: string) {
     const parts = name.trim().split(/\s+/).filter(Boolean);
@@ -2381,6 +2512,9 @@ export default function PlanneringPage() {
                 const planned = selectedWeekKey ? weeklyPlannedByDepot[d.id] : monthlyPlannedByDepot[d.id];
                 const eko = d.material_ekovilla_total ?? d.material_total ?? 0;
                 const vit = d.material_vitull_total ?? 0;
+                const risk = stockCheckByDepot[d.id];
+                const ekoRisk = risk?.Ekovilla && !risk.Ekovilla.ok ? `E -${risk.Ekovilla.needed} ${risk.Ekovilla.firstShortageDate}` : null;
+                const vitRisk = risk?.Vitull && !risk.Vitull.ok ? `V -${risk.Vitull.needed} ${risk.Vitull.firstShortageDate}` : null;
                 return (
                   <span key={d.id} style={{ fontSize: 11, color: '#111827', background: '#f8fafc', border: '1px solid #e5e7eb', padding: '2px 8px', borderRadius: 999, display:'inline-flex', gap:8, alignItems:'center' }}>
                     <span>{d.name}</span>
@@ -2389,6 +2523,11 @@ export default function PlanneringPage() {
                     {planned && (planned.ekovilla > 0 || planned.vitull > 0) ? (
                       <span style={{ marginLeft: 4, color: '#0369a1' }}>(Planerad: E {planned.ekovilla || 0} • V {planned.vitull || 0})</span>
                     ) : null}
+                    {(ekoRisk || vitRisk) && (
+                      <span style={{ marginLeft: 4, color:'#b91c1c', background:'#fef2f2', border:'1px solid #fecaca', padding:'0 6px', borderRadius: 999 }}>
+                        Risk: {ekoRisk}{ekoRisk && vitRisk ? ' • ' : ''}{vitRisk}
+                      </span>
+                    )}
                   </span>
                 );
               })}
