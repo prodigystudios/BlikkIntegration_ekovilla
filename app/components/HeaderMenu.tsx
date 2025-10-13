@@ -263,22 +263,26 @@ export default function HeaderMenu({ role, fullName }: { role: UserRole | null, 
               <IconArchive />
               <span>Materialkvalitet</span>
             </Link>
-
+            
             {/* Divider before sales section */}
-            <div role="separator" aria-hidden style={{ height: 1, background: '#e5e7eb', margin: '8px 8px' }} />
-            <div style={{ fontSize: 12, color: '#6b7280', margin: '6px 8px' }}>Säljare</div>
-            <Link href="/korjournal" prefetch={true} onClick={() => setOpen(false)}
-              aria-current={pathname === '/korjournal' ? 'page' : undefined}
-              className={`menu-link${pathname === '/korjournal' ? ' is-active' : ''}`}>
-              <IconCar />
-              <span>Körjournal</span>
-            </Link>
-            <Link href="/plannering" prefetch={false} onClick={() => setOpen(false)}
-              aria-current={pathname === '/plannering' ? 'page' : undefined}
-              className={`menu-link${pathname === '/plannering' ? ' is-active' : ''}`}>
-              <IconCalendar />
-              <span>Plannering</span>
-            </Link>
+            {role !== 'member' && (
+              <div>
+              <div role="separator" aria-hidden style={{ height: 1, background: '#e5e7eb', margin: '8px 8px' }} />
+              <div style={{ fontSize: 12, color: '#6b7280', margin: '6px 8px' }}>Säljare</div>
+                <Link href="/korjournal" prefetch={true} onClick={() => setOpen(false)}
+                aria-current={pathname === '/korjournal' ? 'page' : undefined}
+                className={`menu-link${pathname === '/korjournal' ? ' is-active' : ''}`}>
+                <IconCar />
+                <span>Körjournal</span>
+                </Link>
+              <Link href="/plannering" prefetch={false} onClick={() => setOpen(false)}
+                aria-current={pathname === '/plannering' ? 'page' : undefined}
+                className={`menu-link${pathname === '/plannering' ? ' is-active' : ''}`}>
+                <IconCalendar />
+                <span>Plannering</span>
+              </Link>
+            </div>
+            )}
           </nav>
 
           {role === 'admin' && (
