@@ -178,6 +178,22 @@ export default function PlanneringPage() {
   const [showCardControls, setShowCardControls] = useState(false);
   // Collapsible left sidebar (search/manual add/backlog)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  // Segment Editor (modal) state
+  type SegmentEditorMode = 'create' | 'edit';
+  interface SegmentEditorDraft {
+    mode: SegmentEditorMode;
+    projectId: string;
+    segmentId?: string;
+    startDay: string; // YYYY-MM-DD
+    endDay: string;   // YYYY-MM-DD
+    truck: string | null;
+    bagCount: number | null;
+    jobType: string | null;
+    depotId: string | null; // null => use truck depot
+    positionIndex?: number | null; // 1-based position within same truck/day (create convenience)
+  }
+  const [segEditorOpen, setSegEditorOpen] = useState(false);
+  const [segEditor, setSegEditor] = useState<SegmentEditorDraft | null>(null);
   useEffect(() => {
     try {
       const v = localStorage.getItem('planner.sidebarCollapsed');
@@ -456,10 +472,10 @@ export default function PlanneringPage() {
   }, []);
 
   const openMailForSegment = useCallback((it: any, email: string) => {
-    // Resolve segment + date span
+    // Resolve segment + date span (allow explicit overrides from callers like the editor modal)
     const seg = scheduledSegments.find(s => s.id === it.segmentId);
-    const startDay = (seg?.startDay) || it.day;
-    const endDay = (seg?.endDay) || it.day;
+    const startDay = it.startDay || (seg?.startDay) || it.day;
+    const endDay = it.endDay || (seg?.endDay) || it.day;
     const single = startDay === endDay;
     const dateText = single ? startDay : `${startDay} – ${endDay}`;
 
@@ -499,7 +515,7 @@ export default function PlanneringPage() {
       orderInDay = idx >= 0 ? idx + 1 : null;
     }
 
-    const subject = encodeURIComponent(`Planerad isolering ${dateText} (${it.project.name}) Ordernummer #${it.project.orderNumber}`);
+  const subject = encodeURIComponent(`Planerad isolering ${dateText} (${it.project.name}) Ordernummer #${it.project.orderNumber}`);
     const orderLine = (orderInDay && totalInDay)
       ? `du är planerad som Nr: ${orderInDay} av ${totalInDay} på lastbilen "${effectiveTruck || 'Ej tilldelad'}". Installatören kommer ringa dig på morgon vid installations tillfälle och meddela ungefärlig ankomst tid.`
       : `Lastbil: ${effectiveTruck || 'Ej tilldelad'}`;
@@ -1978,6 +1994,65 @@ export default function PlanneringPage() {
   function onDragStart(e: React.DragEvent, id: string) { e.dataTransfer.setData('text/plain', id); setDraggingId(id); e.dataTransfer.effectAllowed = 'move'; }
   function onDragEnd() { setDraggingId(null); }
   function allowDrop(e: React.DragEvent) { e.preventDefault(); }
+  // Small helpers for Segment Editor
+  const genId = () => (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? (crypto as any).randomUUID() : Math.random().toString(36).slice(2));
+  const addDaysLocal = (iso: string, n: number) => { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + n); return fmtDate(d); };
+  function openSegmentEditorForNew(projectId: string, day: string) {
+    const meta = scheduleMeta[projectId] || { projectId } as ProjectScheduleMeta;
+    const assumedTruck = meta.truck ?? null;
+    let positionIndex: number | null = null;
+    if (assumedTruck) {
+      const sameDay = itemsByDay.get(day) || [];
+      const sameTruck = sameDay.filter(x => x.truck === assumedTruck && x.spanStart);
+      positionIndex = sameTruck.length + 1; // default to end
+    }
+    setSegEditor({ mode: 'create', projectId, startDay: day, endDay: day, truck: assumedTruck, bagCount: (typeof meta.bagCount === 'number' ? meta.bagCount : null), jobType: meta.jobType ?? null, depotId: null, positionIndex });
+    setSegEditorOpen(true);
+  }
+  function openSegmentEditorForExisting(segmentId: string) {
+    const seg = scheduledSegments.find(s => s.id === segmentId);
+    if (!seg) return;
+    const meta = scheduleMeta[seg.projectId] || { projectId: seg.projectId } as ProjectScheduleMeta;
+    setSegEditor({ mode: 'edit', projectId: seg.projectId, segmentId: seg.id, startDay: seg.startDay, endDay: seg.endDay, truck: meta.truck ?? null, bagCount: (typeof meta.bagCount === 'number' ? meta.bagCount : null), jobType: meta.jobType ?? null, depotId: seg.depotId ?? null });
+    setSegEditorOpen(true);
+  }
+  function saveSegmentEditor() {
+    if (!segEditor) return;
+    const { mode, projectId, segmentId, startDay, endDay, truck, bagCount, jobType, depotId, positionIndex } = segEditor;
+    // Update meta via debounced helper
+    updateMeta(projectId, { truck, bagCount, jobType });
+    if (mode === 'create') {
+      const newSeg: ScheduledSegment = { id: genId(), projectId, startDay, endDay, depotId: depotId ?? undefined } as any;
+      applyScheduledSegments(prev => {
+        const next = [...prev, newSeg];
+        // If a truck and desired position provided, reorder within same truck/day
+        if (truck && positionIndex && positionIndex > 0) {
+          // Build list of start-day items for same group in visual order
+          const group = next
+            .filter(s => s.startDay === startDay && s.projectId !== projectId ? (scheduleMeta[s.projectId]?.truck || null) === truck : true)
+            .filter(s => s.startDay === startDay && (scheduleMeta[s.projectId]?.truck || null) === truck)
+            .sort((a, b) => ((a.sortIndex ?? 1e9) - (b.sortIndex ?? 1e9)) || a.id.localeCompare(b.id));
+          // Ensure our new segment is present
+          const ids = group.map(g => g.id);
+          if (!ids.includes(newSeg.id)) ids.push(newSeg.id);
+          // Move to requested 1-based position (clamped)
+          const from = ids.indexOf(newSeg.id);
+          const to = Math.max(0, Math.min(ids.length - 1, positionIndex - 1));
+          if (from !== -1 && to !== from) {
+            const [moved] = ids.splice(from, 1);
+            ids.splice(to, 0, moved);
+            setSequentialSortForSegments(ids);
+          }
+        }
+        return next;
+      });
+    } else if (segmentId) {
+      applyScheduledSegments(prev => prev.map(s => s.id === segmentId ? ({ ...s, startDay, endDay, depotId: depotId ?? null }) : s));
+      updateSegmentDepot(segmentId, depotId ?? null);
+    }
+    setSegEditorOpen(false);
+    setSegEditor(null);
+  }
   function onDropDay(e: React.DragEvent, day: string) {
     e.preventDefault();
     const id = e.dataTransfer.getData('text/plain');
@@ -2010,11 +2085,9 @@ export default function PlanneringPage() {
     }
     const proj = projects.find(p => p.id === id);
     if (!proj) return;
-    // create meta if missing
+    // Ensure meta exists then open editor for creation
     setScheduleMeta(m => m[proj.id] ? m : { ...m, [proj.id]: { projectId: proj.id, truck: null, bagCount: null, jobType: null, color: null } });
-  const newSeg: ScheduledSegment = { id: (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? (crypto as any).randomUUID() : Math.random().toString(36).slice(2) ), projectId: proj.id, startDay: day, endDay: day };
-    applyScheduledSegments(prev => [...prev, newSeg]);
-    setTimeout(() => setEditingTruckFor(proj.id), 0);
+    openSegmentEditorForNew(proj.id, day);
   }
 
   // Click-based scheduling fallback: select a backlog project, then click a calendar day.
@@ -2024,9 +2097,7 @@ export default function PlanneringPage() {
     setSelectedProjectId(null);
     if (!proj) return;
     setScheduleMeta(m => m[proj.id] ? m : { ...m, [proj.id]: { projectId: proj.id } });
-  const newSeg: ScheduledSegment = { id: (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? (crypto as any).randomUUID() : Math.random().toString(36).slice(2)), projectId: proj.id, startDay: day, endDay: day };
-    applyScheduledSegments(prev => [...prev, newSeg]);
-    setTimeout(() => setEditingTruckFor(proj.id), 0);
+    openSegmentEditorForNew(proj.id, day);
   }
   function unschedule(segmentId: string) { applyScheduledSegments(prev => prev.filter(s => s.id !== segmentId)); }
   function extendSpan(segmentId: string, direction: 'forward' | 'back') {
@@ -2092,6 +2163,150 @@ export default function PlanneringPage() {
 
   return (
     <div style={{ padding: 16, display: 'grid', gap: 16, position: 'relative' }}>
+      {segEditorOpen && segEditor && (() => {
+        const p = projects.find(px => px.id === segEditor.projectId);
+        const daysLen = Math.max(1, Math.round((new Date(segEditor.endDay + 'T00:00:00').getTime() - new Date(segEditor.startDay + 'T00:00:00').getTime()) / 86400000) + 1);
+        const setDaysLen = (n: number) => {
+          const len = Math.max(1, (n|0));
+          setSegEditor(ed => ed ? ({ ...ed, endDay: addDaysLocal(ed.startDay, len - 1) }) : ed);
+        };
+        return (
+          <div onClick={() => { setSegEditorOpen(false); setSegEditor(null); }} style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(1px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+            <div onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" style={{ width: 'min(900px, 94vw)', background: '#fff', border: '1px solid #e2e8f0', borderRadius: 14, overflow: 'hidden', boxShadow: '0 24px 80px rgba(0,0,0,0.35)' }}>
+              <div style={{ position: 'relative', padding: '14px 18px', background: 'linear-gradient(135deg, #0ea5e9 0%, #6366f1 70%)', color: '#fff' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <div style={{ width: 36, height: 36, borderRadius: 10, background: 'rgba(255,255,255,0.18)', display: 'grid', placeItems: 'center' }}>📅</div>
+                  <div style={{ display: 'grid' }}>
+                    <strong style={{ fontSize: 16, letterSpacing: .2 }}>{segEditor.mode === 'create' ? 'Planera jobb' : 'Redigera planering'}</strong>
+                    <span style={{ fontSize: 12, opacity: .95 }}>
+                      {p?.orderNumber ? <span style={{ fontFamily: 'ui-monospace,monospace', background: '#ffffff', color: '#111827', border: '1px solid #e5e7eb', padding: '1px 6px', borderRadius: 6, marginRight: 6 }}>#{p.orderNumber}</span> : null}
+                      {p?.name}
+                    </span>
+                  </div>
+                </div>
+                <button aria-label="Stäng" onClick={() => { setSegEditorOpen(false); setSegEditor(null); }} className="btn--plain btn--xs" style={{ position: 'absolute', right: 10, top: 10, background: 'rgba(255,255,255,0.22)', color: '#fff', border: '1px solid rgba(255,255,255,0.35)', borderRadius: 10, padding: '6px 10px', fontSize: 14, lineHeight: 1 }}>×</button>
+              </div>
+
+              <div style={{ padding: 16, display: 'grid', gridTemplateColumns: 'repeat(12, minmax(0,1fr))', gap: 14 }}>
+                <div style={{ gridColumn: 'span 7', display: 'grid', gap: 12 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
+                <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
+                  <span>Datum (start)</span>
+                  <input type="date" value={segEditor.startDay} onChange={e => setSegEditor(ed => ed ? ({ ...ed, startDay: e.target.value, endDay: (new Date(ed.endDay) < new Date(e.target.value) ? e.target.value : ed.endDay) }) : ed)} style={{ padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }} />
+                </label>
+                <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
+                  <span>Antal dagar</span>
+                  <input type="number" min={1} value={daysLen} onChange={e => setDaysLen(parseInt(e.target.value || '1', 10))} style={{ padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }} />
+                </label>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
+                <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
+                  <span>Lastbil</span>
+                  <select value={segEditor.truck || ''} onChange={e => setSegEditor(ed => ed ? ({ ...ed, truck: e.target.value || null }) : ed)} style={{ padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }}>
+                    <option value="">Välj lastbil…</option>
+                    {trucks.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                </label>
+                {segEditor.mode === 'create' && segEditor.truck && (() => {
+                  const sameDay = itemsByDay.get(segEditor.startDay) || [];
+                  const sameTruck = sameDay.filter(x => x.truck === segEditor.truck && x.spanStart);
+                  const maxPos = Math.max(0, sameTruck.length) + 1; // include new
+                  const val = segEditor.positionIndex ?? maxPos;
+                  return (
+                    <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
+                      <span>Placering (i lastbilsordning)</span>
+                      <select value={val} onChange={e => setSegEditor(ed => ed ? ({ ...ed, positionIndex: parseInt(e.target.value, 10) || 1 }) : ed)} style={{ padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }}>
+                        {Array.from({ length: maxPos }, (_, i) => i + 1).map(n => <option key={n} value={n}>{n} / {maxPos}</option>)}
+                      </select>
+                    </label>
+                  );
+                })()}
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
+                <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
+                  <span>Säckar</span>
+                  <input type="number" min={0} value={segEditor.bagCount ?? ''} placeholder="t.ex. 18" onChange={e => setSegEditor(ed => ed ? ({ ...ed, bagCount: e.target.value === '' ? null : Math.max(0, parseInt(e.target.value, 10) || 0) }) : ed)} style={{ padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }} />
+                </label>
+
+                <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
+                  <span>Jobbtyp / Material</span>
+                  <select value={segEditor.jobType || ''} onChange={e => setSegEditor(ed => ed ? ({ ...ed, jobType: e.target.value || null }) : ed)} style={{ padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }}>
+                    <option value="">Välj…</option>
+                    {jobTypes.map(j => <option key={j} value={j}>{j}</option>)}
+                  </select>
+                </label>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
+                <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
+                  <span>Depå (override)</span>
+                  <select value={segEditor.depotId || ''} onChange={e => setSegEditor(ed => ed ? ({ ...ed, depotId: e.target.value || null }) : ed)} style={{ padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }}>
+                    <option value="">Ingen (använd lastbilens)</option>
+                    {depots.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                  </select>
+                </label>
+                  </div>
+                </div>
+                <div style={{ gridColumn: 'span 5', display: 'grid', gap: 10 }}>
+                  <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 12, padding: 12 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                      <h4 style={{ margin: 0, fontSize: 13, letterSpacing: .2, color: '#0f172a' }}>Översikt</h4>
+                      <div style={{ height: 1, background: '#e5e7eb', flex: 1 }} />
+                    </div>
+                    {(() => {
+                      const start = segEditor.startDay;
+                      const end = segEditor.endDay;
+                      const single = start === end;
+                      const startW = dayNames[(new Date(start+'T00:00:00').getDay()+6)%7];
+                      const endW = dayNames[(new Date(end+'T00:00:00').getDay()+6)%7];
+                      const truckName = segEditor.truck || null;
+                      const truckStyle = truckName && truckColors[truckName] ? truckColors[truckName] : null;
+                      const depotName = segEditor.depotId ? (depots.find(d => d.id === segEditor.depotId)?.name || 'Okänd depå') : 'Lastbilens depå';
+                      return (
+                        <div style={{ display: 'grid', gap: 8 }}>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                            {p?.orderNumber ? <span style={{ fontFamily: 'ui-monospace,monospace', fontSize: 12, background: '#eef2ff', border: '1px solid #c7d2fe', color: '#111827', padding: '2px 8px', borderRadius: 999 }}>#{p.orderNumber}</span> : null}
+                            <span style={{ fontSize: 12, background: '#ecfeff', border: '1px solid #a5f3fc', color: '#164e63', padding: '2px 8px', borderRadius: 999 }}>{single ? `${startW} ${start}` : `${startW} ${start} → ${endW} ${end}`}</span>
+                            <span style={{ fontSize: 12, background: '#f0fdf4', border: '1px solid #86efac', color: '#14532d', padding: '2px 8px', borderRadius: 999 }}>{segEditor.bagCount != null ? `${segEditor.bagCount} säckar` : 'Säckar ej satta'}</span>
+                            <span style={{ fontSize: 12, background: '#f5f3ff', border: '1px solid #ddd6fe', color: '#3730a3', padding: '2px 8px', borderRadius: 999 }}>{segEditor.jobType || 'Jobbtyp ej vald'}</span>
+                            <span style={{ fontSize: 12, background: '#fff7ed', border: '1px solid #fed7aa', color: '#7c2d12', padding: '2px 8px', borderRadius: 999 }}>{depotName}</span>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <div style={{ fontSize: 12, color: '#475569' }}>Lastbil:</div>
+                            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '3px 8px', borderRadius: 8, border: `1px solid ${truckStyle ? truckStyle.border : '#cbd5e1'}`, background: truckStyle ? truckStyle.bg : '#fff' }}>
+                              <div style={{ width: 8, height: 8, borderRadius: 8, background: truckStyle ? truckStyle.border : '#94a3b8' }} />
+                              <div style={{ fontSize: 12, color: truckStyle ? truckStyle.text : '#0f172a' }}>{truckName || 'Inte vald'}</div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', alignItems: 'center', padding: 12, background: '#f8fafc', borderTop: '1px solid #e5e7eb', flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  {p && (
+                    <button
+                      type="button"
+                      onClick={() => handleEmailClick({ segmentId: segEditor.segmentId, project: p, truck: segEditor.truck, day: segEditor.startDay, startDay: segEditor.startDay, endDay: segEditor.endDay })}
+                      disabled={emailFetchStatus[p.id] === 'loading'}
+                      className="btn--plain btn--xs"
+                      title={scheduleMeta[p.id]?.client_notified ? (scheduleMeta[p.id]?.client_notified_by ? `Notifierad av ${scheduleMeta[p.id]!.client_notified_by}` : 'Kund markerad som notifierad') : 'Skicka planeringsmail'}
+                      style={{ fontSize:12, border:'1px solid '+(scheduleMeta[p.id]?.client_notified ? '#047857' : '#7dd3fc'), background: scheduleMeta[p.id]?.client_notified ? '#059669' : '#e0f2fe', color: scheduleMeta[p.id]?.client_notified ? '#fff' : '#0369a1', borderRadius:10, padding:'8px 12px' }}
+                    >
+                      {scheduleMeta[p.id]?.client_notified ? 'Notifierad ✓' : 'Maila kund'}
+                    </button>
+                  )}
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button type="button" onClick={() => { setSegEditorOpen(false); setSegEditor(null); }} className="btn--plain btn--xs" style={{ fontSize: 12, padding: '8px 12px', border: '1px solid #cbd5e1', background: '#fff', borderRadius: 10 }}>Avbryt</button>
+                  <button type="button" onClick={saveSegmentEditor} className="btn--plain btn--xs" style={{ fontSize: 12, padding: '8px 12px', border: '1px solid #16a34a', background: '#16a34a', color: '#fff', borderRadius: 10, boxShadow: '0 2px 6px rgba(22,163,74,0.25)' }}>Spara</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
       {emailToast && (
         <>
           <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.35)', backdropFilter: 'blur(1px)', zIndex: 240, pointerEvents: 'none' }} />
@@ -3029,7 +3244,7 @@ export default function PlanneringPage() {
                               const isMid = (it as any).spanMiddle;
                               const isStart = (it as any).spanStart;
                               return (
-                                <div key={`${it.segmentId}:${it.day}`} draggable onDragStart={e => onDragStart(e, it.segmentId)} onDragEnd={onDragEnd} onClick={() => setOpenDepotMenuSegmentId(null)} style={{ position: 'relative', border: `2px solid ${highlight ? '#f59e0b' : cardBorder}`, background: cardBg, borderRadius: 6, padding: 6, fontSize: 12, cursor: 'grab', display: 'grid', gap: 4, opacity: isMid ? 0.95 : 1, boxShadow: highlight ? '0 0 0 3px rgba(245,158,11,0.35)' : 'none' }}>
+                                <div key={`${it.segmentId}:${it.day}`} draggable onDragStart={e => onDragStart(e, it.segmentId)} onDragEnd={onDragEnd} onDoubleClick={() => openSegmentEditorForExisting(it.segmentId)} onClick={() => setOpenDepotMenuSegmentId(null)} style={{ position: 'relative', border: `2px solid ${highlight ? '#f59e0b' : cardBorder}`, background: cardBg, borderRadius: 6, padding: 6, fontSize: 12, cursor: 'grab', display: 'grid', gap: 4, opacity: isMid ? 0.95 : 1, boxShadow: highlight ? '0 0 0 3px rgba(245,158,11,0.35)' : 'none' }}>
                                   <div style={{ display: 'flex', flexDirection: 'column', gap: 2}}>
                                     <span style={{ fontWeight: 600, color: display ? display.text : '#312e81', display: 'flex', alignItems: 'center', columnGap: 6, rowGap: 2, flexWrap: 'wrap' }}>
                                       {it.project.orderNumber ? (
@@ -3315,7 +3530,7 @@ export default function PlanneringPage() {
                                   setSequentialSortForSegments(next);
                                 };
                                 return (
-                                  <div key={`${it.segmentId}:${it.day}`} draggable onDragStart={e => onDragStart(e, it.segmentId)} onDragEnd={onDragEnd} onClick={() => setOpenDepotMenuSegmentId(null)} style={{ position: 'relative', border: `2px solid ${highlight ? '#f59e0b' : cardBorder}`, background: cardBg, borderRadius: 6, padding: 6, fontSize: 11, cursor: 'grab', display: 'grid', gap: 4, opacity: isMid ? 0.95 : 1, boxShadow: highlight ? '0 0 0 3px rgba(245,158,11,0.35)' : 'none' }}>
+                                  <div key={`${it.segmentId}:${it.day}`} draggable onDragStart={e => onDragStart(e, it.segmentId)} onDragEnd={onDragEnd} onDoubleClick={() => openSegmentEditorForExisting(it.segmentId)} onClick={() => setOpenDepotMenuSegmentId(null)} style={{ position: 'relative', border: `2px solid ${highlight ? '#f59e0b' : cardBorder}`, background: cardBg, borderRadius: 6, padding: 6, fontSize: 11, cursor: 'grab', display: 'grid', gap: 4, opacity: isMid ? 0.95 : 1, boxShadow: highlight ? '0 0 0 3px rgba(245,158,11,0.35)' : 'none' }}>
                                     {/* order controls moved to bottom control section */}
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                                       <span style={{ fontWeight: 600, color: display ? display.text : '#312e81', display: 'flex', alignItems: 'center', columnGap: 6, rowGap: 2, flexWrap: 'wrap' }}>
@@ -3627,14 +3842,14 @@ export default function PlanneringPage() {
                             const isJumpHighlight = !!day && day === jumpTargetDay;
                             const disp = rowKey !== '__UNASSIGNED__' ? truckColors[rowKey] : null;
                             const laneColor = disp?.border || '#cbd5e1';
-        const gridCol = 2 + vi;
-        const isTodayCell = !!day && day === todayISO;
+                            const gridCol = 2 + vi;
+                            const isTodayCell = !!day && day === todayISO;
                             return (
                               <div key={`cell-${rowKey}-${weekdayIdx}-${day || 'x'}`} id={day ? `calday-${day}` : undefined}
                                    onClick={day ? () => scheduleSelectedOnDay(day) : undefined}
                                    onDragOver={allowDrop}
                                    onDrop={day ? (e => onDropDay(e, day)) : undefined}
-          style={{ gridColumn: `${gridCol} / ${gridCol + 1}`, gridRow: `${ri + 2} / ${ri + 3}`, minHeight: 48, border: isJumpHighlight ? '2px solid #f59e0b' : (selectedProjectId ? '2px dashed #fbbf24' : (isTodayCell ? '2px solid #60a5fa' : '1px solid rgba(148,163,184,0.35)')), boxShadow: isTodayCell ? '0 0 0 2px rgba(59,130,246,0.18)' : undefined, borderRadius: 8, padding: 6, background: '#ffffff', display: 'flex', flexDirection: 'column', gap: 4, borderLeft: `4px solid ${rowKey === '__UNASSIGNED__' ? '#cbd5e1' : laneColor}` }}>
+                                  style={{ gridColumn: `${gridCol} / ${gridCol + 1}`, gridRow: `${ri + 2} / ${ri + 3}`, minHeight: 48, border: isJumpHighlight ? '2px solid #f59e0b' : (selectedProjectId ? '2px dashed #fbbf24' : (isTodayCell ? '2px solid #60a5fa' : '1px solid rgba(148,163,184,0.35)')), boxShadow: isTodayCell ? '0 0 0 2px rgba(59,130,246,0.18)' : undefined, borderRadius: 8, padding: 6, background: '#ffffff', display: 'flex', flexDirection: 'column', gap: 4, borderLeft: `4px solid ${rowKey === '__UNASSIGNED__' ? '#cbd5e1' : laneColor}` }}>
                                 {list.length === 0 && <span style={{ fontSize: 11, color: '#94a3b8' }}>—</span>}
                                 {list.map(it => {
                                   let display: null | { bg: string; border: string; text: string } = null;
@@ -3660,7 +3875,7 @@ export default function PlanneringPage() {
                                   const isMid = (it as any).spanMiddle;
                                   const isStart = (it as any).spanStart;
                                   return (
-               <div key={`${it.segmentId}:${it.day}`} draggable onDragStart={e => onDragStart(e, it.segmentId)} onDragEnd={onDragEnd}
+                                    <div key={`${it.segmentId}:${it.day}`} draggable onDragStart={e => onDragStart(e, it.segmentId)} onDragEnd={onDragEnd}
                                          style={{ position: 'relative', border: `2px solid ${highlight ? '#f59e0b' : cardBorder}`, background: cardBg, borderRadius: 6, padding: 6, fontSize: 11, cursor: 'grab', display: 'grid', gap: 4, opacity: isMid ? 0.95 : 1 }}>
                                       <span style={{ fontWeight: 600, color: display ? display.text : '#312e81', display: 'flex', alignItems: 'center', columnGap: 6, rowGap: 2, flexWrap: 'wrap' }}>
                                         {it.project.orderNumber ? (
