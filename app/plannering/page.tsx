@@ -193,6 +193,13 @@ export default function PlanneringPage() {
   }
   const [segEditorOpen, setSegEditorOpen] = useState(false);
   const [segEditor, setSegEditor] = useState<SegmentEditorDraft | null>(null);
+  // Inline, styled confirmation (replaces window.confirm) for destructive actions inside Segment Editor
+  const [confirmDeleteSegmentId, setConfirmDeleteSegmentId] = useState<string | null>(null);
+  useEffect(() => {
+    // Reset confirmation when switching segment or closing modal
+    if (!segEditorOpen) setConfirmDeleteSegmentId(null);
+    else if (segEditor?.segmentId && segEditor.segmentId !== confirmDeleteSegmentId) setConfirmDeleteSegmentId(null);
+  }, [segEditorOpen, segEditor?.segmentId]);
   useEffect(() => {
     try {
       const v = localStorage.getItem('planner.sidebarCollapsed');
@@ -391,6 +398,20 @@ export default function PlanneringPage() {
   const [realtimeStatus, setRealtimeStatus] = useState<'connecting'|'live'|'error'>('connecting');
   const pendingOps = useRef<Promise<any>[]>([]);
   const createdIdsRef = useRef<Set<string>>(new Set());
+  // Simple async op queue helper (re-add after accidental removal). Ensures we can await / flush later if needed.
+  function enqueue<T>(p: PromiseLike<T>) {
+    try {
+      const wrapped = Promise.resolve(p).catch(err => { console.warn('[enqueue] op error', err); throw err; });
+      pendingOps.current.push(wrapped);
+      if (pendingOps.current.length > 200) {
+        // Best effort: drop settled promises
+        pendingOps.current = pendingOps.current.filter(pr => typeof (pr as any).status === 'undefined');
+      }
+    } catch (e) {
+      console.warn('[enqueue] failed to enqueue', e);
+    }
+    return p;
+  }
 
   // On-demand client email fetch: status map per project
   const [emailFetchStatus, setEmailFetchStatus] = useState<Record<string, 'idle' | 'loading' | 'error'>>({});
@@ -996,44 +1017,45 @@ export default function PlanneringPage() {
         const [, projectId] = key.split(':');
         supabase.channel('planning-edit').send({ type: 'broadcast', event: 'editing_stop', payload: { userId: currentUserId, projectId } });
       }
+      localEditingKeysRef.current.clear();
     };
-  }, [currentUserId, supabase]);
+  }, [supabase, currentUserId]);
 
-  // Helper to queue writes (single definition)
-  function enqueue(pLike: Promise<any> | PromiseLike<any>) {
-    const p = Promise.resolve(pLike);
-    pendingOps.current.push(p);
-    p.finally(() => { pendingOps.current = pendingOps.current.filter(x => x !== p); });
-  }
-
-  // Persist segment create/update/delete
   const persistSegmentCreate = useCallback((seg: ScheduledSegment, project: Project) => {
-    // Avoid duplicate attempts if local diff logic fires twice before realtime echo
-    const payload = {
+    if (createdIdsRef.current.has(seg.id)) return;
+    const payload: any = {
       id: seg.id,
-      project_id: project.id,
-      project_name: project.name,
-      customer: project.customer,
-      order_number: project.orderNumber,
-      source: project.isManual ? 'manual' : 'blikk',
+      project_id: seg.projectId,
+      project_name: project.name,            // NOT NULL
+      customer: project.customer || null,
+      order_number: project.orderNumber || null,
+      source: project.isManual ? 'manual' : 'blikk', // NOT NULL constrained enum
       is_manual: project.isManual,
       start_day: seg.startDay,
       end_day: seg.endDay,
       created_by: currentUserId,
       created_by_name: currentUserName || currentUserId || project.customer || 'Okänd'
-    } as const;
-    if (createdIdsRef.current.has(seg.id)) {
-      return; // already attempted
-    }
-    createdIdsRef.current.add(seg.id);
-    console.debug('[planning] upserting segment', payload);
-    enqueue(supabase.from('planning_segments')
-      .upsert(payload, { onConflict: 'id', ignoreDuplicates: true })
-      .select('id')
-      .then(({ data, error }) => {
-        if (error && error.code !== '23505') console.warn('[persist create seg] error', error);
-        else if (!error) console.debug('[planning] upsert ok', data);
-      })
+    };
+    if (seg.depotId) payload.depot_id = seg.depotId;
+    if (seg.sortIndex != null) payload.sort_index = seg.sortIndex;
+    enqueue(
+      supabase.from('planning_segments')
+        .upsert(payload, { onConflict: 'id', ignoreDuplicates: true })
+        .select('id')
+        .then(({ data, error }) => {
+          if (error) {
+            if ((error as any).code === '23505') {
+              // Duplicate: treat as success to avoid spam
+              createdIdsRef.current.add(seg.id);
+            } else {
+              console.warn('[persist create seg] error', error, payload);
+              // Allow retry by not marking id as created
+            }
+          } else {
+            createdIdsRef.current.add(seg.id);
+            console.debug('[planning] upsert ok', data);
+          }
+        })
     );
   }, [supabase, currentUserId, currentUserName]);
 
@@ -2282,8 +2304,8 @@ export default function PlanneringPage() {
                   </div>
                 </div>
               </div>
-              <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', alignItems: 'center', padding: 12, background: '#f8fafc', borderTop: '1px solid #e5e7eb', flexWrap: 'wrap' }}>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <div style={{ display: 'flex', gap: 12, justifyContent: 'space-between', alignItems: 'center', padding: 12, background: '#f8fafc', borderTop: '1px solid #e5e7eb', flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap:'wrap' }}>
                   {p && (
                     <button
                       type="button"
@@ -2296,10 +2318,29 @@ export default function PlanneringPage() {
                       {scheduleMeta[p.id]?.client_notified ? 'Notifierad ✓' : 'Maila kund'}
                     </button>
                   )}
+                  {segEditor.mode === 'edit' && segEditor.segmentId && (
+                    confirmDeleteSegmentId === segEditor.segmentId ? (
+                      <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+                        <span style={{ fontSize:11, color:'#b91c1c', fontWeight:500 }}>Bekräfta borttagning?</span>
+                        <button type="button" onClick={() => { if (!segEditor.segmentId) return; unschedule(segEditor.segmentId); setSegEditorOpen(false); setSegEditor(null); }} className="btn--plain btn--xs" style={{ fontSize:11, padding:'6px 10px', background:'#dc2626', border:'1px solid #b91c1c', color:'#fff', borderRadius:8, boxShadow:'0 0 0 1px #fff inset' }}>Ja, ta bort</button>
+                        <button type="button" onClick={() => setConfirmDeleteSegmentId(null)} className="btn--plain btn--xs" style={{ fontSize:11, padding:'6px 10px', background:'#fff', border:'1px solid #cbd5e1', color:'#334155', borderRadius:8 }}>Avbryt</button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDeleteSegmentId(segEditor.segmentId!)}
+                        className="btn--plain btn--xs"
+                        style={{ fontSize: 12, padding: '8px 12px', border: '1px solid #fca5a5', background: '#fee2e2', color: '#b91c1c', borderRadius: 10 }}
+                        title="Ta bort denna planerade sektion"
+                      >
+                        Ta bort
+                      </button>
+                    )
+                  )}
                 </div>
-                <div style={{ display: 'flex', gap: 8 }}>
+                <div style={{ display: 'flex', gap: 8, flexWrap:'wrap' }}>
                   <button type="button" onClick={() => { setSegEditorOpen(false); setSegEditor(null); }} className="btn--plain btn--xs" style={{ fontSize: 12, padding: '8px 12px', border: '1px solid #cbd5e1', background: '#fff', borderRadius: 10 }}>Avbryt</button>
-                  <button type="button" onClick={saveSegmentEditor} className="btn--plain btn--xs" style={{ fontSize: 12, padding: '8px 12px', border: '1px solid #16a34a', background: '#16a34a', color: '#fff', borderRadius: 10, boxShadow: '0 2px 6px rgba(22,163,74,0.25)' }}>Spara</button>
+                  <button type="button" onClick={saveSegmentEditor} className="btn--plain btn--xs" style={{ fontSize: 12, padding: '8px 12px', border: '1px solid #16a34a', background: '#16a34a', color: '#fff', borderRadius: 10, boxShadow: '0 2px 6px rgba(22,163,74,0.25)' }}>{segEditor.mode === 'create' ? 'Lägg till' : 'Spara'}</button>
                 </div>
               </div>
             </div>
@@ -2835,61 +2876,7 @@ export default function PlanneringPage() {
               )}
             </div>
           )}
-          {/* Depåer panel moved to Admin modal to declutter main page */}
-          {isAdmin && showInlineAdminPanels && (
-            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'stretch' }}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '8px 10px', border: '1px solid #e5e7eb', borderRadius: 10, background: '#ffffff', minWidth: 260 }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: '#111827' }}>Depåer</div>
-                  <form onSubmit={createDepot} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <input value={newDepotName} onChange={e => setNewDepotName(e.target.value)} placeholder="Ny depå" style={{ width: 150, fontSize: 12, padding: '4px 6px', border: '1px solid #cbd5e1', borderRadius: 6 }} />
-                    <button type="submit" disabled={!newDepotName.trim()} className="btn--plain btn--xs" style={{ fontSize: 11, background: '#e0f2fe', border: '1px solid #7dd3fc', color: '#0369a1', borderRadius: 6, padding: '4px 6px' }}>Lägg till</button>
-                  </form>
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {depots.map(dep => {
-                    const edit = depotEdits[dep.id] || {};
-                    const ekoVal = edit.material_ekovilla_total ?? (dep.material_ekovilla_total == null ? '' : String(dep.material_ekovilla_total));
-                    const vitVal = edit.material_vitull_total ?? (dep.material_vitull_total == null ? '' : String(dep.material_vitull_total));
-                    const saveBoth = () => upsertDepotTotals(dep.id, ekoVal, vitVal);
-                    return (
-                      <div key={dep.id} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto auto', alignItems: 'center', gap: 8 }}>
-                        <div style={{ fontSize: 12, fontWeight: 600, color: '#374151' }}>{dep.name}</div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <label style={{ fontSize: 11, color: '#475569', display: 'inline-block' }}>Eko:</label>
-                          <input
-                            inputMode="numeric"
-                            pattern="[0-9]*"
-                            value={ekoVal}
-                            onChange={e => setDepotEdits(prev => ({ ...prev, [dep.id]: { ...prev[dep.id], material_ekovilla_total: e.target.value } }))}
-                            onBlur={saveBoth}
-                            disabled={!isAdmin}
-                            placeholder="Antal"
-                            style={{ width: 70, fontSize: 12, padding: '4px 6px', border: '1px solid #d1d5db', borderRadius: 6 }}
-                          />
-                        </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <label style={{ fontSize: 11, color: '#475569', display: 'inline-block' }}>Vit:</label>
-                          <input
-                            inputMode="numeric"
-                            pattern="[0-9]*"
-                            value={vitVal}
-                            onChange={e => setDepotEdits(prev => ({ ...prev, [dep.id]: { ...prev[dep.id], material_vitull_total: e.target.value } }))}
-                            onBlur={saveBoth}
-                            disabled={!isAdmin}
-                            placeholder="Antal"
-                            style={{ width: 70, fontSize: 12, padding: '4px 6px', border: '1px solid #d1d5db', borderRadius: 6 }}
-                          />
-                        </div>
-                        <button type="button" onClick={() => deleteDepot(dep)} className="btn--plain btn--xs" title="Ta bort depå" style={{ fontSize: 10, background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c', borderRadius: 6, padding: '2px 6px' }}>✕</button>
-                      </div>
-                    );
-                  })}
-                  {depots.length === 0 && <div style={{ fontSize: 12, color: '#6b7280' }}>Inga depåer</div>}
-                </div>
-              </div>
-            </div>
-          )}
+          {/* (Removed duplicate corrupt admin depot panel block) */}
 
           {/* Filters below truck cards */}
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center', padding: '8px 10px', border: '1px solid #e5e7eb', borderRadius: 10, background: '#ffffff' }}>
