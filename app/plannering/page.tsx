@@ -3078,6 +3078,40 @@ export default function PlanneringPage() {
                       </div>
                       <div style={{ display:'grid', gap:10 }}>
                         <div style={{ fontWeight:700 }}>Kommande leveranser</div>
+                        <div style={{ display:'flex', flexWrap:'wrap', gap:8, alignItems:'center' }}>
+                          <button
+                            type="button"
+                            onClick={async ()=>{
+                              try {
+                                setSavingDelivery('saving');
+                                const { data, error } = await supabase.rpc('apply_due_deliveries');
+                                if (error) { console.warn('[deliveries] apply_due_deliveries error', error); setSavingDelivery('error'); return; }
+                                console.debug('[deliveries] applied count', data);
+                                // Refresh depots & deliveries from server to reflect new totals / processed flags
+                                await (async () => {
+                                  try {
+                                    const { data: depRows } = await supabase.from('planning_depots').select('*').order('name');
+                                    if (Array.isArray(depRows)) setDepots(depRows as any);
+                                  } catch(e) { /* ignore */ }
+                                  try {
+                                    const { data: delRows } = await supabase.from('planning_depot_deliveries').select('*').order('delivery_date');
+                                    if (Array.isArray(delRows)) setDeliveries(delRows as any);
+                                  } catch(e) { /* ignore */ }
+                                })();
+                                setSavingDelivery('saved');
+                                setTimeout(()=>setSavingDelivery('idle'), 1200);
+                              } catch (e) {
+                                console.warn('[deliveries] apply_due_deliveries exception', e);
+                                setSavingDelivery('error');
+                              }
+                            }}
+                            className="btn--plain btn--xs"
+                            style={{ fontSize:12, padding:'6px 10px', border:'1px solid #16a34a', background:'#16a34a', color:'#fff', borderRadius:8, boxShadow:'0 2px 4px rgba(16,185,129,0.4)' }}
+                          >
+                            Tillämpa dagens leveranser
+                          </button>
+                          <span style={{ fontSize:11, color:'#64748b' }}>Lägger till alla leveranser med datum idag eller tidigare i depålager en gång.</span>
+                        </div>
                         {groupedDeliveries.length === 0 && (
                           <div style={{ color:'#6b7280' }}>Inga planerade leveranser</div>
                         )}
