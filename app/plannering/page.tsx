@@ -93,7 +93,6 @@ export default function PlanneringPage() {
   // Week selection (ISO week key: YYYY-Www). Empty = all weeks
   const [selectedWeekKey, setSelectedWeekKey] = useState<string>('');
   const [draggingId, setDraggingId] = useState<string | null>(null);
-  const [editingTruckFor, setEditingTruckFor] = useState<string | null>(null);
   const [truckFilter, setTruckFilter] = useState<string>('');
   // Hover/expand UI state for truck cards
   const [hoveredTruck, setHoveredTruck] = useState<string | null>(null);
@@ -135,7 +134,7 @@ export default function PlanneringPage() {
   const [newTruckName, setNewTruckName] = useState('');
   const [newTruckDepotId, setNewTruckDepotId] = useState<string>('');
   const [openDepotMenuTruckId, setOpenDepotMenuTruckId] = useState<string | null>(null);
-  const [openDepotMenuSegmentId, setOpenDepotMenuSegmentId] = useState<string | null>(null);
+  // Per-card depot override popover removed; selection now happens in the Segment Editor modal
   const jobTypes = ['Ekovilla', 'Vitull', 'Leverans', 'Utsugning', 'Snickerier', 'Övrigt'];
   // Crew directory suggestions (profiles with tag "Entreprenad") for team name inputs
   const [crewList, setCrewList] = useState<Array<{ id: string; name: string }>>([]);
@@ -175,7 +174,7 @@ export default function PlanneringPage() {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   // View mode: standard month grid or weekday lanes (all Mondays in a row, etc.)
   const [viewMode, setViewMode] = useState<'monthGrid' | 'weekdayLanes' | 'dayList'>('monthGrid');
-  const [showCardControls, setShowCardControls] = useState(false);
+  // Inline card controls have been retired in favor of the Segment Editor modal
   // Collapsible left sidebar (search/manual add/backlog)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   // Segment Editor (modal) state
@@ -1284,7 +1283,7 @@ export default function PlanneringPage() {
   }, [scheduledSegments, updateSegmentSortIndex]);
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { setOpenDepotMenuTruckId(null); setOpenDepotMenuSegmentId(null); } };
+  const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { setOpenDepotMenuTruckId(null); } };
     if (typeof window !== 'undefined') {
       window.addEventListener('keydown', onKey);
       return () => window.removeEventListener('keydown', onKey);
@@ -2176,7 +2175,7 @@ export default function PlanneringPage() {
               <div style={{ position: 'relative', padding: '14px 18px', background: 'linear-gradient(135deg, #0ea5e9 0%, #6366f1 70%)', color: '#fff' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                   <div style={{ width: 36, height: 36, borderRadius: 10, background: 'rgba(255,255,255,0.18)', display: 'grid', placeItems: 'center' }}>📅</div>
-                  <div style={{ display: 'grid' }}>
+                  <div style={{ display: 'grid', gap: 4 }}>
                     <strong style={{ fontSize: 16, letterSpacing: .2 }}>{segEditor.mode === 'create' ? 'Planera jobb' : 'Redigera planering'}</strong>
                     <span style={{ fontSize: 12, opacity: .95 }}>
                       {p?.orderNumber ? <span style={{ fontFamily: 'ui-monospace,monospace', background: '#ffffff', color: '#111827', border: '1px solid #e5e7eb', padding: '1px 6px', borderRadius: 6, marginRight: 6 }}>#{p.orderNumber}</span> : null}
@@ -2309,8 +2308,8 @@ export default function PlanneringPage() {
       })()}
       {emailToast && (
         <>
-          <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.35)', backdropFilter: 'blur(1px)', zIndex: 240, pointerEvents: 'none' }} />
-          <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', background: '#111827', color: '#fff', padding: '10px 14px', borderRadius: 999, display: 'inline-flex', alignItems: 'center', gap: 8, boxShadow: '0 6px 20px rgba(0,0,0,0.25)', zIndex: 250 }}>
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.35)', backdropFilter: 'blur(1px)', zIndex: 3000, pointerEvents: 'none' }} />
+          <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', background: '#111827', color: '#fff', padding: '10px 14px', borderRadius: 999, display: 'inline-flex', alignItems: 'center', gap: 8, boxShadow: '0 6px 20px rgba(0,0,0,0.25)', zIndex: 3010 }}>
             <span style={{ width: 12, height: 12, borderRadius: 12, border: '2px solid #93c5fd', borderTopColor: '#1d4ed8', display: 'inline-block', animation: 'spin 1s linear infinite' }} />
             <span style={{ fontSize: 12 }}>{emailToast.msg}</span>
             <style>{`@keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}`}</style>
@@ -2352,7 +2351,7 @@ export default function PlanneringPage() {
       {pendingNotifyProjectId && (() => {
         const project = projects.find(p => p.id === pendingNotifyProjectId);
         return (
-          <div style={{ position: 'fixed', inset:0, zIndex: 210, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+          <div style={{ position: 'fixed', inset:0, zIndex: 2000, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
             <div style={{ background:'#fff', border:'1px solid #e2e8f0', borderRadius: 12, padding: '20px 22px', width: 'min(420px,90%)', display:'grid', gap:16, boxShadow:'0 8px 30px -6px rgba(0,0,0,0.25)' }}>
               <div style={{ display:'flex', flexDirection:'column', gap:4 }}>
                 <h3 style={{ margin:0, fontSize:18, color:'#0f172a' }}>Har kunden notifierats?</h3>
@@ -2651,7 +2650,7 @@ export default function PlanneringPage() {
                 );
               })}
             </div>
-            <button type="button" className="btn--plain btn--sm" onClick={() => setShowCardControls(v => !v)} style={{ border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 10px', fontSize: 12 }}>{showCardControls ? 'Dölj kontroller' : 'Visa kontroller'}</button>
+            {/* Inline card control toggle removed; actions live in the modal */}
             <button type="button" className="btn--plain btn--sm" onClick={() => refreshEgenkontroller()} style={{ border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 10px', fontSize: 12 }}>
               {egenkontrollLoading ? 'Laddar EK…' : 'Uppdatera EK'}
             </button>
@@ -3244,7 +3243,7 @@ export default function PlanneringPage() {
                               const isMid = (it as any).spanMiddle;
                               const isStart = (it as any).spanStart;
                               return (
-                                <div key={`${it.segmentId}:${it.day}`} draggable onDragStart={e => onDragStart(e, it.segmentId)} onDragEnd={onDragEnd} onDoubleClick={() => openSegmentEditorForExisting(it.segmentId)} onClick={() => setOpenDepotMenuSegmentId(null)} style={{ position: 'relative', border: `2px solid ${highlight ? '#f59e0b' : cardBorder}`, background: cardBg, borderRadius: 6, padding: 6, fontSize: 12, cursor: 'grab', display: 'grid', gap: 4, opacity: isMid ? 0.95 : 1, boxShadow: highlight ? '0 0 0 3px rgba(245,158,11,0.35)' : 'none' }}>
+                                <div key={`${it.segmentId}:${it.day}`} draggable onDragStart={e => onDragStart(e, it.segmentId)} onDragEnd={onDragEnd} onDoubleClick={() => openSegmentEditorForExisting(it.segmentId)} style={{ position: 'relative', border: `2px solid ${highlight ? '#f59e0b' : cardBorder}`, background: cardBg, borderRadius: 6, padding: 6, fontSize: 12, cursor: 'grab', display: 'grid', gap: 4, opacity: isMid ? 0.95 : 1, boxShadow: highlight ? '0 0 0 3px rgba(245,158,11,0.35)' : 'none' }}>
                                   <div style={{ display: 'flex', flexDirection: 'column', gap: 2}}>
                                     <span style={{ fontWeight: 600, color: display ? display.text : '#312e81', display: 'flex', alignItems: 'center', columnGap: 6, rowGap: 2, flexWrap: 'wrap' }}>
                                       {it.project.orderNumber ? (
@@ -3254,6 +3253,14 @@ export default function PlanneringPage() {
                                       <button type="button" onClick={(e) => { e.stopPropagation(); openProjectModal(it.project.id); }} className="icon-btn" title="Öppna projekt" aria-label="Öppna projekt" style={{ display: 'inline-flex', alignItems: 'center', flex: '0 0 auto' }}>
                                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
                                         <span style={{ fontWeight: 600, fontSize: 10 }}>Öppna projekt</span>
+                                      </button>
+                                      <button type="button"
+                                        onClick={(e) => { e.stopPropagation(); setSelectedProjectId(it.project.id); }}
+                                        className="btn--plain btn--xs"
+                                        title="Lägg till ny separat dag"
+                                        style={{ fontSize: 10, background: '#ecfdf5', border: '1px solid #6ee7b7', color: '#047857', borderRadius: 4, padding: '2px 4px' }}
+                                      >
+                                        Lägg till dag
                                       </button>
                                       {/* EK badge moved to bottom */}
                                     </span>
@@ -3281,7 +3288,7 @@ export default function PlanneringPage() {
                                         Rapporterad
                                       </a>
                                     ); })()}
-                                    {/* Depot info + override */}
+                                    {/* Depot info shown; overrides are edited in modal */}
                                     {(() => {
                                       const seg = scheduledSegments.find(s => s.id === it.segmentId);
                                       const overrideId = seg?.depotId || null;
@@ -3291,114 +3298,11 @@ export default function PlanneringPage() {
                                       return (
                                         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                                           <span style={{ fontSize: 10, color: display ? display.text : '#475569', background:'#f1f5f9', padding:'2px 6px', borderRadius:12, border:`1px solid ${cardBorder}55` }}>Depå: {eff ? eff.name : 'Ingen'}</span>
-                                          {isAdmin && depots.length > 0 && (
-                                            <button type="button" title="Välj depå för detta projekt" aria-expanded={openDepotMenuSegmentId === it.segmentId} onMouseDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); setOpenDepotMenuSegmentId(prev => prev === it.segmentId ? null : it.segmentId); }} style={{ fontSize: 11, lineHeight: 1, padding: '2px 6px', border: `1px solid ${cardBorder}`, borderRadius: 6, background: '#fff', color: display ? display.text : '#111827', cursor: 'pointer' }}>⚙</button>
-                                          )}
-                                          {isAdmin && openDepotMenuSegmentId === it.segmentId && (
-                                            <div onClick={(e) => e.stopPropagation()} role="menu" aria-label="Välj depå" style={{ position: 'absolute', zIndex: 50, top: 6, right: 6, background:'#fff', border:`1px solid ${cardBorder}`, borderRadius:8, boxShadow:'0 8px 24px rgba(0,0,0,0.12)', padding:6, minWidth: 200 }}>
-                                              <div style={{ padding: '6px 8px', fontSize: 11, color: '#6b7280' }}>Depå (segment)</div>
-                                              <button type="button" onClick={() => { updateSegmentDepot(it.segmentId, null); setOpenDepotMenuSegmentId(null); }} style={{ width: '100%', textAlign: 'left', fontSize: 12, padding: '6px 8px', borderRadius: 8, border: '1px solid transparent', background: 'transparent', cursor: 'pointer', color: overrideId ? '#374151' : '#111827', fontWeight: overrideId ? 500 : 700 }}>Ingen (använd lastbilens)</button>
-                                              {depots.map(d => (
-                                                <button key={d.id} type="button" onClick={() => { updateSegmentDepot(it.segmentId, d.id); setOpenDepotMenuSegmentId(null); }} style={{ width: '100%', textAlign: 'left', fontSize: 12, padding: '6px 8px', borderRadius: 8, border: '1px solid transparent', background: overrideId === d.id ? '#eef2ff' : 'transparent', cursor: 'pointer', color: '#111827', fontWeight: overrideId === d.id ? 700 : 500 }}>{d.name}</button>
-                                              ))}
-                                            </div>
-                                          )}
                                         </span>
                                       );
                                     })()}
                                   </div>
-                                  {isStart && showCardControls && (
-                                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
-                                      {(() => {
-                                        const groupSameTruck = items.filter(x => x.truck === it.truck);
-                                        const groupSorted = [...groupSameTruck].sort((a2, b2) => {
-                                          const sa2 = scheduledSegments.find(s => s.id === a2.segmentId)?.sortIndex ?? null;
-                                          const sb2 = scheduledSegments.find(s => s.id === b2.segmentId)?.sortIndex ?? null;
-                                          if (sa2 != null && sb2 != null && sa2 !== sb2) return sa2 - sb2;
-                                          if (sa2 != null && sb2 == null) return -1;
-                                          if (sb2 != null && sa2 == null) return 1;
-                                          const ao2 = a2.project.orderNumber || '';
-                                          const bo2 = b2.project.orderNumber || '';
-                                          if (ao2 && bo2 && ao2 !== bo2) return ao2.localeCompare(bo2, 'sv');
-                                          return a2.project.name.localeCompare(b2.project.name, 'sv');
-                                        });
-                                        const pos = groupSorted.findIndex(x => x.segmentId === it.segmentId);
-                                        if (!it.truck || groupSorted.length < 2 || pos < 0) return null;
-                                        const current = pos + 1;
-                                        const total = groupSorted.length;
-                                        const changePos = (newPos1: number) => {
-                                          const next = [...groupSorted.map(x => x.segmentId)];
-                                          const from = pos;
-                                          const to = Math.max(0, Math.min(total - 1, newPos1 - 1));
-                                          if (to === from) return;
-                                          const [moved] = next.splice(from, 1);
-                                          next.splice(to, 0, moved);
-                                          setSequentialSortForSegments(next);
-                                        };
-                                        return (
-                                          <label style={{ display:'inline-flex', alignItems:'center', gap:6, border:`1px solid ${cardBorder}`, borderRadius:6, padding:'2px 6px', background:'#fff' }}>
-                                            <span style={{ fontSize:10, color:'#334155' }}>Ordning</span>
-                                            <select value={current} onChange={e => changePos(parseInt(e.target.value,10)||current)} style={{ fontSize:11, padding:'2px 4px', border:'1px solid #cbd5e1', borderRadius:4 }}>
-                                              {Array.from({ length: total }, (_, i) => i + 1).map(n => (
-                                                <option key={n} value={n}>{n}</option>
-                                              ))}
-                                            </select>
-                                            <span style={{ fontSize:10, color:'#6b7280' }}>/ {total}</span>
-                                          </label>
-                                        );
-                                      })()}
-                                      <div style={{ position: 'relative', display: 'inline-block' }}>
-                                        <FieldPresence projectId={it.project.id} field="truck" />
-                                        {editingTruckFor === it.project.id ? (
-                                        <select autoFocus value={it.truck || ''} onChange={e => { const val = e.target.value || null; updateMeta(it.project.id, { truck: val }); setEditingTruckFor(null); broadcastEditStop(it.project.id); }} onBlur={() => { setEditingTruckFor(null); broadcastEditStop(it.project.id); }} style={{ fontSize: 11, padding: '2px 6px', border: `1px solid ${cardBorder}`, borderRadius: 6 }}>
-                                          <option value="">Välj lastbil…</option>
-                                          {trucks.map(t => <option key={t} value={t}>{t}</option>)}
-                                        </select>
-                                      ) : (
-                                        <button type="button" className="btn--plain btn--xs" onClick={() => { setEditingTruckFor(it.project.id); broadcastEditStart(it.project.id, 'truck', it.segmentId); }} style={{ fontSize: 11, border: `1px solid ${cardBorder}`, borderRadius: 4, padding: '2px 6px', background: '#fff', color: display ? display.text : '#312e81' }}>{it.truck ? `Lastbil: ${it.truck}` : 'Välj lastbil'}</button>
-                                      )}
-                                      </div>
-                                      <div style={{ position: 'relative', display: 'inline-block' }}>
-                                        <FieldPresence projectId={it.project.id} field="bagCount" />
-                                      <input type="number" min={0} placeholder="Säckar" value={it.bagCount ?? ''} onFocus={() => broadcastEditStart(it.project.id, 'bagCount', it.segmentId)} onBlur={() => broadcastEditStop(it.project.id)} onChange={e => { const v = e.target.value; updateMeta(it.project.id, { bagCount: v === '' ? null : Math.max(0, parseInt(v, 10) || 0) }); }} style={{ width: 70, fontSize: 11, padding: '4px 6px', border: `1px solid ${cardBorder}`, borderRadius: 6 }} />
-                                      </div>
-                                      <div style={{ position: 'relative', display: 'inline-block' }}>
-                                        <FieldPresence projectId={it.project.id} field="jobType" />
-                                      <select value={it.jobType || ''} onFocus={() => broadcastEditStart(it.project.id, 'jobType', it.segmentId)} onBlur={() => broadcastEditStop(it.project.id)} onChange={e => { const v = e.target.value || null; updateMeta(it.project.id, { jobType: v }); }} style={{ fontSize: 11, padding: '4px 6px', border: `1px solid ${cardBorder}`, borderRadius: 6 }}>
-                                        <option value="">Typ av jobb…</option>
-                                        {jobTypes.map(j => <option key={j} value={j}>{j}</option>)}
-                                      </select>
-                                      </div>
-                                      <div style={{ display: 'grid', gap: 4 }}>
-                                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', flexDirection: 'column', alignItems: 'flex-start' }}>
-                                          <strong style={{ fontSize: 10 }}>Längd:</strong>
-                                          <button type="button" className="btn--plain btn--xs" title="Förläng med föregående dag" onClick={() => extendSpan(it.segmentId, 'back')} style={{ fontSize: 10, padding: '6px 6px' }}>Förläng föregående</button>
-                                          <button type="button" className="btn--plain btn--xs" title="Förläng med nästkommande dag" onClick={() => extendSpan(it.segmentId, 'forward')} style={{ fontSize: 10, padding: '6px 6px' }}>Förläng nästa</button>
-                                          <button type="button" className="btn--plain btn--xs" title="Ta bort första dagen" disabled={(it as any).totalSpan <= 1} onClick={() => shrinkSpan(it.segmentId, 'start')} style={{ fontSize: 10, padding: '6px 6px', opacity: (it as any).totalSpan <= 1 ? 0.35 : 1 }}>Ta bort första</button>
-                                          <button type="button" className="btn--plain btn--xs" title="Ta bort sista dagen" disabled={(it as any).totalSpan <= 1} onClick={() => shrinkSpan(it.segmentId, 'end')} style={{ fontSize: 10, padding: '6px 6px', opacity: (it as any).totalSpan <= 1 ? 0.35 : 1 }}>Ta bort sista</button>
-                                          <span style={{ fontSize: 10, background: '#f1f5f9', padding: '2px 6px', borderRadius: 12, border: '1px solid #e2e8f0' }}>{(it as any).totalSpan} dagar</span>
-                                        </div>
-                                          {/* Actual bags used editor (inline small) */}
-                                          <span style={{ display:'inline-flex', alignItems:'center', gap:4 }}>
-                                            <label style={{ fontSize:10, color: display ? display.text : '#334155' }}>Faktiska:</label>
-                                            <input type="number" min={0} value={scheduleMeta[it.project.id]?.actual_bags_used ?? ''} onChange={e => {
-                                              const val = e.target.value === '' ? null : Math.max(0, parseInt(e.target.value,10)||0);
-                                              const actor = currentUserName || currentUserId || 'okänd';
-                                              updateMeta(it.project.id, { actual_bags_used: val, actual_bags_set_at: new Date().toISOString(), actual_bags_set_by: actor });
-                                            }} style={{ width: 60, fontSize:10, padding:'2px 4px', border:`1px solid ${cardBorder}`, borderRadius:4 }} placeholder="Säck" />
-                                          </span>
-                                      </div>
-                                      <button type="button" className="btn--plain btn--xs" onClick={() => unschedule(it.segmentId)} style={{ fontSize: 11, background: '#fee2e2', border: '1px solid #fca5a5', color: '#b91c1c', borderRadius: 4, padding: '2px 6px' }}>Ta bort</button>
-                                      <button type="button" className="btn--plain btn--xs" title="Ny separat dag" onClick={() => setSelectedProjectId(it.project.id)} style={{ fontSize: 11, background: '#ecfdf5', border: '1px solid #6ee7b7', color: '#047857', borderRadius: 4, padding: '2px 6px' }}>Ny dag</button>
-                                      <span style={{ display:'inline-flex', alignItems:'center', gap:6 }}>
-                                        <button type="button" onClick={() => handleEmailClick(it)} disabled={emailFetchStatus[it.project.id] === 'loading'}
-                                          style={{ fontSize:11, background: scheduleMeta[it.project.id]?.client_notified ? '#059669' : '#e0f2fe', border: scheduleMeta[it.project.id]?.client_notified ? '1px solid #047857' : '1px solid #7dd3fc', color: scheduleMeta[it.project.id]?.client_notified ? '#fff' : '#0369a1', borderRadius:4, padding:'2px 6px', position:'relative' }}
-                                          title={scheduleMeta[it.project.id]?.client_notified ? (scheduleMeta[it.project.id]?.client_notified_by ? `Notifierad av ${scheduleMeta[it.project.id]!.client_notified_by}` : 'Kund markerad som notifierad') : 'Skicka planeringsmail'}>
-                                          {scheduleMeta[it.project.id]?.client_notified ? 'Notifierad ✓' : 'Maila kund'}
-                                        </button>
-                                      </span>
-                                    </div>
-                                  )}
+                                  {/* Inline controls removed; use modal for edits and actions */}
                                 </div>
                               );
                             })}
@@ -3530,7 +3434,7 @@ export default function PlanneringPage() {
                                   setSequentialSortForSegments(next);
                                 };
                                 return (
-                                  <div key={`${it.segmentId}:${it.day}`} draggable onDragStart={e => onDragStart(e, it.segmentId)} onDragEnd={onDragEnd} onDoubleClick={() => openSegmentEditorForExisting(it.segmentId)} onClick={() => setOpenDepotMenuSegmentId(null)} style={{ position: 'relative', border: `2px solid ${highlight ? '#f59e0b' : cardBorder}`, background: cardBg, borderRadius: 6, padding: 6, fontSize: 11, cursor: 'grab', display: 'grid', gap: 4, opacity: isMid ? 0.95 : 1, boxShadow: highlight ? '0 0 0 3px rgba(245,158,11,0.35)' : 'none' }}>
+                                  <div key={`${it.segmentId}:${it.day}`} draggable onDragStart={e => onDragStart(e, it.segmentId)} onDragEnd={onDragEnd} onDoubleClick={() => openSegmentEditorForExisting(it.segmentId)} style={{ position: 'relative', border: `2px solid ${highlight ? '#f59e0b' : cardBorder}`, background: cardBg, borderRadius: 6, padding: 6, fontSize: 11, cursor: 'grab', display: 'grid', gap: 4, opacity: isMid ? 0.95 : 1, boxShadow: highlight ? '0 0 0 3px rgba(245,158,11,0.35)' : 'none' }}>
                                     {/* order controls moved to bottom control section */}
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                                       <span style={{ fontWeight: 600, color: display ? display.text : '#312e81', display: 'flex', alignItems: 'center', columnGap: 6, rowGap: 2, flexWrap: 'wrap' }}>
@@ -3541,6 +3445,14 @@ export default function PlanneringPage() {
                                         <button type="button" onClick={(e) => { e.stopPropagation(); openProjectModal(it.project.id); }} className="icon-btn" title="Öppna projekt" aria-label="Öppna projekt" style={{ display: 'inline-flex', alignItems: 'center', flex: '0 0 auto' }}>
                                           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
                                           <span style={{ fontWeight: 600, fontSize: 12 }}>Öppna projekt</span>
+                                        </button>
+                                        <button type="button"
+                                          onClick={(e) => { e.stopPropagation(); setSelectedProjectId(it.project.id); }}
+                                          className="btn--plain btn--xs"
+                                          title="Lägg till ny separat dag"
+                                          style={{ fontSize: 9, background: '#ecfdf5', border: '1px solid #6ee7b7', color: '#047857', borderRadius: 4, padding: '1px 4px' }}
+                                        >
+                                          Lägg till dag
                                         </button>
                                         {/* EK badge moved to bottom */}
                                       </span>
@@ -3563,7 +3475,7 @@ export default function PlanneringPage() {
                                           Rapporterad
                                         </a>
                                       ); })()}
-                                      {/* Depot info + override */}
+                                      {/* Depot info shown; overrides are edited in modal */}
                                       {(() => {
                                         const seg = scheduledSegments.find(s => s.id === it.segmentId);
                                         const overrideId = seg?.depotId || null;
@@ -3573,95 +3485,11 @@ export default function PlanneringPage() {
                                         return (
                                           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                                             <span style={{ fontSize: 9, color: display ? display.text : '#475569', background:'#f1f5f9', padding:'1px 5px', borderRadius:12, border:`1px solid ${cardBorder}55` }}>Depå: {eff ? eff.name : 'Ingen'}</span>
-                                            {isAdmin && depots.length > 0 && (
-                                              <button type="button" title="Välj depå för detta projekt" aria-expanded={openDepotMenuSegmentId === it.segmentId} onMouseDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); setOpenDepotMenuSegmentId(prev => prev === it.segmentId ? null : it.segmentId); }} style={{ fontSize: 10, lineHeight: 1, padding: '1px 5px', border: `1px solid ${cardBorder}`, borderRadius: 6, background: '#fff', color: display ? display.text : '#111827', cursor: 'pointer' }}>⚙</button>
-                                            )}
-                                            {isAdmin && openDepotMenuSegmentId === it.segmentId && (
-                                              <div onClick={(e) => e.stopPropagation()} role="menu" aria-label="Välj depå" style={{ position: 'absolute', zIndex: 50, top: 6, right: 6, background:'#fff', border:`1px solid ${cardBorder}`, borderRadius:8, boxShadow:'0 8px 24px rgba(0,0,0,0.12)', padding:6, minWidth: 200 }}>
-                                                <div style={{ padding: '6px 8px', fontSize: 11, color: '#6b7280' }}>Depå (segment)</div>
-                                                <button type="button" onClick={() => { updateSegmentDepot(it.segmentId, null); setOpenDepotMenuSegmentId(null); }} style={{ width: '100%', textAlign: 'left', fontSize: 12, padding: '6px 8px', borderRadius: 8, border: '1px solid transparent', background: 'transparent', cursor: 'pointer', color: overrideId ? '#374151' : '#111827', fontWeight: overrideId ? 500 : 700 }}>Ingen (använd lastbilens)</button>
-                                                {depots.map(d => (
-                                                  <button key={d.id} type="button" onClick={() => { updateSegmentDepot(it.segmentId, d.id); setOpenDepotMenuSegmentId(null); }} style={{ width: '100%', textAlign: 'left', fontSize: 12, padding: '6px 8px', borderRadius: 8, border: '1px solid transparent', background: overrideId === d.id ? '#eef2ff' : 'transparent', cursor: 'pointer', color: '#111827', fontWeight: overrideId === d.id ? 700 : 500 }}>{d.name}</button>
-                                                ))}
-                                              </div>
-                                            )}
                                           </span>
                                         );
                                       })()}
                                     </div>
-                                    {isStart && showCardControls && (
-                                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
-                                        {(() => {
-                                          if (!canShowOrder) return null;
-                                          const current = pos + 1;
-                                          const total = groupSorted.length;
-                                          const changePos = (newPos1: number) => {
-                                            const next = [...groupSorted.map(x => x.segmentId)];
-                                            const from = pos;
-                                            const to = Math.max(0, Math.min(total - 1, newPos1 - 1));
-                                            if (to === from) return;
-                                            const [moved] = next.splice(from, 1);
-                                            next.splice(to, 0, moved);
-                                            setSequentialSortForSegments(next);
-                                          };
-                                          return (
-                                            <label style={{ display:'inline-flex', alignItems:'center', gap:6, border:`1px solid ${cardBorder}`, borderRadius:6, padding:'1px 5px', background:'#fff' }}>
-                                              <span style={{ fontSize:10, color:'#334155' }}>Ordning</span>
-                                              <select value={current} onChange={e => changePos(parseInt(e.target.value,10)||current)} style={{ fontSize:10, padding:'1px 3px', border:'1px solid #cbd5e1', borderRadius:4 }}>
-                                                {Array.from({ length: total }, (_, i) => i + 1).map(n => (
-                                                  <option key={n} value={n}>{n}</option>
-                                                ))}
-                                              </select>
-                                              <span style={{ fontSize:10, color:'#6b7280' }}>/ {total}</span>
-                                            </label>
-                                          );
-                                        })()}
-                                        <div style={{ position: 'relative', display: 'inline-block' }}>
-                                          <FieldPresence projectId={it.project.id} field="truck" size={12} />
-                                          {editingTruckFor === it.project.id ? (
-                                          <select autoFocus value={it.truck || ''} onChange={e => { const val = e.target.value || null; updateMeta(it.project.id, { truck: val }); setEditingTruckFor(null); broadcastEditStop(it.project.id); }} onBlur={() => { setEditingTruckFor(null); broadcastEditStop(it.project.id); }} style={{ fontSize: 10, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }}>
-                                            <option value="">Lastbil…</option>
-                                            {trucks.map(t => <option key={t} value={t}>{t}</option>)}
-                                          </select>
-                                        ) : (
-                                          <button type="button" className="btn--plain btn--xs" onClick={() => { setEditingTruckFor(it.project.id); broadcastEditStart(it.project.id, 'truck', it.segmentId); }} style={{ fontSize: 10, border: `1px solid ${cardBorder}`, borderRadius: 4, padding: '2px 4px', background: '#fff', color: display ? display.text : '#312e81' }}>{it.truck ? it.truck : 'Välj lastbil'}</button>
-                                        )}
-                                        </div>
-                                        <div style={{ position: 'relative', display: 'inline-block' }}>
-                                          <FieldPresence projectId={it.project.id} field="bagCount" size={12} />
-                                        <input type="number" min={0} placeholder="Säck" value={it.bagCount ?? ''} onFocus={() => broadcastEditStart(it.project.id, 'bagCount', it.segmentId)} onBlur={() => broadcastEditStop(it.project.id)} onChange={e => { const v = e.target.value; updateMeta(it.project.id, { bagCount: v === '' ? null : Math.max(0, parseInt(v, 10) || 0) }); }} style={{ width: 50, fontSize: 10, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }} />
-                                        </div>
-                                        <div style={{ position: 'relative', display: 'inline-block' }}>
-                                          <FieldPresence projectId={it.project.id} field="jobType" size={12} />
-                                        <select value={it.jobType || ''} onFocus={() => broadcastEditStart(it.project.id, 'jobType', it.segmentId)} onBlur={() => broadcastEditStop(it.project.id)} onChange={e => { const v = e.target.value || null; updateMeta(it.project.id, { jobType: v }); }} style={{ fontSize: 10, padding: '2px 4px', border: `1px solid ${cardBorder}`, borderRadius: 4 }}>
-                                          <option value="">Jobb…</option>
-                                          {jobTypes.map(j => <option key={j} value={j}>{j}</option>)}
-                                        </select>
-                                        </div>
-                                        <div style={{ display: 'grid', gap: 4 }}>
-                                          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', flexDirection: 'row', alignItems: 'flex-start' }}>
-                                            <strong style={{ fontSize: 10 }}>Längd:</strong>
-                                            <button type="button" className="btn--plain btn--xs" title="Förläng med föregående dag" onClick={() => extendSpan(it.segmentId, 'back')} style={{ fontSize: 10, padding: '2px 6px' }}>Förläng föregående</button>
-                                            <button type="button" className="btn--plain btn--xs" title="Förläng med nästkommande dag" onClick={() => extendSpan(it.segmentId, 'forward')} style={{ fontSize: 10, padding: '2px 6px' }}>Förläng nästa</button>
-                                            <button type="button" className="btn--plain btn--xs" title="Ta bort första dagen" disabled={(it as any).totalSpan <= 1} onClick={() => shrinkSpan(it.segmentId, 'start')} style={{ fontSize: 10, padding: '2px 6px', opacity: (it as any).totalSpan <= 1 ? 0.35 : 1 }}>Ta bort första</button>
-                                            <button type="button" className="btn--plain btn--xs" title="Ta bort sista dagen" disabled={(it as any).totalSpan <= 1} onClick={() => shrinkSpan(it.segmentId, 'end')} style={{ fontSize: 10, padding: '2px 6px', opacity: (it as any).totalSpan <= 1 ? 0.35 : 1 }}>Ta bort sista</button>
-                                            <span style={{ fontSize: 10, background: '#f1f5f9', padding: '2px 6px', borderRadius: 12, border: '1px solid #e2e8f0' }}>{(it as any).totalSpan} dagar</span>
-                                          </div>
-                                        </div>
-                                        <button type="button" className="btn--plain btn--xs" onClick={() => unschedule(it.segmentId)} style={{ fontSize: 10, background: '#fee2e2', border: '1px solid #fca5a5', color: '#b91c1c', borderRadius: 4, padding: '2px 4px' }}>X</button>
-                                        <button type="button" className="btn--plain btn--xs" title="Ny separat dag" onClick={() => setSelectedProjectId(it.project.id)} style={{ fontSize: 10, background: '#ecfdf5', border: '1px solid #6ee7b7', color: '#047857', borderRadius: 4, padding: '2px 4px' }}>+Dag</button>
-                                        <span style={{ display:'inline-flex', alignItems:'center', gap:4 }}>
-                                          <button disabled={emailFetchStatus[it.project.id] === 'loading'}
-                                            type="button"
-                                            onClick={() => handleEmailClick(it)}
-                                            style={{ fontSize:10, background: scheduleMeta[it.project.id]?.client_notified ? '#059669' : '#e0f2fe', border: scheduleMeta[it.project.id]?.client_notified ? '1px solid #047857' : '1px solid #7dd3fc', color: scheduleMeta[it.project.id]?.client_notified ? '#fff' : '#0369a1', borderRadius: 4, padding: '2px 4px' }}
-                                            title={scheduleMeta[it.project.id]?.client_notified ? (scheduleMeta[it.project.id]?.client_notified_by ? `Notifierad av ${scheduleMeta[it.project.id]!.client_notified_by}` : 'Kund markerad som notifierad') : 'Skicka planeringsmail'}
-                                          >
-                                            {scheduleMeta[it.project.id]?.client_notified ? 'Notifierad ✓' : 'Maila kund'}
-                                          </button>
-                                        </span>
-                                      </div>
-                                    )}
+                                    {/* Inline card controls removed; edits happen in Segment Editor modal */}
                                   </div>
                                 );
                               })}
@@ -3885,6 +3713,14 @@ export default function PlanneringPage() {
                                           <button type="button" onClick={(e) => { e.stopPropagation(); openProjectModal(it.project.id); }} className="icon-btn" title="Öppna projekt" aria-label="Öppna projekt" style={{ display: 'inline-flex', alignItems: 'center', flex: '0 0 auto' }}>
                                             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
                                             <span style={{ fontWeight: 600, fontSize: 12 }}>Öppna projekt</span>
+                                          </button>
+                                          <button type="button"
+                                            onClick={(e) => { e.stopPropagation(); setSelectedProjectId(it.project.id); }}
+                                            className="btn--plain btn--xs"
+                                            title="Lägg till ny separat dag"
+                                            style={{ fontSize: 9, background: '#ecfdf5', border: '1px solid #6ee7b7', color: '#047857', borderRadius: 4, padding: '1px 4px' }}
+                                          >
+                                            lägg till ny dag
                                           </button>
                                       </span>
                                       {(it.bagCount != null || it.jobType) && (
