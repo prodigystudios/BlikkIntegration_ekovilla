@@ -193,6 +193,24 @@ export default function PlanneringPage() {
   }
   const [segEditorOpen, setSegEditorOpen] = useState(false);
   const [segEditor, setSegEditor] = useState<SegmentEditorDraft | null>(null);
+  // Keep modal mounted during exit animation
+  const [segEditorPortal, setSegEditorPortal] = useState(false);
+  useEffect(() => {
+    if (segEditorOpen) {
+      setSegEditorPortal(true);
+    } else if (segEditorPortal) {
+      const t = setTimeout(() => setSegEditorPortal(false), 240); // match CSS transition duration
+      return () => clearTimeout(t);
+    }
+  }, [segEditorOpen, segEditorPortal]);
+  // Delay clearing editor draft until animation done
+  useEffect(() => {
+    if (!segEditorOpen && segEditor) {
+      const t = setTimeout(() => { if (!segEditorOpen) setSegEditor(null); }, 260);
+      return () => clearTimeout(t);
+    }
+  }, [segEditorOpen, segEditor]);
+  const closeSegEditor = useCallback(() => { setSegEditorOpen(false); }, []);
   // Inline, styled confirmation (replaces window.confirm) for destructive actions inside Segment Editor
   const [confirmDeleteSegmentId, setConfirmDeleteSegmentId] = useState<string | null>(null);
   useEffect(() => {
@@ -211,6 +229,8 @@ export default function PlanneringPage() {
   }, [sidebarCollapsed]);
   // UI hover state for backlog punch effect
   const [hoverBacklogId, setHoverBacklogId] = useState<string | null>(null);
+  // Hover state for scheduled segment cards (used to show edit hint on hover)
+  const [hoveredSegmentId, setHoveredSegmentId] = useState<string | null>(null);
 
   // Missing state (reintroduced after earlier cleanup)
   const [truckColorOverrides, setTruckColorOverrides] = useState<Record<string, string>>({});
@@ -2071,8 +2091,7 @@ export default function PlanneringPage() {
       applyScheduledSegments(prev => prev.map(s => s.id === segmentId ? ({ ...s, startDay, endDay, depotId: depotId ?? null }) : s));
       updateSegmentDepot(segmentId, depotId ?? null);
     }
-    setSegEditorOpen(false);
-    setSegEditor(null);
+    closeSegEditor();
   }
   function onDropDay(e: React.DragEvent, day: string) {
     e.preventDefault();
@@ -2184,7 +2203,7 @@ export default function PlanneringPage() {
 
   return (
     <div style={{ padding: 16, display: 'grid', gap: 16, position: 'relative' }}>
-      {segEditorOpen && segEditor && (() => {
+      {(segEditorPortal && segEditor) && (() => {
         const p = projects.find(px => px.id === segEditor.projectId);
         const daysLen = Math.max(1, Math.round((new Date(segEditor.endDay + 'T00:00:00').getTime() - new Date(segEditor.startDay + 'T00:00:00').getTime()) / 86400000) + 1);
         const setDaysLen = (n: number) => {
@@ -2192,8 +2211,8 @@ export default function PlanneringPage() {
           setSegEditor(ed => ed ? ({ ...ed, endDay: addDaysLocal(ed.startDay, len - 1) }) : ed);
         };
         return (
-          <div onClick={() => { setSegEditorOpen(false); setSegEditor(null); }} style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(1px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-            <div onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" style={{ width: 'min(900px, 94vw)', background: '#fff', border: '1px solid #e2e8f0', borderRadius: 14, overflow: 'hidden', boxShadow: '0 24px 80px rgba(0,0,0,0.35)' }}>
+          <div onClick={closeSegEditor} style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(1px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, opacity: segEditorOpen ? 1 : 0, transition: 'opacity .24s ease' }}>
+            <div onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" style={{ width: 'min(900px, 94vw)', background: '#fff', border: '1px solid #e2e8f0', borderRadius: 14, overflow: 'hidden', boxShadow: '0 24px 80px rgba(0,0,0,0.35)', transform: segEditorOpen ? 'translateY(0) scale(1)' : 'translateY(14px) scale(.96)', opacity: segEditorOpen ? 1 : 0, transition: 'transform .35s cubic-bezier(.16,.84,.36,1), opacity .25s ease' }}>
               <div style={{ position: 'relative', padding: '14px 18px', background: 'linear-gradient(135deg, #0ea5e9 0%, #6366f1 70%)', color: '#fff' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                   <div style={{ width: 36, height: 36, borderRadius: 10, background: 'rgba(255,255,255,0.18)', display: 'grid', placeItems: 'center' }}>📅</div>
@@ -2205,7 +2224,7 @@ export default function PlanneringPage() {
                     </span>
                   </div>
                 </div>
-                <button aria-label="Stäng" onClick={() => { setSegEditorOpen(false); setSegEditor(null); }} className="btn--plain btn--xs" style={{ position: 'absolute', right: 10, top: 10, background: 'rgba(255,255,255,0.22)', color: '#fff', border: '1px solid rgba(255,255,255,0.35)', borderRadius: 10, padding: '6px 10px', fontSize: 14, lineHeight: 1 }}>×</button>
+                <button aria-label="Stäng" onClick={closeSegEditor} className="btn--plain btn--xs" style={{ position: 'absolute', right: 10, top: 10, background: 'rgba(255,255,255,0.22)', color: '#fff', border: '1px solid rgba(255,255,255,0.35)', borderRadius: 10, padding: '6px 10px', fontSize: 14, lineHeight: 1 }}>×</button>
               </div>
 
               <div style={{ padding: 16, display: 'grid', gridTemplateColumns: 'repeat(12, minmax(0,1fr))', gap: 14 }}>
@@ -2322,7 +2341,7 @@ export default function PlanneringPage() {
                     confirmDeleteSegmentId === segEditor.segmentId ? (
                       <div style={{ display:'flex', alignItems:'center', gap:6 }}>
                         <span style={{ fontSize:11, color:'#b91c1c', fontWeight:500 }}>Bekräfta borttagning?</span>
-                        <button type="button" onClick={() => { if (!segEditor.segmentId) return; unschedule(segEditor.segmentId); setSegEditorOpen(false); setSegEditor(null); }} className="btn--plain btn--xs" style={{ fontSize:11, padding:'6px 10px', background:'#dc2626', border:'1px solid #b91c1c', color:'#fff', borderRadius:8, boxShadow:'0 0 0 1px #fff inset' }}>Ja, ta bort</button>
+                        <button type="button" onClick={() => { if (!segEditor.segmentId) return; unschedule(segEditor.segmentId); closeSegEditor(); }} className="btn--plain btn--xs" style={{ fontSize:11, padding:'6px 10px', background:'#dc2626', border:'1px solid #b91c1c', color:'#fff', borderRadius:8, boxShadow:'0 0 0 1px #fff inset' }}>Ja, ta bort</button>
                         <button type="button" onClick={() => setConfirmDeleteSegmentId(null)} className="btn--plain btn--xs" style={{ fontSize:11, padding:'6px 10px', background:'#fff', border:'1px solid #cbd5e1', color:'#334155', borderRadius:8 }}>Avbryt</button>
                       </div>
                     ) : (
@@ -2339,7 +2358,7 @@ export default function PlanneringPage() {
                   )}
                 </div>
                 <div style={{ display: 'flex', gap: 8, flexWrap:'wrap' }}>
-                  <button type="button" onClick={() => { setSegEditorOpen(false); setSegEditor(null); }} className="btn--plain btn--xs" style={{ fontSize: 12, padding: '8px 12px', border: '1px solid #cbd5e1', background: '#fff', borderRadius: 10 }}>Avbryt</button>
+                  <button type="button" onClick={closeSegEditor} className="btn--plain btn--xs" style={{ fontSize: 12, padding: '8px 12px', border: '1px solid #cbd5e1', background: '#fff', borderRadius: 10 }}>Avbryt</button>
                   <button type="button" onClick={saveSegmentEditor} className="btn--plain btn--xs" style={{ fontSize: 12, padding: '8px 12px', border: '1px solid #16a34a', background: '#16a34a', color: '#fff', borderRadius: 10, boxShadow: '0 2px 6px rgba(22,163,74,0.25)' }}>{segEditor.mode === 'create' ? 'Lägg till' : 'Spara'}</button>
                 </div>
               </div>
@@ -3264,7 +3283,35 @@ export default function PlanneringPage() {
                               const isMid = (it as any).spanMiddle;
                               const isStart = (it as any).spanStart;
                               return (
-                                <div key={`${it.segmentId}:${it.day}`} draggable onDragStart={e => onDragStart(e, it.segmentId)} onDragEnd={onDragEnd} onDoubleClick={() => openSegmentEditorForExisting(it.segmentId)} style={{ position: 'relative', border: `2px solid ${highlight ? '#f59e0b' : cardBorder}`, background: cardBg, borderRadius: 6, padding: 6, fontSize: 12, cursor: 'grab', display: 'grid', gap: 4, opacity: isMid ? 0.95 : 1, boxShadow: highlight ? '0 0 0 3px rgba(245,158,11,0.35)' : 'none' }}>
+                                <div
+                                  key={`${it.segmentId}:${it.day}`}
+                                  draggable
+                                  onDragStart={e => onDragStart(e, it.segmentId)}
+                                  onDragEnd={onDragEnd}
+                                  onDoubleClick={() => openSegmentEditorForExisting(it.segmentId)}
+                                  onMouseEnter={() => setHoveredSegmentId(it.segmentId)}
+                                  onMouseLeave={() => setHoveredSegmentId(prev => prev === it.segmentId ? null : prev)}
+                                  title="Dubbelklicka för att redigera"
+                                  style={{
+                                    position: 'relative',
+                                    border: `2px solid ${highlight ? '#f59e0b' : (hoveredSegmentId === it.segmentId ? '#6366f1' : cardBorder)}`,
+                                    background: cardBg,
+                                    borderRadius: 6,
+                                    padding: 6,
+                                    fontSize: 12,
+                                    cursor: 'grab',
+                                    display: 'grid',
+                                    gap: 4,
+                                    opacity: isMid ? 0.95 : 1,
+                                    boxShadow: highlight
+                                      ? '0 0 0 3px rgba(245,158,11,0.35)'
+                                      : (hoveredSegmentId === it.segmentId ? '0 0 0 3px rgba(99,102,241,0.35)' : 'none'),
+                                    transition: 'border-color .15s, box-shadow .15s'
+                                  }}
+                                >
+                                  {hoveredSegmentId === it.segmentId && !highlight && (
+                                    <span style={{ position: 'absolute', top: -8, right: 4, background: '#6366f1', color: '#fff', fontSize: 9, padding: '2px 6px', borderRadius: 8, boxShadow: '0 2px 4px rgba(0,0,0,0.15)' }}>Redigera</span>
+                                  )}
                                   <div style={{ display: 'flex', flexDirection: 'column', gap: 2}}>
                                     <span style={{ fontWeight: 600, color: display ? display.text : '#312e81', display: 'flex', alignItems: 'center', columnGap: 6, rowGap: 2, flexWrap: 'wrap' }}>
                                       {it.project.orderNumber ? (
@@ -3455,7 +3502,35 @@ export default function PlanneringPage() {
                                   setSequentialSortForSegments(next);
                                 };
                                 return (
-                                  <div key={`${it.segmentId}:${it.day}`} draggable onDragStart={e => onDragStart(e, it.segmentId)} onDragEnd={onDragEnd} onDoubleClick={() => openSegmentEditorForExisting(it.segmentId)} style={{ position: 'relative', border: `2px solid ${highlight ? '#f59e0b' : cardBorder}`, background: cardBg, borderRadius: 6, padding: 6, fontSize: 11, cursor: 'grab', display: 'grid', gap: 4, opacity: isMid ? 0.95 : 1, boxShadow: highlight ? '0 0 0 3px rgba(245,158,11,0.35)' : 'none' }}>
+                                  <div
+                                    key={`${it.segmentId}:${it.day}`}
+                                    draggable
+                                    onDragStart={e => onDragStart(e, it.segmentId)}
+                                    onDragEnd={onDragEnd}
+                                    onDoubleClick={() => openSegmentEditorForExisting(it.segmentId)}
+                                    onMouseEnter={() => setHoveredSegmentId(it.segmentId)}
+                                    onMouseLeave={() => setHoveredSegmentId(prev => prev === it.segmentId ? null : prev)}
+                                    title="Dubbelklicka för att redigera"
+                                    style={{
+                                      position: 'relative',
+                                      border: `2px solid ${highlight ? '#f59e0b' : (hoveredSegmentId === it.segmentId ? '#6366f1' : cardBorder)}`,
+                                      background: cardBg,
+                                      borderRadius: 6,
+                                      padding: 6,
+                                      fontSize: 11,
+                                      cursor: 'grab',
+                                      display: 'grid',
+                                      gap: 4,
+                                      opacity: isMid ? 0.95 : 1,
+                                      boxShadow: highlight
+                                        ? '0 0 0 3px rgba(245,158,11,0.35)'
+                                        : (hoveredSegmentId === it.segmentId ? '0 0 0 3px rgba(99,102,241,0.35)' : 'none'),
+                                      transition: 'border-color .15s, box-shadow .15s'
+                                    }}
+                                  >
+                                    {hoveredSegmentId === it.segmentId && !highlight && (
+                                      <span style={{ position: 'absolute', top: -8, right: 4, background: '#6366f1', color: '#fff', fontSize: 9, padding: '2px 6px', borderRadius: 8, boxShadow: '0 2px 4px rgba(0,0,0,0.15)' }}>Redigera</span>
+                                    )}
                                     {/* order controls moved to bottom control section */}
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                                       <span style={{ fontWeight: 600, color: display ? display.text : '#312e81', display: 'flex', alignItems: 'center', columnGap: 6, rowGap: 2, flexWrap: 'wrap' }}>
@@ -3724,8 +3799,35 @@ export default function PlanneringPage() {
                                   const isMid = (it as any).spanMiddle;
                                   const isStart = (it as any).spanStart;
                                   return (
-                                    <div key={`${it.segmentId}:${it.day}`} draggable onDragStart={e => onDragStart(e, it.segmentId)} onDragEnd={onDragEnd}
-                                         style={{ position: 'relative', border: `2px solid ${highlight ? '#f59e0b' : cardBorder}`, background: cardBg, borderRadius: 6, padding: 6, fontSize: 11, cursor: 'grab', display: 'grid', gap: 4, opacity: isMid ? 0.95 : 1 }}>
+                                    <div
+                                      key={`${it.segmentId}:${it.day}`}
+                                      draggable
+                                      onDragStart={e => onDragStart(e, it.segmentId)}
+                                      onDragEnd={onDragEnd}
+                                      onDoubleClick={() => openSegmentEditorForExisting(it.segmentId)}
+                                      onMouseEnter={() => setHoveredSegmentId(it.segmentId)}
+                                      onMouseLeave={() => setHoveredSegmentId(prev => prev === it.segmentId ? null : prev)}
+                                      title="Dubbelklicka för att redigera"
+                                      style={{
+                                        position: 'relative',
+                                        border: `2px solid ${highlight ? '#f59e0b' : (hoveredSegmentId === it.segmentId ? '#6366f1' : cardBorder)}`,
+                                        background: cardBg,
+                                        borderRadius: 6,
+                                        padding: 6,
+                                        fontSize: 11,
+                                        cursor: 'grab',
+                                        display: 'grid',
+                                        gap: 4,
+                                        opacity: isMid ? 0.95 : 1,
+                                        boxShadow: highlight
+                                          ? '0 0 0 3px rgba(245,158,11,0.35)'
+                                          : (hoveredSegmentId === it.segmentId ? '0 0 0 3px rgba(99,102,241,0.35)' : 'none'),
+                                        transition: 'border-color .15s, box-shadow .15s'
+                                      }}
+                                    >
+                                      {hoveredSegmentId === it.segmentId && !highlight && (
+                                        <span style={{ position: 'absolute', top: -8, right: 4, background: '#6366f1', color: '#fff', fontSize: 9, padding: '2px 6px', borderRadius: 8, boxShadow: '0 2px 4px rgba(0,0,0,0.15)' }}>Redigera</span>
+                                      )}
                                       <span style={{ fontWeight: 600, color: display ? display.text : '#312e81', display: 'flex', alignItems: 'center', columnGap: 6, rowGap: 2, flexWrap: 'wrap' }}>
                                         {it.project.orderNumber ? (
                                             <span style={{ fontFamily: 'ui-monospace, monospace', background: '#ffffff', color: display ? display.text : '#312e81', border: `1px solid ${cardBorder}`, padding: '1px 4px', borderRadius: 4, whiteSpace: 'nowrap' }} title="Ordernummer">#{it.project.orderNumber}</span>
