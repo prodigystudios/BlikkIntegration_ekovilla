@@ -1904,6 +1904,25 @@ export default function PlanneringPage() {
       ring: `hsl(${hue} 75% 60% / 0.65)`
     };
   }
+  // Extract phone numbers from free text (tolerant to spaces/dashes); returns unique display/tel pairs
+  function extractPhonesFromText(text: string): Array<{ display: string; tel: string }> {
+    if (!text) return [];
+    const found = new Map<string, { display: string; tel: string }>();
+    // Match sequences that look like phone numbers: start with + or digit, include at least 7-8 digits total
+    const re = /(?:(?:\+\d[\d\s-]{6,}\d)|(?:0\d[\d\s-]{5,}\d))/g;
+    const matches = text.match(re) || [];
+    for (const raw of matches) {
+      const display = raw.trim().replace(/\s+/g, ' ');
+      // Normalize for tel: remove spaces and dashes, keep leading + if present
+      const tel = display.replace(/[^\d+]/g, '');
+      // Use digits-only key to dedupe (ignore + for dedupe)
+      const key = tel.replace(/\D/g, '');
+      if (!found.has(key) && key.length >= 7) {
+        found.set(key, { display, tel });
+      }
+    }
+    return Array.from(found.values());
+  }
   function CreatorAvatar({ segmentId, textColorOverride, size = 'md' }: { segmentId: string; textColorOverride?: string; size?: 'sm' | 'md' }) {
     const name = rowCreatorLabel(segmentId);
     if (!name) return null;
@@ -2478,7 +2497,8 @@ export default function PlanneringPage() {
         const postalCode = location?.postalCode || raw?.postalCode || raw?.zip || null;
         const city = location?.city || raw?.city || null;
         const address = [street, postalCode, city].filter(Boolean).join(', ');
-        const description = raw?.description || raw?.notes || raw?.note || null;
+  const description = raw?.description || raw?.notes || raw?.note || null;
+  const contactPhones = description ? extractPhonesFromText(description) : [];
         const segs = scheduledSegments.filter(s => s.projectId === pid);
         const meta = scheduleMeta[pid];
         const ekPath = egenkontrollPath(base?.orderNumber || null);
@@ -2532,6 +2552,15 @@ export default function PlanneringPage() {
                       <span style={{ fontSize:12, color:'#334155', fontWeight:600 }}>Adress:</span>
                       <span style={{ fontSize:12, color:'#334155' }}>{address}</span>
                       <a href={mapsHref} target="_blank" rel="noopener noreferrer" className="btn--plain btn--xs" style={{ fontSize:11, border:'1px solid #cbd5e1', borderRadius:6, padding:'2px 8px', color:'#0369a1', background:'#e0f2fe' }}>Öppna i Kartor</a>
+                    </div>
+                  )}
+                  {contactPhones.length > 0 && (
+                    <div style={{ display:'flex', gap:6, flexWrap:'wrap', alignItems:'center' }}>
+                      {contactPhones.map((ph, i) => (
+                        <a key={ph.tel + ':' + i} href={`tel:${ph.tel}`} title={`Ring ${ph.display}`} style={{ fontSize:11, color:'#065f46', background:'#ecfdf5', border:'1px solid #6ee7b7', padding:'2px 6px', borderRadius: 999, textDecoration:'none' }}>
+                          Kontakt: {ph.display}
+                        </a>
+                      ))}
                     </div>
                   )}
                   {description && (
