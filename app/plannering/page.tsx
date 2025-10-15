@@ -1904,28 +1904,46 @@ export default function PlanneringPage() {
       ring: `hsl(${hue} 75% 60% / 0.65)`
     };
   }
-  function CreatorAvatar({ segmentId, textColorOverride }: { segmentId: string; textColorOverride?: string }) {
+  function CreatorAvatar({ segmentId, textColorOverride, size = 'md' }: { segmentId: string; textColorOverride?: string; size?: 'sm' | 'md' }) {
     const name = rowCreatorLabel(segmentId);
     if (!name) return null;
     const { bg, ring } = creatorColor(name);
     const initials = creatorInitials(name);
+    const isSmall = size === 'sm';
+    const style: React.CSSProperties = isSmall ? {
+      width: 14,
+      height: 14,
+      borderRadius: '50%',
+      background: bg,
+      color: '#fff',
+      fontSize: 8,
+      fontWeight: 800,
+      display: 'inline-flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      boxShadow: '0 0 0 2px #fff, 0 1px 3px rgba(0,0,0,0.2)',
+      border: '1px solid rgba(0,0,0,0.2)',
+      letterSpacing: .4,
+      lineHeight: 1,
+      flexShrink: 0
+    } : {
+      width: 18,
+      height: 18,
+      borderRadius: '50%',
+      background: bg,
+      color: '#fff',
+      fontSize: 9.5,
+      fontWeight: 600,
+      display: 'inline-flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      boxShadow: `0 0 0 1px rgba(0,0,0,0.18), 0 0 0 2px ${ring}`,
+      letterSpacing: .5,
+      flexShrink: 0
+    };
     return (
       <span title={`Skapad av ${name}`}
-            style={{
-              width: 18,
-              height: 18,
-              borderRadius: '50%',
-              background: bg,
-              color: '#fff',
-              fontSize: 9.5,
-              fontWeight: 600,
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              boxShadow: `0 0 0 1px rgba(0,0,0,0.18), 0 0 0 2px ${ring}`,
-              letterSpacing: .5,
-              flexShrink: 0
-            }}>{initials}</span>
+            style={style}>{initials}</span>
     );
   }
 
@@ -2371,6 +2389,16 @@ export default function PlanneringPage() {
                       Egenkontroll
                     </a>
                   ) : null; })()}
+                  {p && (
+                    <button
+                      type="button"
+                      className="btn--plain btn--xs"
+                      onClick={() => openProjectModal(p.id)}
+                      style={{ fontSize: 12, padding: '8px 12px', border: '1px solid #cbd5e1', background: '#fff', borderRadius: 10 }}
+                    >
+                      Öppna projekt
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -2465,7 +2493,7 @@ export default function PlanneringPage() {
         };
         const seller = deriveSeller(raw) || base?.salesResponsible || null;
         return (
-          <div style={{ position: 'fixed', inset:0, zIndex: 260, background: 'rgba(15,23,42,0.5)', backdropFilter:'blur(3px)', display:'flex', alignItems:'center', justifyContent:'center', padding:16 }} onClick={closeProjectModal}>
+          <div style={{ position: 'fixed', inset:0, zIndex: 1400, background: 'rgba(15,23,42,0.5)', backdropFilter:'blur(3px)', display:'flex', alignItems:'center', justifyContent:'center', padding:16 }} onClick={closeProjectModal}>
             <div role="dialog" aria-modal="true" aria-busy={detailLoading ? true : undefined} onClick={e => e.stopPropagation()} style={{ width: 'min(720px, 92vw)', maxHeight: '80vh', overflowY: 'auto', background:'#fff', border:'1px solid #e2e8f0', borderRadius:12, boxShadow:'0 12px 30px rgba(0,0,0,0.25)', display:'grid', gap:12, padding:16 }}>
               <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
                 <div style={{ display:'grid', gap:8 }}>
@@ -3305,11 +3333,12 @@ export default function PlanneringPage() {
                                   title="Dubbelklicka för att redigera"
                                   style={{
                                     position: 'relative',
-                                    border: `2px solid ${highlight ? '#f59e0b' : (hoveredSegmentId === it.segmentId ? '#6366f1' : cardBorder)}`,
+                                    border: `1px solid ${highlight ? '#f59e0b' : (hoveredSegmentId === it.segmentId ? '#6366f1' : cardBorder)}`,
                                     background: cardBg,
                                     borderRadius: 6,
-                                    padding: 6,
-                                    fontSize: 12,
+                                    padding: 5,
+                                    fontSize: 11,
+                                    lineHeight: 1.15,
                                     cursor: 'grab',
                                     display: 'grid',
                                     gap: 4,
@@ -3338,25 +3367,12 @@ export default function PlanneringPage() {
                                         <span style={{ fontFamily: 'ui-monospace, monospace', background: '#ffffff', color: display ? display.text : '#312e81', border: `1px solid ${cardBorder}`, padding: '1px 4px', borderRadius: 4, whiteSpace: 'nowrap' }} title="Ordernummer">#{it.project.orderNumber}</span>
                                       ) : null}
                                       <span style={{ color: display ? display.text : '#312e81', fontWeight: 600, minWidth: 0, overflowWrap: 'anywhere' }}>{it.project.name}</span>
-                                      <button type="button" onClick={(e) => { e.stopPropagation(); openProjectModal(it.project.id); }} className="icon-btn" title="Öppna projekt" aria-label="Öppna projekt" style={{ display: 'inline-flex', alignItems: 'center', flex: '0 0 auto' }}>
-                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
-                                        <span style={{ fontWeight: 600, fontSize: 10 }}>Öppna projekt</span>
-                                      </button>
-                                      <button type="button"
-                                        onClick={(e) => { e.stopPropagation(); setSelectedProjectId(it.project.id); }}
-                                        className="btn--plain btn--xs"
-                                        title="Lägg till ny separat dag"
-                                        style={{ fontSize: 10, background: '#ecfdf5', border: '1px solid #6ee7b7', color: '#047857', borderRadius: 4, padding: '2px 4px' }}
-                                      >
-                                        Lägg till dag
-                                      </button>
-                                      {/* EK badge moved to bottom */}
+                                      {/* Öppna projekt flyttad till Segment Editor */}
+                                      {/* Button moved to bottom controls */}
                                     </span>
                                     {isStart && <span style={{ color: display ? display.text : '#6366f1' }}>{it.project.customer}</span>}
                                     {isStart && it.project.salesResponsible && <span style={{ fontSize: 10, color: display ? display.text : '#334155', background:'#ffffff30', padding:'2px 6px', borderRadius: 12, border:`1px solid ${cardBorder}55` }}>Sälj: {it.project.salesResponsible}</span>}
-                                    {isStart && rowCreatorLabel(it.segmentId) && (
-                                      <CreatorAvatar segmentId={it.segmentId} />
-                                    )}
+                                    {/* Moved avatar to corner badge */}
                                     {(it.bagCount != null || it.jobType) && (
                                       <span style={{ fontSize: 11, color: display ? display.text : '#374151' }}>
                                         {it.bagCount != null ? `${it.bagCount} säckar` : ''}
@@ -3369,9 +3385,27 @@ export default function PlanneringPage() {
                                           säckar blåsta {scheduleMeta[it.project.id]!.actual_bags_used} st
                                         </span>
                                       )}
+                                    {/* Bottom controls */}
+                                    <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 4 }}>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => { e.stopPropagation(); setSelectedProjectId(it.project.id); }}
+                                        className="btn--plain btn--xs"
+                                        title="Lägg till ny separat dag"
+                                        style={{ fontSize: 10, background: '#ecfdf5', border: '1px solid #6ee7b7', color: '#047857', borderRadius: 4, padding: '2px 4px' }}
+                                      >
+                                        Lägg till dag
+                                      </button>
+                                    </div>
                                     {/* EK badge moved to top-right RP circle */}
                                     {/* Team and Depå removed for more compact card */}
                                   </div>
+                                  {/* Corner creator badge (top-left) */}
+                                  {isStart && rowCreatorLabel(it.segmentId) && (
+                                    <span style={{ position: 'absolute', top: -7, left: -7, zIndex: 3 }}>
+                                      <CreatorAvatar segmentId={it.segmentId} size="sm" />
+                                    </span>
+                                  )}
                                   {/* Inline controls removed; use modal for edits and actions */}
                                 </div>
                               );
@@ -3515,11 +3549,12 @@ export default function PlanneringPage() {
                                     title="Dubbelklicka för att redigera"
                                     style={{
                                       position: 'relative',
-                                      border: `2px solid ${highlight ? '#f59e0b' : (hoveredSegmentId === it.segmentId ? '#6366f1' : cardBorder)}`,
+                                      border: `1px solid ${highlight ? '#f59e0b' : (hoveredSegmentId === it.segmentId ? '#6366f1' : cardBorder)}`,
                                       background: cardBg,
                                       borderRadius: 6,
-                                      padding: 6,
-                                      fontSize: 11,
+                                      padding: 5,
+                                      fontSize: 10,
+                                      lineHeight: 1.15,
                                       cursor: 'grab',
                                       display: 'grid',
                                       gap: 4,
@@ -3549,25 +3584,11 @@ export default function PlanneringPage() {
                                           <span style={{ fontFamily: 'ui-monospace, monospace', background: '#ffffff', color: display ? display.text : '#312e81', border: `1px solid ${cardBorder}`, padding: '1px 4px', borderRadius: 4, whiteSpace: 'nowrap' }} title="Ordernummer">#{it.project.orderNumber}</span>
                                         ) : null}
                                         <span style={{ color: display ? display.text : '#312e81', fontWeight: 600, minWidth: 0, overflowWrap: 'anywhere' }}>{it.project.name}</span>
-                                        <button type="button" onClick={(e) => { e.stopPropagation(); openProjectModal(it.project.id); }} className="icon-btn" title="Öppna projekt" aria-label="Öppna projekt" style={{ display: 'inline-flex', alignItems: 'center', flex: '0 0 auto' }}>
-                                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
-                                          <span style={{ fontWeight: 600, fontSize: 12 }}>Öppna projekt</span>
-                                        </button>
-                                        <button type="button"
-                                          onClick={(e) => { e.stopPropagation(); setSelectedProjectId(it.project.id); }}
-                                          className="btn--plain btn--xs"
-                                          title="Lägg till ny separat dag"
-                                          style={{ fontSize: 9, background: '#ecfdf5', border: '1px solid #6ee7b7', color: '#047857', borderRadius: 4, padding: '1px 4px' }}
-                                        >
-                                          Lägg till dag
-                                        </button>
-                                        {/* EK badge moved to bottom */}
+                                        {/* Button moved to bottom controls */}
                                       </span>
                                       {isStart && <span style={{ color: display ? display.text : '#6366f1' }}>{it.project.customer}</span>}
                                       {isStart && it.project.salesResponsible && <span style={{ fontSize: 9, color: display ? display.text : '#334155', background:'#ffffff40', padding:'1px 5px', borderRadius: 10, border:`1px solid ${cardBorder}55` }}>Sälj: {it.project.salesResponsible}</span>}
-                                      {isStart && rowCreatorLabel(it.segmentId) && (
-                                        <CreatorAvatar segmentId={it.segmentId} />
-                                      )}
+                                      {/* Moved creator avatar to corner badge */}
                                       {(it.bagCount != null || it.jobType) && (
                                         <span style={{ fontSize: 10, color: display ? display.text : '#374151' }}>
                                           {it.bagCount != null ? `${it.bagCount} säckar` : ''}
@@ -3575,9 +3596,27 @@ export default function PlanneringPage() {
                                           {it.jobType || ''}
                                         </span>
                                       )}
+                                      {/* Bottom controls */}
+                                      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 4 }}>
+                                        <button
+                                          type="button"
+                                          onClick={(e) => { e.stopPropagation(); setSelectedProjectId(it.project.id); }}
+                                          className="btn--plain btn--xs"
+                                          title="Lägg till ny separat dag"
+                                          style={{ fontSize: 9, background: '#ecfdf5', border: '1px solid #6ee7b7', color: '#047857', borderRadius: 4, padding: '1px 4px' }}
+                                        >
+                                          Lägg till dag
+                                        </button>
+                                      </div>
                                       {/* EK badge moved to top-right RP circle */}
                                       {/* Team and Depå removed for compact card */}
                                     </div>
+                                    {/* Corner creator badge (top-left) */}
+                                    {isStart && rowCreatorLabel(it.segmentId) && (
+                                      <span style={{ position: 'absolute', top: -6, left: -6, zIndex: 3 }}>
+                                        <CreatorAvatar segmentId={it.segmentId} size="sm" />
+                                      </span>
+                                    )}
                                     {/* Inline card controls removed; edits happen in Segment Editor modal */}
                                   </div>
                                 );
@@ -3803,11 +3842,12 @@ export default function PlanneringPage() {
                                       title="Dubbelklicka för att redigera"
                                       style={{
                                         position: 'relative',
-                                        border: `2px solid ${highlight ? '#f59e0b' : (hoveredSegmentId === it.segmentId ? '#6366f1' : cardBorder)}`,
+                                        border: `1px solid ${highlight ? '#f59e0b' : (hoveredSegmentId === it.segmentId ? '#6366f1' : cardBorder)}`,
                                         background: cardBg,
                                         borderRadius: 6,
-                                        padding: 6,
-                                        fontSize: 11,
+                                        padding: 5,
+                                        fontSize: 10,
+                                        lineHeight: 1.15,
                                         cursor: 'grab',
                                         display: 'grid',
                                         gap: 4,
@@ -3826,18 +3866,7 @@ export default function PlanneringPage() {
                                             <span style={{ fontFamily: 'ui-monospace, monospace', background: '#ffffff', color: display ? display.text : '#312e81', border: `1px solid ${cardBorder}`, padding: '1px 4px', borderRadius: 4, whiteSpace: 'nowrap' }} title="Ordernummer">#{it.project.orderNumber}</span>
                                           ) : null}
                                           <span style={{ color: display ? display.text : '#312e81', fontWeight: 600, minWidth: 0, overflowWrap: 'anywhere' }}>{it.project.name}</span>
-                                          <button type="button" onClick={(e) => { e.stopPropagation(); openProjectModal(it.project.id); }} className="icon-btn" title="Öppna projekt" aria-label="Öppna projekt" style={{ display: 'inline-flex', alignItems: 'center', flex: '0 0 auto' }}>
-                                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
-                                            <span style={{ fontWeight: 600, fontSize: 12 }}>Öppna projekt</span>
-                                          </button>
-                                          <button type="button"
-                                            onClick={(e) => { e.stopPropagation(); setSelectedProjectId(it.project.id); }}
-                                            className="btn--plain btn--xs"
-                                            title="Lägg till ny separat dag"
-                                            style={{ fontSize: 9, background: '#ecfdf5', border: '1px solid #6ee7b7', color: '#047857', borderRadius: 4, padding: '1px 4px' }}
-                                          >
-                                            lägg till ny dag
-                                          </button>
+                                          {/* Button moved to bottom controls */}
                                       </span>
                                       {(it.bagCount != null || it.jobType) && (
                                         <span style={{ fontSize: 10, color: display ? display.text : '#374151' }}>
@@ -3851,7 +3880,24 @@ export default function PlanneringPage() {
                                           säckar blåsta {scheduleMeta[it.project.id]!.actual_bags_used} st
                                         </span>
                                       )}
+                                      {/* Bottom controls */}
+                                      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 4 }}>
+                                        <button
+                                          type="button"
+                                          onClick={(e) => { e.stopPropagation(); setSelectedProjectId(it.project.id); }}
+                                          className="btn--plain btn--xs"
+                                          title="Lägg till ny separat dag"
+                                          style={{ fontSize: 9, background: '#ecfdf5', border: '1px solid #6ee7b7', color: '#047857', borderRadius: 4, padding: '1px 4px', textTransform: 'none' }}
+                                        >
+                                          Lägg till dag
+                                        </button>
+                                      </div>
                                       {/* EK badge moved to top-right RP circle */}
+                                                                    {isStart && rowCreatorLabel(it.segmentId) && (
+                                                                      <span style={{ position: 'absolute', top: -6, left: -6, zIndex: 3 }}>
+                                                                        <CreatorAvatar segmentId={it.segmentId} size="sm" />
+                                                                      </span>
+                                                                    )}
                                                                     {isStart && hasEgenkontroll(it.project.orderNumber) && (
                                                                       <span
                                                                         aria-label="Egenkontroll rapporterad"
