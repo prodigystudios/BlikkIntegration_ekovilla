@@ -2360,6 +2360,17 @@ export default function PlanneringPage() {
                 <div style={{ display: 'flex', gap: 8, flexWrap:'wrap' }}>
                   <button type="button" onClick={closeSegEditor} className="btn--plain btn--xs" style={{ fontSize: 12, padding: '8px 12px', border: '1px solid #cbd5e1', background: '#fff', borderRadius: 10 }}>Avbryt</button>
                   <button type="button" onClick={saveSegmentEditor} className="btn--plain btn--xs" style={{ fontSize: 12, padding: '8px 12px', border: '1px solid #16a34a', background: '#16a34a', color: '#fff', borderRadius: 10, boxShadow: '0 2px 6px rgba(22,163,74,0.25)' }}>{segEditor.mode === 'create' ? 'Lägg till' : 'Spara'}</button>
+                  {(() => { const proj = p; const hasEK = !!(proj?.orderNumber && hasEgenkontroll(proj.orderNumber)); const pth = proj?.orderNumber ? egenkontrollPath(proj.orderNumber) : null; return hasEK ? (
+                    <a
+                      href={pth ? `/api/storage/download?path=${encodeURIComponent(pth)}` : '#'}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="btn--plain btn--xs"
+                      style={{ fontSize: 12, padding: '8px 12px', border: '1px solid #047857', background: '#059669', color: '#fff', borderRadius: 10 }}
+                    >
+                      Egenkontroll
+                    </a>
+                  ) : null; })()}
                 </div>
               </div>
             </div>
@@ -3312,6 +3323,15 @@ export default function PlanneringPage() {
                                   {hoveredSegmentId === it.segmentId && !highlight && (
                                     <span style={{ position: 'absolute', top: -8, right: 4, background: '#6366f1', color: '#fff', fontSize: 9, padding: '2px 6px', borderRadius: 8, boxShadow: '0 2px 4px rgba(0,0,0,0.15)' }}>Redigera</span>
                                   )}
+                                  {isStart && hasEgenkontroll(it.project.orderNumber) && (
+                                    <span
+                                      aria-label="Egenkontroll rapporterad"
+                                      title="Egenkontroll rapporterad"
+                                      style={{ position: 'absolute', top: -7, right: -7, width: 14, height: 14, borderRadius: 999, background: '#059669', color: '#fff', border: '1px solid #047857', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, fontWeight: 800, boxShadow: '0 0 0 2px #fff, 0 1px 3px rgba(0,0,0,0.2)', zIndex: 3, pointerEvents: 'none' }}
+                                    >
+                                      ✓
+                                    </span>
+                                  )}
                                   <div style={{ display: 'flex', flexDirection: 'column', gap: 2}}>
                                     <span style={{ fontWeight: 600, color: display ? display.text : '#312e81', display: 'flex', alignItems: 'center', columnGap: 6, rowGap: 2, flexWrap: 'wrap' }}>
                                       {it.project.orderNumber ? (
@@ -3349,26 +3369,8 @@ export default function PlanneringPage() {
                                           säckar blåsta {scheduleMeta[it.project.id]!.actual_bags_used} st
                                         </span>
                                       )}
-                                    {isStart && it.truck && (() => { const team = truckTeamNames(it.truck); return team.length ? <span style={{ fontSize: 10, color: display ? display.text : '#334155', background:'#ffffff40', padding:'2px 6px', borderRadius: 10, border:`1px solid ${cardBorder}40` }}>Team: {team.join(', ')}</span> : null; })()}
-                                    {isStart && hasEgenkontroll(it.project.orderNumber) && (() => { const pth = egenkontrollPath(it.project.orderNumber); return (
-                                      <a href={pth ? `/api/storage/download?path=${encodeURIComponent(pth)}` : '#'} target="_blank" rel="noopener noreferrer" style={{ textDecoration:'none', fontSize:10, background:'#059669', color:'#fff', padding:'2px 6px', borderRadius:8, alignSelf:'flex-start', border:'1px solid #047857', display:'inline-flex', gap:4, alignItems:'center', cursor:'pointer' }} title={pth ? 'Öppna egenkontroll (PDF)' : 'Egenkontroll hittad'}>
-                                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ display:'block' }}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M12 12v6"/><path d="M9 15l3 3 3-3"/></svg>
-                                        Rapporterad
-                                      </a>
-                                    ); })()}
-                                    {/* Depot info shown; overrides are edited in modal */}
-                                    {(() => {
-                                      const seg = scheduledSegments.find(s => s.id === it.segmentId);
-                                      const overrideId = seg?.depotId || null;
-                                      const truckRec = it.truck ? planningTrucks.find(t => t.name === it.truck) : null;
-                                      const effectiveId = overrideId ?? (truckRec?.depot_id ?? null);
-                                      const eff = effectiveId ? depots.find(d => d.id === effectiveId) : null;
-                                      return (
-                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                                          <span style={{ fontSize: 10, color: display ? display.text : '#475569', background:'#f1f5f9', padding:'2px 6px', borderRadius:12, border:`1px solid ${cardBorder}55` }}>Depå: {eff ? eff.name : 'Ingen'}</span>
-                                        </span>
-                                      );
-                                    })()}
+                                    {/* EK badge moved to top-right RP circle */}
+                                    {/* Team and Depå removed for more compact card */}
                                   </div>
                                   {/* Inline controls removed; use modal for edits and actions */}
                                 </div>
@@ -3531,6 +3533,15 @@ export default function PlanneringPage() {
                                     {hoveredSegmentId === it.segmentId && !highlight && (
                                       <span style={{ position: 'absolute', top: -8, right: 4, background: '#6366f1', color: '#fff', fontSize: 9, padding: '2px 6px', borderRadius: 8, boxShadow: '0 2px 4px rgba(0,0,0,0.15)' }}>Redigera</span>
                                     )}
+                                    {isStart && hasEgenkontroll(it.project.orderNumber) && (
+                                      <span
+                                        aria-label="Egenkontroll rapporterad"
+                                        title="Egenkontroll rapporterad"
+                                        style={{ position: 'absolute', top: -6, right: -6, width: 12, height: 12, borderRadius: 999, background: '#059669', color: '#fff', border: '1px solid #047857', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, fontWeight: 800, boxShadow: '0 0 0 2px #fff, 0 1px 3px rgba(0,0,0,0.2)', zIndex: 3, pointerEvents: 'none' }}
+                                      >
+                                        ✓
+                                      </span>
+                                    )}
                                     {/* order controls moved to bottom control section */}
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                                       <span style={{ fontWeight: 600, color: display ? display.text : '#312e81', display: 'flex', alignItems: 'center', columnGap: 6, rowGap: 2, flexWrap: 'wrap' }}>
@@ -3564,26 +3575,8 @@ export default function PlanneringPage() {
                                           {it.jobType || ''}
                                         </span>
                                       )}
-                                      {isStart && it.truck && (() => { const team = truckTeamNames(it.truck); return team.length ? <span style={{ fontSize: 9, color: display ? display.text : '#334155', background:'#ffffff30', padding:'1px 5px', borderRadius: 10, border:`1px solid ${cardBorder}40` }}>Team: {team.join(', ')}</span> : null; })()}
-                                      {isStart && hasEgenkontroll(it.project.orderNumber) && (() => { const pth = egenkontrollPath(it.project.orderNumber); return (
-                                        <a href={pth ? `/api/storage/download?path=${encodeURIComponent(pth)}` : '#'} target="_blank" rel="noopener noreferrer" style={{ textDecoration:'none', fontSize:9, background:'#059669', color:'#fff', padding:'1px 5px', borderRadius:8, alignSelf:'flex-start', border:'1px solid #047857', display:'inline-flex', gap:4, alignItems:'center', cursor:'pointer' }} title={pth ? 'Öppna egenkontroll (PDF)' : 'Egenkontroll hittad'}>
-                                          <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ display:'block' }}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M12 12v6"/><path d="M9 15l3 3 3-3"/></svg>
-                                          Rapporterad
-                                        </a>
-                                      ); })()}
-                                      {/* Depot info shown; overrides are edited in modal */}
-                                      {(() => {
-                                        const seg = scheduledSegments.find(s => s.id === it.segmentId);
-                                        const overrideId = seg?.depotId || null;
-                                        const truckRec = it.truck ? planningTrucks.find(t => t.name === it.truck) : null;
-                                        const effectiveId = overrideId ?? (truckRec?.depot_id ?? null);
-                                        const eff = effectiveId ? depots.find(d => d.id === effectiveId) : null;
-                                        return (
-                                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                                            <span style={{ fontSize: 9, color: display ? display.text : '#475569', background:'#f1f5f9', padding:'1px 5px', borderRadius:12, border:`1px solid ${cardBorder}55` }}>Depå: {eff ? eff.name : 'Ingen'}</span>
-                                          </span>
-                                        );
-                                      })()}
+                                      {/* EK badge moved to top-right RP circle */}
+                                      {/* Team and Depå removed for compact card */}
                                     </div>
                                     {/* Inline card controls removed; edits happen in Segment Editor modal */}
                                   </div>
@@ -3858,11 +3851,17 @@ export default function PlanneringPage() {
                                           säckar blåsta {scheduleMeta[it.project.id]!.actual_bags_used} st
                                         </span>
                                       )}
-                                      {isStart && hasEgenkontroll(it.project.orderNumber) && (() => { const pth = egenkontrollPath(it.project.orderNumber); return (
-                                        <a href={pth ? `/api/storage/download?path=${encodeURIComponent(pth)}` : '#'} target="_blank" rel="noopener noreferrer" style={{ textDecoration:'none', fontSize:9, background:'#059669', color:'#fff', padding:'1px 5px', borderRadius:8, alignSelf:'flex-start', border:'1px solid #047857', display:'inline-flex', gap:4, alignItems:'center', cursor:'pointer' }} title={pth ? 'Öppna egenkontroll (PDF)' : 'Egenkontroll hittad'}>
-                                          Rapporterad
-                                        </a>
-                                      ); })()}
+                                      {/* EK badge moved to top-right RP circle */}
+                                                                    {isStart && hasEgenkontroll(it.project.orderNumber) && (
+                                                                      <span
+                                                                        aria-label="Egenkontroll rapporterad"
+                                                                        title="Egenkontroll rapporterad"
+                                                                        style={{ position: 'absolute', top: -6, right: -6, width: 12, height: 12, borderRadius: 999, background: '#059669', color: '#fff', border: '1px solid #047857', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, fontWeight: 800, boxShadow: '0 0 0 2px #fff, 0 1px 3px rgba(0,0,0,0.2)', zIndex: 3, pointerEvents: 'none' }}
+                                                                      >
+                                                                        ✓
+                                                                      </span>
+                                                                    )}
+                                      {/* Team and Depå removed for compact card */}
                                     </div>
                                   );
                                 })}
