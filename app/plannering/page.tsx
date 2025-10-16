@@ -43,6 +43,17 @@ interface ProjectScheduleMeta {
   actual_bags_set_by?: string | null;
 }
 
+// Partial bag reporting per segment/day
+interface SegmentReport {
+  id: string;
+  segmentId: string; // FK to planning_segments.id
+  reportDay: string; // 'YYYY-MM-DD'
+  amount: number; // säckar
+  createdBy?: string | null;
+  createdByName?: string | null;
+  createdAt?: string | null; // ISO
+}
+
 // Normalize a raw project from /api/blikk/projects into our Project shape
 function normalizeProject(p: any): Project {
   return {
@@ -231,6 +242,11 @@ export default function PlanneringPage() {
   const [hoverBacklogId, setHoverBacklogId] = useState<string | null>(null);
   // Hover state for scheduled segment cards (used to show edit hint on hover)
   const [hoveredSegmentId, setHoveredSegmentId] = useState<string | null>(null);
+
+  // Segment reports (partial reporting before EK)
+  const [segmentReports, setSegmentReports] = useState<SegmentReport[]>([]);
+  // Simple draft used in Segment Editor to add a report
+  const [reportDraft, setReportDraft] = useState<{ day: string; amount: string }>({ day: '', amount: '' });
 
   // Missing state (reintroduced after earlier cleanup)
   const [truckColorOverrides, setTruckColorOverrides] = useState<Record<string, string>>({});
@@ -747,8 +763,18 @@ export default function PlanneringPage() {
         }
         const { data: segs, error: segErr } = await supabase.from('planning_segments').select('*');
         if (segErr) throw segErr;
-  const { data: metas, error: metaErr } = await supabase.from('planning_project_meta').select('*');
+        const { data: metas, error: metaErr } = await supabase.from('planning_project_meta').select('*');
         if (metaErr) throw metaErr;
+        // Load segment reports (partial bag reports)
+        try {
+          const { data: repRows, error: repErr } = await supabase.from('planning_segment_reports').select('*');
+          if (repErr) console.warn('[planning] segment reports load error', repErr);
+          else if (Array.isArray(repRows)) {
+            setSegmentReports(repRows.map((r: any) => ({ id: r.id, segmentId: r.segment_id, reportDay: r.report_day, amount: r.amount, createdBy: r.created_by ?? null, createdByName: r.created_by_name ?? null, createdAt: r.created_at || null })));
+          }
+        } catch (e) {
+          console.warn('[planning] segment reports load exception', e);
+        }
         // Load dynamic trucks (open select) - team names are free text
         try {
           const { data: trucksData, error: trucksErr } = await supabase.from('planning_trucks').select('*').order('name');
@@ -843,6 +869,15 @@ export default function PlanneringPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Reset report draft when switching segment in editor
+  useEffect(() => {
+    if (segEditor?.segmentId) {
+      setReportDraft({ day: segEditor.startDay, amount: '' });
+    } else {
+      setReportDraft({ day: '', amount: '' });
+    }
+  }, [segEditor?.segmentId, segEditor?.startDay]);
+
   // Realtime subscription + presence tracking (recreate when auth identity changes so presence key updates)
   useEffect(() => {
     const presenceKey = currentUserId || 'anon-' + Math.random().toString(36).slice(2, 8);
@@ -911,6 +946,16 @@ export default function PlanneringPage() {
           setScheduleMeta(prev => { const c = { ...prev }; delete c[row.project_id]; return c; });
         }
       })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'planning_segment_reports' }, payload => {
+        const row: any = payload.new || payload.old;
+        if (payload.eventType === 'INSERT') {
+          setSegmentReports(prev => prev.some(r => r.id === row.id) ? prev : [...prev, { id: row.id, segmentId: row.segment_id, reportDay: row.report_day, amount: row.amount, createdBy: row.created_by ?? null, createdByName: row.created_by_name ?? null, createdAt: row.created_at || null }]);
+        } else if (payload.eventType === 'UPDATE') {
+          setSegmentReports(prev => prev.map(r => r.id === row.id ? { id: row.id, segmentId: row.segment_id, reportDay: row.report_day, amount: row.amount, createdBy: row.created_by ?? null, createdByName: row.created_by_name ?? null, createdAt: row.created_at || r.createdAt || null } : r));
+        } else if (payload.eventType === 'DELETE') {
+          setSegmentReports(prev => prev.filter(r => r.id !== row.id));
+        }
+      })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'planning_trucks' }, payload => {
         const row: any = payload.new || payload.old;
         if (payload.eventType === 'INSERT') {
@@ -952,6 +997,57 @@ export default function PlanneringPage() {
       });
     return () => { supabase.removeChannel(channel); };
   }, [supabase, currentUserId, currentUserName]);
+
+  // Aggregations for reported bags
+  const reportedBagsBySegment = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const r of segmentReports) {
+      map.set(r.segmentId, (map.get(r.segmentId) || 0) + (r.amount || 0));
+    }
+    return map;
+  }, [segmentReports]);
+  const segmentIdToProjectId = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const s of scheduledSegments) m.set(s.id, s.projectId);
+    return m;
+  }, [scheduledSegments]);
+  const reportedBagsByProject = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const r of segmentReports) {
+      const pid = segmentIdToProjectId.get(r.segmentId);
+      if (!pid) continue;
+      map.set(pid, (map.get(pid) || 0) + (r.amount || 0));
+    }
+    return map;
+  }, [segmentReports, segmentIdToProjectId]);
+
+  // Add/delete report actions
+  const addPartialReport = useCallback(async () => {
+    if (!segEditor?.segmentId || !currentUserId) return;
+    const day = (reportDraft.day || segEditor.startDay).trim();
+    const amt = parseInt(reportDraft.amount, 10);
+    if (!day || !Number.isFinite(amt) || amt <= 0) return;
+    try {
+      const payload: any = { segment_id: segEditor.segmentId, report_day: day, amount: amt, created_by: currentUserId, created_by_name: currentUserName || null };
+      const { data, error } = await supabase.from('planning_segment_reports').insert(payload).select('*').single();
+      if (error) throw error;
+      if (data) {
+        setSegmentReports(prev => [...prev, { id: data.id, segmentId: data.segment_id, reportDay: data.report_day, amount: data.amount, createdBy: data.created_by ?? null, createdByName: data.created_by_name ?? null, createdAt: data.created_at || null }]);
+        setReportDraft(d => ({ day: d.day, amount: '' }));
+      }
+    } catch (e) {
+      console.warn('[planning] addPartialReport failed', e);
+    }
+  }, [segEditor?.segmentId, reportDraft.day, reportDraft.amount, supabase, currentUserId, currentUserName]);
+  const deletePartialReport = useCallback(async (id: string) => {
+    try {
+      const { error } = await supabase.from('planning_segment_reports').delete().eq('id', id);
+      if (error) throw error;
+      setSegmentReports(prev => prev.filter(r => r.id !== id));
+    } catch (e) {
+      console.warn('[planning] deletePartialReport failed', e);
+    }
+  }, [supabase]);
 
   // Secondary channel for editing broadcast events
   useEffect(() => {
@@ -2358,6 +2454,48 @@ export default function PlanneringPage() {
                       );
                     })()}
                   </div>
+                  {/* Rapportering (partial bags) */}
+                  {segEditor.mode === 'edit' && segEditor.segmentId && (
+                    <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 12, padding: 12 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                        <h4 style={{ margin: 0, fontSize: 13, letterSpacing: .2, color: '#0f172a' }}>Rapportering</h4>
+                        <div style={{ height: 1, background: '#e5e7eb', flex: 1 }} />
+                        <span style={{ fontSize: 11, color: '#64748b' }}>Totalt: {reportedBagsBySegment.get(segEditor.segmentId) || 0} säckar</span>
+                      </div>
+                      <div style={{ display: 'grid', gap: 8 }}>
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                          <label style={{ fontSize: 12, display: 'grid', gap: 4 }}>
+                            <span>Dag</span>
+                            <input type="date" value={reportDraft.day} onChange={e => setReportDraft(d => ({ ...d, day: e.target.value }))} style={{ padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }} />
+                          </label>
+                          <label style={{ fontSize: 12, display: 'grid', gap: 4 }}>
+                            <span>Antal säckar</span>
+                            <input type="number" min={1} value={reportDraft.amount} onChange={e => setReportDraft(d => ({ ...d, amount: e.target.value }))} placeholder="t.ex. 8" style={{ padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }} />
+                          </label>
+                          <button type="button" onClick={addPartialReport} className="btn--plain btn--xs" style={{ alignSelf: 'end', height: 32, padding: '6px 10px', border: '1px solid #16a34a', background: '#16a34a', color: '#fff', borderRadius: 8 }}>Lägg till</button>
+                        </div>
+                        {(() => {
+                          const list = segmentReports.filter(r => r.segmentId === segEditor.segmentId).sort((a,b) => (a.reportDay || '').localeCompare(b.reportDay));
+                          return list.length > 0 ? (
+                            <div style={{ display: 'grid', gap: 6 }}>
+                              {list.map(r => (
+                                <div key={r.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', border: '1px solid #e5e7eb', background: '#fff', borderRadius: 8, padding: '6px 8px' }}>
+                                  <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                                    <span style={{ fontSize: 12, color: '#0f172a' }}>{r.reportDay}</span>
+                                    <span style={{ fontSize: 12, color: '#334155', background: '#f1f5f9', border: '1px solid #e2e8f0', borderRadius: 999, padding: '2px 8px' }}>{r.amount} säckar</span>
+                                    {r.createdByName && <span style={{ fontSize: 11, color: '#64748b' }}>av {r.createdByName}</span>}
+                                  </div>
+                                  <button type="button" className="btn--plain btn--xs" onClick={() => deletePartialReport(r.id)} style={{ fontSize: 11, padding: '4px 8px', border: '1px solid #fecaca', background: '#fee2e2', color: '#b91c1c', borderRadius: 8 }}>Ta bort</button>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div style={{ fontSize: 12, color: '#64748b' }}>Inga delrapporter ännu.</div>
+                          );
+                        })()}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 12, justifyContent: 'space-between', alignItems: 'center', padding: 12, background: '#f8fafc', borderTop: '1px solid #e5e7eb', flexWrap: 'wrap' }}>
@@ -2574,7 +2712,7 @@ export default function PlanneringPage() {
                     {meta?.truck && <span style={{ fontSize:11, color:'#475569', background:'#f1f5f9', border:'1px solid #e2e8f0', padding:'2px 6px', borderRadius: 999 }}>Lastbil: {meta.truck}</span>}
                     {team.length > 0 && <span style={{ fontSize:11, color:'#475569', background:'#f1f5f9', border:'1px solid #e2e8f0', padding:'2px 6px', borderRadius: 999 }}>Team: {team.join(', ')}</span>}
                     {typeof meta?.bagCount === 'number' && <span style={{ fontSize:11, color:'#475569', background:'#f1f5f9', border:'1px solid #e2e8f0', padding:'2px 6px', borderRadius: 999 }}>Plan: {meta.bagCount} säckar</span>}
-                    {typeof meta?.actual_bags_used === 'number' && <span style={{ fontSize:11, color:'#1e293b', background:'#ecfeff', border:'1px solid #bae6fd', padding:'2px 6px', borderRadius: 999 }}>Rapporterat: {meta.actual_bags_used} säckar</span>}
+                    {(() => { const pid = base?.id; const agg = pid ? (reportedBagsByProject.get(pid) || 0) : 0; return agg > 0 ? <span style={{ fontSize:11, color:'#1e293b', background:'#ecfeff', border:'1px solid #bae6fd', padding:'2px 6px', borderRadius: 999 }}>Rapporterat: {agg} säckar</span> : null; })()}
                     {meta?.jobType && <span style={{ fontSize:11, color:'#475569', background:'#f1f5f9', border:'1px solid #e2e8f0', padding:'2px 6px', borderRadius: 999 }}>{meta.jobType}</span>}
                     {base?.createdAt && <span style={{ fontSize:11, color:'#64748b' }}>Skapad {base.createdAt.slice(0,10)}</span>}
                   </div>
@@ -3343,6 +3481,9 @@ export default function PlanneringPage() {
                                 }
                               } else if (it.truck) {
                                 display = truckColors[it.truck];
+                              } else {
+                                // Unassigned truck: emphasize with red theme
+                                display = { bg: '#fee2e2', border: '#fca5a5', text: '#7f1d1d' };
                               }
                               const cardBorder = display ? display.border : '#c7d2fe';
                               const cardBg = display ? display.bg : '#eef2ff';
@@ -3409,11 +3550,11 @@ export default function PlanneringPage() {
                                         {it.jobType || ''}
                                       </span>
                                     )}
-                                      {isStart && scheduleMeta[it.project.id]?.actual_bags_used != null && (
-                                        <span style={{ fontSize: 10, color: display ? display.text : '#1e293b', background:'#ffffff50', padding:'4px 6px', borderRadius:10, border:`1px solid ${cardBorder}55` }} title={`Rapporterat: ${scheduleMeta[it.project.id]?.actual_bags_used} säckar`}>
-                                          säckar blåsta {scheduleMeta[it.project.id]!.actual_bags_used} st
+                                      {isStart && (() => { const agg = reportedBagsByProject.get(it.project.id) || 0; return agg > 0 ? (
+                                        <span style={{ fontSize: 10, color: display ? display.text : '#1e293b', background:'#ffffff50', padding:'4px 6px', borderRadius:10, border:`1px solid ${cardBorder}55` }} title={`Rapporterat: ${agg} säckar`}>
+                                          säckar blåsta {agg} st
                                         </span>
-                                      )}
+                                      ) : null; })()}
                                     {/* Bottom controls */}
                                     <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 4 }}>
                                       <button
@@ -3535,6 +3676,9 @@ export default function PlanneringPage() {
                                   }
                                 } else if (it.truck) {
                                   display = truckColors[it.truck];
+                                } else {
+                                  // Unassigned truck: emphasize with red theme
+                                  display = { bg: '#fee2e2', border: '#fca5a5', text: '#7f1d1d' };
                                 }
                                 const cardBorder = display ? display.border : '#c7d2fe';
                                 const cardBg = display ? display.bg : '#eef2ff';
@@ -3853,6 +3997,9 @@ export default function PlanneringPage() {
                                     }
                                   } else if (it.truck) {
                                     display = truckColors[it.truck];
+                                  } else {
+                                    // Unassigned truck: emphasize with red theme
+                                    display = { bg: '#fee2e2', border: '#fca5a5', text: '#7f1d1d' };
                                   }
                                   const cardBorder = display ? display.border : '#c7d2fe';
                                   const cardBg = display ? display.bg : '#eef2ff';

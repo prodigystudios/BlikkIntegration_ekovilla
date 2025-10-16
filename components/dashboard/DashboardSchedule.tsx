@@ -20,6 +20,8 @@ export default function DashboardSchedule({ compact = false }: { compact?: boole
   const [mode, setMode] = useState<WeekMode>('current');
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [currentUserName, setCurrentUserName] = useState<string | null>(null);
   const [dayIdx, setDayIdx] = useState<number | null>(() => {
     // Default to current weekday (Mon=0..Fri=4). On weekend, show all (null).
     const dow = new Date().getDay(); // Sun=0 .. Sat=6
@@ -32,12 +34,40 @@ export default function DashboardSchedule({ compact = false }: { compact?: boole
   const [detailError, setDetailError] = useState<string | null>(null);
   const [detailData, setDetailData] = useState<any | null>(null);
   const [detailBase, setDetailBase] = useState<any | null>(null);
+  const [reportDraft, setReportDraft] = useState<{ day: string; amount: string }>({ day: '', amount: '' });
+
+  type SegmentReport = { id: string; segment_id: string; report_day: string; amount: number; created_by: string | null; created_by_name: string | null; created_at: string };
+  const [segmentReportsMap, setSegmentReportsMap] = useState<Record<string, SegmentReport[]>>({}); // key: segment_id
 
   const openDetail = useCallback(async (it: any) => {
     setDetailOpen(true);
     setDetailBase(it);
     setDetailError(null);
     setDetailData(null);
+    // Default report draft: clamp to job range if possible
+    try {
+      const s = (it.start_day as string) || null;
+      const e = (it.end_day as string) || s;
+      const today = toISODateLocal(new Date());
+      const def = s && e && s <= today && today <= e ? today : (s || today);
+      setReportDraft({ day: def, amount: '' });
+    } catch { setReportDraft({ day: '', amount: '' }); }
+    // Load reports for this segment lazily if not present
+    if (it.segment_id) {
+      try {
+        const known = segmentReportsMap[it.segment_id];
+        if (!known) {
+          const { data: rows } = await supabase
+            .from('planning_segment_reports')
+            .select('id, segment_id, report_day, amount, created_by, created_by_name, created_at')
+            .eq('segment_id', it.segment_id)
+            .order('report_day');
+          if (Array.isArray(rows)) {
+            setSegmentReportsMap(prev => ({ ...prev, [it.segment_id]: rows as any }));
+          }
+        }
+      } catch { /* ignore */ }
+    }
     // Try to enrich from Blikk API by order number, fallback to id
     const fetchViaLookup = async (): Promise<any | null> => {
       try {
@@ -82,6 +112,28 @@ export default function DashboardSchedule({ compact = false }: { compact?: boole
   }, [mode]);
 
   useEffect(() => {
+    // Load current user and name
+    (async () => {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          setCurrentUserId(user.id);
+          let resolvedName: string | null = null;
+          try {
+            const { data: profile } = await supabase.from('profiles').select('full_name').eq('id', user.id).maybeSingle();
+            if (profile && (profile as any).full_name) resolvedName = (profile as any).full_name as string;
+          } catch {}
+          if (!resolvedName) {
+            const meta: any = user.user_metadata || {};
+            resolvedName = meta.full_name || meta.name || (user.email ? user.email.split('@')[0] : null);
+          }
+          setCurrentUserName(resolvedName);
+        }
+      } catch {}
+    })();
+  }, [supabase]);
+
+  useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoading(true);
@@ -101,6 +153,85 @@ export default function DashboardSchedule({ compact = false }: { compact?: boole
     })();
     return () => { cancelled = true; };
   }, [supabase, range.startISO, range.endISO]);
+
+  // When items change, fetch reports for listed segments
+  useEffect(() => {
+    const ids = Array.from(new Set((items.map(it => it.segment_id) as Array<unknown>)
+      .filter((v): v is string => typeof v === 'string' && v.length > 0)));
+    if (ids.length === 0) return;
+    (async () => {
+      try {
+        const { data: rows } = await supabase
+          .from('planning_segment_reports')
+          .select('id, segment_id, report_day, amount, created_by, created_by_name, created_at')
+          .in('segment_id', ids);
+        if (Array.isArray(rows)) {
+          const grouped: Record<string, SegmentReport[]> = {};
+          for (const r of rows as any as SegmentReport[]) {
+            if (!grouped[r.segment_id]) grouped[r.segment_id] = [];
+            grouped[r.segment_id].push(r);
+          }
+          setSegmentReportsMap(prev => ({ ...prev, ...grouped }));
+        }
+      } catch {}
+    })();
+  }, [items, supabase]);
+
+  // Realtime updates for segment reports
+  useEffect(() => {
+    const channel = supabase.channel('dashboard-segment-reports')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'planning_segment_reports' }, payload => {
+        const row: any = payload.new || payload.old;
+        if (!row?.segment_id) return;
+        setSegmentReportsMap(prev => {
+          const arr = prev[row.segment_id] ? [...prev[row.segment_id]] : [];
+          if (payload.eventType === 'INSERT') {
+            // avoid dup
+            if (!arr.some(x => x.id === row.id)) arr.push(row);
+          } else if (payload.eventType === 'UPDATE') {
+            const i = arr.findIndex(x => x.id === row.id);
+            if (i >= 0) arr[i] = row; else arr.push(row);
+          } else if (payload.eventType === 'DELETE') {
+            const i = arr.findIndex(x => x.id === row.id);
+            if (i >= 0) arr.splice(i, 1);
+          }
+          // sort by day
+          arr.sort((a, b) => (a.report_day || '').localeCompare(b.report_day));
+          return { ...prev, [row.segment_id]: arr };
+        });
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [supabase]);
+
+  const reportedBySegment = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const [segId, list] of Object.entries(segmentReportsMap)) {
+      map.set(segId, list.reduce((sum, r) => sum + (Number(r.amount) || 0), 0));
+    }
+    return map;
+  }, [segmentReportsMap]);
+
+  const addPartialReport = useCallback(async () => {
+    const segId = detailBase?.segment_id as string | undefined;
+    if (!segId) return;
+    const amount = parseInt(reportDraft.amount, 10);
+    const day = reportDraft.day;
+    if (!Number.isFinite(amount) || amount <= 0 || !day) return;
+    const payload: any = {
+      segment_id: segId,
+      report_day: day,
+      amount,
+      created_by: currentUserId,
+      created_by_name: currentUserName || null
+    };
+    const { error } = await supabase.from('planning_segment_reports').insert(payload).select('id').single();
+    if (!error) setReportDraft(d => ({ ...d, amount: '' }));
+  }, [detailBase?.segment_id, reportDraft.amount, reportDraft.day, supabase, currentUserId, currentUserName]);
+
+  const deletePartialReport = useCallback(async (id: string) => {
+    await supabase.from('planning_segment_reports').delete().eq('id', id);
+  }, [supabase]);
 
   const grouped = useMemo(() => {
     // If a specific Mon..Fri day is selected, show only jobs that include that date (start..end inclusive)
@@ -237,6 +368,7 @@ export default function DashboardSchedule({ compact = false }: { compact?: boole
                   const title = [it.order_number ? String(it.order_number) : null, it.project_name].filter(Boolean).join(' - ');
                   const theme = getMaterialTheme(it.job_type);
                   const bagLabel = typeof it.bag_count === 'number' ? `${it.bag_count} säckar${theme.label ? ' ' + theme.label : ''}` : null;
+                  const reported = it.segment_id ? (reportedBySegment.get(it.segment_id) || 0) : 0;
                   return (
                     <div
                       key={it.segment_id || `${it.project_id}|${it.start_day}`}
@@ -272,6 +404,15 @@ export default function DashboardSchedule({ compact = false }: { compact?: boole
                             {bagLabel}
                           </span>
                         )}
+                          {reported > 0 && (
+                            <span style={{ display:'inline-flex', alignItems:'center', gap:6, fontSize: compact ? 10.5 : 11, color:'#0f172a', background:'#ecfeff', border:'1px solid #bae6fd', padding:'3px 8px', borderRadius:999 }} title={`Rapporterat: ${reported} säckar`}>
+                              {/* Check icon */}
+                              <svg width={14} height={14} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                <path fill="currentColor" d="M9 16.2l-3.5-3.5L4 14.2 9 19l12-12-1.5-1.5z" />
+                              </svg>
+                              Rapporterat: {reported}
+                            </span>
+                          )}
                         {it.truck && (
                           <span style={{ display:'inline-flex', alignItems:'center', gap:6, fontSize: compact ? 10.5 : 11, color:'#334155', background:'#f1f5f9', border:'1px solid #e2e8f0', padding:'3px 8px', borderRadius:999 }}>
                             {/* Truck icon */}
@@ -315,6 +456,9 @@ export default function DashboardSchedule({ compact = false }: { compact?: boole
           return uniq.map(display => ({ display, tel: norm(display) }));
         })();
         const headerTitle = [detailBase?.order_number ? `#${detailBase.order_number}` : null, detailBase?.project_name || 'Projekt'].filter(Boolean).join(' ');
+        const segId = detailBase?.segment_id as string | undefined;
+        const segReports = segId ? (segmentReportsMap[segId] || []) : [];
+        const reportedTotal = segReports.reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
         return (
           <div style={{ position: 'fixed', inset:0, zIndex: 260, background: 'rgba(15,23,42,0.5)', backdropFilter:'blur(3px)', display:'flex', alignItems:'center', justifyContent:'center', padding:16 }} onClick={closeDetail}>
             <div role="dialog" aria-modal="true" aria-busy={detailLoading ? true : undefined} onClick={e => e.stopPropagation()} style={{ width: 'min(720px, 92vw)', maxHeight: '80vh', overflowY: 'auto', background:'#fff', border:'1px solid #e2e8f0', borderRadius:12, boxShadow:'0 12px 30px rgba(0,0,0,0.25)', display:'grid', gap:12, padding:16 }}>
@@ -380,6 +524,47 @@ export default function DashboardSchedule({ compact = false }: { compact?: boole
                   {detailBase?.truck && <span style={{ fontSize:11, color:'#475569', background:'#f1f5f9', border:'1px solid #e2e8f0', padding:'2px 6px', borderRadius: 999 }}>Lastbil: {detailBase.truck}</span>}
                   {typeof detailBase?.bag_count === 'number' && <span style={{ fontSize:11, color:'#475569', background:'#f1f5f9', border:'1px solid #e2e8f0', padding:'2px 6px', borderRadius: 999 }}>Plan: {detailBase.bag_count} säckar</span>}
                   {detailBase?.job_type && <span style={{ fontSize:11, color:'#475569', background:'#f1f5f9', border:'1px solid #e2e8f0', padding:'2px 6px', borderRadius: 999 }}>{detailBase.job_type}</span>}
+                  {segId && reportedTotal > 0 && <span style={{ fontSize:11, color:'#0f172a', background:'#ecfeff', border:'1px solid #bae6fd', padding:'2px 6px', borderRadius: 999 }}>Rapporterat: {reportedTotal} säckar</span>}
+                </div>
+                {/* Rapportering UI for installers */}
+                <div style={{ display:'grid', gap:8, background:'#f8fafc', border:'1px solid #e2e8f0', borderRadius:8, padding:10 }}>
+                  <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                    <strong style={{ fontSize:13, color:'#0f172a' }}>Rapportering</strong>
+                    <div style={{ height:1, background:'#e5e7eb', flex:1 }} />
+                    {segId && <span style={{ fontSize:11, color:'#64748b' }}>Totalt: {reportedTotal} säckar</span>}
+                  </div>
+                  {!segId && <div style={{ fontSize:12, color:'#64748b' }}>Denna post saknar segment-id och kan inte rapporteras här.</div>}
+                  {segId && (
+                    <>
+                      <div style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' }}>
+                        <label style={{ display:'grid', gap:4, fontSize:12 }}>
+                          <span>Dag</span>
+                          <input type="date" value={reportDraft.day} onChange={e => setReportDraft(d => ({ ...d, day: e.target.value }))} style={{ padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }} />
+                        </label>
+                        <label style={{ display:'grid', gap:4, fontSize:12 }}>
+                          <span>Antal säckar</span>
+                          <input type="number" min={1} value={reportDraft.amount} onChange={e => setReportDraft(d => ({ ...d, amount: e.target.value }))} placeholder="t.ex. 8" style={{ padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }} />
+                        </label>
+                        <button type="button" onClick={addPartialReport} className="btn--plain btn--sm" style={{ alignSelf:'end', height:34, padding:'6px 12px', border:'1px solid #16a34a', background:'#16a34a', color:'#fff', borderRadius:8 }}>Lägg till</button>
+                      </div>
+                      {segReports.length > 0 ? (
+                        <div style={{ display:'grid', gap:6 }}>
+                          {segReports.map(r => (
+                            <div key={r.id} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', border:'1px solid #e5e7eb', background:'#fff', borderRadius:8, padding:'6px 8px' }}>
+                              <div style={{ display:'flex', gap:10, alignItems:'center' }}>
+                                <span style={{ fontSize:12, color:'#0f172a' }}>{r.report_day}</span>
+                                <span style={{ fontSize:12, color:'#334155', background:'#f1f5f9', border:'1px solid #e2e8f0', borderRadius:999, padding:'2px 8px' }}>{r.amount} säckar</span>
+                                {r.created_by_name && <span style={{ fontSize:11, color:'#64748b' }}>av {r.created_by_name}</span>}
+                              </div>
+                              <button type="button" className="btn--plain btn--xs" onClick={() => deletePartialReport(r.id)} style={{ fontSize:11, padding:'4px 8px', border:'1px solid #fecaca', background:'#fee2e2', color:'#b91c1c', borderRadius:8 }}>Ta bort</button>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div style={{ fontSize:12, color:'#64748b' }}>Inga delrapporter ännu.</div>
+                      )}
+                    </>
+                  )}
                 </div>
               </div>
             </div>
