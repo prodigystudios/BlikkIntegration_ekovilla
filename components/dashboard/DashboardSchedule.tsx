@@ -225,9 +225,28 @@ export default function DashboardSchedule({ compact = false }: { compact?: boole
       created_by: currentUserId,
       created_by_name: currentUserName || null
     };
-    const { error } = await supabase.from('planning_segment_reports').insert(payload).select('id').single();
-    if (!error) setReportDraft(d => ({ ...d, amount: '' }));
-  }, [detailBase?.segment_id, reportDraft.amount, reportDraft.day, supabase, currentUserId, currentUserName]);
+    const { data, error } = await supabase.from('planning_segment_reports').insert(payload).select('*').single();
+    if (!error) {
+      setReportDraft(d => ({ ...d, amount: '' }));
+      // Also withdraw from correct depot with idempotency key based on this partial report
+      try {
+        const jt = String(detailBase?.job_type || '').toLowerCase();
+        const materialKind = jt.startsWith('vit') ? 'Vitull' : (jt.startsWith('eko') ? 'Ekovilla' : undefined);
+        await fetch('/api/planning/consume-bags', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projectId: String(detailBase?.project_id || ''),
+            installationDate: day,
+            totalBags: amount,
+            segmentId: segId,
+            reportKey: data?.id ? `partial:${data.id}` : undefined,
+            materialKind,
+          })
+        });
+      } catch {}
+    }
+  }, [detailBase?.segment_id, detailBase?.job_type, detailBase?.project_id, reportDraft.amount, reportDraft.day, supabase, currentUserId, currentUserName]);
 
   const deletePartialReport = useCallback(async (id: string) => {
     await supabase.from('planning_segment_reports').delete().eq('id', id);

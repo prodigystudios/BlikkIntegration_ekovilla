@@ -1034,6 +1034,27 @@ export default function PlanneringPage() {
       if (data) {
         setSegmentReports(prev => [...prev, { id: data.id, segmentId: data.segment_id, reportDay: data.report_day, amount: data.amount, createdBy: data.created_by ?? null, createdByName: data.created_by_name ?? null, createdAt: data.created_at || null }]);
         setReportDraft(d => ({ day: d.day, amount: '' }));
+        // Also withdraw from correct depot with idempotency key based on this partial report
+        try {
+          const mat = (() => {
+            const jt = (scheduleMeta[segEditor.projectId!]?.jobType || '').toLowerCase();
+            if (jt.startsWith('vit')) return 'Vitull';
+            if (jt.startsWith('eko')) return 'Ekovilla';
+            return undefined;
+          })();
+          await fetch('/api/planning/consume-bags', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              projectId: segEditor.projectId,
+              installationDate: day,
+              totalBags: amt,
+              segmentId: segEditor.segmentId,
+              reportKey: `partial:${data.id}`,
+              materialKind: mat,
+            })
+          });
+        } catch (_) { /* ignore */ }
       }
     } catch (e) {
       console.warn('[planning] addPartialReport failed', e);
