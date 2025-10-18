@@ -27,6 +27,7 @@ interface ScheduledSegment {
   createdByName?: string | null;
   depotId?: string | null; // optional per-segment depot override
   sortIndex?: number | null; // explicit order within a truck/day
+  truck?: string | null; // per-segment truck assignment (added)
 }
 
 interface ProjectScheduleMeta {
@@ -52,6 +53,27 @@ interface SegmentReport {
   createdBy?: string | null;
   createdByName?: string | null;
   createdAt?: string | null; // ISO
+}
+
+// Small inline control to copy a segment to another truck
+function CopyToTruckButton({ segmentId, day, currentTruck, trucks, onCopy }: { segmentId: string; day: string; currentTruck: string | null; trucks: string[]; onCopy: (targetTruck: string) => void }) {
+  const [target, setTarget] = useState<string>('');
+  const options = trucks.filter(t => t && t !== currentTruck);
+  if (options.length === 0) return null;
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+      <select value={target} onChange={e => setTarget(e.target.value)} style={{ fontSize: 10, padding: '2px 4px', border: '1px solid #cbd5e1', borderRadius: 4 }}>
+        <option value="">Välj lastbil…</option>
+        {options.map(t => (<option key={t} value={t}>{t}</option>))}
+      </select>
+      <button type="button" className="btn--plain btn--xs" disabled={!target}
+              onClick={(e) => { e.stopPropagation(); if (target) onCopy(target); }}
+              title="Kopiera till annan lastbil"
+              style={{ fontSize: 10, background: '#fff7ed', border: '1px solid #fdba74', color: '#9a3412', borderRadius: 4, padding: '2px 4px' }}>
+        Kopiera
+      </button>
+    </span>
+  );
 }
 
 // Normalize a raw project from /api/blikk/projects into our Project shape
@@ -185,6 +207,8 @@ export default function PlanneringPage() {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   // View mode: standard month grid or weekday lanes (all Mondays in a row, etc.)
   const [viewMode, setViewMode] = useState<'monthGrid' | 'weekdayLanes' | 'dayList'>('monthGrid');
+  // Calendar preference: hide weekends
+  const [hideWeekends, setHideWeekends] = useState(false);
   // Inline card controls have been retired in favor of the Segment Editor modal
   // Collapsible left sidebar (search/manual add/backlog)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -238,6 +262,16 @@ export default function PlanneringPage() {
   useEffect(() => {
     try { localStorage.setItem('planner.sidebarCollapsed', sidebarCollapsed ? '1' : '0'); } catch { /* ignore */ }
   }, [sidebarCollapsed]);
+  // Load/persist weekend visibility preference
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem('planner.hideWeekends');
+      if (v === '1') setHideWeekends(true);
+    } catch { /* ignore */ }
+  }, []);
+  useEffect(() => {
+    try { localStorage.setItem('planner.hideWeekends', hideWeekends ? '1' : '0'); } catch { /* ignore */ }
+  }, [hideWeekends]);
   // UI hover state for backlog punch effect
   const [hoverBacklogId, setHoverBacklogId] = useState<string | null>(null);
   // Hover state for scheduled segment cards (used to show edit hint on hover)
@@ -807,7 +841,7 @@ export default function PlanneringPage() {
         }
         // Normalize into local shapes
         if (Array.isArray(segs)) {
-          setScheduledSegments(segs.map(s => ({ id: s.id, projectId: s.project_id, startDay: s.start_day, endDay: s.end_day, createdBy: s.created_by, createdByName: s.created_by_name, depotId: (s as any).depot_id ?? null, sortIndex: (s as any).sort_index ?? null })));
+          setScheduledSegments(segs.map(s => ({ id: s.id, projectId: s.project_id, startDay: s.start_day, endDay: s.end_day, createdBy: s.created_by, createdByName: s.created_by_name, depotId: (s as any).depot_id ?? null, sortIndex: (s as any).sort_index ?? null, truck: (s as any).truck ?? null })));
           // Inject projects from segments if not already present
           setProjects(prev => {
             const map = new Map(prev.map(p => [p.id, p]));
@@ -907,7 +941,7 @@ export default function PlanneringPage() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'planning_segments' }, payload => {
         const row: any = payload.new || payload.old;
         if (payload.eventType === 'INSERT') {
-          setScheduledSegments(prev => prev.some(s => s.id === row.id) ? prev : [...prev, { id: row.id, projectId: row.project_id, startDay: row.start_day, endDay: row.end_day, createdBy: row.created_by, createdByName: row.created_by_name, depotId: row.depot_id ?? null, sortIndex: row.sort_index ?? null }]);
+          setScheduledSegments(prev => prev.some(s => s.id === row.id) ? prev : [...prev, { id: row.id, projectId: row.project_id, startDay: row.start_day, endDay: row.end_day, createdBy: row.created_by, createdByName: row.created_by_name, depotId: row.depot_id ?? null, sortIndex: row.sort_index ?? null, truck: row.truck ?? null }]);
           setProjects(prev => prev.some(p => p.id === row.project_id) ? prev : [...prev, {
             id: row.project_id,
             name: row.project_name,
@@ -921,7 +955,7 @@ export default function PlanneringPage() {
             salesResponsible: row.sales_responsible ?? null
           }]);
         } else if (payload.eventType === 'UPDATE') {
-          setScheduledSegments(prev => prev.map(s => s.id === row.id ? { ...s, startDay: row.start_day, endDay: row.end_day, createdByName: row.created_by_name ?? s.createdByName, depotId: row.depot_id ?? s.depotId ?? null, sortIndex: row.sort_index ?? s.sortIndex ?? null } : s));
+          setScheduledSegments(prev => prev.map(s => s.id === row.id ? { ...s, startDay: row.start_day, endDay: row.end_day, createdByName: row.created_by_name ?? s.createdByName, depotId: row.depot_id ?? s.depotId ?? null, sortIndex: row.sort_index ?? s.sortIndex ?? null, truck: row.truck ?? s.truck ?? null } : s));
         } else if (payload.eventType === 'DELETE') {
           setScheduledSegments(prev => prev.filter(s => s.id !== row.id));
         }
@@ -1173,8 +1207,9 @@ export default function PlanneringPage() {
       created_by: currentUserId,
       created_by_name: currentUserName || currentUserId || project.customer || 'Okänd'
     };
-    if (seg.depotId) payload.depot_id = seg.depotId;
-    if (seg.sortIndex != null) payload.sort_index = seg.sortIndex;
+  if (seg.depotId) payload.depot_id = seg.depotId;
+  if (seg.truck !== undefined) payload.truck = seg.truck;
+  if (seg.sortIndex != null) payload.sort_index = seg.sortIndex;
     enqueue(
       supabase.from('planning_segments')
         .upsert(payload, { onConflict: 'id', ignoreDuplicates: true })
@@ -1197,7 +1232,7 @@ export default function PlanneringPage() {
   }, [supabase, currentUserId, currentUserName]);
 
   const persistSegmentUpdate = useCallback((seg: ScheduledSegment) => {
-    enqueue(supabase.from('planning_segments').update({ start_day: seg.startDay, end_day: seg.endDay }).eq('id', seg.id).select('id').then(({ data, error }) => { if (error) console.warn('[persist update seg] error', error); else console.debug('[planning] update ok', data); }));
+    enqueue(supabase.from('planning_segments').update({ start_day: seg.startDay, end_day: seg.endDay, truck: seg.truck ?? null }).eq('id', seg.id).select('id').then(({ data, error }) => { if (error) console.warn('[persist update seg] error', error); else console.debug('[planning] update ok', data); }));
   }, [supabase]);
 
   const deletedSegConfirmRef = useRef<Set<string>>(new Set());
@@ -1467,6 +1502,18 @@ export default function PlanneringPage() {
     );
   }, [supabase]);
 
+  // Duplicate a segment to another truck for the same day (creates a new segment spanning the same range)
+  const duplicateSegmentToTruck = useCallback((segmentId: string, day: string, targetTruck: string) => {
+    const src = scheduledSegments.find(s => s.id === segmentId);
+    if (!src) return;
+    // Keep the original span range but ensure the clicked day is within it
+    if (day < src.startDay || day > src.endDay) return;
+    const newSeg: ScheduledSegment = { id: genId(), projectId: src.projectId, startDay: src.startDay, endDay: src.endDay, depotId: src.depotId ?? null, sortIndex: null, truck: targetTruck };
+    setScheduledSegments(prev => [...prev, newSeg]);
+    const project = projects.find(p => p.id === src.projectId);
+    if (project) persistSegmentCreate(newSeg, project);
+  }, [scheduledSegments, projects, persistSegmentCreate]);
+
   // Explicit save workflow states
   const updateTruckTeamName = useCallback((truck: TruckRec, idx: 1 | 2, value: string) => {
     setEditingTeamNames(prev => {
@@ -1622,10 +1669,12 @@ export default function PlanneringPage() {
     for (let i = 0, lead = weekdayIndex(start); i < lead; i++) days.push({ date: null, inMonth: false });
     for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) days.push({ date: fmtDate(new Date(d)), inMonth: true });
     while (days.length % 7 !== 0) days.push({ date: null, inMonth: false });
-    const out: Array<Array<{ date: string | null; inMonth: boolean }>> = [];
-    for (let i = 0; i < days.length; i += 7) out.push(days.slice(i, i + 7));
-    return out;
-  }, [monthOffset]);
+    const fullWeeks: Array<Array<{ date: string | null; inMonth: boolean }>> = [];
+    for (let i = 0; i < days.length; i += 7) fullWeeks.push(days.slice(i, i + 7));
+    if (!hideWeekends) return fullWeeks;
+    // When hiding weekends, collapse weeks to only Mon-Fri (indices 0..4)
+    return fullWeeks.map(week => week.slice(0, 5));
+  }, [monthOffset, hideWeekends]);
 
   // For weekday lanes view: collect all days in month grouped by weekday index (0=Mon)
   const weekdayLanes = useMemo(() => {
@@ -1641,8 +1690,10 @@ export default function PlanneringPage() {
       const weekdayIndex = (d.getDay() + 6) % 7; // Mon=0
       lanes[weekdayIndex].push({ date: dateStr, inMonth: true });
     }
-    return lanes;
-  }, [viewMode, monthOffset]);
+    if (!hideWeekends) return lanes;
+    // Hide Sat(5) and Sun(6)
+    return lanes.slice(0, 5);
+  }, [viewMode, monthOffset, hideWeekends]);
 
   // Linear list of each day (for 'dayList' view)
   const daysOfMonth = useMemo(() => {
@@ -1653,11 +1704,17 @@ export default function PlanneringPage() {
     const start = startOfMonth(base);
     const end = endOfMonth(base);
     const out: string[] = [];
-    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) out.push(fmtDate(new Date(d)));
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+      const idx = (d.getDay() + 6) % 7; // Mon=0
+      if (hideWeekends && (idx === 5 || idx === 6)) continue;
+      out.push(fmtDate(new Date(d)));
+    }
     return out;
-  }, [viewMode, monthOffset]);
+  }, [viewMode, monthOffset, hideWeekends]);
 
   const dayNames = ['Mån', 'Tis', 'Ons', 'Tor', 'Fre', 'Lör', 'Sön'];
+  const visibleDayIndices = hideWeekends ? [0,1,2,3,4] : [0,1,2,3,4,5,6];
+  const visibleDayNames = visibleDayIndices.map(i => dayNames[i]);
   // Today marker (local date)
   const todayISO = useMemo(() => fmtDate(new Date()), []);
 
@@ -1791,6 +1848,8 @@ export default function PlanneringPage() {
         const spanEnd = day === seg.endDay;
         const totalSpan = Math.round((new Date(seg.endDay).getTime() - new Date(seg.startDay).getTime()) / 86400000) + 1;
         const inst: DayInstance = { ...meta, segmentId: seg.id, project, day, spanStart, spanEnd, spanMiddle: !spanStart && !spanEnd, totalSpan };
+        // Prefer per-segment truck if set
+        (inst as any).truck = (seg as any).truck ?? (inst as any).truck ?? null;
         const list = map.get(day) || [];
         list.push(inst);
         map.set(day, list);
@@ -1817,7 +1876,7 @@ export default function PlanneringPage() {
       // Resolve effective depot: segment override > truck's depot
       let effectiveDepotId: string | null = seg.depotId || null;
       if (!effectiveDepotId) {
-        const truckName = meta?.truck || null;
+        const truckName = (seg as any).truck ?? meta?.truck ?? null;
         if (truckName) {
           const truckRec = planningTrucks.find(t => t.name === truckName) || null;
           effectiveDepotId = truckRec?.depot_id ?? null;
@@ -2208,24 +2267,23 @@ export default function PlanneringPage() {
     const seg = scheduledSegments.find(s => s.id === segmentId);
     if (!seg) return;
     const meta = scheduleMeta[seg.projectId] || { projectId: seg.projectId } as ProjectScheduleMeta;
-    setSegEditor({ mode: 'edit', projectId: seg.projectId, segmentId: seg.id, startDay: seg.startDay, endDay: seg.endDay, truck: meta.truck ?? null, bagCount: (typeof meta.bagCount === 'number' ? meta.bagCount : null), jobType: meta.jobType ?? null, depotId: seg.depotId ?? null });
+    setSegEditor({ mode: 'edit', projectId: seg.projectId, segmentId: seg.id, startDay: seg.startDay, endDay: seg.endDay, truck: (seg as any).truck ?? meta.truck ?? null, bagCount: (typeof meta.bagCount === 'number' ? meta.bagCount : null), jobType: meta.jobType ?? null, depotId: seg.depotId ?? null });
     setSegEditorOpen(true);
   }
   function saveSegmentEditor() {
     if (!segEditor) return;
     const { mode, projectId, segmentId, startDay, endDay, truck, bagCount, jobType, depotId, positionIndex } = segEditor;
-    // Update meta via debounced helper
-    updateMeta(projectId, { truck, bagCount, jobType });
+    // Update only project-scoped meta (truck is now per-segment)
+    updateMeta(projectId, { bagCount, jobType });
     if (mode === 'create') {
-      const newSeg: ScheduledSegment = { id: genId(), projectId, startDay, endDay, depotId: depotId ?? undefined } as any;
+      const newSeg: ScheduledSegment = { id: genId(), projectId, startDay, endDay, depotId: depotId ?? undefined, truck: truck ?? null } as any;
       applyScheduledSegments(prev => {
         const next = [...prev, newSeg];
         // If a truck and desired position provided, reorder within same truck/day
         if (truck && positionIndex && positionIndex > 0) {
           // Build list of start-day items for same group in visual order
           const group = next
-            .filter(s => s.startDay === startDay && s.projectId !== projectId ? (scheduleMeta[s.projectId]?.truck || null) === truck : true)
-            .filter(s => s.startDay === startDay && (scheduleMeta[s.projectId]?.truck || null) === truck)
+            .filter(s => s.startDay === startDay && (((s as any).truck ?? (scheduleMeta[s.projectId]?.truck || null)) === truck))
             .sort((a, b) => ((a.sortIndex ?? 1e9) - (b.sortIndex ?? 1e9)) || a.id.localeCompare(b.id));
           // Ensure our new segment is present
           const ids = group.map(g => g.id);
@@ -2241,9 +2299,15 @@ export default function PlanneringPage() {
         }
         return next;
       });
+      const project = projects.find(p => p.id === projectId);
+      if (project) persistSegmentCreate(newSeg, project);
     } else if (segmentId) {
-      applyScheduledSegments(prev => prev.map(s => s.id === segmentId ? ({ ...s, startDay, endDay, depotId: depotId ?? null }) : s));
+      applyScheduledSegments(prev => prev.map(s => s.id === segmentId ? ({ ...s, startDay, endDay, depotId: depotId ?? null, truck: truck ?? null }) : s));
       updateSegmentDepot(segmentId, depotId ?? null);
+      // Persist segment-level truck
+      setTimeout(() => {
+        enqueue(supabase.from('planning_segments').update({ truck: truck ?? null }).eq('id', segmentId).select('id').then(({ error }) => { if (error) console.warn('[planning] update segment truck error', error); }));
+      }, 0);
     }
     closeSegEditor();
   }
@@ -2553,7 +2617,19 @@ export default function PlanneringPage() {
                     )
                   )}
                 </div>
-                <div style={{ display: 'flex', gap: 8, flexWrap:'wrap' }}>
+                <div style={{ display: 'flex', gap: 8, flexWrap:'wrap', alignItems:'center' }}>
+                  {segEditor.mode === 'edit' && segEditor.segmentId && (
+                    <span style={{ display:'inline-flex', alignItems:'center', gap:6, background:'#fff7ed', border:'1px solid #fdba74', padding:'6px 8px', borderRadius:8 }}>
+                      <span style={{ fontSize:12, color:'#7c2d12' }}>Kopiera till lastbil</span>
+                      <CopyToTruckButton
+                        segmentId={segEditor.segmentId}
+                        day={segEditor.startDay}
+                        currentTruck={segEditor.truck || null}
+                        trucks={trucks}
+                        onCopy={(target: string) => { duplicateSegmentToTruck(segEditor.segmentId!, segEditor.startDay, target); }}
+                      />
+                    </span>
+                  )}
                   <button type="button" onClick={closeSegEditor} className="btn--plain btn--xs" style={{ fontSize: 12, padding: '8px 12px', border: '1px solid #cbd5e1', background: '#fff', borderRadius: 10 }}>Avbryt</button>
                   <button type="button" onClick={saveSegmentEditor} className="btn--plain btn--xs" style={{ fontSize: 12, padding: '8px 12px', border: '1px solid #16a34a', background: '#16a34a', color: '#fff', borderRadius: 10, boxShadow: '0 2px 6px rgba(22,163,74,0.25)' }}>{segEditor.mode === 'create' ? 'Lägg till' : 'Spara'}</button>
                   {(() => { const proj = p; const hasEK = !!(proj?.orderNumber && hasEgenkontroll(proj.orderNumber)); const pth = proj?.orderNumber ? egenkontrollPath(proj.orderNumber) : null; return hasEK ? (
@@ -2937,6 +3013,11 @@ export default function PlanneringPage() {
                 );
               })}
             </div>
+            {/* Hide weekends toggle */}
+            <label style={{ display:'inline-flex', alignItems:'center', gap:6, fontSize:12, color:'#374151', border:'1px solid #d1d5db', borderRadius:6, padding:'4px 8px', background:'#fff' }}>
+              <input type="checkbox" checked={hideWeekends} onChange={e => setHideWeekends(e.target.checked)} />
+              Dölj helger
+            </label>
             {/* Inline card control toggle removed; actions live in the modal */}
             <button type="button" className="btn--plain btn--sm" onClick={() => refreshEgenkontroller()} style={{ border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 10px', fontSize: 12 }}>
               {egenkontrollLoading ? 'Laddar EK…' : 'Uppdatera EK'}
@@ -3403,9 +3484,9 @@ export default function PlanneringPage() {
           )}
           {viewMode === 'monthGrid' && (
             <div style={{ display: 'grid', gap: 12 }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '60px repeat(7, 1fr)', gap: 8, fontSize: 12, fontWeight: 600, color: '#374151' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: `60px repeat(${visibleDayNames.length}, 1fr)`, gap: 8, fontSize: 12, fontWeight: 600, color: '#374151' }}>
                 <div style={{ textAlign: 'center' }}>Vecka</div>
-                {dayNames.map(n => <div key={n} style={{ textAlign: 'center' }}>{n}</div>)}
+                {visibleDayNames.map(n => <div key={n} style={{ textAlign: 'center' }}>{n}</div>)}
               </div>
               {weeks.map((week, wi) => {
                 const firstDay = week.find(c => c.date)?.date;
@@ -3416,9 +3497,11 @@ export default function PlanneringPage() {
                   if (!firstDay || isoWeekKey(firstDay) !== selectedWeekKey) return null;
                 }
                 return (
-                  <div key={wi} style={{ display: 'grid', gridTemplateColumns: '60px repeat(7, 1fr)', gap: 8, background: weekBg, padding: 6, borderRadius: 12, boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.05)' }}>
+                  <div key={wi} style={{ display: 'grid', gridTemplateColumns: `60px repeat(${visibleDayNames.length}, 1fr)`, gap: 8, background: weekBg, padding: 6, borderRadius: 12, boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.05)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, background: 'rgba(255,255,255,0.65)', backdropFilter: 'blur(2px)', border: '1px solid rgba(0,0,0,0.07)', borderRadius: 8, color: '#1e293b', boxShadow: '0 1px 2px rgba(0,0,0,0.08)' }}>{weekNum && `v${weekNum}`}</div>
                     {week.map((cell, ci) => {
+                      // If weekends are hidden, skip Sat(5)/Sun(6)
+                      if (hideWeekends && (ci === 5 || ci === 6)) return <div key={ci} style={{ minHeight: 160, border: '1px solid transparent', borderRadius: 8 }} />;
                       if (!cell.date) return <div key={ci} style={{ minHeight: 160, border: '1px solid transparent', borderRadius: 8 }} />;
                       if (selectedWeekKey && isoWeekKey(cell.date) !== selectedWeekKey) {
                         // Hide days outside the selected ISO week (can happen for leading/trailing days in a month row)
@@ -3613,8 +3696,9 @@ export default function PlanneringPage() {
 
           {viewMode === 'weekdayLanes' && (
             <div style={{ display: 'grid', gap: 16 }}>
-              {dayNames.map((name, idx) => {
-                const lane = weekdayLanes[idx] || [];
+              {visibleDayNames.map((name, localIdx) => {
+                const globalIdx = visibleDayIndices[localIdx];
+                const lane = weekdayLanes[localIdx] || [];
                 const laneDays = selectedWeekKey ? lane.filter(dObj => isoWeekKey(dObj.date) === selectedWeekKey) : lane;
                 if (selectedWeekKey && laneDays.length === 0) return null;
                 return (
@@ -3861,9 +3945,9 @@ export default function PlanneringPage() {
                   });
                   return filtered.length > 0;
                 };
-                const includeSat = dayHasAny(5);
-                const includeSun = dayHasAny(6);
-                const visibleIndices = [0,1,2,3,4].concat(includeSat ? [5] : []).concat(includeSun ? [6] : []);
+                const includeSat = !hideWeekends && dayHasAny(5);
+                const includeSun = !hideWeekends && dayHasAny(6);
+                const visibleIndices = hideWeekends ? [0,1,2,3,4] : [0,1,2,3,4].concat(includeSat ? [5] : []).concat(includeSun ? [6] : []);
                 // Determine if there is any unassigned item in this week
                 let hasUnassigned = false;
                 for (const day of weekDays) {
@@ -4090,20 +4174,20 @@ export default function PlanneringPage() {
                                         </button>
                                       </div>
                                       {/* EK badge moved to top-right RP circle */}
-                                                                    {isStart && rowCreatorLabel(it.segmentId) && (
-                                                                      <span style={{ position: 'absolute', top: -6, left: -6, zIndex: 3 }}>
-                                                                        <CreatorAvatar segmentId={it.segmentId} size="sm" />
-                                                                      </span>
-                                                                    )}
-                                                                    {isStart && hasEgenkontroll(it.project.orderNumber) && (
-                                                                      <span
-                                                                        aria-label="Egenkontroll rapporterad"
-                                                                        title="Egenkontroll rapporterad"
-                                                                        style={{ position: 'absolute', top: -6, right: -6, width: 12, height: 12, borderRadius: 999, background: '#059669', color: '#fff', border: '1px solid #047857', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, fontWeight: 800, boxShadow: '0 0 0 2px #fff, 0 1px 3px rgba(0,0,0,0.2)', zIndex: 3, pointerEvents: 'none' }}
-                                                                      >
-                                                                        ✓
-                                                                      </span>
-                                                                    )}
+                                        {isStart && rowCreatorLabel(it.segmentId) && (
+                                          <span style={{ position: 'absolute', top: -6, left: -6, zIndex: 3 }}>
+                                            <CreatorAvatar segmentId={it.segmentId} size="sm" />
+                                          </span>
+                                        )}
+                                        {isStart && hasEgenkontroll(it.project.orderNumber) && (
+                                          <span
+                                            aria-label="Egenkontroll rapporterad"
+                                            title="Egenkontroll rapporterad"
+                                            style={{ position: 'absolute', top: -6, right: -6, width: 12, height: 12, borderRadius: 999, background: '#059669', color: '#fff', border: '1px solid #047857', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, fontWeight: 800, boxShadow: '0 0 0 2px #fff, 0 1px 3px rgba(0,0,0,0.2)', zIndex: 3, pointerEvents: 'none' }}
+                                          >
+                                            ✓
+                                          </span>
+                                        )}
                                       {/* Team and Depå removed for compact card */}
                                     </div>
                                   );

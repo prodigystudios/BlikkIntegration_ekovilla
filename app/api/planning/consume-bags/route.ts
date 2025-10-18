@@ -55,16 +55,25 @@ export async function POST(req: NextRequest) {
       // ignore and fallback
     }
 
-    // 2) Fallback via truck assignment (project meta truck name -> planning_trucks.depot_id)
+    // 2) Fallback via truck assignment
+    // Prefer the segment's truck if segment was identified, otherwise project meta
     if (!depotId) {
       try {
-        const { data: meta, error: metaErr } = await admin
-          .from('planning_project_meta')
-          .select('truck')
-          .eq('project_id', projectId)
-          .maybeSingle();
-        const truckName = meta?.truck;
-        if (!metaErr && truckName) {
+        let truckName: string | null = null;
+        let metaErrFlag = false;
+        if (segmentId) {
+          const { data: seg2 } = await admin.from('planning_segments').select('truck').eq('id', segmentId).maybeSingle();
+          truckName = (seg2 as any)?.truck ?? null;
+        }
+        if (!truckName) {
+          const { data: meta, error: metaErr } = await admin
+            .from('planning_project_meta')
+            .select('truck')
+            .eq('project_id', projectId)
+            .maybeSingle();
+          if (!metaErr) truckName = meta?.truck ?? null; else metaErrFlag = true;
+        }
+        if (truckName) {
           const { data: truck, error: truckErr } = await admin
             .from('planning_trucks')
             .select('depot_id')
