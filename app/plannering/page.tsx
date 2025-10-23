@@ -67,9 +67,9 @@ function CopyToTruckButton({ segmentId, day, currentTruck, trucks, onCopy }: { s
         {options.map(t => (<option key={t} value={t}>{t}</option>))}
       </select>
       <button type="button" className="btn--plain btn--xs" disabled={!target}
-              onClick={(e) => { e.stopPropagation(); if (target) onCopy(target); }}
-              title="Kopiera till annan lastbil"
-              style={{ fontSize: 10, background: '#fff7ed', border: '1px solid #fdba74', color: '#9a3412', borderRadius: 4, padding: '2px 4px' }}>
+        onClick={(e) => { e.stopPropagation(); if (target) onCopy(target); }}
+        title="Kopiera till annan lastbil"
+        style={{ fontSize: 10, background: '#fff7ed', border: '1px solid #fdba74', color: '#9a3412', borderRadius: 4, padding: '2px 4px' }}>
         Kopiera
       </button>
     </span>
@@ -328,7 +328,7 @@ export default function PlanneringPage() {
       const res = await fetch(`/api/blikk/projects?orderNumber=${encodeURIComponent(val)}`);
       const j = await res.json();
       if (!res.ok) throw new Error(j.error || 'Fel vid sökning');
-  const normalized: Project[] = (j.projects || []).map(normalizeProject);
+      const normalized: Project[] = (j.projects || []).map(normalizeProject);
       if (!normalized.length) {
         setSearchError('Inget projekt hittades');
       } else {
@@ -432,7 +432,7 @@ export default function PlanneringPage() {
         const res = await fetch('/api/blikk/projects');
         const j = await res.json();
         if (!res.ok) setError(j.error || 'Fel vid hämtning');
-  const normalized: Project[] = (j.projects || []).map(normalizeProject);
+        const normalized: Project[] = (j.projects || []).map(normalizeProject);
         // Optional debug: count how many missing customerId
         try {
           const dbg = localStorage.getItem('contactFetchDebug') === '1' || (window as any).__contactFetchDebug;
@@ -465,7 +465,7 @@ export default function PlanneringPage() {
   // Load persisted schedule + meta
   const supabase = createClientComponentClient();
   const [syncing, setSyncing] = useState(false);
-  const [realtimeStatus, setRealtimeStatus] = useState<'connecting'|'live'|'error'>('connecting');
+  const [realtimeStatus, setRealtimeStatus] = useState<'connecting' | 'live' | 'error'>('connecting');
   const pendingOps = useRef<Promise<any>[]>([]);
   const createdIdsRef = useRef<Set<string>>(new Set());
   // Simple async op queue helper (re-add after accidental removal). Ensures we can await / flush later if needed.
@@ -605,7 +605,7 @@ export default function PlanneringPage() {
       orderInDay = idx >= 0 ? idx + 1 : null;
     }
 
-  const subject = encodeURIComponent(`Planerad isolering ${dateText} (${it.project.name}) Ordernummer #${it.project.orderNumber}`);
+    const subject = encodeURIComponent(`Planerad isolering ${dateText} (${it.project.name}) Ordernummer #${it.project.orderNumber}`);
     const orderLine = (orderInDay && totalInDay)
       ? `du är planerad som Nr: ${orderInDay} av ${totalInDay} på lastbilen "${effectiveTruck || 'Ej tilldelad'}". Installatören kommer ringa dig på morgon vid installations tillfälle och meddela ungefärlig ankomst tid.`
       : `Lastbil: ${effectiveTruck || 'Ej tilldelad'}`;
@@ -790,9 +790,9 @@ export default function PlanneringPage() {
             const meta: any = user.user_metadata || {};
             resolvedName = meta.full_name || meta.name || null;
           }
-            if (!resolvedName && user.email) {
-              resolvedName = user.email.split('@')[0];
-            }
+          if (!resolvedName && user.email) {
+            resolvedName = user.email.split('@')[0];
+          }
           if (resolvedName) setCurrentUserName(resolvedName);
         }
         const { data: segs, error: segErr } = await supabase.from('planning_segments').select('*');
@@ -888,7 +888,7 @@ export default function PlanneringPage() {
             const j = await dirRes.json();
             const names: string[] = Array.isArray(j.users) ? j.users.map((u: any) => u.name).filter((v: any): v is string => typeof v === 'string' && v.trim().length > 0) : [];
             const trimmed = names.map(n => n.trim());
-            const unique: string[] = Array.from(new Set(trimmed)).filter(n => n.length > 0).sort((a,b)=>a.localeCompare(b));
+            const unique: string[] = Array.from(new Set(trimmed)).filter(n => n.length > 0).sort((a, b) => a.localeCompare(b));
             setSalesDirectory(unique);
           } else {
             console.warn('[planning] directory fetch failed status', dirRes.status);
@@ -900,7 +900,7 @@ export default function PlanneringPage() {
         console.warn('[planning] initial load failed', e);
       } finally { setSyncing(false); }
     })();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Reset report draft when switching segment in editor
@@ -922,7 +922,7 @@ export default function PlanneringPage() {
         const users: any[] = [];
         for (const key of Object.keys(state)) {
           const entries = (state as any)[key];
-            for (const entry of entries) users.push(entry);
+          for (const entry of entries) users.push(entry);
         }
         setPresenceUsers(users);
       })
@@ -963,19 +963,21 @@ export default function PlanneringPage() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'planning_project_meta' }, payload => {
         const row: any = payload.new || payload.old;
         if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
-          setScheduleMeta(prev => ({ ...prev, [row.project_id]: {
-            projectId: row.project_id,
-            truck: row.truck,
-            bagCount: row.bag_count,
-            jobType: row.job_type,
-            color: row.color,
-            client_notified: row.client_notified,
-            client_notified_at: row.client_notified_at,
-            client_notified_by: row.client_notified_by,
-            actual_bags_used: (row as any).actual_bags_used,
-            actual_bags_set_at: (row as any).actual_bags_set_at,
-            actual_bags_set_by: (row as any).actual_bags_set_by,
-          } }));
+          setScheduleMeta(prev => ({
+            ...prev, [row.project_id]: {
+              projectId: row.project_id,
+              truck: row.truck,
+              bagCount: row.bag_count,
+              jobType: row.job_type,
+              color: row.color,
+              client_notified: row.client_notified,
+              client_notified_at: row.client_notified_at,
+              client_notified_by: row.client_notified_by,
+              actual_bags_used: (row as any).actual_bags_used,
+              actual_bags_set_at: (row as any).actual_bags_set_at,
+              actual_bags_set_by: (row as any).actual_bags_set_by,
+            }
+          }));
         } else if (payload.eventType === 'DELETE') {
           setScheduleMeta(prev => { const c = { ...prev }; delete c[row.project_id]; return c; });
         }
@@ -1171,7 +1173,7 @@ export default function PlanneringPage() {
           const { bg } = creatorColor(name);
           return (
             <span key={(ed.userId || 'anon') + ed.field}
-                  style={{ width: size, height: size, background: bg, color: '#fff', fontSize: size * 0.45, fontWeight: 600, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 0 2px #fff, 0 0 0 3px rgba(0,0,0,0.15)' }}>{initials}</span>
+              style={{ width: size, height: size, background: bg, color: '#fff', fontSize: size * 0.45, fontWeight: 600, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 0 2px #fff, 0 0 0 3px rgba(0,0,0,0.15)' }}>{initials}</span>
           );
         })}
         {editors.length > shown.length && (
@@ -1207,9 +1209,9 @@ export default function PlanneringPage() {
       created_by: currentUserId,
       created_by_name: currentUserName || currentUserId || project.customer || 'Okänd'
     };
-  if (seg.depotId) payload.depot_id = seg.depotId;
-  if (seg.truck !== undefined) payload.truck = seg.truck;
-  if (seg.sortIndex != null) payload.sort_index = seg.sortIndex;
+    if (seg.depotId) payload.depot_id = seg.depotId;
+    if (seg.truck !== undefined) payload.truck = seg.truck;
+    if (seg.sortIndex != null) payload.sort_index = seg.sortIndex;
     enqueue(
       supabase.from('planning_segments')
         .upsert(payload, { onConflict: 'id', ignoreDuplicates: true })
@@ -1371,8 +1373,8 @@ export default function PlanneringPage() {
   }, [supabase]);
 
   const groupedDeliveries = useMemo(() => {
-    const byKey: Record<string, { depotId: string; material: 'Ekovilla'|'Vitull'; date: string; items: typeof deliveries } > = {} as any;
-    const sorted = [...deliveries].sort((a,b)=> (a.delivery_date||'').localeCompare(b.delivery_date||'') || (a.depot_id||'').localeCompare(b.depot_id||'') || (a.material_kind||'').localeCompare(b.material_kind||''));
+    const byKey: Record<string, { depotId: string; material: 'Ekovilla' | 'Vitull'; date: string; items: typeof deliveries }> = {} as any;
+    const sorted = [...deliveries].sort((a, b) => (a.delivery_date || '').localeCompare(b.delivery_date || '') || (a.depot_id || '').localeCompare(b.depot_id || '') || (a.material_kind || '').localeCompare(b.material_kind || ''));
     for (const d of sorted) {
       const key = `${d.depot_id}|${d.delivery_date}|${d.material_kind}`;
       if (!byKey[key]) byKey[key] = { depotId: d.depot_id, material: d.material_kind, date: d.delivery_date, items: [] as any };
@@ -1383,7 +1385,7 @@ export default function PlanneringPage() {
 
   // Upcoming deliveries for current view (selected week or visible month)
   const upcomingDeliveriesForView = useMemo(() => {
-    if (!deliveries || deliveries.length === 0) return [] as Array<{ id: string; depot_id: string; material_kind: 'Ekovilla'|'Vitull'; amount: number; delivery_date: string }>;
+    if (!deliveries || deliveries.length === 0) return [] as Array<{ id: string; depot_id: string; material_kind: 'Ekovilla' | 'Vitull'; amount: number; delivery_date: string }>;
     let start: string | null = null;
     let end: string | null = null;
     if (selectedWeekKey) {
@@ -1411,7 +1413,7 @@ export default function PlanneringPage() {
       return true;
     });
     // Sort ascending by date then depot then material
-    inRange.sort((a,b)=> (a.delivery_date||'').localeCompare(b.delivery_date||'') || (a.depot_id||'').localeCompare(b.depot_id||'') || (a.material_kind||'').localeCompare(b.material_kind||''));
+    inRange.sort((a, b) => (a.delivery_date || '').localeCompare(b.delivery_date || '') || (a.depot_id || '').localeCompare(b.depot_id || '') || (a.material_kind || '').localeCompare(b.material_kind || ''));
     // Limit to avoid clutter
     return inRange.slice(0, 12);
   }, [deliveries, selectedWeekKey, monthOffset]);
@@ -1477,7 +1479,7 @@ export default function PlanneringPage() {
   }, [scheduledSegments, updateSegmentSortIndex]);
 
   useEffect(() => {
-  const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { setOpenDepotMenuTruckId(null); } };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { setOpenDepotMenuTruckId(null); } };
     if (typeof window !== 'undefined') {
       window.addEventListener('keydown', onKey);
       return () => window.removeEventListener('keydown', onKey);
@@ -1537,8 +1539,8 @@ export default function PlanneringPage() {
     // Resolve target values
     const draftTeam1Id = (draft as any).team1Id ?? null;
     const draftTeam2Id = (draft as any).team2Id ?? null;
-  let nm1 = draftTeam1Id ? (crewList.find(c => c.id === draftTeam1Id)?.name || draft.team1 || null) : (draft.team1 || null);
-  let nm2 = draftTeam2Id ? (crewList.find(c => c.id === draftTeam2Id)?.name || draft.team2 || null) : (draft.team2 || null);
+    let nm1 = draftTeam1Id ? (crewList.find(c => c.id === draftTeam1Id)?.name || draft.team1 || null) : (draft.team1 || null);
+    let nm2 = draftTeam2Id ? (crewList.find(c => c.id === draftTeam2Id)?.name || draft.team2 || null) : (draft.team2 || null);
 
     // Optimistic UI: reflect both name and id locally
     setPlanningTrucks(prev => prev.map(t => t.id === truck.id ? { ...t, team_member1_name: nm1 ?? t.team_member1_name ?? null, team_member2_name: nm2 ?? t.team_member2_name ?? null, team1_id: draftTeam1Id, team2_id: draftTeam2Id } : t));
@@ -1628,7 +1630,7 @@ export default function PlanneringPage() {
       color: meta.color,
       client_notified: meta.client_notified ?? null,
       client_notified_at: meta.client_notified_at ?? null,
-  client_notified_by: meta.client_notified_by ?? null,
+      client_notified_by: meta.client_notified_by ?? null,
       actual_bags_used: meta.actual_bags_used ?? null,
       actual_bags_set_at: meta.actual_bags_set_at ?? null,
       actual_bags_set_by: meta.actual_bags_set_by ?? null
@@ -1713,7 +1715,7 @@ export default function PlanneringPage() {
   }, [viewMode, monthOffset, hideWeekends]);
 
   const dayNames = ['Mån', 'Tis', 'Ons', 'Tor', 'Fre', 'Lör', 'Sön'];
-  const visibleDayIndices = hideWeekends ? [0,1,2,3,4] : [0,1,2,3,4,5,6];
+  const visibleDayIndices = hideWeekends ? [0, 1, 2, 3, 4] : [0, 1, 2, 3, 4, 5, 6];
   const visibleDayNames = visibleDayIndices.map(i => dayNames[i]);
   // Today marker (local date)
   const todayISO = useMemo(() => fmtDate(new Date()), []);
@@ -1723,12 +1725,12 @@ export default function PlanneringPage() {
     // Always force light-mode friendly colors: lighten aggressively and always use dark text.
     const hex = base.startsWith('#') ? base.slice(1) : base;
     if (!/^[0-9a-fA-F]{6}$/.test(hex)) return { bg: '#eef2ff', border: '#c7d2fe', text: '#1e293b' };
-    const r = parseInt(hex.slice(0,2),16);
-    const g = parseInt(hex.slice(2,4),16);
-    const b = parseInt(hex.slice(4,6),16);
+    const r = parseInt(hex.slice(0, 2), 16);
+    const g = parseInt(hex.slice(2, 4), 16);
+    const b = parseInt(hex.slice(4, 6), 16);
     const lighten = (ch: number) => Math.round(ch + (255 - ch) * 0.90); // stronger lighten to avoid dark blocks
     const lr = lighten(r), lg = lighten(g), lb = lighten(b);
-    const bg = `#${lr.toString(16).padStart(2,'0')}${lg.toString(16).padStart(2,'0')}${lb.toString(16).padStart(2,'0')}`;
+    const bg = `#${lr.toString(16).padStart(2, '0')}${lg.toString(16).padStart(2, '0')}${lb.toString(16).padStart(2, '0')}`;
     // Force dark text for consistency (never flip to white)
     const text = '#1e293b';
     return { bg, border: '#' + hex, text };
@@ -2138,7 +2140,7 @@ export default function PlanneringPage() {
     };
     return (
       <span title={`Skapad av ${name}`}
-            style={style}>{initials}</span>
+        style={style}>{initials}</span>
     );
   }
 
@@ -2240,7 +2242,7 @@ export default function PlanneringPage() {
       const key = norm(cleaned);
       if (!map.has(key)) map.set(key, cleaned); // only add if not already from directory
     }
-    return Array.from(map.values()).sort((a,b)=>a.localeCompare(b,'sv-SE',{ sensitivity: 'base' }));
+    return Array.from(map.values()).sort((a, b) => a.localeCompare(b, 'sv-SE', { sensitivity: 'base' }));
   }, [projects, salesDirectory]);
   const searchedProjects = useMemo(() => recentSearchedIds.map(id => projects.find(p => p.id === id)).filter(Boolean) as Project[], [recentSearchedIds, projects]);
 
@@ -2425,7 +2427,7 @@ export default function PlanneringPage() {
         const p = projects.find(px => px.id === segEditor.projectId);
         const daysLen = Math.max(1, Math.round((new Date(segEditor.endDay + 'T00:00:00').getTime() - new Date(segEditor.startDay + 'T00:00:00').getTime()) / 86400000) + 1);
         const setDaysLen = (n: number) => {
-          const len = Math.max(1, (n|0));
+          const len = Math.max(1, (n | 0));
           setSegEditor(ed => ed ? ({ ...ed, endDay: addDaysLocal(ed.startDay, len - 1) }) : ed);
         };
         return (
@@ -2448,60 +2450,60 @@ export default function PlanneringPage() {
               <div style={{ padding: 16, display: 'grid', gridTemplateColumns: 'repeat(12, minmax(0,1fr))', gap: 14 }}>
                 <div style={{ gridColumn: 'span 7', display: 'grid', gap: 12 }}>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
-                <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
-                  <span>Datum (start)</span>
-                  <input type="date" value={segEditor.startDay} onChange={e => setSegEditor(ed => ed ? ({ ...ed, startDay: e.target.value, endDay: (new Date(ed.endDay) < new Date(e.target.value) ? e.target.value : ed.endDay) }) : ed)} style={{ padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }} />
-                </label>
-                <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
-                  <span>Antal dagar</span>
-                  <input type="number" min={1} value={daysLen} onChange={e => setDaysLen(parseInt(e.target.value || '1', 10))} style={{ padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }} />
-                </label>
+                    <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
+                      <span>Datum (start)</span>
+                      <input type="date" value={segEditor.startDay} onChange={e => setSegEditor(ed => ed ? ({ ...ed, startDay: e.target.value, endDay: (new Date(ed.endDay) < new Date(e.target.value) ? e.target.value : ed.endDay) }) : ed)} style={{ padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }} />
+                    </label>
+                    <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
+                      <span>Antal dagar</span>
+                      <input type="number" min={1} value={daysLen} onChange={e => setDaysLen(parseInt(e.target.value || '1', 10))} style={{ padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }} />
+                    </label>
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
-                <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
-                  <span>Lastbil</span>
-                  <select value={segEditor.truck || ''} onChange={e => setSegEditor(ed => ed ? ({ ...ed, truck: e.target.value || null }) : ed)} style={{ padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }}>
-                    <option value="">Välj lastbil…</option>
-                    {trucks.map(t => <option key={t} value={t}>{t}</option>)}
-                  </select>
-                </label>
-                {segEditor.mode === 'create' && segEditor.truck && (() => {
-                  const sameDay = itemsByDay.get(segEditor.startDay) || [];
-                  const sameTruck = sameDay.filter(x => x.truck === segEditor.truck && x.spanStart);
-                  const maxPos = Math.max(0, sameTruck.length) + 1; // include new
-                  const val = segEditor.positionIndex ?? maxPos;
-                  return (
                     <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
-                      <span>Placering (i lastbilsordning)</span>
-                      <select value={val} onChange={e => setSegEditor(ed => ed ? ({ ...ed, positionIndex: parseInt(e.target.value, 10) || 1 }) : ed)} style={{ padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }}>
-                        {Array.from({ length: maxPos }, (_, i) => i + 1).map(n => <option key={n} value={n}>{n} / {maxPos}</option>)}
+                      <span>Lastbil</span>
+                      <select value={segEditor.truck || ''} onChange={e => setSegEditor(ed => ed ? ({ ...ed, truck: e.target.value || null }) : ed)} style={{ padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }}>
+                        <option value="">Välj lastbil…</option>
+                        {trucks.map(t => <option key={t} value={t}>{t}</option>)}
                       </select>
                     </label>
-                  );
-                })()}
+                    {segEditor.mode === 'create' && segEditor.truck && (() => {
+                      const sameDay = itemsByDay.get(segEditor.startDay) || [];
+                      const sameTruck = sameDay.filter(x => x.truck === segEditor.truck && x.spanStart);
+                      const maxPos = Math.max(0, sameTruck.length) + 1; // include new
+                      const val = segEditor.positionIndex ?? maxPos;
+                      return (
+                        <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
+                          <span>Placering (i lastbilsordning)</span>
+                          <select value={val} onChange={e => setSegEditor(ed => ed ? ({ ...ed, positionIndex: parseInt(e.target.value, 10) || 1 }) : ed)} style={{ padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }}>
+                            {Array.from({ length: maxPos }, (_, i) => i + 1).map(n => <option key={n} value={n}>{n} / {maxPos}</option>)}
+                          </select>
+                        </label>
+                      );
+                    })()}
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
-                <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
-                  <span>Säckar</span>
-                  <input type="number" min={0} value={segEditor.bagCount ?? ''} placeholder="t.ex. 18" onChange={e => setSegEditor(ed => ed ? ({ ...ed, bagCount: e.target.value === '' ? null : Math.max(0, parseInt(e.target.value, 10) || 0) }) : ed)} style={{ padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }} />
-                </label>
+                    <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
+                      <span>Säckar</span>
+                      <input type="number" min={0} value={segEditor.bagCount ?? ''} placeholder="t.ex. 18" onChange={e => setSegEditor(ed => ed ? ({ ...ed, bagCount: e.target.value === '' ? null : Math.max(0, parseInt(e.target.value, 10) || 0) }) : ed)} style={{ padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }} />
+                    </label>
 
-                <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
-                  <span>Jobbtyp / Material</span>
-                  <select value={segEditor.jobType || ''} onChange={e => setSegEditor(ed => ed ? ({ ...ed, jobType: e.target.value || null }) : ed)} style={{ padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }}>
-                    <option value="">Välj…</option>
-                    {jobTypes.map(j => <option key={j} value={j}>{j}</option>)}
-                  </select>
-                </label>
+                    <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
+                      <span>Jobbtyp / Material</span>
+                      <select value={segEditor.jobType || ''} onChange={e => setSegEditor(ed => ed ? ({ ...ed, jobType: e.target.value || null }) : ed)} style={{ padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }}>
+                        <option value="">Välj…</option>
+                        {jobTypes.map(j => <option key={j} value={j}>{j}</option>)}
+                      </select>
+                    </label>
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
-                <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
-                  <span>Depå (override)</span>
-                  <select value={segEditor.depotId || ''} onChange={e => setSegEditor(ed => ed ? ({ ...ed, depotId: e.target.value || null }) : ed)} style={{ padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }}>
-                    <option value="">Ingen (använd lastbilens)</option>
-                    {depots.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-                  </select>
-                </label>
+                    <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
+                      <span>Depå (override)</span>
+                      <select value={segEditor.depotId || ''} onChange={e => setSegEditor(ed => ed ? ({ ...ed, depotId: e.target.value || null }) : ed)} style={{ padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }}>
+                        <option value="">Ingen (använd lastbilens)</option>
+                        {depots.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                      </select>
+                    </label>
                   </div>
                 </div>
                 <div style={{ gridColumn: 'span 5', display: 'grid', gap: 10 }}>
@@ -2514,8 +2516,8 @@ export default function PlanneringPage() {
                       const start = segEditor.startDay;
                       const end = segEditor.endDay;
                       const single = start === end;
-                      const startW = dayNames[(new Date(start+'T00:00:00').getDay()+6)%7];
-                      const endW = dayNames[(new Date(end+'T00:00:00').getDay()+6)%7];
+                      const startW = dayNames[(new Date(start + 'T00:00:00').getDay() + 6) % 7];
+                      const endW = dayNames[(new Date(end + 'T00:00:00').getDay() + 6) % 7];
                       const truckName = segEditor.truck || null;
                       const truckStyle = truckName && truckColors[truckName] ? truckColors[truckName] : null;
                       const depotName = segEditor.depotId ? (depots.find(d => d.id === segEditor.depotId)?.name || 'Okänd depå') : 'Lastbilens depå';
@@ -2560,7 +2562,7 @@ export default function PlanneringPage() {
                           <button type="button" onClick={addPartialReport} className="btn--plain btn--xs" style={{ alignSelf: 'end', height: 32, padding: '6px 10px', border: '1px solid #16a34a', background: '#16a34a', color: '#fff', borderRadius: 8 }}>Lägg till</button>
                         </div>
                         {(() => {
-                          const list = segmentReports.filter(r => r.segmentId === segEditor.segmentId).sort((a,b) => (a.reportDay || '').localeCompare(b.reportDay));
+                          const list = segmentReports.filter(r => r.segmentId === segEditor.segmentId).sort((a, b) => (a.reportDay || '').localeCompare(b.reportDay));
                           return list.length > 0 ? (
                             <div style={{ display: 'grid', gap: 6 }}>
                               {list.map(r => (
@@ -2584,7 +2586,7 @@ export default function PlanneringPage() {
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 12, justifyContent: 'space-between', alignItems: 'center', padding: 12, background: '#f8fafc', borderTop: '1px solid #e5e7eb', flexWrap: 'wrap' }}>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap:'wrap' }}>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                   {p && (
                     <button
                       type="button"
@@ -2592,17 +2594,17 @@ export default function PlanneringPage() {
                       disabled={emailFetchStatus[p.id] === 'loading'}
                       className="btn--plain btn--xs"
                       title={scheduleMeta[p.id]?.client_notified ? (scheduleMeta[p.id]?.client_notified_by ? `Notifierad av ${scheduleMeta[p.id]!.client_notified_by}` : 'Kund markerad som notifierad') : 'Skicka planeringsmail'}
-                      style={{ fontSize:12, border:'1px solid '+(scheduleMeta[p.id]?.client_notified ? '#047857' : '#7dd3fc'), background: scheduleMeta[p.id]?.client_notified ? '#059669' : '#e0f2fe', color: scheduleMeta[p.id]?.client_notified ? '#fff' : '#0369a1', borderRadius:10, padding:'8px 12px' }}
+                      style={{ fontSize: 12, border: '1px solid ' + (scheduleMeta[p.id]?.client_notified ? '#047857' : '#7dd3fc'), background: scheduleMeta[p.id]?.client_notified ? '#059669' : '#e0f2fe', color: scheduleMeta[p.id]?.client_notified ? '#fff' : '#0369a1', borderRadius: 10, padding: '8px 12px' }}
                     >
                       {scheduleMeta[p.id]?.client_notified ? 'Notifierad ✓' : 'Maila kund'}
                     </button>
                   )}
                   {segEditor.mode === 'edit' && segEditor.segmentId && (
                     confirmDeleteSegmentId === segEditor.segmentId ? (
-                      <div style={{ display:'flex', alignItems:'center', gap:6 }}>
-                        <span style={{ fontSize:11, color:'#b91c1c', fontWeight:500 }}>Bekräfta borttagning?</span>
-                        <button type="button" onClick={() => { if (!segEditor.segmentId) return; unschedule(segEditor.segmentId); closeSegEditor(); }} className="btn--plain btn--xs" style={{ fontSize:11, padding:'6px 10px', background:'#dc2626', border:'1px solid #b91c1c', color:'#fff', borderRadius:8, boxShadow:'0 0 0 1px #fff inset' }}>Ja, ta bort</button>
-                        <button type="button" onClick={() => setConfirmDeleteSegmentId(null)} className="btn--plain btn--xs" style={{ fontSize:11, padding:'6px 10px', background:'#fff', border:'1px solid #cbd5e1', color:'#334155', borderRadius:8 }}>Avbryt</button>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ fontSize: 11, color: '#b91c1c', fontWeight: 500 }}>Bekräfta borttagning?</span>
+                        <button type="button" onClick={() => { if (!segEditor.segmentId) return; unschedule(segEditor.segmentId); closeSegEditor(); }} className="btn--plain btn--xs" style={{ fontSize: 11, padding: '6px 10px', background: '#dc2626', border: '1px solid #b91c1c', color: '#fff', borderRadius: 8, boxShadow: '0 0 0 1px #fff inset' }}>Ja, ta bort</button>
+                        <button type="button" onClick={() => setConfirmDeleteSegmentId(null)} className="btn--plain btn--xs" style={{ fontSize: 11, padding: '6px 10px', background: '#fff', border: '1px solid #cbd5e1', color: '#334155', borderRadius: 8 }}>Avbryt</button>
                       </div>
                     ) : (
                       <button
@@ -2617,10 +2619,10 @@ export default function PlanneringPage() {
                     )
                   )}
                 </div>
-                <div style={{ display: 'flex', gap: 8, flexWrap:'wrap', alignItems:'center' }}>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                   {segEditor.mode === 'edit' && segEditor.segmentId && (
-                    <span style={{ display:'inline-flex', alignItems:'center', gap:6, background:'#fff7ed', border:'1px solid #fdba74', padding:'6px 8px', borderRadius:8 }}>
-                      <span style={{ fontSize:12, color:'#7c2d12' }}>Kopiera till lastbil</span>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: '#fff7ed', border: '1px solid #fdba74', padding: '6px 8px', borderRadius: 8 }}>
+                      <span style={{ fontSize: 12, color: '#7c2d12' }}>Kopiera till lastbil</span>
                       <CopyToTruckButton
                         segmentId={segEditor.segmentId}
                         day={segEditor.startDay}
@@ -2632,17 +2634,19 @@ export default function PlanneringPage() {
                   )}
                   <button type="button" onClick={closeSegEditor} className="btn--plain btn--xs" style={{ fontSize: 12, padding: '8px 12px', border: '1px solid #cbd5e1', background: '#fff', borderRadius: 10 }}>Avbryt</button>
                   <button type="button" onClick={saveSegmentEditor} className="btn--plain btn--xs" style={{ fontSize: 12, padding: '8px 12px', border: '1px solid #16a34a', background: '#16a34a', color: '#fff', borderRadius: 10, boxShadow: '0 2px 6px rgba(22,163,74,0.25)' }}>{segEditor.mode === 'create' ? 'Lägg till' : 'Spara'}</button>
-                  {(() => { const proj = p; const hasEK = !!(proj?.orderNumber && hasEgenkontroll(proj.orderNumber)); const pth = proj?.orderNumber ? egenkontrollPath(proj.orderNumber) : null; return hasEK ? (
-                    <a
-                      href={pth ? `/api/storage/download?path=${encodeURIComponent(pth)}` : '#'}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="btn--plain btn--xs"
-                      style={{ fontSize: 12, padding: '8px 12px', border: '1px solid #047857', background: '#059669', color: '#fff', borderRadius: 10 }}
-                    >
-                      Egenkontroll
-                    </a>
-                  ) : null; })()}
+                  {(() => {
+                    const proj = p; const hasEK = !!(proj?.orderNumber && hasEgenkontroll(proj.orderNumber)); const pth = proj?.orderNumber ? egenkontrollPath(proj.orderNumber) : null; return hasEK ? (
+                      <a
+                        href={pth ? `/api/storage/download?path=${encodeURIComponent(pth)}` : '#'}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="btn--plain btn--xs"
+                        style={{ fontSize: 12, padding: '8px 12px', border: '1px solid #047857', background: '#059669', color: '#fff', borderRadius: 10 }}
+                      >
+                        Egenkontroll
+                      </a>
+                    ) : null;
+                  })()}
                   {p && (
                     <button
                       type="button"
@@ -2704,17 +2708,17 @@ export default function PlanneringPage() {
       {pendingNotifyProjectId && (() => {
         const project = projects.find(p => p.id === pendingNotifyProjectId);
         return (
-          <div style={{ position: 'fixed', inset:0, zIndex: 2000, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-            <div style={{ background:'#fff', border:'1px solid #e2e8f0', borderRadius: 12, padding: '20px 22px', width: 'min(420px,90%)', display:'grid', gap:16, boxShadow:'0 8px 30px -6px rgba(0,0,0,0.25)' }}>
-              <div style={{ display:'flex', flexDirection:'column', gap:4 }}>
-                <h3 style={{ margin:0, fontSize:18, color:'#0f172a' }}>Har kunden notifierats?</h3>
-                <p style={{ margin:0, fontSize:13, color:'#475569' }}>Bekräfta att du skickade eller informerade kunden om <strong>{project?.name}</strong>.</p>
+          <div style={{ position: 'fixed', inset: 0, zIndex: 2000, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+            <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12, padding: '20px 22px', width: 'min(420px,90%)', display: 'grid', gap: 16, boxShadow: '0 8px 30px -6px rgba(0,0,0,0.25)' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <h3 style={{ margin: 0, fontSize: 18, color: '#0f172a' }}>Har kunden notifierats?</h3>
+                <p style={{ margin: 0, fontSize: 13, color: '#475569' }}>Bekräfta att du skickade eller informerade kunden om <strong>{project?.name}</strong>.</p>
               </div>
-              <div style={{ display:'flex', gap:10, flexWrap:'wrap' }}>
-                <button type="button" onClick={() => { if (project) markClientNotified(project.id); setPendingNotifyProjectId(null); }} style={{ flex:'1 1 120px', background:'#059669', color:'#fff', border:'1px solid #047857', borderRadius:8, padding:'10px 14px', fontSize:13, fontWeight:600, cursor:'pointer' }}>Ja, notifierad</button>
-                <button type="button" onClick={() => { setPendingNotifyProjectId(null); }} style={{ flex:'1 1 120px', background:'#f1f5f9', color:'#334155', border:'1px solid #cbd5e1', borderRadius:8, padding:'10px 14px', fontSize:13, fontWeight:600, cursor:'pointer' }}>Nej / Avbryt</button>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                <button type="button" onClick={() => { if (project) markClientNotified(project.id); setPendingNotifyProjectId(null); }} style={{ flex: '1 1 120px', background: '#059669', color: '#fff', border: '1px solid #047857', borderRadius: 8, padding: '10px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Ja, notifierad</button>
+                <button type="button" onClick={() => { setPendingNotifyProjectId(null); }} style={{ flex: '1 1 120px', background: '#f1f5f9', color: '#334155', border: '1px solid #cbd5e1', borderRadius: 8, padding: '10px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Nej / Avbryt</button>
                 {project && scheduleMeta[project.id]?.client_notified && (
-                  <button type="button" onClick={() => { undoClientNotified(project.id); setPendingNotifyProjectId(null); }} style={{ flex:'1 1 100%', background:'#fee2e2', color:'#b91c1c', border:'1px solid #fca5a5', borderRadius:8, padding:'8px 12px', fontSize:12, fontWeight:600, cursor:'pointer' }}>Ångra tidigare markering</button>
+                  <button type="button" onClick={() => { undoClientNotified(project.id); setPendingNotifyProjectId(null); }} style={{ flex: '1 1 100%', background: '#fee2e2', color: '#b91c1c', border: '1px solid #fca5a5', borderRadius: 8, padding: '8px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Ångra tidigare markering</button>
                 )}
               </div>
             </div>
@@ -2732,8 +2736,8 @@ export default function PlanneringPage() {
         const postalCode = location?.postalCode || raw?.postalCode || raw?.zip || null;
         const city = location?.city || raw?.city || null;
         const address = [street, postalCode, city].filter(Boolean).join(', ');
-  const description = raw?.description || raw?.notes || raw?.note || null;
-  const contactPhones = description ? extractPhonesFromText(description) : [];
+        const description = raw?.description || raw?.notes || raw?.note || null;
+        const contactPhones = description ? extractPhonesFromText(description) : [];
         const segs = scheduledSegments.filter(s => s.projectId === pid);
         const meta = scheduleMeta[pid];
         const ekPath = egenkontrollPath(base?.orderNumber || null);
@@ -2748,85 +2752,85 @@ export default function PlanneringPage() {
         };
         const seller = deriveSeller(raw) || base?.salesResponsible || null;
         return (
-          <div style={{ position: 'fixed', inset:0, zIndex: 1400, background: 'rgba(15,23,42,0.5)', backdropFilter:'blur(3px)', display:'flex', alignItems:'center', justifyContent:'center', padding:16 }} onClick={closeProjectModal}>
-            <div role="dialog" aria-modal="true" aria-busy={detailLoading ? true : undefined} onClick={e => e.stopPropagation()} style={{ width: 'min(720px, 92vw)', maxHeight: '80vh', overflowY: 'auto', background:'#fff', border:'1px solid #e2e8f0', borderRadius:12, boxShadow:'0 12px 30px rgba(0,0,0,0.25)', display:'grid', gap:12, padding:16 }}>
-              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
-                <div style={{ display:'grid', gap:8 }}>
-                  <strong style={{ fontSize:18, color:'#0f172a' }}>
-                    {base?.orderNumber ? <span style={{ fontFamily:'ui-monospace,monospace', fontSize:13, background:'#eef2ff', border:'1px solid #c7d2fe', color:'#312e81', padding:'2px 6px', borderRadius:6, marginRight:8 }}>#{base.orderNumber}</span> : null}
+          <div style={{ position: 'fixed', inset: 0, zIndex: 1400, background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }} onClick={closeProjectModal}>
+            <div role="dialog" aria-modal="true" aria-busy={detailLoading ? true : undefined} onClick={e => e.stopPropagation()} style={{ width: 'min(720px, 92vw)', maxHeight: '80vh', overflowY: 'auto', background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12, boxShadow: '0 12px 30px rgba(0,0,0,0.25)', display: 'grid', gap: 12, padding: 16 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ display: 'grid', gap: 8 }}>
+                  <strong style={{ fontSize: 18, color: '#0f172a' }}>
+                    {base?.orderNumber ? <span style={{ fontFamily: 'ui-monospace,monospace', fontSize: 13, background: '#eef2ff', border: '1px solid #c7d2fe', color: '#312e81', padding: '2px 6px', borderRadius: 6, marginRight: 8 }}>#{base.orderNumber}</span> : null}
                     {base?.name || 'Projekt'}
                   </strong>
-                  <span style={{ fontSize:12, color:'#475569' }}>{base?.customer}</span>
+                  <span style={{ fontSize: 12, color: '#475569' }}>{base?.customer}</span>
                 </div>
-                <button onClick={closeProjectModal} className="btn--plain btn--sm" style={{ background:'#fee2e2', border:'1px solid #fca5a5', color:'#b91c1c', borderRadius:6, padding:'6px 10px', fontSize:12 }}>Stäng</button>
+                <button onClick={closeProjectModal} className="btn--plain btn--sm" style={{ background: '#fee2e2', border: '1px solid #fca5a5', color: '#b91c1c', borderRadius: 6, padding: '6px 10px', fontSize: 12 }}>Stäng</button>
               </div>
               {detailLoading && (
-                <div role="status" aria-live="polite" style={{ display:'grid', gap:10, padding:'8px 0' }}>
-                  <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+                <div role="status" aria-live="polite" style={{ display: 'grid', gap: 10, padding: '8px 0' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                       <circle cx="12" cy="12" r="9" stroke="#cbd5e1" strokeWidth="3" opacity="0.35" />
                       <path d="M21 12a9 9 0 0 0-9-9" stroke="#0ea5e9" strokeWidth="3" strokeLinecap="round">
                         <animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="0.8s" repeatCount="indefinite" />
                       </path>
                     </svg>
-                    <span style={{ fontSize:12, color:'#475569' }}>Hämtar detaljer…</span>
+                    <span style={{ fontSize: 12, color: '#475569' }}>Hämtar detaljer…</span>
                   </div>
-                  <div style={{ display:'grid', gap:6 }}>
-                    <div style={{ height:12, background:'#e5e7eb', borderRadius:6 }} />
-                    <div style={{ height:12, width:'85%', background:'#e5e7eb', borderRadius:6 }} />
-                    <div style={{ height:12, width:'70%', background:'#e5e7eb', borderRadius:6 }} />
-                    <div style={{ height:80, background:'#f8fafc', border:'1px solid #e2e8f0', borderRadius:8 }} />
+                  <div style={{ display: 'grid', gap: 6 }}>
+                    <div style={{ height: 12, background: '#e5e7eb', borderRadius: 6 }} />
+                    <div style={{ height: 12, width: '85%', background: '#e5e7eb', borderRadius: 6 }} />
+                    <div style={{ height: 12, width: '70%', background: '#e5e7eb', borderRadius: 6 }} />
+                    <div style={{ height: 80, background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8 }} />
                   </div>
                 </div>
               )}
-              {detailError && <div style={{ fontSize:12, color:'#b91c1c', background:'#fef2f2', border:'1px solid #fecaca', padding:'6px 8px', borderRadius:8 }}>Fel: {detailError}</div>}
-              <div style={{ display:'grid', gap:12 }}>
-                <div style={{ display:'grid', gap:6 }}>
+              {detailError && <div style={{ fontSize: 12, color: '#b91c1c', background: '#fef2f2', border: '1px solid #fecaca', padding: '6px 8px', borderRadius: 8 }}>Fel: {detailError}</div>}
+              <div style={{ display: 'grid', gap: 12 }}>
+                <div style={{ display: 'grid', gap: 6 }}>
                   {mapsHref && (
-                    <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
-                      <span style={{ fontSize:12, color:'#334155', fontWeight:600 }}>Adress:</span>
-                      <span style={{ fontSize:12, color:'#334155' }}>{address}</span>
-                      <a href={mapsHref} target="_blank" rel="noopener noreferrer" className="btn--plain btn--xs" style={{ fontSize:11, border:'1px solid #cbd5e1', borderRadius:6, padding:'2px 8px', color:'#0369a1', background:'#e0f2fe' }}>Öppna i Kartor</a>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: 12, color: '#334155', fontWeight: 600 }}>Adress:</span>
+                      <span style={{ fontSize: 12, color: '#334155' }}>{address}</span>
+                      <a href={mapsHref} target="_blank" rel="noopener noreferrer" className="btn--plain btn--xs" style={{ fontSize: 11, border: '1px solid #cbd5e1', borderRadius: 6, padding: '2px 8px', color: '#0369a1', background: '#e0f2fe' }}>Öppna i Kartor</a>
                     </div>
                   )}
                   {contactPhones.length > 0 && (
-                    <div style={{ display:'flex', gap:6, flexWrap:'wrap', alignItems:'center' }}>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
                       {contactPhones.map((ph, i) => (
-                        <a key={ph.tel + ':' + i} href={`tel:${ph.tel}`} title={`Ring ${ph.display}`} style={{ fontSize:11, color:'#065f46', background:'#ecfdf5', border:'1px solid #6ee7b7', padding:'2px 6px', borderRadius: 999, textDecoration:'none' }}>
+                        <a key={ph.tel + ':' + i} href={`tel:${ph.tel}`} title={`Ring ${ph.display}`} style={{ fontSize: 11, color: '#065f46', background: '#ecfdf5', border: '1px solid #6ee7b7', padding: '2px 6px', borderRadius: 999, textDecoration: 'none' }}>
                           Kontakt: {ph.display}
                         </a>
                       ))}
                     </div>
                   )}
                   {description && (
-                    <div style={{ display:'grid', gap:4 }}>
-                      <span style={{ fontSize:12, color:'#334155', fontWeight:600 }}>Beskrivning</span>
-                      <p style={{ fontSize:12, color:'#475569', whiteSpace:'pre-wrap', margin:0 }}>{description}</p>
+                    <div style={{ display: 'grid', gap: 4 }}>
+                      <span style={{ fontSize: 12, color: '#334155', fontWeight: 600 }}>Beskrivning</span>
+                      <p style={{ fontSize: 12, color: '#475569', whiteSpace: 'pre-wrap', margin: 0 }}>{description}</p>
                     </div>
                   )}
-                  <div style={{ display:'flex', gap:8, flexWrap:'wrap', alignItems:'center' }}>
-                    {seller && <span style={{ fontSize:11, color:'#475569', background:'#f1f5f9', border:'1px solid #e2e8f0', padding:'2px 6px', borderRadius: 999 }}>Sälj: {seller}</span>}
-                    {meta?.truck && <span style={{ fontSize:11, color:'#475569', background:'#f1f5f9', border:'1px solid #e2e8f0', padding:'2px 6px', borderRadius: 999 }}>Lastbil: {meta.truck}</span>}
-                    {team.length > 0 && <span style={{ fontSize:11, color:'#475569', background:'#f1f5f9', border:'1px solid #e2e8f0', padding:'2px 6px', borderRadius: 999 }}>Team: {team.join(', ')}</span>}
-                    {typeof meta?.bagCount === 'number' && <span style={{ fontSize:11, color:'#475569', background:'#f1f5f9', border:'1px solid #e2e8f0', padding:'2px 6px', borderRadius: 999 }}>Plan: {meta.bagCount} säckar</span>}
-                    {(() => { const pid = base?.id; const agg = pid ? (reportedBagsByProject.get(pid) || 0) : 0; return agg > 0 ? <span style={{ fontSize:11, color:'#1e293b', background:'#ecfeff', border:'1px solid #bae6fd', padding:'2px 6px', borderRadius: 999 }}>Rapporterat: {agg} säckar</span> : null; })()}
-                    {meta?.jobType && <span style={{ fontSize:11, color:'#475569', background:'#f1f5f9', border:'1px solid #e2e8f0', padding:'2px 6px', borderRadius: 999 }}>{meta.jobType}</span>}
-                    {base?.createdAt && <span style={{ fontSize:11, color:'#64748b' }}>Skapad {base.createdAt.slice(0,10)}</span>}
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                    {seller && <span style={{ fontSize: 11, color: '#475569', background: '#f1f5f9', border: '1px solid #e2e8f0', padding: '2px 6px', borderRadius: 999 }}>Sälj: {seller}</span>}
+                    {meta?.truck && <span style={{ fontSize: 11, color: '#475569', background: '#f1f5f9', border: '1px solid #e2e8f0', padding: '2px 6px', borderRadius: 999 }}>Lastbil: {meta.truck}</span>}
+                    {team.length > 0 && <span style={{ fontSize: 11, color: '#475569', background: '#f1f5f9', border: '1px solid #e2e8f0', padding: '2px 6px', borderRadius: 999 }}>Team: {team.join(', ')}</span>}
+                    {typeof meta?.bagCount === 'number' && <span style={{ fontSize: 11, color: '#475569', background: '#f1f5f9', border: '1px solid #e2e8f0', padding: '2px 6px', borderRadius: 999 }}>Plan: {meta.bagCount} säckar</span>}
+                    {(() => { const pid = base?.id; const agg = pid ? (reportedBagsByProject.get(pid) || 0) : 0; return agg > 0 ? <span style={{ fontSize: 11, color: '#1e293b', background: '#ecfeff', border: '1px solid #bae6fd', padding: '2px 6px', borderRadius: 999 }}>Rapporterat: {agg} säckar</span> : null; })()}
+                    {meta?.jobType && <span style={{ fontSize: 11, color: '#475569', background: '#f1f5f9', border: '1px solid #e2e8f0', padding: '2px 6px', borderRadius: 999 }}>{meta.jobType}</span>}
+                    {base?.createdAt && <span style={{ fontSize: 11, color: '#64748b' }}>Skapad {base.createdAt.slice(0, 10)}</span>}
                   </div>
                 </div>
                 {(segs.length > 0) && (
-                  <div style={{ display:'grid', gap:6 }}>
-                    <strong style={{ fontSize:13, color:'#0f172a' }}>Planerade dagar</strong>
-                    <div style={{ display:'grid', gap:6 }}>
+                  <div style={{ display: 'grid', gap: 6 }}>
+                    <strong style={{ fontSize: 13, color: '#0f172a' }}>Planerade dagar</strong>
+                    <div style={{ display: 'grid', gap: 6 }}>
                       {segs.map(s => (
-                        <div key={s.id} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', border:'1px solid #e5e7eb', background:'#f8fafc', borderRadius:8, padding:'6px 8px' }}>
-                          <div style={{ display:'grid' }}>
-                            <span style={{ fontSize:12, color:'#0f172a', fontWeight:600 }}>{s.startDay}{s.endDay !== s.startDay ? ` – ${s.endDay}` : ''}</span>
-                            <span style={{ fontSize:11, color:'#475569' }}>{base?.customer}</span>
+                        <div key={s.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', border: '1px solid #e5e7eb', background: '#f8fafc', borderRadius: 8, padding: '6px 8px' }}>
+                          <div style={{ display: 'grid' }}>
+                            <span style={{ fontSize: 12, color: '#0f172a', fontWeight: 600 }}>{s.startDay}{s.endDay !== s.startDay ? ` – ${s.endDay}` : ''}</span>
+                            <span style={{ fontSize: 11, color: '#475569' }}>{base?.customer}</span>
                           </div>
-                          <div style={{ display:'flex', gap:6, alignItems:'center' }}>
-                            <button type="button" className="btn--plain btn--xs" onClick={() => handleEmailClick({ segmentId: s.id, project: base })} style={{ fontSize:11, border:'1px solid #7dd3fc', background:'#e0f2fe', color:'#0369a1', borderRadius:6, padding:'2px 8px' }}>Maila kund</button>
-                            {ekPath && <a href={`/api/storage/download?path=${encodeURIComponent(ekPath)}`} target="_blank" rel="noopener noreferrer" className="btn--plain btn--xs" style={{ fontSize:11, border:'1px solid #047857', background:'#059669', color:'#fff', borderRadius:6, padding:'2px 8px' }}>Egenkontroll</a>}
+                          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                            <button type="button" className="btn--plain btn--xs" onClick={() => handleEmailClick({ segmentId: s.id, project: base })} style={{ fontSize: 11, border: '1px solid #7dd3fc', background: '#e0f2fe', color: '#0369a1', borderRadius: 6, padding: '2px 8px' }}>Maila kund</button>
+                            {ekPath && <a href={`/api/storage/download?path=${encodeURIComponent(ekPath)}`} target="_blank" rel="noopener noreferrer" className="btn--plain btn--xs" style={{ fontSize: 11, border: '1px solid #047857', background: '#059669', color: '#fff', borderRadius: 6, padding: '2px 8px' }}>Egenkontroll</a>}
                           </div>
                         </div>
                       ))}
@@ -2851,9 +2855,9 @@ export default function PlanneringPage() {
               const { bg, ring } = creatorColor(name);
               return (
                 <span key={u.presence_ref || (u.id + '-' + u.joinedAt) || Math.random().toString(36)} title={name}
-                      style={{
-                        width: 18, height: 18, borderRadius: '50%', background: bg, color: '#fff', fontSize: 10, fontWeight: 600, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', boxShadow: `0 0 0 1px rgba(0,0,0,0.25), 0 0 0 2px ${ring}`, letterSpacing: .5
-                      }}>{initials}</span>
+                  style={{
+                    width: 18, height: 18, borderRadius: '50%', background: bg, color: '#fff', fontSize: 10, fontWeight: 600, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', boxShadow: `0 0 0 1px rgba(0,0,0,0.25), 0 0 0 2px ${ring}`, letterSpacing: .5
+                  }}>{initials}</span>
               );
             })}
             {presenceUsers.length > 12 && <span style={{ fontSize: 10, color: '#475569' }}>+{presenceUsers.length - 12}</span>}
@@ -2865,11 +2869,11 @@ export default function PlanneringPage() {
       {source && <div style={{ fontSize: 11, color: '#9ca3af' }}>Källa: {source}</div>}
       {error && <div style={{ background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c', padding: '6px 8px', borderRadius: 6, fontSize: 12 }}>Fel: {error}</div>}
 
-  <div style={{ display: 'grid', gap: 16, gridTemplateColumns: sidebarCollapsed ? '1fr' : '290px 1fr', alignItems: 'start' }}>
+      <div style={{ display: 'grid', gap: 16, gridTemplateColumns: sidebarCollapsed ? '1fr' : '290px 1fr', alignItems: 'start' }}>
         {/* Left: search / manual add / backlog */}
-  {sidebarCollapsed ? null : (
-  <div style={{ display: 'grid', gap: 16 }}>
-          {/* Search & manual add */}
+        {sidebarCollapsed ? null : (
+          <div style={{ display: 'grid', gap: 16 }}>
+            {/* Search & manual add */}
             <div style={{ display: 'grid', gap: 10 }}>
               <form onSubmit={searchByOrderNumber} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                 <input value={searchOrder} onChange={e => setSearchOrder(e.target.value)} placeholder="Sök ordernummer..." style={{ flex: 1, border: '1px solid #d1d5db', borderRadius: 6, padding: '6px 8px', fontSize: 13 }} />
@@ -2894,94 +2898,94 @@ export default function PlanneringPage() {
               </div>
             </div>
 
-          {searchedProjects.length > 0 && (
-            <div style={{ display: 'grid', gap: 8 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <h2 style={{ fontSize: 14, margin: 0 }}>Sökresultat</h2>
-                <button type="button" className="btn--plain btn--xs" style={{ fontSize: 11 }} onClick={() => setRecentSearchedIds([])}>Rensa</button>
-              </div>
-              {searchedProjects.map(p => (
-                <div
-                  key={p.id}
-                  draggable
-                  onDragStart={e => onDragStart(e, p.id)}
-                  onDragEnd={onDragEnd}
-                  onClick={() => setSelectedProjectId(prev => prev === p.id ? null : p.id)}
-                  style={{ position: 'relative', border: selectedProjectId === p.id ? '2px solid #6366f1' : '1px solid #6366f1', boxShadow: selectedProjectId === p.id ? '0 0 0 3px rgba(99,102,241,0.35)' : '0 0 0 3px rgba(99,102,241,0.25)', background: draggingId === p.id ? '#eef2ff' : '#ffffff', borderRadius: 8, padding: 10, cursor: 'grab', display: 'grid', gap: 4 }}>
-                  <div style={{ position: 'absolute', top: -6, right: -6, background: '#6366f1', color: '#fff', fontSize: 10, padding: '2px 6px', borderRadius: 12 }}>Hittad</div>
-                  {p.orderNumber && (egenkontrollOrderNumbers.has(p.orderNumber) || egenkontrollOrderNumbers.has(p.orderNumber.replace(/^0+/, '') || p.orderNumber)) && (
-                    <div style={{ position: 'absolute', top: -6, left: -6, background: '#059669', color: '#fff', fontSize: 10, padding: '2px 6px', borderRadius: 12, boxShadow:'0 0 0 2px #fff' }} title="Egenkontroll finns">EK</div>
-                  )}
-                  <strong style={{ fontSize: 14 }}>
-                    {p.orderNumber ? <span style={{ fontFamily: 'ui-monospace, monospace', background: '#eef2ff', color: '#312e81', padding: '2px 6px', borderRadius: 4, marginRight: 6, fontSize: 12, border: '1px solid #c7d2fe' }}>#{p.orderNumber}</span> : null}
-                    {p.name}
-                  </strong>
-                  <span style={{ fontSize: 12, color: '#6b7280' }}>{p.customer}</span>
-                  {p.salesResponsible && <span style={{ fontSize: 10, color: '#475569', background:'#f1f5f9', padding:'2px 6px', borderRadius:12, border:'1px solid #e2e8f0' }}>Sälj: {p.salesResponsible}</span>}
-                  <span style={{ fontSize: 11, color: '#9ca3af' }}>Skapad: {p.createdAt.slice(0, 10)}</span>
+            {searchedProjects.length > 0 && (
+              <div style={{ display: 'grid', gap: 8 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <h2 style={{ fontSize: 14, margin: 0 }}>Sökresultat</h2>
+                  <button type="button" className="btn--plain btn--xs" style={{ fontSize: 11 }} onClick={() => setRecentSearchedIds([])}>Rensa</button>
                 </div>
-              ))}
-              <hr style={{ border: 'none', height: 1, background: '#e5e7eb', margin: 0 }} />
-            </div>
-          )}
-
-          <div style={{ display: 'grid', gap: 8 }}>
-            <h2 style={{ fontSize: 15, margin: 0 }}>Projekt</h2>
-            {loading && <div style={{ fontSize: 12 }}>Laddar projekt…</div>}
-            {!loading && backlog.length === 0 && <div style={{ fontSize: 12, color: '#64748b' }}>Inga fler oschemalagda.</div>}
-            {filteredBacklog.map(p => {
-              const accent = backlogAccent(p);
-              const active = selectedProjectId === p.id;
-              const hovered = hoverBacklogId === p.id;
-              const baseBg = p.isManual ? '#f1f5f9' : '#ffffff';
-              const elevated = draggingId === p.id || hovered || active;
-              const gradient = `linear-gradient(135deg, ${accent}18, ${baseBg})`;
-              return (
-                <div key={p.id}
-                     draggable
-                     onDragStart={e => onDragStart(e, p.id)}
-                     onDragEnd={onDragEnd}
-                     onMouseEnter={() => setHoverBacklogId(p.id)}
-                     onMouseLeave={() => setHoverBacklogId(prev => prev === p.id ? null : prev)}
-                     onClick={() => setSelectedProjectId(prev => prev === p.id ? null : p.id)}
-                     style={{
-                       position: 'relative',
-                       border: active ? `2px solid ${accent}` : `1px solid ${p.isManual ? '#94a3b8' : '#e2e8f0'}`,
-                       boxShadow: elevated ? `0 4px 10px -2px ${accent}55, 0 0 0 1px ${accent}40` : '0 1px 2px rgba(0,0,0,0.05)',
-                       borderRadius: 10,
-                       padding: '12px 12px 12px 14px',
-                       background: elevated ? gradient : baseBg,
-                       cursor: 'grab',
-                       display: 'grid',
-                       gap: 4,
-                       transition: 'box-shadow 0.25s, transform 0.2s, background 0.3s, border 0.25s',
-                       transform: elevated ? 'translateY(-2px)' : 'translateY(0)'
-                     }}>
-                  <span style={{ position: 'absolute', inset: 0, borderRadius: 10, pointerEvents: 'none', boxShadow: active ? `0 0 0 2px ${accent}` : 'none' }} />
-                  <span style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 5, borderTopLeftRadius: 10, borderBottomLeftRadius: 10, background: accent, opacity: 0.9 }} />
-                  {p.isManual && <span style={{ position: 'absolute', top: -7, left: 10, background: '#334155', color: '#fff', fontSize: 10, padding: '2px 6px', borderRadius: 12 }}>Manuell</span>}
-                  {active && <span style={{ position: 'absolute', top: -7, right: 10, background: accent, color: '#fff', fontSize: 10, padding: '2px 6px', borderRadius: 12 }}>Vald</span>}
-                  {p.orderNumber && (egenkontrollOrderNumbers.has(p.orderNumber) || egenkontrollOrderNumbers.has(p.orderNumber.replace(/^0+/, '') || p.orderNumber)) && (
-                    <span style={{ position: 'absolute', top: -7, left: p.isManual ? 70 : 10, background: '#059669', color: '#fff', fontSize: 10, padding: '2px 6px', borderRadius: 12 }}>EK</span>
-                  )}
-                  <strong style={{ fontSize: 14, lineHeight: 1.25, color: '#111827', display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: 4 }}>
-                    {p.orderNumber && (
-                      <span style={{ fontFamily: 'ui-monospace, monospace', background: '#ffffff', padding: '2px 6px', borderRadius: 4, fontSize: 12, border: `1px solid ${accent}55`, color: '#334155' }}>#{p.orderNumber}</span>
+                {searchedProjects.map(p => (
+                  <div
+                    key={p.id}
+                    draggable
+                    onDragStart={e => onDragStart(e, p.id)}
+                    onDragEnd={onDragEnd}
+                    onClick={() => setSelectedProjectId(prev => prev === p.id ? null : p.id)}
+                    style={{ position: 'relative', border: selectedProjectId === p.id ? '2px solid #6366f1' : '1px solid #6366f1', boxShadow: selectedProjectId === p.id ? '0 0 0 3px rgba(99,102,241,0.35)' : '0 0 0 3px rgba(99,102,241,0.25)', background: draggingId === p.id ? '#eef2ff' : '#ffffff', borderRadius: 8, padding: 10, cursor: 'grab', display: 'grid', gap: 4 }}>
+                    <div style={{ position: 'absolute', top: -6, right: -6, background: '#6366f1', color: '#fff', fontSize: 10, padding: '2px 6px', borderRadius: 12 }}>Hittad</div>
+                    {p.orderNumber && (egenkontrollOrderNumbers.has(p.orderNumber) || egenkontrollOrderNumbers.has(p.orderNumber.replace(/^0+/, '') || p.orderNumber)) && (
+                      <div style={{ position: 'absolute', top: -6, left: -6, background: '#059669', color: '#fff', fontSize: 10, padding: '2px 6px', borderRadius: 12, boxShadow: '0 0 0 2px #fff' }} title="Egenkontroll finns">EK</div>
                     )}
-                    <span>{p.name}</span>
-                  </strong>
-                  <div style={{ fontSize: 12, display: 'flex', gap: 6, flexDirection: 'column', alignItems: 'flex-start', color: '#475569' }}>
-                    <span style={{ fontWeight: 500 }}>{p.customer}</span>
-                    {p.salesResponsible && <span style={{ fontSize: 10, color: '#475569', background:'#f1f5f9', padding:'2px 6px', borderRadius:12, border:'1px solid #e2e8f0' }}>Säljare: {p.salesResponsible}</span>}
-                    <span style={{ fontSize: 10, color: '#64748b', background: '#f1f5f9', padding: '2px 6px', borderRadius: 12, border:'1px solid #e2e8f0' }}>Skapad {p.createdAt.slice(0,10)}</span>
+                    <strong style={{ fontSize: 14 }}>
+                      {p.orderNumber ? <span style={{ fontFamily: 'ui-monospace, monospace', background: '#eef2ff', color: '#312e81', padding: '2px 6px', borderRadius: 4, marginRight: 6, fontSize: 12, border: '1px solid #c7d2fe' }}>#{p.orderNumber}</span> : null}
+                      {p.name}
+                    </strong>
+                    <span style={{ fontSize: 12, color: '#6b7280' }}>{p.customer}</span>
+                    {p.salesResponsible && <span style={{ fontSize: 10, color: '#475569', background: '#f1f5f9', padding: '2px 6px', borderRadius: 12, border: '1px solid #e2e8f0' }}>Sälj: {p.salesResponsible}</span>}
+                    <span style={{ fontSize: 11, color: '#9ca3af' }}>Skapad: {p.createdAt.slice(0, 10)}</span>
                   </div>
-                </div>
-              );
-            })}
-      {selectedProjectId && <div style={{ fontSize: 11, color: '#b45309', background: '#fef3c7', border: '1px solid #fcd34d', padding: '4px 6px', borderRadius: 6 }}>Klicka på en dag i kalendern för att schemalägga vald projekt (fallback).</div>}
+                ))}
+                <hr style={{ border: 'none', height: 1, background: '#e5e7eb', margin: 0 }} />
+              </div>
+            )}
+
+            <div style={{ display: 'grid', gap: 8 }}>
+              <h2 style={{ fontSize: 15, margin: 0 }}>Projekt</h2>
+              {loading && <div style={{ fontSize: 12 }}>Laddar projekt…</div>}
+              {!loading && backlog.length === 0 && <div style={{ fontSize: 12, color: '#64748b' }}>Inga fler oschemalagda.</div>}
+              {filteredBacklog.map(p => {
+                const accent = backlogAccent(p);
+                const active = selectedProjectId === p.id;
+                const hovered = hoverBacklogId === p.id;
+                const baseBg = p.isManual ? '#f1f5f9' : '#ffffff';
+                const elevated = draggingId === p.id || hovered || active;
+                const gradient = `linear-gradient(135deg, ${accent}18, ${baseBg})`;
+                return (
+                  <div key={p.id}
+                    draggable
+                    onDragStart={e => onDragStart(e, p.id)}
+                    onDragEnd={onDragEnd}
+                    onMouseEnter={() => setHoverBacklogId(p.id)}
+                    onMouseLeave={() => setHoverBacklogId(prev => prev === p.id ? null : prev)}
+                    onClick={() => setSelectedProjectId(prev => prev === p.id ? null : p.id)}
+                    style={{
+                      position: 'relative',
+                      border: active ? `2px solid ${accent}` : `1px solid ${p.isManual ? '#94a3b8' : '#e2e8f0'}`,
+                      boxShadow: elevated ? `0 4px 10px -2px ${accent}55, 0 0 0 1px ${accent}40` : '0 1px 2px rgba(0,0,0,0.05)',
+                      borderRadius: 10,
+                      padding: '12px 12px 12px 14px',
+                      background: elevated ? gradient : baseBg,
+                      cursor: 'grab',
+                      display: 'grid',
+                      gap: 4,
+                      transition: 'box-shadow 0.25s, transform 0.2s, background 0.3s, border 0.25s',
+                      transform: elevated ? 'translateY(-2px)' : 'translateY(0)'
+                    }}>
+                    <span style={{ position: 'absolute', inset: 0, borderRadius: 10, pointerEvents: 'none', boxShadow: active ? `0 0 0 2px ${accent}` : 'none' }} />
+                    <span style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 5, borderTopLeftRadius: 10, borderBottomLeftRadius: 10, background: accent, opacity: 0.9 }} />
+                    {p.isManual && <span style={{ position: 'absolute', top: -7, left: 10, background: '#334155', color: '#fff', fontSize: 10, padding: '2px 6px', borderRadius: 12 }}>Manuell</span>}
+                    {active && <span style={{ position: 'absolute', top: -7, right: 10, background: accent, color: '#fff', fontSize: 10, padding: '2px 6px', borderRadius: 12 }}>Vald</span>}
+                    {p.orderNumber && (egenkontrollOrderNumbers.has(p.orderNumber) || egenkontrollOrderNumbers.has(p.orderNumber.replace(/^0+/, '') || p.orderNumber)) && (
+                      <span style={{ position: 'absolute', top: -7, left: p.isManual ? 70 : 10, background: '#059669', color: '#fff', fontSize: 10, padding: '2px 6px', borderRadius: 12 }}>EK</span>
+                    )}
+                    <strong style={{ fontSize: 14, lineHeight: 1.25, color: '#111827', display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: 4 }}>
+                      {p.orderNumber && (
+                        <span style={{ fontFamily: 'ui-monospace, monospace', background: '#ffffff', padding: '2px 6px', borderRadius: 4, fontSize: 12, border: `1px solid ${accent}55`, color: '#334155' }}>#{p.orderNumber}</span>
+                      )}
+                      <span>{p.name}</span>
+                    </strong>
+                    <div style={{ fontSize: 12, display: 'flex', gap: 6, flexDirection: 'column', alignItems: 'flex-start', color: '#475569' }}>
+                      <span style={{ fontWeight: 500 }}>{p.customer}</span>
+                      {p.salesResponsible && <span style={{ fontSize: 10, color: '#475569', background: '#f1f5f9', padding: '2px 6px', borderRadius: 12, border: '1px solid #e2e8f0' }}>Säljare: {p.salesResponsible}</span>}
+                      <span style={{ fontSize: 10, color: '#64748b', background: '#f1f5f9', padding: '2px 6px', borderRadius: 12, border: '1px solid #e2e8f0' }}>Skapad {p.createdAt.slice(0, 10)}</span>
+                    </div>
+                  </div>
+                );
+              })}
+              {selectedProjectId && <div style={{ fontSize: 11, color: '#b45309', background: '#fef3c7', border: '1px solid #fcd34d', padding: '4px 6px', borderRadius: 6 }}>Klicka på en dag i kalendern för att schemalägga vald projekt (fallback).</div>}
+            </div>
           </div>
-  </div>
-  )}
+        )}
 
         {/* Calendar */}
         <div style={{ display: 'grid', gap: 8 }}>
@@ -2991,7 +2995,7 @@ export default function PlanneringPage() {
             <button className="btn--plain btn--sm" onClick={() => setMonthOffset(o => o + 1)}>▶</button>
             {monthOffset !== 0 && <button className="btn--plain btn--sm" onClick={() => setMonthOffset(0)}>Idag</button>}
             <div style={{ display: 'flex', gap: 4 }}>
-              {(['monthGrid','weekdayLanes','dayList'] as const).map(modeKey => {
+              {(['monthGrid', 'weekdayLanes', 'dayList'] as const).map(modeKey => {
                 const active = viewMode === modeKey;
                 return (
                   <button
@@ -3014,7 +3018,7 @@ export default function PlanneringPage() {
               })}
             </div>
             {/* Hide weekends toggle */}
-            <label style={{ display:'inline-flex', alignItems:'center', gap:6, fontSize:12, color:'#374151', border:'1px solid #d1d5db', borderRadius:6, padding:'4px 8px', background:'#fff' }}>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#374151', border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 8px', background: '#fff' }}>
               <input type="checkbox" checked={hideWeekends} onChange={e => setHideWeekends(e.target.checked)} />
               Dölj helger
             </label>
@@ -3022,8 +3026,8 @@ export default function PlanneringPage() {
             <button type="button" className="btn--plain btn--sm" onClick={() => refreshEgenkontroller()} style={{ border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 10px', fontSize: 12 }}>
               {egenkontrollLoading ? 'Laddar EK…' : 'Uppdatera EK'}
             </button>
-            {egenkontrollError && <span style={{ fontSize:10, color:'#b91c1c' }} title={egenkontrollError}>Fel EK</span>}
-            {!egenkontrollLoading && egenkontrollOrderNumbers.size > 0 && <span style={{ fontSize:10, background:'#ecfdf5', color:'#047857', padding:'2px 6px', borderRadius:12, border:'1px solid #6ee7b7' }} title="Antal matchade egenkontroller">EK: {egenkontrollOrderNumbers.size}</span>}
+            {egenkontrollError && <span style={{ fontSize: 10, color: '#b91c1c' }} title={egenkontrollError}>Fel EK</span>}
+            {!egenkontrollLoading && egenkontrollOrderNumbers.size > 0 && <span style={{ fontSize: 10, background: '#ecfdf5', color: '#047857', padding: '2px 6px', borderRadius: 12, border: '1px solid #6ee7b7' }} title="Antal matchade egenkontroller">EK: {egenkontrollOrderNumbers.size}</span>}
             <span style={{ flex: 1 }} />
             <button type="button" className="btn--plain btn--sm" onClick={() => setSidebarCollapsed(s => !s)}
               style={{ border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 10px', fontSize: 12 }}>
@@ -3031,7 +3035,7 @@ export default function PlanneringPage() {
             </button>
             {isAdmin && (
               <button type="button" className="btn--plain btn--sm" onClick={() => setAdminModalOpen(true)}
-                style={{ marginLeft: 'auto', border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 10px', fontSize: 12, background:'#fff' }}>
+                style={{ marginLeft: 'auto', border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 10px', fontSize: 12, background: '#fff' }}>
                 Admin‑inställningar
               </button>
             )}
@@ -3045,7 +3049,7 @@ export default function PlanneringPage() {
                 // For legacy/default trucks without DB record, render compact only
                 return (
                   <div key={tName}
-                       style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 10px', border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff', minWidth: 170 }}>
+                    style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 10px', border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff', minWidth: 170 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <span style={{ width: 16, height: 16, background: c.bg, border: `3px solid ${c.border}`, borderRadius: 6 }} />
                       <span style={{ fontWeight: 700, color: c.text }}>{tName}</span>
@@ -3106,10 +3110,10 @@ export default function PlanneringPage() {
               );
             })}
             {isAdmin && showInlineAdminPanels && (
-            <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 4, padding: '6px 8px', border: '1px dashed #94a3b8', borderRadius: 10, background: '#f8fafc', minWidth: 140 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: '#475569' }}>
-                <span style={{ width: 14, height: 14, background: '#fff', border: '2px dashed #94a3b8', borderRadius: 4 }} /> Ingen
-              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 4, padding: '6px 8px', border: '1px dashed #94a3b8', borderRadius: 10, background: '#f8fafc', minWidth: 140 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: '#475569' }}>
+                  <span style={{ width: 14, height: 14, background: '#fff', border: '2px dashed #94a3b8', borderRadius: 4 }} /> Ingen
+                </div>
                 <form onSubmit={e => { e.preventDefault(); createTruck(); }} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   <input value={newTruckName} onChange={e => setNewTruckName(e.target.value)} placeholder="Ny lastbil" style={{ fontSize: 11, padding: '4px 6px', border: '1px solid #cbd5e1', borderRadius: 6 }} />
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -3123,7 +3127,7 @@ export default function PlanneringPage() {
                   </div>
                   <button type="submit" disabled={!newTruckName.trim()} className="btn--plain btn--xs" style={{ fontSize: 11, background: '#e0f2fe', border: '1px solid #7dd3fc', color: '#0369a1', borderRadius: 6, padding: '4px 6px' }}>Lägg till</button>
                 </form>
-            </div>
+              </div>
             )}
           </div>
           {/* Depå overview + Leveranser as cards */}
@@ -3152,16 +3156,16 @@ export default function PlanneringPage() {
                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                             <div style={{ fontSize: 12, fontWeight: 700, color: '#111827' }}>{d.name}</div>
                             {(ekoRisk || vitRisk) && (
-                              <span style={{ fontSize: 11, color:'#b91c1c', background:'#fef2f2', border:'1px solid #fecaca', padding:'1px 6px', borderRadius: 999 }}>
+                              <span style={{ fontSize: 11, color: '#b91c1c', background: '#fef2f2', border: '1px solid #fecaca', padding: '1px 6px', borderRadius: 999 }}>
                                 Risk: {ekoRisk}{ekoRisk && vitRisk ? ' • ' : ''}{vitRisk}
                               </span>
                             )}
                           </div>
                           <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-                            <span style={{ fontSize: 11, color:'#047857', background:'#ecfdf5', border:'1px solid #6ee7b7', padding:'1px 7px', borderRadius: 999 }}>Ekovilla: {eko}</span>
-                            <span style={{ fontSize: 11, color:'#1d4ed8', background:'#eff6ff', border:'1px solid #93c5fd', padding:'1px 7px', borderRadius: 999 }}>Vitull: {vit}</span>
+                            <span style={{ fontSize: 11, color: '#047857', background: '#ecfdf5', border: '1px solid #6ee7b7', padding: '1px 7px', borderRadius: 999 }}>Ekovilla: {eko}</span>
+                            <span style={{ fontSize: 11, color: '#1d4ed8', background: '#eff6ff', border: '1px solid #93c5fd', padding: '1px 7px', borderRadius: 999 }}>Vitull: {vit}</span>
                             {planned && (planned.ekovilla > 0 || planned.vitull > 0) ? (
-                              <span style={{ fontSize: 11, color:'#0369a1', background:'#f0f9ff', border:'1px solid #bae6fd', padding:'1px 7px', borderRadius: 999 }}>Plan: E {planned.ekovilla || 0} • V {planned.vitull || 0}</span>
+                              <span style={{ fontSize: 11, color: '#0369a1', background: '#f0f9ff', border: '1px solid #bae6fd', padding: '1px 7px', borderRadius: 999 }}>Plan: E {planned.ekovilla || 0} • V {planned.vitull || 0}</span>
                             ) : null}
                           </div>
                         </div>
@@ -3191,10 +3195,10 @@ export default function PlanneringPage() {
                         : { bg: '#eff6ff', border: '#93c5fd', text: '#1d4ed8' };
                       return (
                         <div key={d.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', border: '1px solid #f1f5f9', borderRadius: 8, background: '#fff' }}>
-                          <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: 11, color: '#334155', background:'#f8fafc', border:'1px solid #e5e7eb', padding:'1px 6px', borderRadius: 6 }}>{d.delivery_date}</span>
+                          <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: 11, color: '#334155', background: '#f8fafc', border: '1px solid #e5e7eb', padding: '1px 6px', borderRadius: 6 }}>{d.delivery_date}</span>
                           <span style={{ color: '#64748b' }}>•</span>
                           <span style={{ fontSize: 12, color: '#111827' }}>{depName}</span>
-                          <span style={{ marginLeft: 'auto', fontSize: 11, color: matStyle.text as any, background: matStyle.bg as any, border: `1px solid ${matStyle.border}`, padding:'1px 7px', borderRadius: 999 }}>{d.material_kind} × {d.amount} säckar</span>
+                          <span style={{ marginLeft: 'auto', fontSize: 11, color: matStyle.text as any, background: matStyle.bg as any, border: `1px solid ${matStyle.border}`, padding: '1px 7px', borderRadius: 999 }}>{d.material_kind} × {d.amount} säckar</span>
                         </div>
                       );
                     })}
@@ -3246,20 +3250,20 @@ export default function PlanneringPage() {
           {/* Admin settings modal */}
           {isAdmin && adminModalOpen && (
             <div role="dialog" aria-modal="true" aria-label="Admin-inställningar" onClick={() => setAdminModalOpen(false)}
-              style={{ position:'fixed', inset:0, background:'rgba(15,23,42,0.35)', zIndex:1000, display:'flex', alignItems:'center', justifyContent:'center', padding:16 }}>
-              <div onClick={e=>e.stopPropagation()} style={{ width:'min(100%, 980px)', maxHeight:'85vh', overflow:'auto', background:'#fff', border:'1px solid #e5e7eb', borderRadius:12, boxShadow:'0 20px 40px rgba(0,0,0,0.15)' }}>
-                <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'12px 14px', borderBottom:'1px solid #e5e7eb' }}>
-                  <div style={{ display:'flex', gap:8 }}>
-                    <button onClick={()=>setAdminModalTab('trucks')} style={{ padding:'6px 10px', border:'1px solid '+(adminModalTab==='trucks'?'#111827':'#e5e7eb'), borderRadius:8, background: adminModalTab==='trucks'?'#111827':'#fff', color: adminModalTab==='trucks'?'#fff':'#111827', fontSize:13, fontWeight:600 }}>Lastbilar</button>
-                    <button onClick={()=>setAdminModalTab('depots')} style={{ padding:'6px 10px', border:'1px solid '+(adminModalTab==='depots'?'#111827':'#e5e7eb'), borderRadius:8, background: adminModalTab==='depots'?'#111827':'#fff', color: adminModalTab==='depots'?'#fff':'#111827', fontSize:13, fontWeight:600 }}>Depåer</button>
-                    <button onClick={()=>setAdminModalTab('deliveries')} style={{ padding:'6px 10px', border:'1px solid '+(adminModalTab==='deliveries'?'#111827':'#e5e7eb'), borderRadius:8, background: adminModalTab==='deliveries'?'#111827':'#fff', color: adminModalTab==='deliveries'?'#fff':'#111827', fontSize:13, fontWeight:600 }}>Leveranser</button>
+              style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.35)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+              <div onClick={e => e.stopPropagation()} style={{ width: 'min(100%, 980px)', maxHeight: '85vh', overflow: 'auto', background: '#fff', border: '1px solid #e5e7eb', borderRadius: 12, boxShadow: '0 20px 40px rgba(0,0,0,0.15)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 14px', borderBottom: '1px solid #e5e7eb' }}>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button onClick={() => setAdminModalTab('trucks')} style={{ padding: '6px 10px', border: '1px solid ' + (adminModalTab === 'trucks' ? '#111827' : '#e5e7eb'), borderRadius: 8, background: adminModalTab === 'trucks' ? '#111827' : '#fff', color: adminModalTab === 'trucks' ? '#fff' : '#111827', fontSize: 13, fontWeight: 600 }}>Lastbilar</button>
+                    <button onClick={() => setAdminModalTab('depots')} style={{ padding: '6px 10px', border: '1px solid ' + (adminModalTab === 'depots' ? '#111827' : '#e5e7eb'), borderRadius: 8, background: adminModalTab === 'depots' ? '#111827' : '#fff', color: adminModalTab === 'depots' ? '#fff' : '#111827', fontSize: 13, fontWeight: 600 }}>Depåer</button>
+                    <button onClick={() => setAdminModalTab('deliveries')} style={{ padding: '6px 10px', border: '1px solid ' + (adminModalTab === 'deliveries' ? '#111827' : '#e5e7eb'), borderRadius: 8, background: adminModalTab === 'deliveries' ? '#111827' : '#fff', color: adminModalTab === 'deliveries' ? '#fff' : '#111827', fontSize: 13, fontWeight: 600 }}>Leveranser</button>
                   </div>
-                  <button onClick={()=>setAdminModalOpen(false)} className="btn--plain" aria-label="Stäng" style={{ border:'1px solid #e5e7eb', borderRadius:8, padding:'6px 10px', background:'#fff' }}>Stäng</button>
+                  <button onClick={() => setAdminModalOpen(false)} className="btn--plain" aria-label="Stäng" style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: '6px 10px', background: '#fff' }}>Stäng</button>
                 </div>
-                <div style={{ padding:14, display:'grid', gap:12 }}>
-                  {adminModalTab==='trucks' && (
-                    <div style={{ display:'grid', gap: 12 }}>
-                      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(260px, 1fr))', gap:12 }}>
+                <div style={{ padding: 14, display: 'grid', gap: 12 }}>
+                  {adminModalTab === 'trucks' && (
+                    <div style={{ display: 'grid', gap: 12 }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
                         {planningTrucks.map(tRec => {
                           const currentColor = truckColorOverrides[tRec.name] || tRec.color || defaultTruckColors[tRec.name] || '#6366f1';
                           const edit = editingTeamNames[tRec.id] || { team1: tRec.team_member1_name || '', team2: tRec.team_member2_name || '', team1Id: tRec.team1_id || null, team2Id: tRec.team2_id || null };
@@ -3271,52 +3275,52 @@ export default function PlanneringPage() {
                           );
                           const status = truckSaveStatus[tRec.id];
                           return (
-                            <div key={tRec.id} style={{ display:'flex', flexDirection:'column', gap:10, padding:10, border:'1px solid #e5e7eb', borderRadius:10, background:'#fff' }}>
-                              <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                            <div key={tRec.id} style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: 10, border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                                 <span style={{ width: 16, height: 16, background: currentColor, border: '3px solid #cbd5e1', borderRadius: 6 }} />
                                 <strong>{tRec.name}</strong>
-                                <input type="color" value={currentColor as string} onChange={e=>updateTruckColor(tRec, e.target.value)} style={{ marginLeft:'auto', width: 28, height: 28, border:'1px solid #cbd5e1', borderRadius:6, background:'#fff' }} />
+                                <input type="color" value={currentColor as string} onChange={e => updateTruckColor(tRec, e.target.value)} style={{ marginLeft: 'auto', width: 28, height: 28, border: '1px solid #cbd5e1', borderRadius: 6, background: '#fff' }} />
                               </div>
-                              <div style={{ display:'grid', gap:8 }}>
-                                <label style={{ display:'grid', gap:4, fontSize:12 }}>
+                              <div style={{ display: 'grid', gap: 8 }}>
+                                <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
                                   <span>Team 1</span>
-                                  <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+                                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                                     <select
                                       value={edit.team1Id || tRec.team1_id || ''}
-                                      onChange={e=>{ const val = e.target.value || null; updateTruckTeamId(tRec, 1, val); const nm = crewList.find(c=>c.id===val)?.name || ''; if (nm) updateTruckTeamName(tRec, 1, nm); }}
-                                      style={{ flex:1, padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }}
+                                      onChange={e => { const val = e.target.value || null; updateTruckTeamId(tRec, 1, val); const nm = crewList.find(c => c.id === val)?.name || ''; if (nm) updateTruckTeamName(tRec, 1, nm); }}
+                                      style={{ flex: 1, padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }}
                                     >
                                       <option value="">Ej tilldelad</option>
                                       {crewList.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                                     </select>
-                                    <span style={{ fontSize:11, color:'#6b7280' }}>{(edit.team1 ?? tRec.team_member1_name) || ''}</span>
+                                    <span style={{ fontSize: 11, color: '#6b7280' }}>{(edit.team1 ?? tRec.team_member1_name) || ''}</span>
                                   </div>
                                 </label>
-                                <label style={{ display:'grid', gap:4, fontSize:12 }}>
+                                <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
                                   <span>Team 2</span>
-                                  <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+                                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                                     <select
                                       value={edit.team2Id || tRec.team2_id || ''}
-                                      onChange={e=>{ const val = e.target.value || null; updateTruckTeamId(tRec, 2, val); const nm = crewList.find(c=>c.id===val)?.name || ''; if (nm) updateTruckTeamName(tRec, 2, nm); }}
-                                      style={{ flex:1, padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }}
+                                      onChange={e => { const val = e.target.value || null; updateTruckTeamId(tRec, 2, val); const nm = crewList.find(c => c.id === val)?.name || ''; if (nm) updateTruckTeamName(tRec, 2, nm); }}
+                                      style={{ flex: 1, padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }}
                                     >
                                       <option value="">Ej tilldelad</option>
                                       {crewList.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                                     </select>
-                                    <span style={{ fontSize:11, color:'#6b7280' }}>{(edit.team2 ?? tRec.team_member2_name) || ''}</span>
+                                    <span style={{ fontSize: 11, color: '#6b7280' }}>{(edit.team2 ?? tRec.team_member2_name) || ''}</span>
                                   </div>
                                 </label>
-                                <label style={{ display:'grid', gap:4, fontSize:12 }}>
+                                <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
                                   <span>Depå</span>
-                                  <select value={tRec.depot_id || ''} onChange={e=>updateTruckDepot(tRec, e.target.value || null)} style={{ padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }}>
+                                  <select value={tRec.depot_id || ''} onChange={e => updateTruckDepot(tRec, e.target.value || null)} style={{ padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }}>
                                     <option value="">Ingen depå</option>
                                     {depots.map(d => (<option key={d.id} value={d.id}>{d.name}</option>))}
                                   </select>
                                 </label>
                               </div>
-                              <div style={{ display:'flex', gap:8, alignItems:'center' }}>
-                                <button type="button" disabled={!changed || status?.status === 'saving'} onClick={()=>saveTruckTeamNames(tRec)} className="btn--plain btn--xs" style={{ fontSize:12, padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8, background:'#fff' }}>Spara</button>
-                                <button type="button" onClick={()=>{ if (typeof window!=='undefined'){ const ok = window.confirm(`Ta bort lastbil \"${tRec.name}\"?`); if (!ok) return;} deleteTruck(tRec); }} className="btn--plain btn--xs" style={{ fontSize:12, padding:'6px 8px', border:'1px solid #fecaca', background:'#fef2f2', color:'#b91c1c', borderRadius:8 }}>Ta bort</button>
+                              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                                <button type="button" disabled={!changed || status?.status === 'saving'} onClick={() => saveTruckTeamNames(tRec)} className="btn--plain btn--xs" style={{ fontSize: 12, padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8, background: '#fff' }}>Spara</button>
+                                <button type="button" onClick={() => { if (typeof window !== 'undefined') { const ok = window.confirm(`Ta bort lastbil \"${tRec.name}\"?`); if (!ok) return; } deleteTruck(tRec); }} className="btn--plain btn--xs" style={{ fontSize: 12, padding: '6px 8px', border: '1px solid #fecaca', background: '#fef2f2', color: '#b91c1c', borderRadius: 8 }}>Ta bort</button>
                                 {status?.status === 'saving' && <span style={{ fontSize: 12, color: '#64748b' }}>Sparar…</span>}
                                 {status?.status === 'saved' && <span style={{ fontSize: 12, color: '#059669' }}>✓ Sparad</span>}
                                 {status?.status === 'error' && <span style={{ fontSize: 12, color: '#b91c1c' }}>Fel</span>}
@@ -3325,90 +3329,90 @@ export default function PlanneringPage() {
                           );
                         })}
                       </div>
-                      <div style={{ paddingTop:6, borderTop:'1px dashed #e5e7eb' }}>
-                        <form onSubmit={e=>{e.preventDefault(); createTruck();}} style={{ display:'flex', gap:8, flexWrap:'wrap', alignItems:'center' }}>
-                          <input value={newTruckName} onChange={e=>setNewTruckName(e.target.value)} placeholder="Ny lastbil" style={{ minWidth:220, padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }} />
-                          <select value={newTruckDepotId} onChange={e=>setNewTruckDepotId(e.target.value)} style={{ minWidth:200, padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }}>
+                      <div style={{ paddingTop: 6, borderTop: '1px dashed #e5e7eb' }}>
+                        <form onSubmit={e => { e.preventDefault(); createTruck(); }} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                          <input value={newTruckName} onChange={e => setNewTruckName(e.target.value)} placeholder="Ny lastbil" style={{ minWidth: 220, padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }} />
+                          <select value={newTruckDepotId} onChange={e => setNewTruckDepotId(e.target.value)} style={{ minWidth: 200, padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }}>
                             <option value="">Välj depå (valfritt)</option>
                             {depots.map(d => (<option key={d.id} value={d.id}>{d.name}</option>))}
                           </select>
-                          <button type="submit" disabled={!newTruckName.trim()} className="btn--plain btn--xs" style={{ fontSize:12, padding:'6px 10px', border:'1px solid #7dd3fc', background:'#e0f2fe', color:'#0369a1', borderRadius:8 }}>Lägg till</button>
+                          <button type="submit" disabled={!newTruckName.trim()} className="btn--plain btn--xs" style={{ fontSize: 12, padding: '6px 10px', border: '1px solid #7dd3fc', background: '#e0f2fe', color: '#0369a1', borderRadius: 8 }}>Lägg till</button>
                         </form>
                       </div>
                     </div>
                   )}
-                  {adminModalTab==='depots' && (
-                    <div style={{ display:'grid', gap:12 }}>
-                      <form onSubmit={createDepot} style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' }}>
-                        <input value={newDepotName} onChange={e=>setNewDepotName(e.target.value)} placeholder="Ny depå" style={{ minWidth:240, padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }} />
-                        <button type="submit" disabled={!newDepotName.trim()} className="btn--plain btn--xs" style={{ fontSize:12, padding:'6px 10px', border:'1px solid #7dd3fc', background:'#e0f2fe', color:'#0369a1', borderRadius:8 }}>Lägg till</button>
+                  {adminModalTab === 'depots' && (
+                    <div style={{ display: 'grid', gap: 12 }}>
+                      <form onSubmit={createDepot} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <input value={newDepotName} onChange={e => setNewDepotName(e.target.value)} placeholder="Ny depå" style={{ minWidth: 240, padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }} />
+                        <button type="submit" disabled={!newDepotName.trim()} className="btn--plain btn--xs" style={{ fontSize: 12, padding: '6px 10px', border: '1px solid #7dd3fc', background: '#e0f2fe', color: '#0369a1', borderRadius: 8 }}>Lägg till</button>
                       </form>
-                      <div style={{ display:'grid', gap:8 }}>
+                      <div style={{ display: 'grid', gap: 8 }}>
                         {depots.map(dep => {
                           const edit = depotEdits[dep.id] || {};
                           const ekoVal = edit.material_ekovilla_total ?? (dep.material_ekovilla_total == null ? '' : String(dep.material_ekovilla_total));
                           const vitVal = edit.material_vitull_total ?? (dep.material_vitull_total == null ? '' : String(dep.material_vitull_total));
                           const saveBoth = () => upsertDepotTotals(dep.id, ekoVal, vitVal);
                           return (
-                            <div key={dep.id} style={{ display:'grid', gridTemplateColumns:'1fr auto auto auto', alignItems:'center', gap:10, padding:'6px 8px', border:'1px solid #e5e7eb', borderRadius:8 }}>
-                              <div style={{ fontWeight:600 }}>{dep.name}</div>
-                              <div style={{ display:'flex', gap:8, alignItems:'center' }}>
-                                <label style={{ fontSize:12 }}>Eko</label>
-                                <input inputMode="numeric" pattern="[0-9]*" value={ekoVal} onChange={e=>setDepotEdits(prev=>({ ...prev, [dep.id]: { ...prev[dep.id], material_ekovilla_total: e.target.value } }))} onBlur={saveBoth} placeholder="Antal" style={{ width:90, padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }} />
+                            <div key={dep.id} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto auto', alignItems: 'center', gap: 10, padding: '6px 8px', border: '1px solid #e5e7eb', borderRadius: 8 }}>
+                              <div style={{ fontWeight: 600 }}>{dep.name}</div>
+                              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                                <label style={{ fontSize: 12 }}>Eko</label>
+                                <input inputMode="numeric" pattern="[0-9]*" value={ekoVal} onChange={e => setDepotEdits(prev => ({ ...prev, [dep.id]: { ...prev[dep.id], material_ekovilla_total: e.target.value } }))} onBlur={saveBoth} placeholder="Antal" style={{ width: 90, padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }} />
                               </div>
-                              <div style={{ display:'flex', gap:8, alignItems:'center' }}>
-                                <label style={{ fontSize:12 }}>Vit</label>
-                                <input inputMode="numeric" pattern="[0-9]*" value={vitVal} onChange={e=>setDepotEdits(prev=>({ ...prev, [dep.id]: { ...prev[dep.id], material_vitull_total: e.target.value } }))} onBlur={saveBoth} placeholder="Antal" style={{ width:90, padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }} />
+                              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                                <label style={{ fontSize: 12 }}>Vit</label>
+                                <input inputMode="numeric" pattern="[0-9]*" value={vitVal} onChange={e => setDepotEdits(prev => ({ ...prev, [dep.id]: { ...prev[dep.id], material_vitull_total: e.target.value } }))} onBlur={saveBoth} placeholder="Antal" style={{ width: 90, padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }} />
                               </div>
-                              <button type="button" onClick={()=>deleteDepot(dep)} className="btn--plain btn--xs" style={{ fontSize:12, padding:'6px 10px', border:'1px solid #fecaca', background:'#fef2f2', color:'#b91c1c', borderRadius:8 }}>Ta bort</button>
+                              <button type="button" onClick={() => deleteDepot(dep)} className="btn--plain btn--xs" style={{ fontSize: 12, padding: '6px 10px', border: '1px solid #fecaca', background: '#fef2f2', color: '#b91c1c', borderRadius: 8 }}>Ta bort</button>
                             </div>
                           );
                         })}
-                        {depots.length === 0 && <div style={{ color:'#6b7280' }}>Inga depåer</div>}
+                        {depots.length === 0 && <div style={{ color: '#6b7280' }}>Inga depåer</div>}
                       </div>
                     </div>
                   )}
-                  {adminModalTab==='deliveries' && (
-                    <div style={{ display:'grid', gap:12 }}>
-                      <div style={{ display:'grid', gap:8, padding:'8px 10px', border:'1px dashed #cbd5e1', borderRadius:10, background:'#f8fafc' }}>
-                        <div style={{ fontWeight:700, color:'#0f172a' }}>Planera leverans</div>
-                        <div style={{ display:'grid', gridTemplateColumns:'repeat(4, minmax(160px, 1fr))', gap:8, alignItems:'center' }}>
-                          <label style={{ display:'grid', gap:4, fontSize:12 }}>
+                  {adminModalTab === 'deliveries' && (
+                    <div style={{ display: 'grid', gap: 12 }}>
+                      <div style={{ display: 'grid', gap: 8, padding: '8px 10px', border: '1px dashed #cbd5e1', borderRadius: 10, background: '#f8fafc' }}>
+                        <div style={{ fontWeight: 700, color: '#0f172a' }}>Planera leverans</div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(160px, 1fr))', gap: 8, alignItems: 'center' }}>
+                          <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
                             <span>Depå</span>
-                            <select value={newDelivery.depotId} onChange={e=>setNewDelivery(prev=>({ ...prev, depotId: e.target.value }))} style={{ padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }}>
+                            <select value={newDelivery.depotId} onChange={e => setNewDelivery(prev => ({ ...prev, depotId: e.target.value }))} style={{ padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }}>
                               <option value="">Välj depå</option>
                               {depots.map(d => (<option key={d.id} value={d.id}>{d.name}</option>))}
                             </select>
                           </label>
-                          <label style={{ display:'grid', gap:4, fontSize:12 }}>
+                          <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
                             <span>Material</span>
-                            <select value={newDelivery.materialKind} onChange={e=>setNewDelivery(prev=>({ ...prev, materialKind: e.target.value as any }))} style={{ padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }}>
+                            <select value={newDelivery.materialKind} onChange={e => setNewDelivery(prev => ({ ...prev, materialKind: e.target.value as any }))} style={{ padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }}>
                               <option value="Ekovilla">Ekovilla</option>
                               <option value="Vitull">Vitull</option>
                             </select>
                           </label>
-                          <label style={{ display:'grid', gap:4, fontSize:12 }}>
+                          <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
                             <span>Antal</span>
-                            <input inputMode="numeric" pattern="[0-9]*" value={newDelivery.amount} onChange={e=>setNewDelivery(prev=>({ ...prev, amount: e.target.value }))} placeholder="t.ex. 30" style={{ padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }} />
+                            <input inputMode="numeric" pattern="[0-9]*" value={newDelivery.amount} onChange={e => setNewDelivery(prev => ({ ...prev, amount: e.target.value }))} placeholder="t.ex. 30" style={{ padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }} />
                           </label>
-                          <label style={{ display:'grid', gap:4, fontSize:12 }}>
+                          <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
                             <span>Datum</span>
-                            <input type="date" value={newDelivery.date} onChange={e=>setNewDelivery(prev=>({ ...prev, date: e.target.value }))} style={{ padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }} />
+                            <input type="date" value={newDelivery.date} onChange={e => setNewDelivery(prev => ({ ...prev, date: e.target.value }))} style={{ padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }} />
                           </label>
                         </div>
-                        <div style={{ display:'flex', gap:8, alignItems:'center' }}>
-                          <button type="button" onClick={createPlannedDelivery} disabled={savingDelivery==='saving'} className="btn--plain btn--xs" style={{ fontSize:12, padding:'6px 10px', border:'1px solid #16a34a', background:'#dcfce7', color:'#166534', borderRadius:8 }}>Spara leverans</button>
-                          {savingDelivery==='saving' && <span style={{ fontSize:12, color:'#64748b' }}>Sparar…</span>}
-                          {savingDelivery==='saved' && <span style={{ fontSize:12, color:'#059669' }}>✓ Sparad</span>}
-                          {savingDelivery==='error' && <span style={{ fontSize:12, color:'#b91c1c' }}>Fel</span>}
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                          <button type="button" onClick={createPlannedDelivery} disabled={savingDelivery === 'saving'} className="btn--plain btn--xs" style={{ fontSize: 12, padding: '6px 10px', border: '1px solid #16a34a', background: '#dcfce7', color: '#166534', borderRadius: 8 }}>Spara leverans</button>
+                          {savingDelivery === 'saving' && <span style={{ fontSize: 12, color: '#64748b' }}>Sparar…</span>}
+                          {savingDelivery === 'saved' && <span style={{ fontSize: 12, color: '#059669' }}>✓ Sparad</span>}
+                          {savingDelivery === 'error' && <span style={{ fontSize: 12, color: '#b91c1c' }}>Fel</span>}
                         </div>
                       </div>
-                      <div style={{ display:'grid', gap:10 }}>
-                        <div style={{ fontWeight:700 }}>Kommande leveranser</div>
-                        <div style={{ display:'flex', flexWrap:'wrap', gap:8, alignItems:'center' }}>
+                      <div style={{ display: 'grid', gap: 10 }}>
+                        <div style={{ fontWeight: 700 }}>Kommande leveranser</div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
                           <button
                             type="button"
-                            onClick={async ()=>{
+                            onClick={async () => {
                               try {
                                 setSavingDelivery('saving');
                                 const { data, error } = await supabase.rpc('apply_due_deliveries');
@@ -3419,54 +3423,54 @@ export default function PlanneringPage() {
                                   try {
                                     const { data: depRows } = await supabase.from('planning_depots').select('*').order('name');
                                     if (Array.isArray(depRows)) setDepots(depRows as any);
-                                  } catch(e) { /* ignore */ }
+                                  } catch (e) { /* ignore */ }
                                   try {
                                     const { data: delRows } = await supabase.from('planning_depot_deliveries').select('*').order('delivery_date');
                                     if (Array.isArray(delRows)) setDeliveries(delRows as any);
-                                  } catch(e) { /* ignore */ }
+                                  } catch (e) { /* ignore */ }
                                 })();
                                 setSavingDelivery('saved');
-                                setTimeout(()=>setSavingDelivery('idle'), 1200);
+                                setTimeout(() => setSavingDelivery('idle'), 1200);
                               } catch (e) {
                                 console.warn('[deliveries] apply_due_deliveries exception', e);
                                 setSavingDelivery('error');
                               }
                             }}
                             className="btn--plain btn--xs"
-                            style={{ fontSize:12, padding:'6px 10px', border:'1px solid #16a34a', background:'#16a34a', color:'#fff', borderRadius:8, boxShadow:'0 2px 4px rgba(16,185,129,0.4)' }}
+                            style={{ fontSize: 12, padding: '6px 10px', border: '1px solid #16a34a', background: '#16a34a', color: '#fff', borderRadius: 8, boxShadow: '0 2px 4px rgba(16,185,129,0.4)' }}
                           >
                             Tillämpa dagens leveranser
                           </button>
-                          <span style={{ fontSize:11, color:'#64748b' }}>Lägger till alla leveranser med datum idag eller tidigare i depålager en gång.</span>
+                          <span style={{ fontSize: 11, color: '#64748b' }}>Lägger till alla leveranser med datum idag eller tidigare i depålager en gång.</span>
                         </div>
                         {groupedDeliveries.length === 0 && (
-                          <div style={{ color:'#6b7280' }}>Inga planerade leveranser</div>
+                          <div style={{ color: '#6b7280' }}>Inga planerade leveranser</div>
                         )}
                         {groupedDeliveries.map(group => {
                           const dep = depots.find(d => d.id === group.depotId);
                           const header = `${group.date} • ${dep ? dep.name : 'Okänd depå'} • ${group.material}`;
                           return (
-                            <div key={`${group.depotId}|${group.date}|${group.material}`} style={{ border:'1px solid #e5e7eb', borderRadius:10, padding:8, background:'#fff', display:'grid', gap:6 }}>
-                              <div style={{ fontWeight:600 }}>{header}</div>
-                              <div style={{ display:'grid', gap:6 }}>
+                            <div key={`${group.depotId}|${group.date}|${group.material}`} style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: 8, background: '#fff', display: 'grid', gap: 6 }}>
+                              <div style={{ fontWeight: 600 }}>{header}</div>
+                              <div style={{ display: 'grid', gap: 6 }}>
                                 {group.items.map(item => {
                                   const edit = editingDeliveries[item.id] || { depotId: item.depot_id, materialKind: item.material_kind, amount: String(item.amount), date: item.delivery_date };
                                   return (
-                                    <div key={item.id} style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr auto', gap:8, alignItems:'center' }}>
-                                      <select value={edit.depotId} onChange={e=>setEditingDeliveries(prev=>({ ...prev, [item.id]: { ...edit, depotId: e.target.value } }))} style={{ padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }}>
+                                    <div key={item.id} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: 8, alignItems: 'center' }}>
+                                      <select value={edit.depotId} onChange={e => setEditingDeliveries(prev => ({ ...prev, [item.id]: { ...edit, depotId: e.target.value } }))} style={{ padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }}>
                                         {depots.map(d => (<option key={d.id} value={d.id}>{d.name}</option>))}
                                       </select>
-                                      <select value={edit.materialKind} onChange={e=>setEditingDeliveries(prev=>({ ...prev, [item.id]: { ...edit, materialKind: e.target.value as any } }))} style={{ padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }}>
+                                      <select value={edit.materialKind} onChange={e => setEditingDeliveries(prev => ({ ...prev, [item.id]: { ...edit, materialKind: e.target.value as any } }))} style={{ padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }}>
                                         <option value="Ekovilla">Ekovilla</option>
                                         <option value="Vitull">Vitull</option>
                                       </select>
-                                      <div style={{ display:'flex', gap:6, alignItems:'center' }}>
-                                        <input inputMode="numeric" pattern="[0-9]*" value={edit.amount} onChange={e=>setEditingDeliveries(prev=>({ ...prev, [item.id]: { ...edit, amount: e.target.value } }))} style={{ width:80, padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }} />
-                                        <input type="date" value={edit.date} onChange={e=>setEditingDeliveries(prev=>({ ...prev, [item.id]: { ...edit, date: e.target.value } }))} style={{ padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }} />
+                                      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                                        <input inputMode="numeric" pattern="[0-9]*" value={edit.amount} onChange={e => setEditingDeliveries(prev => ({ ...prev, [item.id]: { ...edit, amount: e.target.value } }))} style={{ width: 80, padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }} />
+                                        <input type="date" value={edit.date} onChange={e => setEditingDeliveries(prev => ({ ...prev, [item.id]: { ...edit, date: e.target.value } }))} style={{ padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }} />
                                       </div>
-                                      <div style={{ display:'flex', gap:6, justifyContent:'flex-end' }}>
-                                        <button type="button" onClick={()=>updatePlannedDelivery(item.id)} className="btn--plain btn--xs" style={{ fontSize:12, padding:'6px 10px', border:'1px solid #cbd5e1', background:'#fff', borderRadius:8 }}>Spara</button>
-                                        <button type="button" onClick={()=>deletePlannedDelivery(item.id)} className="btn--plain btn--xs" style={{ fontSize:12, padding:'6px 10px', border:'1px solid #fecaca', background:'#fef2f2', color:'#b91c1c', borderRadius:8 }}>Ta bort</button>
+                                      <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                                        <button type="button" onClick={() => updatePlannedDelivery(item.id)} className="btn--plain btn--xs" style={{ fontSize: 12, padding: '6px 10px', border: '1px solid #cbd5e1', background: '#fff', borderRadius: 8 }}>Spara</button>
+                                        <button type="button" onClick={() => deletePlannedDelivery(item.id)} className="btn--plain btn--xs" style={{ fontSize: 12, padding: '6px 10px', border: '1px solid #fecaca', background: '#fef2f2', color: '#b91c1c', borderRadius: 8 }}>Ta bort</button>
                                       </div>
                                     </div>
                                   );
@@ -3525,39 +3529,39 @@ export default function PlanneringPage() {
                         }
                         return true;
                       })
-                      // Sort by truck order (known trucks first in trucks[] order), unassigned last,
-                      // and within the same truck use explicit sortIndex when set, then orderNumber/name
-                      .sort((a, b) => {
-                        if (a.truck === b.truck) {
-                          const sa = scheduledSegments.find(s => s.id === a.segmentId)?.sortIndex ?? null;
-                          const sb = scheduledSegments.find(s => s.id === b.segmentId)?.sortIndex ?? null;
-                          if (sa != null && sb != null && sa !== sb) return sa - sb;
-                          if (sa != null && sb == null) return -1;
-                          if (sb != null && sa == null) return 1;
-                          const ao = a.project.orderNumber || '';
-                          const bo = b.project.orderNumber || '';
-                          if (ao && bo && ao !== bo) return ao.localeCompare(bo, 'sv');
-                          return a.project.name.localeCompare(b.project.name, 'sv');
-                        }
-                        const ia = a.truck ? trucks.indexOf(a.truck) : -1;
-                        const ib = b.truck ? trucks.indexOf(b.truck) : -1;
-                        const aUn = ia === -1 || !a.truck;
-                        const bUn = ib === -1 || !b.truck;
-                        if (aUn && !bUn) return 1; // unassigned/unknown last
-                        if (bUn && !aUn) return -1;
-                        if (!aUn && !bUn && ia !== ib) return ia - ib;
-                        // both unassigned or unknown trucks: alphabetical by name
-                        return (a.truck || '').localeCompare(b.truck || '', 'sv');
-                      });
+                        // Sort by truck order (known trucks first in trucks[] order), unassigned last,
+                        // and within the same truck use explicit sortIndex when set, then orderNumber/name
+                        .sort((a, b) => {
+                          if (a.truck === b.truck) {
+                            const sa = scheduledSegments.find(s => s.id === a.segmentId)?.sortIndex ?? null;
+                            const sb = scheduledSegments.find(s => s.id === b.segmentId)?.sortIndex ?? null;
+                            if (sa != null && sb != null && sa !== sb) return sa - sb;
+                            if (sa != null && sb == null) return -1;
+                            if (sb != null && sa == null) return 1;
+                            const ao = a.project.orderNumber || '';
+                            const bo = b.project.orderNumber || '';
+                            if (ao && bo && ao !== bo) return ao.localeCompare(bo, 'sv');
+                            return a.project.name.localeCompare(b.project.name, 'sv');
+                          }
+                          const ia = a.truck ? trucks.indexOf(a.truck) : -1;
+                          const ib = b.truck ? trucks.indexOf(b.truck) : -1;
+                          const aUn = ia === -1 || !a.truck;
+                          const bUn = ib === -1 || !b.truck;
+                          if (aUn && !bUn) return 1; // unassigned/unknown last
+                          if (bUn && !aUn) return -1;
+                          if (!aUn && !bUn && ia !== ib) return ia - ib;
+                          // both unassigned or unknown trucks: alphabetical by name
+                          return (a.truck || '').localeCompare(b.truck || '', 'sv');
+                        });
                       const isJumpHighlight = day === jumpTargetDay;
                       const isToday = day === todayISO;
                       return (
                         <div key={day}
-                             id={`calday-${day}`}
-                             onClick={() => scheduleSelectedOnDay(day)}
-                             onDragOver={allowDrop}
-                             onDrop={e => onDropDay(e, day)}
-                             style={{ border: isJumpHighlight ? '2px solid #f59e0b' : (selectedProjectId ? '2px dashed #fbbf24' : (isToday ? '2px solid #60a5fa' : '1px solid rgba(148,163,184,0.4)')), boxShadow: isJumpHighlight ? '0 0 0 4px rgba(245,158,11,0.35)' : (isToday ? '0 0 0 3px rgba(59,130,246,0.25)' : '0 1px 2px rgba(0,0,0,0.05)'), transition: 'box-shadow 0.3s,border 0.3s', borderRadius: 10, padding: 8, minHeight: 160, background: '#ffffff', display: 'flex', flexDirection: 'column', gap: 8, position: 'relative', cursor: selectedProjectId ? 'copy' : 'default' }}>
+                          id={`calday-${day}`}
+                          onClick={() => scheduleSelectedOnDay(day)}
+                          onDragOver={allowDrop}
+                          onDrop={e => onDropDay(e, day)}
+                          style={{ border: isJumpHighlight ? '2px solid #f59e0b' : (selectedProjectId ? '2px dashed #fbbf24' : (isToday ? '2px solid #60a5fa' : '1px solid rgba(148,163,184,0.4)')), boxShadow: isJumpHighlight ? '0 0 0 4px rgba(245,158,11,0.35)' : (isToday ? '0 0 0 3px rgba(59,130,246,0.25)' : '0 1px 2px rgba(0,0,0,0.05)'), transition: 'box-shadow 0.3s,border 0.3s', borderRadius: 10, padding: 8, minHeight: 160, background: '#ffffff', display: 'flex', flexDirection: 'column', gap: 8, position: 'relative', cursor: selectedProjectId ? 'copy' : 'default' }}>
                           <div style={{ fontSize: 12, fontWeight: 600, display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: '#111827' }}>
                             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                               <span>{day.slice(8, 10)}/{day.slice(5, 7)}</span>
@@ -3635,7 +3639,7 @@ export default function PlanneringPage() {
                                       ✓
                                     </span>
                                   )}
-                                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2}}>
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                                     <span style={{ fontWeight: 600, color: display ? display.text : '#312e81', display: 'flex', alignItems: 'center', columnGap: 6, rowGap: 2, flexWrap: 'wrap' }}>
                                       {it.project.orderNumber ? (
                                         <span style={{ fontFamily: 'ui-monospace, monospace', background: '#ffffff', color: display ? display.text : '#312e81', border: `1px solid ${cardBorder}`, padding: '1px 4px', borderRadius: 4, whiteSpace: 'nowrap' }} title="Ordernummer">#{it.project.orderNumber}</span>
@@ -3645,7 +3649,7 @@ export default function PlanneringPage() {
                                       {/* Button moved to bottom controls */}
                                     </span>
                                     {isStart && <span style={{ color: display ? display.text : '#6366f1' }}>{it.project.customer}</span>}
-                                    {isStart && it.project.salesResponsible && <span style={{ fontSize: 10, color: display ? display.text : '#334155', background:'#ffffff30', padding:'2px 6px', borderRadius: 12, border:`1px solid ${cardBorder}55` }}>Sälj: {it.project.salesResponsible}</span>}
+                                    {isStart && it.project.salesResponsible && <span style={{ fontSize: 10, color: display ? display.text : '#334155', background: '#ffffff30', padding: '2px 6px', borderRadius: 12, border: `1px solid ${cardBorder}55` }}>Sälj: {it.project.salesResponsible}</span>}
                                     {/* Moved avatar to corner badge */}
                                     {(it.bagCount != null || it.jobType) && (
                                       <span style={{ fontSize: 11, color: display ? display.text : '#374151' }}>
@@ -3654,11 +3658,13 @@ export default function PlanneringPage() {
                                         {it.jobType || ''}
                                       </span>
                                     )}
-                                      {isStart && (() => { const agg = reportedBagsByProject.get(it.project.id) || 0; return agg > 0 ? (
-                                        <span style={{ fontSize: 10, color: display ? display.text : '#1e293b', background:'#ffffff50', padding:'4px 6px', borderRadius:10, border:`1px solid ${cardBorder}55` }} title={`Rapporterat: ${agg} säckar`}>
+                                    {isStart && (() => {
+                                      const agg = reportedBagsByProject.get(it.project.id) || 0; return agg > 0 ? (
+                                        <span style={{ fontSize: 10, color: display ? display.text : '#1e293b', background: '#ffffff50', padding: '4px 6px', borderRadius: 10, border: `1px solid ${cardBorder}55` }} title={`Rapporterat: ${agg} säckar`}>
                                           säckar blåsta {agg} st
                                         </span>
-                                      ) : null; })()}
+                                      ) : null;
+                                    })()}
                                     {/* Bottom controls */}
                                     <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 4 }}>
                                       <button
@@ -3724,36 +3730,36 @@ export default function PlanneringPage() {
                           }
                           return true;
                         })
-                        .sort((a, b) => {
-                          if (a.truck === b.truck) {
-                            const sa = scheduledSegments.find(s => s.id === a.segmentId)?.sortIndex ?? null;
-                            const sb = scheduledSegments.find(s => s.id === b.segmentId)?.sortIndex ?? null;
-                            if (sa != null && sb != null && sa !== sb) return sa - sb;
-                            if (sa != null && sb == null) return -1;
-                            if (sb != null && sa == null) return 1;
-                            const ao = a.project.orderNumber || '';
-                            const bo = b.project.orderNumber || '';
-                            if (ao && bo && ao !== bo) return ao.localeCompare(bo, 'sv');
-                            return a.project.name.localeCompare(b.project.name, 'sv');
-                          }
-                          const ia = a.truck ? trucks.indexOf(a.truck) : -1;
-                          const ib = b.truck ? trucks.indexOf(b.truck) : -1;
-                          const aUn = ia === -1 || !a.truck;
-                          const bUn = ib === -1 || !b.truck;
-                          if (aUn && !bUn) return 1;
-                          if (bUn && !aUn) return -1;
-                          if (!aUn && !bUn && ia !== ib) return ia - ib;
-                          return (a.truck || '').localeCompare(b.truck || '', 'sv');
-                        });
+                          .sort((a, b) => {
+                            if (a.truck === b.truck) {
+                              const sa = scheduledSegments.find(s => s.id === a.segmentId)?.sortIndex ?? null;
+                              const sb = scheduledSegments.find(s => s.id === b.segmentId)?.sortIndex ?? null;
+                              if (sa != null && sb != null && sa !== sb) return sa - sb;
+                              if (sa != null && sb == null) return -1;
+                              if (sb != null && sa == null) return 1;
+                              const ao = a.project.orderNumber || '';
+                              const bo = b.project.orderNumber || '';
+                              if (ao && bo && ao !== bo) return ao.localeCompare(bo, 'sv');
+                              return a.project.name.localeCompare(b.project.name, 'sv');
+                            }
+                            const ia = a.truck ? trucks.indexOf(a.truck) : -1;
+                            const ib = b.truck ? trucks.indexOf(b.truck) : -1;
+                            const aUn = ia === -1 || !a.truck;
+                            const bUn = ib === -1 || !b.truck;
+                            if (aUn && !bUn) return 1;
+                            if (bUn && !aUn) return -1;
+                            if (!aUn && !bUn && ia !== ib) return ia - ib;
+                            return (a.truck || '').localeCompare(b.truck || '', 'sv');
+                          });
                         const isJumpHighlight = day === jumpTargetDay;
                         const isToday = day === todayISO;
                         return (
                           <div key={day}
-                               id={`calday-${day}`}
-                               onClick={() => scheduleSelectedOnDay(day)}
-                               onDragOver={allowDrop}
-                               onDrop={e => onDropDay(e, day)}
-                               style={{ minWidth: 160, border: isJumpHighlight ? '2px solid #f59e0b' : (selectedProjectId ? '2px dashed #fbbf24' : (isToday ? '2px solid #60a5fa' : '1px solid rgba(148,163,184,0.4)')), boxShadow: isJumpHighlight ? '0 0 0 4px rgba(245,158,11,0.35)' : (isToday ? '0 0 0 3px rgba(59,130,246,0.25)' : '0 1px 2px rgba(0,0,0,0.05)'), borderRadius: 10, padding: 8, background: '#ffffff', display: 'flex', flexDirection: 'column', gap: 6, position: 'relative', cursor: selectedProjectId ? 'copy' : 'default' }}>
+                            id={`calday-${day}`}
+                            onClick={() => scheduleSelectedOnDay(day)}
+                            onDragOver={allowDrop}
+                            onDrop={e => onDropDay(e, day)}
+                            style={{ minWidth: 160, border: isJumpHighlight ? '2px solid #f59e0b' : (selectedProjectId ? '2px dashed #fbbf24' : (isToday ? '2px solid #60a5fa' : '1px solid rgba(148,163,184,0.4)')), boxShadow: isJumpHighlight ? '0 0 0 4px rgba(245,158,11,0.35)' : (isToday ? '0 0 0 3px rgba(59,130,246,0.25)' : '0 1px 2px rgba(0,0,0,0.05)'), borderRadius: 10, padding: 8, background: '#ffffff', display: 'flex', flexDirection: 'column', gap: 6, position: 'relative', cursor: selectedProjectId ? 'copy' : 'default' }}>
                             <div style={{ fontSize: 11, fontWeight: 600, display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: '#111827' }}>
                               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                                 <span>{day.slice(8, 10)}/{day.slice(5, 7)}</span>
@@ -3865,7 +3871,7 @@ export default function PlanneringPage() {
                                         {/* Button moved to bottom controls */}
                                       </span>
                                       {isStart && <span style={{ color: display ? display.text : '#6366f1' }}>{it.project.customer}</span>}
-                                      {isStart && it.project.salesResponsible && <span style={{ fontSize: 9, color: display ? display.text : '#334155', background:'#ffffff40', padding:'1px 5px', borderRadius: 10, border:`1px solid ${cardBorder}55` }}>Sälj: {it.project.salesResponsible}</span>}
+                                      {isStart && it.project.salesResponsible && <span style={{ fontSize: 9, color: display ? display.text : '#334155', background: '#ffffff40', padding: '1px 5px', borderRadius: 10, border: `1px solid ${cardBorder}55` }}>Sälj: {it.project.salesResponsible}</span>}
                                       {/* Moved creator avatar to corner badge */}
                                       {(it.bagCount != null || it.jobType) && (
                                         <span style={{ fontSize: 10, color: display ? display.text : '#374151' }}>
@@ -3947,7 +3953,7 @@ export default function PlanneringPage() {
                 };
                 const includeSat = !hideWeekends && dayHasAny(5);
                 const includeSun = !hideWeekends && dayHasAny(6);
-                const visibleIndices = hideWeekends ? [0,1,2,3,4] : [0,1,2,3,4].concat(includeSat ? [5] : []).concat(includeSun ? [6] : []);
+                const visibleIndices = hideWeekends ? [0, 1, 2, 3, 4] : [0, 1, 2, 3, 4].concat(includeSat ? [5] : []).concat(includeSun ? [6] : []);
                 // Determine if there is any unassigned item in this week
                 let hasUnassigned = false;
                 for (const day of weekDays) {
@@ -3976,17 +3982,17 @@ export default function PlanneringPage() {
                 return (
                   <div key={wi} style={{ display: 'grid', gap: 8, border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff', padding: 8 }}>
                     {/* Compact week label header */}
-                    <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
-                      <span style={{ display:'inline-flex', alignItems:'center', gap:8 }}>
-                        <span style={{ fontSize: 12, fontWeight: 700, color:'#0f172a', background:'#f1f5f9', border:'1px solid #e2e8f0', borderRadius: 999, padding: '2px 8px' }}>{weekNum && `v${weekNum}`}</span>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: '#0f172a', background: '#f1f5f9', border: '1px solid #e2e8f0', borderRadius: 999, padding: '2px 8px' }}>{weekNum && `v${weekNum}`}</span>
                         {weekContainsToday && (
-                          <span aria-label="Denna vecka innehåller idag" title="Denna vecka innehåller idag" style={{ fontSize: 10, color:'#1d4ed8', background:'#dbeafe', border:'1px solid #93c5fd', borderRadius:999, padding:'1px 6px' }}>Idag</span>
+                          <span aria-label="Denna vecka innehåller idag" title="Denna vecka innehåller idag" style={{ fontSize: 10, color: '#1d4ed8', background: '#dbeafe', border: '1px solid #93c5fd', borderRadius: 999, padding: '1px 6px' }}>Idag</span>
                         )}
                       </span>
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: `140px repeat(${visibleIndices.length}, 1fr)`, alignItems: 'center', gap: 6 }}>
                       {/* Header row: truck label col + 7 weekday headers */}
-                      <div style={{ gridColumn: '1 / 2', fontSize: 12, fontWeight: 600, color:'#374151', textAlign:'left' }}>Lastbil</div>
+                      <div style={{ gridColumn: '1 / 2', fontSize: 12, fontWeight: 600, color: '#374151', textAlign: 'left' }}>Lastbil</div>
                       {visibleIndices.map((idx, vi) => {
                         const cellDate = week[idx]?.date;
                         const isTodayHeader = cellDate === todayISO;
@@ -3999,14 +4005,16 @@ export default function PlanneringPage() {
                         <>
                           {/* Row background band with zebra striping and truck color accent */}
                           {(() => { const disp = rowKey !== '__UNASSIGNED__' ? truckColors[rowKey] : null; const laneColor = disp?.border || '#cbd5e1'; const zebra = ri % 2 === 0 ? '#ffffff' : '#f9fafb'; const endCol = 2 + visibleIndices.length; const style: React.CSSProperties = { gridColumn: `1 / ${endCol}`, gridRow: `${ri + 2} / ${ri + 3}`, background: zebra, borderLeft: `4px solid ${rowKey === '__UNASSIGNED__' ? '#cbd5e1' : laneColor}`, borderRadius: 8, opacity: 0.9 }; return <div key={`bg-${rowKey}`} style={style} />; })()}
-                          <div key={`lbl-${rowKey}`} style={{ gridColumn: '1 / 2', gridRow: `${ri + 2} / ${ri + 3}`, fontSize: 12, fontWeight: 600, color:'#111827', display:'flex', alignItems:'center', gap: 8, flexWrap: 'wrap', paddingLeft: 8 }}>
+                          <div key={`lbl-${rowKey}`} style={{ gridColumn: '1 / 2', gridRow: `${ri + 2} / ${ri + 3}`, fontSize: 12, fontWeight: 600, color: '#111827', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', paddingLeft: 8 }}>
                             {(() => { const disp = rowKey !== '__UNASSIGNED__' ? truckColors[rowKey] : null; const sw = { width: 12, height: 12, borderRadius: 4, border: `2px solid ${disp?.border || '#94a3b8'}`, background: '#fff' } as React.CSSProperties; return <span key={`sw-${rowKey}`} style={sw} />; })()}
                             <span>{rowKey === '__UNASSIGNED__' ? 'Ingen lastbil' : rowKey}</span>
-                            {rowKey !== '__UNASSIGNED__' && (() => { const team = truckTeamNames(rowKey); return team.length ? (
-                              <span style={{ fontSize: 10, fontWeight: 500, color: '#475569', background: '#f1f5f9', border: '1px solid #e2e8f0', borderRadius: 999, padding: '1px 8px' }} title={`Team: ${team.join(', ')}`}>
-                                Team: {team.join(', ')}
-                              </span>
-                            ) : null; })()}
+                            {rowKey !== '__UNASSIGNED__' && (() => {
+                              const team = truckTeamNames(rowKey); return team.length ? (
+                                <span style={{ fontSize: 10, fontWeight: 500, color: '#475569', background: '#f1f5f9', border: '1px solid #e2e8f0', borderRadius: 999, padding: '1px 8px' }} title={`Team: ${team.join(', ')}`}>
+                                  Team: {team.join(', ')}
+                                </span>
+                              ) : null;
+                            })()}
                             {(() => {
                               // Weekly total bags for this truck: count only span starts within this week
                               let sum = 0;
@@ -4062,17 +4070,17 @@ export default function PlanneringPage() {
                               }
                               return true;
                             })
-                            .sort((a, b) => {
-                              const sa = scheduledSegments.find(s => s.id === a.segmentId)?.sortIndex ?? null;
-                              const sb = scheduledSegments.find(s => s.id === b.segmentId)?.sortIndex ?? null;
-                              if (sa != null && sb != null && sa !== sb) return sa - sb;
-                              if (sa != null && sb == null) return -1;
-                              if (sb != null && sa == null) return 1;
-                              const ao = a.project.orderNumber || '';
-                              const bo = b.project.orderNumber || '';
-                              if (ao && bo && ao !== bo) return ao.localeCompare(bo, 'sv');
-                              return a.project.name.localeCompare(b.project.name, 'sv');
-                            });
+                              .sort((a, b) => {
+                                const sa = scheduledSegments.find(s => s.id === a.segmentId)?.sortIndex ?? null;
+                                const sb = scheduledSegments.find(s => s.id === b.segmentId)?.sortIndex ?? null;
+                                if (sa != null && sb != null && sa !== sb) return sa - sb;
+                                if (sa != null && sb == null) return -1;
+                                if (sb != null && sa == null) return 1;
+                                const ao = a.project.orderNumber || '';
+                                const bo = b.project.orderNumber || '';
+                                if (ao && bo && ao !== bo) return ao.localeCompare(bo, 'sv');
+                                return a.project.name.localeCompare(b.project.name, 'sv');
+                              });
                             const isJumpHighlight = !!day && day === jumpTargetDay;
                             const disp = rowKey !== '__UNASSIGNED__' ? truckColors[rowKey] : null;
                             const laneColor = disp?.border || '#cbd5e1';
@@ -4080,10 +4088,10 @@ export default function PlanneringPage() {
                             const isTodayCell = !!day && day === todayISO;
                             return (
                               <div key={`cell-${rowKey}-${weekdayIdx}-${day || 'x'}`} id={day ? `calday-${day}` : undefined}
-                                   onClick={day ? () => scheduleSelectedOnDay(day) : undefined}
-                                   onDragOver={allowDrop}
-                                   onDrop={day ? (e => onDropDay(e, day)) : undefined}
-                                  style={{ gridColumn: `${gridCol} / ${gridCol + 1}`, gridRow: `${ri + 2} / ${ri + 3}`, minHeight: 48, border: isJumpHighlight ? '2px solid #f59e0b' : (selectedProjectId ? '2px dashed #fbbf24' : (isTodayCell ? '2px solid #60a5fa' : '1px solid rgba(148,163,184,0.35)')), boxShadow: isTodayCell ? '0 0 0 2px rgba(59,130,246,0.18)' : undefined, borderRadius: 8, padding: 6, background: '#ffffff', display: 'flex', flexDirection: 'column', gap: 4, borderLeft: `4px solid ${rowKey === '__UNASSIGNED__' ? '#cbd5e1' : laneColor}` }}>
+                                onClick={day ? () => scheduleSelectedOnDay(day) : undefined}
+                                onDragOver={allowDrop}
+                                onDrop={day ? (e => onDropDay(e, day)) : undefined}
+                                style={{ gridColumn: `${gridCol} / ${gridCol + 1}`, gridRow: `${ri + 2} / ${ri + 3}`, minHeight: 48, border: isJumpHighlight ? '2px solid #f59e0b' : (selectedProjectId ? '2px dashed #fbbf24' : (isTodayCell ? '2px solid #60a5fa' : '1px solid rgba(148,163,184,0.35)')), boxShadow: isTodayCell ? '0 0 0 2px rgba(59,130,246,0.18)' : undefined, borderRadius: 8, padding: 6, background: '#ffffff', display: 'flex', flexDirection: 'column', gap: 4, borderLeft: `4px solid ${rowKey === '__UNASSIGNED__' ? '#cbd5e1' : laneColor}` }}>
                                 {list.length === 0 && <span style={{ fontSize: 11, color: '#94a3b8' }}>—</span>}
                                 {list.map(it => {
                                   let display: null | { bg: string; border: string; text: string } = null;
@@ -4144,10 +4152,10 @@ export default function PlanneringPage() {
                                       )}
                                       <span style={{ fontWeight: 600, color: display ? display.text : '#312e81', display: 'flex', alignItems: 'center', columnGap: 6, rowGap: 2, flexWrap: 'wrap' }}>
                                         {it.project.orderNumber ? (
-                                            <span style={{ fontFamily: 'ui-monospace, monospace', background: '#ffffff', color: display ? display.text : '#312e81', border: `1px solid ${cardBorder}`, padding: '1px 4px', borderRadius: 4, whiteSpace: 'nowrap' }} title="Ordernummer">#{it.project.orderNumber}</span>
-                                          ) : null}
-                                          <span style={{ color: display ? display.text : '#312e81', fontWeight: 600, minWidth: 0, overflowWrap: 'anywhere' }}>{it.project.name}</span>
-                                          {/* Button moved to bottom controls */}
+                                          <span style={{ fontFamily: 'ui-monospace, monospace', background: '#ffffff', color: display ? display.text : '#312e81', border: `1px solid ${cardBorder}`, padding: '1px 4px', borderRadius: 4, whiteSpace: 'nowrap' }} title="Ordernummer">#{it.project.orderNumber}</span>
+                                        ) : null}
+                                        <span style={{ color: display ? display.text : '#312e81', fontWeight: 600, minWidth: 0, overflowWrap: 'anywhere' }}>{it.project.name}</span>
+                                        {/* Button moved to bottom controls */}
                                       </span>
                                       {(it.bagCount != null || it.jobType) && (
                                         <span style={{ fontSize: 10, color: display ? display.text : '#374151' }}>
@@ -4157,7 +4165,7 @@ export default function PlanneringPage() {
                                         </span>
                                       )}
                                       {isStart && scheduleMeta[it.project.id]?.actual_bags_used != null && (
-                                        <span style={{ fontSize: 9, color: display ? display.text : '#1e293b', background:'#ffffff50', padding:'2px 5px', borderRadius:10, border:`1px solid ${cardBorder}55` }} title={`Rapporterat: ${scheduleMeta[it.project.id]?.actual_bags_used} säckar`}>
+                                        <span style={{ fontSize: 9, color: display ? display.text : '#1e293b', background: '#ffffff50', padding: '2px 5px', borderRadius: 10, border: `1px solid ${cardBorder}55` }} title={`Rapporterat: ${scheduleMeta[it.project.id]?.actual_bags_used} säckar`}>
                                           säckar blåsta {scheduleMeta[it.project.id]!.actual_bags_used} st
                                         </span>
                                       )}
@@ -4174,20 +4182,20 @@ export default function PlanneringPage() {
                                         </button>
                                       </div>
                                       {/* EK badge moved to top-right RP circle */}
-                                        {isStart && rowCreatorLabel(it.segmentId) && (
-                                          <span style={{ position: 'absolute', top: -6, left: -6, zIndex: 3 }}>
-                                            <CreatorAvatar segmentId={it.segmentId} size="sm" />
-                                          </span>
-                                        )}
-                                        {isStart && hasEgenkontroll(it.project.orderNumber) && (
-                                          <span
-                                            aria-label="Egenkontroll rapporterad"
-                                            title="Egenkontroll rapporterad"
-                                            style={{ position: 'absolute', top: -6, right: -6, width: 12, height: 12, borderRadius: 999, background: '#059669', color: '#fff', border: '1px solid #047857', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, fontWeight: 800, boxShadow: '0 0 0 2px #fff, 0 1px 3px rgba(0,0,0,0.2)', zIndex: 3, pointerEvents: 'none' }}
-                                          >
-                                            ✓
-                                          </span>
-                                        )}
+                                      {isStart && rowCreatorLabel(it.segmentId) && (
+                                        <span style={{ position: 'absolute', top: -6, left: -6, zIndex: 3 }}>
+                                          <CreatorAvatar segmentId={it.segmentId} size="sm" />
+                                        </span>
+                                      )}
+                                      {isStart && hasEgenkontroll(it.project.orderNumber) && (
+                                        <span
+                                          aria-label="Egenkontroll rapporterad"
+                                          title="Egenkontroll rapporterad"
+                                          style={{ position: 'absolute', top: -6, right: -6, width: 12, height: 12, borderRadius: 999, background: '#059669', color: '#fff', border: '1px solid #047857', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, fontWeight: 800, boxShadow: '0 0 0 2px #fff, 0 1px 3px rgba(0,0,0,0.2)', zIndex: 3, pointerEvents: 'none' }}
+                                        >
+                                          ✓
+                                        </span>
+                                      )}
                                       {/* Team and Depå removed for compact card */}
                                     </div>
                                   );
@@ -4227,7 +4235,7 @@ function EmailSummaryPanel({ projects }: { projects: Project[] }) {
   const total = emails.length;
   const copyAll = () => {
     const list = emails.map(e => e.email).join(', ');
-    navigator.clipboard.writeText(list).catch(() => {});
+    navigator.clipboard.writeText(list).catch(() => { });
   };
   if (!total) return null;
   return (
@@ -4248,7 +4256,7 @@ function EmailSummaryPanel({ projects }: { projects: Project[] }) {
                 <div style={{ fontSize: 10, color: '#475569', display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                   <span style={{ background: '#e2e8f0', padding: '1px 4px', borderRadius: 4 }}>{e.customers.size} kund</span>
                   <span style={{ background: '#e2e8f0', padding: '1px 4px', borderRadius: 4 }}>{e.projectIds.size} proj</span>
-                  <button onClick={() => navigator.clipboard.writeText(e.email).catch(() => {})} style={{ fontSize: 10, border: '1px solid #cbd5e1', background: '#fff', padding: '0 4px', borderRadius: 4, cursor: 'pointer' }}>kopiera</button>
+                  <button onClick={() => navigator.clipboard.writeText(e.email).catch(() => { })} style={{ fontSize: 10, border: '1px solid #cbd5e1', background: '#fff', padding: '0 4px', borderRadius: 4, cursor: 'pointer' }}>kopiera</button>
                 </div>
               </div>
             ))}

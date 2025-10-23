@@ -46,8 +46,8 @@ export default function DashboardSchedule({ compact = false }: { compact?: boole
     setDetailData(null);
     // Default report draft: clamp to job range if possible
     try {
-      const s = (it.start_day as string) || null;
-      const e = (it.end_day as string) || s;
+  const s = (it.job_day as string) || (it.start_day as string) || null;
+  const e = (it.job_day as string) || (it.end_day as string) || s;
       const today = toISODateLocal(new Date());
       const def = s && e && s <= today && today <= e ? today : (s || today);
       setReportDraft({ day: def, amount: '' });
@@ -256,17 +256,13 @@ export default function DashboardSchedule({ compact = false }: { compact?: boole
     // If a specific Mon..Fri day is selected, show only jobs that include that date (start..end inclusive)
     if (dayIdx != null) {
       const selISO = range.days[dayIdx];
-      const arr = items.filter((it) => {
-        const s = (it.start_day as string) || selISO;
-        const e = (it.end_day as string) || s;
-        return s <= selISO && selISO <= e;
-      });
+      const arr = items.filter((it) => (it.job_day as string) === selISO);
       return arr.length ? [{ day: selISO, arr }] : [];
     }
-    // Otherwise group by start_day (fallback)
+    // Otherwise group by job_day (per-day rows)
     const map = new Map<string, any[]>();
     for (const it of items) {
-      const k = (it.start_day as string) || 'okänd';
+      const k = (it.job_day as string) || (it.start_day as string) || 'okänd';
       if (!map.has(k)) map.set(k, []);
       map.get(k)!.push(it);
     }
@@ -390,7 +386,7 @@ export default function DashboardSchedule({ compact = false }: { compact?: boole
                   const reported = it.segment_id ? (reportedBySegment.get(it.segment_id) || 0) : 0;
                   return (
                     <div
-                      key={it.segment_id || `${it.project_id}|${it.start_day}`}
+                      key={`${it.segment_id || `${it.project_id}|${it.start_day}`}|${it.job_day || ''}`}
                       onClick={() => openDetail(it)}
                       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(it); } }}
                       role="button"
@@ -474,7 +470,7 @@ export default function DashboardSchedule({ compact = false }: { compact?: boole
           const uniq = Array.from(new Set(found.map(f => f.trim())));
           return uniq.map(display => ({ display, tel: norm(display) }));
         })();
-        const headerTitle = [detailBase?.order_number ? `#${detailBase.order_number}` : null, detailBase?.project_name || 'Projekt'].filter(Boolean).join(' ');
+  const headerTitle = [detailBase?.order_number ? `#${detailBase.order_number}` : null, detailBase?.project_name || 'Projekt'].filter(Boolean).join(' ');
         const segId = detailBase?.segment_id as string | undefined;
         const segReports = segId ? (segmentReportsMap[segId] || []) : [];
         const reportedTotal = segReports.reduce((sum, r) => sum + (Number(r.amount) || 0), 0);

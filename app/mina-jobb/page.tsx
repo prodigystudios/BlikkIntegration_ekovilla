@@ -37,14 +37,20 @@ export default function MinaJobbPage() {
       {error && <div style={{ color:'#b91c1c' }}>Fel: {error}</div>}
       {!loading && !error && items.length === 0 && <div>Inga planerade jobb.</div>}
       <div style={{ display: 'grid', gap: 8 }}>
-        {items.map((it) => (
-          <div key={it.segment_id} style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: 10, background: '#fff' }}>
-            <div style={{ fontWeight: 700 }}>{it.project_name}</div>
-            <div style={{ fontSize: 12, color: '#475569' }}>{it.customer}{it.order_number ? ` • #${it.order_number}` : ''}</div>
-            <div style={{ fontSize: 12, color: '#334155' }}>{it.start_day}{it.end_day !== it.start_day ? ` – ${it.end_day}` : ''}</div>
-            <div style={{ fontSize: 12, color: '#64748b' }}>{it.truck || 'Ingen lastbil'}{it.job_type ? ` • ${it.job_type}` : ''}{typeof it.bag_count === 'number' ? ` • ${it.bag_count} säckar` : ''}</div>
-          </div>
-        ))}
+        {items
+          .slice()
+          .sort((a, b) => String(a.job_day || a.start_day).localeCompare(String(b.job_day || b.start_day)))
+          .map((it) => {
+            const day = it.job_day || it.start_day;
+            return (
+              <div key={`${it.segment_id}|${day}`} style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: 10, background: '#fff' }}>
+                <div style={{ fontWeight: 700 }}>{it.project_name}</div>
+                <div style={{ fontSize: 12, color: '#475569' }}>{it.customer}{it.order_number ? ` • #${it.order_number}` : ''}</div>
+                <div style={{ fontSize: 12, color: '#334155' }}>{day}</div>
+                <div style={{ fontSize: 12, color: '#64748b' }}>{it.truck || 'Ingen lastbil'}{it.job_type ? ` • ${it.job_type}` : ''}{typeof it.bag_count === 'number' ? ` • ${it.bag_count} säckar` : ''}</div>
+              </div>
+            );
+          })}
       </div>
     </div>
   );
