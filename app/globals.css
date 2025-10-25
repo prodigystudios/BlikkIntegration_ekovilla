@@ -78,7 +78,9 @@ input[type="reset"]:focus-visible {
     transition: none;
   }
 }
-
+.input-offert-text::placeholder {
+  color: #131314; /* gray-400 */
+}
 /* Button utilities and variants */
 /* Size utilities */
 .btn--lg { padding: 12px 16px; font-size: 16px; }

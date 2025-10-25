@@ -112,6 +112,16 @@ function IconCalendar(props: React.SVGProps<SVGSVGElement>) {
     </svg>
   );
 }
+function IconOffert(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#111827" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
+      <path d="M4 2h16a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z"/>
+      <line x1="8" y1="6" x2="16" y2="6"/>
+      <line x1="8" y1="10" x2="16" y2="10"/>
+      <line x1="8" y1="14" x2="12" y2="14"/>
+    </svg>
+  );
+}
 
 export default function HeaderMenu({ role, fullName }: { role: UserRole | null, fullName?: string | null }) {
   const [open, setOpen] = useState(false);
@@ -269,13 +279,19 @@ export default function HeaderMenu({ role, fullName }: { role: UserRole | null, 
               <div>
               <div role="separator" aria-hidden style={{ height: 1, background: '#e5e7eb', margin: '8px 8px' }} />
               <div style={{ fontSize: 12, color: '#6b7280', margin: '6px 8px' }}>Säljare</div>
+              {/* <Link href="/offert" prefetch={true} onClick={() => setOpen(false)}
+                aria-current={pathname === '/offert' ? 'page' : undefined}
+                className={`menu-link${pathname === '/offert' ? ' is-active' : ''}`}>
+                <IconOffert />
+                <span>Offert</span>
+              </Link> */}
                 <Link href="/korjournal" prefetch={true} onClick={() => setOpen(false)}
                 aria-current={pathname === '/korjournal' ? 'page' : undefined}
                 className={`menu-link${pathname === '/korjournal' ? ' is-active' : ''}`}>
                 <IconCar />
                 <span>Körjournal</span>
                 </Link>
-              <Link href="/plannering" prefetch={false} onClick={() => setOpen(false)}
+                <Link href="/plannering" prefetch={false} onClick={() => setOpen(false)}
                 aria-current={pathname === '/plannering' ? 'page' : undefined}
                 className={`menu-link${pathname === '/plannering' ? ' is-active' : ''}`}>
                 <IconCalendar />
@@ -299,6 +315,12 @@ export default function HeaderMenu({ role, fullName }: { role: UserRole | null, 
                   <path d="M10 11l2 2 4-4" />
                 </svg>
                 <span>Admin</span>
+              </Link>
+                <Link href="/offert" prefetch={true} onClick={() => setOpen(false)}
+                aria-current={pathname === '/offert' ? 'page' : undefined}
+                className={`menu-link${pathname === '/offert' ? ' is-active' : ''}`}>
+                <IconOffert />
+                <span>Offert</span>
               </Link>
             </div>
           )}
