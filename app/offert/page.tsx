@@ -1,6 +1,6 @@
 'use client';
 export const dynamic = 'force-dynamic';
-import { ReactNode, useEffect, useMemo, useState } from 'react';
+import {useEffect, useMemo, useState } from 'react';
 
 type OffertType = 'private' | 'business';
 type LineItem = {
@@ -18,6 +18,7 @@ type LineItem = {
   articleNumber?: string | null;
   articlePrice?: number | null;
   articleUnitName?: string | null;
+  discountPercent?: string; // % discount applied to unit price (0-100)
 };
 
 type QuoteForm = {
@@ -52,7 +53,7 @@ export default function OffertPage() {
       postalCode: '',
       city: '',
       items: [
-        { id: crypto.randomUUID(), construction: '', m2: '', thicknessMm: '', autoPrice: true, unitPrice: '', pricing: 'm3', quantity: '', articleId: null, articleName: null, articleNumber: null, articlePrice: null },
+        { id: crypto.randomUUID(), construction: '', m2: '', thicknessMm: '', autoPrice: true, unitPrice: '', pricing: 'm3', quantity: '', articleId: null, articleName: null, articleNumber: null, articlePrice: null, discountPercent: '' },
       ],
       vatPercent: '25',
       validUntil: new Date(Date.now() + 14 * 864e5).toISOString().slice(0, 10),
@@ -77,7 +78,7 @@ export default function OffertPage() {
 
   // Auto-update unit price when construction/thickness changes and autoPrice is enabled
   const effectiveRows = useMemo(() => {
-    if (!form) return [] as Array<{ id: string; amount: number; unit: number; label: string; mode: 'm3' | 'item' }>;
+    if (!form) return [] as Array<{ id: string; amount: number; unit: number; effectiveUnit: number; label: string; mode: 'm3' | 'item' }>;
     return form.items.map((it) => {
       const unit = it.autoPrice
         ? computeUnitPrice(it.construction, parseFloat(it.thicknessMm || '0') || 0)
@@ -88,19 +89,22 @@ export default function OffertPage() {
       const thicknessM = (parseFloat(it.thicknessMm || '0') || 0) / 1000; // mm -> m
       const volume = Math.max(0, m2 * thicknessM); // m3
       const qty = parseFloat(it.quantity || '0') || 0;
-      const amount = mode === 'm3' ? volume : qty;
+  const amount = mode === 'm3' ? volume : qty;
+  const rawPct = parseFloat(it.discountPercent || '0');
+  const pct = isNaN(rawPct) ? 0 : Math.min(100, Math.max(0, rawPct));
+  const effectiveUnit = Math.max(0, unit * (1 - pct / 100));
 
       const consLabel = it.construction === 'vagg' ? 'Vägg' : it.construction === 'snedtak' ? 'Snedtak' : it.construction === 'vind' ? 'Vind' : '';
       const baseLabel = it.articleName ? `${it.articleName}${it.articleNumber ? ` (${it.articleNumber})` : ''}` : `${consLabel || 'Okänd'}${it.thicknessMm ? ` ${it.thicknessMm} mm` : ''}`;
   const unitSuffix = mode === 'm3' ? ' (m³)' : (it.articleUnitName ? ` (${it.articleUnitName})` : '');
   const label = `${baseLabel}${unitSuffix}`;
 
-      return { id: it.id, amount, unit, label, mode };
+      return { id: it.id, amount, unit, effectiveUnit, label, mode };
     });
   }, [form?.items]);
 
   const totals = useMemo(() => {
-    const subtotal = Math.max(0, effectiveRows.reduce((sum, r) => sum + r.amount * r.unit, 0));
+    const subtotal = Math.max(0, effectiveRows.reduce((sum, r) => sum + r.amount * r.effectiveUnit, 0));
     const vatPct = parseFloat(form?.vatPercent || '0') || 0;
     const vat = Math.max(0, subtotal * (vatPct / 100));
     const total = subtotal + vat;
@@ -121,15 +125,15 @@ export default function OffertPage() {
     }
     if (!form.items.length) { setError('Lägg till minst en rad.'); return; }
     for (const it of effectiveRows) {
-      if (!(it.amount > 0) || !(it.unit > 0)) {
-        setError('Fyll i kvantitet/volym och pris (> 0) för varje rad.');
+      if (!(it.amount > 0) || !(it.effectiveUnit >= 0)) {
+        setError('Fyll i kvantitet/volym och pris (>= 0) för varje rad.');
         return;
       }
     }
 
     setSubmitting(true);
     try {
-      const lineItems = effectiveRows.map((r) => ({ description: r.label, quantity: r.amount, unitPrice: r.unit }));
+  const lineItems = effectiveRows.map((r) => ({ description: r.label, quantity: r.amount, unitPrice: r.effectiveUnit }));
       const res = await fetch('/api/pdf/quote', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -183,7 +187,7 @@ export default function OffertPage() {
             role="dialog"
             aria-modal="true"
             onClick={(e) => e.stopPropagation()}
-            style={{ width: 'min(150vwpx, 200vw)', maxHeight: '90vh', overflow: 'auto', background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12, boxShadow: '0 20px 40px rgba(0,0,0,0.25)', padding: 16, display: 'grid', gap: 12 }}
+            style={{ width: 'min(1000px, 96vw)', maxHeight: '90vh', overflow: 'auto', background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12, boxShadow: '0 20px 40px rgba(0,0,0,0.25)', padding: 16, display: 'grid', gap: 12 }}
           >
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
               <div style={{ display: 'grid', gap: 4 }}>
@@ -241,7 +245,7 @@ export default function OffertPage() {
                   const unit = row.autoPrice ? computeUnitPrice(row.construction, parseFloat(row.thicknessMm || '0') || 0) : (parseFloat(row.unitPrice || '0') || 0);
                   const isM3 = (row.pricing ?? 'm3') === 'm3';
                   return (
-                    <div key={row.id} style={{ display: 'grid', gridTemplateColumns: isM3 ? 'minmax(220px, 2fr) 1fr 1fr 1fr auto' : 'minmax(220px, 2fr) 1fr 1fr auto', gap: 8, alignItems: 'end' }}>
+                    <div key={row.id} style={{ display: 'grid', gridTemplateColumns: 'minmax(260px, 2fr) 1fr 1fr 2fr auto', gap: 8, alignItems: 'end' }}>
                       <div style={{ display: 'grid', gap: 6 }}>
                         <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
                           <span>Artikel</span>
@@ -285,44 +289,52 @@ export default function OffertPage() {
                           />
                         </label>
                       </div>
+                      {/* Column 2: Area (m²) or Quantity */}
                       {isM3 ? (
-                        <>
-                          <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
-                            <span>m²</span>
-                            <input type="number" min={0} value={row.m2} onChange={(e) => setForm({ ...form, items: form.items.map((x) => x.id === row.id ? { ...x, m2: e.target.value } : x) })} placeholder="0" style={{ padding: '8px 10px', border: '1px solid #cbd5e1', borderRadius: 8 }} />
-                          </label>
-                          <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
-                            <span>Tjocklek (mm)</span>
-                            <input type="number" min={0} value={row.thicknessMm} onChange={(e) => setForm({ ...form, items: form.items.map((x) => x.id === row.id ? { ...x, thicknessMm: e.target.value } : x) })} placeholder="200" style={{ padding: '8px 10px', border: '1px solid #cbd5e1', borderRadius: 8 }} />
-                          </label>
-                        </>
+                        <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
+                          <span>m²</span>
+                          <input type="number" min={0} value={row.m2} onChange={(e) => setForm({ ...form, items: form.items.map((x) => x.id === row.id ? { ...x, m2: e.target.value } : x) })} placeholder="0" style={{ padding: '8px 10px', border: '1px solid #cbd5e1', borderRadius: 8 }} />
+                        </label>
                       ) : (
                         <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
                           <span>Antal</span>
                           <input type="number" min={0} value={row.quantity || ''} onChange={(e) => setForm({ ...form, items: form.items.map((x) => x.id === row.id ? { ...x, quantity: e.target.value } : x) })} placeholder="1" style={{ padding: '8px 10px', border: '1px solid #cbd5e1', borderRadius: 8 }} />
                         </label>
                       )}
+
+                      {/* Column 3: Thickness (mm) or placeholder */}
+                      {isM3 ? (
+                        <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
+                          <span>Tjocklek (mm)</span>
+                          <input type="number" min={0} value={row.thicknessMm} onChange={(e) => setForm({ ...form, items: form.items.map((x) => x.id === row.id ? { ...x, thicknessMm: e.target.value } : x) })} placeholder="200" style={{ padding: '8px 10px', border: '1px solid #cbd5e1', borderRadius: 8 }} />
+                        </label>
+                      ) : (
+                        <div />
+                      )}
                       <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
-                        <span>À-pris (SEK)</span>
-                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                          <input type="number" min={0} value={row.autoPrice ? String(unit || 0) : row.unitPrice} onChange={(e) => setForm({ ...form, items: form.items.map((x) => x.id === row.id ? { ...x, unitPrice: e.target.value } : x) })} disabled={row.autoPrice} placeholder="0" style={{ padding: '8px 10px', border: '1px solid #cbd5e1', borderRadius: 8, background: row.autoPrice ? '#f8fafc' : '#fff' }} />
+                        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(110px,1fr) auto minmax(90px, 0.7fr)', alignItems: 'end', columnGap: 8 }}>
+                          <div style={{ display: 'grid', gap: 4 }}>
+                            <span>À-pris (SEK)</span>
+                            <input type="number" min={0} value={row.autoPrice ? String(unit || 0) : row.unitPrice} onChange={(e) => setForm({ ...form, items: form.items.map((x) => x.id === row.id ? { ...x, unitPrice: e.target.value } : x) })} disabled={row.autoPrice} placeholder="0" style={{ width: '100%', padding: '8px 10px', border: '1px solid #cbd5e1', borderRadius: 8, background: row.autoPrice ? '#f8fafc' : '#fff' }} />
+                          </div>
                           <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center', fontSize: 12 }} title="Justera pris manuellt">
                             <input type="checkbox" checked={!row.autoPrice} onChange={(e) => setForm({ ...form, items: form.items.map((x) => x.id === row.id ? { ...x, autoPrice: !e.target.checked } : x) })} />
                             <span>Manuellt</span>
                           </label>
-                          <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center', fontSize: 12 }} title="Beräkna per m³ (annars per styck)">
+                          <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
+                            <span>Rabatt %</span>
                             <input
-                              type="checkbox"
-                              checked={isM3}
+                              type="number"
+                              min={0}
+                              max={100}
+                              value={row.discountPercent || ''}
                               onChange={(e) => setForm({
                                 ...form,
-                                items: form.items.map((x) => x.id === row.id ? {
-                                  ...x,
-                                  pricing: e.target.checked ? 'm3' : 'item',
-                                } : x)
+                                items: form.items.map((x) => x.id === row.id ? { ...x, discountPercent: e.target.value } : x)
                               })}
+                              placeholder="0"
+                              style={{ width: '100%', padding: '8px 10px', border: '1px solid #cbd5e1', borderRadius: 8 }}
                             />
-                            <span>Per m³</span>
                           </label>
                         </div>
                       </label>
