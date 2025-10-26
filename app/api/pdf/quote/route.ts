@@ -30,11 +30,13 @@ export async function POST(req: NextRequest): Promise<Response> {
     } = body || {};
 
     const pdfDoc = await PDFDocument.create();
-    const page = pdfDoc.addPage([595.28, 841.89]); // A4
+  const page = pdfDoc.addPage([595.28, 841.89]); // A4
     const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
     const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
-    const margin = 36;
+  const margin = 36;
+  const bottomBandHeight = 100; // reserve area for totals at page bottom
+  const contentBottomY = margin + bottomBandHeight;
     let y = page.getHeight() - margin;
     const company = branding.companyName || 'Isoleringslandslaget';
     const primary = hexToRgb(branding.primaryColor || '#0ea5e9');
@@ -65,7 +67,7 @@ export async function POST(req: NextRequest): Promise<Response> {
     drawLabel(page, 'Giltig t.o.m.', rightColX, y + lineGap * 6.4, fontBold, accent);
     drawText(page, validUntil || '-', rightColX, y + lineGap * 5.4, 11, font);
 
-    // Line items
+  // Line items
     y -= 10;
     drawLabel(page, 'Specifikation', margin, y, fontBold, accent); y -= 12;
     const col1 = margin;              // Material
@@ -82,33 +84,64 @@ export async function POST(req: NextRequest): Promise<Response> {
     const rows: Array<{ description: string; quantity: number; unitPrice: number }> = Array.isArray(lineItems) && lineItems.length > 0
       ? lineItems
       : [{ description: material || '-', quantity: quantity || 0, unitPrice: unitPrice || 0 }];
+    const originalItems: Array<any> = Array.isArray(body?.items) ? body.items : [];
 
     let subtotal = 0;
-    for (const r of rows) {
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      const original = originalItems[i] || {};
+      // Build optional detail row (e.g. "120 m² × 500 mm") for m3 pricing
+      let detail: string | null = null;
+      try {
+        const pricing = (original?.pricing ?? '').toString();
+        const m2Str = (original?.m2 ?? '').toString().trim();
+        const thickStr = (original?.thicknessMm ?? '').toString().trim();
+        if (pricing === 'm3' && m2Str && thickStr) {
+          detail = `${m2Str} m² × ${thickStr} mm`;
+        }
+      } catch {}
+
+      const rowHeight = detail ? 22 : 16; // ensure we don't draw into totals area
+      if (y - rowHeight < contentBottomY) break;
+
       const rowSum = (Number(r.quantity) || 0) * (Number(r.unitPrice) || 0);
       subtotal += rowSum;
-      drawText(page, String(r.description || '-'), col1, y, 10, font);
-      drawText(page, String(r.quantity || 0), col2, y, 10, font);
-      drawText(page, formatCurrency(Number(r.unitPrice) || 0), col3, y, 10, font);
-      drawText(page, formatCurrency(rowSum), col4, y, 10, font);
-      y -= 16;
+      drawText(page, String(r.description || '-'), col1, y, 8, font);
+      drawText(page, String(r.quantity || 0), col2, y, 8, font);
+      drawText(page, formatCurrency(Number(r.unitPrice) || 0), col3, y, 8, font);
+      drawText(page, formatCurrency(rowSum), col4, y, 8, font);
+      if (detail) {
+        drawText(page, detail, col1, y - 10, 7.5, font, rgb(0.35, 0.4, 0.45));
+        y -= 22;
+      } else {
+        y -= 16;
+      }
     }
     y -= 8;
 
-    // Totals
-  subtotal = Number.isFinite(totals?.subtotal) ? totals.subtotal : subtotal;
-  const vat = Number.isFinite(totals?.vat) ? totals.vat : subtotal * (vatPercent / 100);
-  const total = Number.isFinite(totals?.total) ? totals.total : subtotal + vat;
-
-    drawText(page, 'Delsumma:', col3, y, 10, fontBold); drawText(page, formatCurrency(subtotal), col4, y, 10, font); y -= 14;
-    drawText(page, `Moms (${vatPercent}%):`, col3, y, 10, fontBold); drawText(page, formatCurrency(vat), col4, y, 10, font); y -= 14;
-    drawText(page, 'Totalt:', col3, y, 11, fontBold); drawText(page, formatCurrency(total), col4, y, 11, fontBold); y -= 24;
-
+    // Notes (render but do not overlap totals band)
     if (notes) {
       drawLabel(page, 'Anteckningar', margin, y, fontBold, accent); y -= 12;
       const wrapped = wrapText(notes, 10, font, page.getWidth() - margin * 2);
-      for (const line of wrapped) { drawText(page, line, margin, y, 10, font); y -= 12; }
+      for (const line of wrapped) {
+        if (y - 12 < contentBottomY) break;
+        drawText(page, line, margin, y, 10, font);
+        y -= 12;
+      }
     }
+
+    // Totals (anchored at bottom band)
+    subtotal = Number.isFinite(totals?.subtotal) ? totals.subtotal : subtotal;
+    const vat = Number.isFinite(totals?.vat) ? totals.vat : subtotal * (vatPercent / 100);
+    const total = Number.isFinite(totals?.total) ? totals.total : subtotal + vat;
+
+    // separator above totals band
+    page.drawRectangle({ x: margin, y: contentBottomY - 12, width: page.getWidth() - margin * 2, height: 0.6, color: rgb(0.85, 0.88, 0.9) });
+
+    let ty = margin + 40;
+    drawText(page, 'Delsumma:', col3, ty, 10, fontBold); drawText(page, formatCurrency(subtotal), col4, ty, 10, font); ty += 14;
+    drawText(page, `Moms (${vatPercent}%):`, col3, ty, 10, fontBold); drawText(page, formatCurrency(vat), col4, ty, 10, font); ty += 16;
+    drawText(page, 'Totalt:', col3, ty, 11, fontBold); drawText(page, formatCurrency(total), col4, ty, 11, fontBold);
 
     // Footer
     const today = new Date().toISOString().slice(0, 10);
