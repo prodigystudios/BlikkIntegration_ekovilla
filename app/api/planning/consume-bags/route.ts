@@ -8,6 +8,7 @@ type Body = {
   reportKey?: string; // unique key to avoid double-decrement, e.g. archive path
   segmentId?: string;
   materialKind?: 'Ekovilla' | 'Vitull';
+  depotId?: string; // optional explicit override
 };
 
 export async function POST(req: NextRequest) {
@@ -26,22 +27,32 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: 'Missing projectId or invalid totalBags' }, { status: 400 });
     }
 
-    const admin = getSupabaseAdmin();
+  const admin = getSupabaseAdmin();
 
-    // Resolve effective depot id: segment override if any for the given date (or by segmentId), else truck's depot
-    let depotId: string | null = null;
+  // Resolve effective depot id:
+  // 1) Explicit depotId from payload (highest priority)
+  // 2) Segment override if any for the given date (or by segmentId)
+  // 3) Truck's depot via segment.truck or project meta truck
+  let depotId: string | null = (json.depotId && String(json.depotId).trim()) || null;
+  // If we match a segment (by id or installationDate), keep its truck so we can fall back to truck->depot mapping
+  let matchedSegTruck: string | null = null;
 
     // 1) Try find segment by id or by date window
     try {
       if (segmentId) {
-        const { data: seg, error: segErr } = await admin.from('planning_segments').select('*').eq('id', segmentId).maybeSingle();
+        const { data: seg, error: segErr } = await admin
+          .from('planning_segments')
+          .select('depot_id, truck')
+          .eq('id', segmentId)
+          .maybeSingle();
         if (!segErr && seg) {
           depotId = (seg as any).depot_id || null;
+          matchedSegTruck = (seg as any)?.truck ? String((seg as any).truck).trim() : null;
         }
       } else if (installationDate) {
         const { data: segs, error: segErr } = await admin
           .from('planning_segments')
-          .select('*')
+          .select('depot_id, truck')
           .eq('project_id', projectId)
           .lte('start_day', installationDate)
           .gte('end_day', installationDate)
@@ -49,6 +60,7 @@ export async function POST(req: NextRequest) {
           .limit(1);
         if (!segErr && Array.isArray(segs) && segs[0]) {
           depotId = (segs[0] as any).depot_id || null;
+          matchedSegTruck = (segs[0] as any)?.truck ? String((segs[0] as any).truck).trim() : null;
         }
       }
     } catch (e) {
@@ -59,11 +71,11 @@ export async function POST(req: NextRequest) {
     // Prefer the segment's truck if segment was identified, otherwise project meta
     if (!depotId) {
       try {
-        let truckName: string | null = null;
+        let truckName: string | null = matchedSegTruck;
         let metaErrFlag = false;
-        if (segmentId) {
+        if (!truckName && segmentId) {
           const { data: seg2 } = await admin.from('planning_segments').select('truck').eq('id', segmentId).maybeSingle();
-          truckName = (seg2 as any)?.truck ?? null;
+          truckName = ((seg2 as any)?.truck ?? null) && String((seg2 as any)?.truck ?? '').trim() || null;
         }
         if (!truckName) {
           const { data: meta, error: metaErr } = await admin
@@ -71,7 +83,7 @@ export async function POST(req: NextRequest) {
             .select('truck')
             .eq('project_id', projectId)
             .maybeSingle();
-          if (!metaErr) truckName = meta?.truck ?? null; else metaErrFlag = true;
+          if (!metaErr) truckName = (meta?.truck ? String(meta.truck).trim() : null); else metaErrFlag = true;
         }
         if (truckName) {
           const { data: truck, error: truckErr } = await admin
