@@ -117,6 +117,26 @@ export async function POST(req: NextRequest) {
       } catch {}
     }
 
+    // Helper: also persist latest actual bags used to planning_project_meta so planner cards reflect it
+    async function upsertActualBagsUsed(pId: string, bags: number) {
+      try {
+        const { error: metaErr } = await admin
+          .from('planning_project_meta')
+          .upsert({
+            project_id: pId,
+            actual_bags_used: Math.round(bags),
+            actual_bags_set_at: new Date().toISOString(),
+            actual_bags_set_by: 'service',
+          } as any, { onConflict: 'project_id' } as any);
+        if (metaErr) {
+          // Non-fatal; log server-side only
+          console.warn('[consume-bags] upsert meta failed', metaErr.message || metaErr);
+        }
+      } catch (e) {
+        console.warn('[consume-bags] upsert meta exception', (e as any)?.message || e);
+      }
+    }
+
     // Idempotency: record a usage row keyed by reportKey if provided
     if (reportKey) {
       try {
@@ -132,6 +152,8 @@ export async function POST(req: NextRequest) {
           // If already recorded (unique violation), treat as already processed
           const msg = String(ins.error.message || '').toLowerCase();
           if (msg.includes('duplicate key') || msg.includes('unique')) {
+            // Even if already processed, ensure meta shows latest report value
+            await upsertActualBagsUsed(projectId, totalBags);
             return NextResponse.json({ ok: true, alreadyProcessed: true });
           }
           return NextResponse.json({ ok: false, error: 'usage-insert-failed', detail: ins.error.message }, { status: 500 });
@@ -139,6 +161,7 @@ export async function POST(req: NextRequest) {
       } catch (e: any) {
         const m = String(e?.message || e).toLowerCase();
         if (m.includes('duplicate key') || m.includes('unique')) {
+          await upsertActualBagsUsed(projectId, totalBags);
           return NextResponse.json({ ok: true, alreadyProcessed: true });
         }
         return NextResponse.json({ ok: false, error: 'usage-insert-exception', detail: String(e?.message || e) }, { status: 500 });
@@ -160,6 +183,8 @@ export async function POST(req: NextRequest) {
       const updatePayload: any = {}; updatePayload[col] = next;
       await admin.from('planning_depots').update(updatePayload).eq('id', depotId);
     }
+    // Also update meta with the latest reported bags so planner UI reflects it
+    await upsertActualBagsUsed(projectId, totalBags);
     return NextResponse.json({ ok: true, depotId, material_kind: mat ?? 'Ekovilla' });
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: 'unexpected', detail: String(e?.message || e) }, { status: 500 });
