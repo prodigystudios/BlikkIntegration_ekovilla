@@ -2991,7 +2991,7 @@ export default function PlanneringPage() {
         <div style={{ display: 'grid', gap: 8 }}>
           <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
             <button className="btn--plain btn--sm" onClick={() => setMonthOffset(o => o - 1)}>◀</button>
-            <strong style={{ fontSize: 16 }}>{(() => { const d = new Date(); d.setMonth(d.getMonth() + monthOffset); return d.toLocaleDateString('sv-SE', { month: 'long', year: 'numeric' }); })()}</strong>
+            <strong style={{ fontSize: 16 }}>{(() => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() + monthOffset); return d.toLocaleDateString('sv-SE', { month: 'long', year: 'numeric' }); })()}</strong>
             <button className="btn--plain btn--sm" onClick={() => setMonthOffset(o => o + 1)}>▶</button>
             {monthOffset !== 0 && <button className="btn--plain btn--sm" onClick={() => setMonthOffset(0)}>Idag</button>}
             <div style={{ display: 'flex', gap: 4 }}>
