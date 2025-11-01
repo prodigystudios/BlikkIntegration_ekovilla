@@ -9,6 +9,8 @@ import FiltersBar from './components/FiltersBar';
 import CalendarMonthGrid from './components/CalendarMonthGrid';
 import CalendarWeekdayLanes from './components/CalendarWeekdayLanes';
 import CalendarDayList from './components/CalendarDayList';
+import nextDynamic from 'next/dynamic';
+const AdminJobTypes = nextDynamic(() => import('../admin/jobtypes/AdminJobTypes'), { ssr: false });
 // NOTE: The file header was previously corrupted by an accidental paste of JSX outside any component.
 // Restoring intended interface/type declarations here.
 
@@ -290,7 +292,7 @@ export default function PlanneringPage() {
 
   // Admin config modal (to declutter main page)
   const [adminModalOpen, setAdminModalOpen] = useState(false);
-  const [adminModalTab, setAdminModalTab] = useState<'trucks' | 'depots' | 'deliveries'>('trucks');
+  const [adminModalTab, setAdminModalTab] = useState<'trucks' | 'depots' | 'deliveries' | 'jobtypes'>('trucks');
   // Hide inline admin panels on main page (creation and depot totals) – manage via modal instead
   const showInlineAdminPanels = false;
 
@@ -489,6 +491,8 @@ export default function PlanneringPage() {
   const [emailToast, setEmailToast] = useState<{ pid: string; msg: string } | null>(null);
   // Client notification tracking (local only for now)
   const [pendingNotifyProjectId, setPendingNotifyProjectId] = useState<string | null>(null);
+  // Job type/material color mapping (from admin settings)
+  const [jobTypeColors, setJobTypeColors] = useState<Record<string, string>>({});
   function markClientNotified(pid: string) {
     const actor = currentUserName || currentUserId || 'okänd';
     const ts = new Date().toISOString();
@@ -510,6 +514,44 @@ export default function PlanneringPage() {
       client_notified_by: null
     }).then(({ error }) => { if (error) console.warn('[notify] undo error', error); }));
   }
+
+  // Load and subscribe to job type/material colors
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from('planning_job_type_colors')
+          .select('job_type,color_hex');
+        if (error) throw error;
+        if (!cancelled) {
+          const map: Record<string, string> = {};
+          for (const r of (data || []) as any[]) map[r.job_type] = r.color_hex;
+          setJobTypeColors(map);
+        }
+      } catch (e) {
+        // non-fatal
+        console.warn('[jobTypeColors] load error', e);
+      }
+    })();
+    const ch = supabase
+      .channel('rtc_job_type_colors')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'planning_job_type_colors' }, (payload) => {
+        setJobTypeColors(prev => {
+          const next = { ...prev };
+          const row: any = payload.new || payload.old;
+          if (!row?.job_type) return next;
+          if (payload.eventType === 'DELETE') {
+            delete next[row.job_type];
+          } else if (payload.new) {
+            next[row.job_type] = row.color_hex;
+          }
+          return next;
+        });
+      })
+      .subscribe();
+    return () => { ch.unsubscribe(); cancelled = true; };
+  }, [supabase]);
 
   // On-demand helpers for email fetching
   const ensureCustomerIdForProject = useCallback(async (projectId: string): Promise<number | null> => {
@@ -2464,7 +2506,16 @@ export default function PlanneringPage() {
                             {p?.orderNumber ? <span style={{ fontFamily: 'ui-monospace,monospace', fontSize: 12, background: '#eef2ff', border: '1px solid #c7d2fe', color: '#111827', padding: '2px 8px', borderRadius: 999 }}>#{p.orderNumber}</span> : null}
                             <span style={{ fontSize: 12, background: '#ecfeff', border: '1px solid #a5f3fc', color: '#164e63', padding: '2px 8px', borderRadius: 999 }}>{single ? `${startW} ${start}` : `${startW} ${start} → ${endW} ${end}`}</span>
                             <span style={{ fontSize: 12, background: '#f0fdf4', border: '1px solid #86efac', color: '#14532d', padding: '2px 8px', borderRadius: 999 }}>{segEditor.bagCount != null ? `${segEditor.bagCount} säckar` : 'Säckar ej satta'}</span>
-                            <span style={{ fontSize: 12, background: '#f5f3ff', border: '1px solid #ddd6fe', color: '#3730a3', padding: '2px 8px', borderRadius: 999 }}>{segEditor.jobType || 'Jobbtyp ej vald'}</span>
+                            {(() => {
+                              const jt = segEditor.jobType || '';
+                              const clr = jt ? jobTypeColors[jt] : undefined;
+                              const badgeStyle: React.CSSProperties = clr ? (
+                                { fontSize: 12, background: '#ffffff', border: `1px solid ${clr}55`, color: clr, padding: '2px 8px', borderRadius: 999 }
+                              ) : (
+                                { fontSize: 12, background: '#f5f3ff', border: '1px solid #ddd6fe', color: '#3730a3', padding: '2px 8px', borderRadius: 999 }
+                              );
+                              return <span style={badgeStyle}>{jt || 'Jobbtyp ej vald'}</span>;
+                            })()}
                             <span style={{ fontSize: 12, background: '#fff7ed', border: '1px solid #fed7aa', color: '#7c2d12', padding: '2px 8px', borderRadius: 999 }}>{depotName}</span>
                           </div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -3175,6 +3226,7 @@ export default function PlanneringPage() {
                     <button onClick={() => setAdminModalTab('trucks')} style={{ padding: '6px 10px', border: '1px solid ' + (adminModalTab === 'trucks' ? '#111827' : '#e5e7eb'), borderRadius: 8, background: adminModalTab === 'trucks' ? '#111827' : '#fff', color: adminModalTab === 'trucks' ? '#fff' : '#111827', fontSize: 13, fontWeight: 600 }}>Lastbilar</button>
                     <button onClick={() => setAdminModalTab('depots')} style={{ padding: '6px 10px', border: '1px solid ' + (adminModalTab === 'depots' ? '#111827' : '#e5e7eb'), borderRadius: 8, background: adminModalTab === 'depots' ? '#111827' : '#fff', color: adminModalTab === 'depots' ? '#fff' : '#111827', fontSize: 13, fontWeight: 600 }}>Depåer</button>
                     <button onClick={() => setAdminModalTab('deliveries')} style={{ padding: '6px 10px', border: '1px solid ' + (adminModalTab === 'deliveries' ? '#111827' : '#e5e7eb'), borderRadius: 8, background: adminModalTab === 'deliveries' ? '#111827' : '#fff', color: adminModalTab === 'deliveries' ? '#fff' : '#111827', fontSize: 13, fontWeight: 600 }}>Leveranser</button>
+                    <button onClick={() => setAdminModalTab('jobtypes')} style={{ padding: '6px 10px', border: '1px solid ' + (adminModalTab === 'jobtypes' ? '#111827' : '#e5e7eb'), borderRadius: 8, background: adminModalTab === 'jobtypes' ? '#111827' : '#fff', color: adminModalTab === 'jobtypes' ? '#fff' : '#111827', fontSize: 13, fontWeight: 600 }}>Jobbtyper</button>
                   </div>
                   <button onClick={() => setAdminModalOpen(false)} className="btn--plain" aria-label="Stäng" style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: '6px 10px', background: '#fff' }}>Stäng</button>
                 </div>
@@ -3401,6 +3453,11 @@ export default function PlanneringPage() {
                       </div>
                     </div>
                   )}
+                  {adminModalTab === 'jobtypes' && (
+                    <div style={{ display: 'grid', gap: 12 }}>
+                      <AdminJobTypes />
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -3434,6 +3491,7 @@ export default function PlanneringPage() {
               rowCreatorLabel={rowCreatorLabel}
               renderCreatorAvatar={(segmentId: string) => <CreatorAvatar segmentId={segmentId} size="sm" />}
               scheduleMeta={scheduleMeta as any}
+              jobTypeColors={jobTypeColors}
             />
           )}
 
@@ -3466,6 +3524,7 @@ export default function PlanneringPage() {
               renderCreatorAvatar={(segmentId: string) => <CreatorAvatar segmentId={segmentId} size="sm" />}
               selectedWeekKey={selectedWeekKey}
               scheduleMeta={scheduleMeta as any}
+              jobTypeColors={jobTypeColors}
             />
           )}
 
@@ -3499,6 +3558,7 @@ export default function PlanneringPage() {
               jumpTargetDay={jumpTargetDay}
               scheduleMeta={scheduleMeta as any}
               truckTeamNames={truckTeamNames}
+              jobTypeColors={jobTypeColors}
             />
           )}
         </div>

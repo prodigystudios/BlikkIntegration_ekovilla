@@ -32,7 +32,8 @@ export interface CalendarDayListProps {
   renderCreatorAvatar: (segmentId: string) => React.ReactNode;
   jumpTargetDay: string | null;
   scheduleMeta: Record<string, any>;
-  truckTeamNames: (truckName?: string | null) => string[];
+  truckTeamNames: (truck: string | null) => string[];
+  jobTypeColors: Record<string, string>;
 }
 
 export default function CalendarDayList(props: CalendarDayListProps) {
@@ -65,6 +66,7 @@ export default function CalendarDayList(props: CalendarDayListProps) {
     jumpTargetDay,
     scheduleMeta,
     truckTeamNames,
+  jobTypeColors,
   } = props;
 
   return (
@@ -299,10 +301,12 @@ export default function CalendarDayList(props: CalendarDayListProps) {
                                 <span style={{ color: display ? display.text : '#312e81', fontWeight: 600, minWidth: 0, overflowWrap: 'anywhere' }}>{it.project.name}</span>
                               </span>
                               {(it.bagCount != null || it.jobType) && (
-                                <span style={{ fontSize: 10, color: display ? display.text : '#374151' }}>
+                                <span style={{ fontSize: 11, color: display ? display.text : '#374151' }}>
                                   {it.bagCount != null ? `${it.bagCount} säckar` : ''}
                                   {it.bagCount != null && it.jobType ? ' • ' : ''}
-                                  {it.jobType || ''}
+                                  {it.jobType ? (
+                                    <span style={{ color: jobTypeColors[it.jobType] || (display ? display.text : '#374151') }}>{it.jobType}</span>
+                                  ) : ''}
                                 </span>
                               )}
                               {isStart && scheduleMeta[it.project.id]?.actual_bags_used != null && (

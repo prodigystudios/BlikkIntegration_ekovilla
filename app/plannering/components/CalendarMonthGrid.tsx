@@ -32,6 +32,7 @@ export interface CalendarMonthGridProps {
   rowCreatorLabel: (segmentId: string) => string | null;
   renderCreatorAvatar: (segmentId: string) => React.ReactNode;
   scheduleMeta: Record<string, any>;
+  jobTypeColors: Record<string, string>;
 }
 
 export default function CalendarMonthGrid(props: CalendarMonthGridProps) {
@@ -63,6 +64,7 @@ export default function CalendarMonthGrid(props: CalendarMonthGridProps) {
     rowCreatorLabel,
     renderCreatorAvatar,
     scheduleMeta,
+    jobTypeColors,
   } = props;
 
   return (
@@ -225,7 +227,9 @@ export default function CalendarMonthGrid(props: CalendarMonthGridProps) {
                               <span style={{ fontSize: 11, color: display ? display.text : '#374151' }}>
                                 {it.bagCount != null ? `${it.bagCount} säckar` : ''}
                                 {it.bagCount != null && it.jobType ? ' • ' : ''}
-                                {it.jobType || ''}
+                                {it.jobType ? (
+                                  <span style={{ color: jobTypeColors[it.jobType] || (display ? display.text : '#374151') }}>{it.jobType}</span>
+                                ) : ''}
                               </span>
                             )}
                             {isStart && scheduleMeta[it.project.id]?.actual_bags_used != null && (

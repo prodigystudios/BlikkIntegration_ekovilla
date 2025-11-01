@@ -32,6 +32,7 @@ export interface CalendarWeekdayLanesProps {
   renderCreatorAvatar: (segmentId: string) => React.ReactNode;
   selectedWeekKey: string;
   scheduleMeta: Record<string, any>;
+  jobTypeColors: Record<string, string>;
 }
 
 export default function CalendarWeekdayLanes(props: CalendarWeekdayLanesProps) {
@@ -63,6 +64,7 @@ export default function CalendarWeekdayLanes(props: CalendarWeekdayLanesProps) {
     renderCreatorAvatar,
     selectedWeekKey,
     scheduleMeta,
+    jobTypeColors,
   } = props;
 
   return (
@@ -224,10 +226,12 @@ export default function CalendarWeekdayLanes(props: CalendarWeekdayLanesProps) {
                               {isStart && <span style={{ color: display ? display.text : '#6366f1' }}>{it.project.customer}</span>}
                               {isStart && it.project.salesResponsible && <span style={{ fontSize: 9, color: display ? display.text : '#334155', background: '#ffffff40', padding: '1px 5px', borderRadius: 10, border: `1px solid ${cardBorder}55` }}>Sälj: {it.project.salesResponsible}</span>}
                               {(it.bagCount != null || it.jobType) && (
-                                <span style={{ fontSize: 10, color: display ? display.text : '#374151' }}>
+                                <span style={{ fontSize: 11, color: display ? display.text : '#374151' }}>
                                   {it.bagCount != null ? `${it.bagCount} säckar` : ''}
                                   {it.bagCount != null && it.jobType ? ' • ' : ''}
-                                  {it.jobType || ''}
+                                  {it.jobType ? (
+                                    <span style={{ color: jobTypeColors[it.jobType] || (display ? display.text : '#374151') }}>{it.jobType}</span>
+                                  ) : ''}
                                 </span>
                               )}
                               {isStart && scheduleMeta[it.project.id]?.actual_bags_used != null && (
