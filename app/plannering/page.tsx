@@ -2,6 +2,10 @@
 export const dynamic = 'force-dynamic';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { useEffect, useMemo, useState, useRef, useCallback } from 'react';
+import { startOfMonth, endOfMonth, fmtDate, isoWeekNumber, isoWeekYear, isoWeekKey, startOfIsoWeek, endOfIsoWeek, mondayFromIsoWeekKey } from './_lib/date';
+import { deriveColors, creatorColor, creatorInitials } from './_lib/colors';
+import EmailSummaryPanel from './components/EmailSummaryPanel';
+import FiltersBar from './components/FiltersBar';
 // NOTE: The file header was previously corrupted by an accidental paste of JSX outside any component.
 // Restoring intended interface/type declarations here.
 
@@ -92,15 +96,7 @@ function normalizeProject(p: any): Project {
   };
 }
 
-function startOfMonth(d: Date) { return new Date(d.getFullYear(), d.getMonth(), 1); }
-function endOfMonth(d: Date) { return new Date(d.getFullYear(), d.getMonth() + 1, 0); }
-// Format date in local time (avoid UTC shift that caused off-by-one day issues)
-function fmtDate(d: Date) {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
+// date helpers moved to ./_lib/date
 
 export default function PlanneringPage() {
   // Loading/data
@@ -1720,79 +1716,9 @@ export default function PlanneringPage() {
   // Today marker (local date)
   const todayISO = useMemo(() => fmtDate(new Date()), []);
 
-  // Helper to derive light background + contrast text from base color
-  function deriveColors(base: string): { bg: string; border: string; text: string } {
-    // Always force light-mode friendly colors: lighten aggressively and always use dark text.
-    const hex = base.startsWith('#') ? base.slice(1) : base;
-    if (!/^[0-9a-fA-F]{6}$/.test(hex)) return { bg: '#eef2ff', border: '#c7d2fe', text: '#1e293b' };
-    const r = parseInt(hex.slice(0, 2), 16);
-    const g = parseInt(hex.slice(2, 4), 16);
-    const b = parseInt(hex.slice(4, 6), 16);
-    const lighten = (ch: number) => Math.round(ch + (255 - ch) * 0.90); // stronger lighten to avoid dark blocks
-    const lr = lighten(r), lg = lighten(g), lb = lighten(b);
-    const bg = `#${lr.toString(16).padStart(2, '0')}${lg.toString(16).padStart(2, '0')}${lb.toString(16).padStart(2, '0')}`;
-    // Force dark text for consistency (never flip to white)
-    const text = '#1e293b';
-    return { bg, border: '#' + hex, text };
-  }
+  // color helpers moved to ./_lib/colors
 
-  function isoWeekNumber(dateStr: string) {
-    const d = new Date(dateStr + 'T00:00:00');
-    const target = new Date(d.valueOf());
-    const dayNr = (d.getDay() + 6) % 7;
-    target.setDate(target.getDate() - dayNr + 3);
-    const firstThursday = new Date(target.getFullYear(), 0, 4);
-    const firstThursdayDayNr = (firstThursday.getDay() + 6) % 7;
-    firstThursday.setDate(firstThursday.getDate() - firstThursdayDayNr + 3);
-    const diff = target.getTime() - firstThursday.getTime();
-    return 1 + Math.round(diff / (7 * 24 * 3600 * 1000));
-  }
-
-  // ISO week year helper (year that the ISO week belongs to)
-  function isoWeekYear(dateStr: string) {
-    const d = new Date(dateStr + 'T00:00:00');
-    const target = new Date(d.valueOf());
-    const dayNr = (d.getDay() + 6) % 7;
-    target.setDate(target.getDate() - dayNr + 3); // shift to Thursday
-    return target.getFullYear();
-  }
-
-  function isoWeekKey(dateStr: string) {
-    const y = isoWeekYear(dateStr);
-    const w = isoWeekNumber(dateStr);
-    return `${y}-W${String(w).padStart(2, '0')}`;
-  }
-
-  function startOfIsoWeek(dateStr: string) {
-    const d = new Date(dateStr + 'T00:00:00');
-    const dayNr = (d.getDay() + 6) % 7; // Mon=0
-    const start = new Date(d);
-    start.setDate(start.getDate() - dayNr);
-    return start;
-  }
-
-  function endOfIsoWeek(dateStr: string) {
-    const start = startOfIsoWeek(dateStr);
-    const end = new Date(start);
-    end.setDate(end.getDate() + 6);
-    return end;
-  }
-
-  // Parse ISO week key (YYYY-Www) to Monday date
-  function mondayFromIsoWeekKey(key: string): Date | null {
-    const m = key.match(/^(\d{4})-W(\d{2})$/);
-    if (!m) return null;
-    const year = parseInt(m[1], 10);
-    const week = parseInt(m[2], 10);
-    if (!Number.isFinite(year) || !Number.isFinite(week) || week < 1 || week > 53) return null;
-    const jan4 = new Date(year, 0, 4);
-    const dayNr = (jan4.getDay() + 6) % 7; // Mon=0
-    const week1Monday = new Date(jan4);
-    week1Monday.setDate(jan4.getDate() - dayNr);
-    const monday = new Date(week1Monday);
-    monday.setDate(week1Monday.getDate() + (week - 1) * 7);
-    return monday;
-  }
+  // ISO week helpers moved to ./_lib/date
 
   // When selecting a week, auto jump to that month so it becomes visible
   useEffect(() => {
@@ -2061,27 +1987,7 @@ export default function PlanneringPage() {
     return out;
   }, [depots, deliveries, scheduledSegments, scheduleMeta, planningTrucks, selectedWeekKey, monthOffset, /* today */ (new Date()).toDateString()]);
 
-  // Avatar helpers
-  function creatorInitials(name: string) {
-    const parts = name.trim().split(/\s+/).filter(Boolean);
-    if (parts.length === 0) return '?';
-    if (parts.length === 1) {
-      const p = parts[0];
-      if (p.length >= 2) return (p[0] + p[1]).toUpperCase();
-      return p[0].toUpperCase();
-    }
-    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-  }
-  function creatorColor(key: string) {
-    let hash = 0;
-    for (let i = 0; i < key.length; i++) hash = (hash * 31 + key.charCodeAt(i)) | 0;
-    const hue = Math.abs(hash) % 360;
-    // Two tones: solid + subtle ring
-    return {
-      bg: `hsl(${hue} 70% 42%)`,
-      ring: `hsl(${hue} 75% 60% / 0.65)`
-    };
-  }
+  // Avatar helpers moved to ./_lib/colors
   // Extract phone numbers from free text (tolerant to spaces/dashes); returns unique display/tel pairs
   function extractPhonesFromText(text: string): Array<{ display: string; tel: string }> {
     if (!text) return [];
@@ -2989,57 +2895,22 @@ export default function PlanneringPage() {
 
         {/* Calendar */}
         <div style={{ display: 'grid', gap: 8 }}>
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-            <button className="btn--plain btn--sm" onClick={() => setMonthOffset(o => o - 1)}>◀</button>
-            <strong style={{ fontSize: 16 }}>{(() => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() + monthOffset); return d.toLocaleDateString('sv-SE', { month: 'long', year: 'numeric' }); })()}</strong>
-            <button className="btn--plain btn--sm" onClick={() => setMonthOffset(o => o + 1)}>▶</button>
-            {monthOffset !== 0 && <button className="btn--plain btn--sm" onClick={() => setMonthOffset(0)}>Idag</button>}
-            <div style={{ display: 'flex', gap: 4 }}>
-              {(['monthGrid', 'weekdayLanes', 'dayList'] as const).map(modeKey => {
-                const active = viewMode === modeKey;
-                return (
-                  <button
-                    key={modeKey}
-                    type="button"
-                    aria-pressed={active}
-                    onClick={() => setViewMode(modeKey)}
-                    className="btn--plain btn--sm"
-                    style={{
-                      padding: '4px 10px',
-                      borderRadius: 6,
-                      border: active ? '2px solid #6366f1' : '1px solid #d1d5db',
-                      background: active ? '#eef2ff' : '#fff',
-                      fontWeight: active ? 600 : 500,
-                      fontSize: 12,
-                      color: active ? '#312e81' : '#374151'
-                    }}
-                  >{modeKey === 'monthGrid' ? 'Månad' : modeKey === 'weekdayLanes' ? 'Veckodagar' : 'Daglista'}</button>
-                );
-              })}
-            </div>
-            {/* Hide weekends toggle */}
-            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#374151', border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 8px', background: '#fff' }}>
-              <input type="checkbox" checked={hideWeekends} onChange={e => setHideWeekends(e.target.checked)} />
-              Dölj helger
-            </label>
-            {/* Inline card control toggle removed; actions live in the modal */}
-            <button type="button" className="btn--plain btn--sm" onClick={() => refreshEgenkontroller()} style={{ border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 10px', fontSize: 12 }}>
-              {egenkontrollLoading ? 'Laddar EK…' : 'Uppdatera EK'}
-            </button>
-            {egenkontrollError && <span style={{ fontSize: 10, color: '#b91c1c' }} title={egenkontrollError}>Fel EK</span>}
-            {!egenkontrollLoading && egenkontrollOrderNumbers.size > 0 && <span style={{ fontSize: 10, background: '#ecfdf5', color: '#047857', padding: '2px 6px', borderRadius: 12, border: '1px solid #6ee7b7' }} title="Antal matchade egenkontroller">EK: {egenkontrollOrderNumbers.size}</span>}
-            <span style={{ flex: 1 }} />
-            <button type="button" className="btn--plain btn--sm" onClick={() => setSidebarCollapsed(s => !s)}
-              style={{ border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 10px', fontSize: 12 }}>
-              {sidebarCollapsed ? 'Visa projektpanel' : 'Dölj projektpanel'}
-            </button>
-            {isAdmin && (
-              <button type="button" className="btn--plain btn--sm" onClick={() => setAdminModalOpen(true)}
-                style={{ marginLeft: 'auto', border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 10px', fontSize: 12, background: '#fff' }}>
-                Admin‑inställningar
-              </button>
-            )}
-          </div>
+          <FiltersBar
+            monthOffset={monthOffset}
+            setMonthOffset={setMonthOffset}
+            viewMode={viewMode}
+            setViewMode={setViewMode}
+            hideWeekends={hideWeekends}
+            setHideWeekends={v => setHideWeekends(v)}
+            refreshEgenkontroller={refreshEgenkontroller}
+            egenkontrollLoading={egenkontrollLoading}
+            egenkontrollError={egenkontrollError}
+            egenkontrollCount={egenkontrollOrderNumbers.size}
+            sidebarCollapsed={sidebarCollapsed}
+            setSidebarCollapsed={setSidebarCollapsed}
+            isAdmin={isAdmin}
+            setAdminModalOpen={setAdminModalOpen}
+          />
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', fontSize: 11, alignItems: 'stretch' }}>
             {trucks.map(tName => {
               const tRec = planningTrucks.find(pt => pt.name === tName);
@@ -4217,52 +4088,4 @@ export default function PlanneringPage() {
   );
 }
 
-// Small floating panel showing all found distinct customer emails
-function EmailSummaryPanel({ projects }: { projects: Project[] }) {
-  const [open, setOpen] = useState(false);
-  const emails = useMemo(() => {
-    const map = new Map<string, { email: string; customers: Set<string>; projectIds: Set<string> }>();
-    for (const p of projects) {
-      if (!p.customerEmail) continue;
-      const key = p.customerEmail.toLowerCase();
-      if (!map.has(key)) map.set(key, { email: p.customerEmail, customers: new Set(), projectIds: new Set() });
-      const entry = map.get(key)!;
-      entry.customers.add(p.customer);
-      entry.projectIds.add(p.id);
-    }
-    return Array.from(map.values()).sort((a, b) => a.email.localeCompare(b.email));
-  }, [projects]);
-  const total = emails.length;
-  const copyAll = () => {
-    const list = emails.map(e => e.email).join(', ');
-    navigator.clipboard.writeText(list).catch(() => { });
-  };
-  if (!total) return null;
-  return (
-    <div style={{ position: 'absolute', top: 8, right: 8, zIndex: 20, maxWidth: 320, fontFamily: 'system-ui, sans-serif' }}>
-      <div style={{ background: '#ffffffdd', backdropFilter: 'blur(4px)', border: '1px solid #e2e8f0', borderRadius: 8, padding: 8, boxShadow: '0 4px 12px rgba(0,0,0,0.08)', display: 'grid', gap: 6 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: '#0f172a' }}>E‑post ({total})</div>
-          <div style={{ display: 'flex', gap: 6 }}>
-            <button onClick={() => setOpen(o => !o)} style={{ fontSize: 11, border: '1px solid #cbd5e1', background: '#fff', padding: '2px 6px', borderRadius: 4, cursor: 'pointer' }}>{open ? 'Göm' : 'Visa'}</button>
-            <button onClick={copyAll} disabled={!total} title="Kopiera alla" style={{ fontSize: 11, border: '1px solid #2563eb', background: '#1d4ed8', color: '#fff', padding: '2px 6px', borderRadius: 4, cursor: 'pointer' }}>Kopiera</button>
-          </div>
-        </div>
-        {open && (
-          <div style={{ maxHeight: 240, overflowY: 'auto', display: 'grid', gap: 4 }}>
-            {emails.map(e => (
-              <div key={e.email} style={{ border: '1px solid #e2e8f0', borderRadius: 6, padding: '4px 6px', background: '#f8fafc', display: 'grid', gap: 2 }}>
-                <div style={{ fontSize: 12, fontWeight: 500, color: '#1e293b', wordBreak: 'break-all' }}>{e.email}</div>
-                <div style={{ fontSize: 10, color: '#475569', display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                  <span style={{ background: '#e2e8f0', padding: '1px 4px', borderRadius: 4 }}>{e.customers.size} kund</span>
-                  <span style={{ background: '#e2e8f0', padding: '1px 4px', borderRadius: 4 }}>{e.projectIds.size} proj</span>
-                  <button onClick={() => navigator.clipboard.writeText(e.email).catch(() => { })} style={{ fontSize: 10, border: '1px solid #cbd5e1', background: '#fff', padding: '0 4px', borderRadius: 4, cursor: 'pointer' }}>kopiera</button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
+// EmailSummaryPanel moved to ./components/EmailSummaryPanel
