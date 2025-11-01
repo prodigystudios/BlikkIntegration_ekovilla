@@ -6,6 +6,9 @@ import { startOfMonth, endOfMonth, fmtDate, isoWeekNumber, isoWeekYear, isoWeekK
 import { deriveColors, creatorColor, creatorInitials } from './_lib/colors';
 import EmailSummaryPanel from './components/EmailSummaryPanel';
 import FiltersBar from './components/FiltersBar';
+import CalendarMonthGrid from './components/CalendarMonthGrid';
+import CalendarWeekdayLanes from './components/CalendarWeekdayLanes';
+import CalendarDayList from './components/CalendarDayList';
 // NOTE: The file header was previously corrupted by an accidental paste of JSX outside any component.
 // Restoring intended interface/type declarations here.
 
@@ -162,6 +165,8 @@ export default function PlanneringPage() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [newTruckName, setNewTruckName] = useState('');
   const [newTruckDepotId, setNewTruckDepotId] = useState<string>('');
+  const [isCreatingTruck, setIsCreatingTruck] = useState(false);
+  const [truckCreateError, setTruckCreateError] = useState<string>('');
   const [openDepotMenuTruckId, setOpenDepotMenuTruckId] = useState<string | null>(null);
   // Per-card depot override popover removed; selection now happens in the Segment Editor modal
   const jobTypes = ['Ekovilla', 'Vitull', 'Leverans', 'Utsugning', 'Snickerier', 'Övrigt'];
@@ -1418,21 +1423,45 @@ export default function PlanneringPage() {
   const createTruck = useCallback(async () => {
     const name = newTruckName.trim();
     if (!name) return;
-    setNewTruckName('');
+    setTruckCreateError('');
+    // Basic validations
+    if (name.length < 2) {
+      setTruckCreateError('Namnet behöver vara minst 2 tecken.');
+      return;
+    }
+    // Prevent obvious duplicates client-side to improve UX
+    if (planningTrucks.some(t => t.name.toLowerCase() === name.toLowerCase())) {
+      setTruckCreateError('Det finns redan en lastbil med det namnet.');
+      return;
+    }
     const payload: any = { name };
     if (currentUserId) payload.created_by = currentUserId;
     if (newTruckDepotId) payload.depot_id = newTruckDepotId; else payload.depot_id = null;
-    enqueue(
-      supabase.from('planning_trucks')
-        .insert(payload)
-        .select('id,name')
-        .then(({ data, error }) => {
-          if (error) console.warn('[planning] createTruck error', error);
-          else console.debug('[planning] createTruck ok', data);
+    setIsCreatingTruck(true);
+    enqueue((async () => {
+      try {
+        const { data, error } = await supabase.from('planning_trucks').insert(payload).select('id,name');
+        if (error) {
+          console.warn('[planning] createTruck error', error);
+          const msg = String(error.message || '').toLowerCase();
+          if (msg.includes('duplicate key') || msg.includes('unique constraint')) {
+            setTruckCreateError('Det finns redan en lastbil med det namnet.');
+          } else if (msg.includes('row-level security') || msg.includes('permission denied') || msg.includes('not allowed')) {
+            setTruckCreateError('Behörighet saknas för att skapa lastbil.');
+          } else {
+            setTruckCreateError('Kunde inte skapa lastbil. Försök igen.');
+          }
+        } else {
+          console.debug('[planning] createTruck ok', data);
+          setNewTruckName('');
           setNewTruckDepotId('');
-        })
-    );
-  }, [newTruckName, supabase, currentUserId]);
+          setTruckCreateError('');
+        }
+      } finally {
+        setIsCreatingTruck(false);
+      }
+    })());
+  }, [newTruckName, supabase, currentUserId, planningTrucks, newTruckDepotId]);
 
   const updateTruckColor = useCallback((truck: TruckRec, color: string) => {
     setTruckColorOverrides(prev => ({ ...prev, [truck.name]: color }));
@@ -2986,17 +3015,18 @@ export default function PlanneringPage() {
                   <span style={{ width: 14, height: 14, background: '#fff', border: '2px dashed #94a3b8', borderRadius: 4 }} /> Ingen
                 </div>
                 <form onSubmit={e => { e.preventDefault(); createTruck(); }} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <input value={newTruckName} onChange={e => setNewTruckName(e.target.value)} placeholder="Ny lastbil" style={{ fontSize: 11, padding: '4px 6px', border: '1px solid #cbd5e1', borderRadius: 6 }} />
+                  <input value={newTruckName} onChange={e => { setTruckCreateError(''); setNewTruckName(e.target.value); }} placeholder="Ny lastbil" disabled={isCreatingTruck} style={{ fontSize: 11, padding: '4px 6px', border: '1px solid #cbd5e1', borderRadius: 6 }} />
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     <label style={{ fontSize: 11, color: '#475569', display: 'inline-block', width: 'auto' }}>Depå:</label>
-                    <select value={newTruckDepotId} onChange={e => setNewTruckDepotId(e.target.value)} style={{ width: 160, fontSize: 11, padding: '4px 6px', border: '1px solid #cbd5e1', borderRadius: 6, background: '#fff' }}>
+                    <select value={newTruckDepotId} onChange={e => { setTruckCreateError(''); setNewTruckDepotId(e.target.value); }} disabled={isCreatingTruck} style={{ width: 160, fontSize: 11, padding: '4px 6px', border: '1px solid #cbd5e1', borderRadius: 6, background: '#fff' }}>
                       <option value="">Välj depå (valfritt)</option>
                       {depots.map(d => (
                         <option key={d.id} value={d.id}>{d.name}</option>
                       ))}
                     </select>
                   </div>
-                  <button type="submit" disabled={!newTruckName.trim()} className="btn--plain btn--xs" style={{ fontSize: 11, background: '#e0f2fe', border: '1px solid #7dd3fc', color: '#0369a1', borderRadius: 6, padding: '4px 6px' }}>Lägg till</button>
+                  {truckCreateError && <div style={{ fontSize: 11, color: '#b91c1c' }}>{truckCreateError}</div>}
+                  <button type="submit" disabled={!newTruckName.trim() || isCreatingTruck} className="btn--plain btn--xs" style={{ fontSize: 11, background: '#e0f2fe', border: '1px solid #7dd3fc', color: '#0369a1', borderRadius: 6, padding: '4px 6px' }}>{isCreatingTruck ? 'Lägger till…' : 'Lägg till'}</button>
                 </form>
               </div>
             )}
@@ -3202,12 +3232,13 @@ export default function PlanneringPage() {
                       </div>
                       <div style={{ paddingTop: 6, borderTop: '1px dashed #e5e7eb' }}>
                         <form onSubmit={e => { e.preventDefault(); createTruck(); }} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                          <input value={newTruckName} onChange={e => setNewTruckName(e.target.value)} placeholder="Ny lastbil" style={{ minWidth: 220, padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }} />
-                          <select value={newTruckDepotId} onChange={e => setNewTruckDepotId(e.target.value)} style={{ minWidth: 200, padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }}>
+                          <input value={newTruckName} onChange={e => { setTruckCreateError(''); setNewTruckName(e.target.value); }} placeholder="Ny lastbil" disabled={isCreatingTruck} style={{ minWidth: 220, padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }} />
+                          <select value={newTruckDepotId} onChange={e => { setTruckCreateError(''); setNewTruckDepotId(e.target.value); }} disabled={isCreatingTruck} style={{ minWidth: 200, padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }}>
                             <option value="">Välj depå (valfritt)</option>
                             {depots.map(d => (<option key={d.id} value={d.id}>{d.name}</option>))}
                           </select>
-                          <button type="submit" disabled={!newTruckName.trim()} className="btn--plain btn--xs" style={{ fontSize: 12, padding: '6px 10px', border: '1px solid #7dd3fc', background: '#e0f2fe', color: '#0369a1', borderRadius: 8 }}>Lägg till</button>
+                          {truckCreateError && <div style={{ fontSize: 12, color: '#b91c1c' }}>{truckCreateError}</div>}
+                          <button type="submit" disabled={!newTruckName.trim() || isCreatingTruck} className="btn--plain btn--xs" style={{ fontSize: 12, padding: '6px 10px', border: '1px solid #7dd3fc', background: '#e0f2fe', color: '#0369a1', borderRadius: 8 }}>{isCreatingTruck ? 'Lägger till…' : 'Lägg till'}</button>
                         </form>
                       </div>
                     </div>
@@ -3358,729 +3389,100 @@ export default function PlanneringPage() {
             </div>
           )}
           {viewMode === 'monthGrid' && (
-            <div style={{ display: 'grid', gap: 12 }}>
-              <div style={{ display: 'grid', gridTemplateColumns: `60px repeat(${visibleDayNames.length}, 1fr)`, gap: 8, fontSize: 12, fontWeight: 600, color: '#374151' }}>
-                <div style={{ textAlign: 'center' }}>Vecka</div>
-                {visibleDayNames.map(n => <div key={n} style={{ textAlign: 'center' }}>{n}</div>)}
-              </div>
-              {weeks.map((week, wi) => {
-                const firstDay = week.find(c => c.date)?.date;
-                const weekNum = firstDay ? isoWeekNumber(firstDay) : '';
-                const weekBg = wi % 2 === 0 ? '#e0f2fe' : '#e0e7ff';
-                // When a week is selected, only render the matching week row
-                if (selectedWeekKey) {
-                  if (!firstDay || isoWeekKey(firstDay) !== selectedWeekKey) return null;
-                }
-                return (
-                  <div key={wi} style={{ display: 'grid', gridTemplateColumns: `60px repeat(${visibleDayNames.length}, 1fr)`, gap: 8, background: weekBg, padding: 6, borderRadius: 12, boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.05)' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, background: 'rgba(255,255,255,0.65)', backdropFilter: 'blur(2px)', border: '1px solid rgba(0,0,0,0.07)', borderRadius: 8, color: '#1e293b', boxShadow: '0 1px 2px rgba(0,0,0,0.08)' }}>{weekNum && `v${weekNum}`}</div>
-                    {week.map((cell, ci) => {
-                      // If weekends are hidden, skip Sat(5)/Sun(6)
-                      if (hideWeekends && (ci === 5 || ci === 6)) return <div key={ci} style={{ minHeight: 160, border: '1px solid transparent', borderRadius: 8 }} />;
-                      if (!cell.date) return <div key={ci} style={{ minHeight: 160, border: '1px solid transparent', borderRadius: 8 }} />;
-                      if (selectedWeekKey && isoWeekKey(cell.date) !== selectedWeekKey) {
-                        // Hide days outside the selected ISO week (can happen for leading/trailing days in a month row)
-                        return <div key={ci} style={{ minHeight: 160, border: '1px solid transparent', borderRadius: 8 }} />;
-                      }
-                      const day = cell.date;
-                      const rawItems = itemsByDay.get(day) || [];
-                      const searchVal = calendarSearch.trim().toLowerCase();
-                      const items = rawItems.filter(it => {
-                        if (truckFilter) {
-                          if (truckFilter === 'UNASSIGNED') { if (it.truck) return false; }
-                          else if (it.truck !== truckFilter) return false;
-                        }
-                        if (salesFilter) {
-                          if (salesFilter === '__NONE__') { if (it.project.salesResponsible) return false; }
-                          else if ((it.project.salesResponsible || '').toLowerCase() !== salesFilter.toLowerCase()) return false;
-                        }
-                        if (searchVal) {
-                          const hay = [it.project.name, it.project.orderNumber || '', it.project.customer, it.jobType || '', (it.bagCount != null ? String(it.bagCount) : '')].join(' ').toLowerCase();
-                          if (!hay.includes(searchVal)) return false;
-                        }
-                        return true;
-                      })
-                        // Sort by truck order (known trucks first in trucks[] order), unassigned last,
-                        // and within the same truck use explicit sortIndex when set, then orderNumber/name
-                        .sort((a, b) => {
-                          if (a.truck === b.truck) {
-                            const sa = scheduledSegments.find(s => s.id === a.segmentId)?.sortIndex ?? null;
-                            const sb = scheduledSegments.find(s => s.id === b.segmentId)?.sortIndex ?? null;
-                            if (sa != null && sb != null && sa !== sb) return sa - sb;
-                            if (sa != null && sb == null) return -1;
-                            if (sb != null && sa == null) return 1;
-                            const ao = a.project.orderNumber || '';
-                            const bo = b.project.orderNumber || '';
-                            if (ao && bo && ao !== bo) return ao.localeCompare(bo, 'sv');
-                            return a.project.name.localeCompare(b.project.name, 'sv');
-                          }
-                          const ia = a.truck ? trucks.indexOf(a.truck) : -1;
-                          const ib = b.truck ? trucks.indexOf(b.truck) : -1;
-                          const aUn = ia === -1 || !a.truck;
-                          const bUn = ib === -1 || !b.truck;
-                          if (aUn && !bUn) return 1; // unassigned/unknown last
-                          if (bUn && !aUn) return -1;
-                          if (!aUn && !bUn && ia !== ib) return ia - ib;
-                          // both unassigned or unknown trucks: alphabetical by name
-                          return (a.truck || '').localeCompare(b.truck || '', 'sv');
-                        });
-                      const isJumpHighlight = day === jumpTargetDay;
-                      const isToday = day === todayISO;
-                      return (
-                        <div key={day}
-                          id={`calday-${day}`}
-                          onClick={() => scheduleSelectedOnDay(day)}
-                          onDragOver={allowDrop}
-                          onDrop={e => onDropDay(e, day)}
-                          style={{ border: isJumpHighlight ? '2px solid #f59e0b' : (selectedProjectId ? '2px dashed #fbbf24' : (isToday ? '2px solid #60a5fa' : '1px solid rgba(148,163,184,0.4)')), boxShadow: isJumpHighlight ? '0 0 0 4px rgba(245,158,11,0.35)' : (isToday ? '0 0 0 3px rgba(59,130,246,0.25)' : '0 1px 2px rgba(0,0,0,0.05)'), transition: 'box-shadow 0.3s,border 0.3s', borderRadius: 10, padding: 8, minHeight: 160, background: '#ffffff', display: 'flex', flexDirection: 'column', gap: 8, position: 'relative', cursor: selectedProjectId ? 'copy' : 'default' }}>
-                          <div style={{ fontSize: 12, fontWeight: 600, display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: '#111827' }}>
-                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                              <span>{day.slice(8, 10)}/{day.slice(5, 7)}</span>
-                              {isToday && (
-                                <span aria-label="Idag" title="Idag" style={{ fontSize: 10, color: '#1d4ed8', background: '#dbeafe', border: '1px solid #93c5fd', padding: '0px 6px', borderRadius: 999 }}>Idag</span>
-                              )}
-                            </span>
-                            {items.length > 0 && <span style={{ fontSize: 10, background: '#f3f4f6', padding: '2px 6px', borderRadius: 12 }}>{items.length}</span>}
-                          </div>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                            {items.map(it => {
-                              let display: null | { bg: string; border: string; text: string } = null;
-                              if (it.color) {
-                                const hex = it.color.startsWith('#') ? it.color.slice(1) : it.color;
-                                if (/^[0-9a-fA-F]{6}$/.test(hex)) {
-                                  const r = parseInt(hex.slice(0, 2), 16);
-                                  const g = parseInt(hex.slice(2, 4), 16);
-                                  const b = parseInt(hex.slice(4, 6), 16);
-                                  const lighten = (ch: number) => Math.round(ch + (255 - ch) * 0.85);
-                                  const lr = lighten(r), lg = lighten(g), lb = lighten(b);
-                                  const bg = `#${lr.toString(16).padStart(2, '0')}${lg.toString(16).padStart(2, '0')}${lb.toString(16).padStart(2, '0')}`;
-                                  const brightness = (r * 299 + g * 587 + b * 114) / 1000;
-                                  const text = brightness < 110 ? '#ffffff' : '#111827';
-                                  display = { bg, border: '#' + hex, text };
-                                }
-                              } else if (it.truck) {
-                                display = truckColors[it.truck];
-                              } else {
-                                // Unassigned truck: emphasize with red theme
-                                display = { bg: '#fee2e2', border: '#fca5a5', text: '#7f1d1d' };
-                              }
-                              const cardBorder = display ? display.border : '#c7d2fe';
-                              const cardBg = display ? display.bg : '#eef2ff';
-                              const searchVal2 = calendarSearch.trim().toLowerCase();
-                              const highlight = calendarSearch && (it.project.name.toLowerCase().includes(searchVal2) || (it.project.orderNumber || '').toLowerCase().includes(searchVal2));
-                              const isMid = (it as any).spanMiddle;
-                              const isStart = (it as any).spanStart;
-                              return (
-                                <div
-                                  key={`${it.segmentId}:${it.day}`}
-                                  draggable
-                                  onDragStart={e => onDragStart(e, it.segmentId)}
-                                  onDragEnd={onDragEnd}
-                                  onDoubleClick={() => openSegmentEditorForExisting(it.segmentId)}
-                                  onMouseEnter={() => setHoveredSegmentId(it.segmentId)}
-                                  onMouseLeave={() => setHoveredSegmentId(prev => prev === it.segmentId ? null : prev)}
-                                  title="Dubbelklicka för att redigera"
-                                  style={{
-                                    position: 'relative',
-                                    border: `1px solid ${highlight ? '#f59e0b' : (hoveredSegmentId === it.segmentId ? '#6366f1' : cardBorder)}`,
-                                    background: cardBg,
-                                    borderRadius: 6,
-                                    padding: 5,
-                                    fontSize: 11,
-                                    lineHeight: 1.15,
-                                    cursor: 'grab',
-                                    display: 'grid',
-                                    gap: 4,
-                                    opacity: isMid ? 0.95 : 1,
-                                    boxShadow: highlight
-                                      ? '0 0 0 3px rgba(245,158,11,0.35)'
-                                      : (hoveredSegmentId === it.segmentId ? '0 0 0 3px rgba(99,102,241,0.35)' : 'none'),
-                                    transition: 'border-color .15s, box-shadow .15s'
-                                  }}
-                                >
-                                  {hoveredSegmentId === it.segmentId && !highlight && (
-                                    <span style={{ position: 'absolute', top: -8, right: 4, background: '#6366f1', color: '#fff', fontSize: 9, padding: '2px 6px', borderRadius: 8, boxShadow: '0 2px 4px rgba(0,0,0,0.15)' }}>Redigera</span>
-                                  )}
-                                  {isStart && hasEgenkontroll(it.project.orderNumber) && (
-                                    <span
-                                      aria-label="Egenkontroll rapporterad"
-                                      title="Egenkontroll rapporterad"
-                                      style={{ position: 'absolute', top: -7, right: -7, width: 14, height: 14, borderRadius: 999, background: '#059669', color: '#fff', border: '1px solid #047857', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, fontWeight: 800, boxShadow: '0 0 0 2px #fff, 0 1px 3px rgba(0,0,0,0.2)', zIndex: 3, pointerEvents: 'none' }}
-                                    >
-                                      ✓
-                                    </span>
-                                  )}
-                                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                                    <span style={{ fontWeight: 600, color: display ? display.text : '#312e81', display: 'flex', alignItems: 'center', columnGap: 6, rowGap: 2, flexWrap: 'wrap' }}>
-                                      {it.project.orderNumber ? (
-                                        <span style={{ fontFamily: 'ui-monospace, monospace', background: '#ffffff', color: display ? display.text : '#312e81', border: `1px solid ${cardBorder}`, padding: '1px 4px', borderRadius: 4, whiteSpace: 'nowrap' }} title="Ordernummer">#{it.project.orderNumber}</span>
-                                      ) : null}
-                                      <span style={{ color: display ? display.text : '#312e81', fontWeight: 600, minWidth: 0, overflowWrap: 'anywhere' }}>{it.project.name}</span>
-                                      {/* Öppna projekt flyttad till Segment Editor */}
-                                      {/* Button moved to bottom controls */}
-                                    </span>
-                                    {isStart && <span style={{ color: display ? display.text : '#6366f1' }}>{it.project.customer}</span>}
-                                    {isStart && it.project.salesResponsible && <span style={{ fontSize: 10, color: display ? display.text : '#334155', background: '#ffffff30', padding: '2px 6px', borderRadius: 12, border: `1px solid ${cardBorder}55` }}>Sälj: {it.project.salesResponsible}</span>}
-                                    {/* Moved avatar to corner badge */}
-                                    {(it.bagCount != null || it.jobType) && (
-                                      <span style={{ fontSize: 11, color: display ? display.text : '#374151' }}>
-                                        {it.bagCount != null ? `${it.bagCount} säckar` : ''}
-                                        {it.bagCount != null && it.jobType ? ' • ' : ''}
-                                        {it.jobType || ''}
-                                      </span>
-                                    )}
-                                    {isStart && (() => {
-                                      const agg = reportedBagsByProject.get(it.project.id) || 0; return agg > 0 ? (
-                                        <span style={{ fontSize: 10, color: display ? display.text : '#1e293b', background: '#ffffff50', padding: '4px 6px', borderRadius: 10, border: `1px solid ${cardBorder}55` }} title={`Rapporterat: ${agg} säckar`}>
-                                          säckar blåsta {agg} st
-                                        </span>
-                                      ) : null;
-                                    })()}
-                                    {/* Bottom controls */}
-                                    <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 4 }}>
-                                      <button
-                                        type="button"
-                                        onClick={(e) => { e.stopPropagation(); setSelectedProjectId(it.project.id); }}
-                                        className="btn--plain btn--xs"
-                                        title="Lägg till ny separat dag"
-                                        style={{ fontSize: 10, background: '#ecfdf5', border: '1px solid #6ee7b7', color: '#047857', borderRadius: 4, padding: '2px 4px' }}
-                                      >
-                                        Lägg till dag
-                                      </button>
-                                    </div>
-                                    {/* EK badge moved to top-right RP circle */}
-                                    {/* Team and Depå removed for more compact card */}
-                                  </div>
-                                  {/* Corner creator badge (top-left) */}
-                                  {isStart && rowCreatorLabel(it.segmentId) && (
-                                    <span style={{ position: 'absolute', top: -7, left: -7, zIndex: 3 }}>
-                                      <CreatorAvatar segmentId={it.segmentId} size="sm" />
-                                    </span>
-                                  )}
-                                  {/* Inline controls removed; use modal for edits and actions */}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                );
-              })}
-            </div>
+            <CalendarMonthGrid
+              weeks={weeks}
+              visibleDayNames={visibleDayNames}
+              hideWeekends={hideWeekends}
+              selectedWeekKey={selectedWeekKey}
+              itemsByDay={itemsByDay as any}
+              trucks={trucks}
+              truckColors={truckColors}
+              calendarSearch={calendarSearch}
+              truckFilter={truckFilter}
+              salesFilter={salesFilter}
+              jumpTargetDay={jumpTargetDay}
+              todayISO={todayISO}
+              selectedProjectId={selectedProjectId}
+              scheduledSegments={scheduledSegments as any}
+              onDragStart={onDragStart}
+              onDragEnd={onDragEnd}
+              onDropDay={onDropDay}
+              allowDrop={allowDrop}
+              scheduleSelectedOnDay={scheduleSelectedOnDay}
+              openSegmentEditorForExisting={openSegmentEditorForExisting}
+              setHoveredSegmentId={setHoveredSegmentId}
+              hoveredSegmentId={hoveredSegmentId}
+              setSelectedProjectId={(pid: string) => setSelectedProjectId(pid)}
+              hasEgenkontroll={hasEgenkontroll}
+              rowCreatorLabel={rowCreatorLabel}
+              renderCreatorAvatar={(segmentId: string) => <CreatorAvatar segmentId={segmentId} size="sm" />}
+              scheduleMeta={scheduleMeta as any}
+            />
           )}
 
           {viewMode === 'weekdayLanes' && (
-            <div style={{ display: 'grid', gap: 16 }}>
-              {visibleDayNames.map((name, localIdx) => {
-                const globalIdx = visibleDayIndices[localIdx];
-                const lane = weekdayLanes[localIdx] || [];
-                const laneDays = selectedWeekKey ? lane.filter(dObj => isoWeekKey(dObj.date) === selectedWeekKey) : lane;
-                if (selectedWeekKey && laneDays.length === 0) return null;
-                return (
-                  <div key={name} style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-                    <div style={{ width: 60, fontSize: 12, fontWeight: 700, textAlign: 'center', padding: '6px 4px', background: '#f1f5f9', border: '1px solid #e2e8f0', borderRadius: 8 }}>{name}</div>
-                    <div style={{ flex: 1, overflowX: 'auto', display: 'flex', gap: 8 }}>
-                      {(selectedWeekKey ? laneDays : lane).map(dObj => {
-                        const day = dObj.date;
-                        const rawItems = itemsByDay.get(day) || [];
-                        const searchVal = calendarSearch.trim().toLowerCase();
-                        const items = rawItems.filter(it => {
-                          if (truckFilter) {
-                            if (truckFilter === 'UNASSIGNED') { if (it.truck) return false; }
-                            else if (it.truck !== truckFilter) return false;
-                          }
-                          if (salesFilter) {
-                            if (salesFilter === '__NONE__') { if (it.project.salesResponsible) return false; }
-                            else if ((it.project.salesResponsible || '').toLowerCase() !== salesFilter.toLowerCase()) return false;
-                          }
-                          if (searchVal) {
-                            const hay = [it.project.name, it.project.orderNumber || '', it.project.customer, it.jobType || '', (it.bagCount != null ? String(it.bagCount) : '')].join(' ').toLowerCase();
-                            if (!hay.includes(searchVal)) return false;
-                          }
-                          return true;
-                        })
-                          .sort((a, b) => {
-                            if (a.truck === b.truck) {
-                              const sa = scheduledSegments.find(s => s.id === a.segmentId)?.sortIndex ?? null;
-                              const sb = scheduledSegments.find(s => s.id === b.segmentId)?.sortIndex ?? null;
-                              if (sa != null && sb != null && sa !== sb) return sa - sb;
-                              if (sa != null && sb == null) return -1;
-                              if (sb != null && sa == null) return 1;
-                              const ao = a.project.orderNumber || '';
-                              const bo = b.project.orderNumber || '';
-                              if (ao && bo && ao !== bo) return ao.localeCompare(bo, 'sv');
-                              return a.project.name.localeCompare(b.project.name, 'sv');
-                            }
-                            const ia = a.truck ? trucks.indexOf(a.truck) : -1;
-                            const ib = b.truck ? trucks.indexOf(b.truck) : -1;
-                            const aUn = ia === -1 || !a.truck;
-                            const bUn = ib === -1 || !b.truck;
-                            if (aUn && !bUn) return 1;
-                            if (bUn && !aUn) return -1;
-                            if (!aUn && !bUn && ia !== ib) return ia - ib;
-                            return (a.truck || '').localeCompare(b.truck || '', 'sv');
-                          });
-                        const isJumpHighlight = day === jumpTargetDay;
-                        const isToday = day === todayISO;
-                        return (
-                          <div key={day}
-                            id={`calday-${day}`}
-                            onClick={() => scheduleSelectedOnDay(day)}
-                            onDragOver={allowDrop}
-                            onDrop={e => onDropDay(e, day)}
-                            style={{ minWidth: 160, border: isJumpHighlight ? '2px solid #f59e0b' : (selectedProjectId ? '2px dashed #fbbf24' : (isToday ? '2px solid #60a5fa' : '1px solid rgba(148,163,184,0.4)')), boxShadow: isJumpHighlight ? '0 0 0 4px rgba(245,158,11,0.35)' : (isToday ? '0 0 0 3px rgba(59,130,246,0.25)' : '0 1px 2px rgba(0,0,0,0.05)'), borderRadius: 10, padding: 8, background: '#ffffff', display: 'flex', flexDirection: 'column', gap: 6, position: 'relative', cursor: selectedProjectId ? 'copy' : 'default' }}>
-                            <div style={{ fontSize: 11, fontWeight: 600, display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: '#111827' }}>
-                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                                <span>{day.slice(8, 10)}/{day.slice(5, 7)}</span>
-                                {isToday && (
-                                  <span aria-label="Idag" title="Idag" style={{ fontSize: 9, color: '#1d4ed8', background: '#dbeafe', border: '1px solid #93c5fd', padding: '0px 6px', borderRadius: 999 }}>Idag</span>
-                                )}
-                              </span>
-                              {items.length > 0 && <span style={{ fontSize: 10, background: '#f3f4f6', padding: '2px 6px', borderRadius: 12 }}>{items.length}</span>}
-                            </div>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                              {items.map(it => {
-                                let display: null | { bg: string; border: string; text: string } = null;
-                                if (it.color) {
-                                  const hex = it.color.startsWith('#') ? it.color.slice(1) : it.color;
-                                  if (/^[0-9a-fA-F]{6}$/.test(hex)) {
-                                    const r = parseInt(hex.slice(0, 2), 16);
-                                    const g = parseInt(hex.slice(2, 4), 16);
-                                    const b = parseInt(hex.slice(4, 6), 16);
-                                    const lighten = (ch: number) => Math.round(ch + (255 - ch) * 0.85);
-                                    const lr = lighten(r), lg = lighten(g), lb = lighten(b);
-                                    const bg = `#${lr.toString(16).padStart(2, '0')}${lg.toString(16).padStart(2, '0')}${lb.toString(16).padStart(2, '0')}`;
-                                    const brightness = (r * 299 + g * 587 + b * 114) / 1000;
-                                    const text = brightness < 110 ? '#ffffff' : '#111827';
-                                    display = { bg, border: '#' + hex, text };
-                                  }
-                                } else if (it.truck) {
-                                  display = truckColors[it.truck];
-                                } else {
-                                  // Unassigned truck: emphasize with red theme
-                                  display = { bg: '#fee2e2', border: '#fca5a5', text: '#7f1d1d' };
-                                }
-                                const cardBorder = display ? display.border : '#c7d2fe';
-                                const cardBg = display ? display.bg : '#eef2ff';
-                                const highlight = calendarSearch && (it.project.name.toLowerCase().includes(searchVal) || (it.project.orderNumber || '').toLowerCase().includes(searchVal));
-                                const isMid = (it as any).spanMiddle;
-                                const isStart = (it as any).spanStart;
-                                // Compute ordering position and controls for this card within same-truck group
-                                const groupSameTruck = items.filter(x => x.truck === it.truck);
-                                const groupSorted = [...groupSameTruck].sort((a2, b2) => {
-                                  const sa2 = scheduledSegments.find(s => s.id === a2.segmentId)?.sortIndex ?? null;
-                                  const sb2 = scheduledSegments.find(s => s.id === b2.segmentId)?.sortIndex ?? null;
-                                  if (sa2 != null && sb2 != null && sa2 !== sb2) return sa2 - sb2;
-                                  if (sa2 != null && sb2 == null) return -1;
-                                  if (sb2 != null && sa2 == null) return 1;
-                                  const ao2 = a2.project.orderNumber || '';
-                                  const bo2 = b2.project.orderNumber || '';
-                                  if (ao2 && bo2 && ao2 !== bo2) return ao2.localeCompare(bo2, 'sv');
-                                  return a2.project.name.localeCompare(b2.project.name, 'sv');
-                                });
-                                const pos = groupSorted.findIndex(x => x.segmentId === it.segmentId);
-                                const canShowOrder = isStart && it.truck && groupSorted.length > 1 && pos >= 0;
-                                const moveWithinGroup = (delta: number) => {
-                                  if (!canShowOrder) return;
-                                  const next = [...groupSorted.map(x => x.segmentId)];
-                                  const from = pos;
-                                  const to = from + delta;
-                                  if (to < 0 || to >= next.length) return;
-                                  const [moved] = next.splice(from, 1);
-                                  next.splice(to, 0, moved);
-                                  setSequentialSortForSegments(next);
-                                };
-                                return (
-                                  <div
-                                    key={`${it.segmentId}:${it.day}`}
-                                    draggable
-                                    onDragStart={e => onDragStart(e, it.segmentId)}
-                                    onDragEnd={onDragEnd}
-                                    onDoubleClick={() => openSegmentEditorForExisting(it.segmentId)}
-                                    onMouseEnter={() => setHoveredSegmentId(it.segmentId)}
-                                    onMouseLeave={() => setHoveredSegmentId(prev => prev === it.segmentId ? null : prev)}
-                                    title="Dubbelklicka för att redigera"
-                                    style={{
-                                      position: 'relative',
-                                      border: `1px solid ${highlight ? '#f59e0b' : (hoveredSegmentId === it.segmentId ? '#6366f1' : cardBorder)}`,
-                                      background: cardBg,
-                                      borderRadius: 6,
-                                      padding: 5,
-                                      fontSize: 10,
-                                      lineHeight: 1.15,
-                                      cursor: 'grab',
-                                      display: 'grid',
-                                      gap: 4,
-                                      opacity: isMid ? 0.95 : 1,
-                                      boxShadow: highlight
-                                        ? '0 0 0 3px rgba(245,158,11,0.35)'
-                                        : (hoveredSegmentId === it.segmentId ? '0 0 0 3px rgba(99,102,241,0.35)' : 'none'),
-                                      transition: 'border-color .15s, box-shadow .15s'
-                                    }}
-                                  >
-                                    {hoveredSegmentId === it.segmentId && !highlight && (
-                                      <span style={{ position: 'absolute', top: -8, right: 4, background: '#6366f1', color: '#fff', fontSize: 9, padding: '2px 6px', borderRadius: 8, boxShadow: '0 2px 4px rgba(0,0,0,0.15)' }}>Redigera</span>
-                                    )}
-                                    {isStart && hasEgenkontroll(it.project.orderNumber) && (
-                                      <span
-                                        aria-label="Egenkontroll rapporterad"
-                                        title="Egenkontroll rapporterad"
-                                        style={{ position: 'absolute', top: -6, right: -6, width: 12, height: 12, borderRadius: 999, background: '#059669', color: '#fff', border: '1px solid #047857', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, fontWeight: 800, boxShadow: '0 0 0 2px #fff, 0 1px 3px rgba(0,0,0,0.2)', zIndex: 3, pointerEvents: 'none' }}
-                                      >
-                                        ✓
-                                      </span>
-                                    )}
-                                    {/* order controls moved to bottom control section */}
-                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                                      <span style={{ fontWeight: 600, color: display ? display.text : '#312e81', display: 'flex', alignItems: 'center', columnGap: 6, rowGap: 2, flexWrap: 'wrap' }}>
-                                        {it.project.orderNumber ? (
-                                          <span style={{ fontFamily: 'ui-monospace, monospace', background: '#ffffff', color: display ? display.text : '#312e81', border: `1px solid ${cardBorder}`, padding: '1px 4px', borderRadius: 4, whiteSpace: 'nowrap' }} title="Ordernummer">#{it.project.orderNumber}</span>
-                                        ) : null}
-                                        <span style={{ color: display ? display.text : '#312e81', fontWeight: 600, minWidth: 0, overflowWrap: 'anywhere' }}>{it.project.name}</span>
-                                        {/* Button moved to bottom controls */}
-                                      </span>
-                                      {isStart && <span style={{ color: display ? display.text : '#6366f1' }}>{it.project.customer}</span>}
-                                      {isStart && it.project.salesResponsible && <span style={{ fontSize: 9, color: display ? display.text : '#334155', background: '#ffffff40', padding: '1px 5px', borderRadius: 10, border: `1px solid ${cardBorder}55` }}>Sälj: {it.project.salesResponsible}</span>}
-                                      {/* Moved creator avatar to corner badge */}
-                                      {(it.bagCount != null || it.jobType) && (
-                                        <span style={{ fontSize: 10, color: display ? display.text : '#374151' }}>
-                                          {it.bagCount != null ? `${it.bagCount} säckar` : ''}
-                                          {it.bagCount != null && it.jobType ? ' • ' : ''}
-                                          {it.jobType || ''}
-                                        </span>
-                                      )}
-                                      {/* Bottom controls */}
-                                      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 4 }}>
-                                        <button
-                                          type="button"
-                                          onClick={(e) => { e.stopPropagation(); setSelectedProjectId(it.project.id); }}
-                                          className="btn--plain btn--xs"
-                                          title="Lägg till ny separat dag"
-                                          style={{ fontSize: 9, background: '#ecfdf5', border: '1px solid #6ee7b7', color: '#047857', borderRadius: 4, padding: '1px 4px' }}
-                                        >
-                                          Lägg till dag
-                                        </button>
-                                      </div>
-                                      {/* EK badge moved to top-right RP circle */}
-                                      {/* Team and Depå removed for compact card */}
-                                    </div>
-                                    {/* Corner creator badge (top-left) */}
-                                    {isStart && rowCreatorLabel(it.segmentId) && (
-                                      <span style={{ position: 'absolute', top: -6, left: -6, zIndex: 3 }}>
-                                        <CreatorAvatar segmentId={it.segmentId} size="sm" />
-                                      </span>
-                                    )}
-                                    {/* Inline card controls removed; edits happen in Segment Editor modal */}
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+            <CalendarWeekdayLanes
+              visibleDayNames={visibleDayNames}
+              visibleDayIndices={visibleDayIndices}
+              weekdayLanes={weekdayLanes as any}
+              itemsByDay={itemsByDay as any}
+              trucks={trucks}
+              truckColors={truckColors}
+              calendarSearch={calendarSearch}
+              truckFilter={truckFilter}
+              salesFilter={salesFilter}
+              jumpTargetDay={jumpTargetDay}
+              todayISO={todayISO}
+              selectedProjectId={selectedProjectId}
+              scheduledSegments={scheduledSegments as any}
+              onDragStart={onDragStart}
+              onDragEnd={onDragEnd}
+              onDropDay={onDropDay}
+              allowDrop={allowDrop}
+              scheduleSelectedOnDay={scheduleSelectedOnDay}
+              openSegmentEditorForExisting={openSegmentEditorForExisting}
+              setHoveredSegmentId={setHoveredSegmentId}
+              hoveredSegmentId={hoveredSegmentId}
+              setSelectedProjectId={(pid: string) => setSelectedProjectId(pid)}
+              hasEgenkontroll={hasEgenkontroll}
+              rowCreatorLabel={rowCreatorLabel}
+              renderCreatorAvatar={(segmentId: string) => <CreatorAvatar segmentId={segmentId} size="sm" />}
+              selectedWeekKey={selectedWeekKey}
+              scheduleMeta={scheduleMeta as any}
+            />
           )}
 
           {viewMode === 'dayList' && (
-            <div style={{ display: 'grid', gap: 16 }}>
-              {/* Weekly truck grid: for each week, render header and rows per truck */}
-              {weeks.map((week, wi) => {
-                // Collect all items for days in this week for filtering and deciding unassigned row
-                const weekDays = week.map(c => c.date).filter(Boolean) as string[];
-                const searchVal = calendarSearch.trim().toLowerCase();
-                const dayHeaderBg = wi % 2 === 0 ? '#f1f5f9' : '#e5e7eb';
-                const firstDay = week.find(c => c.date)?.date;
-                if (selectedWeekKey) {
-                  if (!firstDay || isoWeekKey(firstDay) !== selectedWeekKey) return null;
-                }
-                // Determine which weekend days to include based on whether they have any filtered items
-                const dayHasAny = (weekdayIdx: number) => {
-                  const cell = week[weekdayIdx];
-                  const day = cell?.date;
-                  if (!day) return false;
-                  const raw = itemsByDay.get(day) || [];
-                  const filtered = raw.filter(it => {
-                    if (truckFilter) {
-                      if (truckFilter === 'UNASSIGNED') { if (it.truck) return false; }
-                      else if (it.truck !== truckFilter) return false;
-                    }
-                    if (salesFilter) {
-                      if (salesFilter === '__NONE__') { if (it.project.salesResponsible) return false; }
-                      else if ((it.project.salesResponsible || '').toLowerCase() !== salesFilter.toLowerCase()) return false;
-                    }
-                    if (searchVal) {
-                      const hay = [it.project.name, it.project.orderNumber || '', it.project.customer, it.jobType || '', (it.bagCount != null ? String(it.bagCount) : '')].join(' ').toLowerCase();
-                      if (!hay.includes(searchVal)) return false;
-                    }
-                    return true;
-                  });
-                  return filtered.length > 0;
-                };
-                const includeSat = !hideWeekends && dayHasAny(5);
-                const includeSun = !hideWeekends && dayHasAny(6);
-                const visibleIndices = hideWeekends ? [0, 1, 2, 3, 4] : [0, 1, 2, 3, 4].concat(includeSat ? [5] : []).concat(includeSun ? [6] : []);
-                // Determine if there is any unassigned item in this week
-                let hasUnassigned = false;
-                for (const day of weekDays) {
-                  const raw = itemsByDay.get(day) || [];
-                  const filtered = raw.filter(it => {
-                    if (truckFilter) {
-                      if (truckFilter === 'UNASSIGNED') { if (it.truck) return false; }
-                      else if (it.truck !== truckFilter) return false;
-                    }
-                    if (salesFilter) {
-                      if (salesFilter === '__NONE__') { if (it.project.salesResponsible) return false; }
-                      else if ((it.project.salesResponsible || '').toLowerCase() !== salesFilter.toLowerCase()) return false;
-                    }
-                    if (searchVal) {
-                      const hay = [it.project.name, it.project.orderNumber || '', it.project.customer, it.jobType || '', (it.bagCount != null ? String(it.bagCount) : '')].join(' ').toLowerCase();
-                      if (!hay.includes(searchVal)) return false;
-                    }
-                    return true;
-                  });
-                  if (filtered.some(it => !it.truck)) { hasUnassigned = true; break; }
-                }
-                const rows = [...trucks, ...(hasUnassigned ? ['__UNASSIGNED__'] : [])];
-                const rowCount = rows.length;
-                const weekNum = firstDay ? isoWeekNumber(firstDay) : '';
-                const weekContainsToday = week.some(c => c.date === todayISO);
-                return (
-                  <div key={wi} style={{ display: 'grid', gap: 8, border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff', padding: 8 }}>
-                    {/* Compact week label header */}
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                        <span style={{ fontSize: 12, fontWeight: 700, color: '#0f172a', background: '#f1f5f9', border: '1px solid #e2e8f0', borderRadius: 999, padding: '2px 8px' }}>{weekNum && `v${weekNum}`}</span>
-                        {weekContainsToday && (
-                          <span aria-label="Denna vecka innehåller idag" title="Denna vecka innehåller idag" style={{ fontSize: 10, color: '#1d4ed8', background: '#dbeafe', border: '1px solid #93c5fd', borderRadius: 999, padding: '1px 6px' }}>Idag</span>
-                        )}
-                      </span>
-                    </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: `140px repeat(${visibleIndices.length}, 1fr)`, alignItems: 'center', gap: 6 }}>
-                      {/* Header row: truck label col + 7 weekday headers */}
-                      <div style={{ gridColumn: '1 / 2', fontSize: 12, fontWeight: 600, color: '#374151', textAlign: 'left' }}>Lastbil</div>
-                      {visibleIndices.map((idx, vi) => {
-                        const cellDate = week[idx]?.date;
-                        const isTodayHeader = cellDate === todayISO;
-                        return (
-                          <div key={`hdr-${idx}`} style={{ gridColumn: `${2 + vi} / ${3 + vi}`, background: dayHeaderBg, border: isTodayHeader ? '2px solid #60a5fa' : '1px solid #e5e7eb', boxShadow: isTodayHeader ? '0 0 0 3px rgba(59,130,246,0.25)' : undefined, borderRadius: 8, textAlign: 'center', padding: '4px 0', fontSize: 12, fontWeight: 600, color: '#374151' }}>{dayNames[idx]}</div>
-                        );
-                      })}
-                      {/* Rows per truck */}
-                      {rows.map((rowKey, ri) => (
-                        <>
-                          {/* Row background band with zebra striping and truck color accent */}
-                          {(() => { const disp = rowKey !== '__UNASSIGNED__' ? truckColors[rowKey] : null; const laneColor = disp?.border || '#cbd5e1'; const zebra = ri % 2 === 0 ? '#ffffff' : '#f9fafb'; const endCol = 2 + visibleIndices.length; const style: React.CSSProperties = { gridColumn: `1 / ${endCol}`, gridRow: `${ri + 2} / ${ri + 3}`, background: zebra, borderLeft: `4px solid ${rowKey === '__UNASSIGNED__' ? '#cbd5e1' : laneColor}`, borderRadius: 8, opacity: 0.9 }; return <div key={`bg-${rowKey}`} style={style} />; })()}
-                          <div key={`lbl-${rowKey}`} style={{ gridColumn: '1 / 2', gridRow: `${ri + 2} / ${ri + 3}`, fontSize: 12, fontWeight: 600, color: '#111827', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', paddingLeft: 8 }}>
-                            {(() => { const disp = rowKey !== '__UNASSIGNED__' ? truckColors[rowKey] : null; const sw = { width: 12, height: 12, borderRadius: 4, border: `2px solid ${disp?.border || '#94a3b8'}`, background: '#fff' } as React.CSSProperties; return <span key={`sw-${rowKey}`} style={sw} />; })()}
-                            <span>{rowKey === '__UNASSIGNED__' ? 'Ingen lastbil' : rowKey}</span>
-                            {rowKey !== '__UNASSIGNED__' && (() => {
-                              const team = truckTeamNames(rowKey); return team.length ? (
-                                <span style={{ fontSize: 10, fontWeight: 500, color: '#475569', background: '#f1f5f9', border: '1px solid #e2e8f0', borderRadius: 999, padding: '1px 8px' }} title={`Team: ${team.join(', ')}`}>
-                                  Team: {team.join(', ')}
-                                </span>
-                              ) : null;
-                            })()}
-                            {(() => {
-                              // Weekly total bags for this truck: count only span starts within this week
-                              let sum = 0;
-                              for (const day of weekDays) {
-                                const raw = itemsByDay.get(day) || [];
-                                const list = raw.filter(it => {
-                                  const matchTruck = rowKey === '__UNASSIGNED__' ? !it.truck : it.truck === rowKey;
-                                  if (!matchTruck) return false;
-                                  if (truckFilter) {
-                                    if (truckFilter === 'UNASSIGNED') { if (it.truck) return false; }
-                                    else if (it.truck !== truckFilter) return false;
-                                  }
-                                  if (salesFilter) {
-                                    if (salesFilter === '__NONE__') { if (it.project.salesResponsible) return false; }
-                                    else if ((it.project.salesResponsible || '').toLowerCase() !== salesFilter.toLowerCase()) return false;
-                                  }
-                                  if (searchVal) {
-                                    const hay = [it.project.name, it.project.orderNumber || '', it.project.customer, it.jobType || '', (it.bagCount != null ? String(it.bagCount) : '')].join(' ').toLowerCase();
-                                    if (!hay.includes(searchVal)) return false;
-                                  }
-                                  return true;
-                                });
-                                for (const it of list) {
-                                  const isStart = (it as any).spanStart;
-                                  if (!isStart) continue; // only count the start day of a span
-                                  if (typeof it.bagCount === 'number' && it.bagCount > 0) sum += it.bagCount;
-                                }
-                              }
-                              return sum > 0 ? (
-                                <span style={{ fontSize: 10, fontWeight: 600, color: '#334155', background: '#f1f5f9', border: '1px solid #e2e8f0', borderRadius: 999, padding: '1px 8px' }} title={`Totalt säckar denna vecka: ${sum}`}>
-                                  {sum} säckar
-                                </span>
-                              ) : null;
-                            })()}
-                          </div>
-                          {visibleIndices.map((weekdayIdx, vi) => {
-                            const day = week[weekdayIdx]?.date || null;
-                            const raw = day ? (itemsByDay.get(day) || []) : [];
-                            const list = raw.filter(it => {
-                              const matchTruck = rowKey === '__UNASSIGNED__' ? !it.truck : it.truck === rowKey;
-                              if (!matchTruck) return false;
-                              if (truckFilter) {
-                                if (truckFilter === 'UNASSIGNED') { if (it.truck) return false; }
-                                else if (it.truck !== truckFilter) return false;
-                              }
-                              if (salesFilter) {
-                                if (salesFilter === '__NONE__') { if (it.project.salesResponsible) return false; }
-                                else if ((it.project.salesResponsible || '').toLowerCase() !== salesFilter.toLowerCase()) return false;
-                              }
-                              if (searchVal) {
-                                const hay = [it.project.name, it.project.orderNumber || '', it.project.customer, it.jobType || '', (it.bagCount != null ? String(it.bagCount) : '')].join(' ').toLowerCase();
-                                if (!hay.includes(searchVal)) return false;
-                              }
-                              return true;
-                            })
-                              .sort((a, b) => {
-                                const sa = scheduledSegments.find(s => s.id === a.segmentId)?.sortIndex ?? null;
-                                const sb = scheduledSegments.find(s => s.id === b.segmentId)?.sortIndex ?? null;
-                                if (sa != null && sb != null && sa !== sb) return sa - sb;
-                                if (sa != null && sb == null) return -1;
-                                if (sb != null && sa == null) return 1;
-                                const ao = a.project.orderNumber || '';
-                                const bo = b.project.orderNumber || '';
-                                if (ao && bo && ao !== bo) return ao.localeCompare(bo, 'sv');
-                                return a.project.name.localeCompare(b.project.name, 'sv');
-                              });
-                            const isJumpHighlight = !!day && day === jumpTargetDay;
-                            const disp = rowKey !== '__UNASSIGNED__' ? truckColors[rowKey] : null;
-                            const laneColor = disp?.border || '#cbd5e1';
-                            const gridCol = 2 + vi;
-                            const isTodayCell = !!day && day === todayISO;
-                            return (
-                              <div key={`cell-${rowKey}-${weekdayIdx}-${day || 'x'}`} id={day ? `calday-${day}` : undefined}
-                                onClick={day ? () => scheduleSelectedOnDay(day) : undefined}
-                                onDragOver={allowDrop}
-                                onDrop={day ? (e => onDropDay(e, day)) : undefined}
-                                style={{ gridColumn: `${gridCol} / ${gridCol + 1}`, gridRow: `${ri + 2} / ${ri + 3}`, minHeight: 48, border: isJumpHighlight ? '2px solid #f59e0b' : (selectedProjectId ? '2px dashed #fbbf24' : (isTodayCell ? '2px solid #60a5fa' : '1px solid rgba(148,163,184,0.35)')), boxShadow: isTodayCell ? '0 0 0 2px rgba(59,130,246,0.18)' : undefined, borderRadius: 8, padding: 6, background: '#ffffff', display: 'flex', flexDirection: 'column', gap: 4, borderLeft: `4px solid ${rowKey === '__UNASSIGNED__' ? '#cbd5e1' : laneColor}` }}>
-                                {list.length === 0 && <span style={{ fontSize: 11, color: '#94a3b8' }}>—</span>}
-                                {list.map(it => {
-                                  let display: null | { bg: string; border: string; text: string } = null;
-                                  if (it.color) {
-                                    const hex = it.color.startsWith('#') ? it.color.slice(1) : it.color;
-                                    if (/^[0-9a-fA-F]{6}$/.test(hex)) {
-                                      const r = parseInt(hex.slice(0, 2), 16);
-                                      const g = parseInt(hex.slice(2, 4), 16);
-                                      const b = parseInt(hex.slice(4, 6), 16);
-                                      const lighten = (ch: number) => Math.round(ch + (255 - ch) * 0.85);
-                                      const lr = lighten(r), lg = lighten(g), lb = lighten(b);
-                                      const bg = `#${lr.toString(16).padStart(2, '0')}${lg.toString(16).padStart(2, '0')}${lb.toString(16).padStart(2, '0')}`;
-                                      const brightness = (r * 299 + g * 587 + b * 114) / 1000;
-                                      const text = brightness < 110 ? '#ffffff' : '#111827';
-                                      display = { bg, border: '#' + hex, text };
-                                    }
-                                  } else if (it.truck) {
-                                    display = truckColors[it.truck];
-                                  } else {
-                                    // Unassigned truck: emphasize with red theme
-                                    display = { bg: '#fee2e2', border: '#fca5a5', text: '#7f1d1d' };
-                                  }
-                                  const cardBorder = display ? display.border : '#c7d2fe';
-                                  const cardBg = display ? display.bg : '#eef2ff';
-                                  const highlight = calendarSearch && (it.project.name.toLowerCase().includes(searchVal) || (it.project.orderNumber || '').toLowerCase().includes(searchVal));
-                                  const isMid = (it as any).spanMiddle;
-                                  const isStart = (it as any).spanStart;
-                                  return (
-                                    <div
-                                      key={`${it.segmentId}:${it.day}`}
-                                      draggable
-                                      onDragStart={e => onDragStart(e, it.segmentId)}
-                                      onDragEnd={onDragEnd}
-                                      onDoubleClick={() => openSegmentEditorForExisting(it.segmentId)}
-                                      onMouseEnter={() => setHoveredSegmentId(it.segmentId)}
-                                      onMouseLeave={() => setHoveredSegmentId(prev => prev === it.segmentId ? null : prev)}
-                                      title="Dubbelklicka för att redigera"
-                                      style={{
-                                        position: 'relative',
-                                        border: `1px solid ${highlight ? '#f59e0b' : (hoveredSegmentId === it.segmentId ? '#6366f1' : cardBorder)}`,
-                                        background: cardBg,
-                                        borderRadius: 6,
-                                        padding: 5,
-                                        fontSize: 10,
-                                        lineHeight: 1.15,
-                                        cursor: 'grab',
-                                        display: 'grid',
-                                        gap: 4,
-                                        opacity: isMid ? 0.95 : 1,
-                                        boxShadow: highlight
-                                          ? '0 0 0 3px rgba(245,158,11,0.35)'
-                                          : (hoveredSegmentId === it.segmentId ? '0 0 0 3px rgba(99,102,241,0.35)' : 'none'),
-                                        transition: 'border-color .15s, box-shadow .15s'
-                                      }}
-                                    >
-                                      {hoveredSegmentId === it.segmentId && !highlight && (
-                                        <span style={{ position: 'absolute', top: -8, right: 4, background: '#6366f1', color: '#fff', fontSize: 9, padding: '2px 6px', borderRadius: 8, boxShadow: '0 2px 4px rgba(0,0,0,0.15)' }}>Redigera</span>
-                                      )}
-                                      <span style={{ fontWeight: 600, color: display ? display.text : '#312e81', display: 'flex', alignItems: 'center', columnGap: 6, rowGap: 2, flexWrap: 'wrap' }}>
-                                        {it.project.orderNumber ? (
-                                          <span style={{ fontFamily: 'ui-monospace, monospace', background: '#ffffff', color: display ? display.text : '#312e81', border: `1px solid ${cardBorder}`, padding: '1px 4px', borderRadius: 4, whiteSpace: 'nowrap' }} title="Ordernummer">#{it.project.orderNumber}</span>
-                                        ) : null}
-                                        <span style={{ color: display ? display.text : '#312e81', fontWeight: 600, minWidth: 0, overflowWrap: 'anywhere' }}>{it.project.name}</span>
-                                        {/* Button moved to bottom controls */}
-                                      </span>
-                                      {(it.bagCount != null || it.jobType) && (
-                                        <span style={{ fontSize: 10, color: display ? display.text : '#374151' }}>
-                                          {it.bagCount != null ? `${it.bagCount} säckar` : ''}
-                                          {it.bagCount != null && it.jobType ? ' • ' : ''}
-                                          {it.jobType || ''}
-                                        </span>
-                                      )}
-                                      {isStart && scheduleMeta[it.project.id]?.actual_bags_used != null && (
-                                        <span style={{ fontSize: 9, color: display ? display.text : '#1e293b', background: '#ffffff50', padding: '2px 5px', borderRadius: 10, border: `1px solid ${cardBorder}55` }} title={`Rapporterat: ${scheduleMeta[it.project.id]?.actual_bags_used} säckar`}>
-                                          säckar blåsta {scheduleMeta[it.project.id]!.actual_bags_used} st
-                                        </span>
-                                      )}
-                                      {/* Bottom controls */}
-                                      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 4 }}>
-                                        <button
-                                          type="button"
-                                          onClick={(e) => { e.stopPropagation(); setSelectedProjectId(it.project.id); }}
-                                          className="btn--plain btn--xs"
-                                          title="Lägg till ny separat dag"
-                                          style={{ fontSize: 9, background: '#ecfdf5', border: '1px solid #6ee7b7', color: '#047857', borderRadius: 4, padding: '1px 4px', textTransform: 'none' }}
-                                        >
-                                          Lägg till dag
-                                        </button>
-                                      </div>
-                                      {/* EK badge moved to top-right RP circle */}
-                                      {isStart && rowCreatorLabel(it.segmentId) && (
-                                        <span style={{ position: 'absolute', top: -6, left: -6, zIndex: 3 }}>
-                                          <CreatorAvatar segmentId={it.segmentId} size="sm" />
-                                        </span>
-                                      )}
-                                      {isStart && hasEgenkontroll(it.project.orderNumber) && (
-                                        <span
-                                          aria-label="Egenkontroll rapporterad"
-                                          title="Egenkontroll rapporterad"
-                                          style={{ position: 'absolute', top: -6, right: -6, width: 12, height: 12, borderRadius: 999, background: '#059669', color: '#fff', border: '1px solid #047857', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, fontWeight: 800, boxShadow: '0 0 0 2px #fff, 0 1px 3px rgba(0,0,0,0.2)', zIndex: 3, pointerEvents: 'none' }}
-                                        >
-                                          ✓
-                                        </span>
-                                      )}
-                                      {/* Team and Depå removed for compact card */}
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            );
-                          })}
-                        </>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+            <CalendarDayList
+              weeks={weeks}
+              dayNames={dayNames}
+              hideWeekends={hideWeekends}
+              itemsByDay={itemsByDay as any}
+              trucks={trucks}
+              truckColors={truckColors}
+              calendarSearch={calendarSearch}
+              truckFilter={truckFilter}
+              salesFilter={salesFilter}
+              todayISO={todayISO}
+              selectedWeekKey={selectedWeekKey}
+              scheduledSegments={scheduledSegments as any}
+              onDragStart={onDragStart}
+              onDragEnd={onDragEnd}
+              onDropDay={onDropDay}
+              allowDrop={allowDrop}
+              scheduleSelectedOnDay={scheduleSelectedOnDay}
+              openSegmentEditorForExisting={openSegmentEditorForExisting}
+              setHoveredSegmentId={setHoveredSegmentId}
+              hoveredSegmentId={hoveredSegmentId}
+              setSelectedProjectId={(pid: string) => setSelectedProjectId(pid)}
+              selectedProjectId={selectedProjectId}
+              hasEgenkontroll={hasEgenkontroll}
+              rowCreatorLabel={rowCreatorLabel}
+              renderCreatorAvatar={(segmentId: string) => <CreatorAvatar segmentId={segmentId} size="sm" />}
+              jumpTargetDay={jumpTargetDay}
+              scheduleMeta={scheduleMeta as any}
+              truckTeamNames={truckTeamNames}
+            />
           )}
         </div>
       </div>
