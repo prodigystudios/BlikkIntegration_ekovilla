@@ -62,6 +62,7 @@ interface SegmentReport {
   createdBy?: string | null;
   createdByName?: string | null;
   createdAt?: string | null; // ISO
+  projectId?: string | null; // denormalized project id
 }
 
 // Small inline control to copy a segment to another truck
@@ -847,7 +848,7 @@ export default function PlanneringPage() {
           const { data: repRows, error: repErr } = await supabase.from('planning_segment_reports').select('*');
           if (repErr) console.warn('[planning] segment reports load error', repErr);
           else if (Array.isArray(repRows)) {
-            setSegmentReports(repRows.map((r: any) => ({ id: r.id, segmentId: r.segment_id, reportDay: r.report_day, amount: r.amount, createdBy: r.created_by ?? null, createdByName: r.created_by_name ?? null, createdAt: r.created_at || null })));
+            setSegmentReports(repRows.map((r: any) => ({ id: r.id, segmentId: r.segment_id, reportDay: r.report_day, amount: r.amount, createdBy: r.created_by ?? null, createdByName: r.created_by_name ?? null, createdAt: r.created_at || null, projectId: (r as any).project_id ?? null })));
           }
         } catch (e) {
           console.warn('[planning] segment reports load exception', e);
@@ -1028,9 +1029,9 @@ export default function PlanneringPage() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'planning_segment_reports' }, payload => {
         const row: any = payload.new || payload.old;
         if (payload.eventType === 'INSERT') {
-          setSegmentReports(prev => prev.some(r => r.id === row.id) ? prev : [...prev, { id: row.id, segmentId: row.segment_id, reportDay: row.report_day, amount: row.amount, createdBy: row.created_by ?? null, createdByName: row.created_by_name ?? null, createdAt: row.created_at || null }]);
+          setSegmentReports(prev => prev.some(r => r.id === row.id) ? prev : [...prev, { id: row.id, segmentId: row.segment_id, reportDay: row.report_day, amount: row.amount, createdBy: row.created_by ?? null, createdByName: row.created_by_name ?? null, createdAt: row.created_at || null, projectId: (row as any).project_id ?? null }]);
         } else if (payload.eventType === 'UPDATE') {
-          setSegmentReports(prev => prev.map(r => r.id === row.id ? { id: row.id, segmentId: row.segment_id, reportDay: row.report_day, amount: row.amount, createdBy: row.created_by ?? null, createdByName: row.created_by_name ?? null, createdAt: row.created_at || r.createdAt || null } : r));
+          setSegmentReports(prev => prev.map(r => r.id === row.id ? { id: row.id, segmentId: row.segment_id, reportDay: row.report_day, amount: row.amount, createdBy: row.created_by ?? null, createdByName: row.created_by_name ?? null, createdAt: row.created_at || r.createdAt || null, projectId: (row as any).project_id ?? r.projectId ?? null } : r));
         } else if (payload.eventType === 'DELETE') {
           setSegmentReports(prev => prev.filter(r => r.id !== row.id));
         }
@@ -1093,7 +1094,7 @@ export default function PlanneringPage() {
   const reportedBagsByProject = useMemo(() => {
     const map = new Map<string, number>();
     for (const r of segmentReports) {
-      const pid = segmentIdToProjectId.get(r.segmentId);
+      const pid = r.projectId || segmentIdToProjectId.get(r.segmentId);
       if (!pid) continue;
       map.set(pid, (map.get(pid) || 0) + (r.amount || 0));
     }
@@ -1107,11 +1108,11 @@ export default function PlanneringPage() {
     const amt = parseInt(reportDraft.amount, 10);
     if (!day || !Number.isFinite(amt) || amt <= 0) return;
     try {
-      const payload: any = { segment_id: segEditor.segmentId, report_day: day, amount: amt, created_by: currentUserId, created_by_name: currentUserName || null };
+      const payload: any = { segment_id: segEditor.segmentId, project_id: segEditor.projectId, report_day: day, amount: amt, created_by: currentUserId, created_by_name: currentUserName || null };
       const { data, error } = await supabase.from('planning_segment_reports').insert(payload).select('*').single();
       if (error) throw error;
       if (data) {
-        setSegmentReports(prev => [...prev, { id: data.id, segmentId: data.segment_id, reportDay: data.report_day, amount: data.amount, createdBy: data.created_by ?? null, createdByName: data.created_by_name ?? null, createdAt: data.created_at || null }]);
+        setSegmentReports(prev => [...prev, { id: data.id, segmentId: data.segment_id, reportDay: data.report_day, amount: data.amount, createdBy: data.created_by ?? null, createdByName: data.created_by_name ?? null, createdAt: data.created_at || null, projectId: (data as any).project_id ?? segEditor.projectId }]);
         setReportDraft(d => ({ day: d.day, amount: '' }));
         // Also withdraw from correct depot with idempotency key based on this partial report
         try {
@@ -2834,6 +2835,39 @@ export default function PlanneringPage() {
                     {base?.createdAt && <span style={{ fontSize: 11, color: '#64748b' }}>Skapad {base.createdAt.slice(0, 10)}</span>}
                   </div>
                 </div>
+                {/* Partial reports history for this project */}
+                {(() => {
+                  const segIds = new Set(segs.map(s => s.id));
+                  const list = segmentReports
+                    .filter(r => (r.projectId === pid) || segIds.has(r.segmentId))
+                    .sort((a, b) => (a.reportDay || '').localeCompare(b.reportDay) || (a.createdAt || '').localeCompare(b.createdAt || ''));
+                  const total = list.reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
+                  return (
+                    <div style={{ display: 'grid', gap: 8 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <strong style={{ fontSize: 13, color: '#0f172a' }}>Delrapporter</strong>
+                        <div style={{ height: 1, background: '#e5e7eb', flex: 1 }} />
+                        <span style={{ fontSize: 11, color: '#64748b' }}>Totalt: {total} säckar</span>
+                      </div>
+                      {list.length > 0 ? (
+                        <div style={{ display: 'grid', gap: 6 }}>
+                          {list.map(r => (
+                            <div key={r.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', border: '1px solid #e5e7eb', background: '#fff', borderRadius: 8, padding: '6px 8px' }}>
+                              <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                                <span style={{ fontSize: 12, color: '#0f172a' }}>{r.reportDay}</span>
+                                <span style={{ fontSize: 12, color: '#334155', background: '#f1f5f9', border: '1px solid #e2e8f0', borderRadius: 999, padding: '2px 8px' }}>{r.amount} säckar</span>
+                                {r.createdByName && <span style={{ fontSize: 11, color: '#64748b' }}>av {r.createdByName}</span>}
+                                {r.createdAt && <span style={{ fontSize: 11, color: '#94a3b8' }}>{String(r.createdAt).slice(0, 16).replace('T', ' ')}</span>}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div style={{ fontSize: 12, color: '#64748b' }}>Inga delrapporter för detta projekt ännu.</div>
+                      )}
+                    </div>
+                  );
+                })()}
                 {(segs.length > 0) && (
                   <div style={{ display: 'grid', gap: 6 }}>
                     <strong style={{ fontSize: 13, color: '#0f172a' }}>Planering</strong>

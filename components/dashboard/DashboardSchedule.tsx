@@ -220,6 +220,7 @@ export default function DashboardSchedule({ compact = false }: { compact?: boole
     if (!Number.isFinite(amount) || amount <= 0 || !day) return;
     const payload: any = {
       segment_id: segId,
+      project_id: String(detailBase?.project_id || ''),
       report_day: day,
       amount,
       created_by: currentUserId,
