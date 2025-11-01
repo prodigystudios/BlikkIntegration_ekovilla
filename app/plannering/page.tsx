@@ -2456,6 +2456,8 @@ export default function PlanneringPage() {
                       const truckName = segEditor.truck || null;
                       const truckStyle = truckName && truckColors[truckName] ? truckColors[truckName] : null;
                       const depotName = segEditor.depotId ? (depots.find(d => d.id === segEditor.depotId)?.name || 'Okänd depå') : 'Lastbilens depå';
+                      const lenDays = Math.max(1, Math.round((new Date(segEditor.endDay + 'T00:00:00').getTime() - new Date(segEditor.startDay + 'T00:00:00').getTime()) / 86400000) + 1);
+                      const dayList = Array.from({ length: lenDays }, (_, i) => addDaysLocal(start, i));
                       return (
                         <div style={{ display: 'grid', gap: 8 }}>
                           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
@@ -2471,6 +2473,34 @@ export default function PlanneringPage() {
                               <div style={{ width: 8, height: 8, borderRadius: 8, background: truckStyle ? truckStyle.border : '#94a3b8' }} />
                               <div style={{ fontSize: 12, color: truckStyle ? truckStyle.text : '#0f172a' }}>{truckName || 'Inte vald'}</div>
                             </div>
+                          </div>
+                          {/* Explicit list of all planned days for this project (across segments) */}
+                          <div style={{ display: 'grid', gap: 6 }}>
+                            <div style={{ fontSize: 12, color: '#475569', fontWeight: 600 }}>Dagar</div>
+                            {(() => {
+                              const segsForProject = scheduledSegments.filter(s => s.projectId === segEditor.projectId);
+                              const allDays = new Set<string>();
+                              for (const s of segsForProject) {
+                                const sStart = s.startDay;
+                                const sEnd = s.endDay;
+                                const spanLen = Math.max(1, Math.round((new Date(sEnd + 'T00:00:00').getTime() - new Date(sStart + 'T00:00:00').getTime()) / 86400000) + 1);
+                                for (let i = 0; i < spanLen; i++) {
+                                  allDays.add(addDaysLocal(sStart, i));
+                                }
+                              }
+                              const sorted = Array.from(allDays).sort();
+                              return (
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                                  {sorted.map(d => {
+                                    const w = dayNames[(new Date(d + 'T00:00:00').getDay() + 6) % 7];
+                                    const inCurrentSpan = d >= start && d <= end;
+                                    return (
+                                      <span key={d} style={{ fontSize: 11, color: inCurrentSpan ? '#111827' : '#334155', background: inCurrentSpan ? '#ffffff' : '#f8fafc', border: '1px solid #e2e8f0', padding: '2px 8px', borderRadius: 999 }}>{w} {d}</span>
+                                    );
+                                  })}
+                                </div>
+                              );
+                            })()}
                           </div>
                         </div>
                       );
@@ -2755,21 +2785,8 @@ export default function PlanneringPage() {
                 </div>
                 {(segs.length > 0) && (
                   <div style={{ display: 'grid', gap: 6 }}>
-                    <strong style={{ fontSize: 13, color: '#0f172a' }}>Planerade dagar</strong>
-                    <div style={{ display: 'grid', gap: 6 }}>
-                      {segs.map(s => (
-                        <div key={s.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', border: '1px solid #e5e7eb', background: '#f8fafc', borderRadius: 8, padding: '6px 8px' }}>
-                          <div style={{ display: 'grid' }}>
-                            <span style={{ fontSize: 12, color: '#0f172a', fontWeight: 600 }}>{s.startDay}{s.endDay !== s.startDay ? ` – ${s.endDay}` : ''}</span>
-                            <span style={{ fontSize: 11, color: '#475569' }}>{base?.customer}</span>
-                          </div>
-                          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                            <button type="button" className="btn--plain btn--xs" onClick={() => handleEmailClick({ segmentId: s.id, project: base })} style={{ fontSize: 11, border: '1px solid #7dd3fc', background: '#e0f2fe', color: '#0369a1', borderRadius: 6, padding: '2px 8px' }}>Maila kund</button>
-                            {ekPath && <a href={`/api/storage/download?path=${encodeURIComponent(ekPath)}`} target="_blank" rel="noopener noreferrer" className="btn--plain btn--xs" style={{ fontSize: 11, border: '1px solid #047857', background: '#059669', color: '#fff', borderRadius: 6, padding: '2px 8px' }}>Egenkontroll</a>}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
+                    <strong style={{ fontSize: 13, color: '#0f172a' }}>Planering</strong>
+                    <div style={{ fontSize: 12, color: '#475569' }}>Öppna en planering (dubbelklicka på en kalenderpost) för att se exakta dagar.</div>
                   </div>
                 )}
               </div>
@@ -3489,5 +3506,3 @@ export default function PlanneringPage() {
     </div>
   );
 }
-
-// EmailSummaryPanel moved to ./components/EmailSummaryPanel
