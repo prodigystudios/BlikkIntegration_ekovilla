@@ -4,6 +4,7 @@ import Script from 'next/script';
 import HeaderTitle from './components/HeaderTitle';
 import { getUserProfile } from '../lib/getUserProfile';
 import { UserProfileProvider } from '../lib/UserProfileContext';
+import Link from 'next/link';
 
 export const viewport = {
   width: 'device-width',
@@ -54,7 +55,9 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           boxShadow: '0 8px 8px rgba(0,0,0,0.08)'
         }}
       >
-        <img src="/brand/Ekovilla_logo_Header.png" alt="Ekovilla header logo" height={18} style={{ display: 'block', transform: 'scale(1.5)', transformOrigin: 'left center' }} />
+        <Link href="/" aria-label="Gå till startsidan" style={{ display: 'inline-flex', alignItems: 'center', cursor: 'pointer' }}>
+          <img src="/brand/Ekovilla_logo_Header.png" alt="Ekovilla header logo" height={18} style={{ display: 'block', transform: 'scale(1.5)', transformOrigin: 'left center' }} />
+        </Link>
   {/* Client-only header title */}
   <HeaderTitle />
         <div style={{ marginLeft: 'auto' }} />
