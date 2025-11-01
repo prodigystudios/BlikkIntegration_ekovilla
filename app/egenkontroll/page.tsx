@@ -1,6 +1,7 @@
 "use client";
 export const dynamic = 'force-dynamic';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 
 // Reconstructed Egenkontroll form (migrated from historical root page)
@@ -165,18 +166,21 @@ export default function EgenkontrollPage() {
   }, [toast]);
   const [orderId, setOrderId] = useState('');
   // Read orderId from query (e.g., /egenkontroll?orderId=1234) and auto-lookup once
+  // 1) Primary: react to Next.js search param changes (robust on mobile/PWA)
+  const searchParams = useSearchParams();
   useEffect(() => {
     try {
+      const initial = searchParams.get('orderId') || searchParams.get('order') || '';
+      if (initial && !orderId) setOrderId(initial);
+    } catch {}
+  }, [searchParams, orderId]);
+  // 2) Fallback: on very early mounts where searchParams may not yet be ready, parse window.location once
+  useEffect(() => {
+    try {
+      if (orderId) return;
       const url = new URL(window.location.href);
       const initial = url.searchParams.get('orderId') || url.searchParams.get('order') || '';
-      if (initial && !orderId) {
-        setOrderId(initial);
-        // defer lookup slightly to allow state to flush
-        setTimeout(() => {
-          const btn = document.querySelector('button[aria-busy]') as HTMLButtonElement | null;
-          // fallback: call onLookup directly if available in closure scope later
-        }, 0);
-      }
+      if (initial) setOrderId(initial);
     } catch {}
     // run only on mount
     // eslint-disable-next-line react-hooks/exhaustive-deps
