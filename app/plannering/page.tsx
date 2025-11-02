@@ -76,10 +76,14 @@ function CopyToTruckButton({ segmentId, day, currentTruck, trucks, onCopy }: { s
         <option value="">Välj lastbil…</option>
         {options.map(t => (<option key={t} value={t}>{t}</option>))}
       </select>
-      <button type="button" className="btn--plain btn--xs" disabled={!target}
+      <button
+        type="button"
+        className="btn--plain btn--xs"
+        disabled={!target}
         onClick={(e) => { e.stopPropagation(); if (target) onCopy(target); }}
         title="Kopiera till annan lastbil"
-        style={{ fontSize: 10, background: '#fff7ed', border: '1px solid #fdba74', color: '#9a3412', borderRadius: 4, padding: '2px 4px' }}>
+        style={{ fontSize: 10, background: '#fff7ed', border: '1px solid #fdba74', color: '#9a3412', borderRadius: 4, padding: '2px 4px' }}
+      >
         Kopiera
       </button>
     </span>
@@ -1122,7 +1126,7 @@ export default function PlanneringPage() {
             if (jt.startsWith('eko')) return 'Ekovilla';
             return undefined;
           })();
-          await fetch('/api/planning/consume-bags', {
+          const resp = await fetch('/api/planning/consume-bags', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -1134,6 +1138,7 @@ export default function PlanneringPage() {
               materialKind: mat,
             })
           });
+          try { const j = await resp.json(); console.log('[consume-bags planner]', j); } catch {}
         } catch (_) { /* ignore */ }
       }
     } catch (e) {

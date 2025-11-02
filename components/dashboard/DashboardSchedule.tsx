@@ -233,7 +233,7 @@ export default function DashboardSchedule({ compact = false }: { compact?: boole
       try {
         const jt = String(detailBase?.job_type || '').toLowerCase();
         const materialKind = jt.startsWith('vit') ? 'Vitull' : (jt.startsWith('eko') ? 'Ekovilla' : undefined);
-        await fetch('/api/planning/consume-bags', {
+        const resp = await fetch('/api/planning/consume-bags', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -245,6 +245,7 @@ export default function DashboardSchedule({ compact = false }: { compact?: boole
             materialKind,
           })
         });
+        try { const j = await resp.json(); console.log('[consume-bags dashboard]', j); } catch {}
       } catch {}
     }
   }, [detailBase?.segment_id, detailBase?.job_type, detailBase?.project_id, reportDraft.amount, reportDraft.day, supabase, currentUserId, currentUserName]);
