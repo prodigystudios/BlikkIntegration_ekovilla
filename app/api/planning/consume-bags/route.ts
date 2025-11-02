@@ -117,14 +117,25 @@ export async function POST(req: NextRequest) {
       } catch {}
     }
 
-    // Helper: also persist latest actual bags used to planning_project_meta so planner cards reflect it
-    async function upsertActualBagsUsed(pId: string, bags: number) {
+    // Helper: persist actual bags used to planning_project_meta
+    // If called for a partial report (reportKey starts with 'partial:'), add to existing value instead of overwriting.
+    async function upsertActualBagsUsed(pId: string, bags: number, mode: 'set' | 'add') {
       try {
+        let target = Math.round(bags);
+        if (mode === 'add') {
+          const { data: cur } = await admin
+            .from('planning_project_meta')
+            .select('actual_bags_used')
+            .eq('project_id', pId)
+            .maybeSingle();
+          const prev = Number((cur as any)?.actual_bags_used || 0);
+          target = Math.max(0, Math.round(prev) + Math.round(bags));
+        }
         const { error: metaErr } = await admin
           .from('planning_project_meta')
           .upsert({
             project_id: pId,
-            actual_bags_used: Math.round(bags),
+            actual_bags_used: target,
             actual_bags_set_at: new Date().toISOString(),
             actual_bags_set_by: 'service',
           } as any, { onConflict: 'project_id' } as any);
@@ -153,7 +164,8 @@ export async function POST(req: NextRequest) {
           const msg = String(ins.error.message || '').toLowerCase();
           if (msg.includes('duplicate key') || msg.includes('unique')) {
             // Even if already processed, ensure meta shows latest report value
-            await upsertActualBagsUsed(projectId, totalBags);
+            const isPartial = !!(reportKey && reportKey.startsWith('partial:'));
+            await upsertActualBagsUsed(projectId, totalBags, isPartial ? 'add' : 'set');
             return NextResponse.json({ ok: true, alreadyProcessed: true });
           }
           return NextResponse.json({ ok: false, error: 'usage-insert-failed', detail: ins.error.message }, { status: 500 });
@@ -161,7 +173,8 @@ export async function POST(req: NextRequest) {
       } catch (e: any) {
         const m = String(e?.message || e).toLowerCase();
         if (m.includes('duplicate key') || m.includes('unique')) {
-          await upsertActualBagsUsed(projectId, totalBags);
+          const isPartial = !!(reportKey && reportKey.startsWith('partial:'));
+          await upsertActualBagsUsed(projectId, totalBags, isPartial ? 'add' : 'set');
           return NextResponse.json({ ok: true, alreadyProcessed: true });
         }
         return NextResponse.json({ ok: false, error: 'usage-insert-exception', detail: String(e?.message || e) }, { status: 500 });
@@ -183,8 +196,9 @@ export async function POST(req: NextRequest) {
       const updatePayload: any = {}; updatePayload[col] = next;
       await admin.from('planning_depots').update(updatePayload).eq('id', depotId);
     }
-    // Also update meta with the latest reported bags so planner UI reflects it
-    await upsertActualBagsUsed(projectId, totalBags);
+  // Also update meta with the latest reported bags so planner UI reflects it
+  const isPartial = !!(reportKey && reportKey.startsWith('partial:'));
+  await upsertActualBagsUsed(projectId, totalBags, isPartial ? 'add' : 'set');
     return NextResponse.json({ ok: true, depotId, material_kind: mat ?? 'Ekovilla' });
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: 'unexpected', detail: String(e?.message || e) }, { status: 500 });
