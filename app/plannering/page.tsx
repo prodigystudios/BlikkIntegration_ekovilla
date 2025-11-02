@@ -1140,6 +1140,22 @@ export default function PlanneringPage() {
           });
           try { const j = await resp.json(); console.log('[consume-bags planner]', j); } catch {}
         } catch (_) { /* ignore */ }
+        // Post a short comment to Blikk project timeline (single-line to avoid UI truncation)
+        try {
+          const parts = [
+            `DELRAPPORTERERING`,
+            `Säckar blåsta: ${amt}`,
+            `Datum: ${day}`,
+            ...(currentUserName ? [`Av: ${currentUserName}`] : []),
+          ];
+          const commentText = parts.join(' — ');
+          const resp2 = await fetch('/api/blikk/project/comment', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ projectId: segEditor.projectId, text: commentText })
+          });
+          try { const j2 = await resp2.json(); console.log('[blikk comment planner]', j2); } catch {}
+        } catch (_) { /* ignore */ }
       }
     } catch (e) {
       console.warn('[planning] addPartialReport failed', e);

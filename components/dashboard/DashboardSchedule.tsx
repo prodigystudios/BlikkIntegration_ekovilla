@@ -246,6 +246,22 @@ export default function DashboardSchedule({ compact = false }: { compact?: boole
           })
         });
         try { const j = await resp.json(); console.log('[consume-bags dashboard]', j); } catch {}
+        // Post a short comment to Blikk project (single-line to avoid UI truncation)
+        try {
+          const parts = [
+            `DELRAPPORTERERING`,
+            `Säckar blåsta: ${amount}`,
+            `Datum: ${day}`,
+            ...(currentUserName ? [`Av: ${currentUserName}`] : []),
+          ];
+          const commentText = parts.join(' — ');
+          const resp2 = await fetch('/api/blikk/project/comment', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ projectId: String(detailBase?.project_id || ''), text: commentText })
+          });
+          try { const j2 = await resp2.json(); console.log('[blikk comment dashboard]', j2); } catch {}
+        } catch {}
       } catch {}
     }
   }, [detailBase?.segment_id, detailBase?.job_type, detailBase?.project_id, reportDraft.amount, reportDraft.day, supabase, currentUserId, currentUserName]);

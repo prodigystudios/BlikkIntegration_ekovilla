@@ -1,6 +1,6 @@
 "use client";
 export const dynamic = 'force-dynamic';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 
@@ -165,15 +165,17 @@ export default function EgenkontrollPage() {
     return () => clearTimeout(t);
   }, [toast]);
   const [orderId, setOrderId] = useState('');
-  // Read orderId from query (e.g., /egenkontroll?orderId=1234) and auto-lookup once
-  // 1) Primary: react to Next.js search param changes (robust on mobile/PWA)
-  const searchParams = useSearchParams();
-  useEffect(() => {
-    try {
-      const initial = searchParams.get('orderId') || searchParams.get('order') || '';
-      if (initial && !orderId) setOrderId(initial);
-    } catch {}
-  }, [searchParams, orderId]);
+  // Read orderId from query (e.g., /egenkontroll?orderId=1234) via Suspense-wrapped child to satisfy Next.js CSR bailout requirement
+  function InitOrderId({ orderId, setOrderId }: { orderId: string; setOrderId: (v: string) => void }) {
+    const searchParams = useSearchParams();
+    useEffect(() => {
+      try {
+        const initial = searchParams.get('orderId') || searchParams.get('order') || '';
+        if (initial && !orderId) setOrderId(initial);
+      } catch {}
+    }, [searchParams, orderId, setOrderId]);
+    return null;
+  }
   // 2) Fallback: on very early mounts where searchParams may not yet be ready, parse window.location once
   useEffect(() => {
     try {
@@ -651,6 +653,9 @@ export default function EgenkontrollPage() {
 
   return (
     <main style={{ padding: 24, maxWidth: '100%', background: '#ffffffff' }}>
+      <Suspense fallback={null}>
+        <InitOrderId orderId={orderId} setOrderId={setOrderId} />
+      </Suspense>
       <p>Sök efter order("Använd order nummer ifrån blikk")</p>
 
       <section style={{ marginTop: 16 }}>
