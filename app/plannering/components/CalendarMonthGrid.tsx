@@ -33,6 +33,7 @@ export interface CalendarMonthGridProps {
   renderCreatorAvatar: (segmentId: string) => React.ReactNode;
   scheduleMeta: Record<string, any>;
   jobTypeColors: Record<string, string>;
+  projectAddresses: Record<string, string>;
 }
 
 export default function CalendarMonthGrid(props: CalendarMonthGridProps) {
@@ -65,6 +66,7 @@ export default function CalendarMonthGrid(props: CalendarMonthGridProps) {
     renderCreatorAvatar,
     scheduleMeta,
     jobTypeColors,
+    projectAddresses,
   } = props;
 
   return (
@@ -221,6 +223,11 @@ export default function CalendarMonthGrid(props: CalendarMonthGridProps) {
                               ) : null}
                               <span style={{ color: display ? display.text : '#312e81', fontWeight: 600, minWidth: 0, overflowWrap: 'anywhere' }}>{it.project.name}</span>
                             </span>
+                            {isStart && projectAddresses[it.project.id] && (
+                              <span style={{ fontSize: 10, color: display ? display.text : '#334155' }}>
+                                {projectAddresses[it.project.id]}
+                              </span>
+                            )}
                             {isStart && <span style={{ color: display ? display.text : '#6366f1' }}>{it.project.customer}</span>}
                             {isStart && it.project.salesResponsible && <span style={{ fontSize: 10, color: display ? display.text : '#334155', background: '#ffffff30', padding: '2px 6px', borderRadius: 12, border: `1px solid ${cardBorder}55` }}>Sälj: {it.project.salesResponsible}</span>}
                             {(it.bagCount != null || it.jobType) && (

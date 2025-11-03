@@ -1,7 +1,7 @@
 "use client";
 export const dynamic = 'force-dynamic';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
-import { useEffect, useMemo, useState, useRef, useCallback } from 'react';
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { startOfMonth, endOfMonth, fmtDate, isoWeekNumber, isoWeekYear, isoWeekKey, startOfIsoWeek, endOfIsoWeek, mondayFromIsoWeekKey } from './_lib/date';
 import { deriveColors, creatorColor, creatorInitials } from './_lib/colors';
 import EmailSummaryPanel from './components/EmailSummaryPanel';
@@ -709,6 +709,8 @@ export default function PlanneringPage() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [detailCache, setDetailCache] = useState<Record<string, any>>({});
+  // Lightweight cache of project address lines for card display (DB-sourced only)
+  const [projectAddresses, setProjectAddresses] = useState<Record<string, string>>({});
   const openProjectModal = useCallback(async (projectId: string) => {
     setDetailOpen(true);
     setDetailProjectId(projectId);
@@ -759,6 +761,8 @@ export default function PlanneringPage() {
     }
   }, [detailCache, projects]);
   const closeProjectModal = useCallback(() => { setDetailOpen(false); setDetailProjectId(null); setDetailError(null); }, []);
+
+  // No lazy fallback: rely only on DB-provided address fields loaded into projectAddresses
 
   // Global overlay readiness: wait until core data ready (or timeout)
   const [gateReleased, setGateReleased] = useState(false);
@@ -928,6 +932,23 @@ export default function PlanneringPage() {
             actual_bags_set_by: m.actual_bags_set_by,
           };
           setScheduleMeta(metaObj);
+          // Prefill address cache from stored meta if available
+          try {
+            const addrMap: Record<string, string> = {};
+            for (const m of metas) {
+              const street = (m as any).address_street as string | null | undefined;
+              const postal = (m as any).address_postal as string | null | undefined;
+              const city = (m as any).address_city as string | null | undefined;
+              const parts = [street, city].filter(Boolean) as string[];
+              // If postal is available, include it between street and city if street exists
+              if (street && city && postal) {
+                addrMap[m.project_id] = `${street}, ${city}`; // keep concise; we can add postal if desired
+              } else if (parts.length) {
+                addrMap[m.project_id] = parts.join(', ');
+              }
+            }
+            if (Object.keys(addrMap).length) setProjectAddresses(prev => ({ ...addrMap, ...prev }));
+          } catch { /* ignore */ }
         }
         // Fetch complete sales/admin directory via internal API (service role backed)
         try {
@@ -2301,7 +2322,33 @@ export default function PlanneringPage() {
         return next;
       });
       const project = projects.find(p => p.id === projectId);
-      if (project) persistSegmentCreate(newSeg, project);
+      if (project) {
+        persistSegmentCreate(newSeg, project);
+        // On schedule: if address not stored yet, fetch once from Blikk and persist to meta
+        try {
+          if (!projectAddresses[project.id] && project.orderNumber) {
+            (async () => {
+              try {
+                const r = await fetch(`/api/projects/lookup?orderId=${encodeURIComponent(project.orderNumber!)}`);
+                if (r.ok) {
+                  const raw = await r.json();
+                  const location = raw?.workSiteAddress || raw?.location || null;
+                  const street = location?.streetAddress || raw?.street || raw?.addressLine1 || null;
+                  const postal = location?.postalCode || raw?.postalCode || raw?.zip || null;
+                  const city = location?.city || raw?.city || null;
+                  const line = [street, city].filter(Boolean).join(', ');
+                  if (street || city) {
+                    setProjectAddresses(prev => ({ ...prev, [project.id]: line }));
+                    await supabase
+                      .from('planning_project_meta')
+                      .upsert({ project_id: project.id, address_street: street, address_postal: postal, address_city: city } as any, { onConflict: 'project_id' });
+                  }
+                }
+              } catch { /* ignore */ }
+            })();
+          }
+        } catch { /* ignore */ }
+      }
     } else if (segmentId) {
       applyScheduledSegments(prev => prev.map(s => s.id === segmentId ? ({ ...s, startDay, endDay, depotId: depotId ?? null, truck: truck ?? null }) : s));
       updateSegmentDepot(segmentId, depotId ?? null);
@@ -3547,6 +3594,7 @@ export default function PlanneringPage() {
               renderCreatorAvatar={(segmentId: string) => <CreatorAvatar segmentId={segmentId} size="sm" />}
               scheduleMeta={scheduleMeta as any}
               jobTypeColors={jobTypeColors}
+              projectAddresses={projectAddresses}
             />
           )}
 
@@ -3580,6 +3628,7 @@ export default function PlanneringPage() {
               selectedWeekKey={selectedWeekKey}
               scheduleMeta={scheduleMeta as any}
               jobTypeColors={jobTypeColors}
+              projectAddresses={projectAddresses}
             />
           )}
 
@@ -3614,6 +3663,7 @@ export default function PlanneringPage() {
               scheduleMeta={scheduleMeta as any}
               truckTeamNames={truckTeamNames}
               jobTypeColors={jobTypeColors}
+              projectAddresses={projectAddresses}
             />
           )}
         </div>

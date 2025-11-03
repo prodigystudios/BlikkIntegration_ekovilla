@@ -34,6 +34,7 @@ export interface CalendarDayListProps {
   scheduleMeta: Record<string, any>;
   truckTeamNames: (truck: string | null) => string[];
   jobTypeColors: Record<string, string>;
+  projectAddresses: Record<string, string>;
 }
 
 export default function CalendarDayList(props: CalendarDayListProps) {
@@ -67,6 +68,7 @@ export default function CalendarDayList(props: CalendarDayListProps) {
     scheduleMeta,
     truckTeamNames,
   jobTypeColors,
+  projectAddresses,
   } = props;
 
   return (
@@ -300,6 +302,11 @@ export default function CalendarDayList(props: CalendarDayListProps) {
                                 ) : null}
                                 <span style={{ color: display ? display.text : '#312e81', fontWeight: 600, minWidth: 0, overflowWrap: 'anywhere' }}>{it.project.name}</span>
                               </span>
+                              {isStart && projectAddresses[it.project.id] && (
+                                <span style={{ fontSize: 9, color: display ? display.text : '#334155' }}>
+                                  {projectAddresses[it.project.id]}
+                                </span>
+                              )}
                               {(it.bagCount != null || it.jobType) && (
                                 <span style={{ fontSize: 11, color: display ? display.text : '#374151' }}>
                                   {it.bagCount != null ? `${it.bagCount} säckar` : ''}
