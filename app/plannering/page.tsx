@@ -167,8 +167,13 @@ export default function PlanneringPage() {
     'volvo blå': '#6366f1'
   };
   const [planningTrucks, setPlanningTrucks] = useState<TruckRec[]>([]);
-  // Derived list of truck names for existing logic
-  const trucks = planningTrucks.length ? planningTrucks.map(t => t.name) : defaultTrucks;
+  // Derived list of truck names for existing logic (always alphabetical)
+  const trucks = useMemo(() => {
+    if (!planningTrucks.length) return defaultTrucks;
+    return [...planningTrucks]
+      .sort((a, b) => a.name.localeCompare(b.name, 'sv'))
+      .map(t => t.name);
+  }, [planningTrucks]);
   const [isAdmin, setIsAdmin] = useState(false);
   const [newTruckName, setNewTruckName] = useState('');
   const [newTruckDepotId, setNewTruckDepotId] = useState<string>('');
@@ -210,6 +215,11 @@ export default function PlanneringPage() {
   const [savingDelivery, setSavingDelivery] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [deliveries, setDeliveries] = useState<Array<{ id: string; depot_id: string; material_kind: 'Ekovilla' | 'Vitull'; amount: number; delivery_date: string; created_by: string | null; created_at: string }>>([]);
   const [editingDeliveries, setEditingDeliveries] = useState<Record<string, { depotId?: string; materialKind?: 'Ekovilla' | 'Vitull'; amount?: string; date?: string }>>({});
+
+  // Truck name editing state
+  const [editingTruckNames, setEditingTruckNames] = useState<Record<string, string>>({});
+  const [truckNameStatus, setTruckNameStatus] = useState<Record<string, 'idle' | 'saving' | 'saved' | 'error'>>({});
+  const [truckNameErrors, setTruckNameErrors] = useState<Record<string, string>>({});
 
   // Fallback selection scheduling (if drag/drop misbehaves)
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
@@ -1557,6 +1567,59 @@ export default function PlanneringPage() {
     setPlanningTrucks(prev => prev.map(t => t.id === truck.id ? { ...t, depot_id: depotId } : t));
     enqueue(supabase.from('planning_trucks').update({ depot_id: depotId }).eq('id', truck.id));
   }, [supabase]);
+
+  const updateTruckName = useCallback((truck: TruckRec, newNameRaw: string) => {
+    const newName = (newNameRaw || '').trim();
+    setTruckNameErrors(prev => ({ ...prev, [truck.id]: '' }));
+    if (newName.length < 2) {
+      setTruckNameErrors(prev => ({ ...prev, [truck.id]: 'Namnet behöver vara minst 2 tecken.' }));
+      return;
+    }
+    if (planningTrucks.some(t => t.id !== truck.id && t.name.toLowerCase() === newName.toLowerCase())) {
+      setTruckNameErrors(prev => ({ ...prev, [truck.id]: 'Det finns redan en lastbil med det namnet.' }));
+      return;
+    }
+    if (newName === truck.name) return; // nothing to do
+    setTruckNameStatus(prev => ({ ...prev, [truck.id]: 'saving' }));
+    const oldName = truck.name;
+    // Optimistic: update local name
+    setPlanningTrucks(prev => prev.map(t => t.id === truck.id ? { ...t, name: newName } : t));
+    // Move color override key if exists
+    setTruckColorOverrides(prev => {
+      if (!prev[oldName]) return prev;
+      const { [oldName]: oldColor, ...rest } = prev as any;
+      return { ...rest, [newName]: oldColor };
+    });
+    enqueue((async () => {
+      try {
+        const { error } = await supabase.from('planning_trucks').update({ name: newName }).eq('id', truck.id);
+        if (error) throw error;
+        // Update segments referencing the old name
+        await supabase.from('planning_segments').update({ truck: newName }).eq('truck', oldName);
+        setTruckNameStatus(prev => ({ ...prev, [truck.id]: 'saved' }));
+        setEditingTruckNames(prev => { const { [truck.id]: _, ...rest } = prev; return rest; });
+      } catch (e: any) {
+        console.warn('[planning] updateTruckName error', e);
+        // Revert local change
+        setPlanningTrucks(prev => prev.map(t => t.id === truck.id ? { ...t, name: oldName } : t));
+        // Revert override rename
+        setTruckColorOverrides(prev => {
+          const cur = { ...prev } as any;
+          if (cur[newName]) { cur[oldName] = cur[newName]; delete cur[newName]; }
+          return cur;
+        });
+        const msg = String(e?.message || '').toLowerCase();
+        if (msg.includes('duplicate') || msg.includes('unique')) {
+          setTruckNameErrors(prev => ({ ...prev, [truck.id]: 'Det finns redan en lastbil med det namnet.' }));
+        } else if (msg.includes('permission') || msg.includes('security')) {
+          setTruckNameErrors(prev => ({ ...prev, [truck.id]: 'Behörighet saknas för att byta namn.' }));
+        } else {
+          setTruckNameErrors(prev => ({ ...prev, [truck.id]: 'Kunde inte byta namn. Försök igen.' }));
+        }
+        setTruckNameStatus(prev => ({ ...prev, [truck.id]: 'error' }));
+      }
+    })());
+  }, [planningTrucks, supabase, setPlanningTrucks]);
 
   const updateSegmentDepot = useCallback((segmentId: string, depotId: string | null) => {
     setScheduledSegments(prev => prev.map(s => s.id === segmentId ? { ...s, depotId } : s));
@@ -3336,7 +3399,7 @@ export default function PlanneringPage() {
                   {adminModalTab === 'trucks' && (
                     <div style={{ display: 'grid', gap: 12 }}>
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
-                        {planningTrucks.map(tRec => {
+                        {[...planningTrucks].sort((a, b) => a.name.localeCompare(b.name, 'sv')).map(tRec => {
                           const currentColor = truckColorOverrides[tRec.name] || tRec.color || defaultTruckColors[tRec.name] || '#6366f1';
                           const edit = editingTeamNames[tRec.id] || { team1: tRec.team_member1_name || '', team2: tRec.team_member2_name || '', team1Id: tRec.team1_id || null, team2Id: tRec.team2_id || null };
                           const changed = (
@@ -3348,9 +3411,25 @@ export default function PlanneringPage() {
                           const status = truckSaveStatus[tRec.id];
                           return (
                             <div key={tRec.id} style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: 10, border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff' }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                                 <span style={{ width: 16, height: 16, background: currentColor, border: '3px solid #cbd5e1', borderRadius: 6 }} />
-                                <strong>{tRec.name}</strong>
+                                <input
+                                  value={editingTruckNames[tRec.id] ?? tRec.name}
+                                  onChange={e => setEditingTruckNames(prev => ({ ...prev, [tRec.id]: e.target.value }))}
+                                  placeholder="Namn på lastbil"
+                                  style={{ flex: '1 1 200px', minWidth: 140, padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }}
+                                />
+                                <button
+                                  type="button"
+                                  className="btn--plain btn--xs"
+                                  onClick={() => updateTruckName(tRec, editingTruckNames[tRec.id] ?? tRec.name)}
+                                  disabled={(editingTruckNames[tRec.id] ?? tRec.name).trim() === tRec.name || truckNameStatus[tRec.id] === 'saving'}
+                                  style={{ fontSize: 12, padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8, background: '#fff' }}
+                                >
+                                  {truckNameStatus[tRec.id] === 'saving' ? 'Sparar…' : 'Spara namn'}
+                                </button>
+                                {truckNameStatus[tRec.id] === 'saved' && <span style={{ fontSize: 12, color: '#059669' }}>✓</span>}
+                                {truckNameErrors[tRec.id] && <span style={{ fontSize: 12, color: '#b91c1c' }}>{truckNameErrors[tRec.id]}</span>}
                                 <input type="color" value={currentColor as string} onChange={e => updateTruckColor(tRec, e.target.value)} style={{ marginLeft: 'auto', width: 28, height: 28, border: '1px solid #cbd5e1', borderRadius: 6, background: '#fff' }} />
                               </div>
                               <div style={{ display: 'grid', gap: 8 }}>
