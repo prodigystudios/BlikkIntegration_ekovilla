@@ -312,7 +312,7 @@ export default function CalendarDayList(props: CalendarDayListProps) {
                                   {it.bagCount != null ? `${it.bagCount} säckar` : ''}
                                   {it.bagCount != null && it.jobType ? ' • ' : ''}
                                   {it.jobType ? (
-                                    <span style={{ color: jobTypeColors[it.jobType] || (display ? display.text : '#374151') }}>{it.jobType}</span>
+                                  <span style={{ color: jobTypeColors[it.jobType] || (display ? display.text : '#374151'), textShadow: '0 1px 2px rgba(129, 126, 126, 0.1)', textDecoration: 'underline', textUnderlineOffset: 2 }}>{it.jobType.toLocaleUpperCase('sv-SE')}</span>
                                   ) : ''}
                                 </span>
                               )}
