@@ -34,6 +34,7 @@ export interface CalendarMonthGridProps {
   scheduleMeta: Record<string, any>;
   jobTypeColors: Record<string, string>;
   projectAddresses: Record<string, string>;
+  segmentCrew: Record<string, Array<{ id: string | null; name: string }>>;
 }
 
 export default function CalendarMonthGrid(props: CalendarMonthGridProps) {
@@ -67,6 +68,7 @@ export default function CalendarMonthGrid(props: CalendarMonthGridProps) {
     scheduleMeta,
     jobTypeColors,
     projectAddresses,
+    segmentCrew,
   } = props;
 
   return (
@@ -226,6 +228,11 @@ export default function CalendarMonthGrid(props: CalendarMonthGridProps) {
                             {isStart && projectAddresses[it.project.id] && (
                               <span style={{ fontSize: 10, color: display ? display.text : '#334155' }}>
                                 {projectAddresses[it.project.id]}
+                              </span>
+                            )}
+                            {isStart && segmentCrew[it.segmentId] && segmentCrew[it.segmentId].length > 0 && (
+                              <span style={{ fontSize: 10, color: display ? display.text : '#334155', background: '#ffffff50', padding: '2px 6px', borderRadius: 10, border: `1px solid ${cardBorder}55` }} title={`Team: ${segmentCrew[it.segmentId].map(m => m.name).join(', ')}`}>
+                                Team: {segmentCrew[it.segmentId].map(m => m.name).join(', ')}
                               </span>
                             )}
                             {isStart && <span style={{ color: display ? display.text : '#6366f1' }}>{it.project.customer}</span>}

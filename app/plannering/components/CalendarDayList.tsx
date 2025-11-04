@@ -35,6 +35,7 @@ export interface CalendarDayListProps {
   truckTeamNames: (truck: string | null) => string[];
   jobTypeColors: Record<string, string>;
   projectAddresses: Record<string, string>;
+  segmentCrew: Record<string, Array<{ id: string | null; name: string }>>;
 }
 
 export default function CalendarDayList(props: CalendarDayListProps) {
@@ -69,6 +70,7 @@ export default function CalendarDayList(props: CalendarDayListProps) {
     truckTeamNames,
   jobTypeColors,
   projectAddresses,
+  segmentCrew,
   } = props;
 
   return (
@@ -307,6 +309,11 @@ export default function CalendarDayList(props: CalendarDayListProps) {
                                   {projectAddresses[it.project.id]}
                                 </span>
                               )}
+                                  {isStart && segmentCrew[it.segmentId] && segmentCrew[it.segmentId].length > 0 && (
+                                    <span style={{ fontSize: 9, color: display ? display.text : '#334155', background: '#ffffff50', padding: '1px 5px', borderRadius: 10, border: `1px solid ${cardBorder}55` }} title={`Team: ${segmentCrew[it.segmentId].map(m => m.name).join(', ')}`}>
+                                      Team: {segmentCrew[it.segmentId].map(m => m.name).join(', ')}
+                                    </span>
+                                  )}
                               {(it.bagCount != null || it.jobType) && (
                                 <span style={{ fontSize: 11, color: display ? display.text : '#374151' }}>
                                   {it.bagCount != null ? `${it.bagCount} säckar` : ''}

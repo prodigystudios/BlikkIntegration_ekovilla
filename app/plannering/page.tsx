@@ -221,6 +221,9 @@ export default function PlanneringPage() {
   const [truckNameStatus, setTruckNameStatus] = useState<Record<string, 'idle' | 'saving' | 'saved' | 'error'>>({});
   const [truckNameErrors, setTruckNameErrors] = useState<Record<string, string>>({});
 
+  // Per-segment extra crew (for the day)
+  const [segmentCrew, setSegmentCrew] = useState<Record<string, Array<{ id: string | null; name: string }>>>({});
+
   // Fallback selection scheduling (if drag/drop misbehaves)
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   // View mode: standard month grid or weekday lanes (all Mondays in a row, etc.)
@@ -243,6 +246,7 @@ export default function PlanneringPage() {
     jobType: string | null;
     depotId: string | null; // null => use truck depot
     positionIndex?: number | null; // 1-based position within same truck/day (create convenience)
+    crew?: Array<{ id: string | null; name: string }>; // per-segment extra crew
   }
   const [segEditorOpen, setSegEditorOpen] = useState(false);
   const [segEditor, setSegEditor] = useState<SegmentEditorDraft | null>(null);
@@ -299,6 +303,8 @@ export default function PlanneringPage() {
   const [segmentReports, setSegmentReports] = useState<SegmentReport[]>([]);
   // Simple draft used in Segment Editor to add a report
   const [reportDraft, setReportDraft] = useState<{ day: string; amount: string }>({ day: '', amount: '' });
+  // Segment Editor crew input (name text)
+  const [segCrewInput, setSegCrewInput] = useState<string>('');
 
   // Missing state (reintroduced after earlier cleanup)
   const [truckColorOverrides, setTruckColorOverrides] = useState<Record<string, string>>({});
@@ -871,6 +877,22 @@ export default function PlanneringPage() {
         } catch (e) {
           console.warn('[planning] segment reports load exception', e);
         }
+        // Load per-segment crew assignments
+        try {
+          const { data: crewRows, error: crewErr } = await supabase.from('planning_segment_team_members').select('*');
+          if (crewErr) console.warn('[planning] segment crew load error', crewErr);
+          else if (Array.isArray(crewRows)) {
+            const map: Record<string, Array<{ id: string | null; name: string }>> = {};
+            for (const row of crewRows) {
+              const sid = (row as any).segment_id as string;
+              if (!map[sid]) map[sid] = [];
+              map[sid].push({ id: (row as any).member_id || null, name: (row as any).member_name || '' });
+            }
+            setSegmentCrew(map);
+          }
+        } catch (e) {
+          console.warn('[planning] segment crew load exception', e);
+        }
         // Load dynamic trucks (open select) - team names are free text
         try {
           const { data: trucksData, error: trucksErr } = await supabase.from('planning_trucks').select('*').order('name');
@@ -1038,6 +1060,23 @@ export default function PlanneringPage() {
         } else if (payload.eventType === 'DELETE') {
           setScheduledSegments(prev => prev.filter(s => s.id !== row.id));
         }
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'planning_segment_team_members' }, payload => {
+        const row: any = payload.new || payload.old;
+        const segId = row?.segment_id;
+        if (!segId) return;
+        setSegmentCrew(prev => {
+          const next = { ...prev } as any;
+          if (payload.eventType === 'DELETE') {
+            const list = (next[segId] || []).filter((m: any) => m.id !== (row.member_id || null) || m.name !== (row.member_name || ''));
+            next[segId] = list;
+            return next;
+          }
+          const list = (next[segId] || []).filter((m: any) => !(m.id === (row.member_id || null) && m.name === (row.member_name || '')));
+          list.push({ id: row.member_id || null, name: row.member_name || '' });
+          next[segId] = list;
+          return next;
+        });
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'planning_project_meta' }, payload => {
         const row: any = payload.new || payload.old;
@@ -1353,6 +1392,14 @@ export default function PlanneringPage() {
           if (error) console.warn('[persist delete seg] error', error);
           else console.debug('[planning] delete ok', data);
         })
+    );
+    // Best-effort cleanup of per-segment crew
+    enqueue(
+      supabase
+        .from('planning_segment_team_members')
+        .delete()
+        .eq('segment_id', segmentId)
+        .then(({ error }) => { if (error) console.warn('[persist delete seg-crew] error', error); })
     );
   }, [supabase]);
 
@@ -2345,16 +2392,33 @@ export default function PlanneringPage() {
       const sameTruck = sameDay.filter(x => x.truck === assumedTruck && x.spanStart);
       positionIndex = sameTruck.length + 1; // default to end
     }
-    setSegEditor({ mode: 'create', projectId, startDay: day, endDay: day, truck: assumedTruck, bagCount: (typeof meta.bagCount === 'number' ? meta.bagCount : null), jobType: meta.jobType ?? null, depotId: null, positionIndex });
+  setSegEditor({ mode: 'create', projectId, startDay: day, endDay: day, truck: assumedTruck, bagCount: (typeof meta.bagCount === 'number' ? meta.bagCount : null), jobType: meta.jobType ?? null, depotId: null, positionIndex, crew: [] });
+  setSegCrewInput('');
     setSegEditorOpen(true);
   }
   function openSegmentEditorForExisting(segmentId: string) {
     const seg = scheduledSegments.find(s => s.id === segmentId);
     if (!seg) return;
     const meta = scheduleMeta[seg.projectId] || { projectId: seg.projectId } as ProjectScheduleMeta;
-    setSegEditor({ mode: 'edit', projectId: seg.projectId, segmentId: seg.id, startDay: seg.startDay, endDay: seg.endDay, truck: (seg as any).truck ?? meta.truck ?? null, bagCount: (typeof meta.bagCount === 'number' ? meta.bagCount : null), jobType: meta.jobType ?? null, depotId: seg.depotId ?? null });
+  setSegEditor({ mode: 'edit', projectId: seg.projectId, segmentId: seg.id, startDay: seg.startDay, endDay: seg.endDay, truck: (seg as any).truck ?? meta.truck ?? null, bagCount: (typeof meta.bagCount === 'number' ? meta.bagCount : null), jobType: meta.jobType ?? null, depotId: seg.depotId ?? null, crew: segmentCrew[seg.id] || [] });
+  setSegCrewInput('');
     setSegEditorOpen(true);
   }
+  const persistSegmentCrew = useCallback(async (segmentId: string, crewListDraft: Array<{ id: string | null; name: string }>) => {
+    try {
+      await supabase.from('planning_segment_team_members').delete().eq('segment_id', segmentId);
+      const rows = (crewListDraft || [])
+        .filter(m => (m.name || '').trim().length > 0)
+        .map(m => ({ segment_id: segmentId, member_id: m.id || null, member_name: m.name.trim() }));
+      if (rows.length > 0) {
+        const { error } = await supabase.from('planning_segment_team_members').insert(rows).select('segment_id');
+        if (error) console.warn('[planning] insert crew error', error);
+      }
+      setSegmentCrew(prev => ({ ...prev, [segmentId]: (crewListDraft || []).filter(m => (m.name || '').trim().length > 0) }));
+    } catch (e) {
+      console.warn('[planning] persistSegmentCrew exception', e);
+    }
+  }, [supabase]);
   function saveSegmentEditor() {
     if (!segEditor) return;
     const { mode, projectId, segmentId, startDay, endDay, truck, bagCount, jobType, depotId, positionIndex } = segEditor;
@@ -2412,6 +2476,14 @@ export default function PlanneringPage() {
           }
         } catch { /* ignore */ }
       }
+      // Persist crew for newly created segment
+      try {
+        if (segEditor.crew && segEditor.crew.length > 0) {
+          persistSegmentCrew(newSeg.id, segEditor.crew);
+        } else {
+          setSegmentCrew(prev => ({ ...prev, [newSeg.id]: [] }));
+        }
+      } catch { /* ignore */ }
     } else if (segmentId) {
       applyScheduledSegments(prev => prev.map(s => s.id === segmentId ? ({ ...s, startDay, endDay, depotId: depotId ?? null, truck: truck ?? null }) : s));
       updateSegmentDepot(segmentId, depotId ?? null);
@@ -2419,6 +2491,8 @@ export default function PlanneringPage() {
       setTimeout(() => {
         enqueue(supabase.from('planning_segments').update({ truck: truck ?? null }).eq('id', segmentId).select('id').then(({ error }) => { if (error) console.warn('[planning] update segment truck error', error); }));
       }, 0);
+      // Persist any crew changes
+      try { persistSegmentCrew(segmentId, segEditor.crew || []); } catch { /* ignore */ }
     }
     closeSegEditor();
   }
@@ -2612,6 +2686,34 @@ export default function PlanneringPage() {
                         <option value="">Ingen (använd lastbilens)</option>
                         {depots.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
                       </select>
+                    </label>
+                  </div>
+                  {/* Per-segment extra crew (beyond truck base team) */}
+                  <div style={{ display: 'grid', gap: 6 }}>
+                    <label style={{ display: 'grid', gap: 6, fontSize: 12 }}>
+                      <span>Extra team (denna dag)</span>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                        {(segEditor.crew || []).map((m, idx) => (
+                          <span key={(m.id || m.name) + ':' + idx} style={{ fontSize: 11, background: '#f1f5f9', border: '1px solid #e2e8f0', color: '#334155', padding: '2px 8px', borderRadius: 999, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                            {m.name}
+                            <button type="button" className="btn--plain btn--xs" onClick={() => setSegEditor(ed => ed ? ({ ...ed, crew: (ed.crew || []).filter((_, i) => i !== idx) }) : ed)} title="Ta bort" style={{ fontSize: 11, padding: '0 4px', border: '1px solid #fecaca', background: '#fee2e2', color: '#b91c1c', borderRadius: 6 }}>×</button>
+                          </span>
+                        ))}
+                      </div>
+                      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                        <input value={segCrewInput} onChange={e => setSegCrewInput(e.target.value)} list="planner-crew-names" placeholder="Lägg till namn…" style={{ flex: 1, padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }} />
+                        <datalist id="planner-crew-names">
+                          {crewNames.map(n => <option key={n} value={n} />)}
+                        </datalist>
+                        <button type="button" className="btn--plain btn--xs" onClick={() => {
+                          const name = (segCrewInput || '').trim();
+                          if (!name) return;
+                          const match = crewList.find(c => c.name.toLowerCase() === name.toLowerCase()) || null;
+                          setSegEditor(ed => ed ? ({ ...ed, crew: [ ...(ed.crew || []), { id: match ? match.id : null, name } ] }) : ed);
+                          setSegCrewInput('');
+                        }} style={{ fontSize: 12, padding: '6px 10px', border: '1px solid #cbd5e1', background: '#fff', borderRadius: 8 }}>Lägg till</button>
+                      </div>
+                      <span style={{ fontSize: 10, color: '#64748b' }}>Används för att lägga till fler än två personer per lastbil för denna sektion/dag.</span>
                     </label>
                   </div>
                 </div>
@@ -3434,7 +3536,7 @@ export default function PlanneringPage() {
                               </div>
                               <div style={{ display: 'grid', gap: 8 }}>
                                 <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
-                                  <span>Team 1</span>
+                                  <span>Team leader</span>
                                   <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                                     <select
                                       value={edit.team1Id || tRec.team1_id || ''}
@@ -3448,7 +3550,7 @@ export default function PlanneringPage() {
                                   </div>
                                 </label>
                                 <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
-                                  <span>Team 2</span>
+                                  <span>personal</span>
                                   <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                                     <select
                                       value={edit.team2Id || tRec.team2_id || ''}
@@ -3674,6 +3776,7 @@ export default function PlanneringPage() {
               scheduleMeta={scheduleMeta as any}
               jobTypeColors={jobTypeColors}
               projectAddresses={projectAddresses}
+              segmentCrew={segmentCrew}
             />
           )}
 
@@ -3708,6 +3811,7 @@ export default function PlanneringPage() {
               scheduleMeta={scheduleMeta as any}
               jobTypeColors={jobTypeColors}
               projectAddresses={projectAddresses}
+              segmentCrew={segmentCrew}
             />
           )}
 
@@ -3743,6 +3847,7 @@ export default function PlanneringPage() {
               truckTeamNames={truckTeamNames}
               jobTypeColors={jobTypeColors}
               projectAddresses={projectAddresses}
+              segmentCrew={segmentCrew}
             />
           )}
         </div>
