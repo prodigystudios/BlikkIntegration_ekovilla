@@ -142,7 +142,7 @@ export default function CalendarDayList(props: CalendarDayListProps) {
                 )}
               </span>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: `140px repeat(${visibleIndices.length}, 1fr)`, alignItems: 'center', gap: 6 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: `140px repeat(${visibleIndices.length}, 1fr)`, alignItems: 'center', gap: 6, position: 'sticky', top: 0, zIndex: 5, background: '#ffffff', boxShadow: '0 2px 4px rgba(0,0,0,0.06)', paddingTop: 6, paddingBottom: 6 }}>
               <div style={{ gridColumn: '1 / 2', fontSize: 12, fontWeight: 600, color: '#374151', textAlign: 'left' }}>Lastbil</div>
               {visibleIndices.map((idx, vi) => {
                 const cellDate = week[idx]?.date;
@@ -302,10 +302,10 @@ export default function CalendarDayList(props: CalendarDayListProps) {
                                 {it.project.orderNumber ? (
                                   <span style={{ fontFamily: 'ui-monospace, monospace', background: '#ffffff', color: display ? display.text : '#312e81', border: `1px solid ${cardBorder}`, padding: '1px 4px', borderRadius: 4, whiteSpace: 'nowrap' }} title="Ordernummer">#{it.project.orderNumber}</span>
                                 ) : null}
-                                <span style={{ color: display ? display.text : '#312e81', fontWeight: 600, minWidth: 0, overflowWrap: 'anywhere' }}>{it.project.name}</span>
+                                <span title={it.project.name} style={{ color: display ? display.text : '#312e81', fontWeight: 600, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>{it.project.name}</span>
                               </span>
                               {isStart && projectAddresses[it.project.id] && (
-                                <span style={{ fontSize: 9, color: display ? display.text : '#334155' }}>
+                                <span style={{ fontSize: 9, color: '#64748b' }}>
                                   {projectAddresses[it.project.id]}
                                 </span>
                               )}

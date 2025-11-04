@@ -73,7 +73,7 @@ export default function CalendarMonthGrid(props: CalendarMonthGridProps) {
 
   return (
     <div style={{ display: 'grid', gap: 12 }}>
-      <div style={{ display: 'grid', gridTemplateColumns: `60px repeat(${visibleDayNames.length}, 1fr)`, gap: 8, fontSize: 12, fontWeight: 600, color: '#374151' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: `60px repeat(${visibleDayNames.length}, 1fr)`, gap: 8, fontSize: 12, fontWeight: 600, color: '#374151', position: 'sticky', top: 0, zIndex: 20, background: '#ffffff', boxShadow: '0 2px 4px rgba(0,0,0,0.06)', padding: '6px 0' }}>
         <div style={{ textAlign: 'center' }}>Vecka</div>
         {visibleDayNames.map(n => <div key={n} style={{ textAlign: 'center' }}>{n}</div>)}
       </div>
@@ -223,10 +223,10 @@ export default function CalendarMonthGrid(props: CalendarMonthGridProps) {
                               {it.project.orderNumber ? (
                                 <span style={{ fontFamily: 'ui-monospace, monospace', background: '#ffffff', color: display ? display.text : '#312e81', border: `1px solid ${cardBorder}`, padding: '1px 4px', borderRadius: 4, whiteSpace: 'nowrap' }} title="Ordernummer">#{it.project.orderNumber}</span>
                               ) : null}
-                              <span style={{ color: display ? display.text : '#312e81', fontWeight: 600, minWidth: 0, overflowWrap: 'anywhere' }}>{it.project.name}</span>
+                              <span title={it.project.name} style={{ color: display ? display.text : '#312e81', fontWeight: 600, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>{it.project.name}</span>
                             </span>
                             {isStart && projectAddresses[it.project.id] && (
-                              <span style={{ fontSize: 10, color: display ? display.text : '#334155' }}>
+                              <span style={{ fontSize: 10, color: '#64748b' }}>
                                 {projectAddresses[it.project.id]}
                               </span>
                             )}

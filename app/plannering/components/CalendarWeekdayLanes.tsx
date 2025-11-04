@@ -225,13 +225,13 @@ export default function CalendarWeekdayLanes(props: CalendarWeekdayLanesProps) {
                                 {it.project.orderNumber ? (
                                   <span style={{ fontFamily: 'ui-monospace, monospace', background: '#ffffff', color: display ? display.text : '#312e81', border: `1px solid ${cardBorder}`, padding: '1px 4px', borderRadius: 4, whiteSpace: 'nowrap' }} title="Ordernummer">#{it.project.orderNumber}</span>
                                 ) : null}
-                                <span style={{ color: display ? display.text : '#312e81', fontWeight: 600, minWidth: 0, overflowWrap: 'anywhere' }}>{it.project.name}</span>
+                                <span title={it.project.name} style={{ color: display ? display.text : '#312e81', fontWeight: 600, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>{it.project.name}</span>
                               </span>
-                              {isStart && projectAddresses[it.project.id] && (
-                                <span style={{ fontSize: 9, color: display ? display.text : '#334155' }}>
-                                  {projectAddresses[it.project.id]}
-                                </span>
-                              )}
+                                {isStart && projectAddresses[it.project.id] && (
+                                  <span style={{ fontSize: 9, color: '#64748b' }}>
+                                    {projectAddresses[it.project.id]}
+                                  </span>
+                                )}
                               {isStart && segmentCrew[it.segmentId] && segmentCrew[it.segmentId].length > 0 && (
                                 <span style={{ fontSize: 9, color: display ? display.text : '#334155', background: '#ffffff40', padding: '1px 5px', borderRadius: 10, border: `1px solid ${cardBorder}55` }} title={`Team: ${segmentCrew[it.segmentId].map(m => m.name).join(', ')}`}>
                                   Team: {segmentCrew[it.segmentId].map(m => m.name).join(', ')}
