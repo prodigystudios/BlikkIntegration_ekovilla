@@ -38,6 +38,8 @@ export default function DashboardSchedule({ compact = false }: { compact?: boole
 
   type SegmentReport = { id: string; segment_id: string; report_day: string; amount: number; created_by: string | null; created_by_name: string | null; created_at: string };
   const [segmentReportsMap, setSegmentReportsMap] = useState<Record<string, SegmentReport[]>>({}); // key: segment_id
+  // Per-segment extra crew map for rendering team on cards
+  const [segmentCrewMap, setSegmentCrewMap] = useState<Record<string, Array<{ id: string | null; name: string }>>>({});
 
   const openDetail = useCallback(async (it: any) => {
     setDetailOpen(true);
@@ -177,6 +179,30 @@ export default function DashboardSchedule({ compact = false }: { compact?: boole
     })();
   }, [items, supabase]);
 
+  // When items change, fetch extra crew for listed segments
+  useEffect(() => {
+    const ids = Array.from(new Set((items.map(it => it.segment_id) as Array<unknown>)
+      .filter((v): v is string => typeof v === 'string' && v.length > 0)));
+    if (ids.length === 0) return;
+    (async () => {
+      try {
+        const { data: rows } = await supabase
+          .from('planning_segment_team_members')
+          .select('segment_id, member_id, member_name')
+          .in('segment_id', ids);
+        if (Array.isArray(rows)) {
+          const grouped: Record<string, Array<{ id: string | null; name: string }>> = {};
+          for (const r of rows as any[]) {
+            const sid = r.segment_id as string;
+            if (!grouped[sid]) grouped[sid] = [];
+            grouped[sid].push({ id: r.member_id || null, name: r.member_name || '' });
+          }
+          setSegmentCrewMap(prev => ({ ...prev, ...grouped }));
+        }
+      } catch {}
+    })();
+  }, [items, supabase]);
+
   // Realtime updates for segment reports
   useEffect(() => {
     const channel = supabase.channel('dashboard-segment-reports')
@@ -198,6 +224,26 @@ export default function DashboardSchedule({ compact = false }: { compact?: boole
           // sort by day
           arr.sort((a, b) => (a.report_day || '').localeCompare(b.report_day));
           return { ...prev, [row.segment_id]: arr };
+        });
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'planning_segment_team_members' }, payload => {
+        const row: any = payload.new || payload.old;
+        if (!row?.segment_id) return;
+        setSegmentCrewMap(prev => {
+          const next = { ...prev };
+          const sid = row.segment_id as string;
+          const list = Array.isArray(next[sid]) ? [...next[sid]] : [];
+          if (payload.eventType === 'DELETE') {
+            const idx = list.findIndex(m => (m.id || null) === (row.member_id || null) && (m.name || '') === (row.member_name || ''));
+            if (idx >= 0) list.splice(idx, 1);
+          } else {
+            // INSERT/UPDATE: upsert by id+name combo
+            const idx = list.findIndex(m => (m.id || null) === (row.member_id || null) && (m.name || '') === (row.member_name || ''));
+            if (idx >= 0) list[idx] = { id: row.member_id || null, name: row.member_name || '' };
+            else list.push({ id: row.member_id || null, name: row.member_name || '' });
+          }
+          next[sid] = list;
+          return next;
         });
       })
       .subscribe();
@@ -402,6 +448,11 @@ export default function DashboardSchedule({ compact = false }: { compact?: boole
                   const theme = getMaterialTheme(it.job_type);
                   const bagLabel = typeof it.bag_count === 'number' ? `${it.bag_count} säckar${theme.label ? ' ' + theme.label : ''}` : null;
                   const reported = it.segment_id ? (reportedBySegment.get(it.segment_id) || 0) : 0;
+                  const crewNames = (() => {
+                    const arr = segmentCrewMap[it.segment_id] || [];
+                    const uniq = Array.from(new Set(arr.map(m => (m.name || '').trim()).filter(Boolean)));
+                    return uniq;
+                  })();
                   return (
                     <div
                       key={`${it.segment_id || `${it.project_id}|${it.start_day}`}|${it.job_day || ''}`}
@@ -453,6 +504,15 @@ export default function DashboardSchedule({ compact = false }: { compact?: boole
                               <path fill="currentColor" d="M3 4h11v8h-1.5a2.5 2.5 0 0 0-2.45 2H8A3 3 0 0 0 5 17H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zm13 5h2.586A2 2 0 0 1 20 9.586L21.414 11A2 2 0 0 1 22 12.414V16a1 1 0 0 1-1 1h-1a3 3 0 0 0-3-3h-1V9zM7 18a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm10 0a2 2 0 1 0 0-4 2 2 0 0 0 0 4z" />
                             </svg>
                             {it.truck}
+                          </span>
+                        )}
+                        {crewNames.length > 0 && (
+                          <span style={{ display:'inline-flex', alignItems:'center', gap:6, fontSize: compact ? 10.5 : 11, color:'#334155', background:'#fafafa', border:'1px solid #e5e7eb', padding:'3px 8px', borderRadius:999 }} title={`Team: ${crewNames.join(', ')}`}>
+                            {/* Users icon */}
+                            <svg width={14} height={14} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                              <path fill="currentColor" d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5s-3 1.34-3 3 1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h10v-2.5C11 14.17 6.33 13 4 13zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h8v-2.5c0-2.33-4.67-3.5-7-3.5z"/>
+                            </svg>
+                            Team: {crewNames.join(', ')}
                           </span>
                         )}
                       </div>

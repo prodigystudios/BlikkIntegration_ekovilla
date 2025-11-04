@@ -2414,7 +2414,26 @@ export default function PlanneringPage() {
         const { error } = await supabase.from('planning_segment_team_members').insert(rows).select('segment_id');
         if (error) console.warn('[planning] insert crew error', error);
       }
-      setSegmentCrew(prev => ({ ...prev, [segmentId]: (crewListDraft || []).filter(m => (m.name || '').trim().length > 0) }));
+      setSegmentCrew(prev => {
+        const cleaned = (crewListDraft || []).filter(m => (m.name || '').trim().length > 0);
+        const seenIds = new Set<string>();
+        const seenNames = new Set<string>();
+        const uniq: Array<{ id: string | null; name: string }> = [];
+        for (const m of cleaned) {
+          const id = m.id || null;
+          const nm = (m.name || '').trim();
+          const keyName = nm.toLowerCase();
+          if (id) {
+            if (seenIds.has(id)) continue;
+            seenIds.add(id);
+          } else {
+            if (seenNames.has(keyName)) continue;
+            seenNames.add(keyName);
+          }
+          uniq.push({ id, name: nm });
+        }
+        return { ...prev, [segmentId]: uniq };
+      });
     } catch (e) {
       console.warn('[planning] persistSegmentCrew exception', e);
     }
@@ -2485,7 +2504,30 @@ export default function PlanneringPage() {
         }
       } catch { /* ignore */ }
     } else if (segmentId) {
-      applyScheduledSegments(prev => prev.map(s => s.id === segmentId ? ({ ...s, startDay, endDay, depotId: depotId ?? null, truck: truck ?? null }) : s));
+      // Update segment and optionally reorder within same truck/day
+      applyScheduledSegments(prev => {
+        const next = prev.map(s => s.id === segmentId ? ({ ...s, startDay, endDay, depotId: depotId ?? null, truck: truck ?? null }) : s);
+        if (truck && segEditor.positionIndex && segEditor.positionIndex > 0) {
+          // Build list of start-day items for same group in visual order (after applying edits)
+          const group = next
+            .filter(s => s.startDay === startDay && (((s as any).truck ?? (scheduleMeta[s.projectId]?.truck || null)) === truck))
+            .sort((a, b) => ((a.sortIndex ?? 1e9) - (b.sortIndex ?? 1e9)) || a.id.localeCompare(b.id));
+          const ids = group.map(g => g.id);
+          const from = ids.indexOf(segmentId);
+          const to = Math.max(0, Math.min(Math.max(ids.length - 1, 0), segEditor.positionIndex - 1));
+          if (from !== to) {
+            if (from >= 0) {
+              const [moved] = ids.splice(from, 1);
+              ids.splice(to, 0, moved);
+            } else {
+              // If not found (e.g., changed truck), insert at target
+              ids.splice(to, 0, segmentId);
+            }
+            setSequentialSortForSegments(ids);
+          }
+        }
+        return next;
+      });
       updateSegmentDepot(segmentId, depotId ?? null);
       // Persist segment-level truck
       setTimeout(() => {
@@ -2650,11 +2692,14 @@ export default function PlanneringPage() {
                         {trucks.map(t => <option key={t} value={t}>{t}</option>)}
                       </select>
                     </label>
-                    {segEditor.mode === 'create' && segEditor.truck && (() => {
+                    {segEditor.truck && (() => {
                       const sameDay = itemsByDay.get(segEditor.startDay) || [];
                       const sameTruck = sameDay.filter(x => x.truck === segEditor.truck && x.spanStart);
-                      const maxPos = Math.max(0, sameTruck.length) + 1; // include new
-                      const val = segEditor.positionIndex ?? maxPos;
+                      const currentIdx = segEditor.mode === 'edit' && segEditor.segmentId ? sameTruck.findIndex((x: any) => x.segmentId === segEditor.segmentId) : -1;
+                      const maxPos = segEditor.mode === 'create'
+                        ? (Math.max(0, sameTruck.length) + 1) // include the new one
+                        : (currentIdx >= 0 ? Math.max(1, sameTruck.length) : Math.max(0, sameTruck.length) + 1);
+                      const val = segEditor.positionIndex ?? (currentIdx >= 0 ? (currentIdx + 1) : maxPos);
                       return (
                         <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
                           <span>Placering (i lastbilsordning)</span>
@@ -2709,7 +2754,14 @@ export default function PlanneringPage() {
                           const name = (segCrewInput || '').trim();
                           if (!name) return;
                           const match = crewList.find(c => c.name.toLowerCase() === name.toLowerCase()) || null;
-                          setSegEditor(ed => ed ? ({ ...ed, crew: [ ...(ed.crew || []), { id: match ? match.id : null, name } ] }) : ed);
+                          setSegEditor(ed => {
+                            if (!ed) return ed;
+                            const curr = ed.crew || [];
+                            const lower = name.toLowerCase();
+                            if (match?.id && curr.some(m => m.id === match.id)) return { ...ed, crew: curr };
+                            if (!match?.id && curr.some(m => (m.name || '').toLowerCase() === lower)) return { ...ed, crew: curr };
+                            return { ...ed, crew: [ ...curr, { id: match ? match.id : null, name } ] };
+                          });
                           setSegCrewInput('');
                         }} style={{ fontSize: 12, padding: '6px 10px', border: '1px solid #cbd5e1', background: '#fff', borderRadius: 8 }}>Lägg till</button>
                       </div>
