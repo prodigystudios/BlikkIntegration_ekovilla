@@ -108,12 +108,75 @@ function normalizeProject(p: any): Project {
 
 // date helpers moved to ./_lib/date
 
+function RefreshIcon({ size = 16, title = 'Uppdatera' }: { size?: number; title?: string }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden={true}
+      focusable={false}
+    >
+      <title>{title}</title>
+      {/* Curved arrow around the circle */}
+      <path d="M21 12a9 9 0 1 1-6.364-8.485" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+      {/* Arrow head at the top-right */}
+      <path d="M19 4h4v4" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function SpinnerIcon({ size = 16, title = 'Laddar' }: { size?: number; title?: string }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden={true}
+      focusable={false}
+    >
+      <title>{title}</title>
+      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" strokeOpacity="0.25" fill="none" />
+      <path d="M21 12a9 9 0 00-9-9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" fill="none">
+        <animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="0.9s" repeatCount="indefinite" />
+      </path>
+    </svg>
+  );
+}
+
 export default function PlanneringPage() {
   // Loading/data
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [source, setSource] = useState<string | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
+  // Lightweight refresh for initial projects list (for the backlog panel)
+  const [projectsRefreshLoading, setProjectsRefreshLoading] = useState(false);
+  const refreshInitialProjects = useCallback(async (limit: number = 10) => {
+    if (projectsRefreshLoading) return;
+    setProjectsRefreshLoading(true);
+    try {
+      const res = await fetch(`/api/blikk/projects?limit=${encodeURIComponent(String(limit))}`);
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || 'Fel vid hämtning');
+      const normalized: Project[] = (j.projects || []).map(normalizeProject);
+      const top = normalized.slice(0, limit);
+      setProjects(prev => {
+        const map = new Map<string, Project>(prev.map(p => [p.id, p] as const));
+        for (const p of top) map.set(p.id, p);
+        return Array.from(map.values());
+      });
+      setSource(j.source || source);
+    } catch (e: any) {
+      console.warn('[projects] refresh failed', e?.message || e);
+    } finally {
+      setProjectsRefreshLoading(false);
+    }
+  }, [projectsRefreshLoading, source]);
   // Segments allow non-contiguous scheduling of same project
   const [scheduledSegments, setScheduledSegments] = useState<ScheduledSegment[]>([]);
   // Per project scheduling metadata (shared across its segments)
@@ -1507,11 +1570,30 @@ export default function PlanneringPage() {
       const ok = window.confirm('Ta bort denna leverans?');
       if (!ok) return;
     }
+    // Optimistic removal so UI updates immediately
+    setDeliveries(prev => prev.filter(d => d.id !== id));
+    setEditingDeliveries(prev => { const c = { ...prev }; delete c[id]; return c; });
     try {
       const { error } = await supabase.from('planning_depot_deliveries').delete().eq('id', id);
-      if (error) console.warn('[deliveries] delete error', error);
+      if (error) {
+        console.warn('[deliveries] delete error', error);
+        // Reconcile by refetching on error
+        try {
+          const { data: delRows } = await supabase.from('planning_depot_deliveries').select('*').order('delivery_date');
+          if (Array.isArray(delRows)) setDeliveries(delRows as any);
+        } catch (e) {
+          console.warn('[deliveries] refetch after delete error', e);
+        }
+      }
     } catch (err) {
       console.warn('[deliveries] delete exception', err);
+      // Reconcile by refetching on exception
+      try {
+        const { data: delRows } = await supabase.from('planning_depot_deliveries').select('*').order('delivery_date');
+        if (Array.isArray(delRows)) setDeliveries(delRows as any);
+      } catch (e) {
+        console.warn('[deliveries] refetch after exception error', e);
+      }
     }
   }, [supabase]);
 
@@ -3252,7 +3334,19 @@ export default function PlanneringPage() {
             )}
 
             <div style={{ display: 'grid', gap: 8 }}>
-              <h2 style={{ fontSize: 15, margin: 0 }}>Projekt</h2>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <h2 style={{ fontSize: 15, margin: 0 }}>Projekt</h2>
+                <button className="btn--sm btn--primary" onClick={() => refreshInitialProjects(10)} disabled={projectsRefreshLoading} title="Uppdatera projekt">
+                  {projectsRefreshLoading ? (
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                      <SpinnerIcon size={14} />
+                      Uppdaterar…
+                    </span>
+                  ) : (
+                    <RefreshIcon size={16} />
+                  )}
+                </button>
+              </div>
               {loading && <div style={{ fontSize: 12 }}>Laddar projekt…</div>}
               {!loading && backlog.length === 0 && <div style={{ fontSize: 12, color: '#64748b' }}>Inga fler oschemalagda.</div>}
               {filteredBacklog.map(p => {
