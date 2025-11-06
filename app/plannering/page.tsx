@@ -195,7 +195,25 @@ export default function PlanneringPage() {
   // Week selection (ISO week key: YYYY-Www). Empty = all weeks
   const [selectedWeekKey, setSelectedWeekKey] = useState<string>('');
   const [draggingId, setDraggingId] = useState<string | null>(null);
-  const [truckFilter, setTruckFilter] = useState<string>('');
+  // Multi-truck filter (replaces previous single truckFilter). Values are truck names; special token 'UNASSIGNED' for items without a truck.
+  const [truckFilters, setTruckFilters] = useState<string[]>([]);
+  const [truckFilterOpen, setTruckFilterOpen] = useState(false);
+  const truckFilterRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    function onDocClick(e: MouseEvent) {
+      if (!truckFilterOpen) return;
+      if (truckFilterRef.current && !truckFilterRef.current.contains(e.target as Node)) {
+        setTruckFilterOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [truckFilterOpen]);
+  const toggleTruck = (val: string) => {
+    setTruckFilters(prev => prev.includes(val) ? prev.filter(v => v !== val) : [...prev, val]);
+  };
+  const allSelected = truckFilters.length === 0; // interpret empty as all
+  const summaryLabel = allSelected ? 'Alla' : truckFilters.length === 1 ? (truckFilters[0] === 'UNASSIGNED' ? 'Ingen lastbil' : truckFilters[0]) : `${truckFilters.length} valda`;
   // Hover/expand UI state for truck cards
   const [hoveredTruck, setHoveredTruck] = useState<string | null>(null);
   const [expandedTrucks, setExpandedTrucks] = useState<Record<string, boolean>>({});
@@ -1533,8 +1551,17 @@ export default function PlanneringPage() {
     const payload: any = { depot_id: depotId, material_kind: materialKind, amount: amountNum, delivery_date: date };
     if (currentUserId) payload.created_by = currentUserId;
     try {
-      const { error } = await supabase.from('planning_depot_deliveries').insert(payload).select('id').single();
+      const { data: inserted, error } = await supabase
+        .from('planning_depot_deliveries')
+        .insert(payload)
+        .select('id')
+        .single();
       if (error) { console.warn('[deliveries] create error', error); setSavingDelivery('error'); return; }
+      // Optimistically add to local state so it appears immediately; realtime will reconcile if needed
+      if (inserted && inserted.id) {
+        const newRow = { id: inserted.id as string, depot_id: depotId, material_kind: materialKind, amount: amountNum, delivery_date: date, created_by: currentUserId || null, created_at: new Date().toISOString() } as any;
+        setDeliveries(prev => prev.some(d => d.id === newRow.id) ? prev : [...prev, newRow]);
+      }
       setSavingDelivery('saved');
       setNewDelivery({ depotId: '', materialKind: 'Ekovilla', amount: '', date: '' });
       setTimeout(() => setSavingDelivery('idle'), 1200);
@@ -2070,6 +2097,7 @@ export default function PlanneringPage() {
   }
   const itemsByDay = useMemo(() => {
     const map = new Map<string, DayInstance[]>();
+    // Scheduled job segments → day instances
     for (const seg of scheduledSegments) {
       const project = projects.find(p => p.id === seg.projectId);
       if (!project) continue;
@@ -2089,8 +2117,45 @@ export default function PlanneringPage() {
         map.set(day, list);
       }
     }
+    // Planned depot deliveries → simple 1-day info cards
+    for (const del of deliveries) {
+      if (!del.delivery_date) continue;
+      const day = del.delivery_date;
+      const depotName = depots.find(d => d.id === del.depot_id)?.name || 'Okänd depå';
+      const project: Project = {
+        id: `delivery:${del.id}`,
+        name: `Leverans: ${del.material_kind}`,
+        orderNumber: null,
+        customer: depotName,
+        customerId: null,
+        customerEmail: null,
+        createdAt: del.created_at || new Date().toISOString(),
+        status: 'delivery',
+        salesResponsible: null,
+        isManual: true,
+      };
+      const inst: any = {
+        segmentId: `delivery:${del.id}`,
+        project,
+        day,
+        spanStart: true,
+        spanEnd: true,
+        spanMiddle: false,
+        totalSpan: 1,
+        truck: null,
+        isDelivery: true,
+        deliveryAmount: del.amount,
+        deliveryMaterial: del.material_kind,
+        deliveryDepotName: depotName,
+        // Soft brand color for deliveries (green)
+        color: '#22c55e',
+      };
+      const list = map.get(day) || [];
+      list.push(inst as DayInstance);
+      map.set(day, list);
+    }
     return map;
-  }, [scheduledSegments, scheduleMeta, projects]);
+  }, [scheduledSegments, scheduleMeta, projects, deliveries, depots]);
 
   function rowCreatorLabel(segmentId: string) {
     const seg = scheduledSegments.find(s => s.id === segmentId);
@@ -3609,14 +3674,45 @@ export default function PlanneringPage() {
               </select>
               {selectedWeekKey && <button type="button" className="btn--plain btn--xs" style={{ fontSize: 11 }} onClick={() => setSelectedWeekKey('')}>Rensa</button>}
             </div>
-            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-              <label style={{ fontSize: 12, color: '#374151', display: 'inline-block', width: 'auto' }}>Lastbil:</label>
-              <select value={truckFilter} onChange={e => setTruckFilter(e.target.value)} style={{ width: 170, fontSize: 12, padding: '4px 6px', border: '1px solid #d1d5db', borderRadius: 6, background: '#fff' }}>
-                <option value="">Alla</option>
-                <option value="UNASSIGNED">(Ingen vald)</option>
-                {trucks.map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
-              {truckFilter && <button type="button" className="btn--plain btn--xs" style={{ fontSize: 11 }} onClick={() => setTruckFilter('')}>Rensa</button>}
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center', position: 'relative' }} ref={truckFilterRef}>
+              <label style={{ fontSize: 12, color: '#374151' }}>Lastbil(er):</label>
+              <button type="button" onClick={() => setTruckFilterOpen(o => !o)} aria-haspopup="true" aria-expanded={truckFilterOpen}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, padding: '4px 6px', border: '1px solid #d1d5db', borderRadius: 6, background: '#fff', cursor: 'pointer', minWidth: 200 }}>
+                {(!allSelected && truckFilters.length === 1) && (() => { const t = truckFilters[0]; const swc = t === 'UNASSIGNED' ? '#94a3b8' : (truckColors[t]?.border || '#94a3b8'); const sw: React.CSSProperties = { width: 12, height: 12, borderRadius: 4, border: `2px solid ${swc}`, background: '#fff' }; return <span aria-hidden style={sw} />; })()}
+                <span style={{ fontWeight: 600, color: '#111827' }}>{summaryLabel}</span>
+                <span style={{ fontSize: 10, color: '#64748b' }}>{truckFilterOpen ? '▲' : '▼'}</span>
+              </button>
+              {truckFilters.length > 0 && (
+                <button type="button" className="btn--plain btn--xs" onClick={() => setTruckFilters([])} style={{ fontSize: 11 }}>Rensa</button>
+              )}
+              {truckFilterOpen && (
+                <div role="menu" aria-label="Välj lastbilar" style={{ position: 'absolute', top: '100%', left: 0, marginTop: 6, zIndex: 50, minWidth: 240, background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 10, boxShadow: '0 6px 16px rgba(0,0,0,0.18)', padding: 8, display: 'grid', gap: 6 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #f1f5f9', paddingBottom: 4 }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: '#0f172a' }}>Filtrera lastbilar</span>
+                    <button type="button" className="btn--plain btn--xs" onClick={() => setTruckFilterOpen(false)} style={{ fontSize: 10 }}>Stäng</button>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 240, overflowY: 'auto' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer' }}>
+                      <input type="checkbox" checked={truckFilters.includes('UNASSIGNED')} onChange={() => toggleTruck('UNASSIGNED')} />
+                      {(() => { const sw: React.CSSProperties = { width: 12, height: 12, borderRadius: 4, border: '2px solid #94a3b8', background: '#fff' }; return <span aria-hidden style={sw} />; })()}
+                      <span style={{ flex: 1 }}>(Ingen lastbil)</span>
+                      {truckFilters.includes('UNASSIGNED') && <span style={{ fontSize: 10, color: '#047857' }}>✓</span>}
+                    </label>
+                    {trucks.map(t => (
+                      <label key={t} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer' }}>
+                        <input type="checkbox" checked={truckFilters.includes(t)} onChange={() => toggleTruck(t)} />
+                        {(() => { const swc = truckColors[t]?.border || '#94a3b8'; const sw: React.CSSProperties = { width: 12, height: 12, borderRadius: 4, border: `2px solid ${swc}`, background: '#fff' }; return <span aria-hidden style={sw} />; })()}
+                        <span style={{ flex: 1 }}>{t}</span>
+                        {truckFilters.includes(t) && <span style={{ fontSize: 10, color: '#047857' }}>✓</span>}
+                      </label>
+                    ))}
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', paddingTop: 4, borderTop: '1px solid #f1f5f9' }}>
+                    <button type="button" className="btn--plain btn--xs" onClick={() => setTruckFilters([])} style={{ fontSize: 11, background: '#f1f5f9', border: '1px solid #e2e8f0', borderRadius: 6, padding: '4px 8px' }}>Alla</button>
+                    <button type="button" className="btn--plain btn--xs" onClick={() => setTruckFilterOpen(false)} style={{ fontSize: 11, background: '#ecfdf5', border: '1px solid #6ee7b7', color: '#047857', borderRadius: 6, padding: '4px 8px' }}>Klar</button>
+                  </div>
+                </div>
+              )}
             </div>
             <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
               <label style={{ fontSize: 12, color: '#374151', display: 'inline-block', width: 'auto' }}>Sälj:</label>
@@ -3901,7 +3997,7 @@ export default function PlanneringPage() {
               trucks={trucks}
               truckColors={truckColors}
               calendarSearch={calendarSearch}
-              truckFilter={truckFilter}
+              truckFilters={truckFilters}
               salesFilter={salesFilter}
               jumpTargetDay={jumpTargetDay}
               todayISO={todayISO}
@@ -3935,7 +4031,7 @@ export default function PlanneringPage() {
               trucks={trucks}
               truckColors={truckColors}
               calendarSearch={calendarSearch}
-              truckFilter={truckFilter}
+              truckFilters={truckFilters}
               salesFilter={salesFilter}
               jumpTargetDay={jumpTargetDay}
               todayISO={todayISO}
@@ -3970,7 +4066,7 @@ export default function PlanneringPage() {
               trucks={trucks}
               truckColors={truckColors}
               calendarSearch={calendarSearch}
-              truckFilter={truckFilter}
+              truckFilters={truckFilters}
               salesFilter={salesFilter}
               todayISO={todayISO}
               selectedWeekKey={selectedWeekKey}

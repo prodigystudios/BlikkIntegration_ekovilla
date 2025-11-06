@@ -12,7 +12,7 @@ export interface CalendarDayListProps {
   trucks: string[];
   truckColors: Record<string, TruckDisplay>;
   calendarSearch: string;
-  truckFilter: string;
+  truckFilters: string[];
   salesFilter: string;
   todayISO: string;
   selectedWeekKey: string;
@@ -47,7 +47,7 @@ export default function CalendarDayList(props: CalendarDayListProps) {
     trucks,
     truckColors,
     calendarSearch,
-    truckFilter,
+  truckFilters,
     salesFilter,
     todayISO,
     selectedWeekKey,
@@ -89,9 +89,10 @@ export default function CalendarDayList(props: CalendarDayListProps) {
           if (!day) return false;
           const raw = itemsByDay.get(day) || [];
           const filtered = raw.filter((it: any) => {
-            if (truckFilter) {
-              if (truckFilter === 'UNASSIGNED') { if (it.truck) return false; }
-              else if (it.truck !== truckFilter) return false;
+            if (Array.isArray(truckFilters) && truckFilters.length > 0) {
+              const includeUnassigned = truckFilters.includes('UNASSIGNED');
+              const inSelected = it.truck ? truckFilters.includes(it.truck) : includeUnassigned;
+              if (!inSelected) return false;
             }
             if (salesFilter) {
               if (salesFilter === '__NONE__') { if (it.project.salesResponsible) return false; }
@@ -113,9 +114,10 @@ export default function CalendarDayList(props: CalendarDayListProps) {
         for (const day of weekDays) {
           const raw = itemsByDay.get(day) || [];
           const filtered = raw.filter((it: any) => {
-            if (truckFilter) {
-              if (truckFilter === 'UNASSIGNED') { if (it.truck) return false; }
-              else if (it.truck !== truckFilter) return false;
+            if (Array.isArray(truckFilters) && truckFilters.length > 0) {
+              const includeUnassigned = truckFilters.includes('UNASSIGNED');
+              const inSelected = it.truck ? truckFilters.includes(it.truck) : includeUnassigned;
+              if (!inSelected) return false;
             }
             if (salesFilter) {
               if (salesFilter === '__NONE__') { if (it.project.salesResponsible) return false; }
@@ -129,7 +131,15 @@ export default function CalendarDayList(props: CalendarDayListProps) {
           });
           if (filtered.some((it: any) => !it.truck)) { hasUnassigned = true; break; }
         }
-        const rows = [...trucks, ...(hasUnassigned ? ['__UNASSIGNED__'] : [])];
+        // Build visible rows (trucks + optional unassigned) applying multi-select filters when present
+        let rows = [...trucks, ...(hasUnassigned ? ['__UNASSIGNED__'] : [])];
+        if (Array.isArray(truckFilters) && truckFilters.length > 0) {
+          const filterSet = new Set(truckFilters);
+            rows = [
+              ...trucks.filter(t => filterSet.has(t)),
+              ...(filterSet.has('UNASSIGNED') && hasUnassigned ? ['__UNASSIGNED__'] : [])
+            ];
+        }
         const weekNum = firstDay ? isoWeekNumber(firstDay) : '';
         const weekContainsToday = week.some(c => c.date === todayISO);
         return (
@@ -171,9 +181,10 @@ export default function CalendarDayList(props: CalendarDayListProps) {
                         const list = raw.filter((it: any) => {
                           const matchTruck = rowKey === '__UNASSIGNED__' ? !it.truck : it.truck === rowKey;
                           if (!matchTruck) return false;
-                          if (truckFilter) {
-                            if (truckFilter === 'UNASSIGNED') { if (it.truck) return false; }
-                            else if (it.truck !== truckFilter) return false;
+                          if (Array.isArray(truckFilters) && truckFilters.length > 0) {
+                            const includeUnassigned = truckFilters.includes('UNASSIGNED');
+                            const inSelected = it.truck ? truckFilters.includes(it.truck) : includeUnassigned;
+                            if (!inSelected) return false;
                           }
                           if (salesFilter) {
                             if (salesFilter === '__NONE__') { if (it.project.salesResponsible) return false; }
@@ -201,13 +212,14 @@ export default function CalendarDayList(props: CalendarDayListProps) {
                   {visibleIndices.map((weekdayIdx, vi) => {
                     const day = week[weekdayIdx]?.date || null;
                     const raw = day ? (itemsByDay.get(day) || []) : [];
-                    const list = raw
+                        const list = raw
                       .filter((it: any) => {
                         const matchTruck = rowKey === '__UNASSIGNED__' ? !it.truck : it.truck === rowKey;
                         if (!matchTruck) return false;
-                        if (truckFilter) {
-                          if (truckFilter === 'UNASSIGNED') { if (it.truck) return false; }
-                          else if (it.truck !== truckFilter) return false;
+                        if (Array.isArray(truckFilters) && truckFilters.length > 0) {
+                          const includeUnassigned = truckFilters.includes('UNASSIGNED');
+                          const inSelected = it.truck ? truckFilters.includes(it.truck) : includeUnassigned;
+                          if (!inSelected) return false;
                         }
                         if (salesFilter) {
                           if (salesFilter === '__NONE__') { if (it.project.salesResponsible) return false; }
@@ -220,6 +232,8 @@ export default function CalendarDayList(props: CalendarDayListProps) {
                         return true;
                       })
                       .sort((a: any, b: any) => {
+                        if (!!a.isDelivery && !b.isDelivery) return -1;
+                        if (!!b.isDelivery && !a.isDelivery) return 1;
                         const sa = scheduledSegments.find(s => s.id === a.segmentId)?.sortIndex ?? null;
                         const sb = scheduledSegments.find(s => s.id === b.segmentId)?.sortIndex ?? null;
                         if (sa != null && sb != null && sa !== sb) return sa - sb;
@@ -262,15 +276,16 @@ export default function CalendarDayList(props: CalendarDayListProps) {
                           } else {
                             display = { bg: '#fee2e2', border: '#fca5a5', text: '#7f1d1d' };
                           }
-                          const cardBorder = display ? display.border : '#c7d2fe';
-                          const cardBg = display ? display.bg : '#eef2ff';
+                          const isDelivery = !!it.isDelivery;
+                          const cardBorder = isDelivery ? '#1d201eff' : (display ? display.border : '#c7d2fe');
+                          const cardBg = isDelivery ? '#00b386ff' : (display ? display.bg : '#eef2ff');
                           const highlight = calendarSearch && (it.project.name.toLowerCase().includes(searchVal) || (it.project.orderNumber || '').toLowerCase().includes(searchVal));
                           const isMid = (it as any).spanMiddle;
                           const isStart = (it as any).spanStart;
                           return (
                             <div
-                              key={`${it.segmentId}:${it.day}`}
-                              draggable
+                              key={`${(it.segmentId || it.id || (it.project && it.project.id) || 'x')}:${it.day}`}
+                              draggable={!isDelivery}
                               onDragStart={e => onDragStart(e, it.segmentId)}
                               onDragEnd={onDragEnd}
                               onDoubleClick={() => openSegmentEditorForExisting(it.segmentId)}
@@ -285,7 +300,7 @@ export default function CalendarDayList(props: CalendarDayListProps) {
                                 padding: 5,
                                 fontSize: 10,
                                 lineHeight: 1.15,
-                                cursor: 'grab',
+                                cursor: isDelivery ? 'default' : 'grab',
                                 display: 'grid',
                                 gap: 4,
                                 opacity: isMid ? 0.95 : 1,
@@ -295,26 +310,36 @@ export default function CalendarDayList(props: CalendarDayListProps) {
                                 transition: 'border-color .15s, box-shadow .15s'
                               }}
                             >
-                              {hoveredSegmentId === it.segmentId && !highlight && (
+                              {hoveredSegmentId === it.segmentId && !highlight && !isDelivery && (
                                 <span style={{ position: 'absolute', top: -8, right: 4, background: '#6366f1', color: '#fff', fontSize: 9, padding: '2px 6px', borderRadius: 8, boxShadow: '0 2px 4px rgba(0,0,0,0.15)' }}>Redigera</span>
                               )}
-                              <span style={{ fontWeight: 600, color: display ? display.text : '#312e81', display: 'flex', alignItems: 'center', columnGap: 6, rowGap: 2, flexWrap: 'wrap' }}>
+                              <span style={{ fontWeight: 600, color: isDelivery ? '#18065fff' : (display ? display.text : '#312e81'), display: 'flex', alignItems: 'center', columnGap: 6, rowGap: 2, flexWrap: 'wrap' }}>
                                 {it.project.orderNumber ? (
                                   <span style={{ fontFamily: 'ui-monospace, monospace', background: '#ffffff', color: display ? display.text : '#312e81', border: `1px solid ${cardBorder}`, padding: '1px 4px', borderRadius: 4, whiteSpace: 'nowrap' }} title="Ordernummer">#{it.project.orderNumber}</span>
                                 ) : null}
-                                <span title={it.project.name} style={{ color: display ? display.text : '#312e81', fontWeight: 600, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>{it.project.name}</span>
+                                <span title={it.project.name} style={{ color: isDelivery ? '#ffffffff' : (display ? display.text : '#312e81'), fontWeight: 600, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>{it.project.name}</span>
+                                {isDelivery && (
+                                  <span style={{ fontSize: 9, background: '#15803d', color: '#fff', padding: '2px 6px', borderRadius: 6, fontWeight: 600 }}>Leverans</span>
+                                )}
                               </span>
-                              {isStart && projectAddresses[it.project.id] && (
+                              {!isDelivery && isStart && projectAddresses[it.project.id] && (
                                 <span style={{ fontSize: 9, color: '#64748b' }}>
                                   {projectAddresses[it.project.id]}
                                 </span>
                               )}
-                                  {isStart && segmentCrew[it.segmentId] && segmentCrew[it.segmentId].length > 0 && (
+                              {isDelivery && (
+                                <span style={{ fontSize: 9, color: '#ffffffff' }}>
+                                  {(it.deliveryDepotName || '').trim()}
+                                  {it.deliveryDepotName && (it.deliveryAmount != null) ? ' • ' : ''}
+                                  {(it.deliveryAmount != null) ? `${it.deliveryAmount} st` : ''}
+                                </span>
+                              )}
+                                  {!isDelivery && isStart && segmentCrew[it.segmentId] && segmentCrew[it.segmentId].length > 0 && (
                                     <span style={{ fontSize: 9, color: display ? display.text : '#334155', background: '#ffffff50', padding: '1px 5px', borderRadius: 10, border: `1px solid ${cardBorder}55` }} title={`Team: ${segmentCrew[it.segmentId].map(m => m.name).join(', ')}`}>
                                       Team: {segmentCrew[it.segmentId].map(m => m.name).join(', ')}
                                     </span>
                                   )}
-                              {(it.bagCount != null || it.jobType) && (
+                              {!isDelivery && (it.bagCount != null || it.jobType) && (
                                 <span style={{ fontSize: 11, color: display ? display.text : '#374151' }}>
                                   {it.bagCount != null ? `${it.bagCount} säckar` : ''}
                                   {it.bagCount != null && it.jobType ? ' • ' : ''}
@@ -323,28 +348,30 @@ export default function CalendarDayList(props: CalendarDayListProps) {
                                   ) : ''}
                                 </span>
                               )}
-                              {isStart && scheduleMeta[it.project.id]?.actual_bags_used != null && (
+                              {!isDelivery && isStart && scheduleMeta[it.project.id]?.actual_bags_used != null && (
                                 <span style={{ fontSize: 9, color: display ? display.text : '#1e293b', background: '#ffffff50', padding: '2px 5px', borderRadius: 10, border: `1px solid ${cardBorder}55` }} title={`Rapporterat: ${scheduleMeta[it.project.id]?.actual_bags_used} säckar`}>
                                   säckar blåsta {scheduleMeta[it.project.id]!.actual_bags_used} st
                                 </span>
                               )}
-                              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 4 }}>
-                                <button
-                                  type="button"
-                                  onClick={(e) => { e.stopPropagation(); setSelectedProjectId(it.project.id); }}
-                                  className="btn--plain btn--xs"
-                                  title="Lägg till ny separat dag"
-                                  style={{ fontSize: 9, background: '#ecfdf5', border: '1px solid #6ee7b7', color: '#047857', borderRadius: 4, padding: '1px 4px', textTransform: 'none' }}
-                                >
-                                  Lägg till dag
-                                </button>
-                              </div>
-                              {isStart && rowCreatorLabel(it.segmentId) && (
+                              {!isDelivery && (
+                                <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 4 }}>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => { e.stopPropagation(); setSelectedProjectId(it.project.id); }}
+                                    className="btn--plain btn--xs"
+                                    title="Lägg till ny separat dag"
+                                    style={{ fontSize: 9, background: '#ecfdf5', border: '1px solid #6ee7b7', color: '#047857', borderRadius: 4, padding: '1px 4px', textTransform: 'none' }}
+                                  >
+                                    Lägg till dag
+                                  </button>
+                                </div>
+                              )}
+                              {!isDelivery && isStart && rowCreatorLabel(it.segmentId) && (
                                 <span style={{ position: 'absolute', top: -6, left: -6, zIndex: 3 }}>
                                   {renderCreatorAvatar(it.segmentId)}
                                 </span>
                               )}
-                              {isStart && hasEgenkontroll(it.project.orderNumber) && (
+                              {!isDelivery && isStart && hasEgenkontroll(it.project.orderNumber) && (
                                 <span
                                   aria-label="Egenkontroll rapporterad"
                                   title="Egenkontroll rapporterad"
