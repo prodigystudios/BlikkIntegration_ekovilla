@@ -129,6 +129,7 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
   }, [role]);
   const [mini, setMini] = useState(false);
   const [timeModalOpen, setTimeModalOpen] = useState(false);
+  const [timePrefill, setTimePrefill] = useState<{ project?: string; projectId?: string; date?: string } | null>(null);
   // Persist mini preference in localStorage
   useEffect(() => {
     try {
@@ -173,7 +174,7 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
         <header style={{ display: 'flex', alignItems: isSmall ? 'flex-end' : 'center', gap: 12, justifyContent:'space-between', flexWrap:'wrap' }}>
           <h1 style={{ margin: 0, fontSize: isSmall ? (isXS ? 22 : 24) : 30, letterSpacing: -0.5 }}>Översikt</h1>
           <div style={{ display:'flex', gap:10, flexWrap:'wrap' }}>
-            <button type="button" onClick={()=>setTimeModalOpen(true)}
+            <button type="button" onClick={()=>{ setTimePrefill(null); setTimeModalOpen(true); }}
               style={{ display:'inline-flex', alignItems:'center', gap:8, fontSize:12, fontWeight:600, padding:'10px 14px', border:'1px solid #16a34a', background:'#16a34a', color:'#fff', borderRadius:10, boxShadow:'0 2px 4px rgba(16,185,129,0.35)', cursor:'pointer' }}
             >
               <span aria-hidden style={{ display:'inline-flex' }}>
@@ -246,11 +247,19 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
         {/* Admin-only: Work schedule for current/next week */}
         {role !== 'sales' && (
           <div style={{ order: isSmall ? -2 as any : 0 }}>
-            <DashboardSchedule compact={isSmall || mini} />
+            <DashboardSchedule compact={isSmall || mini} onReportTime={(info: { projectId?: string; projectName?: string; orderNumber?: string; day?: string }) => {
+              const label = info.orderNumber ? `#${info.orderNumber}` : (info.projectName || info.projectId || '');
+              setTimePrefill({ project: label, projectId: info.projectId, date: info.day });
+              setTimeModalOpen(true);
+            }} />
           </div>
         )}
       </div>
-      <TimeReportModal open={timeModalOpen} onClose={()=>setTimeModalOpen(false)} onSubmit={async (payload)=>{
+      <TimeReportModal open={timeModalOpen} onClose={()=>setTimeModalOpen(false)}
+        initialProject={timePrefill?.project || null}
+        initialProjectId={timePrefill?.projectId || null}
+        initialDate={timePrefill?.date || null}
+        onSubmit={async (payload)=>{
         try {
           const minutes = Math.round(payload.totalHours * 60);
           const body = {

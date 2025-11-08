@@ -15,7 +15,7 @@ function startOfISOWeek(d: Date) {
 function addDays(d: Date, n: number) { const x = new Date(d); x.setDate(x.getDate() + n); return x; }
 function toISODateLocal(d: Date) { const y = d.getFullYear(); const m = String(d.getMonth()+1).padStart(2,'0'); const dd = String(d.getDate()).padStart(2,'0'); return `${y}-${m}-${dd}`; }
 
-export default function DashboardSchedule({ compact = false }: { compact?: boolean }) {
+export default function DashboardSchedule({ compact = false, onReportTime }: { compact?: boolean; onReportTime?: (info: { projectId?: string; projectName?: string; orderNumber?: string; day?: string }) => void }) {
   const supabase = createClientComponentClient();
   const [mode, setMode] = useState<WeekMode>('current');
   const [items, setItems] = useState<any[]>([]);
@@ -477,6 +477,17 @@ export default function DashboardSchedule({ compact = false }: { compact?: boole
                         <svg width={16} height={16} viewBox="0 0 24 24" aria-hidden="true" focusable="false" style={{ color:'#94a3b8' }}>
                           <path fill="currentColor" d="M9 18l6-6-6-6" />
                         </svg>
+                        {onReportTime && (
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); onReportTime({ projectId: String(it.project_id || ''), projectName: it.project_name, orderNumber: it.order_number ? String(it.order_number) : undefined, day: (it.job_day || it.start_day) ? String(it.job_day || it.start_day) : undefined }); }}
+                            style={{ fontSize: compact ? 10 : 11, padding: compact ? '4px 6px' : '6px 8px', border:'1px solid #16a34a', background:'#16a34a', color:'#fff', borderRadius:6, display:'inline-flex', alignItems:'center', gap:4 }}
+                            aria-label="Rapportera tid för detta jobb"
+                          >
+                            <svg width={12} height={12} viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" fill="none"><path d="M12 5v14M5 12h14" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                            Tid
+                          </button>
+                        )}
                       </div>
                       <div style={{ display:'flex', gap:6, flexWrap:'wrap', marginTop: compact ? 6 : 8 }}>
                         {bagLabel && (
@@ -567,6 +578,13 @@ export default function DashboardSchedule({ compact = false }: { compact?: boole
                       className="btn--plain btn--sm"
                       style={{ background:'#dcfce7', border:'1px solid #86efac', color:'#166534', borderRadius:6, padding:'6px 10px', fontSize:12 }}
                     >Starta egenkontroll</a>
+                  )}
+                  {onReportTime && (
+                    <button
+                      onClick={() => onReportTime({ projectId: String(detailBase?.project_id || ''), projectName: detailBase?.project_name, orderNumber: detailBase?.order_number ? String(detailBase.order_number) : undefined, day: (detailBase?.job_day || detailBase?.start_day) ? String(detailBase?.job_day || detailBase?.start_day) : undefined })}
+                      className="btn--plain btn--sm"
+                      style={{ background:'#16a34a', border:'1px solid #16a34a', color:'#fff', borderRadius:6, padding:'6px 10px', fontSize:12 }}
+                    >Rapportera tid</button>
                   )}
                   <button onClick={closeDetail} className="btn--plain btn--sm" style={{ background:'#fee2e2', border:'1px solid #fca5a5', color:'#b91c1c', borderRadius:6, padding:'6px 10px', fontSize:12 }}>Stäng</button>
                 </div>

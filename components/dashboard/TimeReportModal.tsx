@@ -20,9 +20,13 @@ export interface TimeReportModalProps {
   activityCode?: string | null; // Optional human code
   activityName?: string | null; // Human name
   }) => void;
+  // Optional prefill when opening from context (e.g., a project card)
+  initialProject?: string | null;
+  initialProjectId?: string | null;
+  initialDate?: string | null; // YYYY-MM-DD
 }
 
-export default function TimeReportModal({ open, onClose, onSubmit }: TimeReportModalProps) {
+export default function TimeReportModal({ open, onClose, onSubmit, initialProject, initialProjectId, initialDate }: TimeReportModalProps) {
   const [isSmall, setIsSmall] = useState(false); // <= 640px
   const [isXS, setIsXS] = useState(false); // <= 420px
   const [date, setDate] = useState<string>('');
@@ -78,13 +82,23 @@ export default function TimeReportModal({ open, onClose, onSubmit }: TimeReportM
     try {
       const today = new Date();
       const iso = today.toISOString().slice(0, 10);
-      setDate(prev => prev || iso);
+      setDate(prev => (initialDate || prev || iso));
     } catch {}
     // Reset transient selections each time we open
     setSelectedTimecode('');
     setSelectedActivity('');
-    setSelectedProjectId(null);
-  }, [open]);
+    // Prefill project if provided (from context like My Jobs)
+    if (initialProjectId) {
+      setSelectedProjectId(String(initialProjectId));
+    } else {
+      setSelectedProjectId(null);
+    }
+    if (initialProject) {
+      setProject(String(initialProject));
+    } else {
+      setProject('');
+    }
+  }, [open, initialProject, initialProjectId, initialDate]);
 
   // Load time codes when modal opens
   useEffect(() => {
