@@ -166,8 +166,9 @@ export class BlikkClient {
     createdFrom?: string;
     sortDesc?: boolean;
   }): Promise<{ data: any; usedUrl: string; attempts: string[]; officialTried: boolean }> {
-    const page = opts?.page ?? 1;
-    const pageSize = opts?.pageSize ?? 25;
+  const page = opts?.page ?? 1;
+  // Blikk: PageSize must be between 1 and 100
+  const pageSize = Math.min(100, Math.max(1, opts?.pageSize ?? 25));
     const envPath = process.env.BLIKK_PROJECTS_PATH || null;
   const enableLegacy = process.env.BLIKK_ENABLE_LEGACY_PROJECTS === '1';
   const bases = envPath ? [envPath] : enableLegacy ? ['/v1/Core/Projects', '/v1/Projects'] : ['/v1/Core/Projects'];
@@ -197,6 +198,7 @@ export class BlikkClient {
     const pagingVariants: Array<Record<string, string>> = [
       { page: String(page), pageSize: String(pageSize) },
       { page: String(page), limit: String(pageSize) },
+      { skip: String(Math.max(0, (page - 1) * pageSize)), take: String(pageSize) },
     ];
 
     const attempts: string[] = [];
@@ -889,41 +891,49 @@ export class BlikkClient {
   }
 
   // List time reports (best-effort tolerant listing) for verification
-  async listTimeReports(opts?: { page?: number; pageSize?: number; userId?: number; projectId?: number; dateFrom?: string; dateTo?: string }) {
+  async listTimeReports(opts?: { page?: number; pageSize?: number; userId?: number; userIds?: number[]; dateFrom?: string; dateTo?: string; debug?: boolean }) {
+    // Simplified per docs: only /v1/Core/TimeReports with filter.from & filter.to (+ optional filter.userId)
     const page = opts?.page ?? 1;
-    const pageSize = opts?.pageSize ?? 25;
-    const envPath = process.env.BLIKK_TIME_REPORTS_PATH || null;
-    const bases = envPath ? [envPath] : ['/v1/Core/TimeReports'];
-    const pagingVariants: Array<Record<string, string>> = [
-      { page: String(page), pageSize: String(pageSize) },
-      { page: String(page), limit: String(pageSize) },
-    ];
-    const userKeys = ['filter.userId', 'userId'];
-    const projectKeys = ['filter.projectId', 'projectId'];
-    const fromKeys = ['filter.dateFrom', 'dateFrom', 'from'];
-    const toKeys = ['filter.dateTo', 'dateTo', 'to'];
-
-    const attempts: string[] = [];
-    let lastErr: any = null;
-    for (const base of bases) {
-      for (const paging of pagingVariants) {
-        const qs = new URLSearchParams(paging);
-        if (opts?.userId) for (const k of userKeys) qs.set(k, String(opts.userId));
-        if (opts?.projectId) for (const k of projectKeys) qs.set(k, String(opts.projectId));
-        if (opts?.dateFrom) for (const k of fromKeys) qs.set(k, opts.dateFrom);
-        if (opts?.dateTo) for (const k of toKeys) qs.set(k, opts.dateTo);
-        const url = `${base}?${qs.toString()}`;
-        attempts.push(url);
-        try {
-          return await this.request(url);
-        } catch (e: any) {
-          lastErr = e;
-          console.warn('Blikk listTimeReports attempt failed', { url, error: String(e?.message || e) });
-        }
+    const pageSize = Math.min(100, Math.max(1, opts?.pageSize ?? 25));
+    const base = process.env.BLIKK_TIME_REPORTS_PATH || '/v1/Core/TimeReports';
+    const qs = new URLSearchParams();
+    qs.set('page', String(page));
+    qs.set('pageSize', String(pageSize));
+    if (opts?.dateFrom) qs.set('filter.from', opts.dateFrom);
+    if (opts?.dateTo) qs.set('filter.to', opts.dateTo);
+    // Prefer documented array filter: filter.userIds (some tenants ignore single userId)
+    const ids: number[] = Array.isArray(opts?.userIds) && (opts!.userIds as number[]).length > 0
+      ? (opts!.userIds as number[])
+      : (Number.isFinite(opts?.userId as any) ? [Number(opts!.userId)] : []);
+    if (ids.length > 0) {
+      // Add both plain and []-array syntaxes to maximize compatibility across tenants/gateways
+      for (const id of ids) {
+        qs.append('filter.userIds', String(id));
+        qs.append('filter.userIds[]', String(id));
       }
+      // Keep legacy single filter for tenants that still honor it (harmless redundancy otherwise)
+      if (ids.length === 1) qs.set('filter.userId', String(ids[0]));
     }
-    if (lastErr) throw lastErr;
-    throw new Error('Failed to list time reports');
+    qs.set('sortOrder', 'ascending');
+    const url = `${base}?${qs.toString()}`;
+    try {
+      const res = await this.request(url);
+      if (opts?.debug) {
+        const anyRes: any = res as any;
+        const items = Array.isArray(anyRes) ? anyRes : (anyRes?.items || anyRes?.data || []);
+        return { items, raw: res, used: url, attempts: [url], method: 'GET' } as any;
+      }
+      return res;
+    } catch (e: any) {
+      if (opts?.debug) return { error: String(e?.message || e), used: url, attempts: [url], method: 'GET' } as any;
+      throw e;
+    }
+  }
+
+  // Diagnostic probe: return a matrix of attempts with method, url, body, status, size
+  async probeListTimeReports(opts?: { page?: number; pageSize?: number; userId?: number; dateFrom?: string; dateTo?: string }) {
+    const data: any = await this.listTimeReports({ ...(opts || {}), debug: true });
+    return { ok: true, attempts: data.attempts, used: data.used, method: data.method, itemsCount: Array.isArray(data.items) ? data.items.length : 0 };
   }
 
   // Minimal contact fetch by id (kept lean for current enrichment need)
@@ -1042,6 +1052,34 @@ export class BlikkClient {
     const nf = new Error('Contact not found');
     (nf as any).attempts = attempts;
     throw nf;
+  }
+
+  // Fetch a single time report by id
+  async getTimeReportById(id: number, opts?: { debug?: boolean }) {
+    if (!Number.isFinite(id)) throw new Error('Invalid time report id');
+    const envPath = process.env.BLIKK_TIME_REPORTS_PATH || null;
+    const bases = envPath ? [envPath] : [
+      '/v1/Core/TimeReports',
+      '/v1/TimeReports',
+      '/v1/Core/Projects', // some tenants expose project-scoped IDs
+      '/v1/Projects',
+    ];
+    const attempts: string[] = [];
+    let lastErr: any = null;
+    for (const base of bases) {
+      const url = `${base}/${id}`;
+      attempts.push(url);
+      try {
+        const res = await this.request(url);
+        if (opts?.debug) return { report: res, used: url, attempts } as any;
+        return res;
+      } catch (e: any) {
+        lastErr = e;
+        console.warn('Blikk getTimeReportById failed', { url, error: String(e?.message || e) });
+      }
+    }
+    if (opts?.debug) return { error: String(lastErr?.message || lastErr), attempts, used: null } as any;
+    throw lastErr || new Error('Failed to fetch time report');
   }
 }
 

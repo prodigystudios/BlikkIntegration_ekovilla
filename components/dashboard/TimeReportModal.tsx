@@ -265,7 +265,21 @@ export default function TimeReportModal({ open, onClose, onSubmit, initialProjec
     return Math.round((mins / 60) * 100) / 100;
   }, [start, end, breakMin]);
 
-  const canSubmit = date && start && end && totalHours > 0 && submitted !== 'saving';
+  const validationError = useMemo(() => {
+    const timeRx = /^([01]?\d|2[0-3]):([0-5]\d)$/;
+    if (!start || !end) return null; // don't validate until both provided
+    if (!timeRx.test(start) || !timeRx.test(end)) return 'Ogiltigt tidsformat (HH:MM).';
+    const [sh, sm] = start.split(':').map(Number);
+    const [eh, em] = end.split(':').map(Number);
+    const s = sh * 60 + sm;
+    const e = eh * 60 + em;
+    if (e <= s) return 'Sluttid måste vara efter starttid.';
+    const br = Math.max(0, parseInt(breakMin || '0', 10) || 0);
+    if (br >= (e - s)) return 'Rast kan inte vara längre än arbetstiden.';
+    return null;
+  }, [start, end, breakMin]);
+
+  const canSubmit = date && start && end && totalHours > 0 && !validationError && submitted !== 'saving';
 
   const handleSubmit = () => {
     if (!canSubmit) return;
@@ -321,7 +335,7 @@ export default function TimeReportModal({ open, onClose, onSubmit, initialProjec
           <button onClick={onClose} className="btn--plain" aria-label="Stäng" style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: isSmall ? '10px 14px' : '8px 12px', minHeight: 44, background: '#fff' }}>Stäng</button>
         </div>
         <div style={{ padding: isSmall ? 12 : 14, display: 'grid', gap: isSmall ? 10 : 12 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: isSmall ? '1fr' : 'repeat(2, minmax(160px, 1fr))', gap: isXS ? 8 : 10 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: isSmall ? '1fr' : 'repeat(2, minmax(160px, 1fr))', gap: isXS ? 8 : 10 }}>
             <label style={{ display: 'grid', gap: 4, fontSize: isSmall ? 13 : 12 }}>
               <span>Datum</span>
               <input type="date" value={date} onChange={e => setDate(e.target.value)} style={{ padding: isSmall ? '12px 14px' : '8px 10px', fontSize: isSmall ? 16 : 14, minHeight: isSmall ? 44 : 36, border: '1px solid #cbd5e1', borderRadius: 10 }} />
@@ -329,13 +343,16 @@ export default function TimeReportModal({ open, onClose, onSubmit, initialProjec
             <div style={{ display: 'grid', gridTemplateColumns: isXS ? '1fr' : '1fr 1fr', gap: isXS ? 8 : 10 }}>
               <label style={{ display: 'grid', gap: 4, fontSize: isSmall ? 13 : 12 }}>
                 <span>Start</span>
-                <input type="time" value={start} onChange={e => setStart(e.target.value)} placeholder="07:00" style={{ padding: isSmall ? '12px 14px' : '8px 10px', fontSize: isSmall ? 16 : 14, minHeight: isSmall ? 44 : 36, border: '1px solid #cbd5e1', borderRadius: 10 }} />
+                  <input type="time" value={start} onChange={e => setStart(e.target.value)} placeholder="07:00" style={{ padding: isSmall ? '12px 14px' : '8px 10px', fontSize: isSmall ? 16 : 14, minHeight: isSmall ? 44 : 36, border: `1px solid ${validationError ? '#fecaca' : '#cbd5e1'}`, borderRadius: 10 }} />
               </label>
               <label style={{ display: 'grid', gap: 4, fontSize: isSmall ? 13 : 12 }}>
                 <span>Slut</span>
-                <input type="time" value={end} onChange={e => setEnd(e.target.value)} placeholder="16:00" style={{ padding: isSmall ? '12px 14px' : '8px 10px', fontSize: isSmall ? 16 : 14, minHeight: isSmall ? 44 : 36, border: '1px solid #cbd5e1', borderRadius: 10 }} />
+                  <input type="time" value={end} onChange={e => setEnd(e.target.value)} placeholder="16:00" style={{ padding: isSmall ? '12px 14px' : '8px 10px', fontSize: isSmall ? 16 : 14, minHeight: isSmall ? 44 : 36, border: `1px solid ${validationError ? '#fecaca' : '#cbd5e1'}`, borderRadius: 10 }} />
               </label>
             </div>
+              {validationError && (
+                <div role="alert" style={{ gridColumn: '1 / -1', fontSize: isSmall ? 12 : 11, color: '#b91c1c' }}>{validationError}</div>
+              )}
             <label style={{ display: 'grid', gap: 4, fontSize: isSmall ? 13 : 12 }}>
               <span>Rast (minuter)</span>
               <input inputMode="numeric" pattern="[0-9]*" value={breakMin} onChange={e => setBreakMin(e.target.value)} placeholder="0" style={{ padding: isSmall ? '12px 14px' : '8px 10px', fontSize: isSmall ? 16 : 14, minHeight: isSmall ? 44 : 36, border: '1px solid #cbd5e1', borderRadius: 10 }} />

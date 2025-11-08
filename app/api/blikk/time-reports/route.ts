@@ -8,14 +8,47 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const page = Number(searchParams.get('page') || '1');
     const pageSize = Number(searchParams.get('pageSize') || '25');
-    const userId = searchParams.get('userId') ? Number(searchParams.get('userId')) : undefined;
+    let userId = searchParams.get('userId') ? Number(searchParams.get('userId')) : undefined;
     const projectId = searchParams.get('projectId') ? Number(searchParams.get('projectId')) : undefined;
     const dateFrom = searchParams.get('dateFrom') || undefined;
     const dateTo = searchParams.get('dateTo') || undefined;
+    const debug = searchParams.get('debug') === '1';
+    // If userId not provided, resolve current user's mapped blikk_id
+    if (!Number.isFinite(userId as any)) {
+      const current = await getUserProfile();
+      if (!current) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
+      if (!adminSupabase) return NextResponse.json({ ok: false, error: 'service role not configured' }, { status: 500 });
+      const { data: prof, error } = await adminSupabase.from('profiles').select('blikk_id').eq('id', current.id).maybeSingle();
+      if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+      if (!prof || prof.blikk_id == null) {
+        return NextResponse.json({ ok: false, error: 'No Blikk user mapping (blikk_id) found for current user' }, { status: 400 });
+      }
+      userId = Number(prof.blikk_id);
+    }
     const blikk = getBlikk();
-    const data = await (blikk as any).listTimeReports({ page, pageSize, userId, projectId, dateFrom, dateTo });
-    const items = Array.isArray(data) ? data : (data.items || data.data || []);
-    return NextResponse.json({ ok: true, items, raw: data });
+    const data = await (blikk as any).listTimeReports({ page, pageSize, userId, projectId, dateFrom, dateTo, debug });
+    // If debug mode, data may be our wrapper object containing items + attempts
+    const anyData: any = data as any;
+    const items = Array.isArray(anyData) ? anyData : (anyData.items || anyData.data || []);
+    const payload: any = { ok: true, items };
+    if (debug) {
+      payload.raw = anyData.raw ?? data;
+      payload.attempts = anyData.attempts || [];
+      payload.used = anyData.used || null;
+      payload.method = anyData.method || 'GET';
+      if (anyData.sentBody) payload.sentBody = anyData.sentBody;
+      // Server-side echo for terminal visibility when debugging
+      try {
+        // eslint-disable-next-line no-console
+        console.log('[time-reports][debug]', {
+          attemptsCount: Array.isArray(payload.attempts) ? payload.attempts.length : 0,
+          used: payload.used,
+          method: payload.method,
+          items: Array.isArray(payload.items) ? payload.items.length : 0,
+        });
+      } catch {}
+    }
+  return NextResponse.json(payload, { headers: { 'Cache-Control': 'no-store' } });
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: e?.message || 'Failed to list time reports' }, { status: 500 });
   }
