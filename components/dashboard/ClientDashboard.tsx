@@ -78,6 +78,15 @@ const baseExtra: Record<string, Omit<QuickLink, 'href' | 'title'>> = {
       <line x1="8" y1="14" x2="12" y2="14"/>
     </svg>
   ) },
+  '/tidrapport': { desc: 'Veckovy & rapportera tid', icon: (
+    <svg width="28" height="28" viewBox="0 0 24 24" strokeWidth={1.6} stroke="currentColor" fill="none" aria-hidden>
+      <rect x="3" y="3" width="18" height="18" rx="2.5" />
+      <path d="M8 3v4M16 3v4" strokeLinecap="round" />
+      <path d="M3 10h18" strokeLinecap="round" />
+      <path d="M12 14v-2" strokeLinecap="round" />
+      <path d="M12 14a3 3 0 1 0 3 3" strokeLinecap="round" />
+    </svg>
+  ) },
 };
 // Dashboard main component (expects role only after cleanup of deprecated userQuickHrefs prop)
 export function ClientDashboard({ role }: { role: UserRole | null }) {
@@ -100,6 +109,7 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
       return [
         { href: '/egenkontroll', title: 'Skapa egenkontroll', ...baseExtra['/egenkontroll'] },
         { href: '/bestallning-klader', title: 'Beställ kläder & annat', ...baseExtra['/bestallning-klader'] },
+        { href: '/tidrapport', title: 'Tidrapport', ...baseExtra['/tidrapport'] },
         { href: '/kontakt-lista', title: 'Kontakt', ...baseExtra['/kontakt-lista'] },
         { href: '/dokument-information', title: 'Dokument & information', ...baseExtra['/dokument-information'] },
       ];
@@ -118,6 +128,7 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
         { href: '/archive', title: 'Egenkontroll arkiv', ...baseExtra['/archive'] },
         { href: '/korjournal', title: 'Körjournal', ...baseExtra['/korjournal'] },
         { href: '/plannering', title: 'Planering', ...baseExtra['/planering'] },
+        { href: '/tidrapport', title: 'Tidrapport', ...baseExtra['/tidrapport'] },
         { href: '/admin', title: 'Admin', ...baseExtra['/admin'] },
         { href: '/offert', title: 'Skapa offert', ...baseExtra['/offert'] },
       ];

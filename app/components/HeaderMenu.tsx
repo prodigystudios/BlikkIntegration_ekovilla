@@ -273,6 +273,14 @@ export default function HeaderMenu({ role, fullName }: { role: UserRole | null, 
               <IconArchive />
               <span>Materialkvalitet</span>
             </Link>
+            {(role === 'member' || role === 'admin') && (
+              <Link href="/tidrapport" prefetch={false} onClick={() => setOpen(false)}
+                aria-current={pathname === '/tidrapport' ? 'page' : undefined}
+                className={`menu-link${pathname === '/tidrapport' ? ' is-active' : ''}`}>
+                <IconCalendar />
+                <span>Tidrapport</span>
+              </Link>
+            )}
             
             {/* Divider before sales section */}
             {role !== 'member' && (
