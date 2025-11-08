@@ -165,7 +165,8 @@ export default function TimeReportModal({ open, onClose, onSubmit }: TimeReportM
               // Accept exact or contains match to be resilient to naming variations
               return hay === targetNorm || hay.includes(targetNorm);
             });
-            setSelectedActivity((preferred || mapped[3]).id);
+            // Fallback to the first item if not found
+            setSelectedActivity((preferred || mapped[0]).id);
           }
         }
       } catch (e: any) {
@@ -295,45 +296,45 @@ export default function TimeReportModal({ open, onClose, onSubmit }: TimeReportM
   return (
     <div role="dialog" aria-modal="true" aria-label="Rapportera arbetstid"
       onClick={onClose}
-      style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.35)', zIndex: 1000, display: 'flex', alignItems: isXS ? 'stretch' : 'center', justifyContent: 'center', padding: isXS ? 0 : 16 }}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.35)', zIndex: 1000, display: 'flex', alignItems: isXS ? 'stretch' : 'center', justifyContent: 'center', padding: isXS ? 0 : 16, touchAction: 'manipulation' }}
     >
-      <div onClick={e => e.stopPropagation()} style={{ width: isXS ? '100%' : 'min(100%, 700px)', maxHeight: isXS ? '100vh' : '85vh', height: isXS ? '100vh' : undefined, overflow: 'auto', background: '#fff', border: '1px solid #e5e7eb', borderRadius: isXS ? 0 : 14, boxShadow: isXS ? 'none' : '0 20px 40px rgba(0,0,0,0.15)' }}>
-        <div style={{ position:'sticky', top:0, zIndex:5, background:'#fff', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: isSmall ? '10px 12px' : '12px 14px', borderBottom: '1px solid #e5e7eb' }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: isXS ? '100%' : 'min(100%, 700px)', maxHeight: isXS ? '100vh' : '85vh', height: isXS ? '100vh' : undefined, overflow: 'auto', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', background: '#fff', border: '1px solid #e5e7eb', borderRadius: isXS ? 0 : 14, boxShadow: isXS ? 'none' : '0 20px 40px rgba(0,0,0,0.15)' }}>
+        <div style={{ position:'sticky', top:0, zIndex:5, background:'#fff', display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingLeft: isSmall ? 12 : 14, paddingRight: isSmall ? 12 : 14, paddingTop: isXS ? 'max(10px, env(safe-area-inset-top))' : (isSmall ? 10 : 12), paddingBottom: isSmall ? 10 : 12, borderBottom: '1px solid #e5e7eb' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ width: 16, height: 16, borderRadius: 999, background: '#22c55e', border: '2px solid #bbf7d0' }} />
             <div style={{ fontSize: 16, fontWeight: 700, color: '#0f172a' }}>Rapportera tid</div>
           </div>
-          <button onClick={onClose} className="btn--plain" aria-label="Stäng" style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: isSmall ? '8px 12px' : '6px 10px', background: '#fff' }}>Stäng</button>
+          <button onClick={onClose} className="btn--plain" aria-label="Stäng" style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: isSmall ? '10px 14px' : '8px 12px', minHeight: 44, background: '#fff' }}>Stäng</button>
         </div>
         <div style={{ padding: isSmall ? 12 : 14, display: 'grid', gap: isSmall ? 10 : 12 }}>
           <div style={{ display: 'grid', gridTemplateColumns: isSmall ? '1fr' : 'repeat(2, minmax(160px, 1fr))', gap: isXS ? 8 : 10 }}>
             <label style={{ display: 'grid', gap: 4, fontSize: isSmall ? 13 : 12 }}>
               <span>Datum</span>
-              <input type="date" value={date} onChange={e => setDate(e.target.value)} style={{ padding: isSmall ? '10px 12px' : '8px 10px', fontSize: isSmall ? 16 : 14, border: '1px solid #cbd5e1', borderRadius: 8 }} />
+              <input type="date" value={date} onChange={e => setDate(e.target.value)} style={{ padding: isSmall ? '12px 14px' : '8px 10px', fontSize: isSmall ? 16 : 14, minHeight: isSmall ? 44 : 36, border: '1px solid #cbd5e1', borderRadius: 10 }} />
             </label>
             <div style={{ display: 'grid', gridTemplateColumns: isXS ? '1fr' : '1fr 1fr', gap: isXS ? 8 : 10 }}>
               <label style={{ display: 'grid', gap: 4, fontSize: isSmall ? 13 : 12 }}>
                 <span>Start</span>
-                <input type="time" value={start} onChange={e => setStart(e.target.value)} placeholder="07:00" style={{ padding: isSmall ? '10px 12px' : '8px 10px', fontSize: isSmall ? 16 : 14, border: '1px solid #cbd5e1', borderRadius: 8 }} />
+                <input type="time" value={start} onChange={e => setStart(e.target.value)} placeholder="07:00" style={{ padding: isSmall ? '12px 14px' : '8px 10px', fontSize: isSmall ? 16 : 14, minHeight: isSmall ? 44 : 36, border: '1px solid #cbd5e1', borderRadius: 10 }} />
               </label>
               <label style={{ display: 'grid', gap: 4, fontSize: isSmall ? 13 : 12 }}>
                 <span>Slut</span>
-                <input type="time" value={end} onChange={e => setEnd(e.target.value)} placeholder="16:00" style={{ padding: isSmall ? '10px 12px' : '8px 10px', fontSize: isSmall ? 16 : 14, border: '1px solid #cbd5e1', borderRadius: 8 }} />
+                <input type="time" value={end} onChange={e => setEnd(e.target.value)} placeholder="16:00" style={{ padding: isSmall ? '12px 14px' : '8px 10px', fontSize: isSmall ? 16 : 14, minHeight: isSmall ? 44 : 36, border: '1px solid #cbd5e1', borderRadius: 10 }} />
               </label>
             </div>
             <label style={{ display: 'grid', gap: 4, fontSize: isSmall ? 13 : 12 }}>
               <span>Rast (minuter)</span>
-              <input inputMode="numeric" pattern="[0-9]*" value={breakMin} onChange={e => setBreakMin(e.target.value)} placeholder="0" style={{ padding: isSmall ? '10px 12px' : '8px 10px', fontSize: isSmall ? 16 : 14, border: '1px solid #cbd5e1', borderRadius: 8 }} />
+              <input inputMode="numeric" pattern="[0-9]*" value={breakMin} onChange={e => setBreakMin(e.target.value)} placeholder="0" style={{ padding: isSmall ? '12px 14px' : '8px 10px', fontSize: isSmall ? 16 : 14, minHeight: isSmall ? 44 : 36, border: '1px solid #cbd5e1', borderRadius: 10 }} />
             </label>
             <div style={{ display: 'grid', gap: 6 }}>
               <label style={{ display: 'grid', gap: 4, fontSize: isSmall ? 13 : 12 }}>
                 <span>Projekt / Ordernummer</span>
-                <input value={project} onChange={e => setProject(e.target.value)} placeholder="#1234 eller projektnamn" style={{ padding: isSmall ? '10px 12px' : '8px 10px', fontSize: isSmall ? 16 : 14, border: '1px solid #cbd5e1', borderRadius: 8 }} />
+                <input value={project} onChange={e => setProject(e.target.value)} placeholder="#1234 eller projektnamn" style={{ padding: isSmall ? '12px 14px' : '8px 10px', fontSize: isSmall ? 16 : 14, minHeight: isSmall ? 44 : 36, border: '1px solid #cbd5e1', borderRadius: 10 }} />
               </label>
               <label style={{ display: 'grid', gap: 4, fontSize: isSmall ? 13 : 12 }}>
                 <span>Tidkod</span>
                 <select value={selectedTimecode} onChange={(e) => setSelectedTimecode(e.target.value)} disabled={tcLoading || timecodes.length === 0}
-                  style={{ padding: isSmall ? '10px 12px' : '8px 10px', fontSize: isSmall ? 16 : 14, border: '1px solid #cbd5e1', borderRadius: 8, background: '#fff' }}
+                  style={{ padding: isSmall ? '12px 14px' : '8px 10px', fontSize: isSmall ? 16 : 14, minHeight: isSmall ? 44 : 36, border: '1px solid #cbd5e1', borderRadius: 10, background: '#fff' }}
                 >
                   <option value="">Välj tidkod</option>
                   {timecodes.map(tc => {
@@ -350,7 +351,7 @@ export default function TimeReportModal({ open, onClose, onSubmit }: TimeReportM
               <label style={{ display: 'grid', gap: 4, fontSize: isSmall ? 13 : 12 }}>
                 <span>Aktivitet</span>
                 <select value={selectedActivity} onChange={(e) => setSelectedActivity(e.target.value)} disabled={actLoading || activities.length === 0}
-                  style={{ padding: isSmall ? '10px 12px' : '8px 10px', fontSize: isSmall ? 16 : 14, border: '1px solid #cbd5e1', borderRadius: 8, background: '#fff' }}
+                  style={{ padding: isSmall ? '12px 14px' : '8px 10px', fontSize: isSmall ? 16 : 14, minHeight: isSmall ? 44 : 36, border: '1px solid #cbd5e1', borderRadius: 10, background: '#fff' }}
                 >
                   <option value="">Välj aktivitet</option>
                   {activities.map(a => {
@@ -374,7 +375,7 @@ export default function TimeReportModal({ open, onClose, onSubmit }: TimeReportM
                   {!jobsLoading && distinctProjects.length === 0 && !jobsError && <span style={{ fontSize: isSmall ? 11 : 10, color: '#64748b', fontWeight: 400 }}>Inga hittades</span>}
                   {jobsError && <span style={{ fontSize: isSmall ? 11 : 10, color: '#b91c1c', fontWeight: 500 }}>{jobsError}</span>}
                 </div>
-                <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 4 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, overflowX: 'auto', paddingBottom: 4, WebkitOverflowScrolling: 'touch' }}>
                   {distinctProjects.map(p => {
                     const labelParts = [p.order_number ? `#${p.order_number}` : (p.project_name || p.project_id)];
                     if (p.customer) labelParts.push(p.customer);
@@ -386,15 +387,16 @@ export default function TimeReportModal({ open, onClose, onSubmit }: TimeReportM
                           flex: '0 0 auto',
                           maxWidth: 240,
                           textAlign: 'left',
-                          fontSize: isSmall ? 12 : 11,
+                          fontSize: isSmall ? 13 : 12,
                           lineHeight: 1.2,
-                          padding: isSmall ? '8px 10px' : '6px 8px',
+                          padding: isSmall ? '10px 12px' : '8px 10px',
                           border: '1px solid ' + (active ? '#16a34a' : '#cbd5e1'),
                           background: active ? '#16a34a' : '#f8fafc',
                           color: active ? '#fff' : '#0f172a',
-                          borderRadius: 10,
+                          borderRadius: 12,
                           boxShadow: active ? '0 2px 4px rgba(16,185,129,0.4)' : 'none',
-                          minWidth: 140,
+                          minWidth: 160,
+                          minHeight: 44,
                         }}
                         aria-label={`Välj projekt ${label}`}
                       >
@@ -407,21 +409,34 @@ export default function TimeReportModal({ open, onClose, onSubmit }: TimeReportM
             </div>
             <label style={{ gridColumn: '1 / -1', display: 'grid', gap: 4, fontSize: isSmall ? 13 : 12 }}>
               <span>Beskrivning</span>
-              <textarea value={desc} onChange={e => setDesc(e.target.value)} rows={3} placeholder="Vad gjordes?" style={{ padding: isSmall ? '10px 12px' : '8px 10px', fontSize: isSmall ? 16 : 14, border: '1px solid #cbd5e1', borderRadius: 8, resize: 'vertical' }} />
+              <textarea value={desc} onChange={e => setDesc(e.target.value)} rows={3} placeholder="Vad gjordes?" style={{ padding: isSmall ? '12px 14px' : '8px 10px', fontSize: isSmall ? 16 : 14, minHeight: isSmall ? 88 : 64, border: '1px solid #cbd5e1', borderRadius: 10, resize: 'vertical' }} />
             </label>
           </div>
-          <div style={{ position: 'sticky', bottom: 0, background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, borderTop: '1px dashed #e5e7eb', paddingTop: 8, paddingBottom: 'max(8px, env(safe-area-inset-bottom))' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: isSmall ? 13 : 12, color: '#334155' }}>
-              <span>Beräknad tid:</span>
-              <strong style={{ fontSize: isSmall ? 16 : 14 }}>{totalHours.toFixed(2)} h</strong>
-            </div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button type="button" onClick={onClose} className="btn--plain btn--xs" style={{ fontSize: isSmall ? 14 : 12, padding: isSmall ? '10px 14px' : '8px 12px', border: '1px solid #e5e7eb', background: '#fff', borderRadius: 8 }}>Avbryt</button>
-              <button type="button" onClick={handleSubmit} disabled={!canSubmit} className="btn--plain btn--xs" style={{ fontSize: isSmall ? 14 : 12, padding: isSmall ? '10px 14px' : '8px 12px', border: '1px solid #16a34a', background: canSubmit ? '#16a34a' : '#a7f3d0', color: '#fff', borderRadius: 8, boxShadow: canSubmit ? '0 2px 4px rgba(16,185,129,0.4)' : 'none', opacity: submitted === 'saving' ? 0.7 : 1 }}>
+          {isXS ? (
+            <div style={{ position: 'sticky', bottom: 0, background: '#fff', display: 'grid', gap: 8, borderTop: '1px dashed #e5e7eb', paddingTop: 8, paddingLeft: 12, paddingRight: 12, paddingBottom: 'max(10px, env(safe-area-inset-bottom))' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, fontSize: 13, color: '#334155' }}>
+                <span>Beräknad tid:</span>
+                <strong style={{ fontSize: 16 }}>{totalHours.toFixed(2)} h</strong>
+              </div>
+              <button type="button" onClick={handleSubmit} disabled={!canSubmit} className="btn--plain btn--xs" style={{ width: '100%', fontSize: 16, padding: '14px 16px', border: '1px solid #16a34a', background: canSubmit ? '#16a34a' : '#a7f3d0', color: '#fff', borderRadius: 12, boxShadow: canSubmit ? '0 4px 8px rgba(16,185,129,0.35)' : 'none', opacity: submitted === 'saving' ? 0.7 : 1, minHeight: 48 }}>
                 {submitted === 'saving' ? 'Sparar…' : 'Spara'}
               </button>
+              <button type="button" onClick={onClose} className="btn--plain btn--xs" style={{ fontSize: 14, padding: '10px 12px', border: '1px solid #e5e7eb', background: '#fff', borderRadius: 10, color: '#0f172a', minHeight: 44 }}>Avbryt</button>
             </div>
-          </div>
+          ) : (
+            <div style={{ position: 'sticky', bottom: 0, background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, borderTop: '1px dashed #e5e7eb', paddingTop: 8, paddingBottom: 'max(8px, env(safe-area-inset-bottom))' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: isSmall ? 13 : 12, color: '#334155' }}>
+                <span>Beräknad tid:</span>
+                <strong style={{ fontSize: isSmall ? 16 : 14 }}>{totalHours.toFixed(2)} h</strong>
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button type="button" onClick={onClose} className="btn--plain btn--xs" style={{ fontSize: isSmall ? 14 : 12, padding: isSmall ? '10px 14px' : '8px 12px', border: '1px solid #e5e7eb', background: '#fff', borderRadius: 8, minHeight: 40 }}>Avbryt</button>
+                <button type="button" onClick={handleSubmit} disabled={!canSubmit} className="btn--plain btn--xs" style={{ fontSize: isSmall ? 14 : 12, padding: isSmall ? '10px 14px' : '8px 12px', border: '1px solid #16a34a', background: canSubmit ? '#16a34a' : '#a7f3d0', color: '#fff', borderRadius: 8, boxShadow: canSubmit ? '0 2px 4px rgba(16,185,129,0.4)' : 'none', opacity: submitted === 'saving' ? 0.7 : 1, minHeight: 40 }}>
+                  {submitted === 'saving' ? 'Sparar…' : 'Spara'}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
