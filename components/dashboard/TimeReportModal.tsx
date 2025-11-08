@@ -125,7 +125,7 @@ export default function TimeReportModal({ open, onClose, onSubmit }: TimeReportM
       }
     })();
     return () => { cancelled = true; };
-  }, [open, selectedTimecode]);
+  }, [open]);
 
   // Load activities when modal opens
   useEffect(() => {
@@ -151,8 +151,21 @@ export default function TimeReportModal({ open, onClose, onSubmit }: TimeReportM
             active: (typeof it.active === 'boolean' ? it.active : (typeof it.isActive === 'boolean' ? it.isActive : null)) as boolean | null,
           })).filter((x: any) => x.id);
           setActivities(mapped);
+          // Auto-select the common default activity "lösullsentrepenad" if present
           if (!selectedActivity && mapped.length > 0) {
-            setSelectedActivity(mapped[0].id);
+            const normalize = (s: string) => s
+              .normalize('NFD')
+              // Remove diacritics
+              .replace(/\p{Diacritic}/gu, '')
+              .toLowerCase();
+            const target = 'lösullsentrepenad';
+            const targetNorm = normalize(target);
+            const preferred = mapped.find((a: { id: string; name: string | null; code: string | null; billable: boolean | null; active: boolean | null }) => {
+              const hay = normalize([a.name || '', a.code || ''].filter(Boolean).join(' '));
+              // Accept exact or contains match to be resilient to naming variations
+              return hay === targetNorm || hay.includes(targetNorm);
+            });
+            setSelectedActivity((preferred || mapped[3]).id);
           }
         }
       } catch (e: any) {
@@ -165,7 +178,7 @@ export default function TimeReportModal({ open, onClose, onSubmit }: TimeReportM
       }
     })();
     return () => { cancelled = true; };
-  }, [open, selectedActivity]);
+  }, [open]);
 
   // Load today's jobs when modal opens or date changes
   useEffect(() => {
@@ -293,12 +306,12 @@ export default function TimeReportModal({ open, onClose, onSubmit }: TimeReportM
           <button onClick={onClose} className="btn--plain" aria-label="Stäng" style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: isSmall ? '8px 12px' : '6px 10px', background: '#fff' }}>Stäng</button>
         </div>
         <div style={{ padding: isSmall ? 12 : 14, display: 'grid', gap: isSmall ? 10 : 12 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: isSmall ? '1fr' : 'repeat(2, minmax(160px, 1fr))', gap: 10 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: isSmall ? '1fr' : 'repeat(2, minmax(160px, 1fr))', gap: isXS ? 8 : 10 }}>
             <label style={{ display: 'grid', gap: 4, fontSize: isSmall ? 13 : 12 }}>
               <span>Datum</span>
               <input type="date" value={date} onChange={e => setDate(e.target.value)} style={{ padding: isSmall ? '10px 12px' : '8px 10px', fontSize: isSmall ? 16 : 14, border: '1px solid #cbd5e1', borderRadius: 8 }} />
             </label>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: isXS ? '1fr' : '1fr 1fr', gap: isXS ? 8 : 10 }}>
               <label style={{ display: 'grid', gap: 4, fontSize: isSmall ? 13 : 12 }}>
                 <span>Start</span>
                 <input type="time" value={start} onChange={e => setStart(e.target.value)} placeholder="07:00" style={{ padding: isSmall ? '10px 12px' : '8px 10px', fontSize: isSmall ? 16 : 14, border: '1px solid #cbd5e1', borderRadius: 8 }} />
