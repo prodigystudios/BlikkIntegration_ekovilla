@@ -755,6 +755,177 @@ export class BlikkClient {
     throw lastErr || new Error('Failed to list users');
   }
 
+  // Create a time report (Core Resources TimeReports Create)
+  async createTimeReport(input: {
+    userId: number;            // required
+    projectId?: number | null; // optional
+    activityId?: number | null; // optional
+    timeCodeId?: number | null; // optional
+    timeArticleId?: number | null; // optional (shared article id 3400)
+    date: string;              // ISO date (yyyy-mm-dd)
+    minutes?: number | null;   // either minutes or hours required
+    hours?: number | null;
+    startTime?: string | null; // 'HH:mm' (some tenants require time-of-day)
+    endTime?: string | null;   // 'HH:mm'
+    description?: string | null;
+    breakMinutes?: number | null; // optional break deducted already from minutes/hours
+    billable?: boolean | null; // hint to set invoiceableHours differently
+  }): Promise<{ data: any; usedPath: string; sentBody: any }> {
+    if (!Number.isFinite(input.userId)) throw new Error('createTimeReport: userId required');
+    const date = String(input.date || '').slice(0, 10);
+    if (!date) throw new Error('createTimeReport: date required');
+
+    // Derive minutes if only hours provided (prefer explicit minutes)
+    let minutes: number | null = null;
+    if (input.minutes != null && Number.isFinite(input.minutes)) {
+      minutes = Number(input.minutes);
+    } else if (input.hours != null && Number.isFinite(input.hours)) {
+      minutes = Math.round(Number(input.hours) * 60);
+    }
+    if (!minutes || minutes <= 0) throw new Error('createTimeReport: positive minutes/hours required');
+
+    const envCreate = process.env.BLIKK_TIME_REPORTS_CREATE_PATH || null; // allow overriding
+    // Official documented path
+    const defaults = ['/v1/Core/TimeReports'];
+    const order = [envCreate, ...defaults].filter(Boolean) as string[];
+    const seen = new Set<string>();
+    const paths = order.filter((p) => { const k = p.split('?')[0]; if (seen.has(k)) return false; seen.add(k); return true; });
+
+    // Build tolerant body (cover potential key name variants)
+    // Standardize date with time suffix if docs expect 'YYYY-MM-DD 00:00:00'
+    const dateWithTime = /\d{4}-\d{2}-\d{2}$/.test(date) ? `${date} 00:00:00` : date;
+
+    const body: Record<string, any> = {
+      userId: input.userId,
+      date: dateWithTime,
+      minutes,
+      description: input.description || '',
+      // Doc-aligned keys
+      comment: input.description || '',
+      internalComment: '',
+      breakMinutes: input.breakMinutes ?? null,
+    };
+    // Provide hours variant to maximize acceptance
+    const hoursDec = Math.round((minutes / 60) * 100) / 100;
+    body.hours = hoursDec;
+    // Provide invoiceable/billable hours variants (some tenants require both)
+    const invoiceable = input.billable === false ? 0 : hoursDec;
+    body.invoiceableHours = invoiceable; // default: all hours invoiceable unless tenant config says otherwise
+    body.billableHours = hoursDec;    // alias
+    body.invoicableHours = hoursDec;  // common misspelling alias seen in some APIs
+    // Provide time-of-day variants in case tenant requires explicit times
+    if (input.startTime && input.endTime) {
+      const start = String(input.startTime).slice(0,5);
+      const end = String(input.endTime).slice(0,5);
+      body.startTime = start;
+      body.endTime = end;
+      body.timeFrom = start;
+      body.timeTo = end;
+      body.start = start;
+      body.end = end;
+      // Doc-specific aliases
+      body.clockStart = start; // matches example payload
+      body.clockEnd = end;
+      // Also provide ISO combined datetimes (some tenants require these)
+      const fromIso = `${date}T${start}:00`;
+      const toIso = `${date}T${end}:00`;
+      body.from = fromIso;
+      body.to = toIso;
+      body.startDateTime = fromIso;
+      body.endDateTime = toIso;
+      body.startAt = fromIso;
+      body.endAt = toIso;
+      body.dateFrom = fromIso;
+      body.dateTo = toIso;
+    }
+    if (input.projectId != null) {
+      body.projectId = input.projectId;
+      body.project = { id: input.projectId };
+    }
+    if (input.activityId != null) {
+      body.activityId = input.activityId;
+      body.activity = { id: input.activityId };
+    }
+    if (input.timeCodeId != null) {
+      body.timeCodeId = input.timeCodeId;
+      body.timeCode = { id: input.timeCodeId };
+    }
+    if (input.timeArticleId != null) {
+      body.timeArticleId = input.timeArticleId;
+      body.timeArticle = { id: input.timeArticleId };
+      body.articleId = input.timeArticleId; // extra aliases for acceptance
+    }
+    if (input.breakMinutes != null && input.breakMinutes! > 0) {
+      body.breakMinutes = input.breakMinutes;
+      body.break = input.breakMinutes; // alias
+    }
+
+    let lastErr: any = null;
+    for (const path of paths) {
+      // Attempt 1: full body
+      try {
+        const data = await this.request(path, { method: 'POST', body: JSON.stringify(body) });
+        return { data, usedPath: path, sentBody: body };
+      } catch (e: any) {
+        lastErr = e;
+        const msg = String(e?.message || '');
+        const maybeNoTime = /without time|utan tid|no time/i.test(msg);
+        // Attempt 2: If tenant rejects duration-only, retry without minutes/hours but keep ISO from/to if available
+        if (maybeNoTime && input.startTime && input.endTime) {
+          const alt: Record<string, any> = { ...body };
+          delete alt.minutes;
+          delete alt.hours;
+          try {
+            const data = await this.request(path, { method: 'POST', body: JSON.stringify(alt) });
+            return { data, usedPath: path, sentBody: alt };
+          } catch (e2: any) {
+            lastErr = e2;
+          }
+        }
+        console.warn('Blikk createTimeReport failed, trying next path', { path, error: msg });
+      }
+    }
+    throw lastErr || new Error('Failed to create time report');
+  }
+
+  // List time reports (best-effort tolerant listing) for verification
+  async listTimeReports(opts?: { page?: number; pageSize?: number; userId?: number; projectId?: number; dateFrom?: string; dateTo?: string }) {
+    const page = opts?.page ?? 1;
+    const pageSize = opts?.pageSize ?? 25;
+    const envPath = process.env.BLIKK_TIME_REPORTS_PATH || null;
+    const bases = envPath ? [envPath] : ['/v1/Core/TimeReports'];
+    const pagingVariants: Array<Record<string, string>> = [
+      { page: String(page), pageSize: String(pageSize) },
+      { page: String(page), limit: String(pageSize) },
+    ];
+    const userKeys = ['filter.userId', 'userId'];
+    const projectKeys = ['filter.projectId', 'projectId'];
+    const fromKeys = ['filter.dateFrom', 'dateFrom', 'from'];
+    const toKeys = ['filter.dateTo', 'dateTo', 'to'];
+
+    const attempts: string[] = [];
+    let lastErr: any = null;
+    for (const base of bases) {
+      for (const paging of pagingVariants) {
+        const qs = new URLSearchParams(paging);
+        if (opts?.userId) for (const k of userKeys) qs.set(k, String(opts.userId));
+        if (opts?.projectId) for (const k of projectKeys) qs.set(k, String(opts.projectId));
+        if (opts?.dateFrom) for (const k of fromKeys) qs.set(k, opts.dateFrom);
+        if (opts?.dateTo) for (const k of toKeys) qs.set(k, opts.dateTo);
+        const url = `${base}?${qs.toString()}`;
+        attempts.push(url);
+        try {
+          return await this.request(url);
+        } catch (e: any) {
+          lastErr = e;
+          console.warn('Blikk listTimeReports attempt failed', { url, error: String(e?.message || e) });
+        }
+      }
+    }
+    if (lastErr) throw lastErr;
+    throw new Error('Failed to list time reports');
+  }
+
   // Minimal contact fetch by id (kept lean for current enrichment need)
   async getContactById(id: number, opts?: { debug?: boolean }) {
     if (!Number.isFinite(id)) throw new Error('Invalid contact id');

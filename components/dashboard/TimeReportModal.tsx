@@ -1,0 +1,416 @@
+"use client";
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
+
+export interface TimeReportModalProps {
+  open: boolean;
+  onClose: () => void;
+  onSubmit?: (payload: {
+    date: string;
+    start: string;
+    end: string;
+    breakMinutes: number;
+    projectId?: string; // Blikk project id from my_jobs
+    project?: string;
+    description?: string;
+    totalHours: number;
+  timecodeId?: string; // Blikk time code id
+  timecodeCode?: string | null; // Optional human code from Blikk
+  activityId?: string; // Blikk activity id
+  activityCode?: string | null; // Optional human code
+  activityName?: string | null; // Human name
+  }) => void;
+}
+
+export default function TimeReportModal({ open, onClose, onSubmit }: TimeReportModalProps) {
+  const [isSmall, setIsSmall] = useState(false); // <= 640px
+  const [isXS, setIsXS] = useState(false); // <= 420px
+  const [date, setDate] = useState<string>('');
+  const [start, setStart] = useState<string>('');
+  const [end, setEnd] = useState<string>('');
+  const [breakMin, setBreakMin] = useState<string>('0');
+  const [project, setProject] = useState<string>('');
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [desc, setDesc] = useState<string>('');
+  const [submitted, setSubmitted] = useState<'idle' | 'saving' | 'saved'>('idle');
+  // Time codes (from Blikk) state
+  const [timecodes, setTimecodes] = useState<Array<{ id: string; name: string | null; code: string | null; billable: boolean | null; active: boolean | null }>>([]);
+  const [tcLoading, setTcLoading] = useState(false);
+  const [tcError, setTcError] = useState<string | null>(null);
+  const [selectedTimecode, setSelectedTimecode] = useState<string>('');
+  // Activities (Blikk) state
+  const [activities, setActivities] = useState<Array<{ id: string; name: string | null; code: string | null; billable: boolean | null; active: boolean | null }>>([]);
+  const [actLoading, setActLoading] = useState(false);
+  const [actError, setActError] = useState<string | null>(null);
+  const [selectedActivity, setSelectedActivity] = useState<string>('');
+  // Today's jobs quick-select state
+  const supabase = createClientComponentClient();
+  const [jobsLoading, setJobsLoading] = useState(false);
+  const [jobsError, setJobsError] = useState<string | null>(null);
+  const [todayJobs, setTodayJobs] = useState<Array<{ project_id: string; project_name: string | null; order_number: string | null; customer: string | null }>>([]);
+
+  const selectedTc = useMemo(() => timecodes.find(tc => tc.id === selectedTimecode) || null, [timecodes, selectedTimecode]);
+  const selectedAct = useMemo(() => activities.find(a => a.id === selectedActivity) || null, [activities, selectedActivity]);
+
+  // Derive distinct projects for quick select (avoid duplicates if multiple segments per project in a day)
+  const distinctProjects = useMemo(() => {
+    const map = new Map<string, { project_id: string; project_name: string | null; order_number: string | null; customer: string | null }>();
+    for (const j of todayJobs) {
+      if (!map.has(j.project_id)) map.set(j.project_id, j);
+    }
+    return Array.from(map.values());
+  }, [todayJobs]);
+
+  useEffect(() => {
+    const calc = () => {
+      const w = typeof window !== 'undefined' ? window.innerWidth : 1024;
+      setIsSmall(w <= 640);
+      setIsXS(w <= 420);
+    };
+    calc();
+    window.addEventListener('resize', calc);
+    return () => window.removeEventListener('resize', calc);
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    // Default values for convenience
+    try {
+      const today = new Date();
+      const iso = today.toISOString().slice(0, 10);
+      setDate(prev => prev || iso);
+    } catch {}
+    // Reset transient selections each time we open
+    setSelectedTimecode('');
+    setSelectedActivity('');
+    setSelectedProjectId(null);
+  }, [open]);
+
+  // Load time codes when modal opens
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!open) return;
+      setTcLoading(true);
+      setTcError(null);
+      try {
+        const res = await fetch('/api/blikk/timecodes?page=1&pageSize=200');
+        const j = await res.json().catch(() => ({ items: [] }));
+        if (cancelled) return;
+        if (!res.ok) {
+          setTcError(j?.error || 'Kunde inte hämta tidkoder');
+          setTimecodes([]);
+        } else {
+          const items = Array.isArray(j?.items) ? j.items : [];
+          // Normalize
+          const mapped = items.map((it: any) => ({
+            id: String(it.id ?? it.code ?? ''),
+            name: (it.name ?? it.code ?? null) as string | null,
+            code: (it.code ?? null) != null ? String(it.code) : null,
+            billable: (typeof it.billable === 'boolean' ? it.billable : (typeof it.isBillable === 'boolean' ? it.isBillable : null)) as boolean | null,
+            active: (typeof it.active === 'boolean' ? it.active : (typeof it.isActive === 'boolean' ? it.isActive : null)) as boolean | null,
+          })).filter((x: any) => x.id);
+          setTimecodes(mapped);
+          if (!selectedTimecode && mapped.length > 0) {
+            setSelectedTimecode(mapped[0].id);
+          }
+        }
+      } catch (e: any) {
+        if (!cancelled) {
+          setTcError('Fel vid hämtning av tidkoder');
+          setTimecodes([]);
+        }
+      } finally {
+        if (!cancelled) setTcLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [open, selectedTimecode]);
+
+  // Load activities when modal opens
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!open) return;
+      setActLoading(true);
+      setActError(null);
+      try {
+        const res = await fetch('/api/blikk/activities?page=1&pageSize=200');
+        const j = await res.json().catch(() => ({ items: [] }));
+        if (cancelled) return;
+        if (!res.ok) {
+          setActError(j?.error || 'Kunde inte hämta aktiviteter');
+          setActivities([]);
+        } else {
+          const items = Array.isArray(j?.items) ? j.items : [];
+          const mapped = items.map((it: any) => ({
+            id: String(it.id ?? it.code ?? ''),
+            name: (it.name ?? it.code ?? null) as string | null,
+            code: (it.code ?? null) != null ? String(it.code) : null,
+            billable: (typeof it.billable === 'boolean' ? it.billable : (typeof it.isBillable === 'boolean' ? it.isBillable : null)) as boolean | null,
+            active: (typeof it.active === 'boolean' ? it.active : (typeof it.isActive === 'boolean' ? it.isActive : null)) as boolean | null,
+          })).filter((x: any) => x.id);
+          setActivities(mapped);
+          if (!selectedActivity && mapped.length > 0) {
+            setSelectedActivity(mapped[0].id);
+          }
+        }
+      } catch (e: any) {
+        if (!cancelled) {
+          setActError('Fel vid hämtning av aktiviteter');
+          setActivities([]);
+        }
+      } finally {
+        if (!cancelled) setActLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [open, selectedActivity]);
+
+  // Load today's jobs when modal opens or date changes
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!open || !date) return;
+      setJobsLoading(true);
+      setJobsError(null);
+      try {
+        const { data, error } = await supabase.rpc('get_my_jobs', { start_date: date, end_date: date });
+        if (cancelled) return;
+        if (error) {
+          console.warn('[time-report] get_my_jobs error', error);
+          setTodayJobs([]);
+          setJobsError('Kunde inte hämta dagens projekt');
+        } else {
+          // Map shape: we only keep needed fields
+          const rows = Array.isArray(data) ? data : [];
+          const mapped = rows.map(r => ({
+            project_id: String((r as any).project_id || ''),
+            project_name: (r as any).project_name || null,
+            order_number: (r as any).order_number || null,
+            customer: (r as any).customer || null,
+          })).filter(r => r.project_id);
+          setTodayJobs(mapped);
+        }
+      } catch (e: any) {
+        if (!cancelled) {
+          setJobsError('Fel vid hämtning');
+          setTodayJobs([]);
+        }
+      } finally {
+        if (!cancelled) setJobsLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [open, date, supabase]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!open) return;
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
+
+  // Prevent background scroll while modal open
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, [open]);
+
+  const totalHours = useMemo(() => {
+    const toMin = (t: string) => {
+      const m = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec(t);
+      if (!m) return null;
+      return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+    };
+    const s = toMin(start);
+    const e = toMin(end);
+    if (s == null || e == null) return 0;
+    let mins = e - s;
+    const br = Math.max(0, parseInt(breakMin || '0', 10) || 0);
+    mins -= br;
+    if (mins < 0) return 0;
+    return Math.round((mins / 60) * 100) / 100;
+  }, [start, end, breakMin]);
+
+  const canSubmit = date && start && end && totalHours > 0 && submitted !== 'saving';
+
+  const handleSubmit = () => {
+    if (!canSubmit) return;
+    setSubmitted('saving');
+    const payload = {
+      date,
+      start,
+      end,
+      breakMinutes: Math.max(0, parseInt(breakMin || '0', 10) || 0),
+      projectId: selectedProjectId || undefined,
+      project: project.trim() || undefined,
+      description: desc.trim() || undefined,
+      totalHours,
+      timecodeId: selectedTimecode || undefined,
+      timecodeCode: selectedTc ? selectedTc.code : null,
+      activityId: selectedActivity || undefined,
+      activityCode: selectedAct ? selectedAct.code : null,
+      activityName: selectedAct ? selectedAct.name : null,
+    };
+    try {
+      onSubmit?.(payload);
+    } catch {}
+    setTimeout(() => {
+      setSubmitted('saved');
+      setTimeout(() => {
+        setSubmitted('idle');
+        onClose();
+        // optionally clear inputs after close
+      }, 600);
+    }, 400);
+  };
+
+  const chooseProject = useCallback((p: { project_id: string; project_name: string | null; order_number: string | null }) => {
+    // Prefer order number; else project name; fallback to id
+    const val = p.order_number ? `#${p.order_number}` : (p.project_name || p.project_id);
+    setProject(val);
+    setSelectedProjectId(p.project_id);
+  }, []);
+
+  if (!open) return null;
+
+  return (
+    <div role="dialog" aria-modal="true" aria-label="Rapportera arbetstid"
+      onClick={onClose}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.35)', zIndex: 1000, display: 'flex', alignItems: isXS ? 'stretch' : 'center', justifyContent: 'center', padding: isXS ? 0 : 16 }}
+    >
+      <div onClick={e => e.stopPropagation()} style={{ width: isXS ? '100%' : 'min(100%, 700px)', maxHeight: isXS ? '100vh' : '85vh', height: isXS ? '100vh' : undefined, overflow: 'auto', background: '#fff', border: '1px solid #e5e7eb', borderRadius: isXS ? 0 : 14, boxShadow: isXS ? 'none' : '0 20px 40px rgba(0,0,0,0.15)' }}>
+        <div style={{ position:'sticky', top:0, zIndex:5, background:'#fff', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: isSmall ? '10px 12px' : '12px 14px', borderBottom: '1px solid #e5e7eb' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ width: 16, height: 16, borderRadius: 999, background: '#22c55e', border: '2px solid #bbf7d0' }} />
+            <div style={{ fontSize: 16, fontWeight: 700, color: '#0f172a' }}>Rapportera tid</div>
+          </div>
+          <button onClick={onClose} className="btn--plain" aria-label="Stäng" style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: isSmall ? '8px 12px' : '6px 10px', background: '#fff' }}>Stäng</button>
+        </div>
+        <div style={{ padding: isSmall ? 12 : 14, display: 'grid', gap: isSmall ? 10 : 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: isSmall ? '1fr' : 'repeat(2, minmax(160px, 1fr))', gap: 10 }}>
+            <label style={{ display: 'grid', gap: 4, fontSize: isSmall ? 13 : 12 }}>
+              <span>Datum</span>
+              <input type="date" value={date} onChange={e => setDate(e.target.value)} style={{ padding: isSmall ? '10px 12px' : '8px 10px', fontSize: isSmall ? 16 : 14, border: '1px solid #cbd5e1', borderRadius: 8 }} />
+            </label>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              <label style={{ display: 'grid', gap: 4, fontSize: isSmall ? 13 : 12 }}>
+                <span>Start</span>
+                <input type="time" value={start} onChange={e => setStart(e.target.value)} placeholder="07:00" style={{ padding: isSmall ? '10px 12px' : '8px 10px', fontSize: isSmall ? 16 : 14, border: '1px solid #cbd5e1', borderRadius: 8 }} />
+              </label>
+              <label style={{ display: 'grid', gap: 4, fontSize: isSmall ? 13 : 12 }}>
+                <span>Slut</span>
+                <input type="time" value={end} onChange={e => setEnd(e.target.value)} placeholder="16:00" style={{ padding: isSmall ? '10px 12px' : '8px 10px', fontSize: isSmall ? 16 : 14, border: '1px solid #cbd5e1', borderRadius: 8 }} />
+              </label>
+            </div>
+            <label style={{ display: 'grid', gap: 4, fontSize: isSmall ? 13 : 12 }}>
+              <span>Rast (minuter)</span>
+              <input inputMode="numeric" pattern="[0-9]*" value={breakMin} onChange={e => setBreakMin(e.target.value)} placeholder="0" style={{ padding: isSmall ? '10px 12px' : '8px 10px', fontSize: isSmall ? 16 : 14, border: '1px solid #cbd5e1', borderRadius: 8 }} />
+            </label>
+            <div style={{ display: 'grid', gap: 6 }}>
+              <label style={{ display: 'grid', gap: 4, fontSize: isSmall ? 13 : 12 }}>
+                <span>Projekt / Ordernummer</span>
+                <input value={project} onChange={e => setProject(e.target.value)} placeholder="#1234 eller projektnamn" style={{ padding: isSmall ? '10px 12px' : '8px 10px', fontSize: isSmall ? 16 : 14, border: '1px solid #cbd5e1', borderRadius: 8 }} />
+              </label>
+              <label style={{ display: 'grid', gap: 4, fontSize: isSmall ? 13 : 12 }}>
+                <span>Tidkod</span>
+                <select value={selectedTimecode} onChange={(e) => setSelectedTimecode(e.target.value)} disabled={tcLoading || timecodes.length === 0}
+                  style={{ padding: isSmall ? '10px 12px' : '8px 10px', fontSize: isSmall ? 16 : 14, border: '1px solid #cbd5e1', borderRadius: 8, background: '#fff' }}
+                >
+                  <option value="">Välj tidkod</option>
+                  {timecodes.map(tc => {
+                    const label = [tc.code, tc.name].filter(Boolean).join(' — ');
+                    const extra = tc.billable == null ? '' : (tc.billable ? ' (debiterbar)' : ' (icke-debiterbar)');
+                    return <option key={tc.id} value={tc.id}>{label}{extra}</option>;
+                  })}
+                </select>
+                <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                  {tcLoading && <span style={{ fontSize: isSmall ? 11 : 10, color:'#64748b' }}>Laddar tidkoder…</span>}
+                  {tcError && <span role="status" aria-live="polite" style={{ fontSize: isSmall ? 11 : 10, color:'#b91c1c' }}>{tcError}</span>}
+                </div>
+              </label>
+              <label style={{ display: 'grid', gap: 4, fontSize: isSmall ? 13 : 12 }}>
+                <span>Aktivitet</span>
+                <select value={selectedActivity} onChange={(e) => setSelectedActivity(e.target.value)} disabled={actLoading || activities.length === 0}
+                  style={{ padding: isSmall ? '10px 12px' : '8px 10px', fontSize: isSmall ? 16 : 14, border: '1px solid #cbd5e1', borderRadius: 8, background: '#fff' }}
+                >
+                  <option value="">Välj aktivitet</option>
+                  {activities.map(a => {
+                    const label = [a.code, a.name].filter(Boolean).join(' — ');
+                    const extras: string[] = [];
+                    if (a.billable != null) extras.push(a.billable ? 'debiterbar' : 'icke-debiterbar');
+                    if (a.active === false) extras.push('inaktiv');
+                    const suffix = extras.length ? ` (${extras.join(', ')})` : '';
+                    return <option key={a.id} value={a.id}>{label}{suffix}</option>;
+                  })}
+                </select>
+                <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                  {actLoading && <span style={{ fontSize: isSmall ? 11 : 10, color:'#64748b' }}>Laddar aktiviteter…</span>}
+                  {actError && <span role="status" aria-live="polite" style={{ fontSize: isSmall ? 11 : 10, color:'#b91c1c' }}>{actError}</span>}
+                </div>
+              </label>
+              <div style={{ display: 'grid', gap: 6 }}>
+                <div style={{ fontSize: isSmall ? 12 : 11, fontWeight: 600, color: '#0f172a', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span>Dagens projekt</span>
+                  {jobsLoading && <span style={{ fontSize: isSmall ? 11 : 10, color: '#64748b' }}>Laddar…</span>}
+                  {!jobsLoading && distinctProjects.length === 0 && !jobsError && <span style={{ fontSize: isSmall ? 11 : 10, color: '#64748b', fontWeight: 400 }}>Inga hittades</span>}
+                  {jobsError && <span style={{ fontSize: isSmall ? 11 : 10, color: '#b91c1c', fontWeight: 500 }}>{jobsError}</span>}
+                </div>
+                <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 4 }}>
+                  {distinctProjects.map(p => {
+                    const labelParts = [p.order_number ? `#${p.order_number}` : (p.project_name || p.project_id)];
+                    if (p.customer) labelParts.push(p.customer);
+                    const label = labelParts.join(' • ');
+                    const active = project && (project.includes(p.order_number || '') || project.includes(p.project_name || '') || project === p.project_id);
+                    return (
+                      <button key={p.project_id} type="button" onClick={() => chooseProject(p)}
+                        style={{
+                          flex: '0 0 auto',
+                          maxWidth: 240,
+                          textAlign: 'left',
+                          fontSize: isSmall ? 12 : 11,
+                          lineHeight: 1.2,
+                          padding: isSmall ? '8px 10px' : '6px 8px',
+                          border: '1px solid ' + (active ? '#16a34a' : '#cbd5e1'),
+                          background: active ? '#16a34a' : '#f8fafc',
+                          color: active ? '#fff' : '#0f172a',
+                          borderRadius: 10,
+                          boxShadow: active ? '0 2px 4px rgba(16,185,129,0.4)' : 'none',
+                          minWidth: 140,
+                        }}
+                        aria-label={`Välj projekt ${label}`}
+                      >
+                        <span style={{ display: 'block', fontWeight: active ? 600 : 500, whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>{label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+            <label style={{ gridColumn: '1 / -1', display: 'grid', gap: 4, fontSize: isSmall ? 13 : 12 }}>
+              <span>Beskrivning</span>
+              <textarea value={desc} onChange={e => setDesc(e.target.value)} rows={3} placeholder="Vad gjordes?" style={{ padding: isSmall ? '10px 12px' : '8px 10px', fontSize: isSmall ? 16 : 14, border: '1px solid #cbd5e1', borderRadius: 8, resize: 'vertical' }} />
+            </label>
+          </div>
+          <div style={{ position: 'sticky', bottom: 0, background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, borderTop: '1px dashed #e5e7eb', paddingTop: 8, paddingBottom: 'max(8px, env(safe-area-inset-bottom))' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: isSmall ? 13 : 12, color: '#334155' }}>
+              <span>Beräknad tid:</span>
+              <strong style={{ fontSize: isSmall ? 16 : 14 }}>{totalHours.toFixed(2)} h</strong>
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button type="button" onClick={onClose} className="btn--plain btn--xs" style={{ fontSize: isSmall ? 14 : 12, padding: isSmall ? '10px 14px' : '8px 12px', border: '1px solid #e5e7eb', background: '#fff', borderRadius: 8 }}>Avbryt</button>
+              <button type="button" onClick={handleSubmit} disabled={!canSubmit} className="btn--plain btn--xs" style={{ fontSize: isSmall ? 14 : 12, padding: isSmall ? '10px 14px' : '8px 12px', border: '1px solid #16a34a', background: canSubmit ? '#16a34a' : '#a7f3d0', color: '#fff', borderRadius: 8, boxShadow: canSubmit ? '0 2px 4px rgba(16,185,129,0.4)' : 'none', opacity: submitted === 'saving' ? 0.7 : 1 }}>
+                {submitted === 'saving' ? 'Sparar…' : 'Spara'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

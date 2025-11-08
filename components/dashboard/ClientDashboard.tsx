@@ -5,6 +5,8 @@ import DashboardNotes from './DashboardNotes';
 import dynamic from 'next/dynamic';
 const DashboardSchedule = dynamic(() => import('./DashboardSchedule'));
 import DashboardTasks from './DashboardTasks';
+import TimeReportModal from './TimeReportModal';
+import { useToast } from '@/lib/Toast';
 import type { UserRole } from '../../lib/roles';
 import { filterLinks, NAV_LINKS } from '../../lib/roles';
 
@@ -126,6 +128,7 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
     ];
   }, [role]);
   const [mini, setMini] = useState(false);
+  const [timeModalOpen, setTimeModalOpen] = useState(false);
   // Persist mini preference in localStorage
   useEffect(() => {
     try {
@@ -141,6 +144,9 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
   useEffect(() => {
     try { localStorage.setItem('dashboard.quicklinks.mini', mini ? '1' : '0'); } catch {}
   }, [mini]);
+
+  // Toast
+  const toast = useToast();
 
   return (
     <main
@@ -164,8 +170,18 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
         </aside>
       )}
       <div className="dash-main-col" style={{ flex:1, display:'flex', flexDirection:'column', gap: mini ? 24 : (isSmall ? 20 : 32) }}>
-        <header style={{ display: 'flex', alignItems: isSmall ? 'flex-end' : 'center', gap: 12 }}>
+        <header style={{ display: 'flex', alignItems: isSmall ? 'flex-end' : 'center', gap: 12, justifyContent:'space-between', flexWrap:'wrap' }}>
           <h1 style={{ margin: 0, fontSize: isSmall ? (isXS ? 22 : 24) : 30, letterSpacing: -0.5 }}>Översikt</h1>
+          <div style={{ display:'flex', gap:10, flexWrap:'wrap' }}>
+            <button type="button" onClick={()=>setTimeModalOpen(true)}
+              style={{ display:'inline-flex', alignItems:'center', gap:8, fontSize:12, fontWeight:600, padding:'10px 14px', border:'1px solid #16a34a', background:'#16a34a', color:'#fff', borderRadius:10, boxShadow:'0 2px 4px rgba(16,185,129,0.35)', cursor:'pointer' }}
+            >
+              <span aria-hidden style={{ display:'inline-flex' }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" strokeWidth={2} stroke="#fff" fill="none"><path d="M12 5v14M5 12h14" strokeLinecap="round" strokeLinejoin="round"/></svg>
+              </span>
+              Rapportera tid
+            </button>
+          </div>
         </header>
         {!mini && (
           <section
@@ -234,6 +250,36 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
           </div>
         )}
       </div>
+      <TimeReportModal open={timeModalOpen} onClose={()=>setTimeModalOpen(false)} onSubmit={async (payload)=>{
+        try {
+          const minutes = Math.round(payload.totalHours * 60);
+          const body = {
+            date: payload.date,
+            minutes,
+            breakMinutes: payload.breakMinutes,
+            start: payload.start,
+            end: payload.end,
+            projectId: payload.projectId ? Number(payload.projectId) : undefined,
+            activityId: payload.activityId ? Number(payload.activityId) : undefined,
+            timeCodeId: payload.timecodeId ? Number(payload.timecodeId) : undefined,
+            description: payload.description || undefined,
+          };
+          console.debug('[time-report] creating', body);
+          const url = process.env.NODE_ENV !== 'production' ? '/api/blikk/time-reports?debug=1' : '/api/blikk/time-reports';
+          const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+          const json = await res.json().catch(()=>({}));
+          if (!res.ok || !json.ok) {
+            console.warn('Time report create failed', json);
+            toast.error(json?.error || 'Misslyckades att spara tid');
+          } else {
+            console.debug('Time report created', json);
+            toast.success('Tidrapport sparad');
+          }
+        } catch (e:any) {
+          console.warn('Time report create error', e);
+          try { toast.error('Fel vid sparande av tid'); } catch {}
+        }
+      }} />
     </main>
   );
 }

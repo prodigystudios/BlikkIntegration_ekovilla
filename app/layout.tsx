@@ -4,6 +4,7 @@ import Script from 'next/script';
 import HeaderTitle from './components/HeaderTitle';
 import { getUserProfile } from '../lib/getUserProfile';
 import { UserProfileProvider } from '../lib/UserProfileContext';
+import { ToastProvider } from '../lib/Toast';
 import Link from 'next/link';
 
 export const viewport = {
@@ -65,7 +66,9 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       </header>
   {/* Content wrapper with top padding to avoid overlap (responsive + safe area) */} 
   <UserProfileProvider profile={profile}>
-    <div className="content-offset">{children}</div>
+    <ToastProvider>
+      <div className="content-offset">{children}</div>
+    </ToastProvider>
   </UserProfileProvider>
       <script
         dangerouslySetInnerHTML={{
