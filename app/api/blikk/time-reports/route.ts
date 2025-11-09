@@ -64,6 +64,8 @@ export async function POST(req: NextRequest) {
     const hours = body.hours != null ? Number(body.hours) : undefined;
     const description = typeof body.description === 'string' ? body.description : '';
     const projectId = body.projectId != null ? Number(body.projectId) : undefined;
+    const internalProjectId = body.internalProjectId != null ? Number(body.internalProjectId) : undefined;
+    const absenceProjectId = body.absenceProjectId != null ? Number(body.absenceProjectId) : undefined;
     const activityId = body.activityId != null ? Number(body.activityId) : undefined;
     const timeCodeId = body.timeCodeId != null ? Number(body.timeCodeId) : (body.timecodeId != null ? Number(body.timecodeId) : undefined);
     const breakMinutes = body.breakMinutes != null ? Number(body.breakMinutes) : undefined;
@@ -83,6 +85,12 @@ export async function POST(req: NextRequest) {
 
     if (!Number.isFinite(userId) || userId <= 0) return NextResponse.json({ error: 'userId is required' }, { status: 400 });
     if (!date) return NextResponse.json({ error: 'date is required' }, { status: 400 });
+
+    // Require exactly one of projectId / internalProjectId / absenceProjectId
+    const idCount = [projectId, internalProjectId, absenceProjectId].filter(v => Number.isFinite(v as any) && (v as number) > 0).length;
+    if (idCount !== 1) {
+      return NextResponse.json({ error: 'Exactly one of projectId, internalProjectId, absenceProjectId must be provided' }, { status: 400 });
+    }
     // Optional stricter validation depending on tenant requirements
     const mustHaveTimeCode = process.env.BLIKK_REQUIRE_TIMECODE === '1';
     if (mustHaveTimeCode && !Number.isFinite(timeCodeId as any)) {
@@ -101,7 +109,9 @@ export async function POST(req: NextRequest) {
       minutes,
       hours,
       description,
-      projectId,
+      projectId: projectId,
+      internalProjectId: internalProjectId,
+      absenceProjectId: absenceProjectId,
       activityId,
       timeCodeId,
       timeArticleId: forcedArticleId,

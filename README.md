@@ -56,6 +56,76 @@ Required environment variables for internal tasks
 
 Legacy endpoints for contacts/users/project-creation were removed for now to keep the project lean. They can be reintroduced if needed.
 
+## Time reporting (multi-context)
+
+The app supports creating time reports against three mutually exclusive target contexts:
+
+1. Normal project (`projectId`)
+2. Internal project (`internalProjectId`)
+3. Absence project (`absenceProjectId`)
+
+Exactly one of these IDs must be provided per time report. The UI enforces this via a toggle in the Time Report modal. If a selected project (any type) requires a comment (detected from its `commentRequiredWhenTimeReporting` flag in fetched metadata), the modal will require the description field before enabling submit.
+
+### Endpoints
+
+- `GET /api/blikk/time-reports` — list reports (automatically resolves current user's Blikk ID if `userId` omitted).
+- `POST /api/blikk/time-reports` — create a time report (see payload below).
+- `GET /api/blikk/internal-projects` — fetch internal projects for selection.
+- `GET /api/blikk/absence-projects` — fetch absence projects for selection.
+
+### POST payload shape
+
+```jsonc
+{
+	"date": "2025-10-11",          // ISO date (yyyy-mm-dd)
+	"minutes": 120,                 // or "hours": 2 (derives minutes internally)
+	"description": "Install work", // required if project metadata demands comment
+	"projectId": 123,               // OR internalProjectId OR absenceProjectId (exactly one)
+	"activityId": 456,              // optional
+	"timeCodeId": 789,              // optional (may be required if BLIKK_REQUIRE_TIMECODE=1)
+	"breakMinutes": 15,             // optional
+	"startTime": "08:00",          // optional; pass with endTime for tenants requiring explicit times
+	"endTime": "10:00"             // optional
+}
+```
+
+The server adds a shared `timeArticleId` (default 3400 or overridden via `BLIKK_TIME_ARTICLE_ID`) and normalizes body variants to maximize acceptance across tenant differences.
+
+### Relevant environment variables
+
+- `BLIKK_TIME_REPORTS_CREATE_PATH` — override the create path if tenant exposes a different route.
+- `BLIKK_TIME_REPORTS_PATH` — override list path.
+- `BLIKK_TIME_ARTICLE_ID` — shared time article ID (default 3400).
+- `BLIKK_REQUIRE_TIMECODE` — set to `1` to require `timeCodeId` in POST validation.
+
+### Validation rules (server)
+
+- Rejects if `userId` cannot be resolved from Supabase `profiles.blikk_id`.
+- Requires `date` and positive duration (`minutes` or `hours`).
+- Ensures exactly one of `projectId | internalProjectId | absenceProjectId` is present.
+- Enforces time code requirement when `BLIKK_REQUIRE_TIMECODE=1`.
+
+### Comment requirement (client)
+
+If the selected project indicates `commentRequiredWhenTimeReporting`, the modal marks the description field as required and blocks submission until filled. This logic is front-end only; you can add server enforcement later if needed.
+
+### Example response (debug mode)
+
+When calling `POST /api/blikk/time-reports?debug=1`, the response includes the normalized `sentBody` used against Blikk:
+
+```jsonc
+{
+	"ok": true,
+	"report": { /* raw Blikk response */ },
+	"usedPath": "/v1/Core/TimeReports",
+	"sentBody": { /* normalized body with aliases */ }
+}
+```
+
+### Adding future server-side enforcement
+
+To enforce comment requirement server-side, inspect incoming `projectId/internalProjectId/absenceProjectId` -> fetch project metadata -> reject if missing description while flag is true. (Currently not implemented to avoid extra latency.)
+
 ### Project comments
 - By default the app will try to post a comment after a PDF is saved if the current project has an `id`.
 - You can customize the endpoint path and request body via env:

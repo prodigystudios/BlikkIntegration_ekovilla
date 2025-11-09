@@ -761,6 +761,8 @@ export class BlikkClient {
   async createTimeReport(input: {
     userId: number;            // required
     projectId?: number | null; // optional
+    internalProjectId?: number | null; // optional (mutually exclusive with projectId/absenceProjectId)
+    absenceProjectId?: number | null;  // optional (mutually exclusive)
     activityId?: number | null; // optional
     timeCodeId?: number | null; // optional
     timeArticleId?: number | null; // optional (shared article id 3400)
@@ -840,9 +842,26 @@ export class BlikkClient {
       body.dateFrom = fromIso;
       body.dateTo = toIso;
     }
+    // Exactly one of projectId/internalProjectId/absenceProjectId should be present
     if (input.projectId != null) {
       body.projectId = input.projectId;
       body.project = { id: input.projectId };
+    }
+    if (input.internalProjectId != null) {
+      body.internalProjectId = input.internalProjectId;
+      body.internalProject = { id: input.internalProjectId };
+      // Remove normal project keys if present
+      delete (body as any).projectId;
+      delete (body as any).project;
+    }
+    if (input.absenceProjectId != null) {
+      body.absenceProjectId = input.absenceProjectId;
+      body.absenceProject = { id: input.absenceProjectId };
+      // Remove normal/internal project keys if present
+      delete (body as any).projectId;
+      delete (body as any).project;
+      delete (body as any).internalProjectId;
+      delete (body as any).internalProject;
     }
     if (input.activityId != null) {
       body.activityId = input.activityId;

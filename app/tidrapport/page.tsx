@@ -11,6 +11,10 @@ interface TimeReportItem {
   projectName?: string | null;
   orderNumber?: string | null;
   projectNumber?: string | null; // internal project number from Blikk (project.number)
+  internalProjectId?: number | string | null;
+  internalProjectName?: string | null;
+  absenceProjectId?: number | string | null;
+  absenceProjectName?: string | null;
   activityId?: number | string | null;
   activityName?: string | null;
   timeCodeId?: number | string | null;
@@ -147,6 +151,10 @@ export default function TimeReportsPage() {
             projectName: r.projectName ?? r.project_name ?? r.project?.name ?? r.project?.title ?? null,
             orderNumber: r.orderNumber ?? r.order_number ?? r.project?.orderNumber ?? r.project?.order_number ?? r.project?.orderNo ?? null,
             projectNumber: r.projectNumber ?? r.project_number ?? r.project?.number ?? null,
+            internalProjectId: r.internalProjectId ?? r.internal_project_id ?? r.internalProject?.id ?? null,
+            internalProjectName: r.internalProjectName ?? r.internal_project_name ?? r.internalProject?.name ?? null,
+            absenceProjectId: r.absenceProjectId ?? r.absence_project_id ?? r.absenceProject?.id ?? null,
+            absenceProjectName: r.absenceProjectName ?? r.absence_project_name ?? r.absenceProject?.name ?? null,
             activityId: r.activityId ?? r.activity_id ?? r.activity?.id ?? null,
             activityName: r.activityName ?? r.activity_name ?? r.activity?.name ?? null,
             timeCodeId: r.timeCodeId ?? r.timecodeId ?? r.time_code_id ?? r.timeCode?.id ?? null,
@@ -263,7 +271,22 @@ export default function TimeReportsPage() {
                       </div>
                       <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
                         {(() => {
-                          // Priority: projectNumber -> orderNumber -> projectName -> projectId
+                          // Show target context: Absence -> Internal -> Project
+                          if (r.absenceProjectId || r.absenceProjectName) {
+                            return (
+                              <span style={{ fontSize:10.5, background:'#ffe4e6', color:'#9f1239', border:'1px solid #fecdd3', padding:'2px 6px', borderRadius:999 }}>
+                                Frånvaro{r.absenceProjectName ? ` – ${r.absenceProjectName}` : (r.absenceProjectId ? `: ${r.absenceProjectId}` : '')}
+                              </span>
+                            );
+                          }
+                          if (r.internalProjectId || r.internalProjectName) {
+                            return (
+                              <span style={{ fontSize:10.5, background:'#f1f5f9', color:'#0f172a', border:'1px solid #e2e8f0', padding:'2px 6px', borderRadius:999 }}>
+                                Intern{r.internalProjectName ? ` – ${r.internalProjectName}` : (r.internalProjectId ? `: ${r.internalProjectId}` : '')}
+                              </span>
+                            );
+                          }
+                          // Priority for normal projects: projectNumber -> orderNumber -> projectName -> projectId
                           if (r.projectNumber) {
                             return <span style={{ fontSize:10.5, background:'#eef2ff', color:'#3730a3', border:'1px solid #c7d2fe', padding:'2px 6px', borderRadius:999 }}>#{r.projectNumber}{r.projectName ? ` – ${r.projectName}` : ''}</span>;
                           }
@@ -324,7 +347,10 @@ export default function TimeReportsPage() {
               breakMinutes: payload.breakMinutes,
               start: payload.start,
               end: payload.end,
-              projectId: payload.projectId ? Number(payload.projectId) : undefined,
+              // target id: exactly one of project/internal/absence
+              projectId: payload.reportType === 'project' && payload.projectId ? Number(payload.projectId) : undefined,
+              internalProjectId: payload.reportType === 'internal' && payload.internalProjectId ? Number(payload.internalProjectId) : undefined,
+              absenceProjectId: payload.reportType === 'absence' && payload.absenceProjectId ? Number(payload.absenceProjectId) : undefined,
               activityId: payload.activityId ? Number(payload.activityId) : undefined,
               timeCodeId: payload.timecodeId ? Number(payload.timecodeId) : undefined,
               description: payload.description || undefined,
