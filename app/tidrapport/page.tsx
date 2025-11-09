@@ -36,6 +36,8 @@ export default function TimeReportsPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [timeModalOpen, setTimeModalOpen] = useState(false);
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [editItem, setEditItem] = useState<TimeReportItem | null>(null);
   const [modalInitialDate, setModalInitialDate] = useState<string | null>(null);
   const toast = useToast();
   const [refreshTick, setRefreshTick] = useState(0);
@@ -267,7 +269,44 @@ export default function TimeReportsPage() {
                           <span style={{ fontSize:12, fontWeight:600, color:'#0f172a', whiteSpace:'nowrap' }}>{start || '—'} → {end || '—'}</span>
                           {r.description && <span style={{ fontSize:11, color:'#475569', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{r.description}</span>}
                         </div>
-                        <div style={{ fontSize:12, color:'#0f172a', fontWeight:600 }}>{h} h</div>
+                        <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+                          <div style={{ fontSize:12, color:'#0f172a', fontWeight:600 }}>{h} h</div>
+                          <button
+                            type="button"
+                            aria-label="Redigera"
+                            onClick={() => { setEditItem(r); setEditModalOpen(true); }}
+                            style={{ fontSize:11, padding:'4px 6px', border:'1px solid #94a3b8', background:'#fff', color:'#0f172a', borderRadius:6, cursor:'pointer' }}
+                          >✎</button>
+                          <button
+                            type="button"
+                            aria-label="Ta bort"
+                            onClick={async () => {
+                              if (!r.id) return;
+                              const confirmDelete = window.confirm('Ta bort tidrapport?');
+                              if (!confirmDelete) return;
+                              try {
+                                const res = await fetch(`/api/blikk/time-reports/${r.id}`, { method:'DELETE' });
+                                const j = await res.json().catch(()=>({ ok:false }));
+                                if (!res.ok || !j.ok) {
+                                  toast.error((j as any).error || 'Kunde inte ta bort');
+                                } else {
+                                  toast.success('Tidrapport borttagen');
+                                  try {
+                                    const dbg = new URLSearchParams(window.location.search).get('debug') === '1';
+                                    if (dbg && (j as any).usedPath) {
+                                      // eslint-disable-next-line no-console
+                                      console.debug('Delete usedPath', (j as any).usedPath);
+                                    }
+                                  } catch {}
+                                  setRefreshTick(t=>t+1);
+                                }
+                              } catch (e:any) {
+                                toast.error('Fel vid borttagning');
+                              }
+                            }}
+                            style={{ fontSize:11, padding:'4px 6px', border:'1px solid #dc2626', background:'#fff', color:'#dc2626', borderRadius:6, cursor:'pointer' }}
+                          >🗑</button>
+                        </div>
                       </div>
                       <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
                         {(() => {
@@ -371,6 +410,56 @@ export default function TimeReportsPage() {
           } catch (e:any) {
             console.warn('Time report create error', e);
             toast.error('Fel vid sparande av tid');
+          }
+        }}
+      />
+      <TimeReportModal
+        open={editModalOpen}
+        onClose={() => { setEditModalOpen(false); setEditItem(null); }}
+        editId={editItem?.id ? String(editItem.id) : null}
+        initialDate={editItem?.date ? String(editItem.date) : null}
+        initialStart={editItem?.clockStart || editItem?.startTime || null}
+        initialEnd={editItem?.clockEnd || editItem?.endTime || null}
+        initialBreakMinutes={typeof editItem?.breakMinutes === 'number' ? editItem.breakMinutes : (editItem?.breakMinutes ? Number(editItem.breakMinutes) : null)}
+        initialDescription={editItem?.description || null}
+        initialTimecodeId={editItem?.timeCodeId ? String(editItem.timeCodeId) : null}
+        initialActivityId={editItem?.activityId ? String(editItem.activityId) : null}
+        initialReportType={editItem ? (editItem.absenceProjectId ? 'absence' : (editItem.internalProjectId ? 'internal' : 'project')) : 'project'}
+        initialProjectId={editItem?.projectId ? String(editItem.projectId) : null}
+        initialInternalProjectId={editItem?.internalProjectId ? String(editItem.internalProjectId) : null}
+        initialAbsenceProjectId={editItem?.absenceProjectId ? String(editItem.absenceProjectId) : null}
+        onSubmit={async (payload: Parameters<NonNullable<TimeReportModalProps['onSubmit']>>[0]) => {
+          if (!payload.editId) return;
+          try {
+            const minutes = Math.round(payload.totalHours * 60);
+            const body: any = {
+              date: payload.date,
+              minutes,
+              breakMinutes: payload.breakMinutes,
+              start: payload.start,
+              end: payload.end,
+              projectId: payload.reportType === 'project' && payload.projectId ? Number(payload.projectId) : undefined,
+              internalProjectId: payload.reportType === 'internal' && payload.internalProjectId ? Number(payload.internalProjectId) : undefined,
+              absenceProjectId: payload.reportType === 'absence' && payload.absenceProjectId ? Number(payload.absenceProjectId) : undefined,
+              activityId: payload.activityId ? Number(payload.activityId) : undefined,
+              timeCodeId: payload.timecodeId ? Number(payload.timecodeId) : undefined,
+              description: payload.description || undefined,
+            };
+            const url = process.env.NODE_ENV !== 'production' ? `/api/blikk/time-reports/${payload.editId}?debug=1` : `/api/blikk/time-reports/${payload.editId}`;
+            const res = await fetch(url, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+            const json = await res.json().catch(()=>({}));
+            if (!res.ok || !(json as any).ok) {
+              console.warn('Time report update failed', json);
+              toast.error((json as any)?.error || 'Misslyckades att uppdatera tid');
+            } else {
+              toast.success('Tidrapport uppdaterad');
+              setEditModalOpen(false);
+              setEditItem(null);
+              setRefreshTick(t => t + 1);
+            }
+          } catch (e:any) {
+            console.warn('Time report update error', e);
+            toast.error('Fel vid uppdatering av tid');
           }
         }}
       />

@@ -1,11 +1,12 @@
 "use client";
-import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 
 export interface TimeReportModalProps {
   open: boolean;
   onClose: () => void;
   onSubmit?: (payload: {
+    editId?: string | null;
     date: string;
     start: string;
     end: string;
@@ -14,22 +15,33 @@ export interface TimeReportModalProps {
     project?: string;
     description?: string;
     totalHours: number;
-  timecodeId?: string; // Blikk time code id
-  timecodeCode?: string | null; // Optional human code from Blikk
-  activityId?: string; // Blikk activity id
-  activityCode?: string | null; // Optional human code
-  activityName?: string | null; // Human name
-  reportType?: 'project' | 'internal' | 'absence';
-  internalProjectId?: string | null;
-  absenceProjectId?: string | null;
+    timecodeId?: string; // Blikk time code id
+    timecodeCode?: string | null; // Optional human code from Blikk
+    activityId?: string; // Blikk activity id
+    activityCode?: string | null; // Optional human code
+    activityName?: string | null; // Human name
+    reportType?: 'project' | 'internal' | 'absence';
+    internalProjectId?: string | null;
+    absenceProjectId?: string | null;
   }) => void;
   // Optional prefill when opening from context (e.g., a project card)
   initialProject?: string | null;
   initialProjectId?: string | null;
   initialDate?: string | null; // YYYY-MM-DD
+  // Edit-mode optional prefills
+  editId?: string | null;
+  initialStart?: string | null;
+  initialEnd?: string | null;
+  initialBreakMinutes?: number | null;
+  initialDescription?: string | null;
+  initialTimecodeId?: string | null;
+  initialActivityId?: string | null;
+  initialReportType?: 'project' | 'internal' | 'absence' | null;
+  initialInternalProjectId?: string | null;
+  initialAbsenceProjectId?: string | null;
 }
 
-export default function TimeReportModal({ open, onClose, onSubmit, initialProject, initialProjectId, initialDate }: TimeReportModalProps) {
+export default function TimeReportModal({ open, onClose, onSubmit, initialProject, initialProjectId, initialDate, editId: propEditId, initialStart, initialEnd, initialBreakMinutes, initialDescription, initialTimecodeId, initialActivityId, initialReportType, initialInternalProjectId, initialAbsenceProjectId }: TimeReportModalProps) {
   const [isSmall, setIsSmall] = useState(false); // <= 640px
   const [isXS, setIsXS] = useState(false); // <= 420px
   const [date, setDate] = useState<string>('');
@@ -93,19 +105,17 @@ export default function TimeReportModal({ open, onClose, onSubmit, initialProjec
 
   useEffect(() => {
     if (!open) return;
-    // Default values for convenience
     try {
       const today = new Date();
       const iso = today.toISOString().slice(0, 10);
       setDate(prev => (initialDate || prev || iso));
     } catch {}
-    // Reset transient selections each time we open
-    setSelectedTimecode('');
-    setSelectedActivity('');
-    setSelectedInternalId('');
-    setSelectedAbsenceId('');
-    setReportType('project');
-    // Prefill project if provided (from context like My Jobs)
+    // Reset / prefill selections depending on edit mode
+    setSelectedTimecode(initialTimecodeId || '');
+    setSelectedActivity(initialActivityId || '');
+    setSelectedInternalId(initialInternalProjectId || '');
+    setSelectedAbsenceId(initialAbsenceProjectId || '');
+    setReportType(initialReportType || 'project');
     if (initialProjectId) {
       setSelectedProjectId(String(initialProjectId));
     } else {
@@ -116,7 +126,11 @@ export default function TimeReportModal({ open, onClose, onSubmit, initialProjec
     } else {
       setProject('');
     }
-  }, [open, initialProject, initialProjectId, initialDate]);
+    if (initialStart) setStart(initialStart);
+    if (initialEnd) setEnd(initialEnd);
+    if (typeof initialBreakMinutes === 'number') setBreakMin(String(initialBreakMinutes));
+    if (typeof initialDescription === 'string') setDesc(initialDescription);
+  }, [open, initialProject, initialProjectId, initialDate, initialStart, initialEnd, initialBreakMinutes, initialDescription, initialTimecodeId, initialActivityId, initialReportType, initialInternalProjectId, initialAbsenceProjectId]);
 
   // Load internal projects when needed
   useEffect(() => {
@@ -344,6 +358,52 @@ export default function TimeReportModal({ open, onClose, onSubmit, initialProjec
     return () => { cancelled = true; };
   }, [open, date, supabase]);
 
+  // When user switches to Internal or Absence tab, auto-select the "Intern" activity to avoid mistakes.
+  // Skip forcing in edit mode (propEditId) to avoid altering existing reports accidentally.
+  const lastForcedTypeRef = useRef<'internal' | 'absence' | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    if (propEditId) return; // don't force during edit of an existing record
+    const isSpecial = reportType === 'internal' || reportType === 'absence';
+    if (!isSpecial) { lastForcedTypeRef.current = null; return; }
+    if (activities.length === 0) return; // wait until activities loaded
+    if (lastForcedTypeRef.current === reportType) return; // already forced for this type
+
+    const normalize = (s: string) => s
+      .normalize('NFD')
+      .replace(/\p{Diacritic}/gu, '')
+      .toLowerCase();
+    const target = 'intern';
+    const internActivity = activities.find(a => {
+      const hay = normalize([a.name || '', a.code || ''].filter(Boolean).join(' '));
+      return hay === target || hay.includes(target);
+    });
+    if (internActivity) {
+      setSelectedActivity(internActivity.id);
+      lastForcedTypeRef.current = reportType;
+    }
+  }, [open, reportType, activities, propEditId]);
+
+  // When switching back to normal project tab, restore the default project activity ("Lösullsentrepenad").
+  useEffect(() => {
+    if (!open) return;
+    if (propEditId) return; // don't override when editing existing reports
+    if (reportType !== 'project') return;
+    if (activities.length === 0) return;
+    const normalize = (s: string) => s
+      .normalize('NFD')
+      .replace(/\p{Diacritic}/gu, '')
+      .toLowerCase();
+    const target = 'losullsentreprenad';
+    const preferred = activities.find(a => {
+      const hay = normalize([a.name || '', a.code || ''].filter(Boolean).join(' '));
+      return hay === target || hay.includes(target);
+    }) || null;
+    if (preferred) {
+      setSelectedActivity(preferred.id);
+    }
+  }, [open, reportType, activities, propEditId]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!open) return;
@@ -410,6 +470,7 @@ export default function TimeReportModal({ open, onClose, onSubmit, initialProjec
     if (!canSubmit) return;
     setSubmitted('saving');
     const payload = {
+      editId: propEditId || null,
       date,
       start,
       end,

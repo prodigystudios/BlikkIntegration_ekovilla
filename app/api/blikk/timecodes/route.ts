@@ -66,8 +66,11 @@ export async function GET(req: NextRequest) {
       ...(includeRaw ? { _raw: tc } : {}),
     }));
 
-    console.log('[blikk timecodes] usedUrl', usedUrl);
-    console.log('[blikk timecodes] sample', mapped.slice(0, 3));
+    const debug = req.nextUrl.searchParams.get('debug') === '1';
+    if (debug && process.env.NODE_ENV !== 'production') {
+      console.log('[blikk timecodes] usedUrl', usedUrl);
+      console.log('[blikk timecodes] sample', mapped.slice(0, 3));
+    }
 
     return NextResponse.json({ items: mapped, source: `blikk:${usedUrl}`, cached: false });
   } catch (e: any) {

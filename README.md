@@ -72,6 +72,8 @@ Exactly one of these IDs must be provided per time report. The UI enforces this 
 - `POST /api/blikk/time-reports` — create a time report (see payload below).
 - `GET /api/blikk/internal-projects` — fetch internal projects for selection.
 - `GET /api/blikk/absence-projects` — fetch absence projects for selection.
+- `PATCH /api/blikk/time-reports/{id}` — update a time report (provides complete payload; derives missing fields from existing record when omitted).
+- `DELETE /api/blikk/time-reports/{id}` — delete a time report (idempotent; 404 treated as already removed).
 
 ### POST payload shape
 
@@ -97,12 +99,26 @@ The server adds a shared `timeArticleId` (default 3400 or overridden via `BLIKK_
 - `BLIKK_TIME_REPORTS_PATH` — override list path.
 - `BLIKK_TIME_ARTICLE_ID` — shared time article ID (default 3400).
 - `BLIKK_REQUIRE_TIMECODE` — set to `1` to require `timeCodeId` in POST validation.
+- `BLIKK_ENABLE_LEGACY_TIME_REPORTS` — if set to `1` allows legacy non-Core delete path fallback; default is off (canonical only).
 
 ### Validation rules (server)
 
 - Rejects if `userId` cannot be resolved from Supabase `profiles.blikk_id`.
 - Requires `date` and positive duration (`minutes` or `hours`).
 - Ensures exactly one of `projectId | internalProjectId | absenceProjectId` is present.
+- PATCH also enforces mutual exclusivity and auto-fills missing context/time fields from the existing report.
+
+### Payload alias rationale
+
+Blikk tenants can differ in accepted field names. To maximize compatibility the server/client includes multiple aliases for certain concepts:
+
+- Time-of-day: `startTime`, `endTime`, `timeFrom`, `timeTo`, `start`, `end`, `clockStart`, `clockEnd` (+ ISO datetime variants `from`, `to`, `startDateTime`, `endDateTime`, `startAt`, `endAt`, `dateFrom`, `dateTo` when date known).
+- Hours: `minutes` and derived decimal `hours`, plus `invoiceableHours`, `billableHours`, `invoicableHours` (common spelling variant). If `billable=false` then `invoiceableHours` is set to `0` but raw `hours` still reflect actual duration.
+- Time article: `timeArticleId`, `timeArticle: { id }`, and `articleId` for acceptance across versions.
+- Description/comment: `description` and `comment` (plus legacy `internalComment` empty string to prevent missing key errors).
+- Break: `breakMinutes` and `break`.
+
+Update (PATCH) reuses these aliases to avoid cases where tenants reject changes lacking a specific synonym.
 - Enforces time code requirement when `BLIKK_REQUIRE_TIMECODE=1`.
 
 ### Comment requirement (client)

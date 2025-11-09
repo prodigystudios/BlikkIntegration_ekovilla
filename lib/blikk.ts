@@ -817,31 +817,8 @@ export class BlikkClient {
     body.invoiceableHours = invoiceable; // default: all hours invoiceable unless tenant config says otherwise
     body.billableHours = hoursDec;    // alias
     body.invoicableHours = hoursDec;  // common misspelling alias seen in some APIs
-    // Provide time-of-day variants in case tenant requires explicit times
-    if (input.startTime && input.endTime) {
-      const start = String(input.startTime).slice(0,5);
-      const end = String(input.endTime).slice(0,5);
-      body.startTime = start;
-      body.endTime = end;
-      body.timeFrom = start;
-      body.timeTo = end;
-      body.start = start;
-      body.end = end;
-      // Doc-specific aliases
-      body.clockStart = start; // matches example payload
-      body.clockEnd = end;
-      // Also provide ISO combined datetimes (some tenants require these)
-      const fromIso = `${date}T${start}:00`;
-      const toIso = `${date}T${end}:00`;
-      body.from = fromIso;
-      body.to = toIso;
-      body.startDateTime = fromIso;
-      body.endDateTime = toIso;
-      body.startAt = fromIso;
-      body.endAt = toIso;
-      body.dateFrom = fromIso;
-      body.dateTo = toIso;
-    }
+    // Inject time aliases
+    if (input.startTime && input.endTime) Object.assign(body, buildTimeAliases(date, input.startTime, input.endTime));
     // Exactly one of projectId/internalProjectId/absenceProjectId should be present
     if (input.projectId != null) {
       body.projectId = input.projectId;
@@ -1100,8 +1077,152 @@ export class BlikkClient {
     if (opts?.debug) return { error: String(lastErr?.message || lastErr), attempts, used: null } as any;
     throw lastErr || new Error('Failed to fetch time report');
   }
+
+  // Update a time report by id using the canonical Core endpoint (PUT).
+  async updateTimeReport(id: number, input: {
+    date?: string | null;
+    minutes?: number | null;
+    hours?: number | null;
+    description?: string | null;
+    startTime?: string | null;
+    endTime?: string | null;
+    activityId?: number | null;
+    timeCodeId?: number | null;
+    projectId?: number | null;
+    internalProjectId?: number | null;
+    absenceProjectId?: number | null;
+    breakMinutes?: number | null;
+    billable?: boolean | null;
+    timeArticleId?: number | null;
+    userId?: number | null;
+  }) {
+    if (!Number.isFinite(id)) throw new Error('Invalid time report id');
+    const base = process.env.BLIKK_TIME_REPORTS_PATH || '/v1/Core/TimeReports';
+    const path = `${base}/${id}`;
+
+    const body: Record<string, any> = {};
+    if (input.date != null) {
+      const date = String(input.date || '').slice(0, 10);
+      if (date) {
+        const dateWithTime = /\d{4}-\d{2}-\d{2}$/.test(date) ? `${date} 00:00:00` : date;
+        body.date = dateWithTime;
+      }
+    }
+  if (input.minutes != null && Number.isFinite(input.minutes)) body.minutes = input.minutes;
+  else if (input.hours != null && Number.isFinite(input.hours)) body.hours = input.hours;
+    if (input.description != null) body.description = input.description;
+  if (input.description != null) body.comment = input.description; // alias for acceptance
+    if (input.startTime && input.endTime) Object.assign(body, buildTimeAliases(input.date ? String(input.date).slice(0,10) : undefined, input.startTime, input.endTime));
+    if (input.activityId != null) { body.activityId = input.activityId; body.activity = { id: input.activityId }; }
+    if (input.timeCodeId != null) { body.timeCodeId = input.timeCodeId; body.timeCode = { id: input.timeCodeId }; }
+  if (input.timeArticleId != null) { body.timeArticleId = input.timeArticleId; body.timeArticle = { id: input.timeArticleId }; body.articleId = input.timeArticleId; }
+  if (input.userId != null) { body.userId = input.userId; body.user = { id: input.userId }; }
+    if (input.breakMinutes != null) { body.breakMinutes = input.breakMinutes; body.break = input.breakMinutes; }
+    if (input.billable != null) body.billable = input.billable;
+    // Provide invoiceable/billable hour variants similar to create
+    let hoursDec: number | null = null;
+    if (body.minutes != null && Number.isFinite(body.minutes)) {
+      hoursDec = Math.round((Number(body.minutes) / 60) * 100) / 100;
+    } else if (input.hours != null && Number.isFinite(input.hours)) {
+      hoursDec = Math.round(Number(input.hours) * 100) / 100;
+    }
+    if (hoursDec != null) {
+      const invoiceable = input.billable === false ? 0 : hoursDec;
+      body.hours = hoursDec; // ensure hours present too
+      body.invoiceableHours = invoiceable;
+      body.billableHours = hoursDec;
+      body.invoicableHours = hoursDec; // common alias
+    }
+
+    // Mutually exclusive target ids
+    if (input.projectId != null) {
+      body.projectId = input.projectId; body.project = { id: input.projectId };
+    }
+    if (input.internalProjectId != null) {
+      body.internalProjectId = input.internalProjectId; body.internalProject = { id: input.internalProjectId };
+      delete body.projectId; delete body.project;
+    }
+    if (input.absenceProjectId != null) {
+      body.absenceProjectId = input.absenceProjectId; body.absenceProject = { id: input.absenceProjectId };
+      delete body.projectId; delete body.project; delete body.internalProjectId; delete body.internalProject;
+    }
+
+    // Single canonical attempt (PUT)
+    const data = await this.request(path, { method: 'PUT', body: JSON.stringify(body) });
+    return { data, usedPath: `${path} (PUT)`, sentBody: body };
+  }
+
+  // Delete a time report by id. Tries DELETE on a set of plausible bases.
+  async deleteTimeReport(id: number) {
+    if (!Number.isFinite(id)) throw new Error('Invalid time report id');
+    const envPath = process.env.BLIKK_TIME_REPORTS_PATH || null;
+    // The canonical path appears to be /v1/Core/TimeReports/{id}. We keep legacy fallback only if explicitly enabled.
+    const enableLegacy = process.env.BLIKK_ENABLE_LEGACY_TIME_REPORTS === '1';
+    const bases = envPath ? [envPath] : enableLegacy ? ['/v1/Core/TimeReports', '/v1/TimeReports'] : ['/v1/Core/TimeReports'];
+    let lastErr: any = null;
+    for (const b of bases) {
+      const p = `${b.replace(/\/?$/, '')}/${id}`;
+      try {
+        // Use raw fetch so we can treat 404 as idempotent success if previous base already removed it.
+        const token = await this.getToken();
+        const res = await fetch(`${BASE_URL}${p}`, {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          cache: 'no-store'
+        });
+        if (res.ok) {
+          let data: any = null;
+          if (res.status !== 204) {
+            try { data = await res.json(); } catch {}
+          }
+          return { data, usedPath: p };
+        }
+        // Accept 404 as success (already deleted) for the FIRST canonical path only.
+        if (res.status === 404 && b.includes('/Core/TimeReports')) {
+          return { data: null, usedPath: p };
+        }
+        const text = await res.text().catch(()=>`status ${res.status}`);
+        throw new Error(`Blikk DELETE ${p} -> ${res.status}: ${text}`);
+      } catch (e: any) {
+        lastErr = e;
+      }
+    }
+    throw lastErr || new Error('Failed to delete time report');
+  }
 }
 
 export function getBlikk() {
   return new BlikkClient();
+}
+
+// Shared helper to build comprehensive time aliases for tenant acceptance.
+// date (YYYY-MM-DD) optional; if provided, ISO variants are included.
+function buildTimeAliases(date: string | undefined, start: string, end: string) {
+  const startHHMM = String(start).slice(0,5);
+  const endHHMM = String(end).slice(0,5);
+  const out: Record<string, any> = {
+    startTime: startHHMM,
+    endTime: endHHMM,
+    timeFrom: startHHMM,
+    timeTo: endHHMM,
+    start: startHHMM,
+    end: endHHMM,
+    clockStart: startHHMM,
+    clockEnd: endHHMM,
+  };
+  if (date) {
+    const fromIso = `${date}T${startHHMM}:00`;
+    const toIso = `${date}T${endHHMM}:00`;
+    Object.assign(out, {
+      from: fromIso,
+      to: toIso,
+      startDateTime: fromIso,
+      endDateTime: toIso,
+      startAt: fromIso,
+      endAt: toIso,
+      dateFrom: fromIso,
+      dateTo: toIso,
+    });
+  }
+  return out;
 }

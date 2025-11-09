@@ -73,28 +73,28 @@ export async function POST(req: NextRequest) {
     // Resolve current user's Blikk ID if userId not provided
     if (!Number.isFinite(userId)) {
       const current = await getUserProfile();
-      if (!current) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-      if (!adminSupabase) return NextResponse.json({ error: 'service role not configured' }, { status: 500 });
+      if (!current) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
+      if (!adminSupabase) return NextResponse.json({ ok: false, error: 'service role not configured' }, { status: 500 });
       const { data: prof, error } = await adminSupabase.from('profiles').select('blikk_id').eq('id', current.id).maybeSingle();
-      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+      if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
       if (!prof || prof.blikk_id == null) {
-        return NextResponse.json({ error: 'No Blikk user mapping (blikk_id) found for current user' }, { status: 400 });
+        return NextResponse.json({ ok: false, error: 'No Blikk user mapping (blikk_id) found for current user' }, { status: 400 });
       }
       userId = Number(prof.blikk_id);
     }
 
-    if (!Number.isFinite(userId) || userId <= 0) return NextResponse.json({ error: 'userId is required' }, { status: 400 });
-    if (!date) return NextResponse.json({ error: 'date is required' }, { status: 400 });
+    if (!Number.isFinite(userId) || userId <= 0) return NextResponse.json({ ok: false, error: 'userId is required' }, { status: 400 });
+    if (!date) return NextResponse.json({ ok: false, error: 'date is required' }, { status: 400 });
 
     // Require exactly one of projectId / internalProjectId / absenceProjectId
     const idCount = [projectId, internalProjectId, absenceProjectId].filter(v => Number.isFinite(v as any) && (v as number) > 0).length;
     if (idCount !== 1) {
-      return NextResponse.json({ error: 'Exactly one of projectId, internalProjectId, absenceProjectId must be provided' }, { status: 400 });
+      return NextResponse.json({ ok: false, error: 'Exactly one of projectId, internalProjectId, absenceProjectId must be provided' }, { status: 400 });
     }
     // Optional stricter validation depending on tenant requirements
     const mustHaveTimeCode = process.env.BLIKK_REQUIRE_TIMECODE === '1';
     if (mustHaveTimeCode && !Number.isFinite(timeCodeId as any)) {
-      return NextResponse.json({ error: 'timeCodeId is required' }, { status: 400 });
+      return NextResponse.json({ ok: false, error: 'timeCodeId is required' }, { status: 400 });
     }
 
     const blikk = getBlikk();
