@@ -125,8 +125,14 @@ export default function TimeReportModal({ open, onClose, onSubmit, initialProjec
             active: (typeof it.active === 'boolean' ? it.active : (typeof it.isActive === 'boolean' ? it.isActive : null)) as boolean | null,
           })).filter((x: any) => x.id);
           setTimecodes(mapped);
-          if (!selectedTimecode && mapped.length > 0) {
-            setSelectedTimecode(mapped[0].id);
+          if (mapped.length > 0) {
+            setSelectedTimecode((prev) => {
+              // Keep previous if still valid; otherwise pick first
+              if (prev && mapped.some((m: { id: string }) => m.id === prev)) return prev;
+              return mapped[0].id;
+            });
+          } else {
+            setSelectedTimecode('');
           }
         }
       } catch (e: any) {
@@ -165,22 +171,24 @@ export default function TimeReportModal({ open, onClose, onSubmit, initialProjec
             active: (typeof it.active === 'boolean' ? it.active : (typeof it.isActive === 'boolean' ? it.isActive : null)) as boolean | null,
           })).filter((x: any) => x.id);
           setActivities(mapped);
-          // Auto-select the common default activity "lösullsentrepenad" if present
-          if (!selectedActivity && mapped.length > 0) {
+          // Auto-select the common default activity "lösullsentrepenad" if present; else first.
+          if (mapped.length > 0) {
             const normalize = (s: string) => s
               .normalize('NFD')
-              // Remove diacritics
               .replace(/\p{Diacritic}/gu, '')
               .toLowerCase();
-            const target = 'lösullsentrepenad';
-            const targetNorm = normalize(target);
+            const targetNorm = normalize('Lösullsentrepenad');
             const preferred = mapped.find((a: { id: string; name: string | null; code: string | null; billable: boolean | null; active: boolean | null }) => {
               const hay = normalize([a.name || '', a.code || ''].filter(Boolean).join(' '));
-              // Accept exact or contains match to be resilient to naming variations
               return hay === targetNorm || hay.includes(targetNorm);
+            }) || null;
+            const pickId = (preferred || mapped[3]).id;
+            setSelectedActivity((prev) => {
+              if (prev && mapped.some((a: { id: string }) => a.id === prev)) return prev;
+              return pickId;
             });
-            // Fallback to the first item if not found
-            setSelectedActivity((preferred || mapped[0]).id);
+          } else {
+            setSelectedActivity('');
           }
         }
       } catch (e: any) {

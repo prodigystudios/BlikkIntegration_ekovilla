@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getBlikk } from '@/lib/blikk';
+import { getTimecodesFromCache } from '@/lib/blikkCache';
 
 /*
   GET /api/blikk/timecodes
@@ -17,9 +18,11 @@ import { getBlikk } from '@/lib/blikk';
 export async function GET(req: NextRequest) {
   const q = req.nextUrl.searchParams.get('q') || req.nextUrl.searchParams.get('query') || '';
   const page = Math.max(1, Number(req.nextUrl.searchParams.get('page') || '1') || 1);
-  const pageSize = Math.min(200, Math.max(1, Number(req.nextUrl.searchParams.get('pageSize') || req.nextUrl.searchParams.get('limit') || '50') || 50));
+  const pageSize = Math.min(50, Math.max(1, Number(req.nextUrl.searchParams.get('pageSize') || req.nextUrl.searchParams.get('limit') || '50') || 50));
   const includeRaw = req.nextUrl.searchParams.get('raw') === '1';
   const mock = req.nextUrl.searchParams.get('mock') === '1';
+  const forceRefresh = req.nextUrl.searchParams.get('refresh') === '1';
+  const useCache = req.nextUrl.searchParams.get('nocache') !== '1';
 
   if (mock) {
     const items = Array.from({ length: Math.min(pageSize, 12) }).map((_, i) => ({
@@ -33,69 +36,26 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ items, source: 'mock' });
   }
 
+  // Fast path: cached response
+  if (useCache && !mock) {
+    try {
+      const cached = await getTimecodesFromCache({ q, page, pageSize, forceRefresh });
+      if (cached.length) {
+        return NextResponse.json({ items: cached, source: 'cache', cached: true });
+      }
+    } catch (e: any) {
+      console.warn('timecodes cache fallback to direct Blikk', e?.message || e);
+    }
+  }
+
   try {
     const blikk = getBlikk();
-    // We'll attempt multiple candidate base paths & param variants similar to listArticles/listTasks.
-    const envPath = process.env.BLIKK_TIMECODES_PATH || null; // allow override like '/v1/Admin/Resources/Timecodes'
-    const bases = envPath ? [envPath] : [
-      '/v1/Admin/Resources/Timecodes',
-      '/v1/Admin/Timecodes',
-      '/v1/Administration/Timecodes',
-      '/v1/Core/Timecodes',
-      '/v1/Timecodes'
-    ];
-    const queryKeys = ['filter.query', 'query', 'q', 'filter.name'];
-    const pagingVariants: Array<Record<string,string>> = [
-      { page: String(page), pageSize: String(pageSize) },
-      { page: String(page), limit: String(pageSize) },
-    ];
-    const attempts: string[] = [];
-    let lastErr: any = null;
-    let raw: any = null;
-    let usedUrl: string | null = null;
-
-    outer: for (const base of bases) {
-      for (const paging of pagingVariants) {
-        // Official style first: filter.query, then fallback keys
-        const officialQs = new URLSearchParams(paging);
-        if (q) officialQs.set('filter.query', q);
-        const officialUrl = `${base}?${officialQs.toString()}`;
-        attempts.push(officialUrl);
-        try {
-          raw = await blikk['request'](officialUrl.replace(/^https?:\/\/[^/]+/, '')); // internal request usage; path only
-          usedUrl = officialUrl;
-          break outer;
-        } catch (e: any) {
-          lastErr = e;
-        }
-        for (const qk of queryKeys) {
-          if (qk === 'filter.query') continue; // already tried
-          const qs = new URLSearchParams(paging);
-          if (q) qs.set(qk, q);
-          const url = `${base}?${qs.toString()}`;
-          attempts.push(url);
-          try {
-            raw = await blikk['request'](url.replace(/^https?:\/\/[^/]+/, ''));
-            usedUrl = url;
-            break outer;
-          } catch (e: any) {
-            lastErr = e;
-          }
-        }
-        // Finally without query
-        const plain = `${base}?${new URLSearchParams(paging).toString()}`;
-        attempts.push(plain);
-        try {
-          raw = await blikk['request'](plain.replace(/^https?:\/\/[^/]+/, ''));
-          usedUrl = plain;
-          break outer;
-        } catch (e: any) {
-          lastErr = e;
-        }
-      }
-    }
-
-    if (!raw && lastErr) throw lastErr;
+  const base = process.env.BLIKK_TIMECODES_PATH || '/v1/Admin/Timecodes';
+  // Your tenant expects limit param naming; use that and map q directly
+  const qs = new URLSearchParams({ page: String(page), limit: String(pageSize) });
+  if (q) qs.set('query', q);
+    const usedUrl = `${base}?${qs.toString()}`;
+    const raw: any = await (blikk as any).request(usedUrl.replace(/^https?:\/\/[^/]+/, ''));
     const arr: any[] = Array.isArray(raw) ? raw : (raw.items || raw.data || []);
     const mapped = arr.map(tc => ({
       id: tc.id ?? tc.timecodeId ?? tc.Id ?? tc.TimecodeId ?? tc.code ?? tc.number ?? tc.Code ?? undefined,
@@ -106,11 +66,10 @@ export async function GET(req: NextRequest) {
       ...(includeRaw ? { _raw: tc } : {}),
     }));
 
-    console.log('[blikk timecodes] attempts', attempts);
     console.log('[blikk timecodes] usedUrl', usedUrl);
     console.log('[blikk timecodes] sample', mapped.slice(0, 3));
 
-    return NextResponse.json({ items: mapped, source: usedUrl ? `blikk:${usedUrl}` : 'blikk', attempts });
+    return NextResponse.json({ items: mapped, source: `blikk:${usedUrl}`, cached: false });
   } catch (e: any) {
     console.error('GET /api/blikk/timecodes failed', e);
     return NextResponse.json({ items: [], error: String(e?.message || e) }, { status: 200 });
