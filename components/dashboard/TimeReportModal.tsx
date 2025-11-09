@@ -44,6 +44,7 @@ export interface TimeReportModalProps {
 export default function TimeReportModal({ open, onClose, onSubmit, initialProject, initialProjectId, initialDate, editId: propEditId, initialStart, initialEnd, initialBreakMinutes, initialDescription, initialTimecodeId, initialActivityId, initialReportType, initialInternalProjectId, initialAbsenceProjectId }: TimeReportModalProps) {
   const [isSmall, setIsSmall] = useState(false); // <= 640px
   const [isXS, setIsXS] = useState(false); // <= 420px
+  const startRef = useRef<HTMLInputElement | null>(null);
   const [date, setDate] = useState<string>('');
   const [start, setStart] = useState<string>('');
   const [end, setEnd] = useState<string>('');
@@ -130,7 +131,13 @@ export default function TimeReportModal({ open, onClose, onSubmit, initialProjec
     if (initialEnd) setEnd(initialEnd);
     if (typeof initialBreakMinutes === 'number') setBreakMin(String(initialBreakMinutes));
     if (typeof initialDescription === 'string') setDesc(initialDescription);
-  }, [open, initialProject, initialProjectId, initialDate, initialStart, initialEnd, initialBreakMinutes, initialDescription, initialTimecodeId, initialActivityId, initialReportType, initialInternalProjectId, initialAbsenceProjectId]);
+    // Avoid bringing up mobile keyboard on very small screens
+    if (!isXS) {
+      setTimeout(() => {
+        try { startRef.current?.focus(); } catch {}
+      }, 50);
+    }
+  }, [open, isXS, initialProject, initialProjectId, initialDate, initialStart, initialEnd, initialBreakMinutes, initialDescription, initialTimecodeId, initialActivityId, initialReportType, initialInternalProjectId, initialAbsenceProjectId]);
 
   // Load internal projects when needed
   useEffect(() => {
@@ -549,7 +556,7 @@ export default function TimeReportModal({ open, onClose, onSubmit, initialProjec
             <div style={{ display: 'grid', gridTemplateColumns: isXS ? '1fr' : '1fr 1fr', gap: isXS ? 8 : 10 }}>
               <label style={{ display: 'grid', gap: 4, fontSize: isSmall ? 13 : 12 }}>
                 <span>Start</span>
-                  <input type="time" value={start} onChange={e => setStart(e.target.value)} placeholder="07:00" style={{ padding: isSmall ? '12px 14px' : '8px 10px', fontSize: isSmall ? 16 : 14, minHeight: isSmall ? 44 : 36, border: `1px solid ${validationError ? '#fecaca' : '#cbd5e1'}`, borderRadius: 10 }} />
+                  <input ref={startRef} type="time" value={start} onChange={e => setStart(e.target.value)} placeholder="07:00" style={{ padding: isSmall ? '12px 14px' : '8px 10px', fontSize: isSmall ? 16 : 14, minHeight: isSmall ? 44 : 36, border: `1px solid ${validationError ? '#fecaca' : '#cbd5e1'}`, borderRadius: 10 }} />
               </label>
               <label style={{ display: 'grid', gap: 4, fontSize: isSmall ? 13 : 12 }}>
                 <span>Slut</span>

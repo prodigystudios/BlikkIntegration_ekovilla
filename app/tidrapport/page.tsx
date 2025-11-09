@@ -32,6 +32,7 @@ interface TimeReportItem {
 }
 
 export default function TimeReportsPage() {
+  const [isSmall, setIsSmall] = useState(false); // <= 640px
   const [items, setItems] = useState<TimeReportItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -97,6 +98,17 @@ export default function TimeReportsPage() {
   }, [weekStart]);
   const goTodayWeek = useCallback(() => {
     setWeekStart(formatLocal(calcMonday(new Date())));
+  }, []);
+
+  // Responsive flag for mobile-specific UI affordances (e.g., floating action button)
+  useEffect(() => {
+    const calc = () => {
+      const w = typeof window !== 'undefined' ? window.innerWidth : 1024;
+      setIsSmall(w <= 640);
+    };
+    calc();
+    window.addEventListener('resize', calc);
+    return () => window.removeEventListener('resize', calc);
   }, []);
 
   // Swedish weekday names (full) with uppercase first letter
@@ -204,16 +216,19 @@ export default function TimeReportsPage() {
 
   return (
     <div style={{ padding: 16, display:'grid', gap:16 }}>
-      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', flexWrap:'wrap', gap:12 }}>
-        <h1 style={{ margin:0, fontSize:20 }}>Veckans rapporter</h1>
-        <div style={{ display:'flex', gap:6, flexWrap:'wrap', alignItems:'center' }}>
-          <button type="button" className='btn--primary btn--sm' onClick={goPrevWeek}>← Föregående</button>
-          <button type="button" className='btn--success btn--sm' onClick={goTodayWeek}>Denna vecka</button>
-          <button type="button" className='btn--primary btn--sm' onClick={goNextWeek}>Nästa →</button>
+      {/* Sticky header with week navigation for better mobile UX */}
+      <div style={{ position:'sticky', top:0, zIndex: 5, background:'#fff', paddingBottom:8, borderBottom:'1px solid #e5e7eb' }}>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', flexWrap:'wrap', gap:12, paddingTop:8 }}>
+          <h1 style={{ margin:0, fontSize:20 }}>Veckans rapporter</h1>
+          <div style={{ display:'flex', gap:6, flexWrap:'wrap', alignItems:'center' }}>
+            <button type="button" className='btn--primary btn--sm' onClick={goPrevWeek}>← Föregående</button>
+            <button type="button" className='btn--success btn--sm' onClick={goTodayWeek}>Denna vecka</button>
+            <button type="button" className='btn--primary btn--sm' onClick={goNextWeek}>Nästa →</button>
+          </div>
         </div>
+        <div style={{ fontSize:12, color:'#64748b', marginTop:6 }}>Vecka: <strong>{formatDayLabel(dateFrom)} → {formatDayLabel(dateTo)}</strong></div>
+        <div style={{ fontSize:12, color:'#334155', marginTop:4 }}>Totalt rapporterat: <strong>{totalHours.toFixed(2)} h</strong></div>
       </div>
-  <div style={{ fontSize:12, color:'#64748b' }}>Vecka: <strong>{formatDayLabel(dateFrom)} → {formatDayLabel(dateTo)}</strong></div>
-      <div style={{ fontSize:12, color:'#334155' }}>Totalt rapporterat: <strong>{totalHours.toFixed(2)} h</strong></div>
       {loading && (
         <div style={{ display:'grid', gap:14 }}>
           {weekDays.map(d => (
@@ -255,7 +270,17 @@ export default function TimeReportsPage() {
             <div key={g.day} style={{ border:'1px solid #e5e7eb', borderRadius:12, background:'#fff', padding:12, display:'grid', gap:10 }}>
               <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:8 }}>
                 <div style={{ fontSize:13, fontWeight:600, color:'#0f172a' }}>{formatDayLabel(g.day)}</div>
-                <div style={{ fontSize:12, color: dayHours > 0 ? '#166534' : '#64748b', background: dayHours > 0 ? '#dcfce7' : '#f1f5f9', border:'1px solid ' + (dayHours > 0 ? '#86efac' : '#e2e8f0'), padding:'4px 8px', borderRadius: 999 }}>{dayHours > 0 ? `Summa: ${dayHours.toFixed(2)} h` : 'Inget rapporterat'}</div>
+                <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                  <div style={{ fontSize:12, color: dayHours > 0 ? '#166534' : '#64748b', background: dayHours > 0 ? '#dcfce7' : '#f1f5f9', border:'1px solid ' + (dayHours > 0 ? '#86efac' : '#e2e8f0'), padding:'4px 8px', borderRadius: 999 }}>{dayHours > 0 ? `Summa: ${dayHours.toFixed(2)} h` : 'Inget rapporterat'}</div>
+                  <button
+                    type="button"
+                    aria-label={`Ny rapport för ${formatDayLabel(g.day)}`}
+                    onClick={() => { setModalInitialDate(g.day); setTimeModalOpen(true); }}
+                    style={{ fontSize:12, padding:'6px 8px', border:'1px solid #16a34a', background:'#fff', color:'#16a34a', borderRadius:8, minHeight:32 }}
+                  >
+                    ➕
+                  </button>
+                </div>
               </div>
               <div style={{ display:'grid', gap:8 }}>
                 {g.arr.sort((a,b)=> (a.clockStart||'').localeCompare(b.clockStart||'')).map(r => {
@@ -275,7 +300,7 @@ export default function TimeReportsPage() {
                             type="button"
                             aria-label="Redigera"
                             onClick={() => { setEditItem(r); setEditModalOpen(true); }}
-                            style={{ fontSize:11, padding:'4px 6px', border:'1px solid #94a3b8', background:'#fff', color:'#0f172a', borderRadius:6, cursor:'pointer' }}
+                            style={{ fontSize:11, padding:'8px 10px', border:'1px solid #94a3b8', background:'#fff', color:'#0f172a', borderRadius:8, cursor:'pointer', minHeight:36 }}
                           >✎</button>
                           <button
                             type="button"
@@ -304,7 +329,7 @@ export default function TimeReportsPage() {
                                 toast.error('Fel vid borttagning');
                               }
                             }}
-                            style={{ fontSize:11, padding:'4px 6px', border:'1px solid #dc2626', background:'#fff', color:'#dc2626', borderRadius:6, cursor:'pointer' }}
+                            style={{ fontSize:11, padding:'8px 10px', border:'1px solid #dc2626', background:'#fff', color:'#dc2626', borderRadius:8, cursor:'pointer', minHeight:36 }}
                           >🗑</button>
                         </div>
                       </div>
@@ -373,6 +398,16 @@ export default function TimeReportsPage() {
           );
         })}
       </div>
+      {/* Floating action button for quick entry on mobile */}
+      {isSmall && (
+        <button
+          type="button"
+          onClick={() => { setModalInitialDate(formatLocal(new Date())); setTimeModalOpen(true); }}
+          aria-label="Ny tidrapport"
+          style={{ position:'fixed', right:16, bottom:'max(16px, env(safe-area-inset-bottom))', zIndex:10, display:'inline-flex', alignItems:'center', justifyContent:'center', width:56, height:56, borderRadius:999, border:'1px solid #16a34a', background:'#16a34a', color:'#fff', boxShadow:'0 8px 16px rgba(16,185,129,0.35)', fontSize:24 }}
+        >+
+        </button>
+      )}
       <TimeReportModal
         open={timeModalOpen}
         onClose={() => setTimeModalOpen(false)}
