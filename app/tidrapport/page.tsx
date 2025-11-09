@@ -42,6 +42,7 @@ export default function TimeReportsPage() {
   const [modalInitialDate, setModalInitialDate] = useState<string | null>(null);
   const toast = useToast();
   const [refreshTick, setRefreshTick] = useState(0);
+  const [deletingIds, setDeletingIds] = useState<string[]>([]);
   // Weekly navigation state: store a Monday anchor date string (YYYY-MM-DD)
   const today = new Date();
   const calcMonday = (d: Date) => {
@@ -301,6 +302,7 @@ export default function TimeReportsPage() {
                             aria-label="Redigera"
                             onClick={() => { setEditItem(r); setEditModalOpen(true); }}
                             style={{ fontSize:11, padding:'8px 10px', border:'1px solid #94a3b8', background:'#fff', color:'#0f172a', borderRadius:8, cursor:'pointer', minHeight:36 }}
+                            disabled={deletingIds.includes(String(r.id))}
                           >✎</button>
                           <button
                             type="button"
@@ -309,6 +311,8 @@ export default function TimeReportsPage() {
                               if (!r.id) return;
                               const confirmDelete = window.confirm('Ta bort tidrapport?');
                               if (!confirmDelete) return;
+                              const idStr = String(r.id);
+                              setDeletingIds(ids => Array.from(new Set([...ids, idStr])));
                               try {
                                 const res = await fetch(`/api/blikk/time-reports/${r.id}`, { method:'DELETE' });
                                 const j = await res.json().catch(()=>({ ok:false }));
@@ -327,10 +331,15 @@ export default function TimeReportsPage() {
                                 }
                               } catch (e:any) {
                                 toast.error('Fel vid borttagning');
+                              } finally {
+                                setDeletingIds(ids => ids.filter(x => x !== idStr));
                               }
                             }}
                             style={{ fontSize:11, padding:'8px 10px', border:'1px solid #dc2626', background:'#fff', color:'#dc2626', borderRadius:8, cursor:'pointer', minHeight:36 }}
-                          >🗑</button>
+                            disabled={deletingIds.includes(String(r.id))}
+                          >
+                            {deletingIds.includes(String(r.id)) ? <span className="spinner dark spin" style={{ width:16, height:16 }} aria-hidden /> : '🗑'}
+                          </button>
                         </div>
                       </div>
                       <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
@@ -435,16 +444,19 @@ export default function TimeReportsPage() {
             if (!res.ok || !json.ok) {
               console.warn('Time report create failed', json);
               toast.error(json?.error || 'Misslyckades att spara tid');
+              return false;
             } else {
               toast.success('Tidrapport sparad');
               setTimeModalOpen(false);
               setModalInitialDate(null);
               // Trigger a lightweight re-fetch instead of full page reload
               setRefreshTick(t => t + 1);
+              return true;
             }
           } catch (e:any) {
             console.warn('Time report create error', e);
             toast.error('Fel vid sparande av tid');
+            return false;
           }
         }}
       />
@@ -486,15 +498,18 @@ export default function TimeReportsPage() {
             if (!res.ok || !(json as any).ok) {
               console.warn('Time report update failed', json);
               toast.error((json as any)?.error || 'Misslyckades att uppdatera tid');
+              return false;
             } else {
               toast.success('Tidrapport uppdaterad');
               setEditModalOpen(false);
               setEditItem(null);
               setRefreshTick(t => t + 1);
+              return true;
             }
           } catch (e:any) {
             console.warn('Time report update error', e);
             toast.error('Fel vid uppdatering av tid');
+            return false;
           }
         }}
       />

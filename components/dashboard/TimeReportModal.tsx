@@ -23,7 +23,7 @@ export interface TimeReportModalProps {
     reportType?: 'project' | 'internal' | 'absence';
     internalProjectId?: string | null;
     absenceProjectId?: string | null;
-  }) => void;
+  }) => Promise<any> | boolean | void;
   // Optional prefill when opening from context (e.g., a project card)
   initialProject?: string | null;
   initialProjectId?: string | null;
@@ -53,6 +53,7 @@ export default function TimeReportModal({ open, onClose, onSubmit, initialProjec
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [desc, setDesc] = useState<string>('');
   const [submitted, setSubmitted] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const [submitError, setSubmitError] = useState<string | null>(null);
   // Report type (normal project, internal project, absence project)
   const [reportType, setReportType] = useState<'project' | 'internal' | 'absence'>('project');
   // Time codes (from Blikk) state
@@ -472,9 +473,9 @@ export default function TimeReportModal({ open, onClose, onSubmit, initialProjec
 
   const hasTarget = (reportType === 'project' && selectedProjectId) || (reportType === 'internal' && selectedInternalId) || (reportType === 'absence' && selectedAbsenceId);
   const canSubmit = date && start && end && totalHours > 0 && !validationError && !!hasTarget && (!requireComment || (desc.trim().length > 0)) && submitted !== 'saving';
-
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!canSubmit) return;
+    setSubmitError(null);
     setSubmitted('saving');
     const payload = {
       editId: propEditId || null,
@@ -496,16 +497,27 @@ export default function TimeReportModal({ open, onClose, onSubmit, initialProjec
       absenceProjectId: reportType === 'absence' ? (selectedAbsenceId || null) : null,
     };
     try {
-      onSubmit?.(payload);
-    } catch {}
-    setTimeout(() => {
+      // Allow caller to return a Promise<boolean> or just void. Await if promise-like.
+      const result = onSubmit ? onSubmit(payload as any) : undefined;
+      if (result && typeof (result as Promise<any>).then === 'function') {
+        const res = await (result as Promise<any>);
+        // If the caller returns falsy / indicates failure, treat as error
+        if (res === false) {
+          setSubmitted('idle');
+          setSubmitError('Kunde inte spara. Försök igen.');
+          return;
+        }
+      }
+      // success
       setSubmitted('saved');
       setTimeout(() => {
         setSubmitted('idle');
         onClose();
-        // optionally clear inputs after close
-      }, 600);
-    }, 400);
+      }, 500);
+    } catch (err: any) {
+      setSubmitted('idle');
+      setSubmitError(err?.message || 'Fel vid sparande.');
+    }
   };
 
   const chooseProject = useCallback((p: { project_id: string; project_name: string | null; order_number: string | null }) => {
@@ -528,9 +540,18 @@ export default function TimeReportModal({ open, onClose, onSubmit, initialProjec
             <span style={{ width: 16, height: 16, borderRadius: 999, background: '#22c55e', border: '2px solid #bbf7d0' }} />
             <div style={{ fontSize: 16, fontWeight: 700, color: '#0f172a' }}>Rapportera tid</div>
           </div>
-          <button onClick={onClose} className="btn--plain" aria-label="Stäng" style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: isSmall ? '10px 14px' : '8px 12px', minHeight: 44, background: '#fff' }}>Stäng</button>
+          <button onClick={submitted === 'saving' ? undefined : onClose} className="btn--plain" aria-label="Stäng" style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: isSmall ? '10px 14px' : '8px 12px', minHeight: 44, background: '#fff', opacity: submitted === 'saving' ? 0.6 : 1 }} disabled={submitted === 'saving'}>Stäng</button>
         </div>
-        <div style={{ padding: isSmall ? 12 : 14, display: 'grid', gap: isSmall ? 10 : 12 }}>
+        <div style={{ padding: isSmall ? 12 : 14, display: 'grid', gap: isSmall ? 10 : 12, position: 'relative' }}>
+          {/* Submission overlay */}
+          {submitted === 'saving' && (
+            <div aria-hidden style={{ position: 'absolute', inset: 0, background: 'rgba(255,255,255,0.6)', zIndex: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+                <span className="spinner dark spin" aria-hidden style={{ width: 40, height: 40 }} />
+                <div style={{ fontSize: 13, color: '#0f172a' }}>Sparar…</div>
+              </div>
+            </div>
+          )}
             {/* Report type selector */}
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4 }}>
               <span style={{ fontSize: isSmall ? 13 : 12, color: '#334155' }}>Typ:</span>
@@ -697,14 +718,14 @@ export default function TimeReportModal({ open, onClose, onSubmit, initialProjec
               )}
             </label>
           </div>
-          {isXS ? (
+              {isXS ? (
             <div style={{ position: 'sticky', bottom: 0, background: '#fff', display: 'grid', gap: 8, borderTop: '1px dashed #e5e7eb', paddingTop: 8, paddingLeft: 12, paddingRight: 12, paddingBottom: 'max(10px, env(safe-area-inset-bottom))' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, fontSize: 13, color: '#334155' }}>
                 <span>Beräknad tid:</span>
                 <strong style={{ fontSize: 16 }}>{totalHours.toFixed(2)} h</strong>
               </div>
               <button type="button" onClick={handleSubmit} disabled={!canSubmit} className="btn--plain btn--xs" style={{ width: '100%', fontSize: 16, padding: '14px 16px', border: '1px solid #16a34a', background: canSubmit ? '#16a34a' : '#a7f3d0', color: '#fff', borderRadius: 12, boxShadow: canSubmit ? '0 4px 8px rgba(16,185,129,0.35)' : 'none', opacity: submitted === 'saving' ? 0.7 : 1, minHeight: 48 }}>
-                {submitted === 'saving' ? 'Sparar…' : 'Spara'}
+                {submitted === 'saving' ? <span style={{ display:'inline-flex', alignItems:'center', gap:8 }}><span className="spinner spin" aria-hidden style={{ width:16, height:16, borderTopColor:'#fff' }} /> Sparar…</span> : 'Spara'}
               </button>
               <button type="button" onClick={onClose} className="btn--plain btn--xs" style={{ fontSize: 14, padding: '10px 12px', border: '1px solid #e5e7eb', background: '#fff', borderRadius: 10, color: '#0f172a', minHeight: 44 }}>Avbryt</button>
             </div>
@@ -717,7 +738,7 @@ export default function TimeReportModal({ open, onClose, onSubmit, initialProjec
               <div style={{ display: 'flex', gap: 8 }}>
                 <button type="button" onClick={onClose} className="btn--plain btn--xs" style={{ fontSize: isSmall ? 14 : 12, padding: isSmall ? '10px 14px' : '8px 12px', border: '1px solid #e5e7eb', background: '#fff', borderRadius: 8, minHeight: 40 }}>Avbryt</button>
                 <button type="button" onClick={handleSubmit} disabled={!canSubmit} className="btn--plain btn--xs" style={{ fontSize: isSmall ? 14 : 12, padding: isSmall ? '10px 14px' : '8px 12px', border: '1px solid #16a34a', background: canSubmit ? '#16a34a' : '#a7f3d0', color: '#fff', borderRadius: 8, boxShadow: canSubmit ? '0 2px 4px rgba(16,185,129,0.4)' : 'none', opacity: submitted === 'saving' ? 0.7 : 1, minHeight: 40 }}>
-                  {submitted === 'saving' ? 'Sparar…' : 'Spara'}
+                  {submitted === 'saving' ? <span style={{ display:'inline-flex', alignItems:'center', gap:8 }}><span className="spinner spin" aria-hidden style={{ width:16, height:16, borderTopColor:'#fff' }} /> Sparar…</span> : 'Spara'}
                 </button>
               </div>
             </div>

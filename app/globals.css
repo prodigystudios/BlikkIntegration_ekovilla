@@ -190,6 +190,23 @@ select.select-field:focus-visible { outline: 2px solid #2563eb; outline-offset: 
 select.select-field:disabled { opacity: 0.6; cursor: not-allowed; }
 select.select-field option { color: #111827; background-color: #ffffff; }
 
+/* Simple spinner utility */
+@keyframes spin { to { transform: rotate(360deg); } }
+.spin { animation: spin 1s linear infinite; }
+.spinner {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  display: inline-block;
+  box-sizing: border-box;
+  border: 2px solid rgba(255,255,255,0.25);
+  border-top-color: rgba(255,255,255,0.9);
+}
+.spinner.dark {
+  border: 2px solid rgba(0,0,0,0.12);
+  border-top-color: rgba(0,0,0,0.7);
+}
+
 /* Kontaktlista responsive table */
 .contacts-section { margin-bottom: 24px; }
 .contacts-grid { border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; }
