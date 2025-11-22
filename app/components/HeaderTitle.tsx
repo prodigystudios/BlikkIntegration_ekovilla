@@ -16,5 +16,6 @@ export default function HeaderTitle() {
   else if (pathname.startsWith('/auth/create-account')) title = 'Skapa konto';
   else if (pathname.startsWith('/offert')) title = 'Skapa offert';
   else if (pathname.startsWith('/admin')) title = 'Admin';
+  else if(pathname.startsWith('/tidrapport')) title = 'Tidrapportering';
   return <strong style={{ letterSpacing: 0.2, marginLeft:36, marginTop:4 }}>{title}</strong>;
 }
