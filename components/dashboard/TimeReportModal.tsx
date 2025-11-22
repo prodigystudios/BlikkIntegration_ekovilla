@@ -534,7 +534,7 @@ export default function TimeReportModal({ open, onClose, onSubmit, initialProjec
       onClick={onClose}
       style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.35)', zIndex: 1000, display: 'flex', alignItems: isXS ? 'stretch' : 'center', justifyContent: 'center', padding: isXS ? 0 : 16, touchAction: 'manipulation' }}
     >
-      <div onClick={e => e.stopPropagation()} style={{ width: isXS ? '100%' : 'min(100%, 700px)', maxHeight: isXS ? '100vh' : '85vh', height: isXS ? '100vh' : undefined, overflow: 'auto', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', background: '#fff', border: '1px solid #e5e7eb', borderRadius: isXS ? 0 : 14, boxShadow: isXS ? 'none' : '0 20px 40px rgba(0,0,0,0.15)' }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: isXS ? '100%' : 'min(100%, 700px)', height: isXS ? '100dvh' : '85vh', display:'flex', flexDirection:'column', background: '#fff', border: '1px solid #e5e7eb', borderRadius: isXS ? 0 : 14, boxShadow: isXS ? 'none' : '0 20px 40px rgba(0,0,0,0.15)', position:'relative' }}>
         <div style={{ position:'sticky', top:0, zIndex:5, background:'#fff', display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingLeft: isSmall ? 12 : 14, paddingRight: isSmall ? 12 : 14, paddingTop: isXS ? 'max(10px, env(safe-area-inset-top))' : (isSmall ? 10 : 12), paddingBottom: isSmall ? 10 : 12, borderBottom: '1px solid #e5e7eb' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ width: 16, height: 16, borderRadius: 999, background: '#22c55e', border: '2px solid #bbf7d0' }} />
@@ -542,7 +542,7 @@ export default function TimeReportModal({ open, onClose, onSubmit, initialProjec
           </div>
           <button onClick={submitted === 'saving' ? undefined : onClose} className="btn--plain" aria-label="Stäng" style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: isSmall ? '10px 14px' : '8px 12px', minHeight: 44, background: '#fff', opacity: submitted === 'saving' ? 0.6 : 1 }} disabled={submitted === 'saving'}>Stäng</button>
         </div>
-        <div style={{ padding: isSmall ? 12 : 14, display: 'grid', gap: isSmall ? 10 : 12, position: 'relative' }}>
+        <div style={{ flex:1, overflowY:'auto', WebkitOverflowScrolling:'touch', overscrollBehavior:'contain', padding: isSmall ? 12 : 14, display: 'grid', gap: isSmall ? 10 : 12, position: 'relative', paddingBottom: isXS ? 110 : 90 }}>
           {/* Submission overlay */}
           {submitted === 'saving' && (
             <div aria-hidden style={{ position: 'absolute', inset: 0, background: 'rgba(255,255,255,0.6)', zIndex: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
@@ -719,7 +719,7 @@ export default function TimeReportModal({ open, onClose, onSubmit, initialProjec
             </label>
           </div>
               {isXS ? (
-            <div style={{ position: 'sticky', bottom: 0, background: '#fff', display: 'grid', gap: 8, borderTop: '1px dashed #e5e7eb', paddingTop: 8, paddingLeft: 12, paddingRight: 12, paddingBottom: 'max(10px, env(safe-area-inset-bottom))' }}>
+            <div style={{ position: 'sticky', bottom: 0, left:0, right:0, background: '#fff', display: 'grid', gap: 8, borderTop: '1px dashed #e5e7eb', paddingTop: 8, paddingLeft: 12, paddingRight: 12, paddingBottom: 'max(10px, env(safe-area-inset-bottom))' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, fontSize: 13, color: '#334155' }}>
                 <span>Beräknad tid:</span>
                 <strong style={{ fontSize: 16 }}>{totalHours.toFixed(2)} h</strong>
@@ -730,7 +730,7 @@ export default function TimeReportModal({ open, onClose, onSubmit, initialProjec
               <button type="button" onClick={onClose} className="btn--plain btn--xs" style={{ fontSize: 14, padding: '10px 12px', border: '1px solid #e5e7eb', background: '#fff', borderRadius: 10, color: '#0f172a', minHeight: 44 }}>Avbryt</button>
             </div>
           ) : (
-            <div style={{ position: 'sticky', bottom: 0, background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, borderTop: '1px dashed #e5e7eb', paddingTop: 8, paddingBottom: 'max(15px, env(safe-area-inset-bottom))', marginBottom: isSmall ? 0 : 10 }}>
+            <div style={{ position: 'sticky', bottom: 0, left:0, right:0, background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, borderTop: '1px dashed #e5e7eb', paddingTop: 8, paddingBottom: 'max(15px, env(safe-area-inset-bottom))', marginBottom: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: isSmall ? 13 : 12, color: '#334155' }}>
                 <span>Beräknad tid:</span>
                 <strong style={{ fontSize: isSmall ? 16 : 14 }}>{totalHours.toFixed(2)} h</strong>
