@@ -19,7 +19,7 @@ async function getContacts(): Promise<ContactsPayload> {
 function Section({ title, people, defaultOpen = false }: { title: string; people: Array<{ name: string; phone?: string; location?: string; role?: string }>, defaultOpen?: boolean }) {
   // Use <details> for native accessibility and animation
   return (
-    <details className="accordion-panel" {...(defaultOpen ? { open: false } : {})}>
+    <details className="accordion-panel" {...(defaultOpen ? { open: true } : {})}>
   <summary className="accordion-summary">{title}</summary>
       <div className="accordion-content">
         <div className="contacts-grid">
@@ -96,7 +96,20 @@ export default async function ContactsPage() {
     if (!grouped[c.category]) grouped[c.category] = [];
     grouped[c.category].push(c);
   }
-  Object.values(grouped).forEach(arr => arr.sort((a,b) => (a.name||'').localeCompare(b.name||'', 'sv')));
+  // Sort each category by Område/Roll (location/role) alphabetically, tie-break by Name
+  Object.values(grouped).forEach(arr => arr.sort((a, b) => {
+    const aKey = (a.location || a.role || '').trim();
+    const bKey = (b.location || b.role || '').trim();
+    if (aKey && bKey) {
+      const cmp = aKey.localeCompare(bKey, 'sv', { sensitivity: 'base' });
+      if (cmp !== 0) return cmp;
+    } else if (aKey && !bKey) {
+      return -1; // non-empty before empty
+    } else if (!aKey && bKey) {
+      return 1;
+    }
+    return (a.name || '').localeCompare(b.name || '', 'sv', { sensitivity: 'base' });
+  }));
   const categories = Object.keys(grouped).sort((a,b)=>a.localeCompare(b,'sv'));
 
   return (
