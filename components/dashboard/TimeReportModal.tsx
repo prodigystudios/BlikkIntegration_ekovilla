@@ -730,7 +730,7 @@ export default function TimeReportModal({ open, onClose, onSubmit, initialProjec
               <button type="button" onClick={onClose} className="btn--plain btn--xs" style={{ fontSize: 14, padding: '10px 12px', border: '1px solid #e5e7eb', background: '#fff', borderRadius: 10, color: '#0f172a', minHeight: 44 }}>Avbryt</button>
             </div>
           ) : (
-            <div style={{ position: 'sticky', bottom: 0, background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, borderTop: '1px dashed #e5e7eb', paddingTop: 8, paddingBottom: 'max(8px, env(safe-area-inset-bottom))' }}>
+            <div style={{ position: 'sticky', bottom: 0, background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, borderTop: '1px dashed #e5e7eb', paddingTop: 8, paddingBottom: 'max(15px, env(safe-area-inset-bottom))', marginBottom: isSmall ? 0 : 10 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: isSmall ? 13 : 12, color: '#334155' }}>
                 <span>Beräknad tid:</span>
                 <strong style={{ fontSize: isSmall ? 16 : 14 }}>{totalHours.toFixed(2)} h</strong>
