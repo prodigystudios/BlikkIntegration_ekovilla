@@ -3356,7 +3356,16 @@ export default function PlanneringPage() {
       <div style={{ display: 'grid', gap: 16, gridTemplateColumns: sidebarCollapsed ? '1fr' : '290px 1fr', alignItems: 'start' }}>
         {/* Left: search / manual add / backlog */}
         {sidebarCollapsed ? null : (
-          <div style={{ display: 'grid', gap: 16 }}>
+          <div style={{
+            display: 'grid',
+            gap: 16,
+            position: 'sticky',
+            top: 75,
+            alignSelf: 'start',
+            maxHeight: 'calc(100vh - 80px)',
+            overflowY: 'auto',
+            paddingRight: 4
+          }}>
             {/* Search & manual add */}
             <div style={{ display: 'grid', gap: 10 }}>
               <form onSubmit={searchByOrderNumber} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
