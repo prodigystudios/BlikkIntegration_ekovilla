@@ -165,10 +165,18 @@ export default function PlanneringPage() {
       if (!res.ok) throw new Error(j.error || 'Fel vid hämtning');
       const normalized: Project[] = (j.projects || []).map(normalizeProject);
       const top = normalized.slice(0, limit);
+      // Reorder so freshly fetched "top" projects appear first (preserving their new data), then append unchanged previous entries.
+      // Previous logic overwrote entries in-place in a Map constructed from prev, which preserved old ordering and hid new projects at the end.
       setProjects(prev => {
-        const map = new Map<string, Project>(prev.map(p => [p.id, p] as const));
-        for (const p of top) map.set(p.id, p);
-        return Array.from(map.values());
+        const prevMap = new Map<string, Project>(prev.map(p => [p.id, p] as const));
+        // Update/insert with latest data
+        for (const p of top) prevMap.set(p.id, p);
+        // Build final list: start with top (deduped), then the rest not in top
+        const seen = new Set<string>();
+        const out: Project[] = [];
+        for (const p of top) { if (!seen.has(p.id)) { out.push(p); seen.add(p.id); } }
+        for (const p of prev) { if (!seen.has(p.id)) { out.push(prevMap.get(p.id)!); } }
+        return out;
       });
       setSource(j.source || source);
     } catch (e: any) {
