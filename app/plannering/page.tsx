@@ -156,22 +156,52 @@ export default function PlanneringPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   // Lightweight refresh for initial projects list (for the backlog panel)
   const [projectsRefreshLoading, setProjectsRefreshLoading] = useState(false);
+  // --- Lightweight in-memory caches & single-flight tracking ---
+  const PROJECTS_CACHE_TTL = 60_000; // 60s
+  const LOOKUP_CACHE_TTL = 5 * 60_000; // 5 min
+  const CONTACT_CACHE_TTL = 10 * 60_000; // 10 min
+  const projectsCacheRef = useRef<{ data: Project[]; fetchedAt: number } | null>(null);
+  const lookupCacheRef = useRef<Map<string, { fetchedAt: number; data: any }>>(new Map());
+  const lookupInFlightRef = useRef<Map<string, Promise<any>>>(new Map());
+  const contactEmailCacheRef = useRef<Map<number, { email: string | null; fetchedAt: number }>>(new Map());
+  const contactEmailInFlightRef = useRef<Map<number, Promise<string | null>>>(new Map());
+  const lastPartialReportAtRef = useRef<number>(0);
+
   const refreshInitialProjects = useCallback(async (limit: number = 10) => {
     if (projectsRefreshLoading) return;
+    // If we have a fresh cached list, reuse it to avoid a network burst.
+    const cached = projectsCacheRef.current;
+    const now = Date.now();
+    if (cached && (now - cached.fetchedAt) < PROJECTS_CACHE_TTL) {
+      // Reorder using cached data (same logic as successful fetch) so user still sees "recent" subset first.
+      setProjectsRefreshLoading(true);
+      try {
+        const top = cached.data.slice(0, limit);
+        setProjects(prev => {
+          const prevMap = new Map<string, Project>(prev.map(p => [p.id, p] as const));
+          for (const p of top) prevMap.set(p.id, p);
+          const seen = new Set<string>();
+          const out: Project[] = [];
+          for (const p of top) { if (!seen.has(p.id)) { out.push(p); seen.add(p.id); } }
+          for (const p of prev) { if (!seen.has(p.id)) { out.push(prevMap.get(p.id)!); } }
+          return out;
+        });
+      } finally {
+        setProjectsRefreshLoading(false);
+      }
+      return;
+    }
     setProjectsRefreshLoading(true);
     try {
       const res = await fetch(`/api/blikk/projects?limit=${encodeURIComponent(String(limit))}`);
       const j = await res.json();
       if (!res.ok) throw new Error(j.error || 'Fel vid hämtning');
       const normalized: Project[] = (j.projects || []).map(normalizeProject);
+      projectsCacheRef.current = { data: normalized, fetchedAt: Date.now() };
       const top = normalized.slice(0, limit);
-      // Reorder so freshly fetched "top" projects appear first (preserving their new data), then append unchanged previous entries.
-      // Previous logic overwrote entries in-place in a Map constructed from prev, which preserved old ordering and hid new projects at the end.
       setProjects(prev => {
         const prevMap = new Map<string, Project>(prev.map(p => [p.id, p] as const));
-        // Update/insert with latest data
         for (const p of top) prevMap.set(p.id, p);
-        // Build final list: start with top (deduped), then the rest not in top
         const seen = new Set<string>();
         const out: Project[] = [];
         for (const p of top) { if (!seen.has(p.id)) { out.push(p); seen.add(p.id); } }
@@ -682,36 +712,57 @@ export default function PlanneringPage() {
   }, [projects]);
 
   const fetchContactEmailByCustomerId = useCallback(async (customerId: number): Promise<string | null> => {
-    let attempt = 0;
-    while (attempt < 3) {
-      attempt++;
-      const res = await fetch(`/api/blikk/contacts/${customerId}`);
-      if (res.status === 404) return null;
-      if (res.status === 429) {
-        let waitMs = 1000;
-        try {
-          const body = await res.json().catch(() => ({}));
-          if (typeof body?.waitInSeconds === 'number') waitMs = Math.min(body.waitInSeconds, 5) * 1000;
-          else {
-            const ra = Number(res.headers.get('Retry-After'));
-            if (Number.isFinite(ra)) waitMs = Math.max(ra, 1) * 1000;
-          }
-        } catch { /* ignore */ }
-        await new Promise(r => setTimeout(r, waitMs));
-        continue;
-      }
-      if (!res.ok) {
-        if (attempt < 3) {
-          await new Promise(r => setTimeout(r, 200 * attempt));
+    // Cache + single-flight
+    const now = Date.now();
+    const cached = contactEmailCacheRef.current.get(customerId);
+    if (cached && (now - cached.fetchedAt) < CONTACT_CACHE_TTL) return cached.email;
+    const inFlight = contactEmailInFlightRef.current.get(customerId);
+    if (inFlight) return inFlight;
+    const p = (async () => {
+      let attempt = 0;
+      while (attempt < 3) {
+        attempt++;
+        const res = await fetch(`/api/blikk/contacts/${customerId}`);
+        if (res.status === 404) {
+          contactEmailCacheRef.current.set(customerId, { email: null, fetchedAt: Date.now() });
+          return null;
+        }
+        if (res.status === 429) {
+          let waitMs = 1000;
+          try {
+            const body = await res.json().catch(() => ({}));
+            if (typeof body?.waitInSeconds === 'number') waitMs = Math.min(body.waitInSeconds, 5) * 1000;
+            else {
+              const ra = Number(res.headers.get('Retry-After'));
+              if (Number.isFinite(ra)) waitMs = Math.max(ra, 1) * 1000;
+            }
+          } catch { /* ignore */ }
+          await new Promise(r => setTimeout(r, waitMs));
           continue;
         }
-        return null;
+        if (!res.ok) {
+          if (attempt < 3) {
+            await new Promise(r => setTimeout(r, 200 * attempt));
+            continue;
+          }
+          contactEmailCacheRef.current.set(customerId, { email: null, fetchedAt: Date.now() });
+          return null;
+        }
+        const j = await res.json();
+        const email = j?.contact?.email || j?.contact?.emailCandidates?.[0] || null;
+        contactEmailCacheRef.current.set(customerId, { email, fetchedAt: Date.now() });
+        return email || null;
       }
-      const j = await res.json();
-      const email = j?.contact?.email || j?.contact?.emailCandidates?.[0] || null;
-      return email || null;
+      contactEmailCacheRef.current.set(customerId, { email: null, fetchedAt: Date.now() });
+      return null;
+    })();
+    contactEmailInFlightRef.current.set(customerId, p);
+    try {
+      const result = await p;
+      return result;
+    } finally {
+      contactEmailInFlightRef.current.delete(customerId);
     }
-    return null;
   }, []);
 
   const openMailForSegment = useCallback((it: any, email: string) => {
@@ -821,19 +872,38 @@ export default function PlanneringPage() {
     setDetailProjectId(projectId);
     setDetailError(null);
     const base = projects.find(p => p.id === projectId);
+    // Abort previous in-flight modal lookup
+    const ctrl = new AbortController();
+    const prevCtrl = (openProjectModal as any)._ctrl as AbortController | undefined;
+    if (prevCtrl) { try { prevCtrl.abort(); } catch {} }
+    (openProjectModal as any)._ctrl = ctrl;
     const fetchViaLookup = async (): Promise<any | null> => {
-      try {
-        // Prefer order number query (Blikk uses it commonly); fallback to ID if numeric
-        if (base?.orderNumber) {
-          const r = await fetch(`/api/projects/lookup?orderId=${encodeURIComponent(base.orderNumber)}`);
-          const j = await r.json();
-          if (r.ok) return { source: 'lookup:order', project: j };
+      const keyOrder = base?.orderNumber ? `order:${base.orderNumber}` : null;
+      const keyId = (() => { const idNum = Number(projectId); return Number.isFinite(idNum) && idNum > 0 ? `id:${idNum}` : null; })();
+      const now = Date.now();
+      const tryFetch = async (url: string, cacheKey: string) => {
+        const cached = lookupCacheRef.current.get(cacheKey);
+        if (cached && (now - cached.fetchedAt) < LOOKUP_CACHE_TTL) return cached.data;
+        let single = lookupInFlightRef.current.get(cacheKey);
+        if (!single) {
+          single = fetch(url, { signal: ctrl.signal })
+            .then(r => r.ok ? r.json() : Promise.reject(r.status))
+            .then(data => { lookupCacheRef.current.set(cacheKey, { data, fetchedAt: Date.now() }); return data; })
+            .catch(err => { if (err?.name === 'AbortError') return null; return null; });
+          lookupInFlightRef.current.set(cacheKey, single);
         }
-        const idNum = Number(projectId);
-        if (Number.isFinite(idNum) && idNum > 0) {
-          const r = await fetch(`/api/projects/lookup?id=${idNum}`);
-          const j = await r.json();
-          if (r.ok) return { source: 'lookup:id', project: j };
+        const data = await single;
+        lookupInFlightRef.current.delete(cacheKey);
+        return data;
+      };
+      try {
+        if (keyOrder) {
+          const data = await tryFetch(`/api/projects/lookup?orderId=${encodeURIComponent(base!.orderNumber!)}`, keyOrder);
+          if (data) return { source: 'lookup:order', project: data };
+        }
+        if (keyId) {
+          const data = await tryFetch(`/api/projects/lookup?id=${encodeURIComponent(projectId)}`, keyId);
+          if (data) return { source: 'lookup:id', project: data };
         }
       } catch { /* ignore */ }
       return null;
@@ -1267,6 +1337,10 @@ export default function PlanneringPage() {
   // Add/delete report actions
   const addPartialReport = useCallback(async () => {
     if (!segEditor?.segmentId || !currentUserId) return;
+    // Cooldown to prevent accidental double clicks (1.5s)
+    const now = Date.now();
+    if (now - lastPartialReportAtRef.current < 1500) return;
+    lastPartialReportAtRef.current = now;
     const day = (reportDraft.day || segEditor.startDay).trim();
     const amt = parseInt(reportDraft.amount, 10);
     if (!day || !Number.isFinite(amt) || amt <= 0) return;
