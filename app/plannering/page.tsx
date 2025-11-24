@@ -2530,9 +2530,9 @@ export default function PlanneringPage() {
   // Small helpers for Segment Editor
   const genId = () => (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? (crypto as any).randomUUID() : Math.random().toString(36).slice(2));
   const addDaysLocal = (iso: string, n: number) => { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + n); return fmtDate(d); };
-  function openSegmentEditorForNew(projectId: string, day: string) {
+  function openSegmentEditorForNew(projectId: string, day: string, overrideTruck?: string | null) {
     const meta = scheduleMeta[projectId] || { projectId } as ProjectScheduleMeta;
-    const assumedTruck = meta.truck ?? null;
+    const assumedTruck = overrideTruck !== undefined ? (overrideTruck || null) : (meta.truck ?? null);
     let positionIndex: number | null = null;
     if (assumedTruck) {
       const sameDay = itemsByDay.get(day) || [];
@@ -2685,7 +2685,8 @@ export default function PlanneringPage() {
     }
     closeSegEditor();
   }
-  function onDropDay(e: React.DragEvent, day: string) {
+  // Drag & drop into a calendar day (optionally within a truck lane in day-list view)
+  function onDropDay(e: React.DragEvent, day: string, laneTruck?: string | null) {
     e.preventDefault();
     const id = e.dataTransfer.getData('text/plain');
     if (!id) return;
@@ -2717,19 +2718,33 @@ export default function PlanneringPage() {
     }
     const proj = projects.find(p => p.id === id);
     if (!proj) return;
-    // Ensure meta exists then open editor for creation
-    setScheduleMeta(m => m[proj.id] ? m : { ...m, [proj.id]: { projectId: proj.id, truck: null, bagCount: null, jobType: null, color: null } });
-    openSegmentEditorForNew(proj.id, day);
+    // Ensure meta exists (set truck if lane context provided)
+    setScheduleMeta(m => {
+      const existing = m[proj.id] || { projectId: proj.id } as ProjectScheduleMeta;
+      const truckOverride = laneTruck === undefined ? existing.truck ?? null : (laneTruck || null);
+      const merged = { ...existing, truck: truckOverride, bagCount: typeof existing.bagCount === 'number' ? existing.bagCount : null, jobType: existing.jobType ?? null, color: existing.color ?? null } as ProjectScheduleMeta;
+      return { ...m, [proj.id]: merged };
+    });
+    openSegmentEditorForNew(proj.id, day, laneTruck === undefined ? undefined : (laneTruck || null));
   }
 
   // Click-based scheduling fallback: select a backlog project, then click a calendar day.
-  function scheduleSelectedOnDay(day: string) {
+  function scheduleSelectedOnDay(day: string, laneTruck?: string | null) {
     if (!selectedProjectId) return;
     const proj = projects.find(p => p.id === selectedProjectId);
     setSelectedProjectId(null);
     if (!proj) return;
-    setScheduleMeta(m => m[proj.id] ? m : { ...m, [proj.id]: { projectId: proj.id } });
-    openSegmentEditorForNew(proj.id, day);
+    // If laneTruck supplied (day-list truck lane), apply it immediately so editor pre-fills truck
+    if (laneTruck !== undefined) {
+      setScheduleMeta(m => {
+        const existing = m[proj.id] || { projectId: proj.id } as ProjectScheduleMeta;
+        const merged = { ...existing, truck: laneTruck || null } as ProjectScheduleMeta;
+        return { ...m, [proj.id]: merged };
+      });
+    } else {
+      setScheduleMeta(m => m[proj.id] ? m : { ...m, [proj.id]: { projectId: proj.id } });
+    }
+    openSegmentEditorForNew(proj.id, day, laneTruck === undefined ? undefined : (laneTruck || null));
   }
   function unschedule(segmentId: string) { applyScheduledSegments(prev => prev.filter(s => s.id !== segmentId)); }
   function extendSpan(segmentId: string, direction: 'forward' | 'back') {

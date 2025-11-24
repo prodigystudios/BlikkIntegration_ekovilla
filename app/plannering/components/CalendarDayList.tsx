@@ -19,9 +19,9 @@ export interface CalendarDayListProps {
   scheduledSegments: Array<{ id: string; sortIndex?: number | null }>;
   onDragStart: (e: React.DragEvent, segmentId: string) => void;
   onDragEnd: () => void;
-  onDropDay: (e: React.DragEvent, day: string) => void;
+  onDropDay: (e: React.DragEvent, day: string, laneTruck?: string | null) => void;
   allowDrop: (e: React.DragEvent) => void;
-  scheduleSelectedOnDay: (day: string) => void;
+  scheduleSelectedOnDay: (day: string, laneTruck?: string | null) => void;
   openSegmentEditorForExisting: (segmentId: string) => void;
   setHoveredSegmentId: (id: string | null) => void;
   hoveredSegmentId: string | null;
@@ -251,10 +251,24 @@ export default function CalendarDayList(props: CalendarDayListProps) {
                     const isTodayCell = !!day && day === todayISO;
                     return (
                       <div key={`cell-${rowKey}-${weekdayIdx}-${day || 'x'}`} id={day ? `calday-${day}` : undefined}
-                        onClick={day ? () => scheduleSelectedOnDay(day) : undefined}
+                        onClick={day ? () => scheduleSelectedOnDay(day, rowKey === '__UNASSIGNED__' ? null : rowKey) : undefined}
                         onDragOver={allowDrop}
-                        onDrop={day ? (e => onDropDay(e, day)) : undefined}
-                        style={{ gridColumn: `${gridCol} / ${gridCol + 1}`, gridRow: `${ri + 2} / ${ri + 3}`, minHeight: 48, border: isJumpHighlight ? '2px solid #f59e0b' : (selectedProjectId ? '2px dashed #fbbf24' : (isTodayCell ? '2px solid #60a5fa' : '1px solid rgba(148,163,184,0.35)')), boxShadow: isTodayCell ? '0 0 0 2px rgba(59,130,246,0.18)' : undefined, borderRadius: 8, padding: 6, background: '#ffffff', display: 'flex', flexDirection: 'column', gap: 4, borderLeft: `4px solid ${rowKey === '__UNASSIGNED__' ? '#cbd5e1' : laneColor}` }}>
+                        onDrop={day ? (e => onDropDay(e, day, rowKey === '__UNASSIGNED__' ? null : rowKey)) : undefined}
+                        style={{
+                          gridColumn: `${gridCol} / ${gridCol + 1}`,
+                          gridRow: `${ri + 2} / ${ri + 3}`,
+                          minHeight: 48,
+                          border: isJumpHighlight ? '2px solid #f59e0b' : (selectedProjectId ? '2px dashed #fbbf24' : (isTodayCell ? '2px solid #60a5fa' : '1px solid rgba(148,163,184,0.35)')),
+                          boxShadow: isTodayCell ? '0 0 0 2px rgba(59,130,246,0.18)' : undefined,
+                          borderRadius: 8,
+                          padding: 6,
+                          background: '#ffffff',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: 4,
+                          borderLeft: `4px solid ${rowKey === '__UNASSIGNED__' ? '#cbd5e1' : laneColor}`,
+                          cursor: selectedProjectId ? 'copy' : 'default'
+                        }}>
                         {list.length === 0 && <span style={{ fontSize: 11, color: '#94a3b8' }}>—</span>}
                         {list.map((it: any) => {
                           let display: null | TruckDisplay = null;
