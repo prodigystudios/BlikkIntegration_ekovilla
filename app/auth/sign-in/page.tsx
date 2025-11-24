@@ -61,6 +61,9 @@ export default function SignInPage() {
               <li>Kommande planering & dashboards</li>
             </ul>
             <p style={footNote}>Behöver du ett konto? Kontakta administratör.</p>
+            <a href="/auth/reset-password" style={footNote}>
+              Glömt lösenord?
+            </a>
           </div>
         </div>
         <div style={formCol} className="auth-form-col">
