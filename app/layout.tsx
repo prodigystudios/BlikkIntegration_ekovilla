@@ -37,39 +37,39 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   <meta name="color-scheme" content="light" />
     </head>
     <body style={{ fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif', margin: 0, width: '100%', overflowX: 'hidden', minHeight: '100dvh', background: '#fff', paddingBottom: 'env(safe-area-inset-bottom)' }} data-has-user={!!profile}>
-      {/* Fixed, full-width header (hidden on auth pages when not logged in) */}
-    <header
-        className="header-app"
-        style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          background: '#ffffffff',
-          color: '#0b0f10',
-          display: 'flex',
-          alignItems: 'center',
-          paddingLeft: 16,
-          paddingRight: 16,
-          gap: 25,
-          zIndex: 1000,
-          boxShadow: '0 8px 8px rgba(0,0,0,0.08)'
-        }}
-      >
-        <Link href="/" aria-label="Gå till startsidan" style={{ display: 'inline-flex', alignItems: 'center', cursor: 'pointer' }}>
-          <img src="/brand/Ekovilla_logo_Header.png" alt="Ekovilla header logo" height={18} style={{ display: 'block', transform: 'scale(1.5)', transformOrigin: 'left center' }} />
-        </Link>
-  {/* Client-only header title */}
-  <HeaderTitle />
-        <div style={{ marginLeft: 'auto' }} />
-  <HeaderMenu role={role} fullName={profile?.full_name || null} />
-      </header>
-  {/* Content wrapper with top padding to avoid overlap (responsive + safe area) */} 
-  <UserProfileProvider profile={profile}>
-    <ToastProvider>
-      <div className="content-offset">{children}</div>
-    </ToastProvider>
-  </UserProfileProvider>
+      <UserProfileProvider profile={profile}>
+        <ToastProvider>
+          {/* Fixed, full-width header (hidden on auth pages when not logged in) */}
+          <header
+            className="header-app"
+            style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              background: '#ffffffff',
+              color: '#0b0f10',
+              display: 'flex',
+              alignItems: 'center',
+              paddingLeft: 16,
+              paddingRight: 16,
+              gap: 25,
+              zIndex: 1000,
+              boxShadow: '0 8px 8px rgba(0,0,0,0.08)'
+            }}
+          >
+            <Link href="/" aria-label="Gå till startsidan" style={{ display: 'inline-flex', alignItems: 'center', cursor: 'pointer' }}>
+              <img src="/brand/Ekovilla_logo_Header.png" alt="Ekovilla header logo" height={18} style={{ display: 'block', transform: 'scale(1.5)', transformOrigin: 'left center' }} />
+            </Link>
+            {/* Client-only header title */}
+            <HeaderTitle />
+            <div style={{ marginLeft: 'auto' }} />
+            <HeaderMenu role={role} fullName={profile?.full_name || null} />
+          </header>
+          {/* Content wrapper with top padding to avoid overlap (responsive + safe area) */}
+          <div className="content-offset">{children}</div>
+        </ToastProvider>
+      </UserProfileProvider>
       <script
         dangerouslySetInnerHTML={{
           __html: `(()=>{try{var hasUser=document.body.getAttribute('data-has-user')==='true';var p=location.pathname;if(!hasUser && p.startsWith('/auth')){var h=document.querySelector('header.header-app');if(h) h.style.display='none';var c=document.querySelector('.content-offset');if(c) c.style.paddingTop='0';}}catch(e){}})();`

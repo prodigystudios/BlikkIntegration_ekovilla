@@ -1,5 +1,6 @@
 "use client";
 import { useState, useRef, useEffect } from 'react';
+import { useToast } from '@/lib/Toast';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { useRouter } from 'next/navigation';
 
@@ -19,6 +20,26 @@ export default function ProfileMenu({ fullName, role }: { fullName: string | nul
   const popRef = useRef<HTMLDivElement | null>(null);
   const router = useRouter();
   const supabase = createClientComponentClient();
+  const toast = useToast();
+  const [email, setEmail] = useState<string | null>(null);
+
+  // Change password modal state
+  const [pwdOpen, setPwdOpen] = useState(false);
+  const [currentPwd, setCurrentPwd] = useState('');
+  const [newPwd, setNewPwd] = useState('');
+  const [confirmPwd, setConfirmPwd] = useState('');
+  const [pwdError, setPwdError] = useState<string | null>(null);
+  const [pwdLoading, setPwdLoading] = useState(false);
+  const [pwdSuccess, setPwdSuccess] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await supabase.auth.getUser();
+        if (data.user?.email) setEmail(data.user.email);
+      } catch {/* ignore */}
+    })();
+  }, [supabase]);
 
   useEffect(() => {
     function onDoc(e: MouseEvent) {
@@ -49,6 +70,41 @@ export default function ProfileMenu({ fullName, role }: { fullName: string | nul
     await supabase.auth.signOut();
     router.replace('/auth/sign-in');
   };
+
+  function closePwd() {
+    setPwdOpen(false);
+    setCurrentPwd('');
+    setNewPwd('');
+    setConfirmPwd('');
+    setPwdError(null);
+    setPwdLoading(false);
+    setPwdSuccess(false);
+  }
+
+  async function submitPasswordChange() {
+    if (!email) { setPwdError('Ingen e‑post kopplad till sessionen.'); return; }
+    if (newPwd !== confirmPwd) { setPwdError('Lösenorden matchar inte.'); return; }
+    const vErr = validatePassword(newPwd);
+    if (vErr) { setPwdError(vErr); return; }
+    setPwdError(null);
+    setPwdLoading(true);
+    try {
+      // Re-authenticate with current password (defensive; Supabase does not strictly require but good UX / security)
+      const { error: signErr } = await supabase.auth.signInWithPassword({ email, password: currentPwd });
+      if (signErr) { setPwdError('Nuvarande lösenord fel.'); setPwdLoading(false); return; }
+      const { error: updErr } = await supabase.auth.updateUser({ password: newPwd });
+      if (updErr) { setPwdError(updErr.message); setPwdLoading(false); return; }
+      // Sync cookie for SSR
+      try { await fetch('/api/auth/callback', { method: 'POST', cache: 'no-store' }); } catch {}
+      setPwdSuccess(true);
+      toast?.success('Lösenord uppdaterat.');
+      setTimeout(() => { closePwd(); }, 1600);
+    } catch (e: any) {
+      setPwdError(e?.message || 'Okänt fel vid uppdatering.');
+    } finally {
+      setPwdLoading(false);
+    }
+  }
 
   return (
     <div style={{ position: 'relative', display: 'inline-block' }}>
@@ -86,8 +142,61 @@ export default function ProfileMenu({ fullName, role }: { fullName: string | nul
           >
             Logga ut
           </button>
+          <button
+            role="menuitem"
+            onClick={() => { setPwdOpen(true); setOpen(false); }}
+            className="btn--plain"
+            style={{ width: '100%', textAlign: 'left', padding: '8px 10px', borderRadius: 8 }}
+          >
+            Byt lösenord
+          </button>
+        </div>
+      )}
+      {pwdOpen && (
+        <div style={modalBackdrop}>
+          <div style={modalCard} role="dialog" aria-modal="true" aria-labelledby="pwd-title">
+            <h2 id="pwd-title" style={modalTitle}>Byt lösenord</h2>
+            <form onSubmit={e => { e.preventDefault(); submitPasswordChange(); }} style={{ display:'flex', flexDirection:'column', gap:14 }}>
+              <label style={labelStyle}>Nuvarande lösenord
+                <input type="password" value={currentPwd} onChange={e=>setCurrentPwd(e.target.value)} required autoComplete="current-password" style={inputStyle} disabled={pwdLoading||pwdSuccess} />
+              </label>
+              <label style={labelStyle}>Nytt lösenord
+                <input type="password" value={newPwd} onChange={e=>setNewPwd(e.target.value)} required minLength={6} autoComplete="new-password" style={inputStyle} disabled={pwdLoading||pwdSuccess} />
+              </label>
+              <label style={labelStyle}>Bekräfta nytt lösenord
+                <input type="password" value={confirmPwd} onChange={e=>setConfirmPwd(e.target.value)} required minLength={6} autoComplete="new-password" style={inputStyle} disabled={pwdLoading||pwdSuccess} />
+              </label>
+              {pwdError && <div style={errorBox}>{pwdError}</div>}
+              {pwdSuccess && <div style={successBox}>Lösenord uppdaterat!</div>}
+              <div style={{ display:'flex', gap:10, justifyContent:'flex-end', marginTop:4 }}>
+                <button type="button" onClick={() => closePwd()} style={ghostBtn} disabled={pwdLoading}>Avbryt</button>
+                <button type="submit" style={primaryBtnSmall} disabled={pwdLoading||pwdSuccess}>{pwdLoading ? 'Sparar…' : pwdSuccess ? 'Klart' : 'Uppdatera'}</button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
     </div>
   );
 }
+
+function validatePassword(p: string) {
+  if (p.length < 6) return 'Minst 6 tecken.';
+  if (!/[A-Za-z]/.test(p) || !/\d/.test(p)) return 'Minst en bokstav och en siffra rekommenderas.'; // soft guidance
+  return null;
+}
+
+// Inline styles reused (borrowing palette from auth pages)
+const modalBackdrop: React.CSSProperties = { position:'fixed', inset:0, background:'rgba(0,0,0,0.38)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:200 };
+const modalCard: React.CSSProperties = { width:'100%', maxWidth:440, background:'#ffffff', border:'1px solid #e2e8f0', borderRadius:20, padding:'30px 30px 28px', boxShadow:'0 10px 34px -6px rgba(0,0,0,0.25)', display:'flex', flexDirection:'column', gap:18 };
+const modalTitle: React.CSSProperties = { margin:0, fontSize:22, fontWeight:600, letterSpacing:-0.3, color:'#064e3b' };
+const labelStyle: React.CSSProperties = { display:'flex', flexDirection:'column', gap:6, fontSize:13, fontWeight:500, color:'#0f3d2e' };
+const inputStyle: React.CSSProperties = { padding:'10px 12px', border:'1px solid #94d5bb', borderRadius:10, fontSize:14, background:'#fff', color:'#064e3b' };
+const primaryBtnSmall: React.CSSProperties = { padding:'10px 16px', borderRadius:10, background:'linear-gradient(135deg,#047857,#059669)', color:'#fff', fontSize:14, fontWeight:600, border:'1px solid #047857', cursor:'pointer', boxShadow:'0 3px 8px -2px rgba(4,120,87,0.45)' };
+const ghostBtn: React.CSSProperties = { padding:'10px 16px', borderRadius:10, background:'#fff', color:'#047857', fontSize:14, fontWeight:600, border:'1px solid #94d5bb', cursor:'pointer' };
+const errorBox: React.CSSProperties = { background:'#fef2f2', border:'1px solid #fecaca', color:'#b91c1c', padding:'8px 10px', fontSize:12.5, borderRadius:8, fontWeight:500 };
+const successBox: React.CSSProperties = { background:'#ecfdf5', border:'1px solid #bbf7d0', color:'#065f46', padding:'8px 10px', fontSize:12.5, borderRadius:8, fontWeight:500 };
+
+// Extend component with password logic below original export
+// (legacy helper removed – inline closePwd used instead)
+
