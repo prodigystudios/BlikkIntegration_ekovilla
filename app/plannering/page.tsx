@@ -2,6 +2,7 @@
 export const dynamic = 'force-dynamic';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
+import { useProjectComments, formatRelativeTime } from '@/lib/useProjectComments';
 import { startOfMonth, endOfMonth, fmtDate, isoWeekNumber, isoWeekYear, isoWeekKey, startOfIsoWeek, endOfIsoWeek, mondayFromIsoWeekKey } from './_lib/date';
 import { deriveColors, creatorColor, creatorInitials } from './_lib/colors';
 import EmailSummaryPanel from './components/EmailSummaryPanel';
@@ -865,18 +866,21 @@ export default function PlanneringPage() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [detailCache, setDetailCache] = useState<Record<string, any>>({});
+  // Shared comments hook for detail modal
+  const { comments: detailComments, loading: detailCommentsLoading, error: detailCommentsError, refresh: refreshDetailComments } = useProjectComments(detailProjectId, { ttlMs: 120_000 });
   // Lightweight cache of project address lines for card display (DB-sourced only)
   const [projectAddresses, setProjectAddresses] = useState<Record<string, string>>({});
   const openProjectModal = useCallback(async (projectId: string) => {
     setDetailOpen(true);
-    setDetailProjectId(projectId);
+  setDetailProjectId(projectId);
     setDetailError(null);
     const base = projects.find(p => p.id === projectId);
-    // Abort previous in-flight modal lookup
+  // Abort previous in-flight modal lookup & trigger comment refresh
     const ctrl = new AbortController();
     const prevCtrl = (openProjectModal as any)._ctrl as AbortController | undefined;
     if (prevCtrl) { try { prevCtrl.abort(); } catch {} }
-    (openProjectModal as any)._ctrl = ctrl;
+  (openProjectModal as any)._ctrl = ctrl;
+  // Prefetch not needed — hook auto-fetches when `detailProjectId` changes
     const fetchViaLookup = async (): Promise<any | null> => {
       const keyOrder = base?.orderNumber ? `order:${base.orderNumber}` : null;
       const keyId = (() => { const idNum = Number(projectId); return Number.isFinite(idNum) && idNum > 0 ? `id:${idNum}` : null; })();
@@ -929,6 +933,8 @@ export default function PlanneringPage() {
       const j = await fetchViaLookup();
       if (!j) throw new Error('Kunde inte hämta projektdetaljer');
       setDetailCache(prev => ({ ...prev, [projectId]: j }));
+      // Prefetch comments (non-blocking)
+  // Comments handled by shared hook; optional force refresh already triggered above.
     } catch (e: any) {
       setDetailError(String(e?.message || e));
     } finally {
@@ -3401,6 +3407,33 @@ export default function PlanneringPage() {
                   <div style={{ display: 'grid', gap: 6 }}>
                     <strong style={{ fontSize: 13, color: '#0f172a' }}>Planering</strong>
                     <div style={{ fontSize: 12, color: '#475569' }}>Öppna en planering (dubbelklicka på en kalenderpost) för att se exakta dagar.</div>
+                  </div>
+                )}
+                {/* Comments via shared hook */}
+                {detailProjectId && (
+                  <div style={{ display: 'grid', gap: 8 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <strong style={{ fontSize: 13, color: '#0f172a' }}>Kommentarer</strong>
+                      <div style={{ height: 1, background: '#e5e7eb', flex: 1 }} />
+                      <button type="button" onClick={() => refreshDetailComments(true)} className="btn--plain btn--xs" style={{ fontSize: 11, padding: '2px 8px', background: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: 6, cursor: 'pointer' }}>Uppdatera</button>
+                    </div>
+                    {detailCommentsLoading && detailComments.length === 0 && <div style={{ fontSize: 12, color: '#64748b' }}>Hämtar kommentarer…</div>}
+                    {detailCommentsError && <div style={{ fontSize: 12, color: '#b91c1c' }}>Fel: {detailCommentsError}</div>}
+                    {!detailCommentsLoading && !detailCommentsError && detailComments.length === 0 && <div style={{ fontSize: 12, color: '#64748b' }}>Inga kommentarer.</div>}
+                    {!detailCommentsLoading && !detailCommentsError && detailComments.length > 0 && (
+                      <div style={{ display: 'grid', gap: 6 }}>
+                        {detailComments.slice(0, 12).map(c => (
+                          <div key={c.id} style={{ display: 'flex', flexDirection: 'column', gap: 2, border: '1px solid #e2e8f0', background: '#fff', borderRadius: 8, padding: '6px 8px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                              {c.userName && <span style={{ fontSize: 11, color: '#475569', fontWeight: 600 }}>{c.userName}</span>}
+                              {c.createdAt && <span style={{ fontSize: 10, color: '#64748b' }}>{formatRelativeTime(c.createdAt)}</span>}
+                            </div>
+                            <div style={{ fontSize: 12, color: '#334155', whiteSpace: 'pre-wrap' }}>{c.text}</div>
+                          </div>
+                        ))}
+                        {detailComments.length > 12 && <div style={{ fontSize: 11, color: '#64748b' }}>Visar första 12 av {detailComments.length} kommentarer.</div>}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

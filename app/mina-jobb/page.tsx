@@ -1,6 +1,7 @@
 "use client";
 export const dynamic = 'force-dynamic';
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
+import { useProjectComments, formatRelativeTime } from '@/lib/useProjectComments';
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import TimeReportModal, { TimeReportModalProps } from "../../components/dashboard/TimeReportModal";
 import { useToast } from "@/lib/Toast";
@@ -13,6 +14,7 @@ export default function MinaJobbPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [prefill, setPrefill] = useState<{ project?: string; projectId?: string; date?: string } | null>(null);
   const toast = useToast();
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     (async () => {
@@ -67,7 +69,7 @@ export default function MinaJobbPage() {
                 <div style={{ fontSize: 12, color: '#475569' }}>{it.customer}{it.order_number ? ` • #${it.order_number}` : ''}</div>
                 <div style={{ fontSize: 12, color: '#334155' }}>{day}</div>
                 <div style={{ fontSize: 12, color: '#64748b' }}>{it.truck || 'Ingen lastbil'}{it.job_type ? ` • ${it.job_type}` : ''}{typeof it.bag_count === 'number' ? ` • ${it.bag_count} säckar` : ''}</div>
-                <div style={{ marginTop: 8 }}>
+                <div style={{ marginTop: 8, display:'flex', gap:8, flexWrap:'wrap' }}>
                   <button
                     type="button"
                     onClick={() => { setPrefill({ project: projectLabel, projectId, date: day ? String(day) : undefined }); setModalOpen(true); }}
@@ -75,7 +77,16 @@ export default function MinaJobbPage() {
                   >
                     Rapportera tid
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => { setExpanded(prev => ({ ...prev, [projectId]: !prev[projectId] })); }}
+                    style={{ display:'inline-flex', alignItems:'center', gap:6, fontSize:11, fontWeight:600, padding:'6px 10px', border:'1px solid #cbd5e1', background:'#f1f5f9', color:'#334155', borderRadius:8 }}
+                  >
+                    {expanded[projectId] ? 'Dölj kommentarer' : 'Visa kommentarer'}
+                  </button>
+                  {expanded[projectId] && <ProjectComments projectId={projectId} />}
                 </div>
+                {/* Comments handled by ProjectComments component */}
               </div>
             );
           })}
@@ -118,6 +129,36 @@ export default function MinaJobbPage() {
           }
         }}
       />
+    </div>
+  );
+}
+
+function ProjectComments({ projectId }: { projectId: string }) {
+  const { comments, loading, error, refresh } = useProjectComments(projectId, { ttlMs: 120_000 });
+  return (
+    <div style={{ marginTop:8, display:'grid', gap:6 }}>
+      <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+        <strong style={{ fontSize:12, color:'#0f172a' }}>Kommentarer</strong>
+        <div style={{ height:1, background:'#e5e7eb', flex:1 }} />
+        <button type="button" onClick={() => refresh(true)} style={{ display:'inline-flex', alignItems:'center', gap:4, fontSize:10, fontWeight:600, padding:'4px 8px', border:'1px solid #cbd5e1', background:'#fff', color:'#475569', borderRadius:8 }}>Uppdatera</button>
+      </div>
+      {loading && comments.length === 0 && <div style={{ fontSize:11, color:'#64748b' }}>Hämtar kommentarer…</div>}
+      {error && <div style={{ fontSize:11, color:'#b91c1c' }}>Fel: {error}</div>}
+      {!loading && !error && comments.length === 0 && <div style={{ fontSize:11, color:'#64748b' }}>Inga kommentarer.</div>}
+      {!loading && !error && comments.length > 0 && (
+        <div style={{ display:'grid', gap:6 }}>
+          {comments.slice(0,6).map(c => (
+            <div key={c.id} style={{ border:'1px solid #e2e8f0', background:'#fff', borderRadius:6, padding:'6px 8px', display:'grid', gap:4 }}>
+              <div style={{ display:'flex', alignItems:'center', gap:6, flexWrap:'wrap' }}>
+                {c.userName && <span style={{ fontSize:10, color:'#475569', fontWeight:600 }}>{c.userName}</span>}
+                {c.createdAt && <span style={{ fontSize:10, color:'#64748b' }}>{formatRelativeTime(c.createdAt)}</span>}
+              </div>
+              <div style={{ fontSize:11, color:'#334155', whiteSpace:'pre-wrap' }}>{c.text}</div>
+            </div>
+          ))}
+          {comments.length > 6 && <div style={{ fontSize:10, color:'#64748b' }}>Visar första 6 av {comments.length}.</div>}
+        </div>
+      )}
     </div>
   );
 }

@@ -372,6 +372,17 @@ export class BlikkClient {
     throw lastErr || new Error('Failed to post comment');
   }
 
+  // List comments on a project using the documented endpoint with page=1.
+  async listProjectComments(projectId: number, page: number = 1): Promise<any[]> {
+    const baseTmpl = process.env.BLIKK_COMMENTS_LIST_PATH_TEMPLATE || '/v1/Core/Projects/{id}/Comments';
+    const path = baseTmpl.replace('{id}', String(projectId));
+    const qs = new URLSearchParams({ page: String(Math.max(1, page)) });
+    const fullPath = `${path}?${qs.toString()}`;
+    const data = await this.request(fullPath);
+    const items = (data as any)?.items || (data as any)?.data || data;
+    return Array.isArray(items) ? items : Array.isArray(items?.items) ? items.items : [items];
+  }
+
   // Add a comment to a task (path customizable via env and tolerant to resource family)
   async addTaskComment(taskId: number, text: string, basePath?: string): Promise<{ data: any; usedPath: string; usedKey: string }> {
     const envPath = process.env.BLIKK_TASK_COMMENTS_PATH_TEMPLATE || null; // e.g., '/v1/Core/Tasks/{id}/Comments'

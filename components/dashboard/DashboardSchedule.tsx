@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useProjectComments, formatRelativeTime } from '../../lib/useProjectComments';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 
 type WeekMode = 'current' | 'next';
@@ -35,6 +36,8 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
   const [detailData, setDetailData] = useState<any | null>(null);
   const [detailBase, setDetailBase] = useState<any | null>(null);
   const [reportDraft, setReportDraft] = useState<{ day: string; amount: string }>({ day: '', amount: '' });
+  // Shared project comments hook
+  const { comments, loading: commentsLoading, error: commentsError, refresh: refreshComments } = useProjectComments(detailBase?.project_id ? String(detailBase.project_id) : null, { ttlMs: 120_000 });
 
   type SegmentReport = { id: string; segment_id: string; report_day: string; amount: number; created_by: string | null; created_by_name: string | null; created_at: string };
   const [segmentReportsMap, setSegmentReportsMap] = useState<Record<string, SegmentReport[]>>({}); // key: segment_id
@@ -629,6 +632,38 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                   <div style={{ display:'grid', gap:4 }}>
                     <span style={{ fontSize:12, color:'#334155', fontWeight:600 }}>Beskrivning</span>
                     <p style={{ fontSize:12, color:'#475569', whiteSpace:'pre-wrap', margin:0 }}>{description}</p>
+                  </div>
+                )}
+                {/* Project comments */}
+                {detailBase?.project_id && (
+                  <div style={{ display:'grid', gap:6 }}>
+                    <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                      <strong style={{ fontSize:13, color:'#0f172a' }}>Kommentarer</strong>
+                      <div style={{ height:1, background:'#e5e7eb', flex:1 }} />
+                      <button
+                        type="button"
+                        onClick={() => refreshComments(true)}
+                        className="btn--plain btn--xs"
+                        style={{ fontSize:11, padding:'4px 8px', border:'1px solid #cbd5e1', background:'#f1f5f9', color:'#0f172a', borderRadius:6 }}
+                      >Uppdatera</button>
+                    </div>
+                    {commentsLoading && comments.length === 0 && <div style={{ fontSize:12, color:'#64748b' }}>Hämtar kommentarer…</div>}
+                    {commentsError && <div style={{ fontSize:12, color:'#b91c1c' }}>Fel: {commentsError}</div>}
+                    {!commentsLoading && !commentsError && comments.length === 0 && <div style={{ fontSize:12, color:'#64748b' }}>Inga kommentarer.</div>}
+                    {!commentsLoading && !commentsError && comments.length > 0 && (
+                      <div style={{ display:'grid', gap:6 }}>
+                        {comments.slice(0,10).map(c => (
+                          <div key={c.id} style={{ display:'grid', gap:4, border:'1px solid #e2e8f0', background:'#fff', borderRadius:8, padding:'6px 8px' }}>
+                            <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
+                              {c.userName && <span style={{ fontSize:11, color:'#475569', fontWeight:600 }}>{c.userName}</span>}
+                              {c.createdAt && <span style={{ fontSize:10, color:'#64748b' }}>{formatRelativeTime(c.createdAt)}</span>}
+                            </div>
+                            <div style={{ fontSize:12, color:'#334155', whiteSpace:'pre-wrap' }}>{c.text}</div>
+                          </div>
+                        ))}
+                        {comments.length > 10 && <div style={{ fontSize:11, color:'#64748b' }}>Visar 10 av {comments.length} kommentarer.</div>}
+                      </div>
+                    )}
                   </div>
                 )}
                 <div style={{ display:'flex', gap:8, flexWrap:'wrap', alignItems:'center' }}>
