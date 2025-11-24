@@ -142,7 +142,8 @@ export default function EgenkontrollPage() {
     setEtapperClosed((rows) => {
       const next = rows.map((r, i) => (i === idx ? { ...r, ...patch } : r));
       const row = next[idx];
-      if (("ytaM2" in patch || "bestalldTjocklek" in patch || "antalSackKgPerSack" in patch) && !("installeradDensitet" in patch)) {
+      // Recalculate density when any contributing value changes. We now prefer uppmatTjocklek (measured) over bestalldTjocklek (ordered).
+      if (("ytaM2" in patch || "uppmatTjocklek" in patch || "bestalldTjocklek" in patch || "antalSackKgPerSack" in patch) && !("installeradDensitet" in patch)) {
         const calc = CalculateDensityOnClosedRow(row);
         next[idx] = {
           ...row,
@@ -614,11 +615,13 @@ export default function EgenkontrollPage() {
     return totalKg / volumeM3;
   }
   function CalculateDensityOnClosedRow(etapp: EtappClosedRow): number {
-    const { ytaM2, bestalldTjocklek, antalSackKgPerSack } = etapp;
+    const { ytaM2, uppmatTjocklek, bestalldTjocklek, antalSackKgPerSack } = etapp;
     const bagWeight = MATERIALS[materialUsed]?.bagWeight ?? 0;
-    if (!ytaM2 || !bestalldTjocklek || !antalSackKgPerSack || !bagWeight) return 0;
+    // Prefer measured thickness (uppmatTjocklek). Fallback to ordered thickness if measurement missing.
+    const thicknessSource = (uppmatTjocklek && uppmatTjocklek.trim() !== '') ? uppmatTjocklek : bestalldTjocklek;
+    if (!ytaM2 || !thicknessSource || !antalSackKgPerSack || !bagWeight) return 0;
     const area = parseFloat(ytaM2);
-    const thicknessMm = parseFloat(bestalldTjocklek);
+    const thicknessMm = parseFloat(thicknessSource);
     const bags = parseFloat(antalSackKgPerSack);
     if (isNaN(area) || isNaN(thicknessMm) || isNaN(bags) || area === 0 || thicknessMm === 0) return 0;
     const thicknessMeters = thicknessMm / 1000;
