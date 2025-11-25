@@ -36,6 +36,14 @@ export default function KorjournalPage() {
   const [editing, setEditing] = useState<Trip | null>(null);
   const [locating, setLocating] = useState<{start?: boolean; end?: boolean}>({});
   const [isSaving, setIsSaving] = useState(false); // prevent double submit
+  // Usage stats (local only)
+  interface UsageStats { startCounts: Record<string, number>; endCounts: Record<string, number>; pairCounts: Record<string, number>; }
+  const USAGE_KEY = 'korjournal.usage.v1';
+  const [usageStats, setUsageStats] = useState<UsageStats>({ startCounts: {}, endCounts: {}, pairCounts: {} });
+  const [topStarts, setTopStarts] = useState<string[]>([]);
+  const [topEnds, setTopEnds] = useState<string[]>([]);
+  const [topPairs, setTopPairs] = useState<Array<{ start: string; end: string; count: number }>>([]);
+  const MAX_SUGGEST = 6;
 
   // Load from API; cache to localStorage as fallback
   useEffect(() => {
@@ -60,6 +68,11 @@ export default function KorjournalPage() {
       } catch {}
       // Fallback to local cache
       try { const raw = localStorage.getItem(STORAGE_KEY); if (raw) setTrips(JSON.parse(raw)); } catch {}
+      // Also load usage stats
+      try {
+        const uRaw = localStorage.getItem(USAGE_KEY);
+        if (uRaw) setUsageStats(JSON.parse(uRaw));
+      } catch {}
     })();
   }, []);
 
@@ -67,6 +80,48 @@ export default function KorjournalPage() {
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(trips)); } catch {}
   }, [trips]);
+
+  // Recompute top suggestions whenever usage stats change
+  useEffect(() => {
+    function sortEntries(rec: Record<string, number>) {
+      return Object.entries(rec)
+        .filter(([k]) => k.trim().length > 0)
+        .sort((a,b) => b[1] - a[1])
+        .slice(0, MAX_SUGGEST)
+        .map(([k]) => k);
+    }
+    setTopStarts(sortEntries(usageStats.startCounts));
+    setTopEnds(sortEntries(usageStats.endCounts));
+    const pairs = Object.entries(usageStats.pairCounts)
+      .filter(([k]) => k.includes('||'))
+      .map(([k,v]) => { const [s,e] = k.split('||'); return { start: s, end: e, count: v }; })
+      .sort((a,b) => b.count - a.count)
+      .slice(0, MAX_SUGGEST);
+    setTopPairs(pairs);
+    try { localStorage.setItem(USAGE_KEY, JSON.stringify(usageStats)); } catch {}
+  }, [usageStats]);
+
+  const bumpUsage = (trip: Trip) => {
+    setUsageStats(prev => {
+      const copy: UsageStats = {
+        startCounts: { ...prev.startCounts },
+        endCounts: { ...prev.endCounts },
+        pairCounts: { ...prev.pairCounts }
+      };
+      const s = (trip.startAddress || '').trim();
+      const e = (trip.endAddress || '').trim();
+      if (s) copy.startCounts[s] = (copy.startCounts[s] || 0) + 1;
+      if (e) copy.endCounts[e] = (copy.endCounts[e] || 0) + 1;
+      if (s && e) { const key = `${s}||${e}`; copy.pairCounts[key] = (copy.pairCounts[key] || 0) + 1; }
+      return copy;
+    });
+  };
+
+  const clearUsage = () => {
+    if (!confirm('Rensa lokala favoritadresser?')) return;
+    setUsageStats({ startCounts: {}, endCounts: {}, pairCounts: {} });
+    try { localStorage.removeItem(USAGE_KEY); } catch {}
+  };
 
   const monthlyGroups = useMemo(() => {
     const map = new Map<string, Trip[]>();
@@ -160,6 +215,7 @@ export default function KorjournalPage() {
           note: j.trip?.note || trip.note,
         };
         setTrips(prev => prev.map(p => p.id === saved.id ? saved : p).sort((a,b) => b.date.localeCompare(a.date)));
+        bumpUsage(saved);
       } else {
         const res = await fetch('/api/korjournal/trips', {
           method: 'POST',
@@ -185,6 +241,7 @@ export default function KorjournalPage() {
           note: j.trip?.note || trip.note,
         };
         setTrips(prev => [saved, ...prev].sort((a,b) => b.date.localeCompare(a.date)));
+        bumpUsage(saved);
       }
       setOpen(false);
       setEditing(null);
@@ -298,6 +355,9 @@ export default function KorjournalPage() {
         </button>
         <div style={{ marginLeft: 'auto' }} />
   <button className="btn--primary btn--sm" onClick={openNew}>Lägg till resa</button>
+        {topStarts.length > 0 && (
+          <button className="btn--plain btn--sm" onClick={clearUsage} title="Rensa lokala favoritadresser">Rensa favoriter</button>
+        )}
       </div>
 
       {monthlyGroups.length === 0 && (
@@ -402,21 +462,52 @@ export default function KorjournalPage() {
               <label style={{ display: 'grid', gap: 4 }}>
                 <span>Startadress</span>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 6 }}>
-                  <input value={form.startAddress} onChange={e => setForm((f:any) => ({ ...f, startAddress: e.target.value }))} placeholder="Ex: Företagsgatan 1, Stockholm" />
+                  <input list="kor-start-suggestions" value={form.startAddress} onChange={e => setForm((f:any) => ({ ...f, startAddress: e.target.value }))} placeholder="Ex: Företagsgatan 1, Stockholm" />
                   <button type="button" className="btn--plain btn--sm" onClick={() => fillAddress('start')} disabled={!!locating.start} title="Hämta nuvarande plats">
                     {locating.start ? 'Hämtar…' : 'Hämta plats'}
                   </button>
                 </div>
+                {topStarts.length > 0 && (
+                  <datalist id="kor-start-suggestions">
+                    {topStarts.map(addr => (
+                      <option key={'opt-start-' + addr} value={addr}>{addr} ({usageStats.startCounts[addr] || 0})</option>
+                    ))}
+                  </datalist>
+                )}
               </label>
               <label style={{ display: 'grid', gap: 4 }}>
                 <span>Slutadress</span>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 6 }}>
-                  <input value={form.endAddress} onChange={e => setForm((f:any) => ({ ...f, endAddress: e.target.value }))} placeholder="Ex: Kundvägen 5, Uppsala" />
+                  <input list="kor-end-suggestions" value={form.endAddress} onChange={e => setForm((f:any) => ({ ...f, endAddress: e.target.value }))} placeholder="Ex: Kundvägen 5, Uppsala" />
                   <button type="button" className="btn--plain btn--sm" onClick={() => fillAddress('end')} disabled={!!locating.end} title="Hämta nuvarande plats">
                     {locating.end ? 'Hämtar…' : 'Hämta plats'}
                   </button>
                 </div>
+                {topEnds.length > 0 && (
+                  <datalist id="kor-end-suggestions">
+                    {topEnds.map(addr => (
+                      <option key={'opt-end-' + addr} value={addr}>{addr} ({usageStats.endCounts[addr] || 0})</option>
+                    ))}
+                  </datalist>
+                )}
               </label>
+              {topPairs.length > 0 && (
+                <div style={{ display: 'grid', gap: 4 }}>
+                  <span style={{ fontSize: 12, fontWeight: 600 }}>Vanliga kombinationer</span>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {topPairs.map(p => (
+                      <button
+                        key={'pair-' + p.start + '||' + p.end}
+                        type="button"
+                        className="btn--plain btn--xs"
+                        onClick={() => setForm((f:any) => ({ ...f, startAddress: p.start, endAddress: p.end }))}
+                        style={{ fontSize: 11, padding: '4px 8px', border: '1px solid #e2e8f0', background: '#ecfdf5', color: '#047857', borderRadius: 999, display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                        title={`Välj kombination (${p.count} ggr)`}
+                      >{p.start.length>18?p.start.slice(0,15)+'…':p.start} → {p.end.length>18?p.end.slice(0,15)+'…':p.end}</button>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div style={{ display: 'grid', gap: 10, gridTemplateColumns: '1fr 1fr' }}>
                 <label style={{ display: 'grid', gap: 4 }}>
                   <span>Start km</span>
