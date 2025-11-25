@@ -4337,7 +4337,7 @@ export default function PlanneringPage() {
             style={{
               position: 'fixed',
               bottom: 24,
-              right: 24,
+              left: '50%',
               zIndex: 2000,
               background: '#1d4ed8',
               color: '#fff',
