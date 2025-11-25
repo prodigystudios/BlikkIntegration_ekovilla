@@ -462,6 +462,56 @@ export default function PlanneringPage() {
     return egenkontrollPaths[norm] || egenkontrollPaths[orderNumber] || null;
   }
 
+  // Derived: remaining bags per project (plan minus reported so far)
+  const remainingBagsByProject = useMemo(() => {
+    const map = new Map<string, number>();
+    const partialSum: Record<string, number> = {};
+    for (const r of segmentReports) {
+      const seg = scheduledSegments.find(s => s.id === r.segmentId);
+      const pid = r.projectId || seg?.projectId || null;
+      if (!pid) continue;
+      partialSum[pid] = (partialSum[pid] || 0) + (Number(r.amount) || 0);
+    }
+    for (const [pid, meta] of Object.entries(scheduleMeta)) {
+      const plan = Number(meta.bagCount) || 0;
+      if (plan <= 0) continue;
+      const proj = projects.find(p => p.id === pid);
+      const order = proj?.orderNumber || null;
+      const ekDone = order ? hasEgenkontroll(order) : false;
+      const usedFromMeta = Number(meta.actual_bags_used) || 0;
+      const usedPartial = partialSum[pid] || 0;
+      const used = ekDone ? usedFromMeta : usedPartial;
+      map.set(pid, Math.max(0, plan - used));
+    }
+    return map;
+  }, [segmentReports, scheduleMeta, projects, hasEgenkontroll, scheduledSegments]);
+  // Bag usage status (plan, used, remaining, overrun)
+  type BagUsageStatus = { plan: number; used: number; remaining: number; overrun: number };
+  const bagUsageStatusByProject = useMemo(() => {
+    const status = new Map<string, BagUsageStatus>();
+    const partialSum: Record<string, number> = {};
+    for (const r of segmentReports) {
+      const seg = scheduledSegments.find(s => s.id === r.segmentId);
+      const pid = r.projectId || seg?.projectId || null;
+      if (!pid) continue;
+      partialSum[pid] = (partialSum[pid] || 0) + (Number(r.amount) || 0);
+    }
+    for (const [pid, meta] of Object.entries(scheduleMeta)) {
+      const plan = Number(meta.bagCount) || 0;
+      if (plan <= 0) continue;
+      const proj = projects.find(p => p.id === pid);
+      const order = proj?.orderNumber || null;
+      const ekDone = order ? hasEgenkontroll(order) : false;
+      const usedMeta = Number(meta.actual_bags_used) || 0;
+      const usedPartial = partialSum[pid] || 0;
+      const used = ekDone ? usedMeta : usedPartial;
+      const remaining = Math.max(0, plan - used);
+      const overrun = used > plan ? (used - plan) : 0;
+      status.set(pid, { plan, used, remaining, overrun });
+    }
+    return status;
+  }, [segmentReports, scheduleMeta, projects, hasEgenkontroll, scheduledSegments]);
+
   async function searchByOrderNumber(e?: React.FormEvent) {
     if (e) e.preventDefault();
     const val = searchOrder.trim();
@@ -4158,6 +4208,8 @@ export default function PlanneringPage() {
               jobTypeColors={jobTypeColors}
               projectAddresses={projectAddresses}
               segmentCrew={segmentCrew}
+              remainingBagsByProject={remainingBagsByProject}
+              bagUsageStatusByProject={bagUsageStatusByProject}
             />
           )}
 
@@ -4193,6 +4245,8 @@ export default function PlanneringPage() {
               jobTypeColors={jobTypeColors}
               projectAddresses={projectAddresses}
               segmentCrew={segmentCrew}
+              remainingBagsByProject={remainingBagsByProject}
+              bagUsageStatusByProject={bagUsageStatusByProject}
             />
           )}
 
@@ -4229,6 +4283,8 @@ export default function PlanneringPage() {
               jobTypeColors={jobTypeColors}
               projectAddresses={projectAddresses}
               segmentCrew={segmentCrew}
+              remainingBagsByProject={remainingBagsByProject}
+              bagUsageStatusByProject={bagUsageStatusByProject}
             />
           )}
         </div>

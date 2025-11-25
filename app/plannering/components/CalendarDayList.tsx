@@ -1,5 +1,6 @@
 "use client";
 import React from 'react';
+import BagUsageText from './BagUsageText';
 import { isoWeekNumber, isoWeekKey } from '../_lib/date';
 
 type TruckDisplay = { bg: string; border: string; text: string };
@@ -36,6 +37,8 @@ export interface CalendarDayListProps {
   jobTypeColors: Record<string, string>;
   projectAddresses: Record<string, string>;
   segmentCrew: Record<string, Array<{ id: string | null; name: string }>>;
+  remainingBagsByProject?: Map<string, number>;
+  bagUsageStatusByProject?: Map<string, { plan: number; used: number; remaining: number; overrun: number }>;
 }
 
 export default function CalendarDayList(props: CalendarDayListProps) {
@@ -71,6 +74,8 @@ export default function CalendarDayList(props: CalendarDayListProps) {
   jobTypeColors,
   projectAddresses,
   segmentCrew,
+  remainingBagsByProject,
+  bagUsageStatusByProject,
   } = props;
 
   return (
@@ -355,11 +360,13 @@ export default function CalendarDayList(props: CalendarDayListProps) {
                                   )}
                               {!isDelivery && (it.bagCount != null || it.jobType) && (
                                 <span style={{ fontSize: 11, color: display ? display.text : '#374151' }}>
-                                  {it.bagCount != null ? `${it.bagCount} säckar` : ''}
-                                  {it.bagCount != null && it.jobType ? ' • ' : ''}
-                                  {it.jobType ? (
-                                  <span style={{ color: jobTypeColors[it.jobType] || (display ? display.text : '#374151'), textShadow: '0 1px 2px rgba(129, 126, 126, 0.1)', textDecoration: 'underline', textUnderlineOffset: 2 }}>{it.jobType.toLocaleUpperCase('sv-SE')}</span>
-                                  ) : ''}
+                                  <BagUsageText
+                                    status={bagUsageStatusByProject?.get(it.project.id)}
+                                    plan={it.bagCount}
+                                    jobType={it.jobType}
+                                    jobTypeColors={jobTypeColors}
+                                    defaultColor={display ? display.text : '#374151'}
+                                  />
                                 </span>
                               )}
                               {!isDelivery && isStart && scheduleMeta[it.project.id]?.actual_bags_used != null && (
