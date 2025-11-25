@@ -418,6 +418,25 @@ export default function PlanneringPage() {
   const [hoverBacklogId, setHoverBacklogId] = useState<string | null>(null);
   // Hover state for scheduled segment cards (used to show edit hint on hover)
   const [hoveredSegmentId, setHoveredSegmentId] = useState<string | null>(null);
+  // Floating next-month shortcut visibility (IntersectionObserver sentinel driven)
+  const [showNextMonthShortcut, setShowNextMonthShortcut] = useState(false);
+  const bottomSentinelRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = bottomSentinelRef.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+    const obs = new IntersectionObserver((entries) => {
+      const entry = entries[0];
+      // Show button only when sentinel fully (or mostly) in view
+      setShowNextMonthShortcut(entry.isIntersecting && entry.intersectionRatio >= 0.6);
+    }, { root: null, threshold: [0, 0.25, 0.5, 0.6, 0.75, 1], rootMargin: '0px 0px 400px 0px' });
+    obs.observe(el);
+    return () => { obs.disconnect(); };
+  }, []);
+  const jumpToNextMonth = useCallback(() => {
+    setMonthOffset(o => o + 1);
+    // After month change, scroll to top smoothly for context
+    try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch { /* ignore */ }
+  }, []);
 
   // Segment reports (partial reporting before EK)
   const [segmentReports, setSegmentReports] = useState<SegmentReport[]>([]);
@@ -4288,6 +4307,42 @@ export default function PlanneringPage() {
             />
           )}
         </div>
+        {/* Floating next-month button (always mounted for animation) */}
+        {!selectedWeekKey && (
+          <button
+            type="button"
+            onClick={jumpToNextMonth}
+            aria-label="Gå till nästa månad"
+            title="Gå till nästa månad"
+            style={{
+              position: 'fixed',
+              bottom: 24,
+              right: 24,
+              zIndex: 2000,
+              background: '#1d4ed8',
+              color: '#fff',
+              border: '1px solid #1e40af',
+              borderRadius: 999,
+              padding: '12px 18px',
+              fontSize: 14,
+              fontWeight: 600,
+              boxShadow: showNextMonthShortcut ? '0 6px 16px rgba(0,0,0,0.25)' : '0 2px 6px rgba(0,0,0,0.15)',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 8,
+              opacity: showNextMonthShortcut ? 1 : 0,
+              transform: showNextMonthShortcut ? 'translateY(0)' : 'translateY(12px)',
+              pointerEvents: showNextMonthShortcut ? 'auto' : 'none',
+              transition: 'opacity .35s ease, transform .35s ease, box-shadow .35s ease, background .2s ease'
+            }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#2563eb'; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#1d4ed8'; }}
+          >
+            Nästa månad →
+          </button>
+        )}
+        {/* Bottom sentinel for IntersectionObserver trigger */}
+        <div ref={bottomSentinelRef} aria-hidden style={{ height: 1, width: '100%' }} />
       </div>
     </div>
   );
