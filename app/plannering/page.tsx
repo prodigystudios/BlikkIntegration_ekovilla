@@ -432,11 +432,31 @@ export default function PlanneringPage() {
     obs.observe(el);
     return () => { obs.disconnect(); };
   }, []);
+  // Anchor ref for top of calendar area
+  const calendarTopRef = useRef<HTMLDivElement | null>(null);
+  const [pendingScrollToTop, setPendingScrollToTop] = useState(false);
   const jumpToNextMonth = useCallback(() => {
     setMonthOffset(o => o + 1);
-    // After month change, scroll to top smoothly for context
-    try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch { /* ignore */ }
+    setPendingScrollToTop(true); // defer actual scrolling until after re-render/layout
   }, []);
+  useEffect(() => {
+    if (pendingScrollToTop) {
+      // Use two RAFs to allow layout to settle if month content height changes
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          try {
+            const el = calendarTopRef.current;
+            if (el) {
+              el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            } else {
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }
+          } catch { /* ignore */ }
+          setPendingScrollToTop(false);
+        });
+      });
+    }
+  }, [pendingScrollToTop, monthOffset]);
 
   // Segment reports (partial reporting before EK)
   const [segmentReports, setSegmentReports] = useState<SegmentReport[]>([]);
@@ -3677,7 +3697,7 @@ export default function PlanneringPage() {
         )}
 
         {/* Calendar */}
-        <div style={{ display: 'grid', gap: 8 }}>
+  <div ref={calendarTopRef} style={{ display: 'grid', gap: 8 }}>
           <FiltersBar
             monthOffset={monthOffset}
             setMonthOffset={setMonthOffset}
