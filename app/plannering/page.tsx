@@ -52,6 +52,9 @@ interface ProjectScheduleMeta {
   actual_bags_used?: number | null;
   actual_bags_set_at?: string | null;
   actual_bags_set_by?: string | null;
+  delivery_sent?: boolean | null;
+  delivery_sent_at?: string | null;
+  delivery_sent_by?: string | null;
 }
 
 // Partial bag reporting per segment/day
@@ -744,6 +747,26 @@ export default function PlanneringPage() {
       client_notified_by: null
     }).then(({ error }) => { if (error) console.warn('[notify] undo error', error); }));
   }
+  function markDeliverySent(pid: string) {
+    const actor = currentUserName || currentUserId || 'okänd';
+    const ts = new Date().toISOString();
+    setScheduleMeta(prev => ({ ...prev, [pid]: { ...(prev[pid] || { projectId: pid }), delivery_sent: true, delivery_sent_at: ts, delivery_sent_by: actor } }));
+    enqueue(supabase.from('planning_project_meta').upsert({
+      project_id: pid,
+      delivery_sent: true,
+      delivery_sent_at: ts,
+      delivery_sent_by: actor
+    }).then(({ error }) => { if (error) console.warn('[delivery_sent] upsert error', error); }));
+  }
+  function undoDeliverySent(pid: string) {
+    setScheduleMeta(prev => ({ ...prev, [pid]: { ...(prev[pid] || { projectId: pid }), delivery_sent: false, delivery_sent_at: null, delivery_sent_by: null } }));
+    enqueue(supabase.from('planning_project_meta').upsert({
+      project_id: pid,
+      delivery_sent: false,
+      delivery_sent_at: null,
+      delivery_sent_by: null
+    }).then(({ error }) => { if (error) console.warn('[delivery_sent] undo error', error); }));
+  }
 
   // Load and subscribe to job type/material colors
   useEffect(() => {
@@ -1216,6 +1239,9 @@ export default function PlanneringPage() {
             actual_bags_used: m.actual_bags_used,
             actual_bags_set_at: m.actual_bags_set_at,
             actual_bags_set_by: m.actual_bags_set_by,
+            delivery_sent: (m as any).delivery_sent ?? null,
+            delivery_sent_at: (m as any).delivery_sent_at ?? null,
+            delivery_sent_by: (m as any).delivery_sent_by ?? null,
           };
           setScheduleMeta(metaObj);
           // Prefill address cache from stored meta if available
@@ -2139,7 +2165,10 @@ export default function PlanneringPage() {
       client_notified_by: meta.client_notified_by ?? null,
       actual_bags_used: meta.actual_bags_used ?? null,
       actual_bags_set_at: meta.actual_bags_set_at ?? null,
-      actual_bags_set_by: meta.actual_bags_set_by ?? null
+  actual_bags_set_by: meta.actual_bags_set_by ?? null,
+      delivery_sent: meta.delivery_sent ?? null,
+      delivery_sent_at: meta.delivery_sent_at ?? null,
+      delivery_sent_by: meta.delivery_sent_by ?? null,
     }).then(({ error }) => { if (error) console.warn('[persist meta upsert] error', error); }));
   }, [supabase]);
 
@@ -2289,6 +2318,14 @@ export default function PlanneringPage() {
         const inst: DayInstance = { ...meta, segmentId: seg.id, project, day, spanStart, spanEnd, spanMiddle: !spanStart && !spanEnd, totalSpan };
         // Prefer per-segment truck if set
         (inst as any).truck = (seg as any).truck ?? (inst as any).truck ?? null;
+        // Treat segments with jobType "Leverans" (outgoing deliveries) as delivery-style cards.
+        // They should appear at the top of the day (same sort behavior as incoming depot deliveries)
+        // but use a different color/badge in the calendar components. We mark them with isDelivery + isDeliveryOutbound.
+        const jtLower = (meta.jobType || '').toLowerCase();
+        if (jtLower === 'leverans') {
+          (inst as any).isDelivery = true; // re-use existing delivery styling logic paths (non-draggable, simplified info)
+          (inst as any).isDeliveryOutbound = true; // additional flag so components can distinguish color/label
+        }
         const list = map.get(day) || [];
         list.push(inst);
         map.set(day, list);
@@ -3063,6 +3100,20 @@ export default function PlanneringPage() {
                       </select>
                     </label>
                   </div>
+                  {/* Outgoing delivery sent toggle (only when Leverans selected) */}
+                  {segEditor.jobType === 'Leverans' && p && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, background: '#fff7ed', border: '1px solid #fed7aa', padding: '10px 12px', borderRadius: 10 }}>
+                      <div style={{ display: 'grid', gap: 2 }}>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: '#7c2d12' }}>Utleverans skickad?</span>
+                        <span style={{ fontSize: 10, color: '#92400e' }}>Markera när denna leverans har skickats för tydlig översikt.</span>
+                      </div>
+                      {scheduleMeta[p.id]?.delivery_sent ? (
+                        <button type="button" onClick={() => undoDeliverySent(p.id)} className="btn--plain btn--xs" style={{ fontSize: 11, padding: '6px 10px', background: '#059669', border: '1px solid #047857', color: '#fff', borderRadius: 8 }}>Skickad ✓ (Ångra)</button>
+                      ) : (
+                        <button type="button" onClick={() => markDeliverySent(p.id)} className="btn--plain btn--xs" style={{ fontSize: 11, padding: '6px 10px', background: '#fde68a', border: '1px solid #f59e0b', color: '#92400e', borderRadius: 8 }}>Markera som skickad</button>
+                      )}
+                    </div>
+                  )}
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
                     <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
                       <span>Depå (override)</span>

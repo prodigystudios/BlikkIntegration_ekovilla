@@ -296,8 +296,9 @@ export default function CalendarDayList(props: CalendarDayListProps) {
                             display = { bg: '#fee2e2', border: '#fca5a5', text: '#7f1d1d' };
                           }
                           const isDelivery = !!it.isDelivery;
-                          const cardBorder = isDelivery ? '#1d201eff' : (display ? display.border : '#c7d2fe');
-                          const cardBg = isDelivery ? '#00b386ff' : (display ? display.bg : '#eef2ff');
+                          const isDeliveryOutbound = !!it.isDeliveryOutbound;
+                          const cardBorder = isDelivery ? (isDeliveryOutbound ? '#92400e' : '#1d201eff') : (display ? display.border : '#c7d2fe');
+                          const cardBg = isDelivery ? (isDeliveryOutbound ? '#f59e0b' : '#00b386ff') : (display ? display.bg : '#eef2ff');
                           const highlight = calendarSearch && (it.project.name.toLowerCase().includes(searchVal) || (it.project.orderNumber || '').toLowerCase().includes(searchVal));
                           const isMid = (it as any).spanMiddle;
                           const isStart = (it as any).spanStart;
@@ -332,26 +333,38 @@ export default function CalendarDayList(props: CalendarDayListProps) {
                               {hoveredSegmentId === it.segmentId && !highlight && !isDelivery && (
                                 <span style={{ position: 'absolute', top: -8, right: 4, background: '#6366f1', color: '#fff', fontSize: 9, padding: '2px 6px', borderRadius: 8, boxShadow: '0 2px 4px rgba(0,0,0,0.15)' }}>Redigera</span>
                               )}
-                              <span style={{ fontWeight: 600, color: isDelivery ? '#18065fff' : (display ? display.text : '#312e81'), display: 'flex', alignItems: 'center', columnGap: 6, rowGap: 2, flexWrap: 'wrap' }}>
+                              <span style={{ fontWeight: 600, color: isDelivery ? (isDeliveryOutbound ? '#3a2200' : '#18065fff') : (display ? display.text : '#312e81'), display: 'flex', alignItems: 'center', columnGap: 6, rowGap: 2, flexWrap: 'wrap' }}>
                                 {it.project.orderNumber ? (
                                   <span style={{ fontFamily: 'ui-monospace, monospace', background: '#ffffff', color: display ? display.text : '#312e81', border: `1px solid ${cardBorder}`, padding: '1px 4px', borderRadius: 4, whiteSpace: 'nowrap' }} title="Ordernummer">#{it.project.orderNumber}</span>
                                 ) : null}
                                 <span title={it.project.name} style={{ color: isDelivery ? '#ffffffff' : (display ? display.text : '#312e81'), fontWeight: 600, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>{it.project.name}</span>
                                 {isDelivery && (
-                                  <span style={{ fontSize: 9, background: '#15803d', color: '#fff', padding: '2px 6px', borderRadius: 6, fontWeight: 600 }}>Leverans</span>
+                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                                    <span style={{ fontSize: 9, background: isDeliveryOutbound ? '#b45309' : '#15803d', color: '#fff', padding: '2px 6px', borderRadius: 6, fontWeight: 600 }}>
+                                      {isDeliveryOutbound ? 'Utleverans' : 'Leverans'}
+                                    </span>
+                                    {isDeliveryOutbound && scheduleMeta[it.project.id]?.delivery_sent && (
+                                      <span title="Leverans skickad" style={{ fontSize: 9, background: '#059669', color: '#fff', padding: '2px 6px', borderRadius: 6, fontWeight: 600 }}>Skickad ✓</span>
+                                    )}
+                                  </span>
                                 )}
                               </span>
-                              {!isDelivery && isStart && projectAddresses[it.project.id] && (
+                              {/* Show project address for normal segments and outgoing deliveries */}
+                              {(!isDelivery || isDeliveryOutbound) && isStart && projectAddresses[it.project.id] && (
                                 <span style={{ fontSize: 9, color: '#64748b' }}>
                                   {projectAddresses[it.project.id]}
                                 </span>
                               )}
-                              {isDelivery && (
+                              {isDelivery && !isDeliveryOutbound && (
                                 <span style={{ fontSize: 9, color: '#ffffffff' }}>
                                   {(it.deliveryDepotName || '').trim()}
                                   {it.deliveryDepotName && (it.deliveryAmount != null) ? ' • ' : ''}
                                   {(it.deliveryAmount != null) ? `${it.deliveryAmount} st` : ''}
                                 </span>
+                              )}
+                              {/* Show customer for normal segments and outgoing deliveries */}
+                              {(!isDelivery || isDeliveryOutbound) && isStart && (
+                                <span style={{ color: display ? display.text : '#6366f1' }}>{it.project.customer}</span>
                               )}
                                   {!isDelivery && isStart && segmentCrew[it.segmentId] && segmentCrew[it.segmentId].length > 0 && (
                                     <span style={{ fontSize: 9, color: display ? display.text : '#334155', background: '#ffffff50', padding: '1px 5px', borderRadius: 10, border: `1px solid ${cardBorder}55` }} title={`Team: ${segmentCrew[it.segmentId].map(m => m.name).join(', ')}`}>

@@ -170,8 +170,9 @@ export default function CalendarWeekdayLanes(props: CalendarWeekdayLanesProps) {
                           display = { bg: '#8dd688ff', border: '#fca5a5', text: '#7f1d1d' };
                         }
                         const isDelivery = !!it.isDelivery;
-                        const cardBorder = isDelivery ? '#1d201eff' : (display ? display.border : '#c7d2fe');
-                        const cardBg = isDelivery ? '#00b386ff' : (display ? display.bg : '#2f57deff');
+                        const isDeliveryOutbound = !!it.isDeliveryOutbound;
+                        const cardBorder = isDelivery ? (isDeliveryOutbound ? '#92400e' : '#1d201eff') : (display ? display.border : '#c7d2fe');
+                        const cardBg = isDelivery ? (isDeliveryOutbound ? '#f59e0b' : '#00b386ff') : (display ? display.bg : '#2f57deff');
                         const searchVal = calendarSearch.trim().toLowerCase();
                         const highlight = calendarSearch && (it.project.name.toLowerCase().includes(searchVal) || (it.project.orderNumber || '').toLowerCase().includes(searchVal));
                         const isMid = (it as any).spanMiddle;
@@ -230,19 +231,29 @@ export default function CalendarWeekdayLanes(props: CalendarWeekdayLanesProps) {
                               </span>
                             )}
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                              <span style={{ fontWeight: 600, color: isDelivery ? '#18065fff' : (display ? display.text : '#312e81'), display: 'flex', alignItems: 'center', columnGap: 6, rowGap: 2, flexWrap: 'wrap' }}>
+                              <span style={{ fontWeight: 600, color: isDelivery ? (isDeliveryOutbound ? '#3a2200' : '#18065fff') : (display ? display.text : '#312e81'), display: 'flex', alignItems: 'center', columnGap: 6, rowGap: 2, flexWrap: 'wrap' }}>
                                 {it.project.orderNumber ? (
                                   <span style={{ fontFamily: 'ui-monospace, monospace', background: '#ffffff', color: display ? display.text : '#312e81', border: `1px solid ${cardBorder}`, padding: '1px 4px', borderRadius: 4, whiteSpace: 'nowrap' }} title="Ordernummer">#{it.project.orderNumber}</span>
                                 ) : null}
                                 <span title={it.project.name} style={{ color: isDelivery ? '#ffffffff' : (display ? display.text : '#e7e7eeff'), fontWeight: 600, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>{it.project.name}</span>
-                                {isDelivery && <span style={{ fontSize: 9, background: '#15803d', color: '#fff', padding: '2px 6px', borderRadius: 6, fontWeight: 600 }}>Leverans</span>}
+                                {isDelivery && (
+                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                                    <span style={{ fontSize: 9, background: isDeliveryOutbound ? '#b45309' : '#15803d', color: '#fff', padding: '2px 6px', borderRadius: 6, fontWeight: 600 }}>
+                                      {isDeliveryOutbound ? 'Utleverans' : 'Leverans'}
+                                    </span>
+                                    {isDeliveryOutbound && scheduleMeta[it.project.id]?.delivery_sent && (
+                                      <span title="Leverans skickad" style={{ fontSize: 9, background: '#059669', color: '#fff', padding: '2px 6px', borderRadius: 6, fontWeight: 600 }}>Skickad ✓</span>
+                                    )}
+                                  </span>
+                                )}
                               </span>
-                              {!isDelivery && isStart && projectAddresses[it.project.id] && (
+                              {/* Show project address for normal segments and outgoing deliveries */}
+                              {(!isDelivery || isDeliveryOutbound) && isStart && projectAddresses[it.project.id] && (
                                 <span style={{ fontSize: 9, color: '#64748b' }}>
                                   {projectAddresses[it.project.id]}
                                 </span>
                               )}
-                              {isDelivery && (
+                              {isDelivery && !isDeliveryOutbound && (
                                 <span style={{ fontSize: 9, color: '#ffffffff' }}>
                                   {(it.deliveryDepotName || '').trim()}
                                   {it.deliveryDepotName && (it.deliveryAmount != null) ? ' • ' : ''}
@@ -254,7 +265,8 @@ export default function CalendarWeekdayLanes(props: CalendarWeekdayLanesProps) {
                                   Team: {segmentCrew[it.segmentId].map(m => m.name).join(', ')}
                                 </span>
                               )}
-                              {!isDelivery && isStart && <span style={{ color: display ? display.text : '#6366f1' }}>{it.project.customer}</span>}
+                              {/* Show customer for normal segments and outgoing deliveries */}
+                              {(!isDelivery || isDeliveryOutbound) && isStart && <span style={{ color: display ? display.text : '#6366f1' }}>{it.project.customer}</span>}
                               {!isDelivery && isStart && it.project.salesResponsible && <span style={{ fontSize: 9, color: display ? display.text : '#334155', background: '#ffffff40', padding: '1px 5px', borderRadius: 10, border: `1px solid ${cardBorder}55` }}>Sälj: {it.project.salesResponsible}</span>}
                               {!isDelivery && (it.bagCount != null || it.jobType) && (
                                 <span style={{ fontSize: 11, color: display ? display.text : '#374151' }}>
