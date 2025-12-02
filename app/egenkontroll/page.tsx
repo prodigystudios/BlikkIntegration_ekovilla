@@ -43,7 +43,8 @@ export default function EgenkontrollPage() {
       'Ekovilla Cellulosa Lösull CE ETA-09/0081': { bagWeight: 14, lambda: '0.038' },
       'Knauf Supafil Frame Lösull B0709EPCR': { bagWeight: 15.5, lambda: '0.038' },
       'Isocell/isEco cellulosa Lösull CE ETA-06/0076': { bagWeight: 12, lambda: '0.038' },
-      'Hunton Nativo Träfiber Lösull DoP 02-04-01': { bagWeight: 14, lambda: '0.039' }
+      'Hunton Nativo Träfiber Lösull DoP 02-04-01': { bagWeight: 14, lambda: '0.039' },
+      'PAROC SHT 1, Lösull vind 0809-CPR-1014' : { bagWeight: 15, lambda: '0.041' },
     }),
     []
   );
@@ -734,6 +735,7 @@ export default function EgenkontrollPage() {
             <option value="Knauf Supafil Frame Lösull B0709EPCR">Knauf Supafil Frame Lösull B0709EPCR</option>
             <option value="Isocell/isEco cellulosa Lösull CE ETA-06/0076">Isocell/isEco cellulosa Lösull CE ETA-06/0076</option>
             <option value="Hunton Nativo Träfiber Lösull DoP 02-04-01">Hunton Nativo Träfiber Lösull DoP 02-04-01</option>
+            <option value="PAROC SHT 1, Lösull vind 0809-CPR-1014 ">PAROC SHT 1, Lösull vind 0809-CPR-1014</option>
           </select>
           {materialUsed && (
             <small style={{ color: '#6b7280' }}>
