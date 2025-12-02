@@ -1,5 +1,6 @@
 "use client";
 import React from 'react';
+import { useTruckAssignments } from '@/lib/TruckAssignmentsContext';
 import BagUsageText from './BagUsageText';
 import { isoWeekKey } from '../_lib/date';
 
@@ -41,6 +42,7 @@ export interface CalendarWeekdayLanesProps {
 }
 
 export default function CalendarWeekdayLanes(props: CalendarWeekdayLanesProps) {
+  const { resolveCrew } = useTruckAssignments();
   const {
     visibleDayNames,
     visibleDayIndices,
@@ -178,6 +180,12 @@ export default function CalendarWeekdayLanes(props: CalendarWeekdayLanesProps) {
                         const isMid = (it as any).spanMiddle;
                         const isStart = (it as any).spanStart;
                         const groupSameTruck = items.filter((x: any) => x.truck === it.truck);
+                        // Resolve truck crew for this day (assignment-aware), fallback is segmentCrew display below
+                        let resolvedCrewNames: string[] = [];
+                        if (it.truck) {
+                          const rc = resolveCrew(it.truck, day);
+                          resolvedCrewNames = [rc.member1, rc.member2].filter(Boolean) as string[];
+                        }
                         const groupSorted = [...groupSameTruck].sort((a2: any, b2: any) => {
                           const sa2 = scheduledSegments.find(s => s.id === a2.segmentId)?.sortIndex ?? null;
                           const sb2 = scheduledSegments.find(s => s.id === b2.segmentId)?.sortIndex ?? null;
@@ -260,10 +268,16 @@ export default function CalendarWeekdayLanes(props: CalendarWeekdayLanesProps) {
                                   {(it.deliveryAmount != null) ? `${it.deliveryAmount} st` : ''}
                                 </span>
                               )}
-                              {!isDelivery && isStart && segmentCrew[it.segmentId] && segmentCrew[it.segmentId].length > 0 && (
-                                <span style={{ fontSize: 9, color: display ? display.text : '#e1e3e5ff', background: '#ffffff40', padding: '1px 5px', borderRadius: 10, border: `1px solid ${cardBorder}55` }} title={`Team: ${segmentCrew[it.segmentId].map(m => m.name).join(', ')}`}>
-                                  Team: {segmentCrew[it.segmentId].map(m => m.name).join(', ')}
-                                </span>
+                              {!isDelivery && isStart && (
+                                (() => {
+                                  const segNames = segmentCrew[it.segmentId]?.map(m => m.name) || [];
+                                  const names = resolvedCrewNames.length ? resolvedCrewNames : segNames;
+                                  return names.length > 0 ? (
+                                    <span style={{ fontSize: 9, color: display ? display.text : '#e1e3e5ff', background: '#ffffff40', padding: '1px 5px', borderRadius: 10, border: `1px solid ${cardBorder}55` }} title={`Team: ${names.join(', ')}`}>
+                                      Team: {names.join(', ')}
+                                    </span>
+                                  ) : null;
+                                })()
                               )}
                               {/* Show customer for normal segments and outgoing deliveries */}
                               {(!isDelivery || isDeliveryOutbound) && isStart && <span style={{ color: display ? display.text : '#6366f1' }}>{it.project.customer}</span>}

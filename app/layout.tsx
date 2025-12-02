@@ -6,6 +6,7 @@ import { getUserProfile } from '../lib/getUserProfile';
 import { UserProfileProvider } from '../lib/UserProfileContext';
 import { ToastProvider } from '../lib/Toast';
 import Link from 'next/link';
+import { TruckAssignmentsProvider } from '../lib/TruckAssignmentsContext';
 
 export const viewport = {
   width: 'device-width',
@@ -67,7 +68,9 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             <HeaderMenu role={role} fullName={profile?.full_name || null} />
           </header>
           {/* Content wrapper with top padding to avoid overlap (responsive + safe area) */}
-          <div className="content-offset">{children}</div>
+          <TruckAssignmentsProvider>
+            <div className="content-offset">{children}</div>
+          </TruckAssignmentsProvider>
         </ToastProvider>
       </UserProfileProvider>
       <script

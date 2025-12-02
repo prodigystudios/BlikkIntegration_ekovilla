@@ -1,5 +1,6 @@
 "use client";
 import React from 'react';
+import { useTruckAssignments } from '@/lib/TruckAssignmentsContext';
 import BagUsageText from './BagUsageText';
 import { isoWeekNumber, isoWeekKey } from '../_lib/date';
 
@@ -42,6 +43,7 @@ export interface CalendarDayListProps {
 }
 
 export default function CalendarDayList(props: CalendarDayListProps) {
+  const { resolveCrew } = useTruckAssignments();
   const {
     weeks,
     dayNames,
@@ -173,9 +175,14 @@ export default function CalendarDayList(props: CalendarDayListProps) {
                     {(() => { const disp = rowKey !== '__UNASSIGNED__' ? truckColors[rowKey] : null; const sw = { width: 12, height: 12, borderRadius: 4, border: `2px solid ${disp?.border || '#94a3b8'}`, background: '#fff' } as React.CSSProperties; return <span key={`sw-${rowKey}`} style={sw} />; })()}
                     <span>{rowKey === '__UNASSIGNED__' ? 'Ingen lastbil' : rowKey}</span>
                     {rowKey !== '__UNASSIGNED__' && (() => {
-                      const team = truckTeamNames(rowKey); return team.length ? (
-                        <span style={{ fontSize: 10, fontWeight: 500, color: '#475569', background: '#f1f5f9', border: '1px solid #e2e8f0', borderRadius: 999, padding: '1px 8px' }} title={`Team: ${team.join(', ')}`}>
-                          Team: {team.join(', ')}
+                      const dayForCrew = firstDay || todayISO;
+                      const rc = resolveCrew(rowKey, dayForCrew);
+                      const team = [rc.member1, rc.member2].filter(Boolean) as string[];
+                      const legacy = team.length === 0 ? truckTeamNames(rowKey) : [];
+                      const names = team.length ? team : legacy;
+                      return names.length ? (
+                        <span style={{ fontSize: 10, fontWeight: 500, color: '#475569', background: '#f1f5f9', border: '1px solid #e2e8f0', borderRadius: 999, padding: '1px 8px' }} title={`Team: ${names.join(', ')}`}>
+                          Team: {names.join(', ')}
                         </span>
                       ) : null;
                     })()}

@@ -3,6 +3,7 @@ export const dynamic = 'force-dynamic';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { useProjectComments, formatRelativeTime } from '@/lib/useProjectComments';
+import TruckAssignmentsInline from './components/TruckAssignmentsInline';
 import { startOfMonth, endOfMonth, fmtDate, isoWeekNumber, isoWeekYear, isoWeekKey, startOfIsoWeek, endOfIsoWeek, mondayFromIsoWeekKey } from './_lib/date';
 import { deriveColors, creatorColor, creatorInitials } from './_lib/colors';
 import EmailSummaryPanel from './components/EmailSummaryPanel';
@@ -475,7 +476,7 @@ export default function PlanneringPage() {
 
   // Admin config modal (to declutter main page)
   const [adminModalOpen, setAdminModalOpen] = useState(false);
-  const [adminModalTab, setAdminModalTab] = useState<'trucks' | 'depots' | 'deliveries' | 'jobtypes'>('trucks');
+  const [adminModalTab, setAdminModalTab] = useState<'trucks' | 'depots' | 'deliveries' | 'jobtypes' | 'assignments'>('trucks');
   // Hide inline admin panels on main page (creation and depot totals) – manage via modal instead
   const showInlineAdminPanels = false;
 
@@ -3835,7 +3836,7 @@ export default function PlanneringPage() {
               );
             })}
             {isAdmin && showInlineAdminPanels && (
-              <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 4, padding: '6px 8px', border: '1px dashed #94a3b8', borderRadius: 10, background: '#f8fafc', minWidth: 140 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 4, padding: '6px 8px', border: '1px dashed #94a3b8', borderRadius: 10, background: '#f8fafc', minWidth: 280 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: '#475569' }}>
                   <span style={{ width: 14, height: 14, background: '#fff', border: '2px dashed #94a3b8', borderRadius: 4 }} /> Ingen
                 </div>
@@ -4014,6 +4015,7 @@ export default function PlanneringPage() {
                     <button onClick={() => setAdminModalTab('trucks')} style={{ padding: '6px 10px', border: '1px solid ' + (adminModalTab === 'trucks' ? '#111827' : '#e5e7eb'), borderRadius: 8, background: adminModalTab === 'trucks' ? '#111827' : '#fff', color: adminModalTab === 'trucks' ? '#fff' : '#111827', fontSize: 13, fontWeight: 600 }}>Lastbilar</button>
                     <button onClick={() => setAdminModalTab('depots')} style={{ padding: '6px 10px', border: '1px solid ' + (adminModalTab === 'depots' ? '#111827' : '#e5e7eb'), borderRadius: 8, background: adminModalTab === 'depots' ? '#111827' : '#fff', color: adminModalTab === 'depots' ? '#fff' : '#111827', fontSize: 13, fontWeight: 600 }}>Depåer</button>
                     <button onClick={() => setAdminModalTab('deliveries')} style={{ padding: '6px 10px', border: '1px solid ' + (adminModalTab === 'deliveries' ? '#111827' : '#e5e7eb'), borderRadius: 8, background: adminModalTab === 'deliveries' ? '#111827' : '#fff', color: adminModalTab === 'deliveries' ? '#fff' : '#111827', fontSize: 13, fontWeight: 600 }}>Leveranser</button>
+                    <button onClick={() => setAdminModalTab('assignments')} style={{ padding: '6px 10px', border: '1px solid ' + (adminModalTab === 'assignments' ? '#111827' : '#e5e7eb'), borderRadius: 8, background: adminModalTab === 'assignments' ? '#111827' : '#fff', color: adminModalTab === 'assignments' ? '#fff' : '#111827', fontSize: 13, fontWeight: 600 }}>Veckotilldelningar</button>
                     <button onClick={() => setAdminModalTab('jobtypes')} style={{ padding: '6px 10px', border: '1px solid ' + (adminModalTab === 'jobtypes' ? '#111827' : '#e5e7eb'), borderRadius: 8, background: adminModalTab === 'jobtypes' ? '#111827' : '#fff', color: adminModalTab === 'jobtypes' ? '#fff' : '#111827', fontSize: 13, fontWeight: 600 }}>Jobbtyper</button>
                   </div>
                   <button onClick={() => setAdminModalOpen(false)} className="btn--plain" aria-label="Stäng" style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: '6px 10px', background: '#fff' }}>Stäng</button>
@@ -4255,6 +4257,12 @@ export default function PlanneringPage() {
                           );
                         })}
                       </div>
+                    </div>
+                  )}
+                  {adminModalTab === 'assignments' && (
+                    <div style={{ display: 'grid', gap: 12 }}>
+                      {/* Weekly crew assignments per truck, managed separately from truck settings */}
+                      <TruckAssignmentsInline trucks={trucks} crewList={crewList} truckColors={truckColors} />
                     </div>
                   )}
                   {adminModalTab === 'jobtypes' && (

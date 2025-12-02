@@ -1,5 +1,6 @@
 "use client";
 import React from 'react';
+import { useTruckAssignments } from '@/lib/TruckAssignmentsContext';
 import BagUsageText from './BagUsageText';
 import { isoWeekNumber, isoWeekKey } from '../_lib/date';
 
@@ -41,6 +42,7 @@ export interface CalendarMonthGridProps {
 }
 
 export default function CalendarMonthGrid(props: CalendarMonthGridProps) {
+  const { resolveCrew } = useTruckAssignments();
   const {
     weeks,
     visibleDayNames,
@@ -259,10 +261,23 @@ export default function CalendarMonthGrid(props: CalendarMonthGridProps) {
                                 {(it.deliveryAmount != null) ? `${it.deliveryAmount} st` : ''}
                               </span>
                             )}
-                            {!isDelivery && isStart && segmentCrew[it.segmentId] && segmentCrew[it.segmentId].length > 0 && (
-                              <span style={{ fontSize: 10, color: display ? display.text : '#334155', background: '#ffffff50', padding: '2px 6px', borderRadius: 10, border: `1px solid ${cardBorder}55` }} title={`Team: ${segmentCrew[it.segmentId].map(m => m.name).join(', ')}`}>
-                                Team: {segmentCrew[it.segmentId].map(m => m.name).join(', ')}
-                              </span>
+                            {!isDelivery && isStart && (
+                              (() => {
+                                let names: string[] = [];
+                                if (it.truck) {
+                                  const rc = resolveCrew(it.truck, day);
+                                  names = [rc.member1, rc.member2].filter(Boolean) as string[];
+                                }
+                                if (names.length === 0) {
+                                  const segNames = segmentCrew[it.segmentId]?.map(m => m.name) || [];
+                                  names = segNames;
+                                }
+                                return names.length > 0 ? (
+                                  <span style={{ fontSize: 10, color: display ? display.text : '#334155', background: '#ffffff50', padding: '2px 6px', borderRadius: 10, border: `1px solid ${cardBorder}55` }} title={`Team: ${names.join(', ')}`}>
+                                    Team: {names.join(', ')}
+                                  </span>
+                                ) : null;
+                              })()
                             )}
                             {/* Show customer for normal segments and outgoing deliveries */}
                             {(!isDelivery || isDeliveryOutbound) && isStart && <span style={{ color: display ? display.text : '#6366f1' }}>{it.project.customer}</span>}
