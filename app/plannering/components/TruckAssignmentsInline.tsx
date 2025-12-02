@@ -281,18 +281,18 @@ function WeekTruckCard({ truckName, crewList, weekRange, onSaved, truckColors }:
           <span aria-hidden style={{ width: 12, height: 12, borderRadius: 4, border: `2px solid ${truckColors[truckName].border}`, background: '#fff' }} />
         )}
         <div style={{ fontSize: 12, fontWeight: 700, color: '#111827' }}>{truckName}</div>
-        <div style={{ display: 'flex', gap: 6, marginLeft: 'auto', alignItems: 'center' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginLeft: 'auto', alignItems: 'center' }}>
           <span style={{ fontSize: 11, color: '#64748b' }}>{weekRange.startISO} → {weekRange.endISO}</span>
-          {overlappingCount > 0 && (
-            <span title={`Överlapp: ${overlappingCount}`} style={{ fontSize: 11, padding: '2px 6px', borderRadius: 999, border: '1px solid #f59e0b', background: '#fffbeb', color: '#92400e' }}>Överlapp ×{overlappingCount}</span>
+          {overlappingCount > 1 && (
+            <span title={`Överlapp: ${overlappingCount}`} style={{ fontSize: 11, padding: '6px 6px', borderRadius: 999, border: '1px solid #f59e0b', background: '#fffbeb', color: '#92400e' }}>Överlapp ×{overlappingCount}</span>
           )}
-          <span style={{ fontSize: 11, padding: '2px 6px', borderRadius: 999, border: idsSet > 0 ? '1px solid #10b981' : '1px solid #94a3b8', background: idsSet > 0 ? '#ecfdf5' : '#f1f5f9', color: idsSet > 0 ? '#065f46' : '#334155' }}>
+          <span style={{ textAlign: 'center', fontSize: 11, padding: '6px 6px', borderRadius: 999, border: idsSet > 0 ? '1px solid #10b981' : '1px solid #94a3b8', background: idsSet > 0 ? '#ecfdf5' : '#f1f5f9', color: idsSet > 0 ? '#065f46' : '#334155' }}>
             {idsSet > 0 ? 'ID satt' : 'Endast namn'}
           </span>
         </div>
       </div>
       <label style={{ display: 'grid', gap: 6 }}>
-        <span style={{ fontSize: 12, color: '#374151' }}>Montör 1</span>
+        <span style={{ fontSize: 12, color: '#374151' }}>Team Leader</span>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
           <select value={local1Id || ''} onChange={e => { const v = e.target.value || null; setLocal1Id(v); const nm = crewList.find(c => c.id === v)?.name || ''; setLocal1Name(nm); }} style={{ flex: 1, padding: '10px 12px', border: '1px solid #cbd5e1', borderRadius: 10, background: '#fff', fontSize: 13, boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>
             <option value="">Ej tilldelad</option>
@@ -302,7 +302,7 @@ function WeekTruckCard({ truckName, crewList, weekRange, onSaved, truckColors }:
         </div>
       </label>
       <label style={{ display: 'grid', gap: 6 }}>
-        <span style={{ fontSize: 12, color: '#374151' }}>Montör 2</span>
+        <span style={{ fontSize: 12, color: '#374151' }}>Team Member 2</span>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
           <select value={local2Id || ''} onChange={e => { const v = e.target.value || null; setLocal2Id(v); const nm = crewList.find(c => c.id === v)?.name || ''; setLocal2Name(nm); }} style={{ flex: 1, padding: '10px 12px', border: '1px solid #cbd5e1', borderRadius: 10, background: '#fff', fontSize: 13, boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>
             <option value="">Ej tilldelad</option>

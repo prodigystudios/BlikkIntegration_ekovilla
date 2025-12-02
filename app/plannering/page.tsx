@@ -4009,7 +4009,7 @@ export default function PlanneringPage() {
           {isAdmin && adminModalOpen && (
             <div role="dialog" aria-modal="true" aria-label="Admin-inställningar" onClick={() => setAdminModalOpen(false)}
               style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.35)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-              <div onClick={e => e.stopPropagation()} style={{ width: 'min(100%, 980px)', maxHeight: '85vh', overflow: 'auto', background: '#fff', border: '1px solid #e5e7eb', borderRadius: 12, boxShadow: '0 20px 40px rgba(0,0,0,0.15)' }}>
+              <div onClick={e => e.stopPropagation()} style={{ width: 'min(100%, 1080px)',minHeight: '60vh', maxHeight: '90vh', overflow: 'auto', background: '#fff', border: '1px solid #e5e7eb', borderRadius: 12, boxShadow: '0 20px 40px rgba(0,0,0,0.15)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 14px', borderBottom: '1px solid #e5e7eb' }}>
                   <div style={{ display: 'flex', gap: 8 }}>
                     <button onClick={() => setAdminModalTab('trucks')} style={{ padding: '6px 10px', border: '1px solid ' + (adminModalTab === 'trucks' ? '#111827' : '#e5e7eb'), borderRadius: 8, background: adminModalTab === 'trucks' ? '#111827' : '#fff', color: adminModalTab === 'trucks' ? '#fff' : '#111827', fontSize: 13, fontWeight: 600 }}>Lastbilar</button>
