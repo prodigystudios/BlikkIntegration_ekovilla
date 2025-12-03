@@ -76,9 +76,9 @@ export default function TruckAssignmentsInline({ trucks, crewList, truckColors }
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <div style={{ fontWeight: 700, color: '#0f172a' }}>Veckotilldelningar</div>
-          <span style={{ fontSize: 12, color: '#64748b' }}>Välj lastbil, vecka och montörer</span>
+          <span style={{ fontSize: 12, color: '#64748b' }}>Välj lastbil, vecka och installatörer</span>
         </div>
-  <button type="button" onClick={() => reload()} className="btn--plain btn--xs" style={{ fontSize: 12, padding: '6px 10px', border: '1px solid #cbd5e1', background: '#fff', borderRadius: 8 }}>Uppdatera</button>
+  <button type="button" onClick={() => reload()} className="btn--primary btn--med" style={{ fontSize: 12}}>Uppdatera</button>
       </div>
       <div style={{
         display: 'grid',
@@ -282,7 +282,7 @@ function WeekTruckCard({ truckName, crewList, weekRange, onSaved, truckColors }:
         )}
         <div style={{ fontSize: 12, fontWeight: 700, color: '#111827' }}>{truckName}</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginLeft: 'auto', alignItems: 'center' }}>
-          <span style={{ fontSize: 11, color: '#64748b' }}>{weekRange.startISO} → {weekRange.endISO}</span>
+          <span style={{ fontSize: 14, color: '#111827' }}>{weekRange.startISO} → {weekRange.endISO}</span>
           {overlappingCount > 1 && (
             <span title={`Överlapp: ${overlappingCount}`} style={{ fontSize: 11, padding: '6px 6px', borderRadius: 999, border: '1px solid #f59e0b', background: '#fffbeb', color: '#92400e' }}>Överlapp ×{overlappingCount}</span>
           )}

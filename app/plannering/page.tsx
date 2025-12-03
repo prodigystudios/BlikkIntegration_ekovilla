@@ -4018,7 +4018,7 @@ export default function PlanneringPage() {
                     <button onClick={() => setAdminModalTab('assignments')} style={{ padding: '6px 10px', border: '1px solid ' + (adminModalTab === 'assignments' ? '#111827' : '#e5e7eb'), borderRadius: 8, background: adminModalTab === 'assignments' ? '#111827' : '#fff', color: adminModalTab === 'assignments' ? '#fff' : '#111827', fontSize: 13, fontWeight: 600 }}>Veckotilldelningar</button>
                     <button onClick={() => setAdminModalTab('jobtypes')} style={{ padding: '6px 10px', border: '1px solid ' + (adminModalTab === 'jobtypes' ? '#111827' : '#e5e7eb'), borderRadius: 8, background: adminModalTab === 'jobtypes' ? '#111827' : '#fff', color: adminModalTab === 'jobtypes' ? '#fff' : '#111827', fontSize: 13, fontWeight: 600 }}>Jobbtyper</button>
                   </div>
-                  <button onClick={() => setAdminModalOpen(false)} className="btn--plain" aria-label="Stäng" style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: '6px 10px', background: '#fff' }}>Stäng</button>
+                  <button onClick={() => setAdminModalOpen(false)} className="btn--danger btn--med" aria-label="Stäng" style={{}}>Stäng</button>
                 </div>
                 <div style={{ padding: 14, display: 'grid', gap: 12 }}>
                   {adminModalTab === 'trucks' && (
@@ -4095,8 +4095,8 @@ export default function PlanneringPage() {
                                 </label>
                               </div>
                               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                                <button type="button" disabled={!changed || status?.status === 'saving'} onClick={() => saveTruckTeamNames(tRec)} className="btn--plain btn--xs" style={{ fontSize: 12, padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8, background: '#fff' }}>Spara</button>
-                                <button type="button" onClick={() => { if (typeof window !== 'undefined') { const ok = window.confirm(`Ta bort lastbil \"${tRec.name}\"?`); if (!ok) return; } deleteTruck(tRec); }} className="btn--plain btn--xs" style={{ fontSize: 12, padding: '6px 8px', border: '1px solid #fecaca', background: '#fef2f2', color: '#b91c1c', borderRadius: 8 }}>Ta bort</button>
+                                <button type="button" disabled={!changed || status?.status === 'saving'} onClick={() => saveTruckTeamNames(tRec)} className="btn--primary btn--sm" style={{opacity: 0.7}}>Spara</button>
+                                <button type="button" onClick={() => { if (typeof window !== 'undefined') { const ok = window.confirm(`Ta bort lastbil \"${tRec.name}\"?`); if (!ok) return; } deleteTruck(tRec); }} className="btn--plain btn--sm" style={{ fontSize: 12, padding: '6px 8px', border: '1px solid #fecaca', background: '#fef2f2', color: '#b91c1c', borderRadius: 8 }}>Ta bort</button>
                                 {status?.status === 'saving' && <span style={{ fontSize: 12, color: '#64748b' }}>Sparar…</span>}
                                 {status?.status === 'saved' && <span style={{ fontSize: 12, color: '#059669' }}>✓ Sparad</span>}
                                 {status?.status === 'error' && <span style={{ fontSize: 12, color: '#b91c1c' }}>Fel</span>}
