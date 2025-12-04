@@ -69,6 +69,7 @@ export async function POST(req: NextRequest) {
     const activityId = body.activityId != null ? Number(body.activityId) : undefined;
     const timeCodeId = body.timeCodeId != null ? Number(body.timeCodeId) : (body.timecodeId != null ? Number(body.timecodeId) : undefined);
     const breakMinutes = body.breakMinutes != null ? Number(body.breakMinutes) : undefined;
+    const travelReport = body.travelReport || null;
 
     // Resolve current user's Blikk ID if userId not provided
     if (!Number.isFinite(userId)) {
@@ -118,6 +119,7 @@ export async function POST(req: NextRequest) {
       breakMinutes,
       startTime: startTime || null,
       endTime: endTime || null,
+      travelReport: travelReport || undefined,
     });
     // Only include sentBody when debug=1 to avoid leaking payloads in production
     const payload: any = { ok: true, report: res.data, usedPath: res.usedPath };

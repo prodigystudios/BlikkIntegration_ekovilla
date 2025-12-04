@@ -24,12 +24,16 @@ type LineItem = {
 type QuoteForm = {
   type: OffertType;
   customerName: string;
+  personalNumber?: string;
   companyName: string;
   email: string;
   phone: string;
   streetAddress: string;
   postalCode: string;
   city: string;
+  visitAddress?: string;
+  deliveryAddress?: string;
+  invoiceAddress?: string;
   items: LineItem[];
   vatPercent: string; // string input, e.g. 25
   validUntil: string; // date ISO
@@ -46,12 +50,16 @@ export default function OffertPage() {
     setForm({
       type,
       customerName: '',
+      personalNumber: '',
       companyName: '',
       email: '',
       phone: '',
       streetAddress: '',
       postalCode: '',
       city: '',
+      visitAddress: '',
+      deliveryAddress: '',
+      invoiceAddress: '',
       items: [
         { id: crypto.randomUUID(), construction: '', m2: '', thicknessMm: '', autoPrice: true, unitPrice: '', pricing: 'm3', quantity: '', articleId: null, articleName: null, articleNumber: null, articlePrice: null, discountPercent: '' },
       ],
@@ -89,26 +97,26 @@ export default function OffertPage() {
       const thicknessM = (parseFloat(it.thicknessMm || '0') || 0) / 1000; // mm -> m
       const volume = Math.max(0, m2 * thicknessM); // m3
       const qty = parseFloat(it.quantity || '0') || 0;
-  const amount = mode === 'm3' ? volume : qty;
-  const rawPct = parseFloat(it.discountPercent || '0');
-  const pct = isNaN(rawPct) ? 0 : Math.min(100, Math.max(0, rawPct));
-  const effectiveUnit = Math.max(0, unit * (1 - pct / 100));
+      const amount = mode === 'm3' ? volume : qty;
+      const rawPct = parseFloat(it.discountPercent || '0');
+      const pct = isNaN(rawPct) ? 0 : Math.min(100, Math.max(0, rawPct));
+      const effectiveUnit = Math.max(0, unit * (1 - pct / 100));
 
       const consLabel = it.construction === 'vagg' ? 'Vägg' : it.construction === 'snedtak' ? 'Snedtak' : it.construction === 'vind' ? 'Vind' : '';
       const baseLabel = it.articleName ? `${it.articleName}${it.articleNumber ? ` (${it.articleNumber})` : ''}` : `${consLabel || 'Okänd'}${it.thicknessMm ? ` ${it.thicknessMm} mm` : ''}`;
-  const unitSuffix = mode === 'm3' ? ' (m³)' : (it.articleUnitName ? ` (${it.articleUnitName})` : '');
-  const label = `${baseLabel}${unitSuffix}`;
+      const unitSuffix = mode === 'm3' ? ' (m³)' : (it.articleUnitName ? ` (${it.articleUnitName})` : '');
+      const label = `${baseLabel}${unitSuffix}`;
 
       return { id: it.id, amount, unit, effectiveUnit, label, mode };
     });
   }, [form?.items]);
 
-  const totals = useMemo(() => {
+    const totals = useMemo(() => {
     const subtotal = Math.max(0, effectiveRows.reduce((sum, r) => sum + r.amount * r.effectiveUnit, 0));
     const vatPct = parseFloat(form?.vatPercent || '0') || 0;
     const vat = Math.max(0, subtotal * (vatPct / 100));
     const total = subtotal + vat;
-    return { subtotal, vat, total };
+      return { subtotal, vat, total };
   }, [effectiveRows, form?.vatPercent]);
 
   const submit = async () => {
@@ -117,6 +125,10 @@ export default function OffertPage() {
     // Minimal validation
     if (form.type === 'private' && !form.customerName.trim()) {
       setError('Ange namn.');
+      return;
+    }
+    if (form.type === 'private' && !(form.personalNumber || '').trim()) {
+      setError('Ange personnummer.');
       return;
     }
     if (form.type === 'business' && !form.companyName.trim()) {
@@ -222,6 +234,12 @@ export default function OffertPage() {
                   <span>Telefon</span>
                   <input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="070…" style={{ padding: '8px 10px', border: '1px solid #cbd5e1', borderRadius: 8 }} />
                 </label>
+                {form.type === 'private' && (
+                  <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
+                    <span>Personnummer</span>
+                    <input value={form.personalNumber || ''} onChange={(e) => setForm({ ...form, personalNumber: e.target.value })} placeholder="ÅÅÅÅMMDD-XXXX" style={{ padding: '8px 10px', border: '1px solid #cbd5e1', borderRadius: 8 }} />
+                  </label>
+                )}
                 <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
                   <span>Adress</span>
                   <input value={form.streetAddress} onChange={(e) => setForm({ ...form, streetAddress: e.target.value })} placeholder="Gata 1" style={{ padding: '8px 10px', border: '1px solid #cbd5e1', borderRadius: 8 }} />
@@ -234,6 +252,24 @@ export default function OffertPage() {
                   <span>Ort</span>
                   <input value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} placeholder="Stad" style={{ padding: '8px 10px', border: '1px solid #cbd5e1', borderRadius: 8 }} />
                 </label>
+                {form.type === 'private' && (
+                  <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
+                    <span>Besöksadress</span>
+                    <input value={form.visitAddress || ''} onChange={(e) => setForm({ ...form, visitAddress: e.target.value })} placeholder="Besöksadress" style={{ padding: '8px 10px', border: '1px solid #cbd5e1', borderRadius: 8 }} />
+                  </label>
+                )}
+                {form.type === 'private' && (
+                  <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
+                    <span>Leveransadress</span>
+                    <input value={form.deliveryAddress || ''} onChange={(e) => setForm({ ...form, deliveryAddress: e.target.value })} placeholder="Leveransadress" style={{ padding: '8px 10px', border: '1px solid #cbd5e1', borderRadius: 8 }} />
+                  </label>
+                )}
+                {form.type === 'private' && (
+                  <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
+                    <span>Fakturaadress</span>
+                    <input value={form.invoiceAddress || ''} onChange={(e) => setForm({ ...form, invoiceAddress: e.target.value })} placeholder="Fakturaadress" style={{ padding: '8px 10px', border: '1px solid #cbd5e1', borderRadius: 8 }} />
+                  </label>
+                )}
               </div>
             </div>
 

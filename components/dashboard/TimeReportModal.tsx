@@ -39,9 +39,20 @@ export interface TimeReportModalProps {
   initialReportType?: 'project' | 'internal' | 'absence' | null;
   initialInternalProjectId?: string | null;
   initialAbsenceProjectId?: string | null;
+  // Optional travel report initial values
+  initialTravelPlace?: string | null;
+  initialTravelDistance?: number | string | null;
+  initialTravelInvoiceableDistance?: number | string | null;
+  initialTravelToSalary?: boolean | null;
+  initialCompanyCarId?: number | string | null;
+  initialTripStart?: number | string | null;
+  initialTripEnd?: number | string | null;
+  initialAddressStart?: string | null;
+  initialAddressGoal?: string | null;
+  initialAddressEnd?: string | null;
 }
 
-export default function TimeReportModal({ open, onClose, onSubmit, initialProject, initialProjectId, initialDate, editId: propEditId, initialStart, initialEnd, initialBreakMinutes, initialDescription, initialTimecodeId, initialActivityId, initialReportType, initialInternalProjectId, initialAbsenceProjectId }: TimeReportModalProps) {
+export default function TimeReportModal({ open, onClose, onSubmit, initialProject, initialProjectId, initialDate, editId: propEditId, initialStart, initialEnd, initialBreakMinutes, initialDescription, initialTimecodeId, initialActivityId, initialReportType, initialInternalProjectId, initialAbsenceProjectId, initialTravelPlace, initialTravelDistance, initialTravelInvoiceableDistance, initialTravelToSalary, initialCompanyCarId, initialTripStart, initialTripEnd, initialAddressStart, initialAddressGoal, initialAddressEnd }: TimeReportModalProps) {
   const [isSmall, setIsSmall] = useState(false); // <= 640px
   const [isXS, setIsXS] = useState(false); // <= 420px
   const startRef = useRef<HTMLInputElement | null>(null);
@@ -81,6 +92,19 @@ export default function TimeReportModal({ open, onClose, onSubmit, initialProjec
   const [jobsLoading, setJobsLoading] = useState(false);
   const [jobsError, setJobsError] = useState<string | null>(null);
   const [todayJobs, setTodayJobs] = useState<Array<{ project_id: string; project_name: string | null; order_number: string | null; customer: string | null }>>([]);
+
+  // Travel report state (collapsible section)
+  const [showTravel, setShowTravel] = useState(false);
+  const [travelPlace, setTravelPlace] = useState<string>('');
+  const [travelDistance, setTravelDistance] = useState<string>('');
+  const [travelInvoiceableDistance, setTravelInvoiceableDistance] = useState<string>('');
+  const [travelToSalary, setTravelToSalary] = useState<boolean>(false);
+  const [companyCarId, setCompanyCarId] = useState<string>('');
+  const [tripStart, setTripStart] = useState<string>('');
+  const [tripEnd, setTripEnd] = useState<string>('');
+  const [addressStart, setAddressStart] = useState<string>('');
+  const [addressGoal, setAddressGoal] = useState<string>('');
+  const [addressEnd, setAddressEnd] = useState<string>('');
 
   const selectedTc = useMemo(() => timecodes.find(tc => tc.id === selectedTimecode) || null, [timecodes, selectedTimecode]);
   const selectedAct = useMemo(() => activities.find(a => a.id === selectedActivity) || null, [activities, selectedActivity]);
@@ -132,6 +156,17 @@ export default function TimeReportModal({ open, onClose, onSubmit, initialProjec
     if (initialEnd) setEnd(initialEnd);
     if (typeof initialBreakMinutes === 'number') setBreakMin(String(initialBreakMinutes));
     if (typeof initialDescription === 'string') setDesc(initialDescription);
+    // Prefill travel values if provided
+    setTravelPlace(initialTravelPlace ? String(initialTravelPlace) : '');
+    setTravelDistance(initialTravelDistance != null ? String(initialTravelDistance) : '');
+    setTravelInvoiceableDistance(initialTravelInvoiceableDistance != null ? String(initialTravelInvoiceableDistance) : '');
+    setTravelToSalary(!!initialTravelToSalary);
+    setCompanyCarId(initialCompanyCarId != null ? String(initialCompanyCarId) : '');
+    setTripStart(initialTripStart != null ? String(initialTripStart) : '');
+    setTripEnd(initialTripEnd != null ? String(initialTripEnd) : '');
+    setAddressStart(initialAddressStart || '');
+    setAddressGoal(initialAddressGoal || '');
+    setAddressEnd(initialAddressEnd || '');
     // Avoid bringing up mobile keyboard on very small screens
     if (!isXS) {
       setTimeout(() => {
@@ -496,6 +531,30 @@ export default function TimeReportModal({ open, onClose, onSubmit, initialProjec
       internalProjectId: reportType === 'internal' ? (selectedInternalId || null) : null,
       absenceProjectId: reportType === 'absence' ? (selectedAbsenceId || null) : null,
     };
+    // Attach optional travel report if any value present
+    const d = Number(travelDistance);
+    const di = Number(travelInvoiceableDistance);
+    const csId = Number(companyCarId);
+    const ts = Number(tripStart);
+    const te = Number(tripEnd);
+    const hasCompanyCar = Number.isFinite(csId) && csId > 0;
+    const hasTravel = (travelPlace.trim().length > 0) || Number.isFinite(d) || Number.isFinite(di) || travelToSalary || hasCompanyCar || !!addressStart || !!addressGoal || !!addressEnd;
+    if (hasTravel) {
+      (payload as any).travelReport = {
+        place: travelPlace || undefined,
+        distance: Number.isFinite(d) ? d : undefined,
+        invoiceableDistance: Number.isFinite(di) ? di : undefined,
+        toSalary: !!travelToSalary,
+        companyCar: hasCompanyCar ? {
+          id: csId,
+          tripStart: Number.isFinite(ts) ? ts : undefined,
+          tripEnd: Number.isFinite(te) ? te : undefined,
+          addressStart: addressStart || undefined,
+          addressGoal: addressGoal || undefined,
+          addressEnd: addressEnd || undefined,
+        } : undefined,
+      };
+    }
     try {
       // Allow caller to return a Promise<boolean> or just void. Await if promise-like.
       const result = onSubmit ? onSubmit(payload as any) : undefined;
@@ -540,6 +599,7 @@ export default function TimeReportModal({ open, onClose, onSubmit, initialProjec
             <span style={{ width: 16, height: 16, borderRadius: 999, background: '#22c55e', border: '2px solid #bbf7d0' }} />
             <div style={{ fontSize: 16, fontWeight: 700, color: '#0f172a' }}>Rapportera tid</div>
           </div>
+          {/* Travel report toggle */}
           <button onClick={submitted === 'saving' ? undefined : onClose} className="btn--plain" aria-label="Stäng" style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: isSmall ? '10px 14px' : '8px 12px', minHeight: 44, background: '#fff', opacity: submitted === 'saving' ? 0.6 : 1 }} disabled={submitted === 'saving'}>Stäng</button>
         </div>
   <div style={{ flex:1, overflowY:'auto', WebkitOverflowScrolling:'touch', overscrollBehavior:'contain', padding: isSmall ? 12 : 14, display: 'grid', gap: isSmall ? 10 : 12, position: 'relative', paddingBottom: 12 }}>
@@ -718,7 +778,70 @@ export default function TimeReportModal({ open, onClose, onSubmit, initialProjec
               )}
             </label>
           </div>
-              {isXS ? (
+          {/* Travel section placed at bottom, expands downward above the footer */}
+          <div style={{ padding: isSmall ? 12 : 14, paddingTop: 0 }}>
+            <button type="button" onClick={() => setShowTravel(v => !v)} aria-expanded={showTravel}
+              style={{ display:'flex', alignItems:'center', justifyContent:'space-between', width:'100%', padding: isSmall ? '12px 14px' : '10px 12px', border:'1px solid #cbd5e1', background:'#fff', color:'#0f172a', borderRadius:10, cursor:'pointer' }}
+            >
+              <span style={{ display:'flex', alignItems:'center', gap:8 }}>
+                <span style={{ width:16, height:16, borderRadius:999, background:'#22c55e', border:'2px solid #bbf7d0' }} />
+                <strong style={{ fontSize: isSmall ? 14 : 13 }}>Reserapport (valfritt)</strong>
+              </span>
+              <span aria-hidden style={{ fontSize: isSmall ? 18 : 16 }}>{showTravel ? '▾' : '▸'}</span>
+            </button>
+            {showTravel && (
+              <div style={{ display:'grid', gap: isSmall ? 12 : 10, border:'1px dashed #e5e7eb', borderRadius:12, padding: isSmall ? 12 : 10, marginTop: isSmall ? 10 : 8 }}>
+                <label style={{ display:'grid', gap:4, fontSize: isSmall ? 13 : 12 }}>
+                  <span>Plats / Sträcka</span>
+                  <input value={travelPlace} onChange={(e)=>setTravelPlace(e.target.value)} placeholder="Piteå–Luleå–Piteå" style={{ width:'100%', padding: isSmall ? '12px 14px' : '8px 10px', border:'1px solid #cbd5e1', borderRadius:10 }} />
+                </label>
+                <div style={{ display:'grid', gridTemplateColumns: isXS ? '1fr' : '1fr 1fr', gap: isXS ? 8 : 10 }}>
+                  <label style={{ display:'grid', gap:4, fontSize: isSmall ? 13 : 12 }}>
+                    <span>Km (faktiskt)</span>
+                    <input type="number" min={0} value={travelDistance} onChange={(e)=>setTravelDistance(e.target.value)} placeholder="100" style={{ width:'100%', padding: isSmall ? '12px 14px' : '8px 10px', border:'1px solid #cbd5e1', borderRadius:10 }} />
+                  </label>
+                  <label style={{ display:'grid', gap:4, fontSize: isSmall ? 13 : 12 }}>
+                    <span>Km (debiterbart)</span>
+                    <input type="number" min={0} value={travelInvoiceableDistance} onChange={(e)=>setTravelInvoiceableDistance(e.target.value)} placeholder="120" style={{ width:'100%', padding: isSmall ? '12px 14px' : '8px 10px', border:'1px solid #cbd5e1', borderRadius:10 }} />
+                  </label>
+                </div>
+                <label style={{ display:'inline-flex', gap:8, alignItems:'center', fontSize: isSmall ? 13 : 12 }}>
+                  <input type="checkbox" checked={travelToSalary} onChange={(e)=>setTravelToSalary(e.target.checked)} />
+                  <span>Till lön</span>
+                </label>
+                <div style={{ display:'grid', gap:8 }}>
+                  <span style={{ fontSize: isSmall ? 12 : 11, color:'#64748b' }}>Företagsbil (valfritt)</span>
+                  <div style={{ display:'grid', gridTemplateColumns: isXS ? '1fr' : 'repeat(2, 1fr)', gap: isXS ? 8 : 10 }}>
+                    <label style={{ display:'grid', gap:4, fontSize: isSmall ? 13 : 12 }}>
+                      <span>Bil-ID</span>
+                      <input value={companyCarId} onChange={(e)=>setCompanyCarId(e.target.value)} placeholder="1" style={{ width:'100%', padding: isSmall ? '12px 14px' : '8px 10px', border:'1px solid #cbd5e1', borderRadius:10 }} />
+                    </label>
+                    <label style={{ display:'grid', gap:4, fontSize: isSmall ? 13 : 12 }}>
+                      <span>Mätarstart</span>
+                      <input type="number" min={0} value={tripStart} onChange={(e)=>setTripStart(e.target.value)} placeholder="15000" style={{ width:'100%', padding: isSmall ? '12px 14px' : '8px 10px', border:'1px solid #cbd5e1', borderRadius:10 }} />
+                    </label>
+                    <label style={{ display:'grid', gap:4, fontSize: isSmall ? 13 : 12 }}>
+                      <span>Mätarslut</span>
+                      <input type="number" min={0} value={tripEnd} onChange={(e)=>setTripEnd(e.target.value)} placeholder="15100" style={{ width:'100%', padding: isSmall ? '12px 14px' : '8px 10px', border:'1px solid #cbd5e1', borderRadius:10 }} />
+                    </label>
+                  </div>
+                  <label style={{ display:'grid', gap:4, fontSize: isSmall ? 13 : 12 }}>
+                    <span>Adress start</span>
+                    <input value={addressStart} onChange={(e)=>setAddressStart(e.target.value)} placeholder="Generalgatan 1" style={{ width:'100%', padding: isSmall ? '12px 14px' : '8px 10px', border:'1px solid #cbd5e1', borderRadius:10 }} />
+                  </label>
+                  <label style={{ display:'grid', gap:4, fontSize: isSmall ? 13 : 12 }}>
+                    <span>Adress mål</span>
+                    <input value={addressGoal} onChange={(e)=>setAddressGoal(e.target.value)} placeholder="Generalgatan 2" style={{ width:'100%', padding: isSmall ? '12px 14px' : '8px 10px', border:'1px solid #cbd5e1', borderRadius:10 }} />
+                  </label>
+                  <label style={{ display:'grid', gap:4, fontSize: isSmall ? 13 : 12 }}>
+                    <span>Adress slut</span>
+                    <input value={addressEnd} onChange={(e)=>setAddressEnd(e.target.value)} placeholder="Generalgatan 1" style={{ width:'100%', padding: isSmall ? '12px 14px' : '8px 10px', border:'1px solid #cbd5e1', borderRadius:10 }} />
+                  </label>
+                </div>
+              </div>
+            )}
+          </div>
+          {isXS ? (
             <div style={{ position:'relative', background: '#fff', display: 'grid', gap: 8, borderTop: '1px dashed #e5e7eb', paddingTop: 8, paddingLeft: 12, paddingRight: 12, paddingBottom: 'max(10px, env(safe-area-inset-bottom))' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, fontSize: 13, color: '#334155' }}>
                 <span>Beräknad tid:</span>

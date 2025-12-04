@@ -164,8 +164,12 @@ export default function CalendarDayList(props: CalendarDayListProps) {
               {visibleIndices.map((idx, vi) => {
                 const cellDate = week[idx]?.date;
                 const isTodayHeader = cellDate === todayISO;
+                const dateLabel = cellDate ? (() => { const d = new Date(cellDate + 'T00:00:00'); const dd = String(d.getDate()).padStart(2, '0'); const mm = String(d.getMonth() + 1).padStart(2, '0'); return `${dd}/${mm}`; })() : '';
                 return (
-                  <div key={`hdr-${idx}`} style={{ gridColumn: `${2 + vi} / ${3 + vi}`, background: dayHeaderBg, border: isTodayHeader ? '2px solid #60a5fa' : '1px solid #e5e7eb', boxShadow: isTodayHeader ? '0 0 0 3px rgba(59,130,246,0.25)' : undefined, borderRadius: 8, textAlign: 'center', padding: '4px 0', fontSize: 12, fontWeight: 600, color: '#374151' }}>{dayNames[idx]}</div>
+                  <div key={`hdr-${idx}`} style={{ gridColumn: `${2 + vi} / ${3 + vi}`, background: dayHeaderBg, border: isTodayHeader ? '2px solid #60a5fa' : '1px solid #e5e7eb', boxShadow: isTodayHeader ? '0 0 0 3px rgba(59,130,246,0.25)' : undefined, borderRadius: 8, textAlign: 'center', padding: '4px 0', fontSize: 12, fontWeight: 600, color: '#374151', display:'flex', alignItems:'center', justifyContent:'center', gap:6 }}>
+                    <span>{dayNames[idx]}</span>
+                    {dateLabel && <span style={{ fontSize:11, fontWeight:500, color:'#64748b' }}>{dateLabel}</span>}
+                  </div>
                 );
               })}
               {rows.map((rowKey, ri) => (

@@ -61,6 +61,8 @@ export default function TimeReportsPage() {
   const [page] = useState(1); // current page (kept for future pagination UI)
   const [pageSize] = useState(50); // Blikk max 100; use 50 to be safe
 
+  // Travel report moved into TimeReportModal (collapsible section)
+
   // Compute week range (Monday..Sunday) from weekStart
   const { dateFrom, dateTo, weekDays, label } = useMemo(() => {
     // Use local-date formatting (avoid UTC shift)
@@ -438,6 +440,8 @@ export default function TimeReportsPage() {
               timeCodeId: payload.timecodeId ? Number(payload.timecodeId) : undefined,
               description: payload.description || undefined,
             };
+            // Travel report is handled inside TimeReportModal and included in payload
+            if ((payload as any).travelReport) body.travelReport = (payload as any).travelReport;
             const url = process.env.NODE_ENV !== 'production' ? '/api/blikk/time-reports?debug=1' : '/api/blikk/time-reports';
             const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
             const json = await res.json().catch(()=>({}));

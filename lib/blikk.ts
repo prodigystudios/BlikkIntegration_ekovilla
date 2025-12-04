@@ -785,6 +785,20 @@ export class BlikkClient {
     description?: string | null;
     breakMinutes?: number | null; // optional break deducted already from minutes/hours
     billable?: boolean | null; // hint to set invoiceableHours differently
+    travelReport?: {
+      place?: string;
+      distance?: number;
+      invoiceableDistance?: number;
+      toSalary?: boolean;
+      companyCar?: {
+        id: number;
+        tripStart?: number;
+        tripEnd?: number;
+        addressStart?: string;
+        addressGoal?: string;
+        addressEnd?: string;
+      };
+    };
   }): Promise<{ data: any; usedPath: string; sentBody: any }> {
     if (!Number.isFinite(input.userId)) throw new Error('createTimeReport: userId required');
     const date = String(input.date || '').slice(0, 10);
@@ -867,6 +881,49 @@ export class BlikkClient {
     if (input.breakMinutes != null && input.breakMinutes! > 0) {
       body.breakMinutes = input.breakMinutes;
       body.break = input.breakMinutes; // alias
+    }
+
+    // Attach travel report if provided, with tolerant key aliases
+    if (input.travelReport) {
+      const tr = input.travelReport;
+      const car = tr.companyCar;
+      const travelBody: Record<string, any> = {
+        place: tr.place || undefined,
+        distance: Number.isFinite(tr.distance as any) ? tr.distance : undefined,
+        invoiceableDistance: Number.isFinite(tr.invoiceableDistance as any) ? tr.invoiceableDistance : undefined,
+        toSalary: tr.toSalary ?? false,
+      };
+      // Aliases some tenants may expect
+      travelBody.kilometers = travelBody.distance;
+      travelBody.km = travelBody.distance;
+      travelBody.invoiceableKm = travelBody.invoiceableDistance;
+      if (car && Number.isFinite(car.id)) {
+        travelBody.companyCar = {
+          id: car.id,
+          tripStart: Number.isFinite(car.tripStart as any) ? car.tripStart : undefined,
+          tripEnd: Number.isFinite(car.tripEnd as any) ? car.tripEnd : undefined,
+          addressStart: car.addressStart || undefined,
+          addressGoal: car.addressGoal || undefined,
+          addressEnd: car.addressEnd || undefined,
+        };
+        // Flat aliases if nested object not accepted
+        travelBody.companyCarId = car.id;
+        travelBody.carId = car.id;
+        travelBody.odometerStart = Number.isFinite(car.tripStart as any) ? car.tripStart : undefined;
+        travelBody.odometerEnd = Number.isFinite(car.tripEnd as any) ? car.tripEnd : undefined;
+      }
+      body.travelReport = travelBody;
+      // Some tenants may expect top-level fields; include minimal mirrors to maximize acceptance
+      if (travelBody.distance != null) body.travelDistance = travelBody.distance;
+      if (travelBody.invoiceableDistance != null) body.travelInvoiceableDistance = travelBody.invoiceableDistance;
+      if (travelBody.place) body.travelPlace = travelBody.place;
+      if (travelBody.toSalary != null) body.travelToSalary = travelBody.toSalary;
+      if (travelBody.companyCarId != null) body.companyCarId = travelBody.companyCarId;
+      if (travelBody.odometerStart != null) body.odometerStart = travelBody.odometerStart;
+      if (travelBody.odometerEnd != null) body.odometerEnd = travelBody.odometerEnd;
+      if (car?.addressStart) body.travelAddressStart = car.addressStart;
+      if (car?.addressGoal) body.travelAddressGoal = car.addressGoal;
+      if (car?.addressEnd) body.travelAddressEnd = car.addressEnd;
     }
 
     let lastErr: any = null;
