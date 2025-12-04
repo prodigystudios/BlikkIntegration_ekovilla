@@ -2,7 +2,7 @@
 import React from 'react';
 import { useTruckAssignments } from '@/lib/TruckAssignmentsContext';
 import BagUsageText from './BagUsageText';
-import { isoWeekNumber, isoWeekKey } from '../_lib/date';
+import { isoWeekNumber, isoWeekKey, isWeekend, getSwedishPublicHolidays, isSwedishHoliday } from '../_lib/date';
 
 type TruckDisplay = { bg: string; border: string; text: string };
 
@@ -115,6 +115,13 @@ export default function CalendarDayList(props: CalendarDayListProps) {
         };
         const includeSat = !hideWeekends && dayHasAny(5);
         const includeSun = !hideWeekends && dayHasAny(6);
+        // Precompute holiday set for the years spanned by this week
+        const years = Array.from(new Set(weekDays.map(d => new Date(d + 'T00:00:00').getFullYear())));
+        const holidaySets = years.map(y => getSwedishPublicHolidays(y));
+        const isHoliday = (iso: string | undefined): boolean => {
+          if (!iso) return false;
+          return holidaySets.some(set => isSwedishHoliday(iso, set));
+        };
         const visibleIndices = hideWeekends ? [0, 1, 2, 3, 4] : [0, 1, 2, 3, 4].concat(includeSat ? [5] : []).concat(includeSun ? [6] : []);
 
         let hasUnassigned = false;
@@ -164,11 +171,14 @@ export default function CalendarDayList(props: CalendarDayListProps) {
               {visibleIndices.map((idx, vi) => {
                 const cellDate = week[idx]?.date;
                 const isTodayHeader = cellDate === todayISO;
+                const weekend = !!cellDate && isWeekend(cellDate);
+                const holiday = isHoliday(cellDate || undefined);
                 const dateLabel = cellDate ? (() => { const d = new Date(cellDate + 'T00:00:00'); const dd = String(d.getDate()).padStart(2, '0'); const mm = String(d.getMonth() + 1).padStart(2, '0'); return `${dd}/${mm}`; })() : '';
                 return (
-                  <div key={`hdr-${idx}`} style={{ gridColumn: `${2 + vi} / ${3 + vi}`, background: dayHeaderBg, border: isTodayHeader ? '2px solid #60a5fa' : '1px solid #e5e7eb', boxShadow: isTodayHeader ? '0 0 0 3px rgba(59,130,246,0.25)' : undefined, borderRadius: 8, textAlign: 'center', padding: '4px 0', fontSize: 12, fontWeight: 600, color: '#374151', display:'flex', alignItems:'center', justifyContent:'center', gap:6 }}>
+                  <div key={`hdr-${idx}`} style={{ gridColumn: `${2 + vi} / ${3 + vi}`, background: holiday ? '#fef3c7' : (weekend ? '#fee2e2' : dayHeaderBg), border: isTodayHeader ? '2px solid #60a5fa' : '1px solid #e5e7eb', boxShadow: isTodayHeader ? '0 0 0 3px rgba(59,130,246,0.25)' : undefined, borderRadius: 8, textAlign: 'center', padding: '4px 0', fontSize: 12, fontWeight: 600, color: '#374151', display:'flex', alignItems:'center', justifyContent:'center', gap:6 }}>
                     <span>{dayNames[idx]}</span>
                     {dateLabel && <span style={{ fontSize:11, fontWeight:500, color:'#64748b' }}>{dateLabel}</span>}
+                    {holiday && <span title="Helgdag" style={{ fontSize:10, color:'#92400e', background:'#fde68a', border:'1px solid #f59e0b', borderRadius:999, padding:'1px 6px' }}>Helgdag</span>}
                   </div>
                 );
               })}
@@ -265,6 +275,8 @@ export default function CalendarDayList(props: CalendarDayListProps) {
                     const laneColor = disp?.border || '#cbd5e1';
                     const gridCol = 2 + vi;
                     const isTodayCell = !!day && day === todayISO;
+                    const weekendCell = !!day && isWeekend(day);
+                    const holidayCell = !!day && isHoliday(day || undefined);
                     return (
                       <div key={`cell-${rowKey}-${weekdayIdx}-${day || 'x'}`} id={day ? `calday-${day}` : undefined}
                         onClick={day ? () => scheduleSelectedOnDay(day, rowKey === '__UNASSIGNED__' ? null : rowKey) : undefined}
@@ -278,7 +290,7 @@ export default function CalendarDayList(props: CalendarDayListProps) {
                           boxShadow: isTodayCell ? '0 0 0 2px rgba(59,130,246,0.18)' : undefined,
                           borderRadius: 8,
                           padding: 6,
-                          background: '#ffffff',
+                          background: holidayCell ? '#fffbeb' : (weekendCell ? '#fff1f2' : '#ffffff'),
                           display: 'flex',
                           flexDirection: 'column',
                           gap: 4,

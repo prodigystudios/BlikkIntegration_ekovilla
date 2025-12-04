@@ -2,7 +2,7 @@
 import React from 'react';
 import { useTruckAssignments } from '@/lib/TruckAssignmentsContext';
 import BagUsageText from './BagUsageText';
-import { isoWeekKey } from '../_lib/date';
+import { isoWeekKey, isWeekend, getSwedishPublicHolidays, isSwedishHoliday } from '../_lib/date';
 
 type TruckDisplay = { bg: string; border: string; text: string };
 
@@ -78,6 +78,11 @@ export default function CalendarWeekdayLanes(props: CalendarWeekdayLanesProps) {
     bagUsageStatusByProject,
   } = props;
 
+  // Build holiday sets for the years spanned by visible lanes
+  const yearsInView = Array.from(new Set(weekdayLanes.flat().map(d => new Date(d.date + 'T00:00:00').getFullYear())));
+  const holidaySets = yearsInView.map(y => getSwedishPublicHolidays(y));
+  const isHoliday = (iso?: string) => !!iso && holidaySets.some(set => isSwedishHoliday(iso, set));
+
   return (
     <div style={{ display: 'grid', gap: 16 }}>
       {visibleDayNames.map((name, localIdx) => {
@@ -134,18 +139,23 @@ export default function CalendarWeekdayLanes(props: CalendarWeekdayLanesProps) {
                   });
                 const isJumpHighlight = day === jumpTargetDay;
                 const isToday = day === todayISO;
+                const weekendCell = isWeekend(day);
+                const holidayCell = isHoliday(day);
                 return (
                   <div key={day}
                     id={`calday-${day}`}
                     onClick={() => scheduleSelectedOnDay(day)}
                     onDragOver={allowDrop}
                     onDrop={e => onDropDay(e, day)}
-                    style={{ minWidth: 160, border: isJumpHighlight ? '2px solid #f59e0b' : (selectedProjectId ? '2px dashed #fbbf24' : (isToday ? '2px solid #60a5fa' : '1px solid rgba(148,163,184,0.4)')), boxShadow: isJumpHighlight ? '0 0 0 4px rgba(245,158,11,0.35)' : (isToday ? '0 0 0 3px rgba(59,130,246,0.25)' : '0 1px 2px rgba(0,0,0,0.05)'), borderRadius: 10, padding: 8, background: '#ffffff', display: 'flex', flexDirection: 'column', gap: 6, position: 'relative', cursor: selectedProjectId ? 'copy' : 'default' }}>
+                    style={{ minWidth: 160, border: isJumpHighlight ? '2px solid #f59e0b' : (selectedProjectId ? '2px dashed #fbbf24' : (isToday ? '2px solid #60a5fa' : '1px solid rgba(148,163,184,0.4)')), boxShadow: isJumpHighlight ? '0 0 0 4px rgba(245,158,11,0.35)' : (isToday ? '0 0 0 3px rgba(59,130,246,0.25)' : '0 1px 2px rgba(0,0,0,0.05)'), borderRadius: 10, padding: 8, background: holidayCell ? '#fffbeb' : (weekendCell ? '#fff1f2' : '#ffffff'), display: 'flex', flexDirection: 'column', gap: 6, position: 'relative', cursor: selectedProjectId ? 'copy' : 'default' }}>
                     <div style={{ fontSize: 11, fontWeight: 600, display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: '#111827' }}>
                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                         <span>{day.slice(8, 10)}/{day.slice(5, 7)}</span>
                         {isToday && (
                           <span aria-label="Idag" title="Idag" style={{ fontSize: 9, color: '#1d4ed8', background: '#dbeafe', border: '1px solid #93c5fd', padding: '0px 6px', borderRadius: 999 }}>Idag</span>
+                        )}
+                        {holidayCell && (
+                          <span aria-label="Helgdag" title="Helgdag" style={{ fontSize: 9, color: '#92400e', background: '#fde68a', border: '1px solid #f59e0b', padding: '0px 6px', borderRadius: 999 }}>Helgdag</span>
                         )}
                       </span>
                       {items.length > 0 && <span style={{ fontSize: 10, background: '#f3f4f6', padding: '2px 6px', borderRadius: 12 }}>{items.length}</span>}

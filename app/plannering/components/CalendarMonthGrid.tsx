@@ -2,7 +2,7 @@
 import React from 'react';
 import { useTruckAssignments } from '@/lib/TruckAssignmentsContext';
 import BagUsageText from './BagUsageText';
-import { isoWeekNumber, isoWeekKey } from '../_lib/date';
+import { isoWeekNumber, isoWeekKey, isWeekend, getSwedishPublicHolidays, isSwedishHoliday } from '../_lib/date';
 
 type TruckDisplay = { bg: string; border: string; text: string };
 
@@ -91,6 +91,14 @@ export default function CalendarMonthGrid(props: CalendarMonthGridProps) {
         if (selectedWeekKey) {
           if (!firstDay || isoWeekKey(firstDay) !== selectedWeekKey) return null;
         }
+        // Precompute holiday sets for the years spanned by this week
+        const weekDays = week.map(c => c.date).filter(Boolean) as string[];
+        const years = Array.from(new Set(weekDays.map(d => new Date(d + 'T00:00:00').getFullYear())));
+        const holidaySets = years.map(y => getSwedishPublicHolidays(y));
+        const isHoliday = (iso: string | undefined): boolean => {
+          if (!iso) return false;
+          return holidaySets.some(set => isSwedishHoliday(iso, set));
+        };
         return (
           <div key={wi} style={{ display: 'grid', gridTemplateColumns: `60px repeat(${visibleDayNames.length}, 1fr)`, gap: 8, background: weekBg, padding: 6, borderRadius: 12, boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.05)' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, background: 'rgba(255,255,255,0.65)', backdropFilter: 'blur(2px)', border: '1px solid rgba(0,0,0,0.07)', borderRadius: 8, color: '#1e293b', boxShadow: '0 1px 2px rgba(0,0,0,0.08)' }}>{weekNum && `v${weekNum}`}</div>
@@ -145,18 +153,23 @@ export default function CalendarMonthGrid(props: CalendarMonthGridProps) {
                 });
               const isJumpHighlight = day === jumpTargetDay;
               const isToday = day === todayISO;
+              const weekendCell = isWeekend(day);
+              const holidayCell = isHoliday(day);
               return (
                 <div key={day}
                   id={`calday-${day}`}
                   onClick={() => scheduleSelectedOnDay(day)}
                   onDragOver={allowDrop}
                   onDrop={e => onDropDay(e, day)}
-                  style={{ border: isJumpHighlight ? '2px solid #f59e0b' : (selectedProjectId ? '2px dashed #fbbf24' : (isToday ? '2px solid #60a5fa' : '1px solid rgba(148,163,184,0.4)')), boxShadow: isJumpHighlight ? '0 0 0 4px rgba(245,158,11,0.35)' : (isToday ? '0 0 0 3px rgba(59,130,246,0.25)' : '0 1px 2px rgba(0,0,0,0.05)'), transition: 'box-shadow 0.3s,border 0.3s', borderRadius: 10, padding: 8, minHeight: 160, background: '#ffffff', display: 'flex', flexDirection: 'column', gap: 8, position: 'relative', cursor: selectedProjectId ? 'copy' : 'default' }}>
+                  style={{ border: isJumpHighlight ? '2px solid #f59e0b' : (selectedProjectId ? '2px dashed #fbbf24' : (isToday ? '2px solid #60a5fa' : '1px solid rgba(148,163,184,0.4)')), boxShadow: isJumpHighlight ? '0 0 0 4px rgba(245,158,11,0.35)' : (isToday ? '0 0 0 3px rgba(59,130,246,0.25)' : '0 1px 2px rgba(0,0,0,0.05)'), transition: 'box-shadow 0.3s,border 0.3s', borderRadius: 10, padding: 8, minHeight: 160, background: holidayCell ? '#fffbeb' : (weekendCell ? '#fff1f2' : '#ffffff'), display: 'flex', flexDirection: 'column', gap: 8, position: 'relative', cursor: selectedProjectId ? 'copy' : 'default' }}>
                   <div style={{ fontSize: 12, fontWeight: 600, display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: '#111827' }}>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                       <span>{day.slice(8, 10)}/{day.slice(5, 7)}</span>
                       {isToday && (
                         <span aria-label="Idag" title="Idag" style={{ fontSize: 10, color: '#1d4ed8', background: '#dbeafe', border: '1px solid #93c5fd', padding: '0px 6px', borderRadius: 999 }}>Idag</span>
+                      )}
+                      {holidayCell && (
+                        <span aria-label="Helgdag" title="Helgdag" style={{ fontSize: 10, color: '#92400e', background: '#fde68a', border: '1px solid #f59e0b', padding: '0px 6px', borderRadius: 999 }}>Helgdag</span>
                       )}
                     </span>
                     {items.length > 0 && <span style={{ fontSize: 10, background: '#f3f4f6', padding: '2px 6px', borderRadius: 12 }}>{items.length}</span>}
