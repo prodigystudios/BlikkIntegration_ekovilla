@@ -769,7 +769,7 @@ export default function PlanneringPage() {
     }).then(({ error }) => { if (error) console.warn('[delivery_sent] undo error', error); }));
   }
 
-  // Load and subscribe to job type/material colors
+  // Load job type/material colors (subscription merged into planning-sync channel)
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -788,23 +788,7 @@ export default function PlanneringPage() {
         console.warn('[jobTypeColors] load error', e);
       }
     })();
-    const ch = supabase
-      .channel('rtc_job_type_colors')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'planning_job_type_colors' }, (payload) => {
-        setJobTypeColors(prev => {
-          const next = { ...prev };
-          const row: any = payload.new || payload.old;
-          if (!row?.job_type) return next;
-          if (payload.eventType === 'DELETE') {
-            delete next[row.job_type];
-          } else if (payload.new) {
-            next[row.job_type] = row.color_hex;
-          }
-          return next;
-        });
-      })
-      .subscribe();
-    return () => { ch.unsubscribe(); cancelled = true; };
+    return () => { cancelled = true; };
   }, [supabase]);
 
   // On-demand helpers for email fetching
@@ -1110,6 +1094,19 @@ export default function PlanneringPage() {
           console.warn('[egenkontroll realtime parse error]', e);
         }
       })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'planning_job_type_colors' }, payload => {
+        setJobTypeColors(prev => {
+          const next = { ...prev };
+          const row: any = payload.new || payload.old;
+          if (!row?.job_type) return next;
+          if (payload.eventType === 'DELETE') {
+            delete next[row.job_type];
+          } else if (payload.new) {
+            next[row.job_type] = row.color_hex;
+          }
+          return next;
+        });
+      })
       .subscribe();
     const interval = setInterval(() => { refreshEgenkontroller(); }, 5 * 60 * 1000);
     return () => { clearInterval(interval); supabase.removeChannel(channel); };
@@ -1307,6 +1304,17 @@ export default function PlanneringPage() {
           for (const entry of entries) users.push(entry);
         }
         setPresenceUsers(users);
+      })
+      // Edit broadcasts merged into planning-sync
+      .on('broadcast', { event: 'editing_start' }, payload => {
+        const p: any = payload.payload;
+        const key = `${p.userId || 'anon'}:${p.projectId}`;
+        setRemoteEditing(prev => ({ ...prev, [key]: { userId: p.userId, userName: p.userName, projectId: p.projectId, segmentId: p.segmentId, field: p.field, ts: Date.now() } }));
+      })
+      .on('broadcast', { event: 'editing_stop' }, payload => {
+        const p: any = payload.payload;
+        const key = `${p.userId || 'anon'}:${p.projectId}`;
+        setRemoteEditing(prev => { const c = { ...prev }; delete c[key]; return c; });
       })
       .on('presence', { event: 'join' }, ({ newPresences }) => {
         setPresenceUsers(prev => {
@@ -1526,27 +1534,9 @@ export default function PlanneringPage() {
     }
   }, [supabase]);
 
-  // Secondary channel for editing broadcast events
+  // Expire stale remote-edit entries
   useEffect(() => {
-    const editingChannel = supabase.channel('planning-edit');
-    editingChannel
-      .on('broadcast', { event: 'editing_start' }, payload => {
-        const p: any = payload.payload;
-        const key = `${p.userId || 'anon'}:${p.projectId}`;
-        setRemoteEditing(prev => ({ ...prev, [key]: { userId: p.userId, userName: p.userName, projectId: p.projectId, segmentId: p.segmentId, field: p.field, ts: Date.now() } }));
-      })
-      .on('broadcast', { event: 'editing_stop' }, payload => {
-        const p: any = payload.payload;
-        const key = `${p.userId || 'anon'}:${p.projectId}`;
-        setRemoteEditing(prev => { const c = { ...prev }; delete c[key]; return c; });
-      })
-      .subscribe(status => {
-        if (status === 'SUBSCRIBED') {
-          // Nothing initial to send
-        }
-      });
     const interval = setInterval(() => {
-      // Expire stale entries ( > 45s )
       const cutoff = Date.now() - 45000;
       setRemoteEditing(prev => {
         let changed = false; const c: typeof prev = { ...prev };
@@ -1556,21 +1546,21 @@ export default function PlanneringPage() {
         return changed ? c : prev;
       });
     }, 10000);
-    return () => { clearInterval(interval); supabase.removeChannel(editingChannel); };
-  }, [supabase]);
+    return () => { clearInterval(interval); };
+  }, []);
 
   function broadcastEditStart(projectId: string, field: string, segmentId?: string) {
     if (!currentUserId && !currentUserName) return; // optional: allow anon but skip for noise
     const key = `${currentUserId || 'anon'}:${projectId}`;
     if (localEditingKeysRef.current.has(key)) return; // already broadcasting
     localEditingKeysRef.current.add(key);
-    supabase.channel('planning-edit').send({ type: 'broadcast', event: 'editing_start', payload: { userId: currentUserId, userName: currentUserName, projectId, segmentId, field } });
+    supabase.channel('planning-sync').send({ type: 'broadcast', event: 'editing_start', payload: { userId: currentUserId, userName: currentUserName, projectId, segmentId, field } });
   }
   function broadcastEditStop(projectId: string) {
     const key = `${currentUserId || 'anon'}:${projectId}`;
     if (!localEditingKeysRef.current.has(key)) return;
     localEditingKeysRef.current.delete(key);
-    supabase.channel('planning-edit').send({ type: 'broadcast', event: 'editing_stop', payload: { userId: currentUserId, projectId } });
+    supabase.channel('planning-sync').send({ type: 'broadcast', event: 'editing_stop', payload: { userId: currentUserId, projectId } });
   }
 
   function getRemoteEditorsForProject(projectId: string) {
@@ -1608,7 +1598,7 @@ export default function PlanneringPage() {
     return () => {
       for (const key of Array.from(localEditingKeysRef.current)) {
         const [, projectId] = key.split(':');
-        supabase.channel('planning-edit').send({ type: 'broadcast', event: 'editing_stop', payload: { userId: currentUserId, projectId } });
+        supabase.channel('planning-sync').send({ type: 'broadcast', event: 'editing_stop', payload: { userId: currentUserId, projectId } });
       }
       localEditingKeysRef.current.clear();
     };
