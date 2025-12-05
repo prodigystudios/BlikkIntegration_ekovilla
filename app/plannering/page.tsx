@@ -3670,7 +3670,7 @@ export default function PlanneringPage() {
                       {p.name}
                     </strong>
                     <span style={{ fontSize: 12, color: '#6b7280' }}>{p.customer}</span>
-                    {p.salesResponsible && <span style={{ fontSize: 10, color: '#475569', background: '#f1f5f9', padding: '2px 6px', borderRadius: 12, border: '1px solid #e2e8f0' }}>Sälj: {p.salesResponsible}</span>}
+                    {/* Sales responsible removed from project card per new requirements */}
                     <span style={{ fontSize: 11, color: '#9ca3af' }}>Skapad: {p.createdAt.slice(0, 10)}</span>
                   </div>
                 ))}
