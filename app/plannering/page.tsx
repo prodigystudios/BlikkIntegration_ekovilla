@@ -703,6 +703,11 @@ export default function PlanneringPage() {
   const supabase = createClientComponentClient();
   const [syncing, setSyncing] = useState(false);
   const [realtimeStatus, setRealtimeStatus] = useState<'connecting' | 'live' | 'error'>('connecting');
+  const [realtimePaused, setRealtimePaused] = useState(false);
+  const planningChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const lastActivityRef = useRef<number>(Date.now());
+  const [forceChannelRerender, setForceChannelRerender] = useState(0);
+  const [idlePromptVisible, setIdlePromptVisible] = useState(false);
   const pendingOps = useRef<Promise<any>[]>([]);
   const createdIdsRef = useRef<Set<string>>(new Set());
   // Simple async op queue helper (re-add after accidental removal). Ensures we can await / flush later if needed.
@@ -1059,7 +1064,8 @@ export default function PlanneringPage() {
     return steps;
   }, [loading, syncing, egenkontrollLoading]);
 
-  // Realtime + periodic refresh for egenkontroll report detection
+  // Realtime + periodic refresh for egenkontroll report detection (pause/resume aware)
+  const egenChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   useEffect(() => {
     const bucket = (process.env.NEXT_PUBLIC_SUPABASE_BUCKET || process.env.SUPABASE_BUCKET || 'pdfs');
     const channel = supabase.channel('egenkontroll-watch')
@@ -1108,9 +1114,19 @@ export default function PlanneringPage() {
         });
       })
       .subscribe();
-    const interval = setInterval(() => { refreshEgenkontroller(); }, 5 * 60 * 1000);
-    return () => { clearInterval(interval); supabase.removeChannel(channel); };
-  }, [supabase, refreshEgenkontroller]);
+    egenChannelRef.current = channel;
+    const interval = setInterval(() => { if (!realtimePaused) refreshEgenkontroller(); }, 5 * 60 * 1000);
+    return () => { clearInterval(interval); supabase.removeChannel(channel); egenChannelRef.current = null; };
+  }, [supabase, refreshEgenkontroller, realtimePaused]);
+
+  // Hook into pause/resume to manage egenkontroll channel
+  useEffect(() => {
+    if (realtimePaused) {
+      if (egenChannelRef.current) { supabase.removeChannel(egenChannelRef.current); egenChannelRef.current = null; }
+    } else {
+      // When resuming, we rely on the effect above to recreate the channel via dependency change
+    }
+  }, [realtimePaused, supabase]);
 
   useEffect(() => {
     (async () => {
@@ -1438,8 +1454,66 @@ export default function PlanneringPage() {
           channel.track({ id: currentUserId, name: currentUserName, joinedAt: new Date().toISOString() });
         }
       });
-    return () => { supabase.removeChannel(channel); };
-  }, [supabase, currentUserId, currentUserName]);
+    planningChannelRef.current = channel;
+    return () => { supabase.removeChannel(channel); planningChannelRef.current = null; };
+  }, [supabase, currentUserId, currentUserName, forceChannelRerender]);
+
+  // Pause/resume helpers and visibility/idle hooks
+  const pauseRealtime = useCallback(() => {
+    try {
+      if (planningChannelRef.current) {
+        supabase.removeChannel(planningChannelRef.current);
+        planningChannelRef.current = null;
+      }
+      setRealtimePaused(true);
+      setRealtimeStatus('connecting');
+    } catch {}
+  }, [supabase]);
+  const resumeRealtime = useCallback(() => {
+    try {
+      setRealtimePaused(false);
+      // If very long idle (>30 min), show centered prompt suggesting refresh
+      const LONG_IDLE_MS = 30 * 60_000;
+      if (Date.now() - lastActivityRef.current > LONG_IDLE_MS) {
+        setIdlePromptVisible(true);
+      } else {
+        setIdlePromptVisible(false);
+      }
+      setForceChannelRerender(prev => prev + 1);
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    const onVis = () => {
+      if (document.hidden) pauseRealtime(); else resumeRealtime();
+    };
+    document.addEventListener('visibilitychange', onVis);
+    onVis();
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, [pauseRealtime, resumeRealtime]);
+
+  useEffect(() => {
+    const bump = () => {
+      lastActivityRef.current = Date.now();
+      if (realtimePaused) {
+        clearTimeout((bump as any)._t);
+        (bump as any)._t = setTimeout(() => resumeRealtime(), 500);
+      }
+    };
+    const events = ['mousemove', 'keydown', 'touchstart', 'scroll'];
+    events.forEach(ev => document.addEventListener(ev, bump, { passive: true }));
+    const idleCheck = setInterval(() => {
+      const IDLE_MS = 90000;
+      if (!document.hidden && !realtimePaused) {
+        if (Date.now() - lastActivityRef.current > IDLE_MS) pauseRealtime();
+      }
+    }, 10000);
+    return () => {
+      events.forEach(ev => document.removeEventListener(ev, bump));
+      clearInterval(idleCheck);
+      clearTimeout((bump as any)._t);
+    };
+  }, [realtimePaused, pauseRealtime, resumeRealtime]);
 
   // Aggregations for reported bags
   const reportedBagsBySegment = useMemo(() => {
@@ -3015,6 +3089,18 @@ export default function PlanneringPage() {
 
   return (
     <div style={{ padding: 16, display: 'grid', gap: 16, position: 'relative' }}>
+      {idlePromptVisible && (
+        <div role="dialog" aria-modal="false" onClick={() => setIdlePromptVisible(false)} style={{ position: 'fixed', inset: 0, zIndex: 900, background: 'rgba(0,0,0,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+          <div onClick={e => e.stopPropagation()} style={{ width: 'min(520px, 92vw)', background: '#ffffff', border: '1px solid #e5e7eb', borderRadius: 12, boxShadow: '0 24px 80px rgba(0,0,0,0.25)', display: 'grid', gap: 12, padding: 16 }}>
+            <div style={{ fontWeight: 700, fontSize: 16 }}>Sidan har varit inaktiv</div>
+            <div style={{ fontSize: 14, color: '#374151' }}>Vill du ladda om sidan för att vara helt i synk?</div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button type="button" onClick={() => { setIdlePromptVisible(false); location.reload(); }} className="btn">Ladda om</button>
+              <button type="button" onClick={() => setIdlePromptVisible(false)} className="btn btn--plain">Fortsätt utan</button>
+            </div>
+          </div>
+        </div>
+      )}
       {(segEditorPortal && segEditor) && (() => {
         const p = projects.find(px => px.id === segEditor.projectId);
         const daysLen = Math.max(1, Math.round((new Date(segEditor.endDay + 'T00:00:00').getTime() - new Date(segEditor.startDay + 'T00:00:00').getTime()) / 86400000) + 1);
