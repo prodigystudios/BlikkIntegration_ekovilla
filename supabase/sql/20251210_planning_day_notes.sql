@@ -17,3 +17,14 @@ create index if not exists idx_planning_day_notes_day on public.planning_day_not
  create policy "insert notes" on public.planning_day_notes for insert with check (true);
  create policy "update notes" on public.planning_day_notes for update using (true) with check (true);
  create policy "delete notes" on public.planning_day_notes for delete using (true);
+
+-- Ensure the table is included in the Realtime publication
+do $$ begin
+  perform 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'planning_day_notes';
+  if not found then
+    execute 'alter publication supabase_realtime add table public.planning_day_notes';
+  end if;
+end $$;
+
+-- Ensure DELETE events include old row data for Realtime
+alter table public.planning_day_notes replica identity full;

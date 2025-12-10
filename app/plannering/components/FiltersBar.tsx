@@ -18,6 +18,8 @@ export default function FiltersBar(props: {
   setSidebarCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
   isAdmin: boolean;
   setAdminModalOpen: (v: boolean) => void;
+  realtimePaused?: boolean;
+  realtimeStatus?: 'connecting' | 'live' | 'error' | string;
 }) {
   const {
     monthOffset,
@@ -34,6 +36,8 @@ export default function FiltersBar(props: {
     setSidebarCollapsed,
     isAdmin,
     setAdminModalOpen,
+    realtimePaused,
+    realtimeStatus,
   } = props;
 
   return (
@@ -87,6 +91,11 @@ export default function FiltersBar(props: {
           Admin‑inställningar
         </button>
       )}
+      {/* Realtime status next to top icon/controls */}
+      <span title={`Realtime: ${realtimePaused ? 'paused' : (realtimeStatus || 'unknown')}`}
+        style={{ marginLeft: 6, fontSize: 11, color: realtimePaused ? '#92400e' : (realtimeStatus === 'live' ? '#065f46' : '#1d4ed8'), background: realtimePaused ? '#fde68a' : (realtimeStatus === 'live' ? '#d1fae5' : '#dbeafe'), border: '1px solid ' + (realtimePaused ? '#f59e0b' : (realtimeStatus === 'live' ? '#6ee7b7' : '#93c5fd')), borderRadius: 999, padding: '2px 8px' }}>
+        {realtimePaused ? 'Realtime: paused' : `Realtime: ${realtimeStatus || '—'}`}
+      </span>
     </div>
   );
 }

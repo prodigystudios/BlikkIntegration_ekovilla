@@ -1382,6 +1382,7 @@ export default function PlanneringPage() {
       })
       // Data changes
       .on('postgres_changes', { event: '*', schema: 'public', table: 'planning_segments' }, payload => {
+        if (process.env.NODE_ENV !== 'production') console.debug('[rt] planning_segments', payload.eventType, payload.new || payload.old);
         const row: any = payload.new || payload.old;
         if (payload.eventType === 'INSERT') {
           setScheduledSegments(prev => prev.some(s => s.id === row.id) ? prev : [...prev, { id: row.id, projectId: row.project_id, startDay: row.start_day, endDay: row.end_day, createdBy: row.created_by, createdByName: row.created_by_name, depotId: row.depot_id ?? null, sortIndex: row.sort_index ?? null, truck: row.truck ?? null }]);
@@ -1404,6 +1405,7 @@ export default function PlanneringPage() {
         }
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'planning_segment_team_members' }, payload => {
+        if (process.env.NODE_ENV !== 'production') console.debug('[rt] planning_segment_team_members', payload.eventType, payload.new || payload.old);
         const row: any = payload.new || payload.old;
         const segId = row?.segment_id;
         if (!segId) return;
@@ -1421,6 +1423,7 @@ export default function PlanneringPage() {
         });
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'planning_project_meta' }, payload => {
+        if (process.env.NODE_ENV !== 'production') console.debug('[rt] planning_project_meta', payload.eventType, payload.new || payload.old);
         const row: any = payload.new || payload.old;
         if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
           setScheduleMeta(prev => ({
@@ -1443,6 +1446,7 @@ export default function PlanneringPage() {
         }
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'planning_segment_reports' }, payload => {
+        if (process.env.NODE_ENV !== 'production') console.debug('[rt] planning_segment_reports', payload.eventType, payload.new || payload.old);
         const row: any = payload.new || payload.old;
         if (payload.eventType === 'INSERT') {
           setSegmentReports(prev => prev.some(r => r.id === row.id) ? prev : [...prev, { id: row.id, segmentId: row.segment_id, reportDay: row.report_day, amount: row.amount, createdBy: row.created_by ?? null, createdByName: row.created_by_name ?? null, createdAt: row.created_at || null, projectId: (row as any).project_id ?? null }]);
@@ -1453,6 +1457,7 @@ export default function PlanneringPage() {
         }
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'planning_trucks' }, payload => {
+        if (process.env.NODE_ENV !== 'production') console.debug('[rt] planning_trucks', payload.eventType, payload.new || payload.old);
         const row: any = payload.new || payload.old;
         if (payload.eventType === 'INSERT') {
           setPlanningTrucks(prev => prev.some(t => t.id === row.id) ? prev : [...prev, { id: row.id, name: row.name, color: row.color, team_member1_name: row.team_member1_name, team_member2_name: row.team_member2_name, depot_id: row.depot_id || null, team1_id: row.team1_id || null, team2_id: row.team2_id || null }]);
@@ -1465,6 +1470,7 @@ export default function PlanneringPage() {
         }
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'planning_depots' }, payload => {
+        if (process.env.NODE_ENV !== 'production') console.debug('[rt] planning_depots', payload.eventType, payload.new || payload.old);
         const row: any = payload.new || payload.old;
         if (payload.eventType === 'INSERT') {
           setDepots(prev => prev.some(d => d.id === row.id) ? prev : [...prev, { id: row.id, name: row.name, material_total: row.material_total, material_ekovilla_total: row.material_ekovilla_total, material_vitull_total: row.material_vitull_total }]);
@@ -1475,6 +1481,7 @@ export default function PlanneringPage() {
         }
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'planning_depot_deliveries' }, payload => {
+        if (process.env.NODE_ENV !== 'production') console.debug('[rt] planning_depot_deliveries', payload.eventType, payload.new || payload.old);
         const row: any = payload.new || payload.old;
         if (payload.eventType === 'INSERT') {
           setDeliveries(prev => prev.some(d => d.id === row.id) ? prev : [...prev, row]);
@@ -1485,24 +1492,36 @@ export default function PlanneringPage() {
         }
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'planning_day_notes' }, payload => {
+        if (process.env.NODE_ENV !== 'production') console.debug('[rt] planning_day_notes', payload.eventType, payload.new || payload.old);
         const row: any = payload.new || payload.old;
         const day: string | undefined = row?.note_day;
+        if (payload.eventType === 'DELETE') {
+          // Fallback: some environments omit old row data; refetch month range
+          const base = new Date();
+          base.setDate(1);
+          base.setMonth(base.getMonth() + monthOffset);
+          const startISO = fmtDate(startOfMonth(base));
+          const endISO = fmtDate(endOfMonth(base));
+          listDayNotes(startISO, endISO)
+            .then(rows => {
+              const map = new Map<string, any>();
+              for (const r of rows) map.set(r.note_day, r);
+              setNotesByDay(map as any);
+            })
+            .catch(() => {});
+          return;
+        }
         if (!day) return;
         setNotesByDay(prev => {
           const next = new Map(prev);
-          if (payload.eventType === 'DELETE') {
-            next.delete(day);
-          } else {
-            // INSERT and UPDATE
-            next.set(day, {
-              id: row.id,
-              note_day: row.note_day,
-              text: row.text,
-              created_by: row.created_by ?? null,
-              created_by_name: row.created_by_name ?? null,
-              created_at: row.created_at || new Date().toISOString(),
-            } as any);
-          }
+          next.set(day, {
+            id: row.id,
+            note_day: row.note_day,
+            text: row.text,
+            created_by: row.created_by ?? null,
+            created_by_name: row.created_by_name ?? null,
+            created_at: row.created_at || new Date().toISOString(),
+          } as any);
           return next;
         });
       })
@@ -1511,10 +1530,26 @@ export default function PlanneringPage() {
           setRealtimeStatus('live');
           // Track current viewer with metadata
           channel.track({ id: currentUserId, name: currentUserName, joinedAt: new Date().toISOString() });
+          if (process.env.NODE_ENV !== 'production') {
+            console.debug('[rt] subscribed; presence state:', channel.presenceState());
+          }
+          // Keep presence fresh for visibility/debugging
+          const presenceInterval = setInterval(() => {
+            try {
+              channel.track({ id: currentUserId, name: currentUserName, pingAt: new Date().toISOString() });
+              if (process.env.NODE_ENV !== 'production') {
+                console.debug('[rt] presence heartbeat; state:', channel.presenceState());
+              }
+            } catch {}
+          }, 30000);
+          (channel as any)._presenceInterval = presenceInterval;
         }
       });
     planningChannelRef.current = channel;
-    return () => { supabase.removeChannel(channel); planningChannelRef.current = null; };
+    return () => {
+      try { clearInterval((channel as any)._presenceInterval); } catch {}
+      supabase.removeChannel(channel); planningChannelRef.current = null;
+    };
   }, [supabase, currentUserId, currentUserName, forceChannelRerender]);
 
   // Pause/resume helpers and visibility/idle hooks
@@ -3900,6 +3935,8 @@ export default function PlanneringPage() {
             setSidebarCollapsed={setSidebarCollapsed}
             isAdmin={isAdmin}
             setAdminModalOpen={setAdminModalOpen}
+            realtimePaused={realtimePaused}
+            realtimeStatus={realtimeStatus}
           />
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', fontSize: 11, alignItems: 'stretch' }}>
             {trucks.map(tName => {
@@ -4449,6 +4486,8 @@ export default function PlanneringPage() {
               bagUsageStatusByProject={bagUsageStatusByProject}
             />
           )}
+
+          
 
           {viewMode === 'weekdayLanes' && (
             <CalendarWeekdayLanes
