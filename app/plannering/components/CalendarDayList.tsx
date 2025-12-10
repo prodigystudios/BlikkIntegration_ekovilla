@@ -3,6 +3,8 @@ import React from 'react';
 import { useTruckAssignments } from '@/lib/TruckAssignmentsContext';
 import BagUsageText from './BagUsageText';
 import { isoWeekNumber, isoWeekKey, isWeekend, getSwedishPublicHolidays, isSwedishHoliday } from '../_lib/date';
+import type { DayNote } from '@/lib/dayNotes';
+import DayNoteEditor from './DayNoteEditor';
 
 type TruckDisplay = { bg: string; border: string; text: string };
 
@@ -11,6 +13,10 @@ export interface CalendarDayListProps {
   dayNames: string[];
   hideWeekends: boolean;
   itemsByDay: Map<string, any[]>;
+  notesByDay?: Map<string, DayNote | undefined>;
+  onNoteChange?: (day: string, note: DayNote | null) => void;
+  currentUserId?: string | null;
+  currentUserName?: string | null;
   trucks: string[];
   truckColors: Record<string, TruckDisplay>;
   calendarSearch: string;
@@ -49,6 +55,10 @@ export default function CalendarDayList(props: CalendarDayListProps) {
     dayNames,
     hideWeekends,
     itemsByDay,
+    notesByDay,
+    onNoteChange,
+    currentUserId,
+    currentUserName,
     trucks,
     truckColors,
     calendarSearch,
@@ -297,6 +307,15 @@ export default function CalendarDayList(props: CalendarDayListProps) {
                           borderLeft: `4px solid ${rowKey === '__UNASSIGNED__' ? '#cbd5e1' : laneColor}`,
                           cursor: selectedProjectId ? 'copy' : 'default'
                         }}>
+                        {day && (
+                          <DayNoteEditor
+                            day={day}
+                            note={notesByDay?.get(day)}
+                            currentUserId={currentUserId}
+                            currentUserName={currentUserName}
+                            onSaved={(n) => onNoteChange?.(day, n)}
+                          />
+                        )}
                         {list.length === 0 && <span style={{ fontSize: 11, color: '#94a3b8' }}>—</span>}
                         {list.map((it: any) => {
                           let display: null | TruckDisplay = null;

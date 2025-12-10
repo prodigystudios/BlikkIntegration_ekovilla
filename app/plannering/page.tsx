@@ -11,6 +11,7 @@ import FiltersBar from './components/FiltersBar';
 import CalendarMonthGrid from './components/CalendarMonthGrid';
 import CalendarWeekdayLanes from './components/CalendarWeekdayLanes';
 import CalendarDayList from './components/CalendarDayList';
+import { listDayNotes, type DayNote } from '@/lib/dayNotes';
 import nextDynamic from 'next/dynamic';
 const AdminJobTypes = nextDynamic(() => import('../admin/jobtypes/AdminJobTypes'), { ssr: false });
 // NOTE: The file header was previously corrupted by an accidental paste of JSX outside any component.
@@ -269,6 +270,42 @@ export default function PlanneringPage() {
   const [calendarSearch, setCalendarSearch] = useState('');
   const [jumpTargetDay, setJumpTargetDay] = useState<string | null>(null);
   const [matchIndex, setMatchIndex] = useState(-1);
+
+  // Day notes state keyed by ISO date
+  const [notesByDay, setNotesByDay] = useState<Map<string, DayNote>>(new Map());
+  const onNoteChange = useCallback((day: string, note: DayNote | null) => {
+    setNotesByDay(prev => {
+      const next = new Map(prev);
+      if (note) next.set(day, note);
+      else next.delete(day);
+      return next;
+    });
+  }, []);
+
+  // Fetch notes for the currently visible month range
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchNotesForMonth() {
+      try {
+        const base = new Date();
+        base.setDate(1);
+        base.setMonth(base.getMonth() + monthOffset);
+        const start = startOfMonth(base);
+        const end = endOfMonth(base);
+        const startISO = fmtDate(start);
+        const endISO = fmtDate(end);
+        const rows = await listDayNotes(startISO, endISO);
+        if (cancelled) return;
+        const map = new Map<string, DayNote>();
+        for (const r of rows) map.set(r.note_day, r);
+        setNotesByDay(map);
+      } catch (e) {
+        // Non-fatal; ignore
+      }
+    }
+    fetchNotesForMonth();
+    return () => { cancelled = true; };
+  }, [monthOffset]);
 
   // Project lookup / backlog
   const [searchOrder, setSearchOrder] = useState('');
@@ -1446,6 +1483,28 @@ export default function PlanneringPage() {
         } else if (payload.eventType === 'DELETE') {
           setDeliveries(prev => prev.filter(d => d.id !== row.id));
         }
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'planning_day_notes' }, payload => {
+        const row: any = payload.new || payload.old;
+        const day: string | undefined = row?.note_day;
+        if (!day) return;
+        setNotesByDay(prev => {
+          const next = new Map(prev);
+          if (payload.eventType === 'DELETE') {
+            next.delete(day);
+          } else {
+            // INSERT and UPDATE
+            next.set(day, {
+              id: row.id,
+              note_day: row.note_day,
+              text: row.text,
+              created_by: row.created_by ?? null,
+              created_by_name: row.created_by_name ?? null,
+              created_at: row.created_at || new Date().toISOString(),
+            } as any);
+          }
+          return next;
+        });
       })
       .subscribe(status => {
         if (status === 'SUBSCRIBED') {
@@ -4357,6 +4416,10 @@ export default function PlanneringPage() {
               hideWeekends={hideWeekends}
               selectedWeekKey={selectedWeekKey}
               itemsByDay={itemsByDay as any}
+              notesByDay={notesByDay as any}
+              onNoteChange={onNoteChange}
+              currentUserId={currentUserId}
+              currentUserName={currentUserName}
               trucks={trucks}
               truckColors={truckColors}
               calendarSearch={calendarSearch}
@@ -4393,6 +4456,10 @@ export default function PlanneringPage() {
               visibleDayIndices={visibleDayIndices}
               weekdayLanes={weekdayLanes as any}
               itemsByDay={itemsByDay as any}
+              notesByDay={notesByDay as any}
+              onNoteChange={onNoteChange}
+              currentUserId={currentUserId}
+              currentUserName={currentUserName}
               trucks={trucks}
               truckColors={truckColors}
               calendarSearch={calendarSearch}
@@ -4430,6 +4497,10 @@ export default function PlanneringPage() {
               dayNames={dayNames}
               hideWeekends={hideWeekends}
               itemsByDay={itemsByDay as any}
+              notesByDay={notesByDay as any}
+              onNoteChange={onNoteChange}
+              currentUserId={currentUserId}
+              currentUserName={currentUserName}
               trucks={trucks}
               truckColors={truckColors}
               calendarSearch={calendarSearch}

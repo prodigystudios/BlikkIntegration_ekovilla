@@ -3,6 +3,8 @@ import React from 'react';
 import { useTruckAssignments } from '@/lib/TruckAssignmentsContext';
 import BagUsageText from './BagUsageText';
 import { isoWeekKey, isWeekend, getSwedishPublicHolidays, isSwedishHoliday } from '../_lib/date';
+import type { DayNote } from '@/lib/dayNotes';
+import DayNoteEditor from './DayNoteEditor';
 
 type TruckDisplay = { bg: string; border: string; text: string };
 
@@ -11,6 +13,10 @@ export interface CalendarWeekdayLanesProps {
   visibleDayIndices: number[];
   weekdayLanes: Array<Array<{ date: string; inMonth: boolean }>>;
   itemsByDay: Map<string, any[]>;
+  notesByDay?: Map<string, DayNote | undefined>;
+  onNoteChange?: (day: string, note: DayNote | null) => void;
+  currentUserId?: string | null;
+  currentUserName?: string | null;
   trucks: string[];
   truckColors: Record<string, TruckDisplay>;
   calendarSearch: string;
@@ -48,6 +54,10 @@ export default function CalendarWeekdayLanes(props: CalendarWeekdayLanesProps) {
     visibleDayIndices,
     weekdayLanes,
     itemsByDay,
+    notesByDay,
+    onNoteChange,
+    currentUserId,
+    currentUserName,
     trucks,
     truckColors,
     calendarSearch,
@@ -148,6 +158,13 @@ export default function CalendarWeekdayLanes(props: CalendarWeekdayLanesProps) {
                     onDragOver={allowDrop}
                     onDrop={e => onDropDay(e, day)}
                     style={{ minWidth: 160, border: isJumpHighlight ? '2px solid #f59e0b' : (selectedProjectId ? '2px dashed #fbbf24' : (isToday ? '2px solid #60a5fa' : '1px solid rgba(148,163,184,0.4)')), boxShadow: isJumpHighlight ? '0 0 0 4px rgba(245,158,11,0.35)' : (isToday ? '0 0 0 3px rgba(59,130,246,0.25)' : '0 1px 2px rgba(0,0,0,0.05)'), borderRadius: 10, padding: 8, background: holidayCell ? '#fffbeb' : (weekendCell ? '#fff1f2' : '#ffffff'), display: 'flex', flexDirection: 'column', gap: 6, position: 'relative', cursor: selectedProjectId ? 'copy' : 'default' }}>
+                    <DayNoteEditor
+                      day={day}
+                      note={notesByDay?.get(day)}
+                      currentUserId={currentUserId}
+                      currentUserName={currentUserName}
+                      onSaved={(n) => onNoteChange?.(day, n)}
+                    />
                     <div style={{ fontSize: 11, fontWeight: 600, display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: '#111827' }}>
                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                         <span>{day.slice(8, 10)}/{day.slice(5, 7)}</span>
