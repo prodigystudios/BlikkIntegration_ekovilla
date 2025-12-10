@@ -342,7 +342,7 @@ export default function PlanneringPage() {
   const [truckCreateError, setTruckCreateError] = useState<string>('');
   const [openDepotMenuTruckId, setOpenDepotMenuTruckId] = useState<string | null>(null);
   // Per-card depot override popover removed; selection now happens in the Segment Editor modal
-  const jobTypes = ['Ekovilla', 'Vitull', 'Leverans', 'Utsugning', 'Snickerier', 'Övrigt'];
+  const defaultJobTypes = ['Ekovilla', 'Vitull', 'Leverans', 'Utsugning', 'Snickerier', 'Övrigt'];
   // Crew directory suggestions (profiles with tag "Entreprenad") for team name inputs
   const [crewList, setCrewList] = useState<Array<{ id: string; name: string }>>([]);
   const crewNames = useMemo(() => crewList.map(c => c.name), [crewList]);
@@ -769,6 +769,11 @@ export default function PlanneringPage() {
   const [pendingNotifyProjectId, setPendingNotifyProjectId] = useState<string | null>(null);
   // Job type/material color mapping (from admin settings)
   const [jobTypeColors, setJobTypeColors] = useState<Record<string, string>>({});
+  const allJobTypes = useMemo(() => {
+    const set = new Set(defaultJobTypes);
+    for (const k of Object.keys(jobTypeColors || {})) set.add(k);
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'sv'));
+  }, [jobTypeColors]);
   function markClientNotified(pid: string) {
     const actor = currentUserName || currentUserId || 'okänd';
     const ts = new Date().toISOString();
@@ -3267,7 +3272,7 @@ export default function PlanneringPage() {
                       <span>Jobbtyp / Material</span>
                       <select value={segEditor.jobType || ''} onChange={e => setSegEditor(ed => ed ? ({ ...ed, jobType: e.target.value || null }) : ed)} style={{ padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }}>
                         <option value="">Välj…</option>
-                        {jobTypes.map(j => <option key={j} value={j}>{j}</option>)}
+                        {allJobTypes.map((j: string) => <option key={j} value={j}>{j}</option>)}
                       </select>
                     </label>
                   </div>
