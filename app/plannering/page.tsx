@@ -40,6 +40,7 @@ interface ScheduledSegment {
   depotId?: string | null; // optional per-segment depot override
   sortIndex?: number | null; // explicit order within a truck/day
   truck?: string | null; // per-segment truck assignment (added)
+  jobType?: string | null; // per-segment job type (optional)
 }
 
 interface ProjectScheduleMeta {
@@ -1258,7 +1259,7 @@ export default function PlanneringPage() {
         }
         // Normalize into local shapes
         if (Array.isArray(segs)) {
-          setScheduledSegments(segs.map(s => ({ id: s.id, projectId: s.project_id, startDay: s.start_day, endDay: s.end_day, createdBy: s.created_by, createdByName: s.created_by_name, depotId: (s as any).depot_id ?? null, sortIndex: (s as any).sort_index ?? null, truck: (s as any).truck ?? null })));
+          setScheduledSegments(segs.map(s => ({ id: s.id, projectId: s.project_id, startDay: s.start_day, endDay: s.end_day, createdBy: s.created_by, createdByName: s.created_by_name, depotId: (s as any).depot_id ?? null, sortIndex: (s as any).sort_index ?? null, truck: (s as any).truck ?? null, jobType: (s as any).job_type ?? null })));
           // Inject projects from segments if not already present
           setProjects(prev => {
             const map = new Map(prev.map(p => [p.id, p]));
@@ -1390,7 +1391,7 @@ export default function PlanneringPage() {
         if (process.env.NODE_ENV !== 'production') console.debug('[rt] planning_segments', payload.eventType, payload.new || payload.old);
         const row: any = payload.new || payload.old;
         if (payload.eventType === 'INSERT') {
-          setScheduledSegments(prev => prev.some(s => s.id === row.id) ? prev : [...prev, { id: row.id, projectId: row.project_id, startDay: row.start_day, endDay: row.end_day, createdBy: row.created_by, createdByName: row.created_by_name, depotId: row.depot_id ?? null, sortIndex: row.sort_index ?? null, truck: row.truck ?? null }]);
+          setScheduledSegments(prev => prev.some(s => s.id === row.id) ? prev : [...prev, { id: row.id, projectId: row.project_id, startDay: row.start_day, endDay: row.end_day, createdBy: row.created_by, createdByName: row.created_by_name, depotId: row.depot_id ?? null, sortIndex: row.sort_index ?? null, truck: row.truck ?? null, jobType: row.job_type ?? null }]);
           setProjects(prev => prev.some(p => p.id === row.project_id) ? prev : [...prev, {
             id: row.project_id,
             name: row.project_name,
@@ -1404,7 +1405,7 @@ export default function PlanneringPage() {
             salesResponsible: row.sales_responsible ?? null
           }]);
         } else if (payload.eventType === 'UPDATE') {
-          setScheduledSegments(prev => prev.map(s => s.id === row.id ? { ...s, startDay: row.start_day, endDay: row.end_day, createdByName: row.created_by_name ?? s.createdByName, depotId: row.depot_id ?? s.depotId ?? null, sortIndex: row.sort_index ?? s.sortIndex ?? null, truck: row.truck ?? s.truck ?? null } : s));
+          setScheduledSegments(prev => prev.map(s => s.id === row.id ? { ...s, startDay: row.start_day, endDay: row.end_day, createdByName: row.created_by_name ?? s.createdByName, depotId: row.depot_id ?? s.depotId ?? null, sortIndex: row.sort_index ?? s.sortIndex ?? null, truck: row.truck ?? s.truck ?? null, jobType: row.job_type ?? s.jobType ?? null } : s));
         } else if (payload.eventType === 'DELETE') {
           setScheduledSegments(prev => prev.filter(s => s.id !== row.id));
         }
@@ -1793,6 +1794,7 @@ export default function PlanneringPage() {
       created_by_name: currentUserName || currentUserId || project.customer || 'Okänd'
     };
     if (seg.depotId) payload.depot_id = seg.depotId;
+    if (seg.jobType !== undefined) payload.job_type = seg.jobType;
     if (seg.truck !== undefined) payload.truck = seg.truck;
     if (seg.sortIndex != null) payload.sort_index = seg.sortIndex;
     enqueue(
@@ -1817,7 +1819,7 @@ export default function PlanneringPage() {
   }, [supabase, currentUserId, currentUserName]);
 
   const persistSegmentUpdate = useCallback((seg: ScheduledSegment) => {
-    enqueue(supabase.from('planning_segments').update({ start_day: seg.startDay, end_day: seg.endDay, truck: seg.truck ?? null }).eq('id', seg.id).select('id').then(({ data, error }) => { if (error) console.warn('[persist update seg] error', error); else console.debug('[planning] update ok', data); }));
+    enqueue(supabase.from('planning_segments').update({ start_day: seg.startDay, end_day: seg.endDay, truck: seg.truck ?? null, job_type: seg.jobType ?? null }).eq('id', seg.id).select('id').then(({ data, error }) => { if (error) console.warn('[persist update seg] error', error); else console.debug('[planning] update ok', data); }));
   }, [supabase]);
 
   const deletedSegConfirmRef = useRef<Set<string>>(new Set());
@@ -2322,7 +2324,6 @@ export default function PlanneringPage() {
       project_id: projectId,
       truck: meta.truck,
       bag_count: meta.bagCount,
-      job_type: meta.jobType,
       color: meta.color,
       client_notified: meta.client_notified ?? null,
       client_notified_at: meta.client_notified_at ?? null,
@@ -2482,10 +2483,12 @@ export default function PlanneringPage() {
         const inst: DayInstance = { ...meta, segmentId: seg.id, project, day, spanStart, spanEnd, spanMiddle: !spanStart && !spanEnd, totalSpan };
         // Prefer per-segment truck if set
         (inst as any).truck = (seg as any).truck ?? (inst as any).truck ?? null;
+        // Prefer per-segment job type if set
+        (inst as any).jobType = (seg as any).jobType ?? (inst as any).jobType ?? null;
         // Treat segments with jobType "Leverans" (outgoing deliveries) as delivery-style cards.
         // They should appear at the top of the day (same sort behavior as incoming depot deliveries)
         // but use a different color/badge in the calendar components. We mark them with isDelivery + isDeliveryOutbound.
-        const jtLower = (meta.jobType || '').toLowerCase();
+        const jtLower = (((seg as any).jobType ?? meta.jobType) || '').toLowerCase();
         if (jtLower === 'leverans') {
           (inst as any).isDelivery = true; // re-use existing delivery styling logic paths (non-draggable, simplified info)
           (inst as any).isDeliveryOutbound = true; // additional flag so components can distinguish color/label
@@ -2925,7 +2928,7 @@ export default function PlanneringPage() {
     const seg = scheduledSegments.find(s => s.id === segmentId);
     if (!seg) return;
     const meta = scheduleMeta[seg.projectId] || { projectId: seg.projectId } as ProjectScheduleMeta;
-  setSegEditor({ mode: 'edit', projectId: seg.projectId, segmentId: seg.id, startDay: seg.startDay, endDay: seg.endDay, truck: (seg as any).truck ?? meta.truck ?? null, bagCount: (typeof meta.bagCount === 'number' ? meta.bagCount : null), jobType: meta.jobType ?? null, depotId: seg.depotId ?? null, crew: segmentCrew[seg.id] || [] });
+  setSegEditor({ mode: 'edit', projectId: seg.projectId, segmentId: seg.id, startDay: seg.startDay, endDay: seg.endDay, truck: (seg as any).truck ?? meta.truck ?? null, bagCount: (typeof meta.bagCount === 'number' ? meta.bagCount : null), jobType: (seg as any).jobType ?? meta.jobType ?? null, depotId: seg.depotId ?? null, crew: segmentCrew[seg.id] || [] });
   setSegCrewInput('');
     setSegEditorOpen(true);
   }
@@ -2966,10 +2969,10 @@ export default function PlanneringPage() {
   function saveSegmentEditor() {
     if (!segEditor) return;
     const { mode, projectId, segmentId, startDay, endDay, truck, bagCount, jobType, depotId, positionIndex } = segEditor;
-    // Update only project-scoped meta (truck is now per-segment)
-    updateMeta(projectId, { bagCount, jobType });
+    // Update only project-scoped meta (truck and jobType are per-segment)
+    updateMeta(projectId, { bagCount });
     if (mode === 'create') {
-      const newSeg: ScheduledSegment = { id: genId(), projectId, startDay, endDay, depotId: depotId ?? undefined, truck: truck ?? null } as any;
+      const newSeg: ScheduledSegment = { id: genId(), projectId, startDay, endDay, depotId: depotId ?? undefined, truck: truck ?? null, jobType: jobType ?? null } as any;
       applyScheduledSegments(prev => {
         const next = [...prev, newSeg];
         // If a truck and desired position provided, reorder within same truck/day
@@ -3029,9 +3032,9 @@ export default function PlanneringPage() {
         }
       } catch { /* ignore */ }
     } else if (segmentId) {
-      // Update segment and optionally reorder within same truck/day
+      // Update segment fields locally, including job type, then optionally reorder
       applyScheduledSegments(prev => {
-        const next = prev.map(s => s.id === segmentId ? ({ ...s, startDay, endDay, depotId: depotId ?? null, truck: truck ?? null }) : s);
+        const next = prev.map(s => s.id === segmentId ? ({ ...s, startDay, endDay, depotId: depotId ?? null, truck: truck ?? null, jobType: jobType ?? null }) : s);
         if (truck && segEditor.positionIndex && segEditor.positionIndex > 0) {
           // Build list of start-day items for same group in visual order (after applying edits)
           const group = next
@@ -3054,9 +3057,9 @@ export default function PlanneringPage() {
         return next;
       });
       updateSegmentDepot(segmentId, depotId ?? null);
-      // Persist segment-level truck
+      // Persist segment updates including job type and truck
       setTimeout(() => {
-        enqueue(supabase.from('planning_segments').update({ truck: truck ?? null }).eq('id', segmentId).select('id').then(({ error }) => { if (error) console.warn('[planning] update segment truck error', error); }));
+        persistSegmentUpdate({ id: segmentId, projectId, startDay, endDay, depotId: depotId ?? undefined, truck: truck ?? null, jobType: jobType ?? null } as any);
       }, 0);
       // Persist any crew changes
       try { persistSegmentCrew(segmentId, segEditor.crew || []); } catch { /* ignore */ }
