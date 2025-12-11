@@ -307,7 +307,7 @@ export default function CalendarDayList(props: CalendarDayListProps) {
                           borderLeft: `4px solid ${rowKey === '__UNASSIGNED__' ? '#cbd5e1' : laneColor}`,
                           cursor: selectedProjectId ? 'copy' : 'default'
                         }}>
-                        {day && (
+                        {day && ri === 0 && (
                           <DayNoteEditor
                             day={day}
                             note={notesByDay?.get(day)}
