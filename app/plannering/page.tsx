@@ -1800,7 +1800,6 @@ export default function PlanneringPage() {
     enqueue(
       supabase.from('planning_segments')
         .upsert(payload, { onConflict: 'id', ignoreDuplicates: true })
-        .select('id')
         .then(({ data, error }) => {
           if (error) {
             if ((error as any).code === '23505') {
@@ -1812,14 +1811,20 @@ export default function PlanneringPage() {
             }
           } else {
             createdIdsRef.current.add(seg.id);
-            console.debug('[planning] upsert ok', data);
+            console.debug('[planning] upsert ok');
           }
         })
     );
   }, [supabase, currentUserId, currentUserName]);
 
   const persistSegmentUpdate = useCallback((seg: ScheduledSegment) => {
-    enqueue(supabase.from('planning_segments').update({ start_day: seg.startDay, end_day: seg.endDay, truck: seg.truck ?? null, job_type: seg.jobType ?? null }).eq('id', seg.id).select('id').then(({ data, error }) => { if (error) console.warn('[persist update seg] error', error); else console.debug('[planning] update ok', data); }));
+    enqueue(
+      supabase
+        .from('planning_segments')
+        .update({ start_day: seg.startDay, end_day: seg.endDay, truck: seg.truck ?? null, job_type: seg.jobType ?? null })
+        .eq('id', seg.id)
+        .then(({ error }) => { if (error) console.warn('[persist update seg] error', error); else console.debug('[planning] update ok'); })
+    );
   }, [supabase]);
 
   const deletedSegConfirmRef = useRef<Set<string>>(new Set());
@@ -2939,9 +2944,9 @@ export default function PlanneringPage() {
         .filter(m => (m.name || '').trim().length > 0)
         .map(m => ({ segment_id: segmentId, member_id: m.id || null, member_name: m.name.trim() }));
       if (rows.length > 0) {
-        const { error } = await supabase.from('planning_segment_team_members').insert(rows).select('segment_id');
+        const { error } = await supabase.from('planning_segment_team_members').insert(rows);
         if (error) console.warn('[planning] insert crew error', error);
-      }
+      } // else: nothing to insert
       setSegmentCrew(prev => {
         const cleaned = (crewListDraft || []).filter(m => (m.name || '').trim().length > 0);
         const seenIds = new Set<string>();
