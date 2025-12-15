@@ -98,7 +98,7 @@ export class BlikkClient {
     const envPath = process.env.BLIKK_PROJECTS_PATH || null;
     const enableLegacy = process.env.BLIKK_ENABLE_LEGACY_PROJECTS === '1';
     const bases = envPath ? [envPath] : enableLegacy ? ['/v1/Core/Projects', '/v1/Projects'] : ['/v1/Core/Projects'];
-    const methods: Array<'PATCH' | 'PUT'> = ['PATCH', 'PUT'];
+    const methods: Array<'PUT'> = ['PUT'];
     const bodies = [
       { description: text },
       { notes: text },
@@ -120,6 +120,73 @@ export class BlikkClient {
       }
     }
     throw lastErr || new Error('updateProjectDescription failed');
+  }
+
+  // Update project status (tries Core and legacy, supports string or object form)
+  async updateProjectStatus(id: number, status: string) {
+    if (!Number.isFinite(id)) throw new Error('updateProjectStatus: invalid id');
+    const label = String(status ?? '').trim();
+    if (!label) throw new Error('updateProjectStatus: empty status');
+    const envPath = process.env.BLIKK_PROJECTS_PATH || null;
+    const enableLegacy = process.env.BLIKK_ENABLE_LEGACY_PROJECTS === '1';
+    const bases = envPath ? [envPath] : enableLegacy ? ['/v1/Core/Projects', '/v1/Projects'] : ['/v1/Core/Projects'];
+    const methods: Array<'PUT'> = ['PUT'];
+    const bodies = [
+      { status: label },
+      { state: label },
+      { status: { name: label } },
+      { state: { name: label } },
+      { status: { title: label } },
+      { state: { title: label } },
+    ];
+
+    let lastErr: any = null;
+    for (const base of bases) {
+      for (const method of methods) {
+        for (const b of bodies) {
+          const path = `${base}/${id}`;
+          try {
+            const data: any = await this.request(path, { method, body: JSON.stringify(b) });
+            return { data, usedPath: `${path} (${method})`, sentBody: b };
+          } catch (e) {
+            lastErr = e;
+          }
+        }
+      }
+    }
+    throw lastErr || new Error('updateProjectStatus failed');
+  }
+
+  // Update project status by numeric id (tries several body shapes)
+  async updateProjectStatusById(id: number, statusId: number) {
+    if (!Number.isFinite(id)) throw new Error('updateProjectStatusById: invalid id');
+    if (!Number.isFinite(statusId)) throw new Error('updateProjectStatusById: invalid statusId');
+    const envPath = process.env.BLIKK_PROJECTS_PATH || null;
+    const enableLegacy = process.env.BLIKK_ENABLE_LEGACY_PROJECTS === '1';
+    const bases = envPath ? [envPath] : enableLegacy ? ['/v1/Core/Projects', '/v1/Projects'] : ['/v1/Core/Projects'];
+    const methods: Array<'PUT'> = ['PUT'];
+    const bodies = [
+      { statusId },
+      { stateId: statusId },
+      { status: { id: statusId } },
+      { state: { id: statusId } },
+    ];
+
+    let lastErr: any = null;
+    for (const base of bases) {
+      for (const method of methods) {
+        for (const b of bodies) {
+          const path = `${base}/${id}`;
+          try {
+            const data: any = await this.request(path, { method, body: JSON.stringify(b) });
+            return { data, usedPath: `${path} (${method})`, sentBody: b };
+          } catch (e) {
+            lastErr = e;
+          }
+        }
+      }
+    }
+    throw lastErr || new Error('updateProjectStatusById failed');
   }
 
   // Convenience: try to get a project by exact order number
@@ -369,6 +436,72 @@ export class BlikkClient {
 
   async listArticles(opts?: { page?: number; pageSize?: number; query?: string }) {
     const { data } = await this.listArticlesWithMeta(opts);
+    return data;
+  }
+
+  // Project statuses (Admin Resources) listing with tolerant params/paths
+  async listProjectStatusesWithMeta(opts?: { page?: number; pageSize?: number; query?: string }): Promise<{ data: any; usedUrl: string; attempts: string[] }>
+  {
+    const page = opts?.page ?? 1;
+    const pageSize = opts?.pageSize ?? 50;
+    const query = opts?.query ?? '';
+
+    // Use only the confirmed statuses path, with optional env override
+    const envPath = process.env.BLIKK_PROJECT_STATUSES_PATH || null; // e.g. '/v1/Admin/ProjectStatuses'
+    const bases = envPath ? [envPath] : ['/v1/Admin/ProjectStatuses'];
+    const queryKeys = ['filter.query', 'query', 'q', 'filter.name'];
+    const pagingVariants: Array<Record<string, string>> = [
+      { page: String(page), pageSize: String(pageSize) },
+      { page: String(page), limit: String(pageSize) },
+      { skip: String(Math.max(0, (page - 1) * pageSize)), take: String(pageSize) },
+    ];
+
+    const attempts: string[] = [];
+    let lastErr: any = null;
+    for (const base of bases) {
+      for (const paging of pagingVariants) {
+        // Try official-style query param first
+        const officialQs = new URLSearchParams(paging);
+        if (query) officialQs.set('filter.query', query);
+        const officialUrl = `${base}?${officialQs.toString()}`;
+        attempts.push(officialUrl);
+        try {
+          const data = await this.request(officialUrl);
+          return { data, usedUrl: officialUrl, attempts };
+        } catch (e: any) {
+          lastErr = e;
+        }
+        // Try other query keys
+        for (const qk of queryKeys) {
+          if (qk === 'filter.query') continue;
+          const qs = new URLSearchParams(paging);
+          if (query) qs.set(qk, query);
+          const url = `${base}?${qs.toString()}`;
+          attempts.push(url);
+          try {
+            const data = await this.request(url);
+            return { data, usedUrl: url, attempts };
+          } catch (e: any) {
+            lastErr = e;
+          }
+        }
+        // No query
+        const plain = `${base}?${new URLSearchParams(paging).toString()}`;
+        attempts.push(plain);
+        try {
+          const data = await this.request(plain);
+          return { data, usedUrl: plain, attempts };
+        } catch (e: any) {
+          lastErr = e;
+        }
+      }
+    }
+    if (lastErr) throw lastErr;
+    throw new Error('Failed to list project statuses');
+  }
+
+  async listProjectStatuses(opts?: { page?: number; pageSize?: number; query?: string }) {
+    const { data } = await this.listProjectStatusesWithMeta(opts);
     return data;
   }
 

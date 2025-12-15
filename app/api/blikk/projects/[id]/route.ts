@@ -42,6 +42,13 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     const city = addressObj?.city || addressObj?.City || data?.city || data?.town || data?.locality || null;
     const address = [street, postalCode, city].filter(Boolean).join(', ') || null;
     const description = data?.description || data?.notes || data?.note || data?.comment || data?.projectDescription || null;
+    const status = (() => {
+      const s: any = data?.status || data?.state;
+      if (!s) return null;
+      if (typeof s === 'string') return s;
+      if (typeof s === 'object') return s.name || s.title || s.status || null;
+      return null;
+    })();
     const salesResponsible = (() => {
       const sr: any = data?.salesResponsible || data?.salesResponsibleUser || data?.salesUser || data?.salesRep || data?.responsibleSalesUser;
       if (Array.isArray(sr)) return sr.map(s => (s && (s.name || s.fullName || s.title)) || '').filter(Boolean).join(', ') || null;
@@ -60,6 +67,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
         name,
         orderNumber,
         salesResponsible,
+        status,
         street,
         postalCode,
         city,

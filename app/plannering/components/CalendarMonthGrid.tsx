@@ -42,6 +42,8 @@ export interface CalendarMonthGridProps {
   scheduleMeta: Record<string, any>;
   jobTypeColors: Record<string, string>;
   projectAddresses: Record<string, string>;
+  projectStatuses?: Record<string, string>;
+  projectStatusColors?: Record<string, string>;
   segmentCrew: Record<string, Array<{ id: string | null; name: string }>>;
   remainingBagsByProject?: Map<string, number>;
   bagUsageStatusByProject?: Map<string, { plan: number; used: number; remaining: number; overrun: number }>;
@@ -83,6 +85,8 @@ export default function CalendarMonthGrid(props: CalendarMonthGridProps) {
     scheduleMeta,
     jobTypeColors,
     projectAddresses,
+    projectStatuses,
+    projectStatusColors,
     segmentCrew,
     remainingBagsByProject,
     bagUsageStatusByProject,
@@ -311,6 +315,26 @@ export default function CalendarMonthGrid(props: CalendarMonthGridProps) {
                             )}
                             {/* Show customer for normal segments and outgoing deliveries */}
                             {(!isDelivery || isDeliveryOutbound) && isStart && <span style={{ color: display ? display.text : '#6366f1' }}>{it.project.customer}</span>}
+                            {/* Show project status if available, with color badge */}
+                            {(!isDelivery || isDeliveryOutbound) && isStart && projectStatuses && projectStatuses[it.project.id] && (() => {
+                              const col = projectStatusColors?.[it.project.id];
+                              const bg = col ? col : '#ffffff30';
+                              const border = col ? col : `${cardBorder}55`;
+                              const hex = (col || '').startsWith('#') ? (col || '').slice(1) : '';
+                              let textColor = display ? display.text : '#334155';
+                              if (/^[0-9a-fA-F]{6}$/.test(hex)) {
+                                const r = parseInt(hex.slice(0,2),16), g = parseInt(hex.slice(2,4),16), b = parseInt(hex.slice(4,6),16);
+                                const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+                                textColor = brightness < 135 ? '#ffffff' : '#111827';
+                              }
+                              return (
+                                <span>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 2px'}}>
+                                    <span style={{ fontSize: 10, color: textColor, background: bg, padding: '4px 6px', borderRadius: 6, border: `1px solid ${border}` }}> {projectStatuses[it.project.id]}</span>
+                                  </div>
+                                </span>
+                              );
+                            })()}
                             {!isDelivery && isStart && it.project.salesResponsible && <span style={{ fontSize: 10, color: display ? display.text : '#334155', background: '#ffffff30', padding: '2px 6px', borderRadius: 12, border: `1px solid ${cardBorder}55` }}>Sälj: {it.project.salesResponsible}</span>}
                             {!isDelivery && (it.bagCount != null || it.jobType) && (
                               <span style={{ fontSize: 11, color: display ? display.text : '#374151' }}>

@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getBlikk } from '@/lib/blikk';
 
+// Simple in-memory cache for project statuses to avoid repeated lookups
+// Key: project id (string) -> { status, ts }
+const STATUS_TTL_MS = 10 * 60_000; // 10 minutes
+const statusCache: Map<string, { status: string; ts: number }> = new Map();
+
 // Legacy POST removed
 export async function POST() {
   return NextResponse.json({ error: 'This endpoint has been removed.' }, { status: 410 });
@@ -96,7 +101,43 @@ export async function GET(req: NextRequest) {
     // Client-side stable sort by createdAt desc if present
     mapped.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
     const projects = mapped.slice(0, 10);
-  return NextResponse.json({ projects, source: 'blikk' });
+
+    // Hydrate missing statuses (unknown) with a small server-side lookup, cached
+    const now = Date.now();
+    const unknowns = projects
+      .map((p, idx) => ({ p, idx }))
+      .filter(({ p }) => (p.status === 'unknown' || !p.status) && /^\d+$/.test(String(p.id)));
+    const toHydrate = unknowns.slice(0, 6); // cap to avoid bursts
+    // Apply cached values immediately if present and fresh
+    for (const it of toHydrate) {
+      const key = String(it.p.id);
+      const cached = statusCache.get(key);
+      if (cached && (now - cached.ts) < STATUS_TTL_MS) {
+        projects[it.idx].status = cached.status;
+      }
+    }
+    // Fetch details for those still unknown after cache
+    const stillUnknown = toHydrate.filter(({ idx }) => projects[idx].status === 'unknown' || !projects[idx].status);
+    if (stillUnknown.length > 0) {
+      // Limit concurrency by doing small batches
+      const batch = stillUnknown.slice(0, 6);
+      await Promise.all(batch.map(async ({ p, idx }) => {
+        try {
+          const data: any = await blikk.getProjectById(Number(p.id));
+          const raw = data?.status ?? data?.state;
+          const label = typeof raw === 'string' ? raw : (raw?.name || raw?.title || null);
+          if (label) {
+            const normalized = String(label);
+            projects[idx].status = normalized;
+            statusCache.set(String(p.id), { status: normalized, ts: Date.now() });
+          }
+        } catch (e) {
+          // Ignore errors; keep 'unknown'
+        }
+      }));
+    }
+
+    return NextResponse.json({ projects, source: 'blikk' });
   } catch (e: any) {
     console.error('GET /api/blikk/projects failed, falling back to mock', e);
     const now = Date.now();

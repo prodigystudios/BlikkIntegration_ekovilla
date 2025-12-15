@@ -2,6 +2,7 @@
 export const dynamic = 'force-dynamic';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
+import { useToast } from '@/lib/Toast';
 import { useProjectComments, formatRelativeTime } from '@/lib/useProjectComments';
 import TruckAssignmentsInline from './components/TruckAssignmentsInline';
 import { startOfMonth, endOfMonth, fmtDate, isoWeekNumber, isoWeekYear, isoWeekKey, startOfIsoWeek, endOfIsoWeek, mondayFromIsoWeekKey } from './_lib/date';
@@ -58,6 +59,8 @@ interface ProjectScheduleMeta {
   delivery_sent?: boolean | null;
   delivery_sent_at?: string | null;
   delivery_sent_by?: string | null;
+  status_label?: string | null;
+  status_color?: string | null;
 }
 
 // Partial bag reporting per segment/day
@@ -156,6 +159,7 @@ function SpinnerIcon({ size = 16, title = 'Laddar' }: { size?: number; title?: s
 }
 
 export default function PlanneringPage() {
+  const toast = useToast();
   // Loading/data
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -173,6 +177,15 @@ export default function PlanneringPage() {
   const contactEmailCacheRef = useRef<Map<number, { email: string | null; fetchedAt: number }>>(new Map());
   const contactEmailInFlightRef = useRef<Map<number, Promise<string | null>>>(new Map());
   const lastPartialReportAtRef = useRef<number>(0);
+  // Track which project ids came from Blikk API lists/lookups, to avoid extra API calls for statuses
+  const apiStatusIdsRef = useRef<Set<string>>(new Set());
+  const [apiStatusVersion, setApiStatusVersion] = useState(0);
+  const addApiStatusIds = useCallback((ids: string[]) => {
+    let changed = false;
+    const set = apiStatusIdsRef.current;
+    for (const id of ids) { if (id && !set.has(id)) { set.add(id); changed = true; } }
+    if (changed) setApiStatusVersion(v => v + 1);
+  }, []);
 
   const refreshInitialProjects = useCallback(async (limit: number = 10) => {
     if (projectsRefreshLoading) return;
@@ -204,6 +217,7 @@ export default function PlanneringPage() {
       const j = await res.json();
       if (!res.ok) throw new Error(j.error || 'Fel vid hämtning');
       const normalized: Project[] = (j.projects || []).map(normalizeProject);
+      addApiStatusIds(normalized.map(p => p.id));
       projectsCacheRef.current = { data: normalized, fetchedAt: Date.now() };
       const top = normalized.slice(0, limit);
       setProjects(prev => {
@@ -409,6 +423,7 @@ export default function PlanneringPage() {
     depotId: string | null; // null => use truck depot
     positionIndex?: number | null; // 1-based position within same truck/day (create convenience)
     crew?: Array<{ id: string | null; name: string }>; // per-segment extra crew
+    statusId?: number | null; // selected Blikk status id
   }
   const [segEditorOpen, setSegEditorOpen] = useState(false);
   const [segEditor, setSegEditor] = useState<SegmentEditorDraft | null>(null);
@@ -507,6 +522,86 @@ export default function PlanneringPage() {
   // Segment Editor crew input (name text)
   const [segCrewInput, setSegCrewInput] = useState<string>('');
 
+  // Blikk project statuses catalog for editor dropdown
+  const [statusOptions, setStatusOptions] = useState<Array<{ id: number; name: string; color?: string | null }>>([]);
+  // Immediate UI override for status colors to avoid flicker when options/meta race
+  const [projectStatusColorOverride, setProjectStatusColorOverride] = useState<Record<string, string>>({});
+  const statusOptionsLoadedAtRef = useRef<number>(0);
+  // Fetch statuses when editor opens (fast path for editing)
+  useEffect(() => {
+    if (!segEditorOpen) return;
+    const TTL = 5 * 60_000;
+    const now = Date.now();
+    if (statusOptions.length > 0 && (now - statusOptionsLoadedAtRef.current) < TTL) return;
+    (async () => {
+      try {
+        const r = await fetch('/api/blikk/project-statuses?page=1&pageSize=100');
+        if (!r.ok) return;
+        const j = await r.json();
+        const list = Array.isArray(j.statuses) ? j.statuses : [];
+        const opts = list
+          .map((s: any) => ({ id: Number(s.id) || 0, name: String(s.name || 'Unknown'), color: s.color || null }))
+          .filter((s: any) => Number.isFinite(s.id) && s.id > 0);
+        setStatusOptions(opts);
+        statusOptionsLoadedAtRef.current = Date.now();
+      } catch { /* ignore */ }
+    })();
+  }, [segEditorOpen, statusOptions.length]);
+
+  // Also fetch once on mount to render colors without opening editor
+  useEffect(() => {
+    const TTL = 5 * 60_000;
+    const now = Date.now();
+    if (statusOptions.length > 0 && (now - statusOptionsLoadedAtRef.current) < TTL) return;
+    (async () => {
+      try {
+        const r = await fetch('/api/blikk/project-statuses?page=1&pageSize=100');
+        if (!r.ok) return;
+        const j = await r.json();
+        const list = Array.isArray(j.statuses) ? j.statuses : [];
+        const opts = list
+          .map((s: any) => ({ id: Number(s.id) || 0, name: String(s.name || 'Unknown'), color: s.color || null }))
+          .filter((s: any) => Number.isFinite(s.id) && s.id > 0);
+        setStatusOptions(opts);
+        statusOptionsLoadedAtRef.current = Date.now();
+      } catch { /* ignore */ }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // When opening editor, fetch current project's status from Blikk to preselect
+  useEffect(() => {
+    if (!segEditorOpen || !segEditor) return;
+    const proj = projects.find(p => p.id === segEditor.projectId);
+    if (!proj) return;
+    (async () => {
+      try {
+        // Prefer id lookup if numeric, else fall back to order number
+        const idNum = Number(proj.id);
+        const url = Number.isFinite(idNum) && idNum > 0
+          ? `/api/projects/lookup?id=${encodeURIComponent(String(idNum))}`
+          : (proj.orderNumber ? `/api/projects/lookup?orderId=${encodeURIComponent(proj.orderNumber)}` : null);
+        if (!url) return;
+        const r = await fetch(url);
+        if (!r.ok) return;
+        const raw = await r.json();
+        const st = (raw?.status ?? raw?.state) as any;
+        const statusId = Number(st?.id ?? st?.Id ?? raw?.statusId ?? raw?.StatusId);
+        if (Number.isFinite(statusId) && statusId > 0) {
+          setSegEditor(ed => ed ? ({ ...ed, statusId }) : ed);
+        } else if (st) {
+          const name = typeof st === 'string' ? st : (st.name || st.title || null);
+          if (name && statusOptions.length > 0) {
+            const match = statusOptions.find(s => s.name.toLowerCase() === String(name).toLowerCase());
+            if (match) setSegEditor(ed => ed ? ({ ...ed, statusId: match.id }) : ed);
+          }
+        }
+        // Ensure cards can render statuses for this project
+        addApiStatusIds([proj.id]);
+      } catch { /* ignore */ }
+    })();
+  }, [segEditorOpen, segEditor?.projectId, projects, statusOptions]);
+
   // Missing state (reintroduced after earlier cleanup)
   const [truckColorOverrides, setTruckColorOverrides] = useState<Record<string, string>>({});
   const [editingTeamNames, setEditingTeamNames] = useState<Record<string, { team1: string; team2: string; team1Id?: string | null; team2Id?: string | null }>>({});
@@ -604,6 +699,7 @@ export default function PlanneringPage() {
       const j = await res.json();
       if (!res.ok) throw new Error(j.error || 'Fel vid sökning');
       const normalized: Project[] = (j.projects || []).map(normalizeProject);
+      addApiStatusIds(normalized.map(p => p.id));
       if (!normalized.length) {
         setSearchError('Inget projekt hittades');
       } else {
@@ -748,6 +844,7 @@ export default function PlanneringPage() {
   const [idlePromptVisible, setIdlePromptVisible] = useState(false);
   const pendingOps = useRef<Promise<any>[]>([]);
   const createdIdsRef = useRef<Set<string>>(new Set());
+  const autoStatusUpdatedRef = useRef<Set<string>>(new Set());
   // Simple async op queue helper (re-add after accidental removal). Ensures we can await / flush later if needed.
   function enqueue<T>(p: PromiseLike<T>) {
     try {
@@ -1019,6 +1116,46 @@ export default function PlanneringPage() {
   const { comments: detailComments, loading: detailCommentsLoading, error: detailCommentsError, refresh: refreshDetailComments } = useProjectComments(detailProjectId, { ttlMs: 120_000 });
   // Lightweight cache of project address lines for card display (DB-sourced only)
   const [projectAddresses, setProjectAddresses] = useState<Record<string, string>>({});
+  // Map project id -> status label for quick lookup in calendar cards
+  const projectStatuses = useMemo(() => {
+    const out: Record<string, string> = {};
+    const apiIds = apiStatusIdsRef.current;
+    for (const p of projects) {
+      if (!p || !p.id) continue;
+      if (p.isManual) {
+        if (p.status && p.status !== 'unknown') out[p.id] = p.status;
+        continue;
+      }
+      const meta = scheduleMeta[p.id];
+      // Prefer locally persisted meta label to avoid flicker
+      if (meta?.status_label) {
+        out[p.id] = String(meta.status_label);
+        continue;
+      }
+      if (apiIds.has(p.id) && p.status && p.status !== 'unknown') {
+        out[p.id] = p.status;
+      }
+    }
+    return out;
+  }, [projects, apiStatusVersion, scheduleMeta]);
+  const projectStatusColors = useMemo(() => {
+    const out: Record<string, string> = {};
+    // Highest priority: explicit overrides set on save
+    for (const pid in projectStatusColorOverride) {
+      const col = projectStatusColorOverride[pid];
+      if (col) out[pid] = col;
+    }
+    for (const pid in scheduleMeta) {
+      const meta = scheduleMeta[pid] as any;
+      let col: string | null | undefined = meta?.status_color;
+      if (!col && meta?.status_label && Array.isArray(statusOptions) && statusOptions.length) {
+        const match = statusOptions.find(o => o.name?.toLowerCase() === String(meta.status_label).toLowerCase());
+        if (match?.color) col = match.color;
+      }
+      if (col && !out[pid]) out[pid] = String(col);
+    }
+    return out;
+  }, [scheduleMeta, statusOptions, projectStatusColorOverride]);
   const openProjectModal = useCallback(async (projectId: string) => {
     setDetailOpen(true);
   setDetailProjectId(projectId);
@@ -1275,7 +1412,7 @@ export default function PlanneringPage() {
                   customer: s.customer || '',
                   orderNumber: s.order_number || null,
                   createdAt: s.created_at || new Date().toISOString(),
-                  status: s.is_manual ? 'MANUELL' : 'PLAN',
+                  status: s.is_manual ? 'MANUELL' : 'unknown',
                   isManual: s.is_manual,
                   customerId: s.customer_id ?? null,
                   customerEmail: s.customer_email ?? null,
@@ -1303,6 +1440,8 @@ export default function PlanneringPage() {
             delivery_sent: (m as any).delivery_sent ?? null,
             delivery_sent_at: (m as any).delivery_sent_at ?? null,
             delivery_sent_by: (m as any).delivery_sent_by ?? null,
+            status_label: (m as any).status_label ?? null,
+            status_color: (m as any).status_color ?? null,
           };
           setScheduleMeta(metaObj);
           // Prefill address cache from stored meta if available
@@ -1402,7 +1541,7 @@ export default function PlanneringPage() {
             customer: row.customer || '',
             orderNumber: row.order_number || null,
             createdAt: row.created_at || new Date().toISOString(),
-            status: row.is_manual ? 'MANUELL' : 'PLAN',
+            status: row.is_manual ? 'MANUELL' : 'unknown',
             isManual: row.is_manual,
             customerId: row.customer_id ?? null,
             customerEmail: row.customer_email ?? null,
@@ -1449,8 +1588,23 @@ export default function PlanneringPage() {
               actual_bags_used: (row as any).actual_bags_used,
               actual_bags_set_at: (row as any).actual_bags_set_at,
               actual_bags_set_by: (row as any).actual_bags_set_by,
+              // hydrate status meta if present
+              status_label: (row as any).status_label ?? (prev[row.project_id]?.status_label ?? null),
+              status_color: (row as any).status_color ?? (prev[row.project_id]?.status_color ?? null),
             }
           }));
+          // Clear immediate color override once server meta arrives to prevent staleness
+          try {
+            const hasStatusMeta = (row as any).status_color != null || (row as any).status_label != null;
+            if (hasStatusMeta) {
+              setProjectStatusColorOverride(prev => {
+                if (!prev[row.project_id]) return prev;
+                const copy = { ...prev };
+                delete copy[row.project_id];
+                return copy;
+              });
+            }
+          } catch {}
         } else if (payload.eventType === 'DELETE') {
           setScheduleMeta(prev => { const c = { ...prev }; delete c[row.project_id]; return c; });
         }
@@ -2343,7 +2497,27 @@ export default function PlanneringPage() {
       delivery_sent: meta.delivery_sent ?? null,
       delivery_sent_at: meta.delivery_sent_at ?? null,
       delivery_sent_by: meta.delivery_sent_by ?? null,
-    }).then(({ error }) => { if (error) console.warn('[persist meta upsert] error', error); }));
+      // ensure status meta persists when present
+      status_label: (meta as any).status_label ?? null,
+      status_color: (meta as any).status_color ?? null,
+    }).then(({ error }) => {
+      if (error) {
+        // Dev-only detailed logging to aid triage pre-deploy
+        if (process.env.NODE_ENV !== 'production') {
+          try {
+            console.error('[persist meta upsert] error', {
+              projectId,
+              message: error.message,
+              code: (error as any).code,
+              details: (error as any).details,
+              hint: (error as any).hint,
+            });
+          } catch {}
+        } else {
+          console.warn('[persist meta upsert] error', error);
+        }
+      }
+    }));
   }, [supabase]);
 
   // Capture original setter once
@@ -3007,7 +3181,7 @@ export default function PlanneringPage() {
       const project = projects.find(p => p.id === projectId);
       if (project) {
         persistSegmentCreate(newSeg, project);
-        // On schedule: if address not stored yet, fetch once from Blikk and persist to meta
+        // On schedule: if address/status not stored yet, fetch once from Blikk and persist to meta
         try {
           if (!projectAddresses[project.id] && project.orderNumber) {
             (async () => {
@@ -3026,6 +3200,84 @@ export default function PlanneringPage() {
                       .from('planning_project_meta')
                       .upsert({ project_id: project.id, address_street: street, address_postal: postal, address_city: city } as any, { onConflict: 'project_id' });
                   }
+                  // Also hydrate project status from the same lookup response
+                  try {
+                    const rawStatus = (raw?.status ?? raw?.state);
+                    const label = typeof rawStatus === 'string' ? rawStatus : (rawStatus?.name || rawStatus?.title || null);
+                    if (label) {
+                      setProjects(prev => prev.map(p => p.id === project.id ? { ...p, status: String(label) } : p));
+                      addApiStatusIds([project.id]);
+                      // If user selected a specific status in the editor, apply that selection; else optionally auto-upgrade
+                      const numericId = Number(project.id);
+                      if (Number.isFinite(numericId) && segEditor?.statusId) {
+                        const selectedId = segEditor.statusId;
+                        autoStatusUpdatedRef.current.add(project.id);
+                        try {
+                          const resp = await fetch(`/api/blikk/projects/${encodeURIComponent(String(numericId))}/status`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ statusId: selectedId })
+                          });
+                          if (resp.ok) {
+                            // reflect by label if we can find it in options
+                            const opt = statusOptions.find(o => o.id === selectedId);
+                            const newLabel = opt?.name || label;
+                            setProjects(prev => prev.map(p => p.id === project.id ? { ...p, status: newLabel } : p));
+                            // Update UI meta immediately; persist async
+                            setScheduleMeta(prev => ({ ...prev, [project.id]: { ...(prev[project.id] || { projectId: project.id }), status_label: newLabel, status_color: opt?.color ?? null } }));
+                            if (opt?.color) setProjectStatusColorOverride(prev => ({ ...prev, [project.id]: String(opt!.color) }));
+                            try {
+                              void supabase
+                                .from('planning_project_meta')
+                                .upsert({ project_id: project.id, status_label: newLabel, status_color: opt?.color ?? null } as any, { onConflict: 'project_id' })
+                                .then(({ error }) => { if (error) try { toast.error('Kunde inte spara status-meta'); } catch {} });
+                            } catch (e) {
+                              try { toast.error('Kunde inte spara status-meta'); } catch {}
+                            }
+                          } else {
+                            autoStatusUpdatedRef.current.delete(project.id);
+                          }
+                        } catch {
+                          autoStatusUpdatedRef.current.delete(project.id);
+                        }
+                      } else {
+                        // Auto-upgrade status on schedule: ORDER-ska planeras -> ORDER-planerad (when no explicit selection)
+                        const current = String(label).toLowerCase();
+                        const shouldUpgrade = /ska\s+planeras/.test(current);
+                        const already = autoStatusUpdatedRef.current.has(project.id);
+                        if (shouldUpgrade && !already && Number.isFinite(numericId)) {
+                          autoStatusUpdatedRef.current.add(project.id);
+                          const target = 'ORDER-planerad';
+                          try {
+                            const resp = await fetch(`/api/blikk/projects/${encodeURIComponent(String(numericId))}/status`, {
+                              method: 'PUT',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ status: target })
+                            });
+                            if (resp.ok) {
+                              setProjects(prev => prev.map(p => p.id === project.id ? { ...p, status: target } : p));
+                              const match = statusOptions.find(o => o.name?.toLowerCase() === target.toLowerCase());
+                              const col = match?.color ?? null;
+                              setScheduleMeta(prev => ({ ...prev, [project.id]: { ...(prev[project.id] || { projectId: project.id }), status_label: target, status_color: col } }));
+                              if (col) setProjectStatusColorOverride(prev => ({ ...prev, [project.id]: String(col) }));
+                              try {
+                                void supabase
+                                  .from('planning_project_meta')
+                                  .upsert({ project_id: project.id, status_label: target, status_color: col } as any, { onConflict: 'project_id' })
+                                  .then(({ error }) => { if (error) try { toast.error('Kunde inte spara status-meta'); } catch {} });
+                              } catch (e) {
+                                try { toast.error('Kunde inte spara status-meta'); } catch {}
+                              }
+                            } else {
+                              autoStatusUpdatedRef.current.delete(project.id);
+                            }
+                          } catch {
+                            autoStatusUpdatedRef.current.delete(project.id);
+                          }
+                        }
+                      }
+                    }
+                  } catch {}
                 }
               } catch { /* ignore */ }
             })();
@@ -3072,7 +3324,45 @@ export default function PlanneringPage() {
       }, 0);
       // Persist any crew changes
       try { persistSegmentCrew(segmentId, segEditor.crew || []); } catch { /* ignore */ }
+      // If user selected a Blikk status in the editor, apply it now for edits too
+      (async () => {
+        try {
+          const numericId = Number(projectId);
+          const selectedId = segEditor.statusId;
+          if (Number.isFinite(numericId) && numericId > 0 && selectedId && Number.isFinite(selectedId)) {
+            autoStatusUpdatedRef.current.add(projectId);
+            const resp = await fetch(`/api/blikk/projects/${encodeURIComponent(String(numericId))}/status`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ statusId: selectedId })
+            });
+            if (resp.ok) {
+              const opt = statusOptions.find(o => o.id === selectedId);
+              const newLabel = opt?.name || projects.find(p => p.id === projectId)?.status || 'unknown';
+              setProjects(prev => prev.map(p => p.id === projectId ? { ...p, status: newLabel } : p));
+              addApiStatusIds([projectId]);
+              setScheduleMeta(prev => ({ ...prev, [projectId]: { ...(prev[projectId] || { projectId }), status_label: newLabel, status_color: opt?.color ?? null } }));
+              if (opt?.color) setProjectStatusColorOverride(prev => ({ ...prev, [projectId]: String(opt!.color) }));
+              try {
+                void supabase
+                  .from('planning_project_meta')
+                  .upsert({ project_id: projectId, status_label: newLabel, status_color: opt?.color ?? null } as any, { onConflict: 'project_id' })
+                  .then(({ error }) => { if (error) try { toast.error('Kunde inte spara status-meta'); } catch {} });
+              } catch (e) {
+                try { toast.error('Kunde inte spara status-meta'); } catch {}
+              }
+            } else {
+              autoStatusUpdatedRef.current.delete(projectId);
+            }
+          }
+        } catch {
+          autoStatusUpdatedRef.current.delete(projectId);
+        }
+      })();
     }
+    try {
+      toast.success('Sparat ✓');
+    } catch {}
     closeSegEditor();
   }
   // Drag & drop into a calendar day (optionally within a truck lane in day-list view)
@@ -3285,6 +3575,18 @@ export default function PlanneringPage() {
                       <select value={segEditor.jobType || ''} onChange={e => setSegEditor(ed => ed ? ({ ...ed, jobType: e.target.value || null }) : ed)} style={{ padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }}>
                         <option value="">Välj…</option>
                         {allJobTypes.map((j: string) => <option key={j} value={j}>{j}</option>)}
+                      </select>
+                    </label>
+                  </div>
+                  {/* Blikk status selection */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
+                    <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
+                      <span>Blikk-status</span>
+                      <select value={segEditor.statusId ?? ''} onChange={e => setSegEditor(ed => ed ? ({ ...ed, statusId: e.target.value === '' ? null : Number(e.target.value) }) : ed)} style={{ padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }}>
+                        <option value="">Ingen ändring</option>
+                        {statusOptions.map(opt => (
+                          <option key={opt.id} value={opt.id}>{opt.name}</option>
+                        ))}
                       </select>
                     </label>
                   </div>
@@ -3631,6 +3933,13 @@ export default function PlanneringPage() {
           return p?.salesResponsibleName || p?.salesResponsibleFullName || null;
         };
         const seller = deriveSeller(raw) || base?.salesResponsible || null;
+        const projectStatus = (() => {
+          const s: any = raw?.status || raw?.state;
+          if (!s) return null;
+          if (typeof s === 'string') return s;
+          if (typeof s === 'object') return s.name || s.title || null;
+          return String(s);
+        })();
         return (
           <div style={{ position: 'fixed', inset: 0, zIndex: 1400, background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }} onClick={closeProjectModal}>
             <div role="dialog" aria-modal="true" aria-busy={detailLoading ? true : undefined} onClick={e => e.stopPropagation()} style={{ width: 'min(720px, 92vw)', maxHeight: '80vh', overflowY: 'auto', background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12, boxShadow: '0 12px 30px rgba(0,0,0,0.25)', display: 'grid', gap: 12, padding: 16 }}>
@@ -3728,8 +4037,9 @@ export default function PlanneringPage() {
                                   return { ...prev, [detailProjectId]: next };
                                 });
                                 setDescEditing(false);
+                                try { toast.success('Sparat ✓'); } catch {}
                               } catch (e) {
-                                alert(String((e as any)?.message || e));
+                                try { toast.error(String((e as any)?.message || 'Misslyckades att spara')); } catch {}
                               } finally {
                                 setDescSaving(false);
                               }
@@ -3750,6 +4060,7 @@ export default function PlanneringPage() {
                   </div>
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                     {seller && <span style={{ fontSize: 11, color: '#475569', background: '#f1f5f9', border: '1px solid #e2e8f0', padding: '2px 6px', borderRadius: 999 }}>Sälj: {seller}</span>}
+                    {projectStatus && <span style={{ fontSize: 11, color: '#334155', background: '#e2e8f0', border: '1px solid #cbd5e1', padding: '2px 6px', borderRadius: 999 }}>Status: {String(projectStatus)}</span>}
                     {meta?.truck && <span style={{ fontSize: 11, color: '#475569', background: '#f1f5f9', border: '1px solid #e2e8f0', padding: '2px 6px', borderRadius: 999 }}>Lastbil: {meta.truck}</span>}
                     {team.length > 0 && <span style={{ fontSize: 11, color: '#475569', background: '#f1f5f9', border: '1px solid #e2e8f0', padding: '2px 6px', borderRadius: 999 }}>Team: {team.join(', ')}</span>}
                     {typeof meta?.bagCount === 'number' && <span style={{ fontSize: 11, color: '#475569', background: '#f1f5f9', border: '1px solid #e2e8f0', padding: '2px 6px', borderRadius: 999 }}>Plan: {meta.bagCount} säckar</span>}
@@ -4558,6 +4869,8 @@ export default function PlanneringPage() {
               scheduleMeta={scheduleMeta as any}
               jobTypeColors={jobTypeColors}
               projectAddresses={projectAddresses}
+              projectStatuses={projectStatuses}
+              projectStatusColors={projectStatusColors as any}
               segmentCrew={segmentCrew}
               remainingBagsByProject={remainingBagsByProject}
               bagUsageStatusByProject={bagUsageStatusByProject}
@@ -4601,6 +4914,8 @@ export default function PlanneringPage() {
               scheduleMeta={scheduleMeta as any}
               jobTypeColors={jobTypeColors}
               projectAddresses={projectAddresses}
+              projectStatuses={projectStatuses}
+              projectStatusColors={projectStatusColors as any}
               segmentCrew={segmentCrew}
               remainingBagsByProject={remainingBagsByProject}
               bagUsageStatusByProject={bagUsageStatusByProject}
@@ -4643,6 +4958,7 @@ export default function PlanneringPage() {
               truckTeamNames={truckTeamNames}
               jobTypeColors={jobTypeColors}
               projectAddresses={projectAddresses}
+              projectStatusColors={projectStatusColors as any}
               segmentCrew={segmentCrew}
               remainingBagsByProject={remainingBagsByProject}
               bagUsageStatusByProject={bagUsageStatusByProject}
