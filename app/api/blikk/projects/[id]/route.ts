@@ -75,3 +75,21 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     return NextResponse.json({ error: msg }, { status });
   }
 }
+
+// Update project description in Blikk
+export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
+  try {
+    const idNum = Number(params.id);
+    if (!Number.isFinite(idNum) || idNum <= 0) {
+      return NextResponse.json({ error: 'Invalid id' }, { status: 400 });
+    }
+    const json = await req.json().catch(() => ({}));
+    const description = typeof json.description === 'string' ? json.description : '';
+    const blikk = getBlikk();
+    const result = await (blikk as any).updateProjectDescription(idNum, description);
+    return NextResponse.json({ ok: true, ...result });
+  } catch (e: any) {
+    console.error('[api/blikk/projects/:id PUT] error', e);
+    return NextResponse.json({ error: String(e?.message || e) }, { status: 500 });
+  }
+}

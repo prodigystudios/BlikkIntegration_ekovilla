@@ -91,6 +91,37 @@ export class BlikkClient {
     return this.request(`/v1/Core/Projects/${id}`);
   }
 
+  // Update project description (tries Core and legacy paths and common field aliases)
+  async updateProjectDescription(id: number, description: string) {
+    if (!Number.isFinite(id)) throw new Error('updateProjectDescription: invalid id');
+    const text = String(description ?? '');
+    const envPath = process.env.BLIKK_PROJECTS_PATH || null;
+    const enableLegacy = process.env.BLIKK_ENABLE_LEGACY_PROJECTS === '1';
+    const bases = envPath ? [envPath] : enableLegacy ? ['/v1/Core/Projects', '/v1/Projects'] : ['/v1/Core/Projects'];
+    const methods: Array<'PATCH' | 'PUT'> = ['PATCH', 'PUT'];
+    const bodies = [
+      { description: text },
+      { notes: text },
+      { note: text },
+    ];
+
+    let lastErr: any = null;
+    for (const base of bases) {
+      for (const method of methods) {
+        for (const b of bodies) {
+          const path = `${base}/${id}`;
+          try {
+            const data: any = await this.request(path, { method, body: JSON.stringify(b) });
+            return { data, usedPath: `${path} (${method})`, sentBody: b };
+          } catch (e) {
+            lastErr = e;
+          }
+        }
+      }
+    }
+    throw lastErr || new Error('updateProjectDescription failed');
+  }
+
   // Convenience: try to get a project by exact order number
   async getProjectByOrderNumber(orderNumber: string) {
     const target = String(orderNumber).trim();

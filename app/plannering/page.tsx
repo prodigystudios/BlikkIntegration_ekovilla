@@ -1011,6 +1011,10 @@ export default function PlanneringPage() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [detailCache, setDetailCache] = useState<Record<string, any>>({});
+  // Description inline edit state for Project Detail modal
+  const [descEditing, setDescEditing] = useState(false);
+  const [descDraft, setDescDraft] = useState('');
+  const [descSaving, setDescSaving] = useState(false);
   // Shared comments hook for detail modal
   const { comments: detailComments, loading: detailCommentsLoading, error: detailCommentsError, refresh: refreshDetailComments } = useProjectComments(detailProjectId, { ttlMs: 120_000 });
   // Lightweight cache of project address lines for card display (DB-sourced only)
@@ -3678,12 +3682,72 @@ export default function PlanneringPage() {
                       ))}
                     </div>
                   )}
-                  {description && (
-                    <div style={{ display: 'grid', gap: 4 }}>
-                      <span style={{ fontSize: 12, color: '#334155', fontWeight: 600 }}>Beskrivning</span>
-                      <p style={{ fontSize: 12, color: '#475569', whiteSpace: 'pre-wrap', margin: 0 }}>{description}</p>
-                    </div>
-                  )}
+                  <div style={{ display: 'grid', gap: 6 }}>
+                    <span style={{ fontSize: 12, color: '#334155', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8 }}>
+                      Beskrivning
+                      {!descEditing && (
+                        <button type="button" className="btn--plain btn--xs" onClick={() => { setDescDraft(description || ''); setDescEditing(true); }}
+                          style={{ fontSize: 11, padding: '2px 8px', border: '1px solid #cbd5e1', borderRadius: 6, background: '#f8fafc', color: '#0f172a' }}>Redigera</button>
+                      )}
+                    </span>
+                    {!descEditing && (
+                      <p style={{ fontSize: 12, color: '#475569', whiteSpace: 'pre-wrap', margin: 0 }}>{description || '—'}</p>
+                    )}
+                    {descEditing && (
+                      <div style={{ display: 'grid', gap: 8 }}>
+                        <textarea
+                          value={descDraft}
+                          onChange={(e) => setDescDraft(e.target.value)}
+                          rows={6}
+                          placeholder="Lägg till beskrivning…"
+                          style={{ width: '100%', fontSize: 12, color: '#0f172a', padding: 8, border: '1px solid #cbd5e1', borderRadius: 8, resize: 'vertical' }}
+                        />
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                          <button
+                            type="button"
+                            disabled={descSaving}
+                            onClick={async () => {
+                              if (!detailProjectId) return;
+                              setDescSaving(true);
+                              try {
+                                const res = await fetch(`/api/blikk/projects/${encodeURIComponent(detailProjectId)}`, {
+                                  method: 'PUT',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ description: descDraft })
+                                });
+                                if (!res.ok) throw new Error(`Spara misslyckades (${res.status})`);
+                                // Optimistically update cache so UI reflects the change immediately
+                                setDetailCache(prev => {
+                                  const cur = prev[detailProjectId];
+                                  if (!cur) return prev;
+                                  if (cur.project) {
+                                    const nextProject = { ...cur.project, description: descDraft, notes: descDraft, note: descDraft };
+                                    return { ...prev, [detailProjectId]: { ...cur, project: nextProject } };
+                                  }
+                                  const next = { ...cur, description: descDraft, notes: descDraft, note: descDraft };
+                                  return { ...prev, [detailProjectId]: next };
+                                });
+                                setDescEditing(false);
+                              } catch (e) {
+                                alert(String((e as any)?.message || e));
+                              } finally {
+                                setDescSaving(false);
+                              }
+                            }}
+                            className="btn--plain btn--xs"
+                            style={{ fontSize: 12, padding: '6px 10px', border: '1px solid #16a34a', background: '#16a34a', color: '#fff', borderRadius: 8 }}
+                          >{descSaving ? 'Sparar…' : 'Spara'}</button>
+                          <button
+                            type="button"
+                            disabled={descSaving}
+                            onClick={() => { setDescEditing(false); setDescDraft(''); }}
+                            className="btn--plain btn--xs"
+                            style={{ fontSize: 12, padding: '6px 10px', border: '1px solid #cbd5e1', background: '#fff', borderRadius: 8 }}
+                          >Avbryt</button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                     {seller && <span style={{ fontSize: 11, color: '#475569', background: '#f1f5f9', border: '1px solid #e2e8f0', padding: '2px 6px', borderRadius: 999 }}>Sälj: {seller}</span>}
                     {meta?.truck && <span style={{ fontSize: 11, color: '#475569', background: '#f1f5f9', border: '1px solid #e2e8f0', padding: '2px 6px', borderRadius: 999 }}>Lastbil: {meta.truck}</span>}
