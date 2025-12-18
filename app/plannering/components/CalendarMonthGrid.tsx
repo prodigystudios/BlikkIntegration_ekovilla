@@ -64,7 +64,7 @@ export default function CalendarMonthGrid(props: CalendarMonthGridProps) {
     trucks,
     truckColors,
     calendarSearch,
-  truckFilters,
+    truckFilters,
     salesFilter,
     jumpTargetDay,
     todayISO,
@@ -273,7 +273,7 @@ export default function CalendarMonthGrid(props: CalendarMonthGridProps) {
                           }}
                         >
                           {orderBadge && (
-                            <span style={{ position: 'absolute', top: 4, right: 4, background: '#111827', color: '#fff', fontSize: 9, padding: '2px 6px', borderRadius: 8, border: '1px solid #334155' }} title="Placering i dag/lastbil">
+                            <span style={{ position: 'absolute', top: 4, right: 4, background: '#f5f4f4ff', color: '#000000ff', fontSize: 12, padding: '3px 6px', borderRadius: 8, border: '1px solid #33415553' }} title="Placering i dag/lastbil">
                               {orderBadge}
                             </span>
                           )}
@@ -347,7 +347,7 @@ export default function CalendarMonthGrid(props: CalendarMonthGridProps) {
                               return (
                                 <span>
                                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 2px'}}>
-                                    <span style={{ fontSize: 10, color: textColor, background: bg, padding: '4px 6px', borderRadius: 6, border: `1px solid ${border}` }}> {projectStatuses[it.project.id]}</span>
+                                    <span style={{ fontSize: 10, color: textColor, background: bg, padding: '4px 6px', borderRadius: 6, border: `2px solid ${border}` }}> {projectStatuses[it.project.id]}</span>
                                     {!isDelivery && isStart && hasEgenkontroll(it.project.orderNumber) && (
                                       <span title="Egenkontroll rapporterad" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10, background: '#ecfdf5', color: '#047857', padding: '4px 6px', borderRadius: 6, border: '1px solid #6ee7b7' }}>
                                         <span style={{ display: 'inline-grid', placeItems: 'center', width: 12, height: 12, borderRadius: 999, background: '#059669', color: '#fff', fontSize: 9, fontWeight: 800 }}>✓</span>

@@ -446,7 +446,29 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
             <div key={day} style={{ display:'grid', gap: compact ? 4 : 6 }}>
               <div style={{ fontWeight:600, fontSize: compact ? 11 : 12, color:'#0f172a' }}>{day}</div>
               <div style={{ display:'grid', gap: compact ? 6 : 8 }}>
-                {arr.map((it: any) => {
+                {(() => {
+                  const getSortIndex = (x: any): number | null => {
+                    const v = (x.sort_index ?? x.sortIndex);
+                    return (typeof v === 'number' && Number.isFinite(v)) ? v : null;
+                  };
+                  const orderCmp = (a: any, b: any) => {
+                    const ta = (a.truck || '').toString();
+                    const tb = (b.truck || '').toString();
+                    if (ta !== tb) return ta.localeCompare(tb, 'sv');
+                    const sa = getSortIndex(a);
+                    const sb = getSortIndex(b);
+                    if (sa != null && sb != null && sa !== sb) return sa - sb;
+                    if (sa != null && sb == null) return -1;
+                    if (sb != null && sa == null) return 1;
+                    const ao = (a.order_number || '').toString();
+                    const bo = (b.order_number || '').toString();
+                    if (ao && bo && ao !== bo) return ao.localeCompare(bo, 'sv');
+                    const an = (a.project_name || '').toString();
+                    const bn = (b.project_name || '').toString();
+                    return an.localeCompare(bn, 'sv');
+                  };
+                  const arrSorted = [...arr].sort(orderCmp);
+                  return arrSorted.map((it: any) => {
                   const title = [it.order_number ? String(it.order_number) : null, it.project_name].filter(Boolean).join(' - ');
                   const theme = getMaterialTheme(it.job_type);
                   const bagLabel = typeof it.bag_count === 'number' ? `${it.bag_count} säckar${theme.label ? ' ' + theme.label : ''}` : null;
@@ -470,9 +492,24 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                         padding: compact ? 8 : 10,
                         cursor:'pointer',
                         background:'#ffffff',
-                        boxShadow:'0 1px 2px rgba(0,0,0,0.04)'
+                        boxShadow:'0 1px 2px rgba(0,0,0,0.04)',
+                        position:'relative'
                       }}
                     >
+                      {(() => {
+                        const hasTruck = !!it.truck;
+                        if (!hasTruck) return null;
+                        const sameTruckSorted = arrSorted.filter((x: any) => x.truck === it.truck);
+                        const pos = Math.max(0, sameTruckSorted.findIndex((x: any) => (x.segment_id || '') === (it.segment_id || '')));
+                        const total = sameTruckSorted.length;
+                        if (total <= 0) return null;
+                        const label = `${pos + 1}/${total}`;
+                        return (
+                          <span title="Placering i dag/lastbil" style={{ position:'absolute', bottom: 8, right: 10, background:'#111827', color:'#fff', fontSize: 10, padding:'4px 6px', borderRadius:8, border:'1px solid #334155' }}>
+                            {label}
+                          </span>
+                        );
+                      })()}
                       <div style={{ display:'flex', alignItems:'center', gap:8 }}>
                         <div style={{ width:8, height:8, borderRadius:999, background: theme.accent, opacity:0.9 }} />
                         <span style={{ fontWeight:700, letterSpacing:0.1, fontSize: compact ? 12 : 13, color:'#0f172a', flex:1, minWidth:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{title}</span>
@@ -532,7 +569,7 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                       </div>
                     </div>
                   );
-                })}
+                }); })()}
               </div>
             </div>
           ))}
