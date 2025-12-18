@@ -12,9 +12,31 @@ export async function PUT(
     const idNum = Number(params.id);
     if (!Number.isFinite(idNum)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 });
     const body = await req.json().catch(() => ({}));
+    const url = new URL(req.url);
+    const debugFetchOnly = url.searchParams.get('debug') === 'true' || process.env.BLIKK_UPDATES_DISABLED === 'true';
     const parsed = BodySchema.safeParse(body);
     if (!parsed.success) return NextResponse.json({ error: 'Invalid body' }, { status: 400 });
     const blikk = getBlikk();
+    // In debug/fetch-only mode: fetch and return the full current project, skip updates entirely
+    if (debugFetchOnly) {
+      const current: any = await blikk.getProjectById(idNum);
+      // Log a trimmed server-side snapshot for verification without flooding logs
+      console.log('[Blikk DEBUG] Fetched project', {
+        id: current?.id,
+        name: current?.name,
+        statusId: current?.statusId ?? current?.status?.id,
+        startDate: current?.startDate,
+        endDate: current?.endDate,
+        hasWorkSiteAddress: Boolean(current?.workSiteAddress),
+        tagsCount: Array.isArray(current?.tags) ? current?.tags.length : 0,
+      });
+      return NextResponse.json({ ok: true, mode: 'debug-fetch-only', project: current });
+    }
+    // Inspect-only: return the canonical body we would send
+    if (url.searchParams.get('inspect') === 'true') {
+      const body = await blikk.buildCanonicalBodyForId(idNum);
+      return NextResponse.json({ ok: true, mode: 'inspect', putBody: body });
+    }
     // If statusId provided, prefer id-based update
     if (typeof parsed.data.statusId === 'number') {
       const res = await blikk.updateProjectStatusById(idNum, parsed.data.statusId);
@@ -46,7 +68,9 @@ export async function PUT(
     const res = await blikk.updateProjectStatus(idNum, label);
     return NextResponse.json({ ok: true, result: res });
   } catch (e: any) {
-    return NextResponse.json({ error: String(e?.message || e) }, { status: 500 });
+    const msg = String(e?.message || e);
+    const is404 = /\b404\b/.test(msg);
+    return NextResponse.json({ error: msg }, { status: is404 ? 404 : 500 });
   }
 }
 
@@ -55,4 +79,40 @@ export async function PATCH(
   ctx: { params: { id: string } }
 ) {
   return PUT(req, ctx);
+}
+
+// GET: debug-only fetch of project via status route
+export async function GET(
+  req: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  const idNum = Number(params.id);
+  if (!Number.isFinite(idNum)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 });
+  const url = new URL(req.url);
+  const debugFetchOnly = url.searchParams.get('debug') === 'true' || process.env.BLIKK_UPDATES_DISABLED === 'true';
+  try {
+    const blikk = getBlikk();
+    if (url.searchParams.get('inspect') === 'true') {
+      const putBody = await (blikk as any).buildCanonicalBodyForId(idNum);
+      return NextResponse.json({ ok: true, mode: 'inspect', putBody });
+    }
+    if (debugFetchOnly) {
+      const current: any = await blikk.getProjectById(idNum);
+      console.log('[Blikk DEBUG][GET] Fetched project', {
+        id: current?.id,
+        name: current?.name,
+        statusId: current?.statusId ?? current?.status?.id,
+        startDate: current?.startDate,
+        endDate: current?.endDate,
+        hasWorkSiteAddress: Boolean(current?.workSiteAddress),
+        tagsCount: Array.isArray(current?.tags) ? current?.tags.length : 0,
+      });
+      return NextResponse.json({ ok: true, mode: 'debug-fetch-only', project: current });
+    }
+    return NextResponse.json({ error: 'Use PUT for updates. For fetch-only, pass ?debug=true. To inspect PUT body, pass ?inspect=true.' }, { status: 405 });
+  } catch (e: any) {
+    const msg = String(e?.message || e);
+    const is404 = /\b404\b/.test(msg);
+    return NextResponse.json({ error: msg }, { status: is404 ? 404 : 500 });
+  }
 }

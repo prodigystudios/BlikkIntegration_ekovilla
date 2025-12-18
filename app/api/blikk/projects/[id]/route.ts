@@ -92,8 +92,23 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
       return NextResponse.json({ error: 'Invalid id' }, { status: 400 });
     }
     const json = await req.json().catch(() => ({}));
-    const description = typeof json.description === 'string' ? json.description : '';
+    const debugFetchOnly = req.nextUrl.searchParams.get('debug') === 'true' || process.env.BLIKK_UPDATES_DISABLED === 'true';
+    if (typeof json.description !== 'string') {
+      return NextResponse.json({ error: 'description required' }, { status: 400 });
+    }
+    const description = json.description;
     const blikk = getBlikk();
+    if (debugFetchOnly) {
+      const current = await (blikk as any).getProjectById(idNum);
+      console.log('[Blikk DEBUG] Fetched project (desc route)', {
+        id: current?.id,
+        name: current?.name || current?.title,
+        startDate: (current as any)?.startDate,
+        endDate: (current as any)?.endDate,
+        statusId: (current as any)?.statusId ?? (current as any)?.status?.id,
+      });
+      return NextResponse.json({ ok: true, mode: 'debug-fetch-only', project: current });
+    }
     const result = await (blikk as any).updateProjectDescription(idNum, description);
     return NextResponse.json({ ok: true, ...result });
   } catch (e: any) {

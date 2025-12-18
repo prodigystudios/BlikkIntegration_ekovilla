@@ -3209,7 +3209,9 @@ export default function PlanneringPage() {
                       addApiStatusIds([project.id]);
                       // If user selected a specific status in the editor, apply that selection; else optionally auto-upgrade
                       const numericId = Number(project.id);
-                      if (Number.isFinite(numericId) && segEditor?.statusId) {
+                      if (loading) {
+                        try { toast.info('Hämtar data, försök igen strax…'); } catch {}
+                      } else if (Number.isFinite(numericId) && segEditor?.statusId) {
                         const selectedId = segEditor.statusId;
                         autoStatusUpdatedRef.current.add(project.id);
                         try {
@@ -3329,7 +3331,9 @@ export default function PlanneringPage() {
         try {
           const numericId = Number(projectId);
           const selectedId = segEditor.statusId;
-          if (Number.isFinite(numericId) && numericId > 0 && selectedId && Number.isFinite(selectedId)) {
+          if (loading) {
+            try { toast.info('Hämtar data, försök igen strax…'); } catch {}
+          } else if (Number.isFinite(numericId) && numericId > 0 && selectedId && Number.isFinite(selectedId)) {
             autoStatusUpdatedRef.current.add(projectId);
             const resp = await fetch(`/api/blikk/projects/${encodeURIComponent(String(numericId))}/status`, {
               method: 'PUT',

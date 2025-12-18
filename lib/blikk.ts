@@ -49,6 +49,105 @@ export class BlikkClient {
     return cachedToken.token;
   }
 
+  // Build the exact canonical body expected by Blikk for PUT /v1/Core/Projects/{id}
+  // Only uses allowed keys and maps common aliases from the fetched object.
+  private buildCanonicalProjectBody(current: any): any {
+    if (!current || typeof current !== 'object') return {};
+    const num = (v: any): number | undefined => {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : undefined;
+    };
+    const bool = (v: any): boolean | undefined => {
+      if (v === true || v === false) return v;
+      return undefined;
+    };
+    const str = (v: any): string | undefined => {
+      if (v == null) return undefined;
+      const s = String(v);
+      return s.length ? s : undefined;
+    };
+    const isoDate = (v: any): string | undefined => {
+      const s = str(v);
+      if (!s) return undefined;
+      // If in YYYY-MM-DD format, add midnight UTC offset to satisfy API expectation
+      if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return `${s}T00:00:00+00:00`;
+      return s;
+    };
+    const pickFrom = (obj: any, ...keys: string[]) => {
+      if (!obj || typeof obj !== 'object') return undefined;
+      for (const k of keys) {
+        if (obj[k] !== undefined && obj[k] !== null) return obj[k];
+      }
+      return undefined;
+    };
+    const pick = (...keys: string[]) => pickFrom(current, ...keys);
+
+    const body: any = {};
+    body.id = num(current.id);
+    body.title = str(pick('title', 'name', 'projectName', 'orderName'));
+    body.projectCollectionId = num(pick('projectCollectionId', 'ProjectCollectionId', 'projectCollectionID', 'collectionId', 'projectGroupId'));
+    body.startDate = isoDate(pick('startDate', 'StartDate'));
+    body.endDate = isoDate(pick('endDate', 'EndDate'));
+
+    // tagIds: prefer direct; else map from tags array
+    let tagIds: any = pick('tagIds');
+    if (!Array.isArray(tagIds)) {
+      const tags = pick('tags');
+      if (Array.isArray(tags)) tagIds = tags.map((t: any) => num(t?.id ?? t)).filter((n: any) => Number.isFinite(n));
+    }
+    if (Array.isArray(tagIds)) body.tagIds = tagIds;
+    else body.tagIds = [];
+
+    body.contactId = num(pick('contactId', 'customerId', 'clientId'))
+      ?? num(pickFrom(pick('customer'), 'id'))
+      ?? num(pickFrom(pick('client'), 'id'))
+      ?? num(pickFrom(pick('contact'), 'id'));
+    body.responsibleId = num(pick('responsibleId', 'responsibleUserId'))
+      ?? num(pickFrom(pick('responsible'), 'id'));
+    body.salesResponsibleId = num(pick('salesResponsibleId', 'salesUserId'))
+      ?? num(pickFrom(pick('salesResponsible'), 'id'))
+      ?? num(pickFrom(pick('salesUser'), 'id'));
+    body.description = str(pick('description', 'notes', 'note', 'projectDescription'));
+    body.statusId = num(pick('statusId', 'stateId'))
+      ?? num(pickFrom(pick('status'), 'id'))
+      ?? num(pickFrom(pick('state'), 'id'));
+    body.readyForInvoice = bool(pick('readyForInvoice')) ?? false;
+    body.costCenterId = num(pick('costCenterId'));
+    body.bookingProjectId = num(pick('bookingProjectId'));
+    body.categoryId = num(pick('categoryId'));
+    body.invoiceText = str(pick('invoiceText'));
+    body.yourReference = str(pick('yourReference'));
+    body.ourReference = str(pick('ourReference'));
+    body.customerReferenceMarking = str(pick('customerReferenceMarking'));
+    body.allIsMember = bool(pick('allIsMember')) ?? false;
+
+    // workSiteAddress
+    const wsa = pick('workSiteAddress', 'WorkSiteAddress', 'worksiteAddress');
+    if (wsa && typeof wsa === 'object') {
+      const wsab = {
+        streetAddress: str(pickFrom(wsa, 'streetAddress', 'street', 'addressLine1')) ?? str(pick('street')),
+        postalCode: str(pickFrom(wsa, 'postalCode', 'zip', 'zipCode')) ?? str(pick('postalCode')),
+        city: str(pickFrom(wsa, 'city', 'town', 'locality')) ?? str(pick('city')),
+        longitude: num(pickFrom(wsa, 'longitude')),
+        latitude: num(pickFrom(wsa, 'latitude')),
+      } as any;
+      Object.keys(wsab).forEach((k) => wsab[k] === undefined && delete wsab[k]);
+      if (Object.keys(wsab).length > 0) {
+        body.workSiteAddress = wsab;
+      }
+    }
+
+    // Remove undefined keys to keep body clean
+    Object.keys(body).forEach((k) => body[k] === undefined && delete body[k]);
+    return body;
+  }
+
+  // Expose a helper to inspect the exact canonical body we would PUT
+  async buildCanonicalBodyForId(id: number): Promise<any> {
+    const current = await this.getProjectById(id);
+    return this.buildCanonicalProjectBody(current);
+  }
+
   private async request<T>(path: string, init: RequestInit = {}, attempt = 0): Promise<T> {
     const token = await this.getToken();
     const res = await fetch(`${BASE_URL}${path}`, {
@@ -60,6 +159,13 @@ export class BlikkClient {
       },
       cache: 'no-store',
     });
+    try {
+      if (process.env.BLIKK_LOG_BODIES === '1' || process.env.BLIKK_LOG_BODIES === 'true') {
+        const method = (init.method || 'GET').toString();
+        const snippet = typeof init.body === 'string' ? init.body.slice(0, 500) : typeof (init.body as any) === 'object' ? '[object body]' : String(init.body || '');
+        console.log('[Blikk request]', { method, path, bodyPreview: snippet });
+      }
+    } catch {}
 
     if (res.status === 429) {
       const retryAfter = Number(res.headers.get('Retry-After') || '1');
@@ -91,26 +197,53 @@ export class BlikkClient {
     return this.request(`/v1/Core/Projects/${id}`);
   }
 
-  // Update project description (tries Core and legacy paths and common field aliases)
+  // Update project description (prefer PATCH; tries Core and legacy paths and common field aliases)
   async updateProjectDescription(id: number, description: string) {
     if (!Number.isFinite(id)) throw new Error('updateProjectDescription: invalid id');
     const text = String(description ?? '');
     const envPath = process.env.BLIKK_PROJECTS_PATH || null;
     const enableLegacy = process.env.BLIKK_ENABLE_LEGACY_PROJECTS === '1';
     const bases = envPath ? [envPath] : enableLegacy ? ['/v1/Core/Projects', '/v1/Projects'] : ['/v1/Core/Projects'];
+    // PUT is the only guaranteed method; we still do a merge fallback below
+    const forceMerge = process.env.BLIKK_FORCE_MERGE_PUT !== '0' && process.env.BLIKK_FORCE_MERGE_PUT !== 'false';
+    let lastErr: any = null;
+    if (forceMerge) {
+      const current: any = await this.getProjectById(id);
+      const baseObj: any = this.buildCanonicalProjectBody(current);
+      // generate merged bodies with different description aliases
+      const mergeBodies = [ { ...baseObj, description } ];
+      for (const base of bases) {
+        const path = `${base}/${id}`;
+        for (const b of mergeBodies) {
+          try {
+            if (process.env.BLIKK_UPDATES_DISABLED === 'true') {
+              return { data: null, usedPath: `${path} (PUT, merge)`, sentBody: b, dryRun: true } as any;
+            }
+            const data: any = await this.request(path, { method: 'PUT', body: JSON.stringify(b) });
+            return { data, usedPath: `${path} (PUT, merge)`, sentBody: b };
+          } catch (e) {
+            lastErr = e;
+          }
+        }
+      }
+      throw lastErr || new Error('updateProjectDescription failed');
+    }
+    // Non-merge path (legacy, not default)
     const methods: Array<'PUT'> = ['PUT'];
     const bodies = [
       { description: text },
       { notes: text },
       { note: text },
+      { projectDescription: text },
     ];
-
-    let lastErr: any = null;
     for (const base of bases) {
       for (const method of methods) {
         for (const b of bodies) {
           const path = `${base}/${id}`;
           try {
+            if (process.env.BLIKK_UPDATES_DISABLED === 'true') {
+              return { data: null, usedPath: `${path} (${method})`, sentBody: b, dryRun: true } as any;
+            }
             const data: any = await this.request(path, { method, body: JSON.stringify(b) });
             return { data, usedPath: `${path} (${method})`, sentBody: b };
           } catch (e) {
@@ -122,7 +255,7 @@ export class BlikkClient {
     throw lastErr || new Error('updateProjectDescription failed');
   }
 
-  // Update project status (tries Core and legacy, supports string or object form)
+  // Update project status (prefer PATCH; tries Core and legacy, supports string or object form)
   async updateProjectStatus(id: number, status: string) {
     if (!Number.isFinite(id)) throw new Error('updateProjectStatus: invalid id');
     const label = String(status ?? '').trim();
@@ -130,6 +263,30 @@ export class BlikkClient {
     const envPath = process.env.BLIKK_PROJECTS_PATH || null;
     const enableLegacy = process.env.BLIKK_ENABLE_LEGACY_PROJECTS === '1';
     const bases = envPath ? [envPath] : enableLegacy ? ['/v1/Core/Projects', '/v1/Projects'] : ['/v1/Core/Projects'];
+    const forceMerge = process.env.BLIKK_FORCE_MERGE_PUT !== '0' && process.env.BLIKK_FORCE_MERGE_PUT !== 'false';
+    let lastErr: any = null;
+    if (forceMerge) {
+      const current: any = await this.getProjectById(id);
+      const baseObj: any = this.buildCanonicalProjectBody(current);
+      // Without a numeric statusId mapping we cannot safely set label; fall back to legacy if no mapping exists upstream
+      const mergeBodies = [ { ...baseObj, statusId: baseObj.statusId } ];
+      for (const base of bases) {
+        const path = `${base}/${id}`;
+        for (const b of mergeBodies) {
+          try {
+            if (process.env.BLIKK_UPDATES_DISABLED === 'true') {
+              return { data: null, usedPath: `${path} (PUT, merge)`, sentBody: b, dryRun: true } as any;
+            }
+            const data: any = await this.request(path, { method: 'PUT', body: JSON.stringify(b) });
+            return { data, usedPath: `${path} (PUT, merge)`, sentBody: b };
+          } catch (e) {
+            lastErr = e;
+          }
+        }
+      }
+      throw lastErr || new Error('updateProjectStatus failed');
+    }
+    // Non-merge path (legacy, not default)
     const methods: Array<'PUT'> = ['PUT'];
     const bodies = [
       { status: label },
@@ -139,13 +296,14 @@ export class BlikkClient {
       { status: { title: label } },
       { state: { title: label } },
     ];
-
-    let lastErr: any = null;
     for (const base of bases) {
       for (const method of methods) {
         for (const b of bodies) {
           const path = `${base}/${id}`;
           try {
+            if (process.env.BLIKK_UPDATES_DISABLED === 'true') {
+              return { data: null, usedPath: `${path} (${method})`, sentBody: b, dryRun: true } as any;
+            }
             const data: any = await this.request(path, { method, body: JSON.stringify(b) });
             return { data, usedPath: `${path} (${method})`, sentBody: b };
           } catch (e) {
@@ -157,13 +315,38 @@ export class BlikkClient {
     throw lastErr || new Error('updateProjectStatus failed');
   }
 
-  // Update project status by numeric id (tries several body shapes)
+  // Update project status by numeric id (prefer PATCH; tries several body shapes)
   async updateProjectStatusById(id: number, statusId: number) {
     if (!Number.isFinite(id)) throw new Error('updateProjectStatusById: invalid id');
     if (!Number.isFinite(statusId)) throw new Error('updateProjectStatusById: invalid statusId');
     const envPath = process.env.BLIKK_PROJECTS_PATH || null;
     const enableLegacy = process.env.BLIKK_ENABLE_LEGACY_PROJECTS === '1';
     const bases = envPath ? [envPath] : enableLegacy ? ['/v1/Core/Projects', '/v1/Projects'] : ['/v1/Core/Projects'];
+    const forceMerge = process.env.BLIKK_FORCE_MERGE_PUT !== '0' && process.env.BLIKK_FORCE_MERGE_PUT !== 'false';
+    let lastErr: any = null;
+    if (forceMerge) {
+      const current: any = await this.getProjectById(id);
+      const baseObj: any = this.buildCanonicalProjectBody(current);
+      const mergeBodies = [
+        { ...baseObj, statusId },
+      ];
+      for (const base of bases) {
+        const path = `${base}/${id}`;
+        for (const b of mergeBodies) {
+          try {
+            if (process.env.BLIKK_UPDATES_DISABLED === 'true') {
+              return { data: null, usedPath: `${path} (PUT, merge)`, sentBody: b, dryRun: true } as any;
+            }
+            const data: any = await this.request(path, { method: 'PUT', body: JSON.stringify(b) });
+            return { data, usedPath: `${path} (PUT, merge)`, sentBody: b };
+          } catch (e) {
+            lastErr = e;
+          }
+        }
+      }
+      throw lastErr || new Error('updateProjectStatusById failed');
+    }
+    // Non-merge path (legacy, not default)
     const methods: Array<'PUT'> = ['PUT'];
     const bodies = [
       { statusId },
@@ -171,13 +354,14 @@ export class BlikkClient {
       { status: { id: statusId } },
       { state: { id: statusId } },
     ];
-
-    let lastErr: any = null;
     for (const base of bases) {
       for (const method of methods) {
         for (const b of bodies) {
           const path = `${base}/${id}`;
           try {
+            if (process.env.BLIKK_UPDATES_DISABLED === 'true') {
+              return { data: null, usedPath: `${path} (${method})`, sentBody: b, dryRun: true } as any;
+            }
             const data: any = await this.request(path, { method, body: JSON.stringify(b) });
             return { data, usedPath: `${path} (${method})`, sentBody: b };
           } catch (e) {
