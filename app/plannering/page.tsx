@@ -2331,13 +2331,13 @@ export default function PlanneringPage() {
     );
   }, [supabase]);
 
-  // Persist a sequential order (0..n-1) for the given segments using their current visual order
+  // Persist a sequential order (0..n-1) for the given segments.
+  // Force-write indices to avoid races with realtime patches overriding local state.
   const setSequentialSortForSegments = useCallback((orderedSegmentIds: string[]) => {
     orderedSegmentIds.forEach((id, idx) => {
-      const current = scheduledSegments.find(s => s.id === id)?.sortIndex ?? null;
-      if (current !== idx) updateSegmentSortIndex(id, idx);
+      updateSegmentSortIndex(id, idx);
     });
-  }, [scheduledSegments, updateSegmentSortIndex]);
+  }, [updateSegmentSortIndex]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { setOpenDepotMenuTruckId(null); } };
@@ -3173,6 +3173,14 @@ export default function PlanneringPage() {
           if (from !== -1 && to !== from) {
             const [moved] = ids.splice(from, 1);
             ids.splice(to, 0, moved);
+            // Set initial sortIndex on the newly created segment and reflect order locally for the whole group
+            const indexMap = new Map<string, number>();
+            ids.forEach((id, idx) => indexMap.set(id, idx));
+            newSeg.sortIndex = indexMap.get(newSeg.id) ?? to;
+            for (let i = 0; i < next.length; i++) {
+              const s = next[i];
+              if (indexMap.has(s.id)) next[i] = { ...s, sortIndex: indexMap.get(s.id)! } as any;
+            }
             setSequentialSortForSegments(ids);
           }
         }
@@ -3313,6 +3321,13 @@ export default function PlanneringPage() {
             } else {
               // If not found (e.g., changed truck), insert at target
               ids.splice(to, 0, segmentId);
+            }
+            // Reflect order locally for the whole group so the UI swaps instantly
+            const indexMap = new Map<string, number>();
+            ids.forEach((id, idx) => indexMap.set(id, idx));
+            for (let i = 0; i < next.length; i++) {
+              const s = next[i];
+              if (indexMap.has(s.id)) next[i] = { ...s, sortIndex: indexMap.get(s.id)! } as any;
             }
             setSequentialSortForSegments(ids);
           }
@@ -3553,10 +3568,22 @@ export default function PlanneringPage() {
                     {segEditor.truck && (() => {
                       const sameDay = itemsByDay.get(segEditor.startDay) || [];
                       const sameTruck = sameDay.filter(x => x.truck === segEditor.truck && x.spanStart);
-                      const currentIdx = segEditor.mode === 'edit' && segEditor.segmentId ? sameTruck.findIndex((x: any) => x.segmentId === segEditor.segmentId) : -1;
+                      // Sort same-truck start items by the same comparator used in calendars (sortIndex asc, then orderNumber/name)
+                      const sameTruckSorted = [...sameTruck].sort((a: any, b: any) => {
+                        const sa = scheduledSegments.find(s => s.id === a.segmentId)?.sortIndex ?? null;
+                        const sb = scheduledSegments.find(s => s.id === b.segmentId)?.sortIndex ?? null;
+                        if (sa != null && sb != null && sa !== sb) return sa - sb;
+                        if (sa != null && sb == null) return -1;
+                        if (sb != null && sa == null) return 1;
+                        const ao = a.project.orderNumber || '';
+                        const bo = b.project.orderNumber || '';
+                        if (ao && bo && ao !== bo) return ao.localeCompare(bo, 'sv');
+                        return a.project.name.localeCompare(b.project.name, 'sv');
+                      });
+                      const currentIdx = segEditor.mode === 'edit' && segEditor.segmentId ? sameTruckSorted.findIndex((x: any) => x.segmentId === segEditor.segmentId) : -1;
                       const maxPos = segEditor.mode === 'create'
-                        ? (Math.max(0, sameTruck.length) + 1) // include the new one
-                        : (currentIdx >= 0 ? Math.max(1, sameTruck.length) : Math.max(0, sameTruck.length) + 1);
+                        ? (Math.max(0, sameTruckSorted.length) + 1) // include the new one
+                        : (currentIdx >= 0 ? Math.max(1, sameTruckSorted.length) : Math.max(0, sameTruckSorted.length) + 1);
                       const val = segEditor.positionIndex ?? (currentIdx >= 0 ? (currentIdx + 1) : maxPos);
                       return (
                         <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>

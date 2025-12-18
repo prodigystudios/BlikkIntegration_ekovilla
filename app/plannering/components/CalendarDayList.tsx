@@ -348,6 +348,25 @@ export default function CalendarDayList(props: CalendarDayListProps) {
                           const highlight = calendarSearch && (it.project.name.toLowerCase().includes(searchVal) || (it.project.orderNumber || '').toLowerCase().includes(searchVal));
                           const isMid = (it as any).spanMiddle;
                           const isStart = (it as any).spanStart;
+                          // Compute visual order badge based on sortIndex for same truck/day (start items only)
+                          let orderBadge: string | null = null;
+                          if (!isDelivery && day && it.truck && isStart) {
+                            const sameTruckStart = list.filter((x: any) => x.truck === it.truck && (x as any).spanStart);
+                            const cmp = (a2: any, b2: any) => {
+                              const sa2 = scheduledSegments.find(s => s.id === a2.segmentId)?.sortIndex ?? null;
+                              const sb2 = scheduledSegments.find(s => s.id === b2.segmentId)?.sortIndex ?? null;
+                              if (sa2 != null && sb2 != null && sa2 !== sb2) return sa2 - sb2;
+                              if (sa2 != null && sb2 == null) return -1;
+                              if (sb2 != null && sa2 == null) return 1;
+                              const ao2 = a2.project.orderNumber || '';
+                              const bo2 = b2.project.orderNumber || '';
+                              if (ao2 && bo2 && ao2 !== bo2) return ao2.localeCompare(bo2, 'sv');
+                              return a2.project.name.localeCompare(b2.project.name, 'sv');
+                            };
+                            const sortedStart = [...sameTruckStart].sort(cmp);
+                            const pos = sortedStart.findIndex(x => x.segmentId === it.segmentId);
+                            if (pos >= 0) orderBadge = `${pos + 1}/${sortedStart.length}`;
+                          }
                           return (
                             <div
                               key={`${(it.segmentId || it.id || (it.project && it.project.id) || 'x')}:${it.day}`}
@@ -376,6 +395,11 @@ export default function CalendarDayList(props: CalendarDayListProps) {
                                 transition: 'border-color .15s, box-shadow .15s'
                               }}
                             >
+                              {orderBadge && (
+                                <span style={{ position: 'absolute', top: 4, right: 4, background: '#111827', color: '#fff', fontSize: 9, padding: '2px 6px', borderRadius: 8, border: '1px solid #334155' }} title="Placering i dag/lastbil">
+                                  {orderBadge}
+                                </span>
+                              )}
                               {hoveredSegmentId === it.segmentId && !highlight && !isDelivery && (
                                 <span style={{ position: 'absolute', top: -8, right: 4, background: '#6366f1', color: '#fff', fontSize: 9, padding: '2px 6px', borderRadius: 8, boxShadow: '0 2px 4px rgba(0,0,0,0.15)' }}>Redigera</span>
                               )}
@@ -428,6 +452,12 @@ export default function CalendarDayList(props: CalendarDayListProps) {
                                   <span>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 2px'}}>
                                       <span style={{ fontSize: 9, color: textColor, background: bg, padding: '4px 6px', borderRadius: 6, border: `1px solid ${border}` }}> {projectStatuses[it.project.id]}</span>
+                                      {!isDelivery && isStart && hasEgenkontroll(it.project.orderNumber) && (
+                                        <span title="Egenkontroll rapporterad" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 9, background: '#ecfdf5', color: '#047857', padding: '4px 6px', borderRadius: 6, border: '1px solid #6ee7b7' }}>
+                                          <span style={{ display: 'inline-grid', placeItems: 'center', width: 10, height: 10, borderRadius: 999, background: '#059669', color: '#fff', fontSize: 8, fontWeight: 800 }}>✓</span>
+                                          Egenkontroll
+                                        </span>
+                                      )}
                                     </div>
                                   </span>
                                 );
@@ -471,15 +501,7 @@ export default function CalendarDayList(props: CalendarDayListProps) {
                                   {renderCreatorAvatar(it.segmentId)}
                                 </span>
                               )}
-                              {!isDelivery && isStart && hasEgenkontroll(it.project.orderNumber) && (
-                                <span
-                                  aria-label="Egenkontroll rapporterad"
-                                  title="Egenkontroll rapporterad"
-                                  style={{ position: 'absolute', top: -6, right: -6, width: 12, height: 12, borderRadius: 999, background: '#059669', color: '#fff', border: '1px solid #047857', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, fontWeight: 800, boxShadow: '0 0 0 2px #fff, 0 1px 3px rgba(0,0,0,0.2)', zIndex: 3, pointerEvents: 'none' }}
-                                >
-                                  ✓
-                                </span>
-                              )}
+                              {/* Inline Egenkontroll indicator moved to title row above */}
                             </div>
                           );
                         })}
