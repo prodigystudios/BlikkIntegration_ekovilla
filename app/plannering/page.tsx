@@ -8,6 +8,7 @@ import TruckAssignmentsInline from './components/TruckAssignmentsInline';
 import { startOfMonth, endOfMonth, fmtDate, isoWeekNumber, isoWeekYear, isoWeekKey, startOfIsoWeek, endOfIsoWeek, mondayFromIsoWeekKey } from './_lib/date';
 import { deriveColors, creatorColor, creatorInitials } from './_lib/colors';
 import EmailSummaryPanel from './components/EmailSummaryPanel';
+import ActivityLogModal from './components/ActivityLogModal';
 import FiltersBar from './components/FiltersBar';
 import CalendarMonthGrid from './components/CalendarMonthGrid';
 import CalendarWeekdayLanes from './components/CalendarWeekdayLanes';
@@ -285,6 +286,7 @@ export default function PlanneringPage() {
   const [calendarSearch, setCalendarSearch] = useState('');
   const [jumpTargetDay, setJumpTargetDay] = useState<string | null>(null);
   const [matchIndex, setMatchIndex] = useState(-1);
+  const [showActivity, setShowActivity] = useState<boolean>(false);
 
   // Day notes state keyed by ISO date
   const [notesByDay, setNotesByDay] = useState<Map<string, DayNote>>(new Map());
@@ -321,6 +323,25 @@ export default function PlanneringPage() {
     fetchNotesForMonth();
     return () => { cancelled = true; };
   }, [monthOffset]);
+
+  // Compute current visible month range (ISO) for the activity panel
+  const currentMonthRange = useMemo(() => {
+    const d = new Date();
+    d.setDate(1);
+    d.setMonth(d.getMonth() + monthOffset);
+    const start = startOfMonth(d);
+    const end = endOfMonth(d);
+    return { startISO: fmtDate(start), endISO: fmtDate(end) };
+  }, [monthOffset]);
+
+  // Map projectId -> orderNumber for ActivityLog labels
+  const projectOrderMap = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const p of projects) {
+      if (p && p.id && p.orderNumber) out[p.id] = String(p.orderNumber);
+    }
+    return out;
+  }, [projects]);
 
   // Project lookup / backlog
   const [searchOrder, setSearchOrder] = useState('');
@@ -4357,6 +4378,16 @@ export default function PlanneringPage() {
             realtimePaused={realtimePaused}
             realtimeStatus={realtimeStatus}
           />
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <button
+              type="button"
+              className="btn--plain btn--sm"
+              onClick={() => setShowActivity(v => !v)}
+              style={{ border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 10px', fontSize: 12 }}
+            >{showActivity ? 'Dölj aktivitetslogg' : 'Visa aktivitetslogg'}</button>
+          </div>
+          {/* Modal for activity log */}
+          <ActivityLogModal open={showActivity} onClose={() => setShowActivity(false)} startISO={currentMonthRange.startISO} endISO={currentMonthRange.endISO} projectOrderMap={projectOrderMap} />
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', fontSize: 11, alignItems: 'stretch' }}>
             {trucks.map(tName => {
               const tRec = planningTrucks.find(pt => pt.name === tName);
