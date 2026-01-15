@@ -261,6 +261,12 @@ export default function HeaderMenu({ role, fullName }: { role: UserRole | null, 
               <IconDoc />
               <span>Dokument & Information</span>
             </Link>
+            <Link href="/nyheter" prefetch={false} onClick={() => setOpen(false)}
+              aria-current={pathname?.startsWith('/nyheter') ? 'page' : undefined}
+              className={`menu-link${pathname?.startsWith('/nyheter') ? ' is-active' : ''}`}>
+              <IconDoc />
+              <span>Nyheter</span>
+            </Link>
             <Link href="/bestallning-klader" prefetch={true} onClick={() => setOpen(false)}
               aria-current={pathname === '/bestallning-klader' ? 'page' : undefined}
               className={`menu-link${pathname === '/bestallning-klader' ? ' is-active' : ''}`}>

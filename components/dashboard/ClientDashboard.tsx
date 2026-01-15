@@ -9,6 +9,7 @@ import TimeReportModal from './TimeReportModal';
 import { useToast } from '@/lib/Toast';
 import type { UserRole } from '../../lib/roles';
 import { filterLinks, NAV_LINKS } from '../../lib/roles';
+import NewsModal, { type NewsItem } from './NewsModal';
 
 // Base mapping of NAV_LINKS (contains all). We'll adapt to QuickLink shape.
 const baseExtra: Record<string, Omit<QuickLink, 'href' | 'title'>> = {
@@ -90,6 +91,8 @@ const baseExtra: Record<string, Omit<QuickLink, 'href' | 'title'>> = {
 };
 // Dashboard main component (expects role only after cleanup of deprecated userQuickHrefs prop)
 export function ClientDashboard({ role }: { role: UserRole | null }) {
+  const NEWS_SEEN_KEY = 'dashboard.news.lastSeenId';
+
   // Responsive flags (client-only)
   const [isSmall, setIsSmall] = useState(false); // <= 640px
   const [isXS, setIsXS] = useState(false); // <= 420px
@@ -103,6 +106,41 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
     window.addEventListener('resize', calc);
     return () => window.removeEventListener('resize', calc);
   }, []);
+
+  // News modal (shown once per news item)
+  const [newsItem, setNewsItem] = useState<NewsItem | null>(null);
+  const [newsOpen, setNewsOpen] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const res = await fetch('/api/news/latest', { cache: 'no-store' });
+        if (!res.ok) return;
+        const j = await res.json();
+        const item = (j?.item || null) as NewsItem | null;
+        if (!alive || !item?.id) return;
+
+        let lastSeen: string | null = null;
+        try { lastSeen = localStorage.getItem(NEWS_SEEN_KEY); } catch { /* ignore */ }
+
+        setNewsItem(item);
+        if (!lastSeen || lastSeen !== item.id) {
+          setNewsOpen(true);
+        }
+      } catch {
+        // ignore
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  const closeNews = () => {
+    setNewsOpen(false);
+    if (newsItem?.id) {
+      try { localStorage.setItem(NEWS_SEEN_KEY, newsItem.id); } catch { /* ignore */ }
+    }
+  };
   const links: QuickLink[] = useMemo(() => {
     // Explicit role-based sets as requested
   if (role === 'member') {
@@ -161,6 +199,10 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
   const toast = useToast();
 
   return (
+    <>
+      {newsItem && (
+        <NewsModal open={newsOpen} item={newsItem} onClose={closeNews} />
+      )}
     <main
       className="dash-layout"
       style={{
@@ -303,6 +345,7 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
         }
       }} />
     </main>
+    </>
   );
 }
 
