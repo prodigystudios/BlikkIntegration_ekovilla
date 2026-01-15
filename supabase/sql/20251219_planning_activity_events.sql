@@ -109,6 +109,10 @@ begin
           or (old.depot_id   is distinct from new.depot_id)
           or (old.job_type   is distinct from new.job_type)
           or (old.sort_index is distinct from new.sort_index);
+    -- Skip logging if nothing actually changed and not moved
+    if changed = '{}'::jsonb and not moved then
+      return new;
+    end if;
     det := jsonb_build_object('changed', changed, 'context', jsonb_build_object(
       'truck_before', old.truck, 'truck_after', new.truck,
       'start_before', old.start_day, 'start_after', new.start_day,
@@ -147,6 +151,10 @@ begin
     entity_id := coalesce(new.project_id::text, old.project_id::text);
     proj_id := entity_id;
     changed := public.json_diff(to_jsonb(old) - 'updated_at', to_jsonb(new) - 'updated_at');
+    -- Skip logging if no actual diff
+    if changed = '{}'::jsonb then
+      return new;
+    end if;
     det := jsonb_build_object('changed', changed);
     perform public.log_planning_activity('meta_updated', 'project_meta', entity_id, proj_id, null, det);
     return new;
@@ -175,6 +183,7 @@ returns trigger language plpgsql as $$
 declare
   entity_id text;
   det jsonb;
+  changed jsonb;
 begin
   if tg_op = 'INSERT' then
     entity_id := new.id::text;
@@ -183,7 +192,12 @@ begin
     return new;
   elsif tg_op = 'UPDATE' then
     entity_id := coalesce(new.id::text, old.id::text);
-    det := jsonb_build_object('changed', public.json_diff(to_jsonb(old), to_jsonb(new)));
+    -- Compute diff and skip if empty
+    changed := public.json_diff(to_jsonb(old), to_jsonb(new));
+    if changed = '{}'::jsonb then
+      return new;
+    end if;
+    det := jsonb_build_object('changed', changed);
     perform public.log_planning_activity('assignment_updated', 'truck_assignment', entity_id, null, null, det);
     return new;
   elsif tg_op = 'DELETE' then

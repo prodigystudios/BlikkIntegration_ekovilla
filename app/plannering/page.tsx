@@ -2393,10 +2393,45 @@ export default function PlanneringPage() {
     // Keep the original span range but ensure the clicked day is within it
     if (day < src.startDay || day > src.endDay) return;
     const newSeg: ScheduledSegment = { id: genId(), projectId: src.projectId, startDay: src.startDay, endDay: src.endDay, depotId: src.depotId ?? null, sortIndex: null, truck: targetTruck };
-    setScheduledSegments(prev => [...prev, newSeg]);
+
+    // Assign a stable sequential sortIndex for the target truck on the segment's start day.
+    // This prevents duplicated segments from being created with sort_index NULL.
+    const group = [...scheduledSegments, newSeg]
+      .filter(s => s.startDay === newSeg.startDay && (((s as any).truck ?? (scheduleMeta[s.projectId]?.truck || null)) === targetTruck));
+    const cmp = (a: any, b: any) => {
+      const sa = (a.sortIndex ?? null) as number | null;
+      const sb = (b.sortIndex ?? null) as number | null;
+      if (sa != null && sb != null && sa !== sb) return sa - sb;
+      if (sa != null && sb == null) return -1;
+      if (sb != null && sa == null) return 1;
+      const pa = projects.find(p => p.id === a.projectId);
+      const pb = projects.find(p => p.id === b.projectId);
+      const ao = pa?.orderNumber || '';
+      const bo = pb?.orderNumber || '';
+      if (ao && bo && ao !== bo) return ao.localeCompare(bo, 'sv');
+      const an = pa?.name || '';
+      const bn = pb?.name || '';
+      if (an && bn && an !== bn) return an.localeCompare(bn, 'sv');
+      return String(a.id).localeCompare(String(b.id));
+    };
+    const ids = [...group].sort(cmp).map(s => s.id);
+    if (!ids.includes(newSeg.id)) ids.push(newSeg.id);
+    const indexMap = new Map<string, number>();
+    ids.forEach((id, idx) => indexMap.set(id, idx));
+    newSeg.sortIndex = indexMap.get(newSeg.id) ?? null;
+
+    setScheduledSegments(prev => {
+      const next = [...prev, newSeg];
+      for (let i = 0; i < next.length; i++) {
+        const s = next[i];
+        if (indexMap.has(s.id)) next[i] = { ...s, sortIndex: indexMap.get(s.id)! } as any;
+      }
+      return next;
+    });
+    setSequentialSortForSegments(ids);
     const project = projects.find(p => p.id === src.projectId);
     if (project) persistSegmentCreate(newSeg, project);
-  }, [scheduledSegments, projects, persistSegmentCreate]);
+  }, [scheduledSegments, projects, persistSegmentCreate, scheduleMeta, setSequentialSortForSegments]);
 
   // Explicit save workflow states
   const updateTruckTeamName = useCallback((truck: TruckRec, idx: 1 | 2, value: string) => {
@@ -3179,31 +3214,53 @@ export default function PlanneringPage() {
       const newSeg: ScheduledSegment = { id: genId(), projectId, startDay, endDay, depotId: depotId ?? undefined, truck: truck ?? null, jobType: jobType ?? null } as any;
       applyScheduledSegments(prev => {
         const next = [...prev, newSeg];
-        // If a truck and desired position provided, reorder within same truck/day
-        if (truck && positionIndex && positionIndex > 0) {
-          // Build list of start-day items for same group in visual order
-          const group = next
-            .filter(s => s.startDay === startDay && (((s as any).truck ?? (scheduleMeta[s.projectId]?.truck || null)) === truck))
-            .sort((a, b) => ((a.sortIndex ?? 1e9) - (b.sortIndex ?? 1e9)) || a.id.localeCompare(b.id));
-          // Ensure our new segment is present
-          const ids = group.map(g => g.id);
+        // Always ensure a stable sequential sortIndex (0..n-1) per startDay+truck.
+        // Previously we only persisted indices when the user moved position; if the default
+        // position was "end" (from===to), the new segment would keep sortIndex=null and not persist.
+        if (truck) {
+          const sameGroup = next
+            .filter(s => s.startDay === startDay && (((s as any).truck ?? (scheduleMeta[s.projectId]?.truck || null)) === truck));
+
+          const cmp = (a: any, b: any) => {
+            const sa = (a.sortIndex ?? null) as number | null;
+            const sb = (b.sortIndex ?? null) as number | null;
+            if (sa != null && sb != null && sa !== sb) return sa - sb;
+            if (sa != null && sb == null) return -1;
+            if (sb != null && sa == null) return 1;
+            const pa = projects.find(p => p.id === a.projectId);
+            const pb = projects.find(p => p.id === b.projectId);
+            const ao = pa?.orderNumber || '';
+            const bo = pb?.orderNumber || '';
+            if (ao && bo && ao !== bo) return ao.localeCompare(bo, 'sv');
+            const an = pa?.name || '';
+            const bn = pb?.name || '';
+            if (an && bn && an !== bn) return an.localeCompare(bn, 'sv');
+            return String(a.id).localeCompare(String(b.id));
+          };
+
+          const groupSorted = [...sameGroup].sort(cmp);
+          const ids = groupSorted.map(g => g.id);
           if (!ids.includes(newSeg.id)) ids.push(newSeg.id);
-          // Move to requested 1-based position (clamped)
-          const from = ids.indexOf(newSeg.id);
-          const to = Math.max(0, Math.min(ids.length - 1, positionIndex - 1));
-          if (from !== -1 && to !== from) {
-            const [moved] = ids.splice(from, 1);
-            ids.splice(to, 0, moved);
-            // Set initial sortIndex on the newly created segment and reflect order locally for the whole group
-            const indexMap = new Map<string, number>();
-            ids.forEach((id, idx) => indexMap.set(id, idx));
-            newSeg.sortIndex = indexMap.get(newSeg.id) ?? to;
-            for (let i = 0; i < next.length; i++) {
-              const s = next[i];
-              if (indexMap.has(s.id)) next[i] = { ...s, sortIndex: indexMap.get(s.id)! } as any;
+
+          // If a desired position is provided, place the new segment accordingly.
+          if (positionIndex && positionIndex > 0) {
+            const from = ids.indexOf(newSeg.id);
+            const to = Math.max(0, Math.min(ids.length - 1, positionIndex - 1));
+            if (from !== -1 && to !== from) {
+              const [moved] = ids.splice(from, 1);
+              ids.splice(to, 0, moved);
             }
-            setSequentialSortForSegments(ids);
           }
+
+          // Reflect order locally for the whole group and persist indices.
+          const indexMap = new Map<string, number>();
+          ids.forEach((id, idx) => indexMap.set(id, idx));
+          newSeg.sortIndex = indexMap.get(newSeg.id) ?? null;
+          for (let i = 0; i < next.length; i++) {
+            const s = next[i];
+            if (indexMap.has(s.id)) next[i] = { ...s, sortIndex: indexMap.get(s.id)! } as any;
+          }
+          setSequentialSortForSegments(ids);
         }
         return next;
       });
@@ -3413,6 +3470,10 @@ export default function PlanneringPage() {
     // If dragging a segment vs a backlog project
     const seg = scheduledSegments.find(s => s.id === id);
     if (seg) {
+      const resolveTruck = (s: any) => (s?.truck ?? (scheduleMeta[s.projectId]?.truck || null)) as string | null;
+      const oldStartDay = seg.startDay;
+      const oldTruck = resolveTruck(seg);
+
       // inclusive length
       const startOld = new Date(seg.startDay + 'T00:00:00');
       const endOld = new Date(seg.endDay + 'T00:00:00');
@@ -3422,13 +3483,74 @@ export default function PlanneringPage() {
       const newEndDate = new Date(newStartDate);
       newEndDate.setDate(newEndDate.getDate() + (lengthDays - 1));
       const newEndStr = fmtDate(newEndDate);
+
+      const newTruck = laneTruck !== undefined ? (laneTruck || null) : resolveTruck(seg);
+
       // Guard: never allow end < start
       if (newEndDate < newStartDate) {
         console.warn('[DragMove] corrected inverted range', { seg, newStartStr, attemptedEnd: newEndStr });
         newEndDate.setTime(newStartDate.getTime());
       }
       console.debug('[DragMove] segment', { id: seg.id, oldStart: seg.startDay, oldEnd: seg.endDay, newStart: newStartStr, newEnd: newEndStr, lengthDays });
-      applyScheduledSegments(prev => prev.map(s => s.id === id ? { ...s, startDay: newStartStr, endDay: newEndStr } : s));
+
+      const cmp = (a: any, b: any) => {
+        const sa = (a.sortIndex ?? null) as number | null;
+        const sb = (b.sortIndex ?? null) as number | null;
+        if (sa != null && sb != null && sa !== sb) return sa - sb;
+        if (sa != null && sb == null) return -1;
+        if (sb != null && sa == null) return 1;
+        const pa = projects.find(p => p.id === a.projectId);
+        const pb = projects.find(p => p.id === b.projectId);
+        const ao = pa?.orderNumber || '';
+        const bo = pb?.orderNumber || '';
+        if (ao && bo && ao !== bo) return ao.localeCompare(bo, 'sv');
+        const an = pa?.name || '';
+        const bn = pb?.name || '';
+        if (an && bn && an !== bn) return an.localeCompare(bn, 'sv');
+        return String(a.id).localeCompare(String(b.id));
+      };
+
+      const nextSegments = scheduledSegments.map(s => {
+        if (s.id !== id) return s;
+        const next: any = { ...s, startDay: newStartStr, endDay: newEndStr, truck: newTruck };
+        // If moving to unassigned, clear sort index to avoid stale ordering.
+        if (!newTruck) next.sortIndex = null;
+        return next as ScheduledSegment;
+      });
+
+      // Update local state + persist start/end/truck change.
+      applyScheduledSegments(() => nextSegments);
+      // Ensure we persist truck changes too (applyScheduledSegments only diffs dates).
+      setTimeout(() => {
+        try {
+          const updated = nextSegments.find(s => s.id === id);
+          if (updated) persistSegmentUpdate(updated);
+        } catch { /* ignore */ }
+      }, 0);
+
+      // Re-sequence indices for affected groups (old group and new group).
+      // Default behavior: when moving into a group, append to the end.
+      const resequenceGroup = (startDay: string, truck: string, appendSegmentId?: string) => {
+        const group = nextSegments
+          .filter(s => s.startDay === startDay && (resolveTruck(s as any) || null) === truck);
+        let ordered = [...group].sort(cmp).map(s => s.id);
+        if (appendSegmentId) {
+          ordered = ordered.filter(x => x !== appendSegmentId);
+          ordered.push(appendSegmentId);
+        }
+        // De-dup and persist sequential indices
+        const seen = new Set<string>();
+        const ids = ordered.filter(x => { if (seen.has(x)) return false; seen.add(x); return true; });
+        if (ids.length > 0) setSequentialSortForSegments(ids);
+      };
+
+      if (oldTruck) resequenceGroup(oldStartDay, oldTruck, undefined);
+      if (newTruck) resequenceGroup(newStartStr, newTruck, id);
+      if (!newTruck) {
+        // Persist clearing sort_index when unassigned
+        updateSegmentSortIndex(id, null);
+      }
+
       // Auto navigate month if moved to different month than currently shown
       const targetDate = newStartDate;
       const base = new Date(); base.setDate(1);
