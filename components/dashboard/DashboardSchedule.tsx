@@ -36,6 +36,9 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
   const [detailData, setDetailData] = useState<any | null>(null);
   const [detailBase, setDetailBase] = useState<any | null>(null);
   const [reportDraft, setReportDraft] = useState<{ day: string; amount: string }>({ day: '', amount: '' });
+  const [commentDraft, setCommentDraft] = useState<string>('');
+  const [reportError, setReportError] = useState<string | null>(null);
+  const [reportSending, setReportSending] = useState(false);
   // Shared project comments hook
   const { comments, loading: commentsLoading, error: commentsError, refresh: refreshComments } = useProjectComments(detailBase?.project_id ? String(detailBase.project_id) : null, { ttlMs: 120_000 });
 
@@ -49,6 +52,7 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
     setDetailBase(it);
     setDetailError(null);
     setDetailData(null);
+    setReportError(null);
     // Default report draft: clamp to job range if possible
     try {
   const s = (it.job_day as string) || (it.start_day as string) || null;
@@ -57,6 +61,7 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
       const def = s && e && s <= today && today <= e ? today : (s || today);
       setReportDraft({ day: def, amount: '' });
     } catch { setReportDraft({ day: '', amount: '' }); }
+    setCommentDraft('');
     // Load reports for this segment lazily if not present
     if (it.segment_id) {
       try {
@@ -262,58 +267,103 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
   }, [segmentReportsMap]);
 
   const addPartialReport = useCallback(async () => {
+    if (reportSending) return;
     const segId = detailBase?.segment_id as string | undefined;
-    if (!segId) return;
+    const projectId = String(detailBase?.project_id || '').trim();
+    const day = (reportDraft.day || '').trim();
     const amount = parseInt(reportDraft.amount, 10);
-    const day = reportDraft.day;
-    if (!Number.isFinite(amount) || amount <= 0 || !day) return;
-    const payload: any = {
-      segment_id: segId,
-      project_id: String(detailBase?.project_id || ''),
-      report_day: day,
-      amount,
-      created_by: currentUserId,
-      created_by_name: currentUserName || null
-    };
-    const { data, error } = await supabase.from('planning_segment_reports').insert(payload).select('*').single();
-    if (!error) {
-      setReportDraft(d => ({ ...d, amount: '' }));
-      // Also withdraw from correct depot with idempotency key based on this partial report
-      try {
-        const jt = String(detailBase?.job_type || '').toLowerCase();
-        const materialKind = jt.startsWith('vit') ? 'Vitull' : (jt.startsWith('eko') ? 'Ekovilla' : undefined);
-        const resp = await fetch('/api/planning/consume-bags', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            projectId: String(detailBase?.project_id || ''),
-            installationDate: day,
-            totalBags: amount,
-            segmentId: segId,
-            reportKey: data?.id ? `partial:${data.id}` : undefined,
-            materialKind,
-          })
-        });
-        try { const j = await resp.json(); console.log('[consume-bags dashboard]', j); } catch {}
-        // Post a short comment to Blikk project (single-line to avoid UI truncation)
+    const hasAmount = Number.isFinite(amount) && amount > 0;
+    const commentOneLine = String(commentDraft || '').replace(/\s+/g, ' ').trim();
+    const hasComment = commentOneLine.length > 0;
+
+    setReportError(null);
+    if (!projectId) {
+      setReportError('Saknar projekt-id.');
+      return;
+    }
+    if (hasAmount && !segId) {
+      setReportError('Saknar segment-id: kan inte rapportera säckar här.');
+      return;
+    }
+    if (!day) {
+      setReportError('Välj ett datum.');
+      return;
+    }
+    if (hasAmount && !hasComment) {
+      setReportError('Kommentar krävs när du rapporterar säckar. EG: "Yta Isolerad".');
+      return;
+    }
+    if (!hasAmount && !hasComment) {
+      setReportError('Skriv en kommentar eller ange antal säckar.');
+      return;
+    }
+
+    setReportSending(true);
+    try {
+      let insertedReportId: string | null = null;
+
+      if (hasAmount) {
+        const payload: any = {
+          segment_id: segId,
+          project_id: projectId,
+          report_day: day,
+          amount,
+          created_by: currentUserId,
+          created_by_name: currentUserName || null
+        };
+        const { data, error } = await supabase.from('planning_segment_reports').insert(payload).select('*').single();
+        if (error) throw error;
+        insertedReportId = data?.id ? String(data.id) : null;
+
+        // Also withdraw from correct depot with idempotency key based on this partial report
         try {
-          const parts = [
-            `DELRAPPORTERERING`,
-            `Säckar blåsta: ${amount}`,
-            `Datum: ${day}`,
-            ...(currentUserName ? [`Av: ${currentUserName}`] : []),
-          ];
-          const commentText = parts.join(' — ');
-          const resp2 = await fetch('/api/blikk/project/comment', {
+          const jt = String(detailBase?.job_type || '').toLowerCase();
+          const materialKind = jt.startsWith('vit') ? 'Vitull' : (jt.startsWith('eko') ? 'Ekovilla' : undefined);
+          const resp = await fetch('/api/planning/consume-bags', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ projectId: String(detailBase?.project_id || ''), text: commentText })
+            body: JSON.stringify({
+              projectId,
+              installationDate: day,
+              totalBags: amount,
+              segmentId: segId,
+              reportKey: insertedReportId ? `partial:${insertedReportId}` : undefined,
+              materialKind,
+            })
           });
-          try { const j2 = await resp2.json(); console.log('[blikk comment dashboard]', j2); } catch {}
+          try { const j = await resp.json(); console.log('[consume-bags dashboard]', j); } catch {}
         } catch {}
+      }
+
+      // Post a short comment to Blikk project timeline (single-line to avoid UI truncation)
+      try {
+        const parts = [
+          `DELRAPPORTERERING`,
+          ...(hasAmount ? [`Säckar blåsta: ${amount}`] : []),
+          `Datum: ${day}`,
+          ...(currentUserName ? [`Av: ${currentUserName}`] : []),
+          ...(hasComment ? [`Kommentar: ${commentOneLine}`] : []),
+        ];
+        const commentText = parts.join(' — ');
+        const resp2 = await fetch('/api/blikk/project/comment', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId, text: commentText })
+        });
+        try { const j2 = await resp2.json(); console.log('[blikk comment dashboard]', j2); } catch {}
       } catch {}
+
+      // Reset inputs and refresh comments panel
+      setReportDraft(d => ({ ...d, amount: '' }));
+      setCommentDraft('');
+      try { refreshComments(true); } catch {}
+    } catch (e: any) {
+      console.warn('[dashboard schedule] addPartialReport failed', e);
+      setReportError('Kunde inte skicka rapport. Försök igen.');
+    } finally {
+      setReportSending(false);
     }
-  }, [detailBase?.segment_id, detailBase?.job_type, detailBase?.project_id, reportDraft.amount, reportDraft.day, supabase, currentUserId, currentUserName]);
+  }, [reportSending, detailBase?.segment_id, detailBase?.job_type, detailBase?.project_id, reportDraft.amount, reportDraft.day, commentDraft, supabase, currentUserId, currentUserName, refreshComments]);
 
   const deletePartialReport = useCallback(async (id: string) => {
     await supabase.from('planning_segment_reports').delete().eq('id', id);
@@ -716,21 +766,31 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                     <div style={{ height:1, background:'#e5e7eb', flex:1 }} />
                     {segId && <span style={{ fontSize:11, color:'#64748b' }}>Totalt: {reportedTotal} säckar</span>}
                   </div>
-                  {!segId && <div style={{ fontSize:12, color:'#64748b' }}>Denna post saknar segment-id och kan inte rapporteras här.</div>}
-                  {segId && (
+                  {!detailBase?.project_id && <div style={{ fontSize:12, color:'#64748b' }}>Denna post saknar projekt-id och kan inte rapporteras här.</div>}
+                  {detailBase?.project_id && (
                     <>
+                      {!segId && <div style={{ fontSize:12, color:'#64748b' }}>Denna post saknar segment-id (kan inte rapportera säckar), men du kan skicka en kommentar.</div>}
                       <div style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' }}>
                         <label style={{ display:'grid', gap:4, fontSize:12 }}>
                           <span>Dag</span>
                           <input type="date" value={reportDraft.day} onChange={e => setReportDraft(d => ({ ...d, day: e.target.value }))} style={{ padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }} />
                         </label>
-                        <label style={{ display:'grid', gap:4, fontSize:12 }}>
-                          <span>Antal säckar</span>
-                          <input type="number" min={1} value={reportDraft.amount} onChange={e => setReportDraft(d => ({ ...d, amount: e.target.value }))} placeholder="t.ex. 8" style={{ padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }} />
+                        {segId && (
+                          <label style={{ display:'grid', gap:4, fontSize:12 }}>
+                            <span>Antal säckar</span>
+                            <input type="number" min={1} value={reportDraft.amount} onChange={e => setReportDraft(d => ({ ...d, amount: e.target.value }))} placeholder="t.ex. 8" style={{ padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }} />
+                          </label>
+                        )}
+                        <label style={{ display:'grid', gap:4, fontSize:12, flex:'1 1 260px' }}>
+                          <span>Kommentar</span>
+                          <textarea value={commentDraft} onChange={e => setCommentDraft(e.target.value)} placeholder="t.ex. 25 kvm klart / kunde inte utföra p.g.a. ..." rows={2} style={{ padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8, resize:'vertical' }} />
                         </label>
-                        <button type="button" onClick={addPartialReport} className="btn--plain btn--sm" style={{ alignSelf:'end', height:34, padding:'6px 12px', border:'1px solid #16a34a', background:'#16a34a', color:'#fff', borderRadius:8 }}>Lägg till</button>
+                        <button type="button" onClick={addPartialReport} disabled={reportSending} className="btn--plain btn--sm" style={{ alignSelf:'end', height:34, padding:'6px 12px', border:'1px solid #16a34a', background: reportSending ? '#86efac' : '#16a34a', color:'#fff', borderRadius:8 }}>
+                          {reportSending ? 'Skickar…' : 'Skicka'}
+                        </button>
                       </div>
-                      {segReports.length > 0 ? (
+                      {reportError && <div style={{ fontSize:12, color:'#b91c1c', background:'#fef2f2', border:'1px solid #fecaca', padding:'6px 8px', borderRadius:8 }}>{reportError}</div>}
+                      {segId && segReports.length > 0 ? (
                         <div style={{ display:'grid', gap:6 }}>
                           {segReports.map(r => (
                             <div key={r.id} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', border:'1px solid #e5e7eb', background:'#fff', borderRadius:8, padding:'6px 8px' }}>
@@ -743,9 +803,9 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                             </div>
                           ))}
                         </div>
-                      ) : (
+                      ) : segId ? (
                         <div style={{ fontSize:12, color:'#64748b' }}>Inga delrapporter ännu.</div>
-                      )}
+                      ) : null}
                     </>
                   )}
                 </div>
