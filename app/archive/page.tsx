@@ -10,7 +10,13 @@ async function fetchFiles(search: string) {
   const base = host ? `${proto}://${host}` : '';
   const qs = search ? (search.startsWith('?') ? search : `?${search}`) : '';
   const url = base ? `${base}/api/storage/list-all${qs}` : `/api/storage/list-all${qs}`;
-  const res = await fetch(url, { cache: 'no-store', next: { tags: ['archive-list'] } });
+  // IMPORTANT: Forward cookies so authenticated middleware + Supabase session works on internal fetch.
+  const cookie = h.get('cookie') || '';
+  const res = await fetch(url, {
+    cache: 'no-store',
+    next: { tags: ['archive-list'] },
+    headers: cookie ? { cookie } : undefined,
+  });
   if (!res.ok) {
     try { const j = await res.json(); throw new Error(j?.error || 'Failed'); } catch { throw new Error('Failed to load'); }
   }
