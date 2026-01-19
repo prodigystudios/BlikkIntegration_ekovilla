@@ -11,7 +11,12 @@ async function getContacts(): Promise<ContactsPayload> {
   const host = h.get('x-forwarded-host') || h.get('host') || 'localhost:3000';
   const proto = h.get('x-forwarded-proto') || (host.startsWith('localhost') ? 'http' : 'https');
   const url = `${proto}://${host}/api/contacts`;
-  const res = await fetch(url, { cache: 'no-store' });
+  // IMPORTANT: Forward cookies so authenticated middleware + Supabase session works on internal fetch.
+  const cookie = h.get('cookie') || '';
+  const res = await fetch(url, {
+    cache: 'no-store',
+    headers: cookie ? { cookie } : undefined,
+  });
   if (!res.ok) throw new Error('Failed to load contacts');
   return res.json();
 }
