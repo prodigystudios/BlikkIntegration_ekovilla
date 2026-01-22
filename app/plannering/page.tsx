@@ -5224,6 +5224,7 @@ export default function PlanneringPage() {
               truckTeamNames={truckTeamNames}
               jobTypeColors={jobTypeColors}
               projectAddresses={projectAddresses}
+              projectStatuses={projectStatuses}
               projectStatusColors={projectStatusColors as any}
               segmentCrew={segmentCrew}
               remainingBagsByProject={remainingBagsByProject}
