@@ -13,7 +13,29 @@
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'user_role') THEN
-    CREATE TYPE user_role AS ENUM ('member','sales','admin');
+    CREATE TYPE public.user_role AS ENUM ('member','sales','admin','konsult');
+  ELSE
+    -- If the legacy value exists, rename it.
+    IF EXISTS (
+      SELECT 1
+      FROM pg_type t
+      JOIN pg_enum e ON e.enumtypid = t.oid
+      WHERE t.typname = 'user_role' AND e.enumlabel = 'readonly'
+    ) THEN
+      BEGIN
+        ALTER TYPE public.user_role RENAME VALUE 'readonly' TO 'konsult';
+      EXCEPTION
+        WHEN undefined_object THEN NULL;
+        WHEN duplicate_object THEN NULL;
+      END;
+    END IF;
+
+    -- Ensure 'konsult' exists (no-op if already present)
+    BEGIN
+      ALTER TYPE public.user_role ADD VALUE IF NOT EXISTS 'konsult';
+    EXCEPTION
+      WHEN duplicate_object THEN NULL;
+    END;
   END IF;
 END$$;
 

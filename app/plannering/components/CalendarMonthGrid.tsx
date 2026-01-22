@@ -9,6 +9,7 @@ import DayNoteEditor from './DayNoteEditor';
 type TruckDisplay = { bg: string; border: string; text: string };
 
 export interface CalendarMonthGridProps {
+  readOnly?: boolean;
   weeks: Array<Array<{ date: string | null; inMonth: boolean }>>;
   visibleDayNames: string[];
   hideWeekends: boolean;
@@ -52,6 +53,7 @@ export interface CalendarMonthGridProps {
 export default function CalendarMonthGrid(props: CalendarMonthGridProps) {
   const { resolveCrew } = useTruckAssignments();
   const {
+    readOnly,
     weeks,
     visibleDayNames,
     hideWeekends,
@@ -172,9 +174,9 @@ export default function CalendarMonthGrid(props: CalendarMonthGridProps) {
               return (
                 <div key={day}
                   id={`calday-${day}`}
-                  onClick={() => scheduleSelectedOnDay(day)}
-                  onDragOver={allowDrop}
-                  onDrop={e => onDropDay(e, day)}
+                  onClick={() => { if (!readOnly) scheduleSelectedOnDay(day); }}
+                  onDragOver={readOnly ? undefined : allowDrop}
+                  onDrop={readOnly ? undefined : (e => onDropDay(e, day))}
                   style={{ border: isJumpHighlight ? '2px solid #f59e0b' : (selectedProjectId ? '2px dashed #fbbf24' : (isToday ? '2px solid #60a5fa' : '1px solid rgba(148,163,184,0.4)')), boxShadow: isJumpHighlight ? '0 0 0 4px rgba(245,158,11,0.35)' : (isToday ? '0 0 0 3px rgba(59,130,246,0.25)' : '0 1px 2px rgba(0,0,0,0.05)'), transition: 'box-shadow 0.3s,border 0.3s', borderRadius: 10, padding: 8, minHeight: 160, background: holidayCell ? '#fffbeb' : (weekendCell ? '#fff1f2' : '#ffffff'), display: 'flex', flexDirection: 'column', gap: 8, position: 'relative', cursor: selectedProjectId ? 'copy' : 'default' }}>
                   <DayNoteEditor
                     day={day}
@@ -182,6 +184,7 @@ export default function CalendarMonthGrid(props: CalendarMonthGridProps) {
                     currentUserId={currentUserId}
                     currentUserName={currentUserName}
                     onSaved={(n) => onNoteChange?.(day, n)}
+                    readOnly={readOnly}
                   />
                   <div style={{ fontSize: 12, fontWeight: 600, display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: '#111827' }}>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
@@ -247,13 +250,13 @@ export default function CalendarMonthGrid(props: CalendarMonthGridProps) {
                       return (
                         <div
                           key={`${(it.segmentId || it.id || (it.project && it.project.id) || 'x')}:${it.day}`}
-                          draggable={!isDelivery}
-                          onDragStart={e => onDragStart(e, it.segmentId)}
-                          onDragEnd={onDragEnd}
+                          draggable={!readOnly && !isDelivery}
+                          onDragStart={readOnly ? undefined : (e => onDragStart(e, it.segmentId))}
+                          onDragEnd={readOnly ? undefined : onDragEnd}
                           onDoubleClick={() => openSegmentEditorForExisting(it.segmentId)}
                           onMouseEnter={() => setHoveredSegmentId(it.segmentId)}
                           onMouseLeave={() => setHoveredSegmentId(hoveredSegmentId === it.segmentId ? null : hoveredSegmentId)}
-                          title="Dubbelklicka för att redigera"
+                          title={readOnly ? 'Dubbelklicka för att visa' : 'Dubbelklicka för att redigera'}
                           style={{
                             position: 'relative',
                             border: `1px solid ${highlight ? '#f59e0b' : (hoveredSegmentId === it.segmentId ? '#6366f1' : cardBorder)}`,
@@ -262,7 +265,7 @@ export default function CalendarMonthGrid(props: CalendarMonthGridProps) {
                             padding: 5,
                             fontSize: 11,
                             lineHeight: 1.15,
-                            cursor: isDelivery ? 'default' : 'grab',
+                            cursor: (readOnly || isDelivery) ? 'default' : 'grab',
                             display: 'grid',
                             gap: 4,
                             opacity: isMid ? 0.95 : 1,
@@ -277,7 +280,7 @@ export default function CalendarMonthGrid(props: CalendarMonthGridProps) {
                               {orderBadge}
                             </span>
                           )}
-                          {hoveredSegmentId === it.segmentId && !highlight && !isDelivery && (
+                          {hoveredSegmentId === it.segmentId && !readOnly && !highlight && !isDelivery && (
                             <span style={{ position: 'absolute', top: -8, right: 4, background: '#6366f1', color: '#fff', fontSize: 9, padding: '2px 6px', borderRadius: 8, boxShadow: '0 2px 4px rgba(0,0,0,0.15)' }}>Redigera</span>
                           )}
                           {/* Inline Egenkontroll indicator moved next to title below */}

@@ -1,5 +1,17 @@
 import { NextResponse } from 'next/server';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
+import { cookies } from 'next/headers';
+import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+
+async function forbidIfReadonly() {
+  const supabase = createRouteHandlerClient({ cookies });
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  const { data: prof } = await supabase.from('profiles').select('role').eq('id', user.id).maybeSingle();
+  const role = (prof as any)?.role as string | null | undefined;
+  if (role === 'konsult' || role === 'readonly') return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+  return null;
+}
 
 type NoteRow = {
   id: string;
@@ -40,6 +52,8 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    const forbidden = await forbidIfReadonly();
+    if (forbidden) return forbidden;
     const supabase = getSupabaseAdmin();
     const body = await request.json();
     const { note_day, text, created_by, created_by_name, id } = body ?? {};
@@ -74,6 +88,8 @@ export async function POST(request: Request) {
 
 export async function DELETE(request: Request) {
   try {
+    const forbidden = await forbidIfReadonly();
+    if (forbidden) return forbidden;
     const { searchParams } = new URL(request.url);
     const id = searchParams.get('id');
     const note_day = searchParams.get('note_day');

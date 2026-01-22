@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
+import { cookies } from 'next/headers';
+import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 
 type Body = {
   projectId: string;
@@ -13,6 +15,16 @@ type Body = {
 
 export async function POST(req: NextRequest) {
   try {
+    // This route uses service role, so enforce role-based authorization explicitly.
+    const authClient = createRouteHandlerClient({ cookies });
+    const { data: { user } } = await authClient.auth.getUser();
+    if (!user) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
+    const { data: prof } = await authClient.from('profiles').select('role').eq('id', user.id).maybeSingle();
+    const role = (prof as any)?.role as string | null | undefined;
+    if (role === 'konsult' || role === 'readonly') {
+      return NextResponse.json({ ok: false, error: 'forbidden' }, { status: 403 });
+    }
+
     const json = (await req.json()) as Body;
     const projectId = String(json.projectId || '').trim();
     const totalBags = Number(json.totalBags);

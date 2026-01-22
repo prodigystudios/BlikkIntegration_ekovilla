@@ -22,7 +22,7 @@ export default function AdminUsers() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
-  const [role, setRole] = useState<'member' | 'sales' | 'admin'>('member');
+  const [role, setRole] = useState<'member' | 'sales' | 'admin' | 'konsult'>('member');
   const [creating, setCreating] = useState(false);
 
   useEffect(() => {
@@ -77,6 +77,7 @@ export default function AdminUsers() {
             <select value={role} onChange={e => setRole(e.target.value as any)} style={{ ...fieldStyle, marginTop: 4 }}>
               <option value="member">Member</option>
               <option value="sales">Sales</option>
+              <option value="konsult">Konsult</option>
               <option value="admin">Admin</option>
             </select>
           </label>
@@ -202,6 +203,7 @@ function UserRow({ user, onChanged, onDeleted }: { user: AdminUserRow; onChanged
         <select value={roleDraft} onChange={e=>setRoleDraft(e.target.value)} onBlur={saveChanges} style={{ ...fieldStyle, padding: '4px 6px', fontSize: 13 }}>
           <option value="member">member</option>
             <option value="sales">sales</option>
+            <option value="konsult">konsult</option>
             <option value="admin">admin</option>
         </select>
       </td>

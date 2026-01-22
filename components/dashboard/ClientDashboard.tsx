@@ -93,6 +93,9 @@ const baseExtra: Record<string, Omit<QuickLink, 'href' | 'title'>> = {
 export function ClientDashboard({ role }: { role: UserRole | null }) {
   const NEWS_SEEN_KEY = 'dashboard.news.lastSeenId';
 
+  // konsult should have the same viewing permissions as sales.
+  const effectiveRole: UserRole | null = role === 'konsult' ? 'sales' : role;
+
   // Responsive flags (client-only)
   const [isSmall, setIsSmall] = useState(false); // <= 640px
   const [isXS, setIsXS] = useState(false); // <= 420px
@@ -143,7 +146,7 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
   };
   const links: QuickLink[] = useMemo(() => {
     // Explicit role-based sets as requested
-  if (role === 'member') {
+    if (effectiveRole === 'member') {
       return [
         { href: '/egenkontroll', title: 'Skapa egenkontroll', ...baseExtra['/egenkontroll'] },
         { href: '/bestallning-klader', title: 'Beställ kläder & annat', ...baseExtra['/bestallning-klader'] },
@@ -152,7 +155,7 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
         { href: '/dokument-information', title: 'Dokument & information', ...baseExtra['/dokument-information'] },
       ];
     }
-    if (role === 'sales') {
+    if (effectiveRole === 'sales') {
       return [
         { href: '/archive', title: 'Egenkontroll arkiv', ...baseExtra['/archive'] },
         { href: '/korjournal', title: 'Körjournal', ...baseExtra['/korjournal'] },
@@ -160,7 +163,7 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
         { href: '/kontakt-lista', title: 'Kontakt', ...baseExtra['/kontakt-lista'] },
       ];
     }
-    if (role === 'admin') {
+    if (effectiveRole === 'admin') {
       return [
         { href: '/egenkontroll', title: 'Ny egenkontroll', ...baseExtra['/egenkontroll'] },
         { href: '/archive', title: 'Egenkontroll arkiv', ...baseExtra['/archive'] },
@@ -175,7 +178,7 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
     return [
       { href: '/egenkontroll', title: 'Egenkontroll', ...baseExtra['/egenkontroll'] },
     ];
-  }, [role]);
+  }, [effectiveRole]);
   const [mini, setMini] = useState(false);
   const [timeModalOpen, setTimeModalOpen] = useState(false);
   const [timePrefill, setTimePrefill] = useState<{ project?: string; projectId?: string; date?: string } | null>(null);
@@ -298,7 +301,7 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
         </section>
 
         {/* Admin-only: Work schedule for current/next week */}
-        {role !== 'sales' && (
+        {effectiveRole !== 'sales' && (
           <div style={{ order: isSmall ? -2 as any : 0 }}>
             <DashboardSchedule compact={isSmall || mini} onReportTime={(info: { projectId?: string; projectName?: string; orderNumber?: string; day?: string }) => {
               const label = info.orderNumber ? `#${info.orderNumber}` : (info.projectName || info.projectId || '');

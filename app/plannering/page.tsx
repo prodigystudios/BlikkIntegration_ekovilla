@@ -372,6 +372,7 @@ export default function PlanneringPage() {
       .map(t => t.name);
   }, [planningTrucks]);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [isReadOnly, setIsReadOnly] = useState(false);
   const [newTruckName, setNewTruckName] = useState('');
   const [newTruckDepotId, setNewTruckDepotId] = useState<string>('');
   const [isCreatingTruck, setIsCreatingTruck] = useState(false);
@@ -1348,7 +1349,9 @@ export default function PlanneringPage() {
             if ((profile as any).full_name) {
               resolvedName = (profile as any).full_name as string;
             }
-            if ((profile as any).role === 'admin') setIsAdmin(true);
+            const role = (profile as any).role as string | null | undefined;
+            if (role === 'admin') setIsAdmin(true);
+            if (role === 'konsult' || role === 'readonly') setIsReadOnly(true);
           }
           if (!resolvedName) {
             const meta: any = user.user_metadata || {};
@@ -3144,13 +3147,22 @@ export default function PlanneringPage() {
   const searchedProjects = useMemo(() => recentSearchedIds.map(id => projects.find(p => p.id === id)).filter(Boolean) as Project[], [recentSearchedIds, projects]);
 
   // DnD handlers
-  function onDragStart(e: React.DragEvent, id: string) { e.dataTransfer.setData('text/plain', id); setDraggingId(id); e.dataTransfer.effectAllowed = 'move'; }
+  function onDragStart(e: React.DragEvent, id: string) {
+    if (isReadOnly) { e.preventDefault(); return; }
+    e.dataTransfer.setData('text/plain', id);
+    setDraggingId(id);
+    e.dataTransfer.effectAllowed = 'move';
+  }
   function onDragEnd() { setDraggingId(null); }
   function allowDrop(e: React.DragEvent) { e.preventDefault(); }
   // Small helpers for Segment Editor
   const genId = () => (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? (crypto as any).randomUUID() : Math.random().toString(36).slice(2));
   const addDaysLocal = (iso: string, n: number) => { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + n); return fmtDate(d); };
   function openSegmentEditorForNew(projectId: string, day: string, overrideTruck?: string | null) {
+    if (isReadOnly) {
+      try { toast.info('Läs-läge: du kan inte planera eller flytta jobb.'); } catch {}
+      return;
+    }
     const meta = scheduleMeta[projectId] || { projectId } as ProjectScheduleMeta;
     const assumedTruck = overrideTruck !== undefined ? (overrideTruck || null) : (meta.truck ?? null);
     let positionIndex: number | null = null;
@@ -3207,6 +3219,10 @@ export default function PlanneringPage() {
   }, [supabase]);
   function saveSegmentEditor() {
     if (!segEditor) return;
+    if (isReadOnly) {
+      try { toast.error('Läs-läge: du kan inte spara ändringar.'); } catch {}
+      return;
+    }
     const { mode, projectId, segmentId, startDay, endDay, truck, bagCount, jobType, depotId, positionIndex } = segEditor;
     // Update only project-scoped meta (truck and jobType are per-segment)
     updateMeta(projectId, { bagCount });
@@ -3465,6 +3481,7 @@ export default function PlanneringPage() {
   // Drag & drop into a calendar day (optionally within a truck lane in day-list view)
   function onDropDay(e: React.DragEvent, day: string, laneTruck?: string | null) {
     e.preventDefault();
+    if (isReadOnly) return;
     const id = e.dataTransfer.getData('text/plain');
     if (!id) return;
     // If dragging a segment vs a backlog project
@@ -3572,6 +3589,7 @@ export default function PlanneringPage() {
 
   // Click-based scheduling fallback: select a backlog project, then click a calendar day.
   function scheduleSelectedOnDay(day: string, laneTruck?: string | null) {
+    if (isReadOnly) return;
     if (!selectedProjectId) return;
     const proj = projects.find(p => p.id === selectedProjectId);
     setSelectedProjectId(null);
@@ -3588,7 +3606,10 @@ export default function PlanneringPage() {
     }
     openSegmentEditorForNew(proj.id, day, laneTruck === undefined ? undefined : (laneTruck || null));
   }
-  function unschedule(segmentId: string) { applyScheduledSegments(prev => prev.filter(s => s.id !== segmentId)); }
+  function unschedule(segmentId: string) {
+    if (isReadOnly) return;
+    applyScheduledSegments(prev => prev.filter(s => s.id !== segmentId));
+  }
   function extendSpan(segmentId: string, direction: 'forward' | 'back') {
     applyScheduledSegments(prev => prev.map(s => {
       if (s.id !== segmentId) return s;
@@ -3666,6 +3687,67 @@ export default function PlanneringPage() {
       )}
       {(segEditorPortal && segEditor) && (() => {
         const p = projects.find(px => px.id === segEditor.projectId);
+        if (isReadOnly) {
+          const start = segEditor.startDay;
+          const end = segEditor.endDay;
+          const single = start === end;
+          const depotName = segEditor.depotId ? (depots.find(d => d.id === segEditor.depotId)?.name || 'Okänd depå') : 'Lastbilens depå';
+          const crew = (segEditor.segmentId ? (segmentCrew[segEditor.segmentId] || []) : [])
+            .map(m => (m.name || '').trim())
+            .filter(Boolean);
+          return (
+            <div onClick={closeSegEditor} style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(1px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, opacity: segEditorOpen ? 1 : 0, transition: 'opacity .24s ease' }}>
+              <div onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" style={{ width: 'min(760px, 94vw)', background: '#fff', border: '1px solid #e2e8f0', borderRadius: 14, overflow: 'hidden', boxShadow: '0 24px 80px rgba(0,0,0,0.35)', transform: segEditorOpen ? 'translateY(0) scale(1)' : 'translateY(14px) scale(.96)', opacity: segEditorOpen ? 1 : 0, transition: 'transform .35s cubic-bezier(.16,.84,.36,1), opacity .25s ease' }}>
+                <div style={{ position: 'relative', padding: '14px 18px', background: 'linear-gradient(135deg, #0f172a 0%, #334155 70%)', color: '#fff' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <div style={{ width: 36, height: 36, borderRadius: 10, background: 'rgba(255,255,255,0.14)', display: 'grid', placeItems: 'center' }}>👁️</div>
+                    <div style={{ display: 'grid', gap: 4 }}>
+                      <strong style={{ fontSize: 16, letterSpacing: .2 }}>Planering (läs-läge)</strong>
+                      <span style={{ fontSize: 12, opacity: .95 }}>
+                        {p?.orderNumber ? <span style={{ fontFamily: 'ui-monospace,monospace', background: '#ffffff', color: '#111827', border: '1px solid #e5e7eb', padding: '1px 6px', borderRadius: 6, marginRight: 6 }}>#{p.orderNumber}</span> : null}
+                        {p?.name}
+                      </span>
+                    </div>
+                  </div>
+                  <button aria-label="Stäng" onClick={closeSegEditor} className="btn--plain btn--xs" style={{ position: 'absolute', right: 10, top: 10, background: 'rgba(255,255,255,0.18)', color: '#fff', border: '1px solid rgba(255,255,255,0.28)', borderRadius: 10, padding: '6px 10px', fontSize: 14, lineHeight: 1 }}>×</button>
+                </div>
+                <div style={{ padding: 16, display: 'grid', gap: 12 }}>
+                  <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 12, padding: 12, display: 'grid', gap: 8 }}>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                      {single ? (
+                        <span style={{ fontSize: 12, background: '#ecfeff', border: '1px solid #a5f3fc', color: '#164e63', padding: '2px 8px', borderRadius: 999 }}>{start}</span>
+                      ) : (
+                        <span style={{ fontSize: 12, background: '#ecfeff', border: '1px solid #a5f3fc', color: '#164e63', padding: '2px 8px', borderRadius: 999 }}>{start} → {end}</span>
+                      )}
+                      <span style={{ fontSize: 12, background: '#f0fdf4', border: '1px solid #86efac', color: '#14532d', padding: '2px 8px', borderRadius: 999 }}>{segEditor.bagCount != null ? `${segEditor.bagCount} säckar` : 'Säckar ej satta'}</span>
+                      <span style={{ fontSize: 12, background: '#f5f3ff', border: '1px solid #ddd6fe', color: '#3730a3', padding: '2px 8px', borderRadius: 999 }}>{segEditor.jobType || 'Jobbtyp ej vald'}</span>
+                      <span style={{ fontSize: 12, background: '#fff7ed', border: '1px solid #fed7aa', color: '#7c2d12', padding: '2px 8px', borderRadius: 999 }}>{segEditor.truck || 'Ingen lastbil'}</span>
+                      <span style={{ fontSize: 12, background: '#fff7ed', border: '1px solid #fed7aa', color: '#7c2d12', padding: '2px 8px', borderRadius: 999 }}>{depotName}</span>
+                    </div>
+                    {crew.length > 0 && (
+                      <div style={{ fontSize: 12, color: '#334155' }}>
+                        <span style={{ fontWeight: 700 }}>Extra crew: </span>{crew.join(', ')}
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
+                    {p && (
+                      <button
+                        type="button"
+                        className="btn--plain btn--xs"
+                        onClick={() => openProjectModal(p.id)}
+                        style={{ fontSize: 12, padding: '8px 12px', border: '1px solid #cbd5e1', background: '#fff', borderRadius: 10 }}
+                      >
+                        Öppna projekt
+                      </button>
+                    )}
+                    <button type="button" onClick={closeSegEditor} className="btn--plain btn--xs" style={{ fontSize: 12, padding: '8px 12px', border: '1px solid #cbd5e1', background: '#fff', borderRadius: 10 }}>Stäng</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        }
         const daysLen = Math.max(1, Math.round((new Date(segEditor.endDay + 'T00:00:00').getTime() - new Date(segEditor.startDay + 'T00:00:00').getTime()) / 86400000) + 1);
         const setDaysLen = (n: number) => {
           const len = Math.max(1, (n | 0));

@@ -49,7 +49,8 @@ export async function POST(req: NextRequest) {
   if (!adminSupabase) return NextResponse.json({ error: 'service role not configured' }, { status: 500 });
 
   const body = await req.json();
-  const { email, password, full_name, role } = body as { email: string; password: string; full_name?: string; role?: string };
+  let { email, password, full_name, role } = body as { email: string; password: string; full_name?: string; role?: string };
+  if (role === 'readonly') role = 'konsult';
   if (!email || !password) return NextResponse.json({ error: 'missing fields' }, { status: 400 });
 
   // Create auth user
@@ -62,7 +63,7 @@ export async function POST(req: NextRequest) {
   if (full_name) {
     await adminSupabase.from('profiles').update({ full_name }).eq('id', userId);
   }
-  if (role && ['member','sales','admin'].includes(role) && role !== 'member') {
+  if (role && ['member','sales','admin','konsult'].includes(role) && role !== 'member') {
     // use function to ensure authorization semantics (runs SECURITY DEFINER)
     await adminSupabase.rpc('set_user_role', { target: userId, new_role: role });
   }

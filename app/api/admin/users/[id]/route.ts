@@ -15,7 +15,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
   const { id } = params;
   const body = await req.json();
-  const { role, full_name, disabled, tags } = body as { role?: string; full_name?: string; disabled?: boolean; tags?: string[] };
+  let { role, full_name, disabled, tags } = body as { role?: string; full_name?: string; disabled?: boolean; tags?: string[] };
+  if (role === 'readonly') role = 'konsult';
 
   // Update profile name if provided
   let nameUpdated = false;
@@ -26,7 +27,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   }
   // Change role (direct update with service role; server already validated current user is admin)
   let roleUpdated = false;
-  if (role && ['member','sales','admin'].includes(role)) {
+  if (role && ['member','sales','admin','konsult'].includes(role)) {
     const { error: roleErr } = await adminSupabase.from('profiles').update({ role }).eq('id', id);
     if (roleErr) return NextResponse.json({ error: 'failed updating role', details: roleErr.message }, { status: 500 });
     roleUpdated = true;

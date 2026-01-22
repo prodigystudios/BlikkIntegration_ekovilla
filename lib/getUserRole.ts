@@ -1,7 +1,7 @@
 import { cookies } from 'next/headers';
 import { createServerComponentClient } from '@supabase/auth-helpers-nextjs';
 
-export type UserRole = 'member' | 'sales' | 'admin';
+export type UserRole = 'member' | 'sales' | 'admin' | 'konsult';
 
 // Secure role fetch: uses auth.getUser() (contacts auth server) then tries view, then direct table.
 export async function getUserRole(): Promise<UserRole | null> {

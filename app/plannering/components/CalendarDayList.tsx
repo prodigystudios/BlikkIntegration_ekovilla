@@ -9,6 +9,7 @@ import DayNoteEditor from './DayNoteEditor';
 type TruckDisplay = { bg: string; border: string; text: string };
 
 export interface CalendarDayListProps {
+  readOnly?: boolean;
   weeks: Array<Array<{ date: string | null; inMonth: boolean }>>;
   dayNames: string[];
   hideWeekends: boolean;
@@ -53,6 +54,7 @@ export interface CalendarDayListProps {
 export default function CalendarDayList(props: CalendarDayListProps) {
   const { resolveCrew } = useTruckAssignments();
   const {
+    readOnly,
     weeks,
     dayNames,
     hideWeekends,
@@ -64,7 +66,7 @@ export default function CalendarDayList(props: CalendarDayListProps) {
     trucks,
     truckColors,
     calendarSearch,
-  truckFilters,
+    truckFilters,
     salesFilter,
     todayISO,
     selectedWeekKey,
@@ -78,29 +80,29 @@ export default function CalendarDayList(props: CalendarDayListProps) {
     setHoveredSegmentId,
     hoveredSegmentId,
     setSelectedProjectId,
-  selectedProjectId,
+    selectedProjectId,
     hasEgenkontroll,
     rowCreatorLabel,
     renderCreatorAvatar,
     jumpTargetDay,
     scheduleMeta,
     truckTeamNames,
-  jobTypeColors,
-  projectAddresses,
-  projectStatuses,
-  projectStatusColors,
-  segmentCrew,
-  remainingBagsByProject,
-  bagUsageStatusByProject,
+    jobTypeColors,
+    projectAddresses,
+    projectStatuses,
+    projectStatusColors,
+    segmentCrew,
+    remainingBagsByProject,
+    bagUsageStatusByProject,
   } = props;
 
   return (
     <div style={{ display: 'grid', gap: 16 }}>
       {weeks.map((week, wi) => {
-        const weekDays = week.map(c => c.date).filter(Boolean) as string[];
+        const weekDays = week.map(c => c.date).filter((d): d is string => Boolean(d));
         const searchVal = calendarSearch.trim().toLowerCase();
         const dayHeaderBg = wi % 2 === 0 ? '#f1f5f9' : '#e5e7eb';
-        const firstDay = week.find(c => c.date)?.date as string | undefined;
+        const firstDay = (week.find(c => c.date)?.date ?? undefined) as string | undefined;
         if (selectedWeekKey) {
           if (!firstDay || isoWeekKey(firstDay) !== selectedWeekKey) return null;
         }
@@ -181,7 +183,6 @@ export default function CalendarDayList(props: CalendarDayListProps) {
               </span>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: `140px repeat(${visibleIndices.length}, 1fr)`, alignItems: 'center', gap: 6, position: 'sticky', top: 0, zIndex: 5, background: '#ffffff', boxShadow: '0 2px 4px rgba(0,0,0,0.06)', paddingTop: 6, paddingBottom: 6 }}>
-              <div style={{ gridColumn: '1 / 2', fontSize: 12, fontWeight: 600, color: '#374151', textAlign: 'left' }}>Lastbil</div>
               {visibleIndices.map((idx, vi) => {
                 const cellDate = week[idx]?.date;
                 const isTodayHeader = cellDate === todayISO;
@@ -252,7 +253,7 @@ export default function CalendarDayList(props: CalendarDayListProps) {
                   {visibleIndices.map((weekdayIdx, vi) => {
                     const day = week[weekdayIdx]?.date || null;
                     const raw = day ? (itemsByDay.get(day) || []) : [];
-                        const list = raw
+                    const list = raw
                       .filter((it: any) => {
                         const matchTruck = rowKey === '__UNASSIGNED__' ? !it.truck : it.truck === rowKey;
                         if (!matchTruck) return false;
@@ -262,18 +263,20 @@ export default function CalendarDayList(props: CalendarDayListProps) {
                           if (!inSelected) return false;
                         }
                         if (salesFilter) {
-                          if (salesFilter === '__NONE__') { if (it.project.salesResponsible) return false; }
-                          else if ((it.project.salesResponsible || '').toLowerCase() !== salesFilter.toLowerCase()) return false;
+                          if (salesFilter === '__NONE__') {
+                            if (it.project.salesResponsible) return false;
+                          } else if ((it.project.salesResponsible || '').toLowerCase() !== salesFilter.toLowerCase()) return false;
                         }
                         if (searchVal) {
-                          const hay = [it.project.name, it.project.orderNumber || '', it.project.customer, it.jobType || '', (it.bagCount != null ? String(it.bagCount) : '')].join(' ').toLowerCase();
+                          const hay = [it.project.name, it.project.orderNumber || '', it.project.customer, it.jobType || '', (it.bagCount != null ? String(it.bagCount) : '')]
+                            .join(' ')
+                            .toLowerCase();
                           if (!hay.includes(searchVal)) return false;
                         }
                         return true;
                       })
                       .sort((a: any, b: any) => {
                         if (!!a.isDelivery && !b.isDelivery) return -1;
-                        if (!!b.isDelivery && !a.isDelivery) return 1;
                         const sa = scheduledSegments.find(s => s.id === a.segmentId)?.sortIndex ?? null;
                         const sb = scheduledSegments.find(s => s.id === b.segmentId)?.sortIndex ?? null;
                         if (sa != null && sb != null && sa !== sb) return sa - sb;
@@ -293,9 +296,9 @@ export default function CalendarDayList(props: CalendarDayListProps) {
                     const holidayCell = !!day && isHoliday(day || undefined);
                     return (
                       <div key={`cell-${rowKey}-${weekdayIdx}-${day || 'x'}`} id={day ? `calday-${day}` : undefined}
-                        onClick={day ? () => scheduleSelectedOnDay(day, rowKey === '__UNASSIGNED__' ? null : rowKey) : undefined}
-                        onDragOver={allowDrop}
-                        onDrop={day ? (e => onDropDay(e, day, rowKey === '__UNASSIGNED__' ? null : rowKey)) : undefined}
+                        onClick={(day && !readOnly) ? () => scheduleSelectedOnDay(day, rowKey === '__UNASSIGNED__' ? null : rowKey) : undefined}
+                        onDragOver={readOnly ? undefined : allowDrop}
+                        onDrop={(day && !readOnly) ? (e => onDropDay(e, day, rowKey === '__UNASSIGNED__' ? null : rowKey)) : undefined}
                         style={{
                           gridColumn: `${gridCol} / ${gridCol + 1}`,
                           gridRow: `${ri + 2} / ${ri + 3}`,
@@ -318,6 +321,7 @@ export default function CalendarDayList(props: CalendarDayListProps) {
                             currentUserId={currentUserId}
                             currentUserName={currentUserName}
                             onSaved={(n) => onNoteChange?.(day, n)}
+                            readOnly={readOnly}
                           />
                         )}
                         {list.length === 0 && <span style={{ fontSize: 11, color: '#94a3b8' }}>—</span>}
@@ -370,13 +374,13 @@ export default function CalendarDayList(props: CalendarDayListProps) {
                           return (
                             <div
                               key={`${(it.segmentId || it.id || (it.project && it.project.id) || 'x')}:${it.day}`}
-                              draggable={!isDelivery}
-                              onDragStart={e => onDragStart(e, it.segmentId)}
-                              onDragEnd={onDragEnd}
+                              draggable={!readOnly && !isDelivery}
+                              onDragStart={!readOnly ? (e => onDragStart(e, it.segmentId)) : undefined}
+                              onDragEnd={!readOnly ? onDragEnd : undefined}
                               onDoubleClick={() => openSegmentEditorForExisting(it.segmentId)}
                               onMouseEnter={() => setHoveredSegmentId(it.segmentId)}
                               onMouseLeave={() => setHoveredSegmentId(hoveredSegmentId === it.segmentId ? null : hoveredSegmentId)}
-                              title="Dubbelklicka för att redigera"
+                              title={readOnly ? 'Dubbelklicka för att visa' : 'Dubbelklicka för att redigera'}
                               style={{
                                 position: 'relative',
                                 border: `1px solid ${highlight ? '#f59e0b' : (hoveredSegmentId === it.segmentId ? '#6366f1' : cardBorder)}`,
@@ -385,7 +389,7 @@ export default function CalendarDayList(props: CalendarDayListProps) {
                                 padding: 5,
                                 fontSize: 10,
                                 lineHeight: 1.15,
-                                cursor: isDelivery ? 'default' : 'grab',
+                                cursor: (isDelivery || readOnly) ? 'default' : 'grab',
                                 display: 'grid',
                                 gap: 4,
                                 opacity: isMid ? 0.95 : 1,
@@ -400,7 +404,7 @@ export default function CalendarDayList(props: CalendarDayListProps) {
                                   {orderBadge}
                                 </span>
                               )}
-                              {hoveredSegmentId === it.segmentId && !highlight && !isDelivery && (
+                              {hoveredSegmentId === it.segmentId && !highlight && !isDelivery && !readOnly && (
                                 <span style={{ position: 'absolute', top: -8, right: 4, background: '#6366f1', color: '#fff', fontSize: 9, padding: '2px 6px', borderRadius: 8, boxShadow: '0 2px 4px rgba(0,0,0,0.15)' }}>Redigera</span>
                               )}
                               <span style={{ fontWeight: 600, color: isDelivery ? (isDeliveryOutbound ? '#3a2200' : '#18065fff') : (display ? display.text : '#312e81'), display: 'flex', alignItems: 'center', columnGap: 6, rowGap: 2, flexWrap: 'wrap' }}>

@@ -8,12 +8,14 @@ export default function DayNoteEditor({
   currentUserId,
   currentUserName,
   onSaved,
+  readOnly,
 }: {
   day: string; // YYYY-MM-DD
   note?: DayNote | undefined;
   currentUserId?: string | null;
   currentUserName?: string | null;
   onSaved?: (note: DayNote | null) => void;
+  readOnly?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState<string>(note?.text ?? '');
@@ -75,15 +77,17 @@ export default function DayNoteEditor({
         ) : (
           <span style={{ fontSize: 11, color: '#64748b' }}>&nbsp;</span>
         )}
-        <button
-          type="button"
-          onClick={startEdit}
-          className="btn--plain btn--xs"
-          title={note?.text ? 'Redigera anteckning' : 'Lägg till anteckning'}
-          style={{ fontSize: 10, background: '#eef2ff', border: '1px solid #c7d2fe', color: '#4338ca', borderRadius: 6, padding: '2px 6px', whiteSpace: 'nowrap' }}
-        >
-          {note?.text ? 'Ändra' : 'Anteckning'}
-        </button>
+        {!readOnly && (
+          <button
+            type="button"
+            onClick={startEdit}
+            className="btn--plain btn--xs"
+            title={note?.text ? 'Redigera anteckning' : 'Lägg till anteckning'}
+            style={{ fontSize: 10, background: '#eef2ff', border: '1px solid #c7d2fe', color: '#4338ca', borderRadius: 6, padding: '2px 6px', whiteSpace: 'nowrap' }}
+          >
+            {note?.text ? 'Ändra' : 'Anteckning'}
+          </button>
+        )}
       </div>
     );
   }

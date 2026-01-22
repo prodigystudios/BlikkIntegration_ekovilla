@@ -13,7 +13,7 @@ function IconUser(props: React.SVGProps<SVGSVGElement>) {
   );
 }
 
-export default function ProfileMenu({ fullName, role }: { fullName: string | null, role: 'member' | 'sales' | 'admin' | null }) {
+export default function ProfileMenu({ fullName, role }: { fullName: string | null, role: 'member' | 'sales' | 'admin' | 'konsult' | null }) {
   const [open, setOpen] = useState(false);
   const [alignRight, setAlignRight] = useState(false); // flip to right edge if near viewport edge
   const btnRef = useRef<HTMLButtonElement | null>(null);
