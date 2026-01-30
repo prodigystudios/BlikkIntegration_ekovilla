@@ -426,11 +426,17 @@ export default function PlanneringPage() {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   // View mode: standard month grid or weekday lanes (all Mondays in a row, etc.)
   const [viewMode, setViewMode] = useState<'monthGrid' | 'weekdayLanes' | 'dayList'>('monthGrid');
+  const [viewModeHydrated, setViewModeHydrated] = useState(false);
+  const [hadStoredViewMode, setHadStoredViewMode] = useState(false);
   // Calendar preference: hide weekends
   const [hideWeekends, setHideWeekends] = useState(false);
   // Inline card controls have been retired in favor of the Segment Editor modal
   // Collapsible left sidebar (search/manual add/backlog)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsedHydrated, setSidebarCollapsedHydrated] = useState(false);
+  const [hadStoredSidebarCollapsed, setHadStoredSidebarCollapsed] = useState(false);
+  // Responsive layout helpers
+  const [isNarrow, setIsNarrow] = useState(false);
   // Segment Editor (modal) state
   type SegmentEditorMode = 'create' | 'edit';
   interface SegmentEditorDraft {
@@ -477,12 +483,72 @@ export default function PlanneringPage() {
   useEffect(() => {
     try {
       const v = localStorage.getItem('planner.sidebarCollapsed');
+      setHadStoredSidebarCollapsed(v != null);
       if (v === '1') setSidebarCollapsed(true);
     } catch { /* ignore */ }
+    setSidebarCollapsedHydrated(true);
   }, []);
   useEffect(() => {
     try { localStorage.setItem('planner.sidebarCollapsed', sidebarCollapsed ? '1' : '0'); } catch { /* ignore */ }
   }, [sidebarCollapsed]);
+
+  // Persist view mode without clobbering storage before hydration
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem('planner.viewMode');
+      setHadStoredViewMode(v != null);
+      if (v === 'monthGrid' || v === 'weekdayLanes' || v === 'dayList') {
+        setViewMode(v);
+      }
+    } catch { /* ignore */ }
+    setViewModeHydrated(true);
+  }, []);
+  useEffect(() => {
+    if (!viewModeHydrated) return;
+    try { localStorage.setItem('planner.viewMode', viewMode); } catch { /* ignore */ }
+  }, [viewMode, viewModeHydrated]);
+
+  // Detect mobile/narrow layout
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia === 'undefined') return;
+    const mq = window.matchMedia('(max-width: 900px)');
+    const onChange = () => setIsNarrow(!!mq.matches);
+    onChange();
+    try {
+      // Safari < 14 uses addListener/removeListener
+      // eslint-disable-next-line deprecation/deprecation
+      if (typeof mq.addEventListener === 'function') mq.addEventListener('change', onChange);
+      // eslint-disable-next-line deprecation/deprecation
+      else mq.addListener(onChange);
+    } catch { /* ignore */ }
+    return () => {
+      try {
+        // eslint-disable-next-line deprecation/deprecation
+        if (typeof mq.removeEventListener === 'function') mq.removeEventListener('change', onChange);
+        // eslint-disable-next-line deprecation/deprecation
+        else mq.removeListener(onChange);
+      } catch { /* ignore */ }
+    };
+  }, []);
+
+  // First-time mobile defaults: keep UI usable without zoom
+  useEffect(() => {
+    if (!viewModeHydrated) return;
+    if (isNarrow && !hadStoredViewMode) setViewMode('dayList');
+  }, [isNarrow, viewModeHydrated, hadStoredViewMode]);
+  useEffect(() => {
+    if (!sidebarCollapsedHydrated) return;
+    if (isNarrow && !hadStoredSidebarCollapsed) setSidebarCollapsed(true);
+  }, [isNarrow, sidebarCollapsedHydrated, hadStoredSidebarCollapsed]);
+
+  // Prevent background scroll when mobile drawer is open
+  useEffect(() => {
+    if (!isNarrow) return;
+    if (sidebarCollapsed) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, [isNarrow, sidebarCollapsed]);
   // Load/persist weekend visibility preference
   useEffect(() => {
     try {
@@ -4423,9 +4489,182 @@ export default function PlanneringPage() {
       {source && <div style={{ fontSize: 11, color: '#9ca3af' }}>Källa: {source}</div>}
       {error && <div style={{ background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c', padding: '6px 8px', borderRadius: 6, fontSize: 12 }}>Fel: {error}</div>}
 
-      <div style={{ display: 'grid', gap: 16, gridTemplateColumns: sidebarCollapsed ? '1fr' : '290px 1fr', alignItems: 'start' }}>
+      {/* Mobile drawer for backlog/search */}
+      {isNarrow && !sidebarCollapsed && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setSidebarCollapsed(true)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 3000,
+            background: 'rgba(15, 23, 42, 0.55)',
+            display: 'grid',
+            justifyItems: 'center',
+            alignItems: 'end',
+            padding: 12
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: 'min(720px, 100%)',
+              maxHeight: 'min(78vh, 720px)',
+              background: '#ffffff',
+              borderRadius: 14,
+              border: '1px solid #e5e7eb',
+              boxShadow: '0 24px 70px rgba(0,0,0,0.35)',
+              overflow: 'hidden',
+              display: 'grid',
+              gridTemplateRows: 'auto 1fr'
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '10px 12px', borderBottom: '1px solid #e5e7eb', background: '#f8fafc' }}>
+              <div style={{ fontWeight: 700, color: '#0f172a' }}>Projekt</div>
+              <button
+                type="button"
+                className="btn--plain btn--xs"
+                onClick={() => setSidebarCollapsed(true)}
+                style={{ fontSize: 12, padding: '6px 10px', border: '1px solid #cbd5e1', background: '#fff', borderRadius: 10 }}
+              >
+                Stäng
+              </button>
+            </div>
+            <div style={{ padding: 12, overflowY: 'auto' }}>
+              <div style={{ display: 'grid', gap: 16 }}>
+                {/* Search & manual add */}
+                <div style={{ display: 'grid', gap: 10 }}>
+                  <form onSubmit={searchByOrderNumber} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <input value={searchOrder} onChange={e => setSearchOrder(e.target.value)} placeholder="Sök ordernummer..." style={{ flex: 1, border: '1px solid #d1d5db', borderRadius: 6, padding: '10px 10px', fontSize: 14 }} />
+                    <button type="submit" disabled={!searchOrder.trim() || searchLoading} className="btn--plain btn--xs" style={{ border: '1px solid #d1d5db', borderRadius: 10, padding: '8px 10px', background: '#fff' }}>{searchLoading ? 'Söker…' : 'Sök'}</button>
+                    {searchOrder && !searchLoading && <button type="button" className="btn--plain btn--xs" style={{ fontSize: 12 }} onClick={() => { setSearchOrder(''); setSearchError(null); }}>Rensa</button>}
+                  </form>
+                  {searchError && <div style={{ fontSize: 12, color: '#b91c1c' }}>{searchError}</div>}
+                  <div style={{ padding: 10, border: '1px solid #e2e8f0', borderRadius: 12, background: '#f8fafc', display: 'grid', gap: 8 }}>
+                    <strong style={{ fontSize: 14, color: '#1e293b' }}>Lägg till manuellt</strong>
+                    <form onSubmit={addManualProject} style={{ display: 'grid', gap: 8 }}>
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                        <input value={manualName} onChange={e => setManualName(e.target.value)} placeholder="Projektnamn" style={{ flex: '1 1 220px', border: '1px solid #cbd5e1', borderRadius: 10, padding: '10px 10px', fontSize: 14 }} />
+                        <input value={manualCustomer} onChange={e => setManualCustomer(e.target.value)} placeholder="Kund" style={{ flex: '1 1 220px', border: '1px solid #cbd5e1', borderRadius: 10, padding: '10px 10px', fontSize: 14 }} />
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <input value={manualOrderNumber} onChange={e => setManualOrderNumber(e.target.value)} placeholder="Ordernr (valfritt)" style={{ flex: '1 1 220px', border: '1px solid #cbd5e1', borderRadius: 10, padding: '10px 10px', fontSize: 14 }} />
+                        <button type="submit" className="btn--plain btn--xs" disabled={!manualName.trim() || !manualCustomer.trim()} style={{ fontSize: 14, border: '1px solid #2563eb', color: '#1d4ed8', background: '#fff', padding: '10px 12px', borderRadius: 10 }}>Lägg till</button>
+                      </div>
+                      {manualError && <div style={{ fontSize: 12, color: '#b91c1c' }}>{manualError}</div>}
+                      <div style={{ fontSize: 11, color: '#64748b' }}>Endast lokalt tills sparfunktion finns.</div>
+                    </form>
+                  </div>
+                </div>
+
+                {searchedProjects.length > 0 && (
+                  <div style={{ display: 'grid', gap: 8 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <h2 style={{ fontSize: 14, margin: 0 }}>Sökresultat</h2>
+                      <button type="button" className="btn--plain btn--xs" style={{ fontSize: 12 }} onClick={() => setRecentSearchedIds([])}>Rensa</button>
+                    </div>
+                    {searchedProjects.map(p => (
+                      <div
+                        key={p.id}
+                        draggable
+                        onDragStart={e => onDragStart(e, p.id)}
+                        onDragEnd={onDragEnd}
+                        onClick={() => { setSelectedProjectId(prev => prev === p.id ? null : p.id); setSidebarCollapsed(true); }}
+                        style={{ position: 'relative', border: selectedProjectId === p.id ? '2px solid #6366f1' : '1px solid #6366f1', boxShadow: selectedProjectId === p.id ? '0 0 0 3px rgba(99,102,241,0.35)' : '0 0 0 3px rgba(99,102,241,0.25)', background: draggingId === p.id ? '#eef2ff' : '#ffffff', borderRadius: 12, padding: 12, cursor: 'grab', display: 'grid', gap: 4 }}
+                      >
+                        <div style={{ position: 'absolute', top: -6, right: -6, background: '#6366f1', color: '#fff', fontSize: 11, padding: '2px 8px', borderRadius: 999 }}>Hittad</div>
+                        {p.orderNumber && (egenkontrollOrderNumbers.has(p.orderNumber) || egenkontrollOrderNumbers.has(p.orderNumber.replace(/^0+/, '') || p.orderNumber)) && (
+                          <div style={{ position: 'absolute', top: -6, left: -6, background: '#059669', color: '#fff', fontSize: 11, padding: '2px 8px', borderRadius: 999, boxShadow: '0 0 0 2px #fff' }} title="Egenkontroll finns">EK</div>
+                        )}
+                        <strong style={{ fontSize: 14 }}>
+                          {p.orderNumber ? <span style={{ fontFamily: 'ui-monospace, monospace', background: '#eef2ff', color: '#312e81', padding: '2px 8px', borderRadius: 8, marginRight: 6, fontSize: 12, border: '1px solid #c7d2fe' }}>#{p.orderNumber}</span> : null}
+                          {p.name}
+                        </strong>
+                        <span style={{ fontSize: 12, color: '#6b7280' }}>{p.customer}</span>
+                        <span style={{ fontSize: 11, color: '#9ca3af' }}>Skapad: {p.createdAt.slice(0, 10)}</span>
+                      </div>
+                    ))}
+                    <hr style={{ border: 'none', height: 1, background: '#e5e7eb', margin: 0 }} />
+                  </div>
+                )}
+
+                <div style={{ display: 'grid', gap: 8 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <h2 style={{ fontSize: 15, margin: 0 }}>Projekt</h2>
+                    <button className="btn--sm btn--primary" onClick={() => refreshInitialProjects(10)} disabled={projectsRefreshLoading} title="Uppdatera projekt">
+                      {projectsRefreshLoading ? (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                          <SpinnerIcon size={14} />
+                          Uppdaterar…
+                        </span>
+                      ) : (
+                        <RefreshIcon size={16} />
+                      )}
+                    </button>
+                  </div>
+                  {loading && <div style={{ fontSize: 12 }}>Laddar projekt…</div>}
+                  {!loading && backlog.length === 0 && <div style={{ fontSize: 12, color: '#64748b' }}>Inga fler oschemalagda.</div>}
+                  {filteredBacklog.map(p => {
+                    const accent = backlogAccent(p);
+                    const active = selectedProjectId === p.id;
+                    const hovered = hoverBacklogId === p.id;
+                    const baseBg = p.isManual ? '#f1f5f9' : '#ffffff';
+                    const elevated = draggingId === p.id || hovered || active;
+                    const gradient = `linear-gradient(135deg, ${accent}18, ${baseBg})`;
+                    return (
+                      <div key={p.id}
+                        draggable
+                        onDragStart={e => onDragStart(e, p.id)}
+                        onDragEnd={onDragEnd}
+                        onMouseEnter={() => setHoverBacklogId(p.id)}
+                        onMouseLeave={() => setHoverBacklogId(prev => prev === p.id ? null : prev)}
+                        onClick={() => { setSelectedProjectId(prev => prev === p.id ? null : p.id); setSidebarCollapsed(true); }}
+                        style={{
+                          position: 'relative',
+                          border: active ? `2px solid ${accent}` : `1px solid ${p.isManual ? '#94a3b8' : '#e2e8f0'}`,
+                          boxShadow: elevated ? `0 4px 10px -2px ${accent}55, 0 0 0 1px ${accent}40` : '0 1px 2px rgba(0,0,0,0.05)',
+                          borderRadius: 12,
+                          padding: '12px 12px 12px 14px',
+                          background: elevated ? gradient : baseBg,
+                          cursor: 'grab',
+                          display: 'grid',
+                          gap: 4,
+                          transition: 'box-shadow 0.25s, transform 0.2s, background 0.3s, border 0.25s',
+                          transform: elevated ? 'translateY(-2px)' : 'translateY(0)'
+                        }}>
+                        <span style={{ position: 'absolute', inset: 0, borderRadius: 12, pointerEvents: 'none', boxShadow: active ? `0 0 0 2px ${accent}` : 'none' }} />
+                        <span style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 6, borderTopLeftRadius: 12, borderBottomLeftRadius: 12, background: accent, opacity: 0.9 }} />
+                        {p.isManual && <span style={{ position: 'absolute', top: -7, left: 10, background: '#334155', color: '#fff', fontSize: 11, padding: '2px 8px', borderRadius: 999 }}>Manuell</span>}
+                        {active && <span style={{ position: 'absolute', top: -7, right: 10, background: accent, color: '#fff', fontSize: 11, padding: '2px 8px', borderRadius: 999 }}>Vald</span>}
+                        {p.orderNumber && (egenkontrollOrderNumbers.has(p.orderNumber) || egenkontrollOrderNumbers.has(p.orderNumber.replace(/^0+/, '') || p.orderNumber)) && (
+                          <span style={{ position: 'absolute', top: -7, left: p.isManual ? 70 : 10, background: '#059669', color: '#fff', fontSize: 11, padding: '2px 8px', borderRadius: 999 }}>EK</span>
+                        )}
+                        <strong style={{ fontSize: 14, lineHeight: 1.25, color: '#111827', display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: 4 }}>
+                          {p.orderNumber && (
+                            <span style={{ fontFamily: 'ui-monospace, monospace', background: '#ffffff', padding: '2px 8px', borderRadius: 8, fontSize: 12, border: `1px solid ${accent}55`, color: '#334155' }}>#{p.orderNumber}</span>
+                          )}
+                          <span>{p.name}</span>
+                        </strong>
+                        <div style={{ fontSize: 12, display: 'flex', gap: 6, flexDirection: 'column', alignItems: 'flex-start', color: '#475569' }}>
+                          <span style={{ fontWeight: 500 }}>{p.customer}</span>
+                          {p.salesResponsible && <span style={{ fontSize: 11, color: '#475569', background: '#f1f5f9', padding: '2px 8px', borderRadius: 999, border: '1px solid #e2e8f0' }}>Säljare: {p.salesResponsible}</span>}
+                          <span style={{ fontSize: 11, color: '#64748b', background: '#f1f5f9', padding: '2px 8px', borderRadius: 999, border: '1px solid #e2e8f0' }}>Skapad {p.createdAt.slice(0, 10)}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {selectedProjectId && <div style={{ fontSize: 12, color: '#b45309', background: '#fef3c7', border: '1px solid #fcd34d', padding: '8px 10px', borderRadius: 10 }}>Klicka på en dag i kalendern för att schemalägga vald projekt (fallback).</div>}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div style={{ display: 'grid', gap: 16, gridTemplateColumns: (sidebarCollapsed || isNarrow) ? '1fr' : '290px 1fr', alignItems: 'start' }}>
         {/* Left: search / manual add / backlog */}
-        {sidebarCollapsed ? null : (
+        {(sidebarCollapsed || isNarrow) ? null : (
           <div style={{
             display: 'grid',
             gap: 16,
@@ -4473,7 +4712,7 @@ export default function PlanneringPage() {
                     draggable
                     onDragStart={e => onDragStart(e, p.id)}
                     onDragEnd={onDragEnd}
-                    onClick={() => setSelectedProjectId(prev => prev === p.id ? null : p.id)}
+                    onClick={() => { setSelectedProjectId(prev => prev === p.id ? null : p.id); if (isNarrow) setSidebarCollapsed(true); }}
                     style={{ position: 'relative', border: selectedProjectId === p.id ? '2px solid #6366f1' : '1px solid #6366f1', boxShadow: selectedProjectId === p.id ? '0 0 0 3px rgba(99,102,241,0.35)' : '0 0 0 3px rgba(99,102,241,0.25)', background: draggingId === p.id ? '#eef2ff' : '#ffffff', borderRadius: 8, padding: 10, cursor: 'grab', display: 'grid', gap: 4 }}>
                     <div style={{ position: 'absolute', top: -6, right: -6, background: '#6366f1', color: '#fff', fontSize: 10, padding: '2px 6px', borderRadius: 12 }}>Hittad</div>
                     {p.orderNumber && (egenkontrollOrderNumbers.has(p.orderNumber) || egenkontrollOrderNumbers.has(p.orderNumber.replace(/^0+/, '') || p.orderNumber)) && (
@@ -4522,7 +4761,7 @@ export default function PlanneringPage() {
                     onDragEnd={onDragEnd}
                     onMouseEnter={() => setHoverBacklogId(p.id)}
                     onMouseLeave={() => setHoverBacklogId(prev => prev === p.id ? null : prev)}
-                    onClick={() => setSelectedProjectId(prev => prev === p.id ? null : p.id)}
+                    onClick={() => { setSelectedProjectId(prev => prev === p.id ? null : p.id); if (isNarrow) setSidebarCollapsed(true); }}
                     style={{
                       position: 'relative',
                       border: active ? `2px solid ${accent}` : `1px solid ${p.isManual ? '#94a3b8' : '#e2e8f0'}`,
