@@ -509,7 +509,7 @@ export default function KorjournalPage() {
               <label style={{ display: 'grid', gap: 4 }}>
                 <span>Startadress</span>
                 <div style={{ position: 'relative' }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: 6 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 6 }}>
                     <input
                       list="kor-start-suggestions"
                       value={form.startAddress}
@@ -525,7 +525,13 @@ export default function KorjournalPage() {
                       }}
                       placeholder="Ex: Företagsgatan 1, Stockholm"
                     />
-                    {topStarts.length > 0 && (
+                    <button type="button" className="btn--plain btn--sm" onClick={() => fillAddress('start')} disabled={!!locating.start} title="Hämta nuvarande plats">
+                      {locating.start ? 'Hämtar…' : 'Hämta plats'}
+                    </button>
+                  </div>
+
+                  {topStarts.length > 0 && (
+                    <div style={{ marginTop: 6, display: 'flex', justifyContent: 'flex-end' }}>
                       <button
                         type="button"
                         className="btn--plain btn--sm"
@@ -536,11 +542,8 @@ export default function KorjournalPage() {
                       >
                         Favoriter ▾
                       </button>
-                    )}
-                    <button type="button" className="btn--plain btn--sm" onClick={() => fillAddress('start')} disabled={!!locating.start} title="Hämta nuvarande plats">
-                      {locating.start ? 'Hämtar…' : 'Hämta plats'}
-                    </button>
-                  </div>
+                    </div>
+                  )}
 
                   {startAuto && (
                     <div style={{ marginTop: 6, fontSize: 12, color: '#6b7280', display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -606,7 +609,7 @@ export default function KorjournalPage() {
               <label style={{ display: 'grid', gap: 4 }}>
                 <span>Slutadress</span>
                 <div style={{ position: 'relative' }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: 6 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 6 }}>
                     <input
                       list="kor-end-suggestions"
                       value={form.endAddress}
@@ -622,7 +625,13 @@ export default function KorjournalPage() {
                       }}
                       placeholder="Ex: Kundvägen 5, Uppsala"
                     />
-                    {topEnds.length > 0 && (
+                    <button type="button" className="btn--plain btn--sm" onClick={() => fillAddress('end')} disabled={!!locating.end} title="Hämta nuvarande plats">
+                      {locating.end ? 'Hämtar…' : 'Hämta plats'}
+                    </button>
+                  </div>
+
+                  {topEnds.length > 0 && (
+                    <div style={{ marginTop: 6, display: 'flex', justifyContent: 'flex-end' }}>
                       <button
                         type="button"
                         className="btn--plain btn--sm"
@@ -633,11 +642,8 @@ export default function KorjournalPage() {
                       >
                         Favoriter ▾
                       </button>
-                    )}
-                    <button type="button" className="btn--plain btn--sm" onClick={() => fillAddress('end')} disabled={!!locating.end} title="Hämta nuvarande plats">
-                      {locating.end ? 'Hämtar…' : 'Hämta plats'}
-                    </button>
-                  </div>
+                    </div>
+                  )}
 
                   {endAuto && (
                     <div style={{ marginTop: 6, fontSize: 12, color: '#6b7280', display: 'flex', gap: 8, alignItems: 'center' }}>
