@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 
@@ -40,14 +40,22 @@ export default function KorjournalPage() {
   interface UsageStats { startCounts: Record<string, number>; endCounts: Record<string, number>; pairCounts: Record<string, number>; }
   const USAGE_KEY = 'korjournal.usage.v1';
   const [usageStats, setUsageStats] = useState<UsageStats>({ startCounts: {}, endCounts: {}, pairCounts: {} });
+  const [usageReady, setUsageReady] = useState(false);
   const [topStarts, setTopStarts] = useState<string[]>([]);
   const [topEnds, setTopEnds] = useState<string[]>([]);
-  const [topPairs, setTopPairs] = useState<Array<{ start: string; end: string; count: number }>>([]);
   const MAX_SUGGEST = 6;
+  const [suggestMenu, setSuggestMenu] = useState<null | 'start' | 'end'>(null);
 
   // Load from API; cache to localStorage as fallback
   useEffect(() => {
     (async () => {
+      // Load usage stats first so we don't accidentally overwrite persisted favorites with empty defaults.
+      try {
+        const uRaw = localStorage.getItem(USAGE_KEY);
+        if (uRaw) setUsageStats(JSON.parse(uRaw));
+      } catch {}
+      setUsageReady(true);
+
       try {
         const res = await fetch('/api/korjournal/trips', { cache: 'no-store' });
         if (res.ok) {
@@ -68,11 +76,6 @@ export default function KorjournalPage() {
       } catch {}
       // Fallback to local cache
       try { const raw = localStorage.getItem(STORAGE_KEY); if (raw) setTrips(JSON.parse(raw)); } catch {}
-      // Also load usage stats
-      try {
-        const uRaw = localStorage.getItem(USAGE_KEY);
-        if (uRaw) setUsageStats(JSON.parse(uRaw));
-      } catch {}
     })();
   }, []);
 
@@ -92,14 +95,9 @@ export default function KorjournalPage() {
     }
     setTopStarts(sortEntries(usageStats.startCounts));
     setTopEnds(sortEntries(usageStats.endCounts));
-    const pairs = Object.entries(usageStats.pairCounts)
-      .filter(([k]) => k.includes('||'))
-      .map(([k,v]) => { const [s,e] = k.split('||'); return { start: s, end: e, count: v }; })
-      .sort((a,b) => b.count - a.count)
-      .slice(0, MAX_SUGGEST);
-    setTopPairs(pairs);
+    if (!usageReady) return;
     try { localStorage.setItem(USAGE_KEY, JSON.stringify(usageStats)); } catch {}
-  }, [usageStats]);
+  }, [usageStats, usageReady]);
 
   const bumpUsage = (trip: Trip) => {
     setUsageStats(prev => {
@@ -123,6 +121,48 @@ export default function KorjournalPage() {
     try { localStorage.removeItem(USAGE_KEY); } catch {}
   };
 
+  const normalizeAddr = (s: string) => s.trim().toLowerCase();
+  const bestFavoriteForPrefix = (prefixRaw: string, counts: Record<string, number>) => {
+    const prefix = normalizeAddr(prefixRaw);
+    if (prefix.length < 2) return null;
+
+    let bestAddr: string | null = null;
+    let bestCount = -1;
+    const consider = (addr: string, count: number) => {
+      if (count > bestCount) {
+        bestAddr = addr;
+        bestCount = count;
+      }
+    };
+
+    // Prefer prefix-matches (autocomplete-like)
+    for (const [addr, count] of Object.entries(counts)) {
+      const n = normalizeAddr(addr);
+      if (!n || n === prefix) continue;
+      if (n.startsWith(prefix)) consider(addr, count);
+    }
+
+    // Fallback: substring matches
+    if (!bestAddr) {
+      for (const [addr, count] of Object.entries(counts)) {
+        const n = normalizeAddr(addr);
+        if (!n || n === prefix) continue;
+        if (n.includes(prefix)) consider(addr, count);
+      }
+    }
+
+    return bestAddr;
+  };
+
+  const startAuto = useMemo(
+    () => bestFavoriteForPrefix(String(form.startAddress || ''), usageStats.startCounts),
+    [form.startAddress, usageStats.startCounts]
+  );
+  const endAuto = useMemo(
+    () => bestFavoriteForPrefix(String(form.endAddress || ''), usageStats.endCounts),
+    [form.endAddress, usageStats.endCounts]
+  );
+
   const monthlyGroups = useMemo(() => {
     const map = new Map<string, Trip[]>();
     for (const t of trips) {
@@ -145,7 +185,14 @@ export default function KorjournalPage() {
   const monthKm = (arr: Trip[]) => arr.reduce((sum, t) => sum + diffKm(t), 0);
 
   const resetForm = () => setForm({ date: todayISO(), startAddress: '', endAddress: '', startKm: '', endKm: '', note: '' });
-  const openNew = () => { resetForm(); setError(null); setOpen(true); };
+  const closeModal = () => {
+    setOpen(false);
+    setSuggestMenu(null);
+    setEditing(null);
+    setIsSaving(false);
+  };
+
+  const openNew = () => { resetForm(); setError(null); setSuggestMenu(null); setEditing(null); setOpen(true); };
   const openEdit = (t: Trip) => {
     setForm({
       date: t.date,
@@ -157,12 +204,12 @@ export default function KorjournalPage() {
     });
     setEditing(t);
     setError(null);
+    setSuggestMenu(null);
     setOpen(true);
   };
 
   const submit = async () => {
     if (isSaving) return; // guard double click
-    setIsSaving(true);
     setError(null);
     const startKm = form.startKm === '' || form.startKm === null || form.startKm === undefined ? null : Number(form.startKm);
     const endKm = form.endKm === '' || form.endKm === null || form.endKm === undefined ? null : Number(form.endKm);
@@ -180,6 +227,8 @@ export default function KorjournalPage() {
       setError('Slut-kilometer kan inte vara mindre än start-kilometer.');
       return;
     }
+
+    setIsSaving(true);
     const trip: Trip = {
       id: editing?.id || uuid(),
       date: form.date || todayISO(),
@@ -243,13 +292,11 @@ export default function KorjournalPage() {
         setTrips(prev => [saved, ...prev].sort((a,b) => b.date.localeCompare(a.date)));
         bumpUsage(saved);
       }
-      setOpen(false);
-      setEditing(null);
+      closeModal();
     } catch (e: any) {
       setError(e?.message || 'Kunde inte spara resan');
     } finally {
-      // Only reset saving if modal still open (error case) – if closed, next open resets logically
-      if (open) setIsSaving(false);
+      setIsSaving(false);
     }
   };
 
@@ -446,12 +493,12 @@ export default function KorjournalPage() {
       {/* Modal for new trip */}
       {open && (
         <div role="dialog" aria-modal="true" style={{ position: 'fixed', inset: 0, zIndex: 2100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div onClick={() => setOpen(false)} style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.35)' }} />
+          <div onClick={closeModal} style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.35)' }} />
           <div style={{ position: 'relative', width: 'min(96vw, 720px)', background: '#fff', borderRadius: 10, boxShadow: '0 10px 30px rgba(0,0,0,0.2)', overflow: 'hidden' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 12, borderBottom: '1px solid #e5e7eb' }}>
               <strong>{editing ? 'Redigera resa' : 'Ny resa'}</strong>
               <div style={{ marginLeft: 'auto' }} />
-              <button className="btn--plain btn--sm" onClick={() => setOpen(false)}>Stäng</button>
+              <button className="btn--plain btn--sm" onClick={closeModal}>Stäng</button>
             </div>
             <div style={{ padding: 12, display: 'grid', gap: 10 }}>
               {error && <div style={{ color: '#b91c1c', fontSize: 13 }}>{error}</div>}
@@ -461,11 +508,92 @@ export default function KorjournalPage() {
               </label>
               <label style={{ display: 'grid', gap: 4 }}>
                 <span>Startadress</span>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 6 }}>
-                  <input list="kor-start-suggestions" value={form.startAddress} onChange={e => setForm((f:any) => ({ ...f, startAddress: e.target.value }))} placeholder="Ex: Företagsgatan 1, Stockholm" />
-                  <button type="button" className="btn--plain btn--sm" onClick={() => fillAddress('start')} disabled={!!locating.start} title="Hämta nuvarande plats">
-                    {locating.start ? 'Hämtar…' : 'Hämta plats'}
-                  </button>
+                <div style={{ position: 'relative' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: 6 }}>
+                    <input
+                      list="kor-start-suggestions"
+                      value={form.startAddress}
+                      onChange={e => setForm((f:any) => ({ ...f, startAddress: e.target.value }))}
+                      onKeyDown={e => {
+                        if (!startAuto) return;
+                        const el = e.currentTarget;
+                        const caretAtEnd = (el.selectionStart ?? el.value.length) === el.value.length;
+                        const accept = (e.key === 'ArrowRight' && caretAtEnd) || (e.key === ' ' && e.ctrlKey);
+                        if (!accept) return;
+                        e.preventDefault();
+                        setForm((f: any) => ({ ...f, startAddress: startAuto }));
+                      }}
+                      placeholder="Ex: Företagsgatan 1, Stockholm"
+                    />
+                    {topStarts.length > 0 && (
+                      <button
+                        type="button"
+                        className="btn--plain btn--sm"
+                        aria-haspopup="listbox"
+                        aria-expanded={suggestMenu === 'start'}
+                        onClick={() => setSuggestMenu(m => m === 'start' ? null : 'start')}
+                        title="Välj från favoriter"
+                      >
+                        Favoriter ▾
+                      </button>
+                    )}
+                    <button type="button" className="btn--plain btn--sm" onClick={() => fillAddress('start')} disabled={!!locating.start} title="Hämta nuvarande plats">
+                      {locating.start ? 'Hämtar…' : 'Hämta plats'}
+                    </button>
+                  </div>
+
+                  {startAuto && (
+                    <div style={{ marginTop: 6, fontSize: 12, color: '#6b7280', display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <span>Förslag:</span>
+                      <button
+                        type="button"
+                        className="btn--plain btn--xs"
+                        onClick={() => setForm((f: any) => ({ ...f, startAddress: startAuto }))}
+                        title="Klicka för att fylla i (eller tryck → vid slutet av texten / Ctrl+Mellanslag)"
+                        style={{ maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                      >
+                        {startAuto}
+                      </button>
+                      <span style={{ marginLeft: 'auto', fontSize: 11 }}>→ / Ctrl+Mellanslag</span>
+                    </div>
+                  )}
+
+                  {suggestMenu === 'start' && topStarts.length > 0 && (
+                    <>
+                      <div
+                        onClick={() => setSuggestMenu(null)}
+                        style={{ position: 'fixed', inset: 0, zIndex: 2105 }}
+                      />
+                      <div
+                        role="listbox"
+                        style={{ position: 'absolute', top: 'calc(100% + 6px)', right: 0, zIndex: 2106, width: 'min(520px, 92vw)', background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10, boxShadow: '0 10px 30px rgba(0,0,0,0.15)', overflow: 'hidden' }}
+                      >
+                        <div style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700, color: '#374151', background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                          Vanliga startadresser
+                        </div>
+                        <div style={{ maxHeight: 240, overflow: 'auto' }}>
+                          {topStarts.map(addr => (
+                            <button
+                              key={'fav-start-' + addr}
+                              type="button"
+                              className="btn--plain"
+                              onClick={() => {
+                                setForm((f: any) => ({ ...f, startAddress: addr }));
+                                setSuggestMenu(null);
+                              }}
+                              style={{ width: '100%', textAlign: 'left', padding: '10px 12px', borderBottom: '1px solid #f1f5f9' }}
+                              title={addr}
+                            >
+                              <div style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
+                                <span style={{ flex: 1, wordBreak: 'break-word' }}>{addr}</span>
+                                <span style={{ fontSize: 12, color: '#6b7280' }}>({usageStats.startCounts[addr] || 0})</span>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </div>
                 {topStarts.length > 0 && (
                   <datalist id="kor-start-suggestions">
@@ -477,11 +605,92 @@ export default function KorjournalPage() {
               </label>
               <label style={{ display: 'grid', gap: 4 }}>
                 <span>Slutadress</span>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 6 }}>
-                  <input list="kor-end-suggestions" value={form.endAddress} onChange={e => setForm((f:any) => ({ ...f, endAddress: e.target.value }))} placeholder="Ex: Kundvägen 5, Uppsala" />
-                  <button type="button" className="btn--plain btn--sm" onClick={() => fillAddress('end')} disabled={!!locating.end} title="Hämta nuvarande plats">
-                    {locating.end ? 'Hämtar…' : 'Hämta plats'}
-                  </button>
+                <div style={{ position: 'relative' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: 6 }}>
+                    <input
+                      list="kor-end-suggestions"
+                      value={form.endAddress}
+                      onChange={e => setForm((f:any) => ({ ...f, endAddress: e.target.value }))}
+                      onKeyDown={e => {
+                        if (!endAuto) return;
+                        const el = e.currentTarget;
+                        const caretAtEnd = (el.selectionStart ?? el.value.length) === el.value.length;
+                        const accept = (e.key === 'ArrowRight' && caretAtEnd) || (e.key === ' ' && e.ctrlKey);
+                        if (!accept) return;
+                        e.preventDefault();
+                        setForm((f: any) => ({ ...f, endAddress: endAuto }));
+                      }}
+                      placeholder="Ex: Kundvägen 5, Uppsala"
+                    />
+                    {topEnds.length > 0 && (
+                      <button
+                        type="button"
+                        className="btn--plain btn--sm"
+                        aria-haspopup="listbox"
+                        aria-expanded={suggestMenu === 'end'}
+                        onClick={() => setSuggestMenu(m => m === 'end' ? null : 'end')}
+                        title="Välj från favoriter"
+                      >
+                        Favoriter ▾
+                      </button>
+                    )}
+                    <button type="button" className="btn--plain btn--sm" onClick={() => fillAddress('end')} disabled={!!locating.end} title="Hämta nuvarande plats">
+                      {locating.end ? 'Hämtar…' : 'Hämta plats'}
+                    </button>
+                  </div>
+
+                  {endAuto && (
+                    <div style={{ marginTop: 6, fontSize: 12, color: '#6b7280', display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <span>Förslag:</span>
+                      <button
+                        type="button"
+                        className="btn--plain btn--xs"
+                        onClick={() => setForm((f: any) => ({ ...f, endAddress: endAuto }))}
+                        title="Klicka för att fylla i (eller tryck → vid slutet av texten / Ctrl+Mellanslag)"
+                        style={{ maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                      >
+                        {endAuto}
+                      </button>
+                      <span style={{ marginLeft: 'auto', fontSize: 11 }}>→ / Ctrl+Mellanslag</span>
+                    </div>
+                  )}
+
+                  {suggestMenu === 'end' && topEnds.length > 0 && (
+                    <>
+                      <div
+                        onClick={() => setSuggestMenu(null)}
+                        style={{ position: 'fixed', inset: 0, zIndex: 2105 }}
+                      />
+                      <div
+                        role="listbox"
+                        style={{ position: 'absolute', top: 'calc(100% + 6px)', right: 0, zIndex: 2106, width: 'min(520px, 92vw)', background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10, boxShadow: '0 10px 30px rgba(0,0,0,0.15)', overflow: 'hidden' }}
+                      >
+                        <div style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700, color: '#374151', background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                          Vanliga slutadresser
+                        </div>
+                        <div style={{ maxHeight: 240, overflow: 'auto' }}>
+                          {topEnds.map(addr => (
+                            <button
+                              key={'fav-end-' + addr}
+                              type="button"
+                              className="btn--plain"
+                              onClick={() => {
+                                setForm((f: any) => ({ ...f, endAddress: addr }));
+                                setSuggestMenu(null);
+                              }}
+                              style={{ width: '100%', textAlign: 'left', padding: '10px 12px', borderBottom: '1px solid #f1f5f9' }}
+                              title={addr}
+                            >
+                              <div style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
+                                <span style={{ flex: 1, wordBreak: 'break-word' }}>{addr}</span>
+                                <span style={{ fontSize: 12, color: '#6b7280' }}>({usageStats.endCounts[addr] || 0})</span>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </div>
                 {topEnds.length > 0 && (
                   <datalist id="kor-end-suggestions">
@@ -491,23 +700,6 @@ export default function KorjournalPage() {
                   </datalist>
                 )}
               </label>
-              {topPairs.length > 0 && (
-                <div style={{ display: 'grid', gap: 4 }}>
-                  <span style={{ fontSize: 12, fontWeight: 600 }}>Vanliga kombinationer</span>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                    {topPairs.map(p => (
-                      <button
-                        key={'pair-' + p.start + '||' + p.end}
-                        type="button"
-                        className="btn--plain btn--xs"
-                        onClick={() => setForm((f:any) => ({ ...f, startAddress: p.start, endAddress: p.end }))}
-                        style={{ fontSize: 11, padding: '4px 8px', border: '1px solid #e2e8f0', background: '#ecfdf5', color: '#047857', borderRadius: 999, display: 'inline-flex', alignItems: 'center', gap: 4 }}
-                        title={`Välj kombination (${p.count} ggr)`}
-                      >{p.start.length>18?p.start.slice(0,15)+'…':p.start} → {p.end.length>18?p.end.slice(0,15)+'…':p.end}</button>
-                    ))}
-                  </div>
-                </div>
-              )}
               <div style={{ display: 'grid', gap: 10, gridTemplateColumns: '1fr 1fr' }}>
                 <label style={{ display: 'grid', gap: 4 }}>
                   <span>Start km</span>
