@@ -48,6 +48,7 @@ export interface CalendarWeekdayLanesProps {
   segmentCrew: Record<string, Array<{ id: string | null; name: string }>>;
   remainingBagsByProject?: Map<string, number>;
   bagUsageStatusByProject?: Map<string, { plan: number; used: number; remaining: number; overrun: number }>;
+  pauseSegmentToHold: (segmentId: string) => void;
 }
 
 export default function CalendarWeekdayLanes(props: CalendarWeekdayLanesProps) {
@@ -92,6 +93,7 @@ export default function CalendarWeekdayLanes(props: CalendarWeekdayLanesProps) {
     segmentCrew,
     remainingBagsByProject,
     bagUsageStatusByProject,
+    pauseSegmentToHold,
   } = props;
 
   // Build holiday sets for the years spanned by visible lanes
@@ -358,6 +360,17 @@ export default function CalendarWeekdayLanes(props: CalendarWeekdayLanesProps) {
                               )}
                               {!isDelivery && (
                                 <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 4 }}>
+                                  {isStart && (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => { e.stopPropagation(); pauseSegmentToHold(it.segmentId); }}
+                                      className="btn--plain btn--xs"
+                                      title="Pausa (flytta till Pausade jobb)"
+                                      style={{ fontSize: 9, background: '#fff7ed', border: '1px solid #fdba74', color: '#9a3412', borderRadius: 4, padding: '1px 6px', marginRight: 6, textTransform: 'none' }}
+                                    >
+                                      Pausa
+                                    </button>
+                                  )}
                                   <button
                                     type="button"
                                     onClick={(e) => { e.stopPropagation(); setSelectedProjectId(it.project.id); }}

@@ -49,6 +49,7 @@ export interface CalendarDayListProps {
   segmentCrew: Record<string, Array<{ id: string | null; name: string }>>;
   remainingBagsByProject?: Map<string, number>;
   bagUsageStatusByProject?: Map<string, { plan: number; used: number; remaining: number; overrun: number }>;
+  pauseSegmentToHold: (segmentId: string) => void;
 }
 
 export default function CalendarDayList(props: CalendarDayListProps) {
@@ -94,6 +95,7 @@ export default function CalendarDayList(props: CalendarDayListProps) {
     segmentCrew,
     remainingBagsByProject,
     bagUsageStatusByProject,
+    pauseSegmentToHold,
   } = props;
 
   return (
@@ -488,7 +490,18 @@ export default function CalendarDayList(props: CalendarDayListProps) {
                                 </span>
                               )}
                               {!isDelivery && (
-                                <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 4 }}>
+                                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginTop: 4 }}>
+                                  {isStart && (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => { e.stopPropagation(); pauseSegmentToHold(it.segmentId); }}
+                                      className="btn--plain btn--xs"
+                                      title="Pausa (flytta till Pausade jobb)"
+                                      style={{ fontSize: 9, background: '#fff7ed', border: '1px solid #fdba74', color: '#9a3412', borderRadius: 4, padding: '1px 6px', textTransform: 'none' }}
+                                    >
+                                      Pausa
+                                    </button>
+                                  )}
                                   <button
                                     type="button"
                                     onClick={(e) => { e.stopPropagation(); setSelectedProjectId(it.project.id); }}

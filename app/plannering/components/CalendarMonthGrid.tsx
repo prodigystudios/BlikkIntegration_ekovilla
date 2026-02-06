@@ -48,6 +48,7 @@ export interface CalendarMonthGridProps {
   segmentCrew: Record<string, Array<{ id: string | null; name: string }>>;
   remainingBagsByProject?: Map<string, number>;
   bagUsageStatusByProject?: Map<string, { plan: number; used: number; remaining: number; overrun: number }>;
+  pauseSegmentToHold: (segmentId: string) => void;
 }
 
 export default function CalendarMonthGrid(props: CalendarMonthGridProps) {
@@ -92,6 +93,7 @@ export default function CalendarMonthGrid(props: CalendarMonthGridProps) {
     segmentCrew,
     remainingBagsByProject,
     bagUsageStatusByProject,
+    pauseSegmentToHold,
   } = props;
 
   return (
@@ -380,6 +382,17 @@ export default function CalendarMonthGrid(props: CalendarMonthGridProps) {
                             )}
                             {!isDelivery && (
                               <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 4 }}>
+                                {isStart && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => { e.stopPropagation(); pauseSegmentToHold(it.segmentId); }}
+                                    className="btn--plain btn--xs"
+                                    title="Pausa (flytta till Pausade jobb)"
+                                    style={{ fontSize: 10, background: '#fff7ed', border: '1px solid #fdba74', color: '#9a3412', borderRadius: 4, padding: '2px 6px', marginRight: 6 }}
+                                  >
+                                    Pausa
+                                  </button>
+                                )}
                                 <button
                                   type="button"
                                   onClick={(e) => { e.stopPropagation(); setSelectedProjectId(it.project.id); }}

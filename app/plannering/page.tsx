@@ -43,6 +43,9 @@ interface ScheduledSegment {
   sortIndex?: number | null; // explicit order within a truck/day
   truck?: string | null; // per-segment truck assignment (added)
   jobType?: string | null; // per-segment job type (optional)
+  onHold?: boolean; // paused / on-hold (not shown in calendar)
+  onHoldAt?: string | null;
+  onHoldBy?: string | null;
 }
 
 interface ProjectScheduleMeta {
@@ -255,6 +258,8 @@ export default function PlanneringPage() {
   // Week selection (ISO week key: YYYY-Www). Empty = all weeks
   const [selectedWeekKey, setSelectedWeekKey] = useState<string>('');
   const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [holdDropActive, setHoldDropActive] = useState(false);
+  const holdDropDepthRef = useRef(0);
   // Multi-truck filter (replaces previous single truckFilter). Values are truck names; special token 'UNASSIGNED' for items without a truck.
   const [truckFilters, setTruckFilters] = useState<string[]>([]);
   const [truckFilterOpen, setTruckFilterOpen] = useState(false);
@@ -1490,7 +1495,21 @@ export default function PlanneringPage() {
         }
         // Normalize into local shapes
         if (Array.isArray(segs)) {
-          setScheduledSegments(segs.map(s => ({ id: s.id, projectId: s.project_id, startDay: s.start_day, endDay: s.end_day, createdBy: s.created_by, createdByName: s.created_by_name, depotId: (s as any).depot_id ?? null, sortIndex: (s as any).sort_index ?? null, truck: (s as any).truck ?? null, jobType: (s as any).job_type ?? null })));
+          setScheduledSegments(segs.map(s => ({
+            id: s.id,
+            projectId: s.project_id,
+            startDay: s.start_day,
+            endDay: s.end_day,
+            createdBy: s.created_by,
+            createdByName: s.created_by_name,
+            depotId: (s as any).depot_id ?? null,
+            sortIndex: (s as any).sort_index ?? null,
+            truck: (s as any).truck ?? null,
+            jobType: (s as any).job_type ?? null,
+            onHold: (s as any).on_hold ?? false,
+            onHoldAt: (s as any).on_hold_at ?? null,
+            onHoldBy: (s as any).on_hold_by ?? null,
+          })));
           // Inject projects from segments if not already present
           setProjects(prev => {
             const map = new Map(prev.map(p => [p.id, p]));
@@ -1624,7 +1643,21 @@ export default function PlanneringPage() {
         if (process.env.NODE_ENV !== 'production') console.debug('[rt] planning_segments', payload.eventType, payload.new || payload.old);
         const row: any = payload.new || payload.old;
         if (payload.eventType === 'INSERT') {
-          setScheduledSegments(prev => prev.some(s => s.id === row.id) ? prev : [...prev, { id: row.id, projectId: row.project_id, startDay: row.start_day, endDay: row.end_day, createdBy: row.created_by, createdByName: row.created_by_name, depotId: row.depot_id ?? null, sortIndex: row.sort_index ?? null, truck: row.truck ?? null, jobType: row.job_type ?? null }]);
+          setScheduledSegments(prev => prev.some(s => s.id === row.id) ? prev : [...prev, {
+            id: row.id,
+            projectId: row.project_id,
+            startDay: row.start_day,
+            endDay: row.end_day,
+            createdBy: row.created_by,
+            createdByName: row.created_by_name,
+            depotId: row.depot_id ?? null,
+            sortIndex: row.sort_index ?? null,
+            truck: row.truck ?? null,
+            jobType: row.job_type ?? null,
+            onHold: row.on_hold ?? false,
+            onHoldAt: row.on_hold_at ?? null,
+            onHoldBy: row.on_hold_by ?? null,
+          }]);
           setProjects(prev => prev.some(p => p.id === row.project_id) ? prev : [...prev, {
             id: row.project_id,
             name: row.project_name,
@@ -1638,7 +1671,19 @@ export default function PlanneringPage() {
             salesResponsible: row.sales_responsible ?? null
           }]);
         } else if (payload.eventType === 'UPDATE') {
-          setScheduledSegments(prev => prev.map(s => s.id === row.id ? { ...s, startDay: row.start_day, endDay: row.end_day, createdByName: row.created_by_name ?? s.createdByName, depotId: row.depot_id ?? s.depotId ?? null, sortIndex: row.sort_index ?? s.sortIndex ?? null, truck: row.truck ?? s.truck ?? null, jobType: row.job_type ?? s.jobType ?? null } : s));
+          setScheduledSegments(prev => prev.map(s => s.id === row.id ? {
+            ...s,
+            startDay: row.start_day,
+            endDay: row.end_day,
+            createdByName: row.created_by_name ?? s.createdByName,
+            depotId: row.depot_id ?? s.depotId ?? null,
+            sortIndex: row.sort_index ?? s.sortIndex ?? null,
+            truck: row.truck ?? s.truck ?? null,
+            jobType: row.job_type ?? s.jobType ?? null,
+            onHold: row.on_hold ?? s.onHold ?? false,
+            onHoldAt: row.on_hold_at ?? s.onHoldAt ?? null,
+            onHoldBy: row.on_hold_by ?? s.onHoldBy ?? null,
+          } : s));
         } else if (payload.eventType === 'DELETE') {
           setScheduledSegments(prev => prev.filter(s => s.id !== row.id));
         }
@@ -2421,6 +2466,28 @@ export default function PlanneringPage() {
     );
   }, [supabase]);
 
+  const updateSegmentOnHold = useCallback((segmentId: string, onHold: boolean) => {
+    const ts = onHold ? new Date().toISOString() : null;
+    const actor = onHold ? (currentUserId || null) : null;
+    setScheduledSegments(prev => prev.map(s => s.id === segmentId ? { ...s, onHold, onHoldAt: ts, onHoldBy: actor } : s));
+    enqueue(
+      supabase.from('planning_segments')
+        .update({ on_hold: onHold, on_hold_at: ts, on_hold_by: actor })
+        .eq('id', segmentId)
+        .select('id')
+        .then(({ error }) => {
+          if (error) {
+            console.warn('[planning] update segment on_hold error', error);
+            try {
+              const msg = String((error as any)?.message || '').toLowerCase();
+              if (msg.includes('column') && msg.includes('on_hold')) toast.error('DB saknar kolumnen on_hold (kör migration).');
+              else toast.error('Kunde inte pausa/återställa jobb.');
+            } catch { /* ignore */ }
+          }
+        })
+    );
+  }, [supabase, currentUserId, toast]);
+
   // Persist a sequential order (0..n-1) for the given segments.
   // Force-write indices to avoid races with realtime patches overriding local state.
   const setSequentialSortForSegments = useCallback((orderedSegmentIds: string[]) => {
@@ -2778,6 +2845,7 @@ export default function PlanneringPage() {
     const map = new Map<string, DayInstance[]>();
     // Scheduled job segments → day instances
     for (const seg of scheduledSegments) {
+      if (seg.onHold) continue;
       const project = projects.find(p => p.id === seg.projectId);
       if (!project) continue;
       const meta = scheduleMeta[seg.projectId] || { projectId: seg.projectId };
@@ -2856,6 +2924,7 @@ export default function PlanneringPage() {
     const out: Record<string, { ekovilla: number; vitull: number }> = {};
     if (!selectedWeekKey) return out; // only compute when a week is selected
     for (const seg of scheduledSegments) {
+      if (seg.onHold) continue;
       // Count only segments whose start day is in the selected week to avoid double-counting per-day instances
       if (isoWeekKey(seg.startDay) !== selectedWeekKey) continue;
       const meta = scheduleMeta[seg.projectId];
@@ -2892,6 +2961,7 @@ export default function PlanneringPage() {
     const m = String(base.getMonth() + 1).padStart(2, '0');
     const visibleMonthKey = `${y}-${m}`; // 'YYYY-MM'
     for (const seg of scheduledSegments) {
+      if (seg.onHold) continue;
       // Only count segments whose start day is within the visible month
       if (!seg.startDay.startsWith(visibleMonthKey + '-')) continue;
       const meta = scheduleMeta[seg.projectId];
@@ -3001,6 +3071,7 @@ export default function PlanneringPage() {
 
     // Add planned consumption on segment start day, future only
     for (const seg of scheduledSegments) {
+      if (seg.onHold) continue;
       if (seg.startDay < simStartISO || seg.startDay > endISO) continue;
       const meta = scheduleMeta[seg.projectId];
       const bag = meta?.bagCount;
@@ -3116,6 +3187,7 @@ export default function PlanneringPage() {
     if (!term) return [] as string[];
     const set = new Set<string>();
     for (const seg of scheduledSegments) {
+      if (seg.onHold) continue;
       const project = projects.find(p => p.id === seg.projectId);
       if (!project) continue;
       const meta = scheduleMeta[seg.projectId] || {};
@@ -3181,6 +3253,55 @@ export default function PlanneringPage() {
 
   // Backlog lists
   const backlog = useMemo(() => projects.filter(p => !scheduledSegments.some(s => s.projectId === p.id) && !recentSearchedIds.includes(p.id)), [projects, scheduledSegments, recentSearchedIds]);
+  const heldSegments = useMemo(() => scheduledSegments.filter(s => !!s.onHold), [scheduledSegments]);
+
+  const [holdActorNames, setHoldActorNames] = useState<Record<string, string>>({});
+  const fetchedHoldActorIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const ids = Array.from(new Set(
+      heldSegments
+        .map(s => s.onHoldBy)
+        .filter((v): v is string => typeof v === 'string' && v.length > 0)
+    ));
+    const missing = ids.filter(id => !fetchedHoldActorIdsRef.current.has(id));
+    if (missing.length === 0) return;
+
+    missing.forEach(id => fetchedHoldActorIdsRef.current.add(id));
+
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('id, full_name')
+          .in('id', missing);
+        if (error) return;
+        const rows: Array<{ id: string; full_name: string | null }> = Array.isArray(data) ? (data as any) : [];
+        const next: Record<string, string> = {};
+        for (const r of rows) {
+          const nm = (r?.full_name ?? '').trim();
+          if (r?.id && nm) next[r.id] = nm;
+        }
+        if (Object.keys(next).length) setHoldActorNames(prev => ({ ...prev, ...next }));
+      } catch {
+        // ignore
+      }
+    })();
+  }, [heldSegments, supabase]);
+
+  function holdTimeInfo(iso: string | null | undefined) {
+    if (!iso) return { label: null as string | null, daysText: null as string | null };
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return { label: iso, daysText: null };
+
+    const label = d.toLocaleString('sv-SE', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const holdDay = new Date(d);
+    holdDay.setHours(0, 0, 0, 0);
+    const days = Math.max(0, Math.floor((today.getTime() - holdDay.getTime()) / 86400000));
+    const daysText = days === 0 ? 'idag' : days === 1 ? '1 dag sedan' : `${days} dagar sedan`;
+    return { label, daysText };
+  }
 
   // NOTE: Contact enrichment removed in this fresh baseline because Project no longer includes customerId/customerEmail.
   // Once we reintroduce those fields from the Blikk project API response, we can add a minimal effect here that:
@@ -3218,9 +3339,59 @@ export default function PlanneringPage() {
     e.dataTransfer.setData('text/plain', id);
     setDraggingId(id);
     e.dataTransfer.effectAllowed = 'move';
+
+    // Make drag preview smaller/consistent across different card sizes
+    try {
+      const seg = scheduledSegments.find(s => s.id === id);
+      const proj = seg ? (projects.find(p => p.id === seg.projectId) || null) : (projects.find(p => p.id === id) || null);
+      const label = proj
+        ? `${proj.orderNumber ? `#${proj.orderNumber} ` : ''}${proj.name}`.trim()
+        : 'Flyttar…';
+
+      const dragEl = document.createElement('div');
+      dragEl.textContent = label.length > 48 ? (label.slice(0, 47) + '…') : label;
+      dragEl.style.position = 'absolute';
+      dragEl.style.top = '-1000px';
+      dragEl.style.left = '-1000px';
+      dragEl.style.padding = '8px 10px';
+      dragEl.style.maxWidth = '240px';
+      dragEl.style.whiteSpace = 'nowrap';
+      dragEl.style.overflow = 'hidden';
+      dragEl.style.textOverflow = 'ellipsis';
+      dragEl.style.fontSize = '12px';
+      dragEl.style.fontWeight = '700';
+      dragEl.style.borderRadius = '999px';
+      dragEl.style.border = '1px solid #cbd5e1';
+      dragEl.style.background = '#ffffff';
+      dragEl.style.color = '#0f172a';
+      dragEl.style.boxShadow = '0 12px 26px rgba(2, 6, 23, 0.18)';
+      document.body.appendChild(dragEl);
+      e.dataTransfer.setDragImage(dragEl, 14, 14);
+      setTimeout(() => {
+        try { dragEl.remove(); } catch { /* ignore */ }
+      }, 0);
+    } catch {
+      // ignore drag image failures
+    }
   }
-  function onDragEnd() { setDraggingId(null); }
+  function onDragEnd() {
+    setDraggingId(null);
+    holdDropDepthRef.current = 0;
+    setHoldDropActive(false);
+  }
   function allowDrop(e: React.DragEvent) { e.preventDefault(); }
+
+  function onHoldDragEnter(e: React.DragEvent) {
+    e.preventDefault();
+    holdDropDepthRef.current += 1;
+    setHoldDropActive(true);
+  }
+
+  function onHoldDragLeave(e: React.DragEvent) {
+    e.preventDefault();
+    holdDropDepthRef.current = Math.max(holdDropDepthRef.current - 1, 0);
+    if (holdDropDepthRef.current === 0) setHoldDropActive(false);
+  }
   // Small helpers for Segment Editor
   const genId = () => (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? (crypto as any).randomUUID() : Math.random().toString(36).slice(2));
   const addDaysLocal = (iso: string, n: number) => { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + n); return fmtDate(d); };
@@ -3556,6 +3727,7 @@ export default function PlanneringPage() {
       const resolveTruck = (s: any) => (s?.truck ?? (scheduleMeta[s.projectId]?.truck || null)) as string | null;
       const oldStartDay = seg.startDay;
       const oldTruck = resolveTruck(seg);
+      const wasOnHold = !!seg.onHold;
 
       // inclusive length
       const startOld = new Date(seg.startDay + 'T00:00:00');
@@ -3595,7 +3767,7 @@ export default function PlanneringPage() {
 
       const nextSegments = scheduledSegments.map(s => {
         if (s.id !== id) return s;
-        const next: any = { ...s, startDay: newStartStr, endDay: newEndStr, truck: newTruck };
+        const next: any = { ...s, startDay: newStartStr, endDay: newEndStr, truck: newTruck, onHold: false, onHoldAt: null, onHoldBy: null };
         // If moving to unassigned, clear sort index to avoid stale ordering.
         if (!newTruck) next.sortIndex = null;
         return next as ScheduledSegment;
@@ -3610,6 +3782,10 @@ export default function PlanneringPage() {
           if (updated) persistSegmentUpdate(updated);
         } catch { /* ignore */ }
       }, 0);
+
+      if (wasOnHold) {
+        try { updateSegmentOnHold(id, false); } catch { /* ignore */ }
+      }
 
       // Re-sequence indices for affected groups (old group and new group).
       // Default behavior: when moving into a group, append to the end.
@@ -3651,6 +3827,59 @@ export default function PlanneringPage() {
       return { ...m, [proj.id]: merged };
     });
     openSegmentEditorForNew(proj.id, day, laneTruck === undefined ? undefined : (laneTruck || null));
+  }
+  const pauseSegmentToHold = useCallback((segmentId: string) => {
+    if (isReadOnly) return;
+
+    const seg = scheduledSegments.find(s => s.id === segmentId);
+    if (!seg) {
+      try { toast.info('Bara schemalagda jobb kan pausas.'); } catch { /* ignore */ }
+      return;
+    }
+    if (seg.onHold) return;
+
+    updateSegmentOnHold(segmentId, true);
+
+    // Re-sequence indices for the group the segment was removed from
+    const resolveTruck = (s: any) => (s?.truck ?? (scheduleMeta[s.projectId]?.truck || null)) as string | null;
+    const oldTruck = resolveTruck(seg);
+    const oldStartDay = seg.startDay;
+    if (!oldTruck) return;
+
+    const cmp = (a: any, b: any) => {
+      const sa = (a.sortIndex ?? null) as number | null;
+      const sb = (b.sortIndex ?? null) as number | null;
+      if (sa != null && sb != null && sa !== sb) return sa - sb;
+      if (sa != null && sb == null) return -1;
+      if (sb != null && sa == null) return 1;
+      const pa = projects.find(p => p.id === a.projectId);
+      const pb = projects.find(p => p.id === b.projectId);
+      const ao = pa?.orderNumber || '';
+      const bo = pb?.orderNumber || '';
+      if (ao && bo && ao !== bo) return ao.localeCompare(bo, 'sv');
+      const an = pa?.name || '';
+      const bn = pb?.name || '';
+      if (an && bn && an !== bn) return an.localeCompare(bn, 'sv');
+      return String(a.id).localeCompare(String(b.id));
+    };
+
+    const ids = scheduledSegments
+      .filter(s => s.id !== segmentId && !s.onHold && s.startDay === oldStartDay && (resolveTruck(s as any) || null) === oldTruck)
+      .sort(cmp)
+      .map(s => s.id);
+    if (ids.length > 0) setSequentialSortForSegments(ids);
+  }, [isReadOnly, scheduledSegments, scheduleMeta, projects, toast, updateSegmentOnHold, setSequentialSortForSegments]);
+
+  function onDropHold(e: React.DragEvent) {
+    e.preventDefault();
+    if (isReadOnly) return;
+
+    holdDropDepthRef.current = 0;
+    setHoldDropActive(false);
+
+    const id = e.dataTransfer.getData('text/plain');
+    if (!id) return;
+    pauseSegmentToHold(id);
   }
 
   // Click-based scheduling fallback: select a backlog project, then click a calendar day.
@@ -4533,6 +4762,99 @@ export default function PlanneringPage() {
             </div>
             <div style={{ padding: 12, overflowY: 'auto' }}>
               <div style={{ display: 'grid', gap: 16 }}>
+                {/* On-hold / paused jobs */}
+                <div
+                  onDragOver={allowDrop}
+                  onDragEnter={onHoldDragEnter}
+                  onDragLeave={onHoldDragLeave}
+                  onDrop={onDropHold}
+                  style={{
+                    padding: 12,
+                    border: holdDropActive ? '2px solid #f59e0b' : '2px dashed #f59e0b',
+                    borderRadius: 12,
+                    background: holdDropActive ? 'linear-gradient(135deg, #fef3c7, #ffffff)' : 'linear-gradient(135deg, #fffbeb, #ffffff)',
+                    boxShadow: holdDropActive ? '0 0 0 4px rgba(245, 158, 11, 0.22), 0 12px 30px rgba(245, 158, 11, 0.18)' : '0 10px 22px rgba(245, 158, 11, 0.10)',
+                    display: 'grid',
+                    gap: 8
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                    <strong style={{ fontSize: 14, color: '#92400e' }}>Pausade jobb</strong>
+                    <span style={{ fontSize: 12, color: '#92400e', background: '#fffbeb', border: '1px solid #fcd34d', padding: '2px 8px', borderRadius: 999 }}>{heldSegments.length}</span>
+                  </div>
+                  <div style={{ fontSize: 12, color: '#92400e' }}>Dra ett jobb från kalendern hit för att pausa det. Dra tillbaka till kalendern för att planera igen.</div>
+                  {heldSegments.length === 0 ? (
+                    <div style={{ fontSize: 12, color: '#92400e' }}>Inget pausat just nu.</div>
+                  ) : (
+                    <div style={{ display: 'grid', gap: 8 }}>
+                      {heldSegments
+                        .slice()
+                        .sort((a, b) => String(b.onHoldAt || '').localeCompare(String(a.onHoldAt || '')) || String(a.id).localeCompare(String(b.id)))
+                        .map(seg => {
+                          const proj = projects.find(p => p.id === seg.projectId) || null;
+                          const meta = scheduleMeta[seg.projectId] || null;
+                          const truck = (seg as any).truck ?? meta?.truck ?? null;
+                          const holdInfo = holdTimeInfo(seg.onHoldAt);
+                          const actorId = seg.onHoldBy || null;
+                          const actorName = actorId
+                            ? (actorId === currentUserId
+                              ? (currentUserName || 'Du')
+                              : (holdActorNames[actorId] || actorId.slice(0, 8)))
+                            : null;
+                          return (
+                            <div
+                              key={seg.id}
+                              draggable
+                              onDragStart={e => onDragStart(e, seg.id)}
+                              onDragEnd={onDragEnd}
+                              onClick={() => { openSegmentEditorForExisting(seg.id); setSidebarCollapsed(true); }}
+                              style={{
+                                position: 'relative',
+                                border: '1px solid #fecaca',
+                                borderLeft: '6px solid #ef4444',
+                                background: 'linear-gradient(135deg, #fff1f2, #ffffff)',
+                                borderRadius: 12,
+                                padding: 10,
+                                boxShadow: '0 10px 22px rgba(2, 6, 23, 0.06)',
+                                opacity: draggingId === seg.id ? 0.65 : 1,
+                                cursor: 'grab',
+                                display: 'grid',
+                                gap: 4
+                              }}
+                              title="Dra tillbaka till kalendern för att återplanera"
+                            >
+                              <div style={{ position: 'absolute', top: 8, right: 8, fontSize: 10, fontWeight: 800, color: '#0f172a', background: '#ffe4e6', border: '1px solid #fecdd3', padding: '2px 8px', borderRadius: 999 }}>
+                                PAUSAD
+                              </div>
+                              <div style={{ display: 'flex', gap: 6, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                                {proj?.orderNumber ? (
+                                  <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: 11, background: '#ffe4e6', border: '1px solid #fecdd3', padding: '1px 6px', borderRadius: 8, color: '#0f172a' }}>#{proj.orderNumber}</span>
+                                ) : null}
+                                <strong style={{ fontSize: 13, color: '#0f172a' }}>{proj?.name || 'Okänt projekt'}</strong>
+                              </div>
+                              <div style={{ fontSize: 12, color: '#475569' }}>{proj?.customer || ''}</div>
+                              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                                <span style={{ fontSize: 11, color: '#0f172a', background: '#fff1f2', border: '1px solid #fecdd3', padding: '1px 7px', borderRadius: 999 }}>Senast planerad: {seg.startDay}</span>
+                                {truck ? <span style={{ fontSize: 11, color: '#0f172a', background: '#fff1f2', border: '1px solid #fecdd3', padding: '1px 7px', borderRadius: 999 }}>Lastbil: {truck}</span> : null}
+                              </div>
+                              {holdInfo.label ? (
+                                <div style={{ fontSize: 11, color: '#0f172a' }}>
+                                  Pausad: <span style={{ fontFamily: 'ui-monospace, monospace' }}>{holdInfo.label}</span>
+                                  {holdInfo.daysText ? <span style={{ color: '#334155' }}> · {holdInfo.daysText}</span> : null}
+                                </div>
+                              ) : null}
+                              {actorName ? (
+                                <div style={{ fontSize: 11, color: '#0f172a' }}>
+                                  Pausad av: <span style={{ fontWeight: 700 }}>{actorName}</span>
+                                </div>
+                              ) : null}
+                            </div>
+                          );
+                        })}
+                    </div>
+                  )}
+                </div>
+
                 {/* Search & manual add */}
                 <div style={{ display: 'grid', gap: 10 }}>
                   <form onSubmit={searchByOrderNumber} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
@@ -4730,6 +5052,99 @@ export default function PlanneringPage() {
                 <hr style={{ border: 'none', height: 1, background: '#e5e7eb', margin: 0 }} />
               </div>
             )}
+
+            {/* On-hold / paused jobs */}
+            <div
+              onDragOver={allowDrop}
+              onDragEnter={onHoldDragEnter}
+              onDragLeave={onHoldDragLeave}
+              onDrop={onDropHold}
+              style={{
+                padding: 12,
+                border: holdDropActive ? '2px solid #f59e0b' : '2px dashed #f59e0b',
+                borderRadius: 10,
+                background: holdDropActive ? 'linear-gradient(135deg, #fef3c7, #ffffff)' : 'linear-gradient(135deg, #fffbeb, #ffffff)',
+                boxShadow: holdDropActive ? '0 0 0 4px rgba(245, 158, 11, 0.22), 0 12px 30px rgba(245, 158, 11, 0.18)' : '0 10px 22px rgba(245, 158, 11, 0.10)',
+                display: 'grid',
+                gap: 8
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                <strong style={{ fontSize: 13, color: '#92400e' }}>Pausade jobb</strong>
+                <span style={{ fontSize: 11, color: '#92400e', background: '#fffbeb', border: '1px solid #fcd34d', padding: '2px 8px', borderRadius: 999 }}>{heldSegments.length}</span>
+              </div>
+              <div style={{ fontSize: 11, color: '#92400e' }}>Dra ett jobb från kalendern hit för att pausa det. Dra tillbaka till kalendern för att planera igen.</div>
+              {heldSegments.length === 0 ? (
+                <div style={{ fontSize: 11, color: '#92400e' }}>Inget pausat just nu.</div>
+              ) : (
+                <div style={{ display: 'grid', gap: 8 }}>
+                  {heldSegments
+                    .slice()
+                    .sort((a, b) => String(b.onHoldAt || '').localeCompare(String(a.onHoldAt || '')) || String(a.id).localeCompare(String(b.id)))
+                    .map(seg => {
+                      const proj = projects.find(p => p.id === seg.projectId) || null;
+                      const meta = scheduleMeta[seg.projectId] || null;
+                      const truck = (seg as any).truck ?? meta?.truck ?? null;
+                      const holdInfo = holdTimeInfo(seg.onHoldAt);
+                      const actorId = seg.onHoldBy || null;
+                      const actorName = actorId
+                        ? (actorId === currentUserId
+                          ? (currentUserName || 'Du')
+                          : (holdActorNames[actorId] || actorId.slice(0, 8)))
+                        : null;
+                      return (
+                        <div
+                          key={seg.id}
+                          draggable
+                          onDragStart={e => onDragStart(e, seg.id)}
+                          onDragEnd={onDragEnd}
+                          onClick={() => openSegmentEditorForExisting(seg.id)}
+                          style={{
+                            position: 'relative',
+                            border: '1px solid #fecaca',
+                            borderLeft: '6px solid #ef4444',
+                            background: 'linear-gradient(135deg, #fff1f2, #ffffff)',
+                            borderRadius: 10,
+                            padding: 10,
+                            boxShadow: '0 10px 22px rgba(2, 6, 23, 0.06)',
+                            opacity: draggingId === seg.id ? 0.65 : 1,
+                            cursor: 'grab',
+                            display: 'grid',
+                            gap: 4
+                          }}
+                          title="Dra tillbaka till kalendern för att återplanera"
+                        >
+                          <div style={{ position: 'absolute', top: 8, right: 8, fontSize: 10, fontWeight: 800, color: '#0f172a', background: '#ffe4e6', border: '1px solid #fecdd3', padding: '2px 8px', borderRadius: 999 }}>
+                            PAUSAD
+                          </div>
+                          <div style={{ display: 'flex', gap: 6, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                            {proj?.orderNumber ? (
+                              <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: 11, background: '#ffe4e6', border: '1px solid #fecdd3', padding: '1px 6px', borderRadius: 8, color: '#0f172a' }}>#{proj.orderNumber}</span>
+                            ) : null}
+                            <strong style={{ fontSize: 12, color: '#0f172a' }}>{proj?.name || 'Okänt projekt'}</strong>
+                          </div>
+                          <div style={{ fontSize: 11, color: '#475569' }}>{proj?.customer || ''}</div>
+                          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                            <span style={{ fontSize: 10, color: '#0f172a', background: '#fff1f2', border: '1px solid #fecdd3', padding: '1px 6px', borderRadius: 999 }}>Senast planerad: {seg.startDay}</span>
+                            {truck ? <span style={{ fontSize: 10, color: '#0f172a', background: '#fff1f2', border: '1px solid #fecdd3', padding: '1px 6px', borderRadius: 999 }}>Lastbil: {truck}</span> : null}
+                          </div>
+                          {holdInfo.label ? (
+                            <div style={{ fontSize: 10, color: '#0f172a' }}>
+                              Pausad: <span style={{ fontFamily: 'ui-monospace, monospace' }}>{holdInfo.label}</span>
+                              {holdInfo.daysText ? <span style={{ color: '#334155' }}> · {holdInfo.daysText}</span> : null}
+                            </div>
+                          ) : null}
+                          {actorName ? (
+                            <div style={{ fontSize: 10, color: '#0f172a' }}>
+                              Pausad av: <span style={{ fontWeight: 700 }}>{actorName}</span>
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
+            </div>
 
             <div style={{ display: 'grid', gap: 8 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -5379,6 +5794,7 @@ export default function PlanneringPage() {
               segmentCrew={segmentCrew}
               remainingBagsByProject={remainingBagsByProject}
               bagUsageStatusByProject={bagUsageStatusByProject}
+              pauseSegmentToHold={pauseSegmentToHold}
             />
           )}
 
@@ -5424,11 +5840,13 @@ export default function PlanneringPage() {
               segmentCrew={segmentCrew}
               remainingBagsByProject={remainingBagsByProject}
               bagUsageStatusByProject={bagUsageStatusByProject}
+              pauseSegmentToHold={pauseSegmentToHold}
             />
           )}
 
           {viewMode === 'dayList' && (
             <CalendarDayList
+                            pauseSegmentToHold={pauseSegmentToHold}
               weeks={weeks}
               dayNames={dayNames}
               hideWeekends={hideWeekends}
