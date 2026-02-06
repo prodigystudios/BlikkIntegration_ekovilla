@@ -21,6 +21,7 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
   const [mode, setMode] = useState<WeekMode>('current');
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [segmentSortIndexMap, setSegmentSortIndexMap] = useState<Record<string, number | null>>({});
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [currentUserName, setCurrentUserName] = useState<string | null>(null);
   const [dayIdx, setDayIdx] = useState<number | null>(() => {
@@ -163,6 +164,49 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
     })();
     return () => { cancelled = true; };
   }, [supabase, range.startISO, range.endISO]);
+
+  // Enrich items with per-segment sort_index (used for ordering, same as Planning page)
+  useEffect(() => {
+    const ids = Array.from(new Set((items.map(it => it.segment_id) as Array<unknown>)
+      .filter((v): v is string => typeof v === 'string' && v.length > 0)));
+    if (ids.length === 0) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data: rows, error } = await supabase
+          .from('planning_segments')
+          .select('id, sort_index')
+          .in('id', ids);
+        if (cancelled) return;
+        if (error) {
+          // If RLS blocks this for some users, keep working with fallback ordering.
+          console.warn('[dashboard schedule] failed to load segment sort_index', error);
+          return;
+        }
+        const next: Record<string, number | null> = {};
+        for (const r of (rows as any[]) || []) {
+          const id = String(r.id);
+          const v = (r.sort_index ?? null);
+          next[id] = (typeof v === 'number' && Number.isFinite(v)) ? v : null;
+        }
+        setSegmentSortIndexMap(prev => {
+          const prevKeys = Object.keys(prev);
+          const nextKeys = Object.keys(next);
+          if (prevKeys.length !== nextKeys.length) return next;
+          for (const k of nextKeys) {
+            if (!(k in prev)) return next;
+            if (prev[k] !== next[k]) return next;
+          }
+          return prev;
+        });
+      } catch (e) {
+        console.warn('[dashboard schedule] failed to load segment sort_index', e);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [items, supabase]);
 
   // When items change, fetch reports for listed segments
   useEffect(() => {
@@ -499,7 +543,10 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                 {(() => {
                   const getSortIndex = (x: any): number | null => {
                     const v = (x.sort_index ?? x.sortIndex);
-                    return (typeof v === 'number' && Number.isFinite(v)) ? v : null;
+                    if (typeof v === 'number' && Number.isFinite(v)) return v;
+                    const sid = (x.segment_id || x.segmentId || '') as string;
+                    if (sid && sid in segmentSortIndexMap) return segmentSortIndexMap[sid];
+                    return null;
                   };
                   const orderCmp = (a: any, b: any) => {
                     const ta = (a.truck || '').toString();
