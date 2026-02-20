@@ -262,8 +262,39 @@ export default function PlanneringPage() {
   const holdDropDepthRef = useRef(0);
   // Multi-truck filter (replaces previous single truckFilter). Values are truck names; special token 'UNASSIGNED' for items without a truck.
   const [truckFilters, setTruckFilters] = useState<string[]>([]);
+  const [truckFiltersHydrated, setTruckFiltersHydrated] = useState(false);
   const [truckFilterOpen, setTruckFilterOpen] = useState(false);
   const truckFilterRef = useRef<HTMLDivElement | null>(null);
+
+  // Persist selected truck filters between sessions
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem('planner.truckFilters');
+      if (v) {
+        const parsed = JSON.parse(v);
+        if (Array.isArray(parsed)) {
+          const cleaned = parsed
+            .filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
+            .map(s => s.trim());
+          // de-dupe but keep order
+          const seen = new Set<string>();
+          const uniq: string[] = [];
+          for (const s of cleaned) {
+            if (seen.has(s)) continue;
+            seen.add(s);
+            uniq.push(s);
+          }
+          setTruckFilters(uniq);
+        }
+      }
+    } catch { /* ignore */ }
+    setTruckFiltersHydrated(true);
+  }, []);
+  useEffect(() => {
+    if (!truckFiltersHydrated) return;
+    try { localStorage.setItem('planner.truckFilters', JSON.stringify(truckFilters)); } catch { /* ignore */ }
+  }, [truckFilters, truckFiltersHydrated]);
+
   useEffect(() => {
     function onDocClick(e: MouseEvent) {
       if (!truckFilterOpen) return;
