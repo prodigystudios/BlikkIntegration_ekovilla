@@ -255,6 +255,12 @@ export default function HeaderMenu({ role, fullName }: { role: UserRole | null, 
               <IconPhone />
               <span>Kontakt & Adresser</span>
             </Link>
+            <Link href="/dokument" prefetch={false} onClick={() => setOpen(false)}
+              aria-current={pathname?.startsWith('/dokument') && pathname !== '/dokument-information' ? 'page' : undefined}
+              className={`menu-link${pathname?.startsWith('/dokument') && pathname !== '/dokument-information' ? ' is-active' : ''}`}>
+              <IconDoc />
+              <span>Dokument</span>
+            </Link>
             <Link href="/dokument-information" prefetch={true} onClick={() => setOpen(false)}
               aria-current={pathname === '/dokument-information' ? 'page' : undefined}
               className={`menu-link${pathname === '/dokument-information' ? ' is-active' : ''}`}>

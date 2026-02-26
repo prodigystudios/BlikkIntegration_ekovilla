@@ -165,6 +165,23 @@ Environment variables required (set locally and in Vercel):
 - `SUPABASE_SERVICE_ROLE_KEY`
 - (optional) `SUPABASE_ANON_KEY` if you plan to use client-side auth later
 
+## Dokument (filsystem)
+
+The page `/dokument` provides a simple folder/subfolder document library backed by:
+
+- DB tables: `documents_folders`, `documents_files`
+- Supabase Storage bucket (configurable)
+
+Setup:
+
+- Run migration: `supabase/sql/20260220_documents.sql` in the Supabase SQL editor.
+- Create (or reuse) a Storage bucket and set `SUPABASE_DOCS_BUCKET` (fallback: `SUPABASE_BUCKET`, default: `pdfs`).
+
+Notes:
+
+- Read access: all authenticated users.
+- Write access (create folders, upload/delete): admins only.
+
 Auth
 
 - A simple email magic link sign-in is available at `/auth/sign-in`.

@@ -11,6 +11,7 @@ export const NAV_LINKS: RoleAwareLink[] = [
   // /egenkontroll creation accessed via quick links only
   { href: '/archive', label: 'Sparade egenkontroller' },
   { href: '/kontakt-lista', label: 'Kontakt & Adresser' },
+  { href: '/dokument', label: 'Dokument' },
   { href: '/dokument-information', label: 'Dokument & Information' },
   { href: '/bestallning-klader', label: 'Beställning kläder', roles: ['member','admin'] },
   { href: '/korjournal', label: 'Körjournal', roles: ['sales','admin'] },
