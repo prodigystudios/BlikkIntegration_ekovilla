@@ -58,6 +58,12 @@ const baseExtra: Record<string, Omit<QuickLink, 'href' | 'title'>> = {
       <path d="M8 13h8M8 17h5" strokeLinecap="round" />
     </svg>
   ) },
+  '/dokument': { desc: 'Dokumentbibliotek', icon: (
+    <svg width="28" height="28" viewBox="0 0 24 24" strokeWidth={1.6} stroke="currentColor" fill="none" aria-hidden>
+      <path d="M3.5 6a2 2 0 0 1 2-2h5l2 2H18.5a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5.5a2 2 0 0 1-2-2V6Z" />
+      <path d="M7 12h10M7 16h7" strokeLinecap="round" />
+    </svg>
+  ) },
   '/bestallning-klader': { desc: 'Beställ kläder & material', icon: (
     <svg width="28" height="28" viewBox="0 0 24 24" strokeWidth={1.6} stroke="currentColor" fill="none" aria-hidden>
       <path d="M6 6h15l-1.2 8.5a2 2 0 0 1-2 1.7H9.3a2 2 0 0 1-2-1.6L5.2 3.7A1 1 0 0 0 4.2 3H2" strokeLinecap="round" strokeLinejoin="round" />
@@ -161,6 +167,7 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
         { href: '/korjournal', title: 'Körjournal', ...baseExtra['/korjournal'] },
         { href: '/plannering', title: 'Planering', ...baseExtra['/planering'] },
         { href: '/kontakt-lista', title: 'Kontakt', ...baseExtra['/kontakt-lista'] },
+        { href: '/dokument', title: 'Dokument', ...baseExtra['/dokument'] },
       ];
     }
     if (effectiveRole === 'admin') {
@@ -170,6 +177,7 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
         { href: '/korjournal', title: 'Körjournal', ...baseExtra['/korjournal'] },
         { href: '/plannering', title: 'Planering', ...baseExtra['/planering'] },
         { href: '/tidrapport', title: 'Tidrapport', ...baseExtra['/tidrapport'] },
+        { href: '/dokument', title: 'Dokument', ...baseExtra['/dokument'] },
         { href: '/admin', title: 'Admin', ...baseExtra['/admin'] },
         { href: '/offert', title: 'Skapa offert', ...baseExtra['/offert'] },
       ];
