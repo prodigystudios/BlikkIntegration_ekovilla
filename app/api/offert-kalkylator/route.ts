@@ -14,7 +14,7 @@ export async function GET() {
 
     const { data, error } = await supabase
       .from('offert_calculations')
-      .select('id, name, address, city, quote_date, salesperson, created_at, subtotal, total_before_rot, rot_amount, total_after_rot')
+      .select('id, name, address, city, phone, quote_date, salesperson, created_at, subtotal, total_before_rot, rot_amount, total_after_rot')
       .eq('user_id', user.id)
       .order('created_at', { ascending: false });
 
@@ -35,6 +35,7 @@ export async function POST(req: NextRequest) {
     const name = typeof body?.name === 'string' ? body.name.trim() : '';
     const address = typeof body?.address === 'string' ? body.address.trim() : '';
     const city = typeof body?.city === 'string' ? body.city.trim() : '';
+    const phone = typeof body?.phone === 'string' ? body.phone.trim() : '';
     const quoteDate = typeof body?.quoteDate === 'string' ? body.quoteDate.trim() : '';
     const salesperson = typeof body?.salesperson === 'string' ? body.salesperson.trim() : '';
     const payload = body?.payload ?? null;
@@ -56,6 +57,7 @@ export async function POST(req: NextRequest) {
       name,
       address,
       city,
+      phone,
       quote_date: quoteDate,
       salesperson,
       payload,
@@ -68,7 +70,7 @@ export async function POST(req: NextRequest) {
     const { data, error } = await supabase
       .from('offert_calculations')
       .insert(insertRow)
-      .select('id, name, address, city, quote_date, salesperson, created_at, subtotal, total_before_rot, rot_amount, total_after_rot')
+      .select('id, name, address, city, phone, quote_date, salesperson, created_at, subtotal, total_before_rot, rot_amount, total_after_rot')
       .single();
 
     if (error) throw error;

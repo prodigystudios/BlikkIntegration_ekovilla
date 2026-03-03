@@ -161,7 +161,7 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
   const links: QuickLink[] = useMemo(() => {
     if (role === 'konsult') {
       return [
-        { href: '/offert/kalkylator', title: 'Offertkalkylator', ...baseExtra['/offert/kalkylator'] },
+        { href: '/offert/kalkylator', title: 'Kalkylator Försäljning Privat', ...baseExtra['/offert/kalkylator'] },
         { href: '/plannering', title: 'Planering', ...baseExtra['/planering'] },
         { href: '/dokument', title: 'Dokument', ...baseExtra['/dokument'] },
         { href: '/kontakt-lista', title: 'Kontakt', ...baseExtra['/kontakt-lista'] },
@@ -184,7 +184,7 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
         { href: '/plannering', title: 'Planering', ...baseExtra['/planering'] },
         { href: '/kontakt-lista', title: 'Kontakt', ...baseExtra['/kontakt-lista'] },
         { href: '/dokument', title: 'Dokument', ...baseExtra['/dokument'] },
-        { href: '/offert/kalkylator', title: 'Offertkalkylator', ...baseExtra['/offert/kalkylator'] },
+        { href: '/offert/kalkylator', title: 'Kalkylator Försäljning Privat', ...baseExtra['/offert/kalkylator'] },
       ];
     }
     if (effectiveRole === 'admin') {
@@ -197,7 +197,7 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
         { href: '/dokument', title: 'Dokument', ...baseExtra['/dokument'] },
         { href: '/admin', title: 'Admin', ...baseExtra['/admin'] },
         { href: '/offert', title: 'Skapa offert', ...baseExtra['/offert'] },
-        { href: '/offert/kalkylator', title: 'Offertkalkylator', ...baseExtra['/offert/kalkylator'] },
+        { href: '/offert/kalkylator', title: 'Kalkylator Försäljning Privat', ...baseExtra['/offert/kalkylator'] },
       ];
     }
     // Fallback before role known: minimal set

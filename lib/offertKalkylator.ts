@@ -230,10 +230,10 @@ export function computeOffertKalkylator(state: OffertKalkylatorState): OffertKal
   const marginal = clamp0(state.marginalKr);
   const totalBeforeRot = subtotal + etablering + marginal;
 
-  // ROT: (Totalsumma - etablering) x 0.6 x 0.3
-  const rotBase = Math.max(0, totalBeforeRot - etablering);
+  // ROT beräknas utan etablering (ej avdragsgill): (delsumma + marginal) x 0.6 x 0.3
+  const rotBase = Math.max(0, subtotal + marginal);
   const rotAmount = Math.max(0, rotBase * 0.6 * 0.3);
-  const totalAfterRot = Math.max(0, totalBeforeRot - rotAmount);
+  const totalAfterRot = Math.max(0, (rotBase - rotAmount) + etablering);
 
   return { lines, subtotal, etablering, marginal, totalBeforeRot, rotAmount, totalAfterRot };
 }

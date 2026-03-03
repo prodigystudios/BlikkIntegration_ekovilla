@@ -18,6 +18,7 @@ type SavedItem = {
   name: string;
   address: string;
   city: string;
+  phone: string;
   quote_date: string;
   salesperson: string;
   created_at: string;
@@ -79,6 +80,7 @@ export default function OffertKalkylatorPage() {
   const [quoteName, setQuoteName] = useState('');
   const [address, setAddress] = useState('');
   const [city, setCity] = useState('');
+  const [phone, setPhone] = useState('');
   const [quoteDate, setQuoteDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [salesperson, setSalesperson] = useState('');
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -121,6 +123,48 @@ export default function OffertKalkylatorPage() {
     return !!quoteName.trim() && !!address.trim() && !!city.trim() && !!quoteDate.trim() && !!salesperson.trim();
   }, [quoteName, address, city, quoteDate, salesperson]);
 
+  type SortMode =
+    | 'created_desc'
+    | 'created_asc'
+    | 'quote_date_desc'
+    | 'quote_date_asc'
+    | 'name_asc'
+    | 'name_desc'
+    | 'total_after_rot_desc'
+    | 'total_after_rot_asc';
+
+  const [sortMode, setSortMode] = useState<SortMode>('created_desc');
+
+  const sortedItems = useMemo(() => {
+    const arr = [...items];
+    const byCreatedDesc = (a: SavedItem, b: SavedItem) => String(b.created_at).localeCompare(String(a.created_at));
+
+    arr.sort((a, b) => {
+      switch (sortMode) {
+        case 'created_desc':
+          return byCreatedDesc(a, b);
+        case 'created_asc':
+          return String(a.created_at).localeCompare(String(b.created_at));
+        case 'quote_date_desc':
+          return String(b.quote_date).localeCompare(String(a.quote_date)) || byCreatedDesc(a, b);
+        case 'quote_date_asc':
+          return String(a.quote_date).localeCompare(String(b.quote_date)) || byCreatedDesc(a, b);
+        case 'name_asc':
+          return String(a.name).localeCompare(String(b.name), 'sv', { sensitivity: 'base' }) || byCreatedDesc(a, b);
+        case 'name_desc':
+          return String(b.name).localeCompare(String(a.name), 'sv', { sensitivity: 'base' }) || byCreatedDesc(a, b);
+        case 'total_after_rot_desc':
+          return (Number(b.total_after_rot) - Number(a.total_after_rot)) || byCreatedDesc(a, b);
+        case 'total_after_rot_asc':
+          return (Number(a.total_after_rot) - Number(b.total_after_rot)) || byCreatedDesc(a, b);
+        default:
+          return byCreatedDesc(a, b);
+      }
+    });
+
+    return arr;
+  }, [items, sortMode]);
+
   const showActiveSummary = useMemo(() => {
     return hasLoadedOffer;
   }, [hasLoadedOffer]);
@@ -146,6 +190,7 @@ export default function OffertKalkylatorPage() {
           name,
           address: a,
           city: c,
+          phone: phone.trim(),
           quoteDate: d,
           salesperson: s,
           payload: state,
@@ -164,6 +209,7 @@ export default function OffertKalkylatorPage() {
       setQuoteName('');
       setAddress('');
       setCity('');
+      setPhone('');
       setQuoteDate(new Date().toISOString().slice(0, 10));
       setSalesperson(profileName || '');
       await refreshList();
@@ -223,6 +269,7 @@ export default function OffertKalkylatorPage() {
       if (typeof item?.name === 'string') setQuoteName(item.name);
       if (typeof item?.address === 'string') setAddress(item.address);
       if (typeof item?.city === 'string') setCity(item.city);
+      if (typeof item?.phone === 'string') setPhone(item.phone);
       if (typeof item?.quote_date === 'string') setQuoteDate(item.quote_date);
       if (profileName) setSalesperson(profileName);
       else if (typeof item?.salesperson === 'string') setSalesperson(item.salesperson);
@@ -536,6 +583,16 @@ export default function OffertKalkylatorPage() {
                 style={{ padding: '10px 12px', border: '1px solid #e5e7eb', borderRadius: 8 }}
               />
             </label>
+            <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
+              <span style={{ color: '#334155' }}>Telefon</span>
+              <input
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                placeholder="070-123 45 67"
+                inputMode="tel"
+                style={{ padding: '10px 12px', border: '1px solid #e5e7eb', borderRadius: 8 }}
+              />
+            </label>
             <label style={{ display: 'grid', gap: 4, fontSize: 12, gridColumn: '1 / -1' }}>
               <span style={{ color: '#334155' }}>Säljare *</span>
               <input
@@ -559,6 +616,7 @@ export default function OffertKalkylatorPage() {
                 setQuoteName('');
                 setAddress('');
                 setCity('');
+                setPhone('');
                 setQuoteDate(new Date().toISOString().slice(0, 10));
                 setSalesperson(profileName || '');
                 setActiveId(null);
@@ -578,16 +636,35 @@ export default function OffertKalkylatorPage() {
       <section style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: 12, background: '#ffffff', display: 'grid', gap: 10 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <strong style={{ fontSize: 13 }}>SPARADE OFFERTER</strong>
-          <button className="btn--plain btn--sm" onClick={refreshList} disabled={loadingList}>
-            {loadingList ? 'Uppdaterar…' : 'Uppdatera'}
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#334155' }}>
+              <span>Sortera</span>
+              <select
+                className="select-field"
+                value={sortMode}
+                onChange={(e) => setSortMode(e.target.value as SortMode)}
+              >
+                <option value="created_desc">Senast sparad</option>
+                <option value="created_asc">Äldst sparad</option>
+                <option value="quote_date_desc">Offertdatum (nyast)</option>
+                <option value="quote_date_asc">Offertdatum (äldst)</option>
+                <option value="name_asc">Namn (A–Ö)</option>
+                <option value="name_desc">Namn (Ö–A)</option>
+                <option value="total_after_rot_desc">Efter ROT (högst)</option>
+                <option value="total_after_rot_asc">Efter ROT (lägst)</option>
+              </select>
+            </label>
+            <button className="btn--plain btn--sm" onClick={refreshList} disabled={loadingList}>
+              {loadingList ? 'Uppdaterar…' : 'Uppdatera'}
+            </button>
+          </div>
         </div>
 
         {items.length === 0 ? (
           <div style={{ fontSize: 12, color: '#64748b' }}>Inga sparade offerter ännu.</div>
         ) : (
           <div style={{ display: 'grid', gap: 8 }}>
-            {items.map((it) => (
+            {sortedItems.map((it) => (
               <div
                 key={it.id}
                 style={{
