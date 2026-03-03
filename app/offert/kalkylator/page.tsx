@@ -644,7 +644,7 @@ export default function OffertKalkylatorPage() {
                 value={sortMode}
                 onChange={(e) => setSortMode(e.target.value as SortMode)}
               >
-                <option value="created_desc">Senast sparad</option>
+                <option value="created_desc">Senast Sparad</option>
                 <option value="created_asc">Äldst sparad</option>
                 <option value="quote_date_desc">Offertdatum (nyast)</option>
                 <option value="quote_date_asc">Offertdatum (äldst)</option>
