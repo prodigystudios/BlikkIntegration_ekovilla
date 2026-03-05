@@ -12,7 +12,7 @@ export const viewport = {
   width: 'device-width',
   initialScale: 1,
   // Optional: restrict pinch-zoom. Consider accessibility before using.
-  maximumScale: 1.1,
+  maximumScale: 2.0,
   userScalable: true,
   viewportFit: 'cover',
 } as const;
