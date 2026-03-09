@@ -71,7 +71,7 @@ export default function DayNoteEditor({
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
         {note?.text ? (
-          <div style={{ fontSize: 11, color: '#374151', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 6, padding: '3px 6px', maxHeight: 56, overflow: 'hidden', textOverflow: 'ellipsis' }} title={note.text}>
+          <div className="text-error" style={{ fontSize: 11, fontWeight: 700, background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 6, padding: '3px 6px', maxHeight: 56, overflow: 'hidden', textOverflow: 'ellipsis' }} title={note.text}>
             {note.text}
           </div>
         ) : (
