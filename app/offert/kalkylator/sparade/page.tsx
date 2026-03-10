@@ -49,6 +49,7 @@ export default function SparadeOfferterPage() {
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [sharingId, setSharingId] = useState<string | null>(null);
   const [sortMode, setSortMode] = useState<SortMode>('created_desc');
 
   const statusOptions = useMemo(() => ['Återkoppling', 'Bekräftad', 'Förlorad'] as const, []);
@@ -57,6 +58,55 @@ export default function SparadeOfferterPage() {
     if (status === 'Bekräftad') return 'status-select--confirmed';
     if (status === 'Förlorad') return 'status-select--lost';
     return '';
+  };
+
+  const safeFilename = (name: string) => {
+    return (name || 'offert')
+      .replace(/[^a-z0-9\-_ ]/gi, '')
+      .trim()
+      .replace(/\s+/g, '_')
+      .slice(0, 60) || 'offert';
+  };
+
+  const sharePdf = async (id: string, name: string) => {
+    setSharingId(id);
+    try {
+      const res = await fetch(`/api/pdf/offert-kalkylator/${encodeURIComponent(id)}`, { method: 'GET' });
+      if (!res.ok) {
+        const ct = res.headers.get('content-type') || '';
+        if (ct.includes('application/json')) {
+          const json = await res.json();
+          throw new Error(json?.error || 'Kunde inte skapa PDF.');
+        }
+        throw new Error('Kunde inte skapa PDF.');
+      }
+
+      const blob = await res.blob();
+      const filename = `${safeFilename(name)}.pdf`;
+
+      const file = new File([blob], filename, { type: 'application/pdf' });
+      const nav: any = navigator;
+
+      if (nav?.share && (!nav?.canShare || nav.canShare({ files: [file] }))) {
+        await nav.share({ files: [file], title: 'Offert PDF' });
+        return;
+      }
+
+      // Fallback: download
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast.success('PDF nedladdad.');
+    } catch (e: any) {
+      toast.error(e?.message || String(e));
+    } finally {
+      setSharingId(null);
+    }
   };
 
   const refreshList = async () => {
@@ -250,25 +300,24 @@ export default function SparadeOfferterPage() {
                   <button
                     className="btn--primary btn--sm"
                     onClick={() => openInCalculator(it.id)}
-                    disabled={loadingId === it.id || deletingId === it.id || updatingId === it.id}
+                    disabled={loadingId === it.id || deletingId === it.id || updatingId === it.id || sharingId === it.id}
                   >
                     {loadingId === it.id ? 'Öppnar…' : 'Öppna i kalkylatorn'}
                   </button>
-                  <a
+                  <button
                     className="btn--success btn--sm"
-                    href={`/api/pdf/offert-kalkylator/${encodeURIComponent(it.id)}`}
-                    target="_blank"
-                    rel="noopener"
+                    onClick={() => sharePdf(it.id, it.name)}
+                    disabled={loadingId === it.id || deletingId === it.id || updatingId === it.id || sharingId === it.id}
                   >
-                    Skapa PDF
-                  </a>
+                    {sharingId === it.id ? 'Skapar…' : 'Skapa PDF'}
+                  </button>
 
                   <span style={{ flex: 1 }} />
 
                   <button
                     className="btn--danger btn--sm"
                     onClick={() => del(it.id)}
-                    disabled={deletingId === it.id || loadingId === it.id || updatingId === it.id}
+                    disabled={deletingId === it.id || loadingId === it.id || updatingId === it.id || sharingId === it.id}
                   >
                     {deletingId === it.id ? 'Tar bort…' : 'Ta bort'}
                   </button>
