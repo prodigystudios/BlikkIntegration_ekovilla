@@ -20,10 +20,13 @@ declare module 'pdf-lib' {
 
   export class PDFDocument {
     static create(): Promise<PDFDocument>;
+    static load(pdf: Uint8Array | ArrayBuffer | Buffer): Promise<PDFDocument>;
     addPage(size?: [number, number] | { width: number; height: number }): any;
     embedFont(font: string): Promise<any>;
-  embedPng(png: Uint8Array | ArrayBuffer | Buffer): Promise<{ width: number; height: number }>;
-  embedJpg?(jpg: Uint8Array | ArrayBuffer | Buffer): Promise<{ width: number; height: number }>;
+    embedPng(png: Uint8Array | ArrayBuffer | Buffer): Promise<{ width: number; height: number }>;
+    embedJpg?(jpg: Uint8Array | ArrayBuffer | Buffer): Promise<{ width: number; height: number }>;
+    copyPages(srcDoc: PDFDocument, indices: number[]): Promise<any[]>;
+    getPageIndices(): number[];
     save(): Promise<Uint8Array>;
   }
 }

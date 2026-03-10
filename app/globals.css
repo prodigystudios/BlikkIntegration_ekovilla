@@ -39,6 +39,31 @@ input[type="reset"] {
   transition: background-color .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease;
 }
 
+/* Ensure links with btn--* classes look like real buttons */
+.btn--plain,
+.btn--primary,
+.btn--danger,
+.btn--success {
+  -webkit-appearance: none;
+  appearance: none;
+  font: inherit;
+  line-height: 1.2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid #e5e7eb; /* gray-200 */
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+  box-shadow: none;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  transition: background-color .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease;
+}
+
 button:hover,
 input[type="button"]:hover,
 input[type="submit"]:hover,
@@ -60,6 +85,15 @@ input[type="submit"]:disabled,
 input[type="reset"]:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+a.btn--plain[aria-disabled="true"],
+a.btn--primary[aria-disabled="true"],
+a.btn--danger[aria-disabled="true"],
+a.btn--success[aria-disabled="true"] {
+  opacity: 0.6;
+  cursor: not-allowed;
+  pointer-events: none;
 }
 
 button:focus-visible,
@@ -85,7 +119,7 @@ input[type="reset"]:focus-visible {
 /* Size utilities */
 .btn--lg { padding: 12px 16px; font-size: 16px; }
 .btn--med { padding: 8px 12px; font-size: 14px; }
-.btn--sm { padding: 6px 10px; font-size: 12px; }
+.btn--sm { padding: 8px 16px; font-size: 12px; }
 .btn--block { width: 100%; }
 
 /* Success/complete (green) variant */
@@ -189,6 +223,18 @@ select.select-field:hover { border-color: #d1d5db; }
 select.select-field:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; border-color: #2563eb; }
 select.select-field:disabled { opacity: 0.6; cursor: not-allowed; }
 select.select-field option { color: #111827; background-color: #ffffff; }
+
+/* Status color coding (offert-kalkylator sparade) */
+select.select-field.status-select--confirmed {
+  border-color: #16a34a; /* same as .btn--success */
+  color: #16a34a;
+  font-weight: 600;
+}
+select.select-field.status-select--lost {
+  border-color: #dc2626; /* same as .btn--danger */
+  color: #dc2626;
+  font-weight: 600;
+}
 
 /* Simple spinner utility */
 @keyframes spin { to { transform: rotate(360deg); } }

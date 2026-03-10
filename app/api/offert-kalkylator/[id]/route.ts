@@ -60,15 +60,23 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const body = await req.json();
+
     const name = typeof body?.name === 'string' ? body.name.trim() : '';
-    if (!name) return NextResponse.json({ error: 'Missing name' }, { status: 400 });
+    const status = typeof body?.status === 'string' ? body.status.trim() : '';
+    const nextMeetingDate = typeof body?.nextMeetingDate === 'string' ? body.nextMeetingDate.trim() : '';
+
+    const update: any = {};
+    if (name) update.name = name;
+    if (status) update.status = status;
+    if ('nextMeetingDate' in (body || {})) update.next_meeting_date = nextMeetingDate || null;
+    if (Object.keys(update).length === 0) return NextResponse.json({ error: 'Nothing to update' }, { status: 400 });
 
     const { data, error } = await supabase
       .from('offert_calculations')
-      .update({ name })
+      .update(update)
       .eq('id', id)
       .eq('user_id', user.id)
-      .select('id, name, address, city, phone, quote_date, salesperson, created_at, subtotal, total_before_rot, rot_amount, total_after_rot')
+      .select('id, name, address, city, phone, quote_date, salesperson, status, next_meeting_date, created_at, subtotal, total_before_rot, rot_amount, total_after_rot')
       .single();
 
     if (error) throw error;

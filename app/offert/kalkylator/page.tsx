@@ -2,7 +2,9 @@
 
 export const dynamic = 'force-dynamic';
 
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
 import {
   computeOffertKalkylator,
   OFFERT_KALKYLATOR_DEFAULT_STATE,
@@ -12,21 +14,6 @@ import {
 } from '@/lib/offertKalkylator';
 import { useToast } from '@/lib/Toast';
 import { useUserProfile } from '@/lib/UserProfileContext';
-
-type SavedItem = {
-  id: string;
-  name: string;
-  address: string;
-  city: string;
-  phone: string;
-  quote_date: string;
-  salesperson: string;
-  created_at: string;
-  subtotal: number;
-  total_before_rot: number;
-  rot_amount: number;
-  total_after_rot: number;
-};
 
 function formatKr(value: number) {
   const v = Number.isFinite(value) ? value : 0;
@@ -72,8 +59,10 @@ function SelectNumber({
   );
 }
 
-export default function OffertKalkylatorPage() {
+function OffertKalkylatorInner() {
   const toast = useToast();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const profile = useUserProfile();
   const profileName = (profile?.full_name || '').trim();
   const [state, setState] = useState<OffertKalkylatorState>(OFFERT_KALKYLATOR_DEFAULT_STATE);
@@ -82,94 +71,41 @@ export default function OffertKalkylatorPage() {
   const [city, setCity] = useState('');
   const [phone, setPhone] = useState('');
   const [quoteDate, setQuoteDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [nextMeetingDate, setNextMeetingDate] = useState('');
   const [salesperson, setSalesperson] = useState('');
   const [activeId, setActiveId] = useState<string | null>(null);
   const [activeCreatedAt, setActiveCreatedAt] = useState<string | null>(null);
   const [hasLoadedOffer, setHasLoadedOffer] = useState(false);
-  const [items, setItems] = useState<SavedItem[]>([]);
-  const [loadingList, setLoadingList] = useState(false);
+  const [saveNotice, setSaveNotice] = useState<{ kind: 'success' | 'error'; message: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const [loadingId, setLoadingId] = useState<string | null>(null);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [locatingAddress, setLocatingAddress] = useState(false);
 
+  const lastAutoLoadedIdRef = useRef<string | null>(null);
+
   const totals = useMemo(() => computeOffertKalkylator(state), [state]);
-
-  const refreshList = async () => {
-    setLoadingList(true);
-    try {
-      const res = await fetch('/api/offert-kalkylator', { method: 'GET' });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json?.error || 'Kunde inte hämta sparade offerter.');
-      setItems(Array.isArray(json?.items) ? json.items : []);
-    } catch (e: any) {
-      toast.error(e?.message || String(e));
-    } finally {
-      setLoadingList(false);
-    }
-  };
-
-  useEffect(() => {
-    refreshList();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   useEffect(() => {
     if (!profileName) return;
     setSalesperson(profileName);
   }, [profileName]);
 
+  useEffect(() => {
+    if (!saveNotice) return;
+    const t = setTimeout(() => setSaveNotice(null), 6500);
+    return () => clearTimeout(t);
+  }, [saveNotice]);
+
   const canSave = useMemo(() => {
     return !!quoteName.trim() && !!address.trim() && !!city.trim() && !!quoteDate.trim() && !!salesperson.trim();
   }, [quoteName, address, city, quoteDate, salesperson]);
-
-  type SortMode =
-    | 'created_desc'
-    | 'created_asc'
-    | 'quote_date_desc'
-    | 'quote_date_asc'
-    | 'name_asc'
-    | 'name_desc'
-    | 'total_after_rot_desc'
-    | 'total_after_rot_asc';
-
-  const [sortMode, setSortMode] = useState<SortMode>('created_desc');
-
-  const sortedItems = useMemo(() => {
-    const arr = [...items];
-    const byCreatedDesc = (a: SavedItem, b: SavedItem) => String(b.created_at).localeCompare(String(a.created_at));
-
-    arr.sort((a, b) => {
-      switch (sortMode) {
-        case 'created_desc':
-          return byCreatedDesc(a, b);
-        case 'created_asc':
-          return String(a.created_at).localeCompare(String(b.created_at));
-        case 'quote_date_desc':
-          return String(b.quote_date).localeCompare(String(a.quote_date)) || byCreatedDesc(a, b);
-        case 'quote_date_asc':
-          return String(a.quote_date).localeCompare(String(b.quote_date)) || byCreatedDesc(a, b);
-        case 'name_asc':
-          return String(a.name).localeCompare(String(b.name), 'sv', { sensitivity: 'base' }) || byCreatedDesc(a, b);
-        case 'name_desc':
-          return String(b.name).localeCompare(String(a.name), 'sv', { sensitivity: 'base' }) || byCreatedDesc(a, b);
-        case 'total_after_rot_desc':
-          return (Number(b.total_after_rot) - Number(a.total_after_rot)) || byCreatedDesc(a, b);
-        case 'total_after_rot_asc':
-          return (Number(a.total_after_rot) - Number(b.total_after_rot)) || byCreatedDesc(a, b);
-        default:
-          return byCreatedDesc(a, b);
-      }
-    });
-
-    return arr;
-  }, [items, sortMode]);
 
   const showActiveSummary = useMemo(() => {
     return hasLoadedOffer;
   }, [hasLoadedOffer]);
 
   const save = async () => {
+    setSaveNotice(null);
     const name = quoteName.trim();
     const a = address.trim();
     const c = city.trim();
@@ -192,6 +128,7 @@ export default function OffertKalkylatorPage() {
           city: c,
           phone: phone.trim(),
           quoteDate: d,
+          nextMeetingDate: (nextMeetingDate || '').trim(),
           salesperson: s,
           payload: state,
           subtotal: totals.subtotal,
@@ -205,16 +142,20 @@ export default function OffertKalkylatorPage() {
       if (json?.item?.id) setActiveId(String(json.item.id));
       if (json?.item?.created_at) setActiveCreatedAt(String(json.item.created_at));
       setHasLoadedOffer(false);
-      toast.success('Offert sparad.');
+      toast.success('Offert sparad.', { ttl: 5000 });
+      const savedAt = json?.item?.created_at ? new Date(String(json.item.created_at)) : new Date();
+      setSaveNotice({ kind: 'success', message: `Offert sparad ${savedAt.toLocaleString('sv-SE')}.` });
       setQuoteName('');
       setAddress('');
       setCity('');
       setPhone('');
       setQuoteDate(new Date().toISOString().slice(0, 10));
+      setNextMeetingDate('');
       setSalesperson(profileName || '');
-      await refreshList();
     } catch (e: any) {
-      toast.error(e?.message || String(e));
+      const msg = e?.message || String(e);
+      toast.error(msg);
+      setSaveNotice({ kind: 'error', message: msg });
     } finally {
       setSaving(false);
     }
@@ -271,6 +212,8 @@ export default function OffertKalkylatorPage() {
       if (typeof item?.city === 'string') setCity(item.city);
       if (typeof item?.phone === 'string') setPhone(item.phone);
       if (typeof item?.quote_date === 'string') setQuoteDate(item.quote_date);
+      if (typeof item?.next_meeting_date === 'string') setNextMeetingDate(item.next_meeting_date);
+      else setNextMeetingDate('');
       if (profileName) setSalesperson(profileName);
       else if (typeof item?.salesperson === 'string') setSalesperson(item.salesperson);
       setActiveId(String(item?.id || id));
@@ -284,33 +227,30 @@ export default function OffertKalkylatorPage() {
     }
   };
 
-  const del = async (id: string) => {
-    setDeletingId(id);
-    try {
-      const res = await fetch(`/api/offert-kalkylator/${encodeURIComponent(id)}`, { method: 'DELETE' });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json?.error || 'Kunde inte ta bort offert.');
-      toast.success('Offert borttagen.');
-      if (activeId === id) {
-        setActiveId(null);
-        setActiveCreatedAt(null);
-        setHasLoadedOffer(false);
-      }
-      await refreshList();
-    } catch (e: any) {
-      toast.error(e?.message || String(e));
-    } finally {
-      setDeletingId(null);
-    }
-  };
+  useEffect(() => {
+    const id = (searchParams.get('load') || '').trim();
+    if (!id) return;
+    if (lastAutoLoadedIdRef.current === id) return;
+    lastAutoLoadedIdRef.current = id;
+    (async () => {
+      await load(id);
+      router.replace('/offert/kalkylator');
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, router]);
 
   return (
     <div style={{ padding: 16, maxWidth: 980, margin: '0 auto', display: 'grid', gap: 14 }}>
-      <div style={{ display: 'grid', gap: 4 }}>
-        <h1 style={{ margin: 0, fontSize: 18 }}>Offertkalkylator</h1>
-        <p style={{ margin: 0, fontSize: 12, color: '#64748b' }}>
-          Summerar valda rader, lägger på marginal och etableringskostnad, och räknar ROT.
-        </p>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ display: 'grid', gap: 4 }}>
+          <h1 style={{ margin: 0, fontSize: 18 }}>Offertkalkylator</h1>
+          <p style={{ margin: 0, fontSize: 12, color: '#64748b' }}>
+            Summerar valda rader, lägger på marginal och etableringskostnad, och räknar ROT.
+          </p>
+        </div>
+        <Link className="btn--plain btn--sm" href="/offert/kalkylator/sparade">
+          Sparade offerter
+        </Link>
       </div>
 
       <section style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: 12, background: '#ffffff', display: 'grid', gap: 10 }}>
@@ -352,6 +292,7 @@ export default function OffertKalkylatorPage() {
             <div><span style={{ color: '#64748b' }}>Datum:</span> {quoteDate.trim() || '—'}</div>
             <div><span style={{ color: '#64748b' }}>Adress:</span> {address.trim() || '—'}</div>
             <div><span style={{ color: '#64748b' }}>Stad:</span> {city.trim() || '—'}</div>
+            <div style={{ gridColumn: '1 / -1' }}><span style={{ color: '#64748b' }}>Nästa möte:</span> {nextMeetingDate.trim() || '—'}</div>
             {activeId && (
               <div style={{ gridColumn: '1 / -1' }}><span style={{ color: '#64748b' }}>Säljare:</span> {salesperson.trim() || '—'}</div>
             )}
@@ -535,7 +476,34 @@ export default function OffertKalkylatorPage() {
       <section style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: 12, background: '#ffffff', display: 'grid', gap: 10 }}>
         <strong style={{ fontSize: 13 }}>SPARA OFFERT</strong>
         <div style={{ display: 'grid', gap: 10 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
+          {saveNotice && (
+            <div
+              role="status"
+              aria-live="polite"
+              style={{
+                fontSize: 12,
+                borderRadius: 10,
+                padding: '10px 12px',
+                border: `1px solid ${saveNotice.kind === 'success' ? '#bbf7d0' : '#fecaca'}`,
+                background: saveNotice.kind === 'success' ? '#f0fdf4' : '#fef2f2',
+                color: '#0f172a',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                gap: 10,
+                flexWrap: 'wrap',
+              }}
+            >
+              <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                <span style={{ fontWeight: 700 }}>{saveNotice.kind === 'success' ? 'Sparat' : 'Fel'}</span>
+                <span>{saveNotice.message}</span>
+              </div>
+              <Link className="btn--plain btn--sm" href="/offert/kalkylator/sparade">
+                Visa sparade
+              </Link>
+            </div>
+          )}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10 }}>
             <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
               <span style={{ color: '#334155' }}>Namn *</span>
               <input
@@ -551,6 +519,15 @@ export default function OffertKalkylatorPage() {
                 type="date"
                 value={quoteDate}
                 onChange={(e) => setQuoteDate(e.target.value)}
+                style={{ padding: '10px 12px', border: '1px solid #e5e7eb', borderRadius: 8 }}
+              />
+            </label>
+            <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
+              <span style={{ color: '#334155' }}>Nästa inbokat möte</span>
+              <input
+                type="date"
+                value={nextMeetingDate}
+                onChange={(e) => setNextMeetingDate(e.target.value)}
                 style={{ padding: '10px 12px', border: '1px solid #e5e7eb', borderRadius: 8 }}
               />
             </label>
@@ -618,6 +595,7 @@ export default function OffertKalkylatorPage() {
                 setCity('');
                 setPhone('');
                 setQuoteDate(new Date().toISOString().slice(0, 10));
+                setNextMeetingDate('');
                 setSalesperson(profileName || '');
                 setActiveId(null);
                 setActiveCreatedAt(null);
@@ -631,86 +609,20 @@ export default function OffertKalkylatorPage() {
           </div>
         </div>
       </section>
-
-      {/* LISTA */}
-      <section style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: 12, background: '#ffffff', display: 'grid', gap: 10 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          <strong style={{ fontSize: 13 }}>SPARADE OFFERTER</strong>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#334155' }}>
-              <span>Sortera</span>
-              <select
-                className="select-field"
-                value={sortMode}
-                onChange={(e) => setSortMode(e.target.value as SortMode)}
-              >
-                <option value="created_desc">Senast Sparad</option>
-                <option value="created_asc">Äldst sparad</option>
-                <option value="quote_date_desc">Offertdatum (nyast)</option>
-                <option value="quote_date_asc">Offertdatum (äldst)</option>
-                <option value="name_asc">Namn (A–Ö)</option>
-                <option value="name_desc">Namn (Ö–A)</option>
-                <option value="total_after_rot_desc">Efter ROT (högst)</option>
-                <option value="total_after_rot_asc">Efter ROT (lägst)</option>
-              </select>
-            </label>
-            <button className="btn--plain btn--sm" onClick={refreshList} disabled={loadingList}>
-              {loadingList ? 'Uppdaterar…' : 'Uppdatera'}
-            </button>
-          </div>
-        </div>
-
-        {items.length === 0 ? (
-          <div style={{ fontSize: 12, color: '#64748b' }}>Inga sparade offerter ännu.</div>
-        ) : (
-          <div style={{ display: 'grid', gap: 8 }}>
-            {sortedItems.map((it) => (
-              <div
-                key={it.id}
-                style={{
-                  border: '1px solid #e5e7eb',
-                  borderRadius: 10,
-                  padding: 10,
-                  display: 'grid',
-                  gap: 8,
-                  background: '#fff',
-                }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
-                  <div style={{ display: 'grid', gap: 2 }}>
-                    <div style={{ fontWeight: 700, fontSize: 13 }}>{it.name}</div>
-                    <div style={{ fontSize: 12, color: '#64748b' }}>
-                      {it.address} • {it.city} • {it.quote_date} • {it.salesperson}
-                    </div>
-                    <div style={{ fontSize: 12, color: '#94a3b8' }}>{new Date(it.created_at).toLocaleString('sv-SE')}</div>
-                  </div>
-                  <div style={{ display: 'grid', gap: 2, textAlign: 'right' }}>
-                    <div style={{ fontSize: 12, color: '#334155' }}>Efter ROT</div>
-                    <div style={{ fontWeight: 700, fontSize: 13 }}>{formatKr(it.total_after_rot)}</div>
-                  </div>
-                </div>
-
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                  <button
-                    className="btn--primary btn--sm"
-                    onClick={() => load(it.id)}
-                    disabled={loadingId === it.id || deletingId === it.id}
-                  >
-                    {loadingId === it.id ? 'Laddar…' : 'Ladda'}
-                  </button>
-                  <button
-                    className="btn--danger btn--sm"
-                    onClick={() => del(it.id)}
-                    disabled={deletingId === it.id || loadingId === it.id}
-                  >
-                    {deletingId === it.id ? 'Tar bort…' : 'Ta bort'}
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
     </div>
+  );
+}
+
+export default function OffertKalkylatorPage() {
+  return (
+    <Suspense
+      fallback={
+        <div style={{ padding: 16, maxWidth: 980, margin: '0 auto', fontSize: 12, color: '#64748b' }}>
+          Laddar…
+        </div>
+      }
+    >
+      <OffertKalkylatorInner />
+    </Suspense>
   );
 }
