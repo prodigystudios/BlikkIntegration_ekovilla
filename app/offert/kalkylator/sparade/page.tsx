@@ -23,6 +23,7 @@ type SavedItem = {
   total_before_rot: number;
   rot_amount: number;
   total_after_rot: number;
+  customer_submitted_at?: string | null;
 };
 
 function formatKr(value: number) {
@@ -51,6 +52,7 @@ export default function SparadeOfferterPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [sharingId, setSharingId] = useState<string | null>(null);
+  const [customerLinkingId, setCustomerLinkingId] = useState<string | null>(null);
   const [sortMode, setSortMode] = useState<SortMode>('created_desc');
 
   const statusOptions = useMemo(() => ['Återkoppling', 'Bekräftad', 'Förlorad'] as const, []);
@@ -107,6 +109,33 @@ export default function SparadeOfferterPage() {
       toast.error(e?.message || String(e));
     } finally {
       setSharingId(null);
+    }
+  };
+
+  const createCustomerLink = async (id: string) => {
+    setCustomerLinkingId(id);
+    try {
+      const res = await fetch(`/api/offert-kalkylator/${encodeURIComponent(id)}/customer-link`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(json?.error || 'Kunde inte skapa kundlänk.');
+      const url = String(json?.url || '').trim();
+      if (!url) throw new Error('Kunde inte skapa kundlänk.');
+
+      try {
+        await navigator.clipboard.writeText(url);
+        toast.success('Kundlänk skapad och kopierad.', { ttl: 4500 });
+      } catch {
+        toast.success('Kundlänk skapad.', { ttl: 4500 });
+        // Fallback: show a prompt so it can be copied manually.
+        window.prompt('Kundlänk (kopiera):', url);
+      }
+    } catch (e: any) {
+      toast.error(e?.message || String(e));
+    } finally {
+      setCustomerLinkingId(null);
     }
   };
 
@@ -263,7 +292,25 @@ export default function SparadeOfferterPage() {
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
                   <div style={{ display: 'grid', gap: 2 }}>
-                    <div style={{ fontWeight: 700, fontSize: 13 }}>{it.name}</div>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <div style={{ fontWeight: 700, fontSize: 13 }}>{it.name}</div>
+                      {String(it.customer_submitted_at || '').trim() && (
+                        <span
+                          style={{
+                            fontSize: 11,
+                            padding: '2px 8px',
+                            borderRadius: 999,
+                            border: '1px solid #16a34a',
+                            background: '#dcfce7',
+                            color: '#14532d',
+                            whiteSpace: 'nowrap',
+                          }}
+                          title={`Inskickat: ${new Date(String(it.customer_submitted_at)).toLocaleString('sv-SE')}`}
+                        >
+                          Kund lämnat uppgifter {new Date(String(it.customer_submitted_at)).toLocaleDateString('sv-SE')}
+                        </span>
+                      )}
+                    </div>
                     <div style={{ fontSize: 12, color: '#64748b' }}>
                       {it.address} • {it.city} • {it.quote_date} • {it.salesperson}{String(it.salesperson_phone || '').trim() ? ` (${String(it.salesperson_phone).trim()})` : ''}
                     </div>
@@ -308,9 +355,17 @@ export default function SparadeOfferterPage() {
                   <button
                     className="btn--success btn--sm"
                     onClick={() => sharePdf(it.id, it.name)}
-                    disabled={loadingId === it.id || deletingId === it.id || updatingId === it.id || sharingId === it.id}
+                    disabled={loadingId === it.id || deletingId === it.id || updatingId === it.id || sharingId === it.id || customerLinkingId === it.id}
                   >
                     {sharingId === it.id ? 'Skapar…' : 'Skapa PDF'}
+                  </button>
+
+                  <button
+                    className="btn--plain btn--sm"
+                    onClick={() => createCustomerLink(it.id)}
+                    disabled={loadingId === it.id || deletingId === it.id || updatingId === it.id || sharingId === it.id || customerLinkingId === it.id}
+                  >
+                    {customerLinkingId === it.id ? 'Skapar…' : 'Skapa kundlänk'}
                   </button>
 
                   <span style={{ flex: 1 }} />
@@ -318,7 +373,7 @@ export default function SparadeOfferterPage() {
                   <button
                     className="btn--danger btn--sm"
                     onClick={() => del(it.id)}
-                    disabled={deletingId === it.id || loadingId === it.id || updatingId === it.id || sharingId === it.id}
+                    disabled={deletingId === it.id || loadingId === it.id || updatingId === it.id || sharingId === it.id || customerLinkingId === it.id}
                   >
                     {deletingId === it.id ? 'Tar bort…' : 'Ta bort'}
                   </button>

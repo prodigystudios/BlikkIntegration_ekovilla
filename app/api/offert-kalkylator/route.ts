@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { computeOffertKalkylator, OFFERT_KALKYLATOR_DEFAULT_STATE } from '@/lib/offertKalkylator';
+import { adminSupabase } from '@/lib/adminSupabase';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -19,7 +20,40 @@ export async function GET() {
       .order('created_at', { ascending: false });
 
     if (error) throw error;
-    return NextResponse.json({ items: data ?? [] });
+
+    const items = (data ?? []) as any[];
+
+    // Optional: attach customer-response status per offer.
+    if (adminSupabase && items.length > 0) {
+      const ids = items.map((x) => String(x.id)).filter(Boolean);
+      const { data: reqRows, error: reqErr } = await adminSupabase
+        .from('offert_customer_requests')
+        .select('offert_id, submitted_at')
+        .eq('seller_user_id', user.id)
+        .eq('status', 'submitted')
+        .in('offert_id', ids);
+
+      if (reqErr) {
+        // Non-fatal: just return list without labels.
+        if (process.env.NODE_ENV !== 'production') console.warn('[offert-kalkylator GET] customer req lookup failed', reqErr.message);
+      } else {
+        const byOffertId = new Map<string, string>();
+        for (const r of (reqRows || []) as any[]) {
+          const offId = String(r?.offert_id || '').trim();
+          const sub = r?.submitted_at ? String(r.submitted_at) : '';
+          if (!offId || !sub) continue;
+          const prev = byOffertId.get(offId);
+          if (!prev || String(sub).localeCompare(prev) > 0) byOffertId.set(offId, sub);
+        }
+
+        for (const it of items) {
+          const sub = byOffertId.get(String(it.id)) || null;
+          (it as any).customer_submitted_at = sub;
+        }
+      }
+    }
+
+    return NextResponse.json({ items });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message ?? 'Unknown error' }, { status: 500 });
   }

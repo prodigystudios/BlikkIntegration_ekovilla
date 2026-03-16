@@ -59,6 +59,25 @@ function SelectNumber({
   );
 }
 
+type CustomerResponseRow = {
+  person1_name: string;
+  person1_personnummer: string;
+  person2_name: string;
+  person2_personnummer: string;
+  delivery_address: string;
+  postal_code: string;
+  city: string;
+  property_designation: string;
+  phone: string;
+  email: string;
+  existing_insulation: string;
+  attic_hatch_type: string;
+  other_info: string;
+  signature_data_url: string;
+  signature_signed_at?: string;
+  submitted_at?: string;
+};
+
 function OffertKalkylatorInner() {
   const toast = useToast();
   const router = useRouter();
@@ -83,6 +102,12 @@ function OffertKalkylatorInner() {
   const [saving, setSaving] = useState(false);
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const [locatingAddress, setLocatingAddress] = useState(false);
+
+  const [customerStatus, setCustomerStatus] = useState<'none' | 'pending' | 'submitted' | 'revoked'>('none');
+  const [customerCreatedAt, setCustomerCreatedAt] = useState<string | null>(null);
+  const [customerSubmittedAt, setCustomerSubmittedAt] = useState<string | null>(null);
+  const [loadingCustomerData, setLoadingCustomerData] = useState(false);
+  const [customerResponse, setCustomerResponse] = useState<CustomerResponseRow | null>(null);
 
   const lastAutoLoadedIdRef = useRef<string | null>(null);
 
@@ -112,6 +137,63 @@ function OffertKalkylatorInner() {
   const showActiveSummary = useMemo(() => {
     return hasLoadedOffer;
   }, [hasLoadedOffer]);
+
+  useEffect(() => {
+    if (!activeId || !showActiveSummary) {
+      setCustomerStatus('none');
+      setCustomerCreatedAt(null);
+      setCustomerSubmittedAt(null);
+      setCustomerResponse(null);
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingCustomerData(true);
+    (async () => {
+      try {
+        const [statusRes, respRes] = await Promise.all([
+          fetch(`/api/offert-kalkylator/${encodeURIComponent(activeId)}/customer-status`, { cache: 'no-store' }),
+          fetch(`/api/offert-kalkylator/${encodeURIComponent(activeId)}/customer-response`, { cache: 'no-store' }),
+        ]);
+
+        const statusJson = await statusRes.json().catch(() => null);
+        const respJson = await respRes.json().catch(() => null);
+
+        if (cancelled) return;
+
+        if (statusRes.ok) {
+          const st = String(statusJson?.status || 'none');
+          if (st === 'pending' || st === 'submitted' || st === 'revoked') setCustomerStatus(st);
+          else setCustomerStatus('none');
+          setCustomerCreatedAt(statusJson?.createdAt ? String(statusJson.createdAt) : null);
+          setCustomerSubmittedAt(statusJson?.submittedAt ? String(statusJson.submittedAt) : null);
+        } else {
+          setCustomerStatus('none');
+          setCustomerCreatedAt(null);
+          setCustomerSubmittedAt(null);
+        }
+
+        if (respRes.ok) {
+          setCustomerResponse((respJson?.response as any) || null);
+          if (respJson?.submittedAt) setCustomerSubmittedAt(String(respJson.submittedAt));
+        } else {
+          setCustomerResponse(null);
+        }
+      } catch {
+        if (cancelled) return;
+        setCustomerStatus('none');
+        setCustomerCreatedAt(null);
+        setCustomerSubmittedAt(null);
+        setCustomerResponse(null);
+      } finally {
+        if (!cancelled) setLoadingCustomerData(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeId, showActiveSummary]);
 
   const save = async () => {
     setSaveNotice(null);
@@ -336,6 +418,61 @@ function OffertKalkylatorInner() {
             <div style={{ color: '#64748b' }}>Totalsumma (efter ROT)</div>
             <div style={{ fontWeight: 700, whiteSpace: 'nowrap' }}>{formatKr(totals.totalAfterRot)}</div>
           </div>
+
+          {activeId && (
+            <>
+              <div style={{ height: 1, background: '#e5e7eb', margin: '2px 0' }} />
+              <div style={{ display: 'grid', gap: 8 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+                  <div style={{ fontSize: 12, color: '#64748b' }}>
+                    Kunduppgifter: {
+                      customerStatus === 'submitted' ? 'Inskickat' :
+                      customerStatus === 'pending' ? 'Väntar på kund' :
+                      customerStatus === 'revoked' ? 'Ersatt av ny länk' :
+                      'Ingen länk'
+                    }
+                    {customerSubmittedAt && customerStatus === 'submitted' && (
+                      <span> ({new Date(customerSubmittedAt).toLocaleString('sv-SE')})</span>
+                    )}
+                    {customerCreatedAt && customerStatus === 'pending' && (
+                      <span> ({new Date(customerCreatedAt).toLocaleString('sv-SE')})</span>
+                    )}
+                  </div>
+                </div>
+
+                {loadingCustomerData && (
+                  <div style={{ fontSize: 12, color: '#64748b' }}>Hämtar kundstatus…</div>
+                )}
+
+                {customerResponse && (
+                  <div style={{ display: 'grid', gap: 8, marginTop: 2 }}>
+                    <strong style={{ fontSize: 12 }}>KUNDSVAR</strong>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10, fontSize: 12 }}>
+                      <div><span style={{ color: '#64748b' }}>Namn 1:</span> {customerResponse.person1_name || '—'}</div>
+                      <div><span style={{ color: '#64748b' }}>Personnr 1:</span> {customerResponse.person1_personnummer || '—'}</div>
+                      <div><span style={{ color: '#64748b' }}>Namn 2:</span> {customerResponse.person2_name || '—'}</div>
+                      <div><span style={{ color: '#64748b' }}>Personnr 2:</span> {customerResponse.person2_personnummer || '—'}</div>
+                      <div style={{ gridColumn: '1 / -1' }}><span style={{ color: '#64748b' }}>Leveransadress:</span> {customerResponse.delivery_address || '—'}</div>
+                      <div><span style={{ color: '#64748b' }}>Postnr:</span> {customerResponse.postal_code || '—'}</div>
+                      <div><span style={{ color: '#64748b' }}>Ort:</span> {customerResponse.city || '—'}</div>
+                      <div style={{ gridColumn: '1 / -1' }}><span style={{ color: '#64748b' }}>Fastighetsbeteckning:</span> {customerResponse.property_designation || '—'}</div>
+                      <div><span style={{ color: '#64748b' }}>Telefon:</span> {customerResponse.phone || '—'}</div>
+                      <div><span style={{ color: '#64748b' }}>E-post:</span> {customerResponse.email || '—'}</div>
+                      <div style={{ gridColumn: '1 / -1' }}><span style={{ color: '#64748b' }}>Befintlig isolering:</span> {customerResponse.existing_insulation || '—'}</div>
+                      <div><span style={{ color: '#64748b' }}>Vindslucka:</span> {customerResponse.attic_hatch_type || '—'}</div>
+                      <div style={{ gridColumn: '1 / -1' }}><span style={{ color: '#64748b' }}>Övrigt:</span> {customerResponse.other_info || '—'}</div>
+                    </div>
+                    {customerResponse.signature_data_url && (
+                      <div style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: 10, background: '#fff' }}>
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img alt="Signatur" src={customerResponse.signature_data_url} style={{ width: '100%', height: 'auto', display: 'block' }} />
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
         </section>
       )}
 

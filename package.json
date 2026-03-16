@@ -15,7 +15,8 @@
   "@supabase/auth-helpers-nextjs": "^0.10.0",
   "@supabase/supabase-js": "2.45.4",
   "zod": "3.23.8",
-  "pdf-lib": "^1.17.1"
+  "pdf-lib": "^1.17.1",
+  "resend": "^4.0.0"
   },
   "devDependencies": {
     "@types/node": "20.12.12",
