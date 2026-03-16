@@ -14,7 +14,7 @@ export async function GET() {
 
     const { data, error } = await supabase
       .from('offert_calculations')
-      .select('id, name, address, city, phone, quote_date, salesperson, status, next_meeting_date, created_at, subtotal, total_before_rot, rot_amount, total_after_rot')
+      .select('id, name, address, city, phone, quote_date, salesperson, salesperson_phone, status, next_meeting_date, created_at, subtotal, total_before_rot, rot_amount, total_after_rot')
       .eq('user_id', user.id)
       .order('created_at', { ascending: false });
 
@@ -38,6 +38,7 @@ export async function POST(req: NextRequest) {
     const phone = typeof body?.phone === 'string' ? body.phone.trim() : '';
     const quoteDate = typeof body?.quoteDate === 'string' ? body.quoteDate.trim() : '';
     const salesperson = typeof body?.salesperson === 'string' ? body.salesperson.trim() : '';
+    const salespersonPhone = typeof body?.salespersonPhone === 'string' ? body.salespersonPhone.trim() : '';
     const nextMeetingDate = typeof body?.nextMeetingDate === 'string' ? body.nextMeetingDate.trim() : '';
     const status = typeof body?.status === 'string' ? body.status.trim() : '';
     const payload = body?.payload ?? null;
@@ -62,6 +63,7 @@ export async function POST(req: NextRequest) {
       phone,
       quote_date: quoteDate,
       salesperson,
+      salesperson_phone: salespersonPhone,
       status: status || 'Återkoppling',
       next_meeting_date: nextMeetingDate || null,
       payload,
@@ -74,7 +76,7 @@ export async function POST(req: NextRequest) {
     const { data, error } = await supabase
       .from('offert_calculations')
       .insert(insertRow)
-      .select('id, name, address, city, phone, quote_date, salesperson, status, next_meeting_date, created_at, subtotal, total_before_rot, rot_amount, total_after_rot')
+      .select('id, name, address, city, phone, quote_date, salesperson, salesperson_phone, status, next_meeting_date, created_at, subtotal, total_before_rot, rot_amount, total_after_rot')
       .single();
 
     if (error) throw error;

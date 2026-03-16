@@ -15,7 +15,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
   const { id } = params;
   const body = await req.json();
-  let { role, full_name, disabled, tags } = body as { role?: string; full_name?: string; disabled?: boolean; tags?: string[] };
+  let { role, full_name, disabled, tags, phone } = body as { role?: string; full_name?: string; disabled?: boolean; tags?: string[]; phone?: string };
   if (role === 'readonly') role = 'konsult';
 
   // Update profile name if provided
@@ -39,12 +39,21 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     if (tagErr) return NextResponse.json({ error: 'failed updating tags', details: tagErr.message }, { status: 500 });
     tagsUpdated = true;
   }
+
+  // Update phone (allow clearing by explicitly sending phone)
+  let phoneUpdated = false;
+  if ('phone' in (body || {})) {
+    const phoneValue = typeof phone === 'string' ? phone.trim() : '';
+    const { error: phoneErr } = await adminSupabase.from('profiles').update({ phone: phoneValue || null }).eq('id', id);
+    if (phoneErr) return NextResponse.json({ error: 'failed updating phone', details: phoneErr.message }, { status: 500 });
+    phoneUpdated = true;
+  }
   // Disable/enable user (Supabase: update user) if requested
   if (typeof disabled === 'boolean') {
     // Supabase JS v2 doesn't expose direct 'banned' flag; placeholder for future
   }
 
-  return NextResponse.json({ ok: true, nameUpdated, roleUpdated, tagsUpdated });
+  return NextResponse.json({ ok: true, nameUpdated, roleUpdated, tagsUpdated, phoneUpdated });
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {

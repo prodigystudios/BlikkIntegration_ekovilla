@@ -92,7 +92,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
 
     const { data: item, error } = await supabase
       .from('offert_calculations')
-      .select('id, created_at, name, address, city, phone, quote_date, salesperson, next_meeting_date, status, payload, subtotal, total_before_rot, rot_amount, total_after_rot')
+      .select('id, created_at, name, address, city, phone, quote_date, salesperson, salesperson_phone, next_meeting_date, status, payload, subtotal, total_before_rot, rot_amount, total_after_rot')
       .eq('id', id)
       .eq('user_id', user.id)
       .single();
@@ -224,6 +224,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
       ...(String(item.phone || '').trim() ? [{ label: 'Telefon:', value: String(item.phone || '') }] : []),
       { label: 'Offertdatum:', value: String(item.quote_date || '') },
       ...(String(item.salesperson || '').trim() ? [{ label: 'Säljare:', value: String(item.salesperson || '') }] : []),
+      ...(String((item as any).salesperson_phone || '').trim() ? [{ label: 'Säljare tel:', value: String((item as any).salesperson_phone || '') }] : []),
       ...(String(item.next_meeting_date || '').trim() ? [{ label: 'Nästa möte:', value: String(item.next_meeting_date || '') }] : []),
     ];
 

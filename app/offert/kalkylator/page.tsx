@@ -65,6 +65,7 @@ function OffertKalkylatorInner() {
   const searchParams = useSearchParams();
   const profile = useUserProfile();
   const profileName = (profile?.full_name || '').trim();
+  const profilePhone = String(profile?.phone || '').trim();
   const [state, setState] = useState<OffertKalkylatorState>(OFFERT_KALKYLATOR_DEFAULT_STATE);
   const [quoteName, setQuoteName] = useState('');
   const [address, setAddress] = useState('');
@@ -73,6 +74,8 @@ function OffertKalkylatorInner() {
   const [quoteDate, setQuoteDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [nextMeetingDate, setNextMeetingDate] = useState('');
   const [salesperson, setSalesperson] = useState('');
+  const [salespersonPhone, setSalespersonPhone] = useState('');
+  const [ovrigInfo, setOvrigInfo] = useState('');
   const [activeId, setActiveId] = useState<string | null>(null);
   const [activeCreatedAt, setActiveCreatedAt] = useState<string | null>(null);
   const [hasLoadedOffer, setHasLoadedOffer] = useState(false);
@@ -89,6 +92,12 @@ function OffertKalkylatorInner() {
     if (!profileName) return;
     setSalesperson(profileName);
   }, [profileName]);
+
+  useEffect(() => {
+    const p = String(profilePhone || '').trim();
+    if (!p) return;
+    setSalespersonPhone(p);
+  }, [profilePhone]);
 
   useEffect(() => {
     if (!saveNotice) return;
@@ -117,6 +126,12 @@ function OffertKalkylatorInner() {
     if (!d) return toast.error('Datum är obligatoriskt.');
     if (!s) return toast.error('Säljare är obligatoriskt.');
 
+    const payloadToSave: Partial<OffertKalkylatorState> & { ovrigInfo?: string } = { ...state };
+    if (!(payloadToSave.isoleringKvm && payloadToSave.isoleringKvm > 0)) delete (payloadToSave as any).isoleringHojd;
+    if (!(payloadToSave.utsugningKvm && payloadToSave.utsugningKvm > 0)) delete (payloadToSave as any).utsugningHojd;
+    const extra = ovrigInfo.trim();
+    if (extra) payloadToSave.ovrigInfo = extra;
+
     setSaving(true);
     try {
       const res = await fetch('/api/offert-kalkylator', {
@@ -130,7 +145,8 @@ function OffertKalkylatorInner() {
           quoteDate: d,
           nextMeetingDate: (nextMeetingDate || '').trim(),
           salesperson: s,
-          payload: state,
+          salespersonPhone: salespersonPhone.trim(),
+          payload: payloadToSave,
           subtotal: totals.subtotal,
           totalBeforeRot: totals.totalBeforeRot,
           rotAmount: totals.rotAmount,
@@ -152,6 +168,8 @@ function OffertKalkylatorInner() {
       setQuoteDate(new Date().toISOString().slice(0, 10));
       setNextMeetingDate('');
       setSalesperson(profileName || '');
+      setSalespersonPhone(String(profilePhone || '').trim());
+      setOvrigInfo('');
     } catch (e: any) {
       const msg = e?.message || String(e);
       toast.error(msg);
@@ -206,7 +224,12 @@ function OffertKalkylatorInner() {
       const item = json?.item;
       const payload = item?.payload;
       if (!payload || typeof payload !== 'object') throw new Error('Offert saknar payload.');
-      setState({ ...OFFERT_KALKYLATOR_DEFAULT_STATE, ...payload });
+      const nextState = { ...OFFERT_KALKYLATOR_DEFAULT_STATE, ...payload } as OffertKalkylatorState;
+      if (!nextState.isoleringHojd) nextState.isoleringHojd = OFFERT_KALKYLATOR_DEFAULT_STATE.isoleringHojd;
+      if (!nextState.utsugningHojd) nextState.utsugningHojd = OFFERT_KALKYLATOR_DEFAULT_STATE.utsugningHojd;
+      setState(nextState);
+      const extra = (payload as any)?.ovrigInfo;
+      setOvrigInfo(typeof extra === 'string' ? extra : '');
       if (typeof item?.name === 'string') setQuoteName(item.name);
       if (typeof item?.address === 'string') setAddress(item.address);
       if (typeof item?.city === 'string') setCity(item.city);
@@ -216,6 +239,9 @@ function OffertKalkylatorInner() {
       else setNextMeetingDate('');
       if (profileName) setSalesperson(profileName);
       else if (typeof item?.salesperson === 'string') setSalesperson(item.salesperson);
+      if (String(profilePhone || '').trim()) setSalespersonPhone(String(profilePhone || '').trim());
+      else if (typeof item?.salesperson_phone === 'string') setSalespersonPhone(item.salesperson_phone);
+      else setSalespersonPhone('');
       setActiveId(String(item?.id || id));
       if (typeof item?.created_at === 'string') setActiveCreatedAt(item.created_at);
       setHasLoadedOffer(true);
@@ -296,6 +322,9 @@ function OffertKalkylatorInner() {
             {activeId && (
               <div style={{ gridColumn: '1 / -1' }}><span style={{ color: '#64748b' }}>Säljare:</span> {salesperson.trim() || '—'}</div>
             )}
+            {activeId && (
+              <div style={{ gridColumn: '1 / -1' }}><span style={{ color: '#64748b' }}>Telefon:</span> {salespersonPhone.trim() || '—'}</div>
+            )}
           </div>
 
           <div style={{ height: 1, background: '#e5e7eb', margin: '2px 0' }} />
@@ -327,7 +356,6 @@ function OffertKalkylatorInner() {
               value={state.isoleringHojd}
               onChange={(e) => setState((s) => ({ ...s, isoleringHojd: e.target.value as IsoleringHojd }))}
             >
-              <option value="">Välj…</option>
               <option value="25-35">25–35</option>
               <option value="45-55">45–55</option>
             </select>
@@ -406,7 +434,6 @@ function OffertKalkylatorInner() {
               value={state.utsugningHojd}
               onChange={(e) => setState((s) => ({ ...s, utsugningHojd: e.target.value as UtsugningHojd }))}
             >
-              <option value="">Välj…</option>
               <option value="20">20</option>
               <option value="21-40">21–40</option>
             </select>
@@ -580,6 +607,29 @@ function OffertKalkylatorInner() {
                 style={{ padding: '10px 12px', border: '1px solid #e5e7eb', borderRadius: 8 }}
               />
             </label>
+
+            <label style={{ display: 'grid', gap: 4, fontSize: 12, gridColumn: '1 / -1' }}>
+              <span style={{ color: '#334155' }}>Telefon (säljare)</span>
+              <input
+                value={salespersonPhone}
+                onChange={(e) => setSalespersonPhone(e.target.value)}
+                placeholder="070-123 45 67"
+                inputMode="tel"
+                disabled={!!String(profilePhone || '').trim()}
+                style={{ padding: '10px 12px', border: '1px solid #e5e7eb', borderRadius: 8 }}
+              />
+            </label>
+
+            <label style={{ display: 'grid', gap: 4, fontSize: 12, gridColumn: '1 / -1' }}>
+              <span style={{ color: '#334155' }}>Övrig info</span>
+              <textarea
+                value={ovrigInfo}
+                onChange={(e) => setOvrigInfo(e.target.value)}
+                placeholder="T.ex. portkod, särskilda önskemål, intern notering"
+                rows={3}
+                style={{ padding: '10px 12px', border: '1px solid #e5e7eb', borderRadius: 8, resize: 'vertical' }}
+              />
+            </label>
           </div>
 
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
@@ -597,6 +647,8 @@ function OffertKalkylatorInner() {
                 setQuoteDate(new Date().toISOString().slice(0, 10));
                 setNextMeetingDate('');
                 setSalesperson(profileName || '');
+                setSalespersonPhone(String(profilePhone || '').trim());
+                setOvrigInfo('');
                 setActiveId(null);
                 setActiveCreatedAt(null);
                 setHasLoadedOffer(false);

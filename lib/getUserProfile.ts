@@ -5,6 +5,7 @@ export interface UserProfile {
   id: string;
   role: 'member' | 'sales' | 'admin' | 'konsult';
   full_name: string | null;
+  phone?: string | null;
 }
 
 export async function getUserProfile(): Promise<UserProfile | null> {
@@ -15,7 +16,7 @@ export async function getUserProfile(): Promise<UserProfile | null> {
     // Single select of needed columns from self row
     const { data, error } = await supabase
       .from('profiles')
-      .select('id, role, full_name')
+      .select('id, role, full_name, phone')
       .eq('id', user.id)
       .maybeSingle();
     if (error) return null;
@@ -24,6 +25,7 @@ export async function getUserProfile(): Promise<UserProfile | null> {
       id: data.id as string,
       role: data.role as UserProfile['role'],
       full_name: (data as any).full_name ?? null,
+      phone: (data as any).phone ?? null,
     };
   } catch {
     return null;

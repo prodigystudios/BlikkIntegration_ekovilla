@@ -8,6 +8,7 @@ interface AdminUserRow {
   email: string;
   role: string;
   full_name: string | null;
+  phone?: string | null;
   created_at: string;
   tags?: string[];
 }
@@ -97,6 +98,7 @@ export default function AdminUsers() {
                 <tr style={thRowStyle}>
                   <th style={thCell}>E-post</th>
                   <th style={thCell}>Namn</th>
+                  <th style={thCell}>Telefon</th>
                   <th style={thCell}>Roll</th>
                   <th style={thCell}>Taggar</th>
                   <th style={thCell}>Skapad</th>
@@ -156,6 +158,7 @@ const tdCell: React.CSSProperties = {
 function UserRow({ user, onChanged, onDeleted }: { user: AdminUserRow; onChanged: (u: AdminUserRow)=>void; onDeleted: (id: string)=>void }) {
   const [editingName, setEditingName] = React.useState(false);
   const [nameDraft, setNameDraft] = React.useState(user.full_name || '');
+  const [phoneDraft, setPhoneDraft] = React.useState(user.phone || '');
   const [roleDraft, setRoleDraft] = React.useState(user.role);
   const [saving, setSaving] = React.useState(false);
   const [busyDelete, setBusyDelete] = React.useState(false);
@@ -167,13 +170,14 @@ function UserRow({ user, onChanged, onDeleted }: { user: AdminUserRow; onChanged
     const tags = tagsDraft.split(',').map(s=>s.trim()).filter(Boolean);
     const payload: any = {};
     if (nameDraft !== user.full_name) payload.full_name = nameDraft;
+    if (phoneDraft !== (user.phone || '')) payload.phone = phoneDraft;
     if (roleDraft !== user.role) payload.role = roleDraft;
     payload.tags = tags; // always send tags from this input
     const res = await fetch(`/api/admin/users/${user.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     if (!res.ok) {
       try { const j = await res.json(); console.warn('saveChanges failed', j); } catch {}
     }
-    onChanged({ ...user, full_name: nameDraft || null, role: roleDraft, tags });
+    onChanged({ ...user, full_name: nameDraft || null, phone: phoneDraft || null, role: roleDraft, tags });
     setEditingName(false);
     setSaving(false);
   }
@@ -198,6 +202,15 @@ function UserRow({ user, onChanged, onDeleted }: { user: AdminUserRow; onChanged
             <button onClick={()=>setEditingName(true)} style={{ ...iconBtn }} aria-label="Redigera namn">✏️</button>
           </div>
         )}
+      </td>
+      <td style={tdCell}>
+        <input
+          value={phoneDraft}
+          onChange={e=>setPhoneDraft(e.target.value)}
+          onBlur={saveChanges}
+          placeholder="070-123 45 67"
+          style={{ ...fieldStyle, padding: '4px 6px', fontSize: 13, minWidth: 140 }}
+        />
       </td>
       <td style={tdCell}>
         <select value={roleDraft} onChange={e=>setRoleDraft(e.target.value)} onBlur={saveChanges} style={{ ...fieldStyle, padding: '4px 6px', fontSize: 13 }}>

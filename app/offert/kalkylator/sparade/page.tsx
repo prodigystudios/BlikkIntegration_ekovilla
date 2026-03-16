@@ -16,6 +16,7 @@ type SavedItem = {
   quote_date: string;
   next_meeting_date?: string | null;
   salesperson: string;
+  salesperson_phone?: string | null;
   status?: string | null;
   created_at: string;
   subtotal: number;
@@ -264,7 +265,7 @@ export default function SparadeOfferterPage() {
                   <div style={{ display: 'grid', gap: 2 }}>
                     <div style={{ fontWeight: 700, fontSize: 13 }}>{it.name}</div>
                     <div style={{ fontSize: 12, color: '#64748b' }}>
-                      {it.address} • {it.city} • {it.quote_date} • {it.salesperson}
+                      {it.address} • {it.city} • {it.quote_date} • {it.salesperson}{String(it.salesperson_phone || '').trim() ? ` (${String(it.salesperson_phone).trim()})` : ''}
                     </div>
                     {it.next_meeting_date && (
                       <div style={{ fontSize: 12, color: '#64748b' }}>Nästa möte: {String(it.next_meeting_date)}</div>

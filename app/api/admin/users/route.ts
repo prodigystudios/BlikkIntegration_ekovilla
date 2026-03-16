@@ -20,14 +20,21 @@ export async function GET() {
 
   // Fetch profiles in one query
   const ids = authUsers.users.map(u => u.id);
-  let profiles: Record<string, { role: string; full_name: string | null }> = {};
+  let profiles: Record<string, { role: string; full_name: string | null; phone?: string | null }> = {};
   if (ids.length > 0) {
     const { data: profRows, error: profErr } = await adminSupabase
       .from('profiles')
-      .select('id, role, full_name, tags')
+      .select('id, role, full_name, phone, tags')
       .in('id', ids);
     if (!profErr && profRows) {
-      profRows.forEach(r => { profiles[r.id] = { role: r.role, full_name: (r as any).full_name ?? null } as any; (profiles as any)[r.id].tags = (r as any).tags || []; });
+      profRows.forEach(r => {
+        profiles[r.id] = {
+          role: r.role,
+          full_name: (r as any).full_name ?? null,
+          phone: (r as any).phone ?? null,
+        } as any;
+        (profiles as any)[r.id].tags = (r as any).tags || [];
+      });
     }
   }
 
@@ -37,6 +44,7 @@ export async function GET() {
     created_at: u.created_at,
     role: profiles[u.id]?.role || 'member',
     full_name: profiles[u.id]?.full_name || null,
+    phone: profiles[u.id]?.phone || null,
     tags: (profiles as any)[u.id]?.tags || []
   }));
 

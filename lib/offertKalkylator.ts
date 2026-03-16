@@ -28,9 +28,9 @@ export type OffertKalkylatorState = {
 
 export const OFFERT_KALKYLATOR_DEFAULT_STATE: OffertKalkylatorState = {
   isoleringKvm: 0,
-  isoleringHojd: '',
+  isoleringHojd: '25-35',
   utsugningKvm: 0,
-  utsugningHojd: '',
+  utsugningHojd: '20',
   mogelbehandlingKvm: 0,
   tatskiktKvm: 0,
   landgangM: 0,
