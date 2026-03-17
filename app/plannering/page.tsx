@@ -79,6 +79,62 @@ interface SegmentReport {
   projectId?: string | null; // denormalized project id
 }
 
+type PresenceUser = {
+  id?: string | null;
+  name?: string | null;
+  joinedAt?: string;
+  pingAt?: string;
+  presence_ref?: string;
+};
+
+function normalizePresenceEntries(value: any): PresenceUser[] {
+  if (!value) return [];
+  if (Array.isArray(value)) {
+    return value.flatMap((entry) => normalizePresenceEntries(entry));
+  }
+  if (typeof value === 'object' && Array.isArray(value.metas)) {
+    return value.metas.map((meta: any) => ({
+      id: meta?.id ?? null,
+      name: meta?.name ?? null,
+      joinedAt: meta?.joinedAt ?? undefined,
+      pingAt: meta?.pingAt ?? undefined,
+      presence_ref: meta?.presence_ref ?? meta?.phx_ref ?? undefined,
+    }));
+  }
+  if (typeof value === 'object') {
+    return [{
+      id: value?.id ?? null,
+      name: value?.name ?? null,
+      joinedAt: value?.joinedAt ?? undefined,
+      pingAt: value?.pingAt ?? undefined,
+      presence_ref: value?.presence_ref ?? value?.phx_ref ?? undefined,
+    }];
+  }
+  return [];
+}
+
+function flattenPresenceState(state: Record<string, any>): PresenceUser[] {
+  const users: PresenceUser[] = [];
+  for (const key of Object.keys(state || {})) {
+    const entries = normalizePresenceEntries((state as any)[key]);
+    if (entries.length > 0) users.push(...entries);
+  }
+  return users;
+}
+
+function mergePresenceUsers(prev: PresenceUser[], incoming: PresenceUser[]) {
+  const map = new Map<string, PresenceUser>();
+  for (const user of prev) {
+    const key = user.presence_ref || user.id || user.name || Math.random().toString(36);
+    map.set(key, user);
+  }
+  for (const user of incoming) {
+    const key = user.presence_ref || user.id || user.name || Math.random().toString(36);
+    map.set(key, user);
+  }
+  return Array.from(map.values());
+}
+
 // Small inline control to copy a segment to another truck
 function CopyToTruckButton({ segmentId, day, currentTruck, trucks, onCopy }: { segmentId: string; day: string; currentTruck: string | null; trucks: string[]; onCopy: (targetTruck: string) => void }) {
   const [target, setTarget] = useState<string>('');
@@ -247,7 +303,7 @@ export default function PlanneringPage() {
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [currentUserName, setCurrentUserName] = useState<string | null>(null);
   // Presence (who is currently viewing)
-  const [presenceUsers, setPresenceUsers] = useState<Array<{ id?: string | null; name?: string | null; joinedAt?: string; presence_ref?: string }>>([]);
+  const [presenceUsers, setPresenceUsers] = useState<PresenceUser[]>([]);
   // Editing presence (other users editing fields for a project/segment)
   interface RemoteEditEntry { userId: string | null | undefined; userName: string | null | undefined; projectId: string; segmentId?: string; field: string; ts: number; }
   const [remoteEditing, setRemoteEditing] = useState<Record<string, RemoteEditEntry>>({});
@@ -958,7 +1014,7 @@ export default function PlanneringPage() {
   }, []);
 
   // Load persisted schedule + meta
-  const supabase = createClientComponentClient();
+  const [supabase] = useState(() => createClientComponentClient());
   const [syncing, setSyncing] = useState(false);
   const [realtimeStatus, setRealtimeStatus] = useState<'connecting' | 'live' | 'error'>('connecting');
   const [realtimePaused, setRealtimePaused] = useState(false);
@@ -969,6 +1025,15 @@ export default function PlanneringPage() {
   const pendingOps = useRef<Promise<any>[]>([]);
   const createdIdsRef = useRef<Set<string>>(new Set());
   const autoStatusUpdatedRef = useRef<Set<string>>(new Set());
+  const sendPlanningBroadcast = useCallback((event: string, payload: Record<string, any>) => {
+    const channel = planningChannelRef.current;
+    if (!channel) return;
+    void channel.send({ type: 'broadcast', event, payload }).catch((err: any) => {
+      if (process.env.NODE_ENV !== 'production') {
+        console.warn('[rt] planning broadcast failed', event, err?.message || err);
+      }
+    });
+  }, []);
   // Simple async op queue helper (re-add after accidental removal). Ensures we can await / flush later if needed.
   function enqueue<T>(p: PromiseLike<T>) {
     try {
@@ -1640,12 +1705,7 @@ export default function PlanneringPage() {
       // Presence events
       .on('presence', { event: 'sync' }, () => {
         const state = channel.presenceState();
-        const users: any[] = [];
-        for (const key of Object.keys(state)) {
-          const entries = (state as any)[key];
-          for (const entry of entries) users.push(entry);
-        }
-        setPresenceUsers(users);
+        setPresenceUsers(flattenPresenceState(state as any));
       })
       // Edit broadcasts merged into planning-sync
       .on('broadcast', { event: 'editing_start' }, payload => {
@@ -1659,15 +1719,11 @@ export default function PlanneringPage() {
         setRemoteEditing(prev => { const c = { ...prev }; delete c[key]; return c; });
       })
       .on('presence', { event: 'join' }, ({ newPresences }) => {
-        setPresenceUsers(prev => {
-          const map = new Map<string, any>();
-          for (const p of prev) map.set(p.presence_ref || p.id || Math.random().toString(36), p);
-          for (const np of newPresences) map.set(np.presence_ref || np.id || Math.random().toString(36), np);
-          return Array.from(map.values());
-        });
+        setPresenceUsers(prev => mergePresenceUsers(prev, normalizePresenceEntries(newPresences)));
       })
       .on('presence', { event: 'leave' }, ({ leftPresences }) => {
-        setPresenceUsers(prev => prev.filter(p => !leftPresences.some(lp => lp.presence_ref === p.presence_ref)));
+        const leaving = normalizePresenceEntries(leftPresences);
+        setPresenceUsers(prev => prev.filter(p => !leaving.some(lp => (lp.presence_ref && lp.presence_ref === p.presence_ref) || (!lp.presence_ref && lp.id && lp.id === p.id))));
       })
       // Data changes
       .on('postgres_changes', { event: '*', schema: 'public', table: 'planning_segments' }, payload => {
@@ -1862,18 +1918,30 @@ export default function PlanneringPage() {
         if (status === 'SUBSCRIBED') {
           setRealtimeStatus('live');
           // Track current viewer with metadata
-          channel.track({ id: currentUserId, name: currentUserName, joinedAt: new Date().toISOString() });
-          if (process.env.NODE_ENV !== 'production') {
-            console.debug('[rt] subscribed; presence state:', channel.presenceState());
-          }
+          void (async () => {
+            const selfPresence = {
+              id: currentUserId,
+              name: currentUserName || currentUserId || 'Okänd',
+              joinedAt: new Date().toISOString(),
+            };
+            const result = await channel.track(selfPresence);
+            if (process.env.NODE_ENV !== 'production') {
+              console.debug('[rt] subscribed; track result:', result, 'presence state:', channel.presenceState());
+            }
+            const state = channel.presenceState();
+            const users = flattenPresenceState(state as any);
+            setPresenceUsers(users.length > 0 ? users : [selfPresence]);
+          })();
           // Keep presence fresh for visibility/debugging
           const presenceInterval = setInterval(() => {
-            try {
-              channel.track({ id: currentUserId, name: currentUserName, pingAt: new Date().toISOString() });
-              if (process.env.NODE_ENV !== 'production') {
-                console.debug('[rt] presence heartbeat; state:', channel.presenceState());
-              }
-            } catch {}
+            void (async () => {
+              try {
+                const result = await channel.track({ id: currentUserId, name: currentUserName || currentUserId || 'Okänd', pingAt: new Date().toISOString() });
+                if (process.env.NODE_ENV !== 'production') {
+                  console.debug('[rt] presence heartbeat; track result:', result, 'state:', channel.presenceState());
+                }
+              } catch {}
+            })();
           }, 30000);
           (channel as any)._presenceInterval = presenceInterval;
         }
@@ -2055,13 +2123,13 @@ export default function PlanneringPage() {
     const key = `${currentUserId || 'anon'}:${projectId}`;
     if (localEditingKeysRef.current.has(key)) return; // already broadcasting
     localEditingKeysRef.current.add(key);
-    supabase.channel('planning-sync').send({ type: 'broadcast', event: 'editing_start', payload: { userId: currentUserId, userName: currentUserName, projectId, segmentId, field } });
+    sendPlanningBroadcast('editing_start', { userId: currentUserId, userName: currentUserName, projectId, segmentId, field });
   }
   function broadcastEditStop(projectId: string) {
     const key = `${currentUserId || 'anon'}:${projectId}`;
     if (!localEditingKeysRef.current.has(key)) return;
     localEditingKeysRef.current.delete(key);
-    supabase.channel('planning-sync').send({ type: 'broadcast', event: 'editing_stop', payload: { userId: currentUserId, projectId } });
+    sendPlanningBroadcast('editing_stop', { userId: currentUserId, projectId });
   }
 
   function getRemoteEditorsForProject(projectId: string) {
@@ -2099,11 +2167,11 @@ export default function PlanneringPage() {
     return () => {
       for (const key of Array.from(localEditingKeysRef.current)) {
         const [, projectId] = key.split(':');
-        supabase.channel('planning-sync').send({ type: 'broadcast', event: 'editing_stop', payload: { userId: currentUserId, projectId } });
+        sendPlanningBroadcast('editing_stop', { userId: currentUserId, projectId });
       }
       localEditingKeysRef.current.clear();
     };
-  }, [supabase, currentUserId]);
+  }, [currentUserId, sendPlanningBroadcast]);
 
   const persistSegmentCreate = useCallback((seg: ScheduledSegment, project: Project) => {
     if (createdIdsRef.current.has(seg.id)) return;
