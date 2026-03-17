@@ -20,6 +20,13 @@ function formatKr(value: number) {
   return `${Math.round(v).toLocaleString('sv-SE')} kr`;
 }
 
+function formatOffertNumber(year: any, seq: any) {
+  const y = Number(year);
+  const s = Number(seq);
+  if (!Number.isFinite(y) || !Number.isFinite(s) || y <= 0 || s <= 0) return '';
+  return `${y}-${String(Math.trunc(s)).padStart(5, '0')}`;
+}
+
 function toNum(v: string) {
   const n = Number(v);
   if (!Number.isFinite(n)) return 0;
@@ -97,6 +104,7 @@ function OffertKalkylatorInner() {
   const [ovrigInfo, setOvrigInfo] = useState('');
   const [activeId, setActiveId] = useState<string | null>(null);
   const [activeCreatedAt, setActiveCreatedAt] = useState<string | null>(null);
+  const [activeOffertNumber, setActiveOffertNumber] = useState<string | null>(null);
   const [hasLoadedOffer, setHasLoadedOffer] = useState(false);
   const [saveNotice, setSaveNotice] = useState<{ kind: 'success' | 'error'; message: string } | null>(null);
   const [saving, setSaving] = useState(false);
@@ -206,7 +214,7 @@ function OffertKalkylatorInner() {
     if (!a) return toast.error('Adress är obligatoriskt.');
     if (!c) return toast.error('Stad är obligatoriskt.');
     if (!d) return toast.error('Datum är obligatoriskt.');
-    if (!s) return toast.error('Säljare är obligatoriskt.');
+    if (!s) return toast.error('Vår referens är obligatoriskt.');
 
     const payloadToSave: Partial<OffertKalkylatorState> & { ovrigInfo?: string } = { ...state };
     if (!(payloadToSave.isoleringKvm && payloadToSave.isoleringKvm > 0)) delete (payloadToSave as any).isoleringHojd;
@@ -216,8 +224,9 @@ function OffertKalkylatorInner() {
 
     setSaving(true);
     try {
-      const res = await fetch('/api/offert-kalkylator', {
-        method: 'POST',
+      const isUpdatingLoadedOffer = !!activeId && hasLoadedOffer;
+      const res = await fetch(isUpdatingLoadedOffer ? `/api/offert-kalkylator/${encodeURIComponent(activeId)}` : '/api/offert-kalkylator', {
+        method: isUpdatingLoadedOffer ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name,
@@ -239,19 +248,22 @@ function OffertKalkylatorInner() {
       if (!res.ok) throw new Error(json?.error || 'Kunde inte spara offert.');
       if (json?.item?.id) setActiveId(String(json.item.id));
       if (json?.item?.created_at) setActiveCreatedAt(String(json.item.created_at));
-      setHasLoadedOffer(false);
-      toast.success('Offert sparad.', { ttl: 5000 });
+      setActiveOffertNumber(formatOffertNumber(json?.item?.offert_number_year, json?.item?.offert_number_seq) || null);
+      setHasLoadedOffer(isUpdatingLoadedOffer);
+      toast.success(isUpdatingLoadedOffer ? 'Offert uppdaterad.' : 'Offert sparad.', { ttl: 5000 });
       const savedAt = json?.item?.created_at ? new Date(String(json.item.created_at)) : new Date();
-      setSaveNotice({ kind: 'success', message: `Offert sparad ${savedAt.toLocaleString('sv-SE')}.` });
-      setQuoteName('');
-      setAddress('');
-      setCity('');
-      setPhone('');
-      setQuoteDate(new Date().toISOString().slice(0, 10));
-      setNextMeetingDate('');
-      setSalesperson(profileName || '');
-      setSalespersonPhone(String(profilePhone || '').trim());
-      setOvrigInfo('');
+      setSaveNotice({ kind: 'success', message: `${isUpdatingLoadedOffer ? 'Offert uppdaterad' : 'Offert sparad'} ${savedAt.toLocaleString('sv-SE')}.` });
+      if (!isUpdatingLoadedOffer) {
+        setQuoteName('');
+        setAddress('');
+        setCity('');
+        setPhone('');
+        setQuoteDate(new Date().toISOString().slice(0, 10));
+        setNextMeetingDate('');
+        setSalesperson(profileName || '');
+        setSalespersonPhone(String(profilePhone || '').trim());
+        setOvrigInfo('');
+      }
     } catch (e: any) {
       const msg = e?.message || String(e);
       toast.error(msg);
@@ -326,6 +338,7 @@ function OffertKalkylatorInner() {
       else setSalespersonPhone('');
       setActiveId(String(item?.id || id));
       if (typeof item?.created_at === 'string') setActiveCreatedAt(item.created_at);
+      setActiveOffertNumber(formatOffertNumber(item?.offert_number_year, item?.offert_number_seq) || null);
       setHasLoadedOffer(true);
       toast.info('Offert laddad.');
     } catch (e: any) {
@@ -396,16 +409,17 @@ function OffertKalkylatorInner() {
             )}
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10, fontSize: 12 }}>
+            <div><span style={{ color: '#64748b' }}>Offertnummer:</span> {activeOffertNumber || '—'}</div>
             <div><span style={{ color: '#64748b' }}>Namn:</span> {quoteName.trim() || '—'}</div>
             <div><span style={{ color: '#64748b' }}>Datum:</span> {quoteDate.trim() || '—'}</div>
             <div><span style={{ color: '#64748b' }}>Adress:</span> {address.trim() || '—'}</div>
             <div><span style={{ color: '#64748b' }}>Stad:</span> {city.trim() || '—'}</div>
             <div style={{ gridColumn: '1 / -1' }}><span style={{ color: '#64748b' }}>Nästa möte:</span> {nextMeetingDate.trim() || '—'}</div>
             {activeId && (
-              <div style={{ gridColumn: '1 / -1' }}><span style={{ color: '#64748b' }}>Säljare:</span> {salesperson.trim() || '—'}</div>
+              <div style={{ gridColumn: '1 / -1' }}><span style={{ color: '#64748b' }}>Vår referens:</span> {salesperson.trim() || '—'}</div>
             )}
             {activeId && (
-              <div style={{ gridColumn: '1 / -1' }}><span style={{ color: '#64748b' }}>Telefon:</span> {salespersonPhone.trim() || '—'}</div>
+              <div style={{ gridColumn: '1 / -1' }}><span style={{ color: '#64748b' }}>Telefonnummer:</span> {salespersonPhone.trim() || '—'}</div>
             )}
           </div>
 
@@ -735,18 +749,18 @@ function OffertKalkylatorInner() {
               />
             </label>
             <label style={{ display: 'grid', gap: 4, fontSize: 12, gridColumn: '1 / -1' }}>
-              <span style={{ color: '#334155' }}>Säljare *</span>
+              <span style={{ color: '#334155' }}>Vår referens *</span>
               <input
                 value={salesperson}
                 onChange={(e) => setSalesperson(e.target.value)}
-                placeholder="Namn på säljare"
+                placeholder="Namn på referens"
                 disabled={!!profileName}
                 style={{ padding: '10px 12px', border: '1px solid #e5e7eb', borderRadius: 8 }}
               />
             </label>
 
             <label style={{ display: 'grid', gap: 4, fontSize: 12, gridColumn: '1 / -1' }}>
-              <span style={{ color: '#334155' }}>Telefon (säljare)</span>
+              <span style={{ color: '#334155' }}>Telefonnummer</span>
               <input
                 value={salespersonPhone}
                 onChange={(e) => setSalespersonPhone(e.target.value)}
@@ -771,7 +785,7 @@ function OffertKalkylatorInner() {
 
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
             <button className="btn--success" disabled={saving || !canSave} onClick={save} style={{ minWidth: 160 }}>
-              {saving ? 'Sparar…' : 'Spara'}
+              {saving ? 'Sparar…' : hasLoadedOffer && activeId ? 'Uppdatera offert' : 'Spara'}
             </button>
             <button
               className="btn--plain"
@@ -788,6 +802,7 @@ function OffertKalkylatorInner() {
                 setOvrigInfo('');
                 setActiveId(null);
                 setActiveCreatedAt(null);
+                setActiveOffertNumber(null);
                 setHasLoadedOffer(false);
               }}
               disabled={saving}

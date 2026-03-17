@@ -3,7 +3,7 @@ import { usePathname } from "next/navigation";
 
 export default function HeaderTitle() {
   const pathname = usePathname();
-  let title = 'Egenkontroll';
+  let title = '';
   if (pathname === '/') title = 'Startsida';
   else if (pathname.startsWith('/egenkontroll')) title = 'Skapa egenkontroll';
   else if (pathname.startsWith('/archive')) title = 'Sparade egenkontroller';
@@ -18,5 +18,6 @@ export default function HeaderTitle() {
   else if (pathname.startsWith('/offert')) title = 'Skapa offert';
   else if (pathname.startsWith('/admin')) title = 'Admin';
   else if(pathname.startsWith('/tidrapport')) title = 'Tidrapportering';
+  else if(pathname.startsWith('/kund/offert')) title = 'Beställningsbekräftelse';
   return <strong style={{ letterSpacing: 0.2, marginLeft:36, marginTop:4 }}>{title}</strong>;
 }

@@ -6,6 +6,19 @@ import { adminSupabase } from '@/lib/adminSupabase';
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
+function formatOffertNumber(year: any, seq: any) {
+  const y = Number(year);
+  const s = Number(seq);
+  if (!Number.isFinite(y) || !Number.isFinite(s) || y <= 0 || s <= 0) return '';
+  return `${y}-${String(Math.trunc(s)).padStart(5, '0')}`;
+}
+
+function formatKr(value: any) {
+  const v = Number(value);
+  const n = Number.isFinite(v) ? v : 0;
+  return `${Math.round(n).toLocaleString('sv-SE')} kr`;
+}
+
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '180px minmax(0, 1fr)', gap: 12, padding: '8px 0', borderBottom: '1px solid #e5e7eb' }}>
@@ -25,9 +38,11 @@ export default async function AdminOffertCustomerResponsePage({ params }: { para
 
   const { data: offer } = await adminSupabase
     .from('offert_calculations')
-    .select('id, name, address, city, salesperson, created_at')
+    .select('id, offert_number_year, offert_number_seq, name, address, city, salesperson, salesperson_phone, created_at, total_before_rot, rot_amount, total_after_rot')
     .eq('id', offertId)
     .maybeSingle();
+
+  const offertNumber = formatOffertNumber((offer as any)?.offert_number_year, (offer as any)?.offert_number_seq);
 
   const { data: latestReq, error: reqErr } = await adminSupabase
     .from('offert_customer_requests')
@@ -66,15 +81,22 @@ export default async function AdminOffertCustomerResponsePage({ params }: { para
       <div style={{ display: 'grid', gap: 4 }}>
         <h1 style={{ margin: 0, fontSize: 18 }}>Kunduppgifter (admin)</h1>
         <p style={{ margin: 0, fontSize: 12, color: '#64748b' }}>
-          Offert: {offer?.name || offertId}
+          Offert: {offer?.name || offertId}{offertNumber ? ` (${offertNumber})` : ''}
         </p>
       </div>
 
       <section style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: 12, background: '#fff' }}>
         <Row label="Offert" value={offer?.name || offertId} />
-        <Row label="Säljare" value={offer?.salesperson || '—'} />
+        {offertNumber && <Row label="Offertnummer" value={offertNumber} />}
+        <Row label="Vår referens" value={offer?.salesperson || '—'} />
+        {String((offer as any)?.salesperson_phone || '').trim() && (
+          <Row label="Telefonnummer" value={String((offer as any).salesperson_phone).trim()} />
+        )}
         <Row label="Säljare email" value={latestReq.seller_email || '—'} />
         <Row label="Adress" value={[offer?.address, offer?.city].filter(Boolean).join(', ')} />
+        <Row label="Totalsumma (innan ROT)" value={formatKr((offer as any)?.total_before_rot)} />
+        <Row label="ROT" value={`- ${formatKr((offer as any)?.rot_amount)}`} />
+        <Row label="Totalsumma (efter ROT)" value={formatKr((offer as any)?.total_after_rot)} />
         <Row label="Inskickad" value={latestReq.submitted_at ? new Date(latestReq.submitted_at).toLocaleString('sv-SE') : '—'} />
       </section>
 

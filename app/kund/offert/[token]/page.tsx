@@ -8,6 +8,18 @@ type LoadState =
   | { kind: 'invalid'; message: string }
   | { kind: 'submitted' };
 
+type OffertInfo = {
+  offertNumber: string;
+  totalBeforeRot: number;
+  rotAmount: number;
+  totalAfterRot: number;
+};
+
+function formatKr(value: number) {
+  const v = Number.isFinite(value) ? value : 0;
+  return `${Math.round(v).toLocaleString('sv-SE')} kr`;
+}
+
 function FieldLabel({ children }: { children: React.ReactNode }) {
   return <span style={{ color: '#334155' }}>{children}</span>;
 }
@@ -147,6 +159,7 @@ export default function CustomerOffertTokenPage({ params }: { params: { token: s
   const token = String(params?.token || '').trim();
 
   const [loadState, setLoadState] = useState<LoadState>({ kind: 'loading' });
+  const [offertInfo, setOffertInfo] = useState<OffertInfo | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -232,6 +245,15 @@ export default function CustomerOffertTokenPage({ params }: { params: { token: s
           if (cancelled) return;
           setLoadState({ kind: res.status === 410 ? 'submitted' : 'invalid', message: msg });
           return;
+        }
+        const j = await res.json().catch(() => null);
+        if (!cancelled) {
+          setOffertInfo({
+            offertNumber: String(j?.offertNumber || '').trim(),
+            totalBeforeRot: Number(j?.totalBeforeRot) || 0,
+            rotAmount: Number(j?.rotAmount) || 0,
+            totalAfterRot: Number(j?.totalAfterRot) || 0,
+          });
         }
         if (cancelled) return;
         setLoadState({ kind: 'ready' });
@@ -321,11 +343,36 @@ export default function CustomerOffertTokenPage({ params }: { params: { token: s
   return (
     <div style={{ padding: 16, maxWidth: 820, margin: '0 auto', display: 'grid', gap: 12 }}>
       <div style={{ display: 'grid', gap: 4 }}>
-        <h1 style={{ margin: 0, fontSize: 18 }}>Kunduppgifter</h1>
+        <h1 style={{ margin: 0, fontSize: 18 }}>Beställningsbekräftelse</h1>
         <p style={{ margin: 0, fontSize: 12, color: '#64748b' }}>
-          Fyll i uppgifterna nedan och signera. När du skickat in låses formuläret.
+          Fyll i uppgifterna nedan för att godkänna mottagen offert med nr:{offertInfo?.offertNumber || '—'}. När du skickat in låses formuläret.
         </p>
       </div>
+
+      {offertInfo && (
+        <section style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: 12, background: '#fff', display: 'grid', gap: 10 }}>
+          <strong style={{ fontSize: 13 }}>OFFERT</strong>
+          <div style={{ display: 'grid', gap: 6, fontSize: 12 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+              <span style={{ color: '#64748b' }}>Offertnummer</span>
+              <span style={{ fontWeight: 700, whiteSpace: 'nowrap' }}>{offertInfo.offertNumber || '—'}</span>
+            </div>
+            <div style={{ height: 1, background: '#e5e7eb' }} />
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+              <span style={{ color: '#64748b' }}>Totalsumma (innan ROT)</span>
+              <span style={{ fontWeight: 700, whiteSpace: 'nowrap' }}>{formatKr(offertInfo.totalBeforeRot)}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+              <span style={{ color: '#64748b' }}>ROT</span>
+              <span style={{ fontWeight: 700, whiteSpace: 'nowrap' }}>- {formatKr(offertInfo.rotAmount)}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+              <span style={{ color: '#64748b' }}>Totalsumma (efter ROT)</span>
+              <span style={{ fontWeight: 800, whiteSpace: 'nowrap' }}>{formatKr(offertInfo.totalAfterRot)}</span>
+            </div>
+          </div>
+        </section>
+      )}
 
       <form onSubmit={onSubmit} style={{ display: 'grid', gap: 12 }}>
         <section style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: 12, background: '#fff', display: 'grid', gap: 10 }}>

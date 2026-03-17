@@ -15,7 +15,7 @@ export async function GET() {
 
     const { data, error } = await supabase
       .from('offert_calculations')
-      .select('id, name, address, city, phone, quote_date, salesperson, salesperson_phone, status, next_meeting_date, created_at, subtotal, total_before_rot, rot_amount, total_after_rot')
+      .select('id, offert_number_year, offert_number_seq, name, address, city, phone, quote_date, salesperson, salesperson_phone, status, next_meeting_date, created_at, subtotal, total_before_rot, rot_amount, total_after_rot')
       .eq('user_id', user.id)
       .order('created_at', { ascending: false });
 
@@ -110,7 +110,7 @@ export async function POST(req: NextRequest) {
     const { data, error } = await supabase
       .from('offert_calculations')
       .insert(insertRow)
-      .select('id, name, address, city, phone, quote_date, salesperson, salesperson_phone, status, next_meeting_date, created_at, subtotal, total_before_rot, rot_amount, total_after_rot')
+      .select('id, offert_number_year, offert_number_seq, name, address, city, phone, quote_date, salesperson, salesperson_phone, status, next_meeting_date, created_at, subtotal, total_before_rot, rot_amount, total_after_rot')
       .single();
 
     if (error) throw error;

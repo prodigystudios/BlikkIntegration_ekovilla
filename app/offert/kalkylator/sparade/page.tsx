@@ -9,6 +9,8 @@ import { useToast } from '@/lib/Toast';
 
 type SavedItem = {
   id: string;
+  offert_number_year?: number | null;
+  offert_number_seq?: number | null;
   name: string;
   address: string;
   city: string;
@@ -29,6 +31,13 @@ type SavedItem = {
 function formatKr(value: number) {
   const v = Number.isFinite(value) ? value : 0;
   return `${Math.round(v).toLocaleString('sv-SE')} kr`;
+}
+
+function formatOffertNumber(year: any, seq: any) {
+  const y = Number(year);
+  const s = Number(seq);
+  if (!Number.isFinite(y) || !Number.isFinite(s) || y <= 0 || s <= 0) return '';
+  return `${y}-${String(Math.trunc(s)).padStart(5, '0')}`;
 }
 
 type SortMode =
@@ -294,6 +303,22 @@ export default function SparadeOfferterPage() {
                   <div style={{ display: 'grid', gap: 2 }}>
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                       <div style={{ fontWeight: 700, fontSize: 13 }}>{it.name}</div>
+                      {formatOffertNumber(it.offert_number_year, it.offert_number_seq) && (
+                        <span
+                          style={{
+                            fontSize: 11,
+                            padding: '2px 8px',
+                            borderRadius: 999,
+                            border: '1px solid #e5e7eb',
+                            background: '#f8fafc',
+                            color: '#334155',
+                            whiteSpace: 'nowrap',
+                          }}
+                          title="Offertnummer"
+                        >
+                          {formatOffertNumber(it.offert_number_year, it.offert_number_seq)}
+                        </span>
+                      )}
                       {String(it.customer_submitted_at || '').trim() && (
                         <span
                           style={{
@@ -372,7 +397,11 @@ export default function SparadeOfferterPage() {
 
                   <button
                     className="btn--danger btn--sm"
-                    onClick={() => del(it.id)}
+                    onClick={() => {
+                      const ok = window.confirm(`Ta bort offert ”${String(it.name || '').trim() || 'offert'}”?`);
+                      if (!ok) return;
+                      del(it.id);
+                    }}
                     disabled={deletingId === it.id || loadingId === it.id || updatingId === it.id || sharingId === it.id || customerLinkingId === it.id}
                   >
                     {deletingId === it.id ? 'Tar bort…' : 'Ta bort'}

@@ -81,6 +81,13 @@ function safeFilename(name: string) {
     .slice(0, 60) || 'offert';
 }
 
+function formatOffertNumber(year: any, seq: any) {
+  const y = Number(year);
+  const s = Number(seq);
+  if (!Number.isFinite(y) || !Number.isFinite(s) || y <= 0 || s <= 0) return '';
+  return `${y}-${String(Math.trunc(s)).padStart(5, '0')}`;
+}
+
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }): Promise<Response> {
   try {
     const id = String(params?.id || '').trim();
@@ -92,7 +99,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
 
     const { data: item, error } = await supabase
       .from('offert_calculations')
-      .select('id, created_at, name, address, city, phone, quote_date, salesperson, salesperson_phone, next_meeting_date, status, payload, subtotal, total_before_rot, rot_amount, total_after_rot')
+      .select('id, offert_number_year, offert_number_seq, created_at, name, address, city, phone, quote_date, salesperson, salesperson_phone, next_meeting_date, status, payload, subtotal, total_before_rot, rot_amount, total_after_rot')
       .eq('id', id)
       .eq('user_id', user.id)
       .single();
@@ -220,12 +227,13 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
       { label: 'Stad:', value: String(item.city || '') },
     ];
 
+    const offertNumber = formatOffertNumber((item as any).offert_number_year, (item as any).offert_number_seq);
+
     const rightRows = [
-      ...(String(item.phone || '').trim() ? [{ label: 'Telefon:', value: String(item.phone || '') }] : []),
+      ...(offertNumber ? [{ label: 'Offertnummer:', value: offertNumber }] : []),
       { label: 'Offertdatum:', value: String(item.quote_date || '') },
-      ...(String(item.salesperson || '').trim() ? [{ label: 'Säljare:', value: String(item.salesperson || '') }] : []),
-      ...(String((item as any).salesperson_phone || '').trim() ? [{ label: 'Säljare tel:', value: String((item as any).salesperson_phone || '') }] : []),
-      ...(String(item.next_meeting_date || '').trim() ? [{ label: 'Nästa möte:', value: String(item.next_meeting_date || '') }] : []),
+      ...(String(item.salesperson || '').trim() ? [{ label: 'Vår referens:', value: String(item.salesperson || '') }] : []),
+      ...(String((item as any).salesperson_phone || '').trim() ? [{ label: 'Telefonnummer:', value: String((item as any).salesperson_phone || '') }] : []),
     ];
 
     const rows = Math.max(leftRows.length, rightRows.length);
