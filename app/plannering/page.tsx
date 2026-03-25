@@ -547,6 +547,7 @@ export default function PlanneringPage() {
   }
   const [segEditorOpen, setSegEditorOpen] = useState(false);
   const [segEditor, setSegEditor] = useState<SegmentEditorDraft | null>(null);
+  const [segEditorSaving, setSegEditorSaving] = useState(false);
   // Keep modal mounted during exit animation
   const [segEditorPortal, setSegEditorPortal] = useState(false);
   useEffect(() => {
@@ -564,7 +565,10 @@ export default function PlanneringPage() {
       return () => clearTimeout(t);
     }
   }, [segEditorOpen, segEditor]);
-  const closeSegEditor = useCallback(() => { setSegEditorOpen(false); }, []);
+  const closeSegEditor = useCallback(() => {
+    if (segEditorSaving) return;
+    setSegEditorOpen(false);
+  }, [segEditorSaving]);
   // Inline, styled confirmation (replaces window.confirm) for destructive actions inside Segment Editor
   const [confirmDeleteSegmentId, setConfirmDeleteSegmentId] = useState<string | null>(null);
   useEffect(() => {
@@ -2192,7 +2196,7 @@ export default function PlanneringPage() {
     if (seg.jobType !== undefined) payload.job_type = seg.jobType;
     if (seg.truck !== undefined) payload.truck = seg.truck;
     if (seg.sortIndex != null) payload.sort_index = seg.sortIndex;
-    enqueue(
+    return enqueue(
       supabase.from('planning_segments')
         .upsert(payload, { onConflict: 'id', ignoreDuplicates: true })
         .then(({ data, error }) => {
@@ -2203,6 +2207,7 @@ export default function PlanneringPage() {
             } else {
               console.warn('[persist create seg] error', error, payload);
               // Allow retry by not marking id as created
+              throw error;
             }
           } else {
             createdIdsRef.current.add(seg.id);
@@ -2213,12 +2218,18 @@ export default function PlanneringPage() {
   }, [supabase, currentUserId, currentUserName]);
 
   const persistSegmentUpdate = useCallback((seg: ScheduledSegment) => {
-    enqueue(
+    return enqueue(
       supabase
         .from('planning_segments')
-        .update({ start_day: seg.startDay, end_day: seg.endDay, truck: seg.truck ?? null, job_type: seg.jobType ?? null })
+        .update({ start_day: seg.startDay, end_day: seg.endDay, depot_id: seg.depotId ?? null, sort_index: seg.sortIndex ?? null, truck: seg.truck ?? null, job_type: seg.jobType ?? null })
         .eq('id', seg.id)
-        .then(({ error }) => { if (error) console.warn('[persist update seg] error', error); else console.debug('[planning] update ok'); })
+        .then(({ error }) => {
+          if (error) {
+            console.warn('[persist update seg] error', error);
+            throw error;
+          }
+          console.debug('[planning] update ok');
+        })
     );
   }, [supabase]);
 
@@ -2548,23 +2559,33 @@ export default function PlanneringPage() {
 
   const updateSegmentDepot = useCallback((segmentId: string, depotId: string | null) => {
     setScheduledSegments(prev => prev.map(s => s.id === segmentId ? { ...s, depotId } : s));
-    enqueue(
+    return enqueue(
       supabase.from('planning_segments')
         .update({ depot_id: depotId })
         .eq('id', segmentId)
         .select('id')
-        .then(({ error }) => { if (error) console.warn('[planning] update segment depot error', error); })
+        .then(({ error }) => {
+          if (error) {
+            console.warn('[planning] update segment depot error', error);
+            throw error;
+          }
+        })
     );
   }, [supabase]);
 
   const updateSegmentSortIndex = useCallback((segmentId: string, sortIndex: number | null) => {
     setScheduledSegments(prev => prev.map(s => s.id === segmentId ? { ...s, sortIndex } : s));
-    enqueue(
+    return enqueue(
       supabase.from('planning_segments')
         .update({ sort_index: sortIndex })
         .eq('id', segmentId)
         .select('id')
-        .then(({ error }) => { if (error) console.warn('[planning] update segment sort_index error', error); })
+        .then(({ error }) => {
+          if (error) {
+            console.warn('[planning] update segment sort_index error', error);
+            throw error;
+          }
+        })
     );
   }, [supabase]);
 
@@ -2777,7 +2798,7 @@ export default function PlanneringPage() {
   }, [editingTeamNames, supabase, crewList]);
 
   const persistMetaUpsert = useCallback((projectId: string, meta: ProjectScheduleMeta) => {
-    enqueue(supabase.from('planning_project_meta').upsert({
+    return enqueue(supabase.from('planning_project_meta').upsert({
       project_id: projectId,
       truck: meta.truck,
       bag_count: meta.bagCount,
@@ -2810,6 +2831,7 @@ export default function PlanneringPage() {
         } else {
           console.warn('[persist meta upsert] error', error);
         }
+        throw error;
       }
     }));
   }, [supabase]);
@@ -3524,13 +3546,14 @@ export default function PlanneringPage() {
   }
   const persistSegmentCrew = useCallback(async (segmentId: string, crewListDraft: Array<{ id: string | null; name: string }>) => {
     try {
-      await supabase.from('planning_segment_team_members').delete().eq('segment_id', segmentId);
+      const { error: deleteError } = await supabase.from('planning_segment_team_members').delete().eq('segment_id', segmentId);
+      if (deleteError) throw deleteError;
       const rows = (crewListDraft || [])
         .filter(m => (m.name || '').trim().length > 0)
         .map(m => ({ segment_id: segmentId, member_id: m.id || null, member_name: m.name.trim() }));
       if (rows.length > 0) {
         const { error } = await supabase.from('planning_segment_team_members').insert(rows);
-        if (error) console.warn('[planning] insert crew error', error);
+        if (error) throw error;
       } // else: nothing to insert
       setSegmentCrew(prev => {
         const cleaned = (crewListDraft || []).filter(m => (m.name || '').trim().length > 0);
@@ -3554,18 +3577,31 @@ export default function PlanneringPage() {
       });
     } catch (e) {
       console.warn('[planning] persistSegmentCrew exception', e);
+      throw e;
     }
   }, [supabase]);
-  function saveSegmentEditor() {
+  async function saveSegmentEditor() {
     if (!segEditor) return;
+    if (segEditorSaving) return;
     if (isReadOnly) {
       try { toast.error('Läs-läge: du kan inte spara ändringar.'); } catch {}
       return;
     }
     const { mode, projectId, segmentId, startDay, endDay, truck, bagCount, jobType, depotId, positionIndex } = segEditor;
-    // Update only project-scoped meta (truck and jobType are per-segment)
-    updateMeta(projectId, { bagCount });
-    if (mode === 'create') {
+    setSegEditorSaving(true);
+    try {
+      const mergedMeta = { ...(scheduleMeta[projectId] || { projectId }), bagCount } as ProjectScheduleMeta;
+      setScheduleMeta(m => ({ ...m, [projectId]: mergedMeta }));
+      latestMetaCache.current[projectId] = mergedMeta;
+      const existingMetaTimer = metaDebounceTimers.current[projectId];
+      if (existingMetaTimer) {
+        clearTimeout(existingMetaTimer);
+        delete metaDebounceTimers.current[projectId];
+      }
+
+      const pendingWrites: PromiseLike<any>[] = [persistMetaUpsert(projectId, mergedMeta)];
+
+      if (mode === 'create') {
       const newSeg: ScheduledSegment = { id: genId(), projectId, startDay, endDay, depotId: depotId ?? undefined, truck: truck ?? null, jobType: jobType ?? null } as any;
       applyScheduledSegments(prev => {
         const next = [...prev, newSeg];
@@ -3621,7 +3657,7 @@ export default function PlanneringPage() {
       });
       const project = projects.find(p => p.id === projectId);
       if (project) {
-        persistSegmentCreate(newSeg, project);
+        pendingWrites.push(Promise.resolve(persistSegmentCreate(newSeg, project)));
         // On schedule: if address/status not stored yet, fetch once from Blikk and persist to meta
         try {
           if (!projectAddresses[project.id] && project.orderNumber) {
@@ -3728,15 +3764,15 @@ export default function PlanneringPage() {
         } catch { /* ignore */ }
       }
       // Persist crew for newly created segment
-      try {
-        if (segEditor.crew && segEditor.crew.length > 0) {
-          persistSegmentCrew(newSeg.id, segEditor.crew);
-        } else {
-          setSegmentCrew(prev => ({ ...prev, [newSeg.id]: [] }));
-        }
-      } catch { /* ignore */ }
+      if (segEditor.crew && segEditor.crew.length > 0) {
+        pendingWrites.push(persistSegmentCrew(newSeg.id, segEditor.crew));
+      } else {
+        setSegmentCrew(prev => ({ ...prev, [newSeg.id]: [] }));
+      }
     } else if (segmentId) {
       // Update segment fields locally, including job type, then optionally reorder
+      let orderedIdsToPersist: string[] = [];
+      let hasOrderedIdsToPersist = false;
       applyScheduledSegments(prev => {
         const next = prev.map(s => s.id === segmentId ? ({ ...s, startDay, endDay, depotId: depotId ?? null, truck: truck ?? null, jobType: jobType ?? null }) : s);
         if (truck && segEditor.positionIndex && segEditor.positionIndex > 0) {
@@ -3762,18 +3798,21 @@ export default function PlanneringPage() {
               const s = next[i];
               if (indexMap.has(s.id)) next[i] = { ...s, sortIndex: indexMap.get(s.id)! } as any;
             }
+            orderedIdsToPersist = ids;
+            hasOrderedIdsToPersist = true;
             setSequentialSortForSegments(ids);
           }
         }
         return next;
       });
-      updateSegmentDepot(segmentId, depotId ?? null);
       // Persist segment updates including job type and truck
-      setTimeout(() => {
-        persistSegmentUpdate({ id: segmentId, projectId, startDay, endDay, depotId: depotId ?? undefined, truck: truck ?? null, jobType: jobType ?? null } as any);
-      }, 0);
+      const currentSegment = scheduledSegments.find(s => s.id === segmentId);
+      pendingWrites.push(Promise.resolve(persistSegmentUpdate({ id: segmentId, projectId, startDay, endDay, depotId: depotId ?? undefined, sortIndex: hasOrderedIdsToPersist ? orderedIdsToPersist.indexOf(segmentId) : (currentSegment?.sortIndex ?? null), truck: truck ?? null, jobType: jobType ?? null } as any)));
+      if (hasOrderedIdsToPersist) {
+        pendingWrites.push(...orderedIdsToPersist.map((id: string, idx: number) => Promise.resolve(updateSegmentSortIndex(id, idx))));
+      }
       // Persist any crew changes
-      try { persistSegmentCrew(segmentId, segEditor.crew || []); } catch { /* ignore */ }
+      pendingWrites.push(persistSegmentCrew(segmentId, segEditor.crew || []));
       // If user selected a Blikk status in the editor, apply it now for edits too
       (async () => {
         try {
@@ -3812,10 +3851,18 @@ export default function PlanneringPage() {
         }
       })();
     }
-    try {
-      toast.success('Sparat ✓');
-    } catch {}
-    closeSegEditor();
+      await Promise.all(pendingWrites);
+      try {
+        toast.success('Sparat ✓');
+      } catch {}
+      setSegEditorOpen(false);
+    } catch (e: any) {
+      try {
+        toast.error(String(e?.message || 'Kunde inte spara ändringen.'));
+      } catch {}
+    } finally {
+      setSegEditorSaving(false);
+    }
   }
   // Drag & drop into a calendar day (optionally within a truck lane in day-list view)
   function onDropDay(e: React.DragEvent, day: string, laneTruck?: string | null) {
@@ -4467,8 +4514,8 @@ export default function PlanneringPage() {
                       />
                     </span>
                   )}
-                  <button type="button" onClick={closeSegEditor} className="btn--plain btn--xs" style={{ fontSize: 12, padding: '8px 12px', border: '1px solid #cbd5e1', background: '#fff', borderRadius: 10 }}>Avbryt</button>
-                  <button type="button" onClick={saveSegmentEditor} className="btn--plain btn--xs" style={{ fontSize: 12, padding: '8px 12px', border: '1px solid #16a34a', background: '#16a34a', color: '#fff', borderRadius: 10, boxShadow: '0 2px 6px rgba(22,163,74,0.25)' }}>{segEditor.mode === 'create' ? 'Lägg till' : 'Spara'}</button>
+                  <button type="button" onClick={closeSegEditor} disabled={segEditorSaving} className="btn--plain btn--xs" style={{ fontSize: 12, padding: '8px 12px', border: '1px solid #cbd5e1', background: '#fff', borderRadius: 10, opacity: segEditorSaving ? 0.6 : 1 }}>Avbryt</button>
+                  <button type="button" onClick={saveSegmentEditor} disabled={segEditorSaving} className="btn--plain btn--xs" style={{ fontSize: 12, padding: '8px 12px', border: '1px solid #16a34a', background: '#16a34a', color: '#fff', borderRadius: 10, boxShadow: '0 2px 6px rgba(22,163,74,0.25)', opacity: segEditorSaving ? 0.7 : 1 }}>{segEditorSaving ? 'Sparar…' : segEditor.mode === 'create' ? 'Lägg till' : 'Spara'}</button>
                   {(() => {
                     const proj = p; const hasEK = !!(proj?.orderNumber && hasEgenkontroll(proj.orderNumber)); const pth = proj?.orderNumber ? egenkontrollPath(proj.orderNumber) : null; return hasEK ? (
                       <a
