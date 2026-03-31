@@ -32,6 +32,20 @@ interface Project {
   isManual: boolean;
 }
 
+function getVisibleCalendarRange(monthOffset: number) {
+  const base = new Date();
+  base.setDate(1);
+  base.setMonth(base.getMonth() + monthOffset);
+  const monthStart = startOfMonth(base);
+  const monthEnd = endOfMonth(base);
+  return {
+    start: startOfIsoWeek(fmtDate(monthStart)),
+    end: endOfIsoWeek(fmtDate(monthEnd)),
+    visibleMonth: base.getMonth(),
+    visibleYear: base.getFullYear(),
+  };
+}
+
 interface ScheduledSegment {
   id: string;
   projectId: string; // FK to Project.id
@@ -391,16 +405,12 @@ export default function PlanneringPage() {
     });
   }, []);
 
-  // Fetch notes for the currently visible month range
+  // Fetch notes for the full visible calendar range, including spillover days
   useEffect(() => {
     let cancelled = false;
     async function fetchNotesForMonth() {
       try {
-        const base = new Date();
-        base.setDate(1);
-        base.setMonth(base.getMonth() + monthOffset);
-        const start = startOfMonth(base);
-        const end = endOfMonth(base);
+        const { start, end } = getVisibleCalendarRange(monthOffset);
         const startISO = fmtDate(start);
         const endISO = fmtDate(end);
         const rows = await listDayNotes(startISO, endISO);
@@ -1889,12 +1899,10 @@ export default function PlanneringPage() {
         const row: any = payload.new || payload.old;
         const day: string | undefined = row?.note_day;
         if (payload.eventType === 'DELETE') {
-          // Fallback: some environments omit old row data; refetch month range
-          const base = new Date();
-          base.setDate(1);
-          base.setMonth(base.getMonth() + monthOffset);
-          const startISO = fmtDate(startOfMonth(base));
-          const endISO = fmtDate(endOfMonth(base));
+          // Fallback: some environments omit old row data; refetch visible calendar range
+          const { start, end } = getVisibleCalendarRange(monthOffset);
+          const startISO = fmtDate(start);
+          const endISO = fmtDate(end);
           listDayNotes(startISO, endISO)
             .then(rows => {
               const map = new Map<string, any>();
@@ -2860,16 +2868,15 @@ export default function PlanneringPage() {
 
   // Calendar grid weeks
   const weeks = useMemo(() => {
-    const base = new Date();
-    base.setDate(1);
-    base.setMonth(base.getMonth() + monthOffset);
-    const start = startOfMonth(base);
-    const end = endOfMonth(base);
+    const { start, end, visibleMonth, visibleYear } = getVisibleCalendarRange(monthOffset);
     const days: Array<{ date: string | null; inMonth: boolean }> = [];
-    const weekdayIndex = (d: Date) => (d.getDay() + 6) % 7; // Mon=0
-    for (let i = 0, lead = weekdayIndex(start); i < lead; i++) days.push({ date: null, inMonth: false });
-    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) days.push({ date: fmtDate(new Date(d)), inMonth: true });
-    while (days.length % 7 !== 0) days.push({ date: null, inMonth: false });
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+      const current = new Date(d);
+      days.push({
+        date: fmtDate(current),
+        inMonth: current.getMonth() === visibleMonth && current.getFullYear() === visibleYear,
+      });
+    }
     const fullWeeks: Array<Array<{ date: string | null; inMonth: boolean }>> = [];
     for (let i = 0; i < days.length; i += 7) fullWeeks.push(days.slice(i, i + 7));
     if (!hideWeekends) return fullWeeks;

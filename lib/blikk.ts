@@ -96,7 +96,6 @@ export class BlikkClient {
       if (Array.isArray(tags)) tagIds = tags.map((t: any) => num(t?.id ?? t)).filter((n: any) => Number.isFinite(n));
     }
     if (Array.isArray(tagIds)) body.tagIds = tagIds;
-    else body.tagIds = [];
 
     body.contactId = num(pick('contactId', 'customerId', 'clientId'))
       ?? num(pickFrom(pick('customer'), 'id'))

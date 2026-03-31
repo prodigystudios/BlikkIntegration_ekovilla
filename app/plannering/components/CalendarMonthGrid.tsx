@@ -127,6 +127,7 @@ export default function CalendarMonthGrid(props: CalendarMonthGridProps) {
                 return <div key={ci} style={{ minHeight: 160, border: '1px solid transparent', borderRadius: 8 }} />;
               }
               const day = cell.date;
+              const isInMonth = cell.inMonth;
               const rawItems = itemsByDay.get(day) || [];
               const searchVal = calendarSearch.trim().toLowerCase();
               const items = rawItems
@@ -173,13 +174,23 @@ export default function CalendarMonthGrid(props: CalendarMonthGridProps) {
               const isToday = day === todayISO;
               const weekendCell = isWeekend(day);
               const holidayCell = isHoliday(day);
+              const cellBackground = !isInMonth
+                ? '#f8fafc'
+                : holidayCell
+                  ? '#fffbeb'
+                  : (weekendCell ? '#fff1f2' : '#ffffff');
+              const cellBorder = isJumpHighlight
+                ? '2px solid #f59e0b'
+                : (selectedProjectId
+                  ? '2px dashed #fbbf24'
+                  : (isToday ? '2px solid #60a5fa' : (isInMonth ? '1px solid rgba(148,163,184,0.4)' : '1px solid rgba(148,163,184,0.25)')));
               return (
                 <div key={day}
                   id={`calday-${day}`}
                   onClick={() => { if (!readOnly) scheduleSelectedOnDay(day); }}
                   onDragOver={readOnly ? undefined : allowDrop}
                   onDrop={readOnly ? undefined : (e => onDropDay(e, day))}
-                  style={{ border: isJumpHighlight ? '2px solid #f59e0b' : (selectedProjectId ? '2px dashed #fbbf24' : (isToday ? '2px solid #60a5fa' : '1px solid rgba(148,163,184,0.4)')), boxShadow: isJumpHighlight ? '0 0 0 4px rgba(245,158,11,0.35)' : (isToday ? '0 0 0 3px rgba(59,130,246,0.25)' : '0 1px 2px rgba(0,0,0,0.05)'), transition: 'box-shadow 0.3s,border 0.3s', borderRadius: 10, padding: 8, minHeight: 160, background: holidayCell ? '#fffbeb' : (weekendCell ? '#fff1f2' : '#ffffff'), display: 'flex', flexDirection: 'column', gap: 8, position: 'relative', cursor: selectedProjectId ? 'copy' : 'default' }}>
+                  style={{ border: cellBorder, boxShadow: isJumpHighlight ? '0 0 0 4px rgba(245,158,11,0.35)' : (isToday ? '0 0 0 3px rgba(59,130,246,0.25)' : '0 1px 2px rgba(0,0,0,0.05)'), transition: 'box-shadow 0.3s,border 0.3s', borderRadius: 10, padding: 8, minHeight: 160, background: cellBackground, display: 'flex', flexDirection: 'column', gap: 8, position: 'relative', cursor: selectedProjectId ? 'copy' : 'default', opacity: isInMonth ? 1 : 0.72 }}>
                   <DayNoteEditor
                     day={day}
                     note={notesByDay?.get(day)}
@@ -188,9 +199,12 @@ export default function CalendarMonthGrid(props: CalendarMonthGridProps) {
                     onSaved={(n) => onNoteChange?.(day, n)}
                     readOnly={readOnly}
                   />
-                  <div style={{ fontSize: 12, fontWeight: 600, display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: '#111827' }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: isInMonth ? '#111827' : '#64748b' }}>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                       <span>{day.slice(8, 10)}/{day.slice(5, 7)}</span>
+                      {!isInMonth && (
+                        <span aria-label="Annan månad" title="Dag från angränsande månad" style={{ fontSize: 10, color: '#475569', background: '#e2e8f0', border: '1px solid #cbd5e1', padding: '0px 6px', borderRadius: 999 }}>Annan månad</span>
+                      )}
                       {isToday && (
                         <span aria-label="Idag" title="Idag" style={{ fontSize: 10, color: '#1d4ed8', background: '#dbeafe', border: '1px solid #93c5fd', padding: '0px 6px', borderRadius: 999 }}>Idag</span>
                       )}
