@@ -7,6 +7,53 @@ import { useToast } from '../../lib/Toast';
 type FolderRow = { id: string; parent_id: string | null; name: string; color: string | null; created_at: string };
 type FileRow = { id: string; folder_id: string | null; file_name: string; content_type: string | null; size_bytes: number | null; created_at: string };
 type SearchFileRow = FileRow & { folder_name: string | null };
+type PublishMeta = { users: Array<{ id: string; name: string; role: string }>; tags: string[] };
+type PublicationSummary = {
+  id: string;
+  title: string;
+  description: string | null;
+  version_label: string | null;
+  due_at: string | null;
+  requires_approval: boolean;
+  created_at: string;
+  documents_files?: { id: string; file_name: string } | null;
+};
+type PublicationStatusItem = {
+  userId: string;
+  name: string;
+  role: string;
+  sourceType: 'user' | 'tag';
+  sourceValue: string | null;
+  assignedAt: string;
+  firstOpenedAt: string | null;
+  lastOpenedAt: string | null;
+  approvedAt: string | null;
+  approvalNote: string | null;
+};
+type PublicationStatusResponse = {
+  publication: PublicationSummary;
+  summary: { total: number; unread: number; read: number; approved: number };
+  items: PublicationStatusItem[];
+};
+type PublishUiState = {
+  file: FileRow;
+  title: string;
+  description: string;
+  versionLabel: string;
+  dueAt: string;
+  requiresApproval: boolean;
+  selectedUserIds: string[];
+  selectedTags: string[];
+};
+type PublishStatusUiState = {
+  file: FileRow;
+  publications: PublicationSummary[];
+  selectedPublicationId: string | null;
+  status: PublicationStatusResponse | null;
+  loadingPublications: boolean;
+  loadingStatus: boolean;
+  error: string | null;
+};
 
 type ListResponse = {
   ok: true;
@@ -48,6 +95,11 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
   const [globalSearchLoading, setGlobalSearchLoading] = useState(false);
   const [globalSearchError, setGlobalSearchError] = useState<string | null>(null);
   const [globalSearchResults, setGlobalSearchResults] = useState<SearchFileRow[] | null>(null);
+  const [publishUi, setPublishUi] = useState<PublishUiState | null>(null);
+  const [publishMeta, setPublishMeta] = useState<PublishMeta | null>(null);
+  const [publishMetaLoading, setPublishMetaLoading] = useState(false);
+  const [publishMetaError, setPublishMetaError] = useState<string | null>(null);
+  const [publishStatusUi, setPublishStatusUi] = useState<PublishStatusUiState | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const createFolderNameRef = useRef<HTMLInputElement | null>(null);
 
@@ -298,6 +350,137 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
       setBusy(null);
     }
   };
+
+  const loadPublishMeta = useCallback(async () => {
+    if (publishMeta || publishMetaLoading) return;
+    setPublishMetaLoading(true);
+    setPublishMetaError(null);
+    try {
+      const res = await fetch('/api/documents/publications/meta', { cache: 'no-store' });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json?.ok) throw new Error(json?.error || 'Kunde inte ladda mottagare');
+      setPublishMeta({
+        users: Array.isArray(json.users) ? json.users : [],
+        tags: Array.isArray(json.tags) ? json.tags : [],
+      });
+    } catch (e: any) {
+      setPublishMetaError(e?.message || 'Kunde inte ladda mottagare');
+    } finally {
+      setPublishMetaLoading(false);
+    }
+  }, [publishMeta, publishMetaLoading]);
+
+  const openPublish = useCallback((file: FileRow) => {
+    setPublishUi({
+      file,
+      title: file.file_name,
+      description: '',
+      versionLabel: '',
+      dueAt: '',
+      requiresApproval: true,
+      selectedUserIds: [],
+      selectedTags: [],
+    });
+    loadPublishMeta();
+  }, [loadPublishMeta]);
+
+  const closePublish = useCallback(() => {
+    setPublishUi(null);
+    setPublishMetaError(null);
+  }, []);
+
+  const togglePublishUser = useCallback((userId: string) => {
+    setPublishUi(prev => {
+      if (!prev) return prev;
+      const exists = prev.selectedUserIds.includes(userId);
+      return { ...prev, selectedUserIds: exists ? prev.selectedUserIds.filter(id => id !== userId) : [...prev.selectedUserIds, userId] };
+    });
+  }, []);
+
+  const togglePublishTag = useCallback((tag: string) => {
+    setPublishUi(prev => {
+      if (!prev) return prev;
+      const exists = prev.selectedTags.includes(tag);
+      return { ...prev, selectedTags: exists ? prev.selectedTags.filter(item => item !== tag) : [...prev.selectedTags, tag] };
+    });
+  }, []);
+
+  const submitPublish = useCallback(async () => {
+    if (!publishUi) return;
+    if (!publishUi.title.trim()) {
+      toast.error('Titel krävs');
+      return;
+    }
+    if (publishUi.selectedUserIds.length === 0 && publishUi.selectedTags.length === 0) {
+      toast.error('Välj minst en mottagare eller grupp');
+      return;
+    }
+    setBusy('publish');
+    try {
+      const res = await fetch('/api/documents/publications', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fileId: publishUi.file.id,
+          title: publishUi.title.trim(),
+          description: publishUi.description.trim(),
+          versionLabel: publishUi.versionLabel.trim(),
+          dueAt: publishUi.dueAt ? new Date(publishUi.dueAt).toISOString() : null,
+          requiresApproval: publishUi.requiresApproval,
+          userIds: publishUi.selectedUserIds,
+          tags: publishUi.selectedTags,
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json?.ok) throw new Error(json?.error || 'Kunde inte publicera dokument');
+      toast.success('Dokumentet har publicerats för kvittens');
+      closePublish();
+    } catch (e: any) {
+      toast.error(e?.message || 'Kunde inte publicera dokument');
+    } finally {
+      setBusy(null);
+    }
+  }, [closePublish, publishUi, toast]);
+
+  const loadPublicationStatus = useCallback(async (publicationId: string) => {
+    setPublishStatusUi(prev => prev ? { ...prev, selectedPublicationId: publicationId, loadingStatus: true, error: null } : prev);
+    try {
+      const res = await fetch(`/api/documents/publications/${encodeURIComponent(publicationId)}/status`, { cache: 'no-store' });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json?.ok) throw new Error(json?.error || 'Kunde inte ladda status');
+      setPublishStatusUi(prev => prev ? { ...prev, selectedPublicationId: publicationId, status: json as PublicationStatusResponse, loadingStatus: false } : prev);
+    } catch (e: any) {
+      setPublishStatusUi(prev => prev ? { ...prev, loadingStatus: false, error: e?.message || 'Kunde inte ladda status' } : prev);
+    }
+  }, []);
+
+  const openPublishStatus = useCallback(async (file: FileRow) => {
+    setPublishStatusUi({
+      file,
+      publications: [],
+      selectedPublicationId: null,
+      status: null,
+      loadingPublications: true,
+      loadingStatus: false,
+      error: null,
+    });
+    try {
+      const res = await fetch(`/api/documents/publications?fileId=${encodeURIComponent(file.id)}`, { cache: 'no-store' });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json?.ok) throw new Error(json?.error || 'Kunde inte ladda publiceringar');
+      const items = Array.isArray(json.items) ? json.items as PublicationSummary[] : [];
+      setPublishStatusUi(prev => prev ? { ...prev, publications: items, loadingPublications: false, selectedPublicationId: items[0]?.id || null } : prev);
+      if (items[0]?.id) {
+        await loadPublicationStatus(items[0].id);
+      }
+    } catch (e: any) {
+      setPublishStatusUi(prev => prev ? { ...prev, loadingPublications: false, error: e?.message || 'Kunde inte ladda publiceringar' } : prev);
+    }
+  }, [loadPublicationStatus]);
+
+  const closePublishStatus = useCallback(() => {
+    setPublishStatusUi(null);
+  }, []);
 
   const deleteFolder = async (id: string, parentId: string | null) => {
     if (!effectiveCanEdit) return;
@@ -873,6 +1056,16 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
                           Ladda ner
                         </button>
                         {effectiveCanEdit && (
+                          <button type="button" onClick={() => openPublishStatus(file)} disabled={!!busy} style={buttonSecondary}>
+                            Status
+                          </button>
+                        )}
+                        {effectiveCanEdit && (
+                          <button type="button" onClick={() => openPublish(file)} disabled={!!busy} style={buttonSecondary}>
+                            Publicera
+                          </button>
+                        )}
+                        {effectiveCanEdit && (
                           <button type="button" onClick={() => deleteFile(file.id)} disabled={!!busy} style={{ ...buttonSecondary, color: '#991b1b' }}>
                             Ta bort
                           </button>
@@ -912,6 +1105,16 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
                         Ladda ner
                       </button>
                       {effectiveCanEdit && (
+                        <button type="button" onClick={() => openPublishStatus(file)} disabled={!!busy} style={buttonSecondary}>
+                          Status
+                        </button>
+                      )}
+                      {effectiveCanEdit && (
+                        <button type="button" onClick={() => openPublish(file)} disabled={!!busy} style={buttonSecondary}>
+                          Publicera
+                        </button>
+                      )}
+                      {effectiveCanEdit && (
                         <button type="button" onClick={() => deleteFile(file.id)} disabled={!!busy} style={{ ...buttonSecondary, color: '#991b1b' }}>
                           Ta bort
                         </button>
@@ -924,6 +1127,362 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
           </div>
         </div>
       )}
+
+      {publishUi && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(17,24,39,0.52)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 20,
+            zIndex: 60,
+          }}
+          onClick={closePublish}
+        >
+          <div
+            style={{
+              width: 'min(820px, 100%)',
+              maxHeight: '90vh',
+              overflow: 'auto',
+              borderRadius: 18,
+              background: '#fff',
+              border: '1px solid #e5e7eb',
+              boxShadow: '0 24px 60px rgba(0,0,0,0.22)',
+              padding: 22,
+              display: 'grid',
+              gap: 18,
+            }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: 22 }}>Publicera dokument för kvittens</h3>
+                <p style={{ margin: '6px 0 0', color: '#6b7280' }}>{publishUi.file.file_name}</p>
+              </div>
+              <button type="button" onClick={closePublish} style={buttonSecondary}>Stäng</button>
+            </div>
+
+            <div style={{ display: 'grid', gap: 14 }}>
+              <label style={{ display: 'grid', gap: 6 }}>
+                <span style={fieldLabel}>Titel</span>
+                <input
+                  value={publishUi.title}
+                  onChange={(event) => setPublishUi(prev => prev ? { ...prev, title: event.target.value } : prev)}
+                  style={inputStyle}
+                  placeholder="Ex. Arbetsmiljörutin april 2026"
+                />
+              </label>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 14 }}>
+                <label style={{ display: 'grid', gap: 6 }}>
+                  <span style={fieldLabel}>Version</span>
+                  <input
+                    value={publishUi.versionLabel}
+                    onChange={(event) => setPublishUi(prev => prev ? { ...prev, versionLabel: event.target.value } : prev)}
+                    style={inputStyle}
+                    placeholder="Ex. 2026-04"
+                  />
+                </label>
+                <label style={{ display: 'grid', gap: 6 }}>
+                  <span style={fieldLabel}>Deadline</span>
+                  <input
+                    type="datetime-local"
+                    value={publishUi.dueAt}
+                    onChange={(event) => setPublishUi(prev => prev ? { ...prev, dueAt: event.target.value } : prev)}
+                    style={inputStyle}
+                  />
+                </label>
+              </div>
+
+              <label style={{ display: 'grid', gap: 6 }}>
+                <span style={fieldLabel}>Beskrivning</span>
+                <textarea
+                  value={publishUi.description}
+                  onChange={(event) => setPublishUi(prev => prev ? { ...prev, description: event.target.value } : prev)}
+                  style={{ ...inputStyle, minHeight: 96, resize: 'vertical' }}
+                  placeholder="Kort beskrivning eller instruktion till personalen"
+                />
+              </label>
+
+              <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontWeight: 600, color: '#111827' }}>
+                <input
+                  type="checkbox"
+                  checked={publishUi.requiresApproval}
+                  onChange={(event) => setPublishUi(prev => prev ? { ...prev, requiresApproval: event.target.checked } : prev)}
+                />
+                Aktivt godkännande krävs
+              </label>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 16, alignItems: 'start' }}>
+              <section style={pickerSection}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center' }}>
+                  <strong>Personer</strong>
+                  {publishUi.selectedUserIds.length > 0 && <span style={countChip}>{publishUi.selectedUserIds.length} valda</span>}
+                </div>
+                {publishMetaLoading && <div style={{ color: '#6b7280', fontSize: 13 }}>Laddar användare…</div>}
+                {!publishMetaLoading && publishMeta?.users?.length === 0 && <div style={{ color: '#6b7280', fontSize: 13 }}>Inga användare hittades.</div>}
+                <div style={{ display: 'grid', gap: 8, maxHeight: 260, overflow: 'auto' }}>
+                  {(publishMeta?.users || []).map(user => (
+                    <label key={user.id} style={checkboxRow}>
+                      <input type="checkbox" checked={publishUi.selectedUserIds.includes(user.id)} onChange={() => togglePublishUser(user.id)} />
+                      <span style={{ display: 'grid', gap: 2 }}>
+                        <span style={{ fontWeight: 600, color: '#111827' }}>{user.name}</span>
+                        <span style={{ fontSize: 12, color: '#6b7280' }}>{user.role}</span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </section>
+
+              <section style={pickerSection}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center' }}>
+                  <strong>Grupper via taggar</strong>
+                  {publishUi.selectedTags.length > 0 && <span style={countChip}>{publishUi.selectedTags.length} valda</span>}
+                </div>
+                {publishMetaLoading && <div style={{ color: '#6b7280', fontSize: 13 }}>Laddar taggar…</div>}
+                {!publishMetaLoading && publishMeta?.tags?.length === 0 && <div style={{ color: '#6b7280', fontSize: 13 }}>Inga taggar hittades.</div>}
+                <div style={{ display: 'grid', gap: 8, maxHeight: 260, overflow: 'auto' }}>
+                  {(publishMeta?.tags || []).map(tag => (
+                    <label key={tag} style={checkboxRow}>
+                      <input type="checkbox" checked={publishUi.selectedTags.includes(tag)} onChange={() => togglePublishTag(tag)} />
+                      <span style={{ fontWeight: 600, color: '#111827' }}>{tag}</span>
+                    </label>
+                  ))}
+                </div>
+              </section>
+            </div>
+
+            {publishMetaError && <div style={{ color: '#991b1b', fontSize: 14 }}>{publishMetaError}</div>}
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+              <div style={{ color: '#6b7280', fontSize: 13 }}>
+                Publiceringen skapar en egen kvittenscykel för den här dokumentversionen.
+              </div>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                <button type="button" onClick={closePublish} style={buttonSecondary}>Avbryt</button>
+                <button type="button" onClick={submitPublish} disabled={busy === 'publish'} style={buttonStyle}>Publicera</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {publishStatusUi && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(17,24,39,0.52)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 20,
+            zIndex: 60,
+          }}
+          onClick={closePublishStatus}
+        >
+          <div
+            style={{
+              width: 'min(1080px, 100%)',
+              maxHeight: '90vh',
+              overflow: 'auto',
+              borderRadius: 18,
+              background: '#fff',
+              border: '1px solid #e5e7eb',
+              boxShadow: '0 24px 60px rgba(0,0,0,0.22)',
+              padding: 22,
+              display: 'grid',
+              gap: 18,
+            }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: 22 }}>Kvittensstatus</h3>
+                <p style={{ margin: '6px 0 0', color: '#6b7280' }}>{publishStatusUi.file.file_name}</p>
+              </div>
+              <button type="button" onClick={closePublishStatus} style={buttonSecondary}>Stäng</button>
+            </div>
+
+            {publishStatusUi.loadingPublications && <div style={{ color: '#6b7280' }}>Laddar publiceringar…</div>}
+            {!publishStatusUi.loadingPublications && publishStatusUi.publications.length === 0 && (
+              <div style={{ ...pickerSection, background: '#fff' }}>Inga publiceringar finns ännu för det här dokumentet.</div>
+            )}
+
+            {!publishStatusUi.loadingPublications && publishStatusUi.publications.length > 0 && (
+              <>
+                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                  {publishStatusUi.publications.map(publication => {
+                    const active = publication.id === publishStatusUi.selectedPublicationId;
+                    return (
+                      <button
+                        key={publication.id}
+                        type="button"
+                        onClick={() => loadPublicationStatus(publication.id)}
+                        style={{
+                          ...buttonSecondary,
+                          borderColor: active ? '#111827' : '#d1d5db',
+                          background: active ? '#111827' : '#fff',
+                          color: active ? '#fff' : '#111827',
+                        }}
+                      >
+                        {publication.title}
+                        {publication.version_label ? ` • ${publication.version_label}` : ''}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {publishStatusUi.error && <div style={{ color: '#991b1b' }}>{publishStatusUi.error}</div>}
+                {publishStatusUi.loadingStatus && <div style={{ color: '#6b7280' }}>Laddar mottagarstatus…</div>}
+
+                {publishStatusUi.status && !publishStatusUi.loadingStatus && (() => {
+                  const status = publishStatusUi.status;
+                  const requiresApproval = status.publication.requires_approval;
+                  return (
+                  <div style={{ display: 'grid', gap: 16 }}>
+                    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                      <span style={summaryChip('#fee2e2', '#991b1b')}>Ej läst: {status.summary.unread}</span>
+                      <span style={summaryChip('#fef3c7', '#92400e')}>Läst: {status.summary.read}</span>
+                      <span style={summaryChip('#dcfce7', '#166534')}>
+                        {requiresApproval ? 'Godkänt' : 'Klart'}: {status.summary.approved}
+                      </span>
+                      <span style={summaryChip('#e5e7eb', '#374151')}>Totalt: {status.summary.total}</span>
+                    </div>
+
+                    <div style={{ display: 'grid', gap: 8 }}>
+                      {status.items.map(item => (
+                        <div key={item.userId} style={{ border: '1px solid #e5e7eb', borderRadius: 12, padding: '12px 14px', display: 'grid', gap: 8, background: '#fff' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                            <strong>{item.name}</strong>
+                            <span style={{ color: '#6b7280', fontSize: 13 }}>{item.role}</span>
+                            <span style={recipientStatusChip(item, requiresApproval)}>
+                              {isPublicationStatusComplete(item, requiresApproval)
+                                ? (requiresApproval ? 'Godkänt' : 'Klart')
+                                : item.firstOpenedAt
+                                  ? 'Läst'
+                                  : 'Ej läst'}
+                            </span>
+                            {item.sourceType === 'tag' && item.sourceValue && <span style={minorChip}>Grupp: {item.sourceValue}</span>}
+                          </div>
+                          <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', color: '#6b7280', fontSize: 13 }}>
+                            <span>Tilldelad: {new Date(item.assignedAt).toLocaleString('sv-SE')}</span>
+                            <span>Öppnad: {item.firstOpenedAt ? new Date(item.firstOpenedAt).toLocaleString('sv-SE') : 'Nej'}</span>
+                            <span>
+                              {requiresApproval ? 'Godkänd' : 'Klar'}: {
+                                item.approvedAt
+                                  ? new Date(item.approvedAt).toLocaleString('sv-SE')
+                                  : item.firstOpenedAt
+                                    ? new Date(item.firstOpenedAt).toLocaleString('sv-SE')
+                                    : 'Nej'
+                              }
+                            </span>
+                          </div>
+                          {item.approvalNote && <div style={{ fontSize: 13, color: '#374151' }}>Kommentar: {item.approvalNote}</div>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  );
+                })()}
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </section>
   );
+}
+
+const fieldLabel: React.CSSProperties = {
+  fontSize: 13,
+  fontWeight: 700,
+  color: '#374151',
+};
+
+const inputStyle: React.CSSProperties = {
+  width: '100%',
+  borderRadius: 10,
+  border: '1px solid #d1d5db',
+  padding: '10px 12px',
+  fontSize: 14,
+  color: '#111827',
+  background: '#fff',
+  boxSizing: 'border-box',
+};
+
+const pickerSection: React.CSSProperties = {
+  border: '1px solid #e5e7eb',
+  borderRadius: 14,
+  padding: 14,
+  background: '#f8fafc',
+  display: 'grid',
+  gap: 12,
+};
+
+const checkboxRow: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'flex-start',
+  gap: 10,
+  padding: '8px 10px',
+  borderRadius: 10,
+  background: '#fff',
+  border: '1px solid #e5e7eb',
+};
+
+const countChip: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  padding: '3px 8px',
+  borderRadius: 999,
+  background: '#e0e7ff',
+  color: '#3730a3',
+  fontSize: 12,
+  fontWeight: 700,
+};
+
+const minorChip: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  padding: '4px 8px',
+  borderRadius: 999,
+  background: '#eef2ff',
+  color: '#4338ca',
+  fontSize: 12,
+  fontWeight: 700,
+};
+
+function summaryChip(background: string, color: string): React.CSSProperties {
+  return {
+    display: 'inline-flex',
+    alignItems: 'center',
+    padding: '6px 10px',
+    borderRadius: 999,
+    background,
+    color,
+    fontSize: 12,
+    fontWeight: 700,
+  };
+}
+
+function isPublicationStatusComplete(item: PublicationStatusItem, requiresApproval: boolean) {
+  return !!item.approvedAt || (!requiresApproval && !!item.firstOpenedAt);
+}
+
+function recipientStatusChip(item: PublicationStatusItem, requiresApproval: boolean): React.CSSProperties {
+  if (isPublicationStatusComplete(item, requiresApproval)) {
+    return summaryChip('#dcfce7', '#166534');
+  }
+  if (item.firstOpenedAt) {
+    return summaryChip('#fef3c7', '#92400e');
+  }
+  return summaryChip('#fee2e2', '#991b1b');
 }

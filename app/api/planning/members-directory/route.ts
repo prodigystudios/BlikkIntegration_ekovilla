@@ -10,13 +10,13 @@ export async function GET(_req: NextRequest) {
   try {
     const { data: profiles, error: profErr } = await adminSupabase
       .from('profiles')
-      .select('id, full_name, role, email');
+      .select('id, full_name, role');
     if (profErr) throw profErr;
 
     const directory = (profiles || []).map(p => ({
       id: p.id,
       role: p.role,
-      name: p.full_name || (p.email ? p.email.split('@')[0] : null)
+      name: p.full_name || null
     })).filter(d => d.name);
 
     // Deduplicate by id (should already be unique) and ensure name trimmed

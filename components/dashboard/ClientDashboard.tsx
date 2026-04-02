@@ -5,6 +5,7 @@ import DashboardNotes from './DashboardNotes';
 import dynamic from 'next/dynamic';
 const DashboardSchedule = dynamic(() => import('./DashboardSchedule'));
 import DashboardTasks from './DashboardTasks';
+import DashboardDocumentApprovals from './DashboardDocumentApprovals';
 import TimeReportModal from './TimeReportModal';
 import { useToast } from '@/lib/Toast';
 import type { UserRole } from '../../lib/roles';
@@ -62,6 +63,13 @@ const baseExtra: Record<string, Omit<QuickLink, 'href' | 'title'>> = {
     <svg width="28" height="28" viewBox="0 0 24 24" strokeWidth={1.6} stroke="currentColor" fill="none" aria-hidden>
       <path d="M3.5 6a2 2 0 0 1 2-2h5l2 2H18.5a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5.5a2 2 0 0 1-2-2V6Z" />
       <path d="M7 12h10M7 16h7" strokeLinecap="round" />
+    </svg>
+  ) },
+  '/mina-dokument': { desc: 'Dokument att läsa och godkänna', icon: (
+    <svg width="28" height="28" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor" fill="none" aria-hidden>
+      <path d="M6 3h8l4 4v13a1 1 0 0 1-1 1H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" />
+      <path d="M14 3v5h5" />
+      <path d="M8 14l2.2 2.2L16 10.5" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   ) },
   '/bestallning-klader': { desc: 'Beställ kläder & material', icon: (
@@ -174,6 +182,7 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
         { href: '/bestallning-klader', title: 'Beställ kläder & annat', ...baseExtra['/bestallning-klader'] },
         { href: '/tidrapport', title: 'Tidrapport', ...baseExtra['/tidrapport'] },
         { href: '/kontakt-lista', title: 'Kontakt', ...baseExtra['/kontakt-lista'] },
+        { href: '/mina-dokument', title: 'Mina dokument', ...baseExtra['/mina-dokument'] },
         { href: '/dokument-information', title: 'Dokument & information', ...baseExtra['/dokument-information'] },
       ];
     }
@@ -183,6 +192,7 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
         { href: '/korjournal', title: 'Körjournal', ...baseExtra['/korjournal'] },
         { href: '/plannering', title: 'Planering', ...baseExtra['/planering'] },
         { href: '/kontakt-lista', title: 'Kontakt', ...baseExtra['/kontakt-lista'] },
+        { href: '/mina-dokument', title: 'Mina dokument', ...baseExtra['/mina-dokument'] },
         { href: '/dokument', title: 'Dokument', ...baseExtra['/dokument'] },
         { href: '/offert/kalkylator', title: 'Kalkylator Försäljning Privat', ...baseExtra['/offert/kalkylator'] },
       ];
@@ -194,6 +204,7 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
         { href: '/korjournal', title: 'Körjournal', ...baseExtra['/korjournal'] },
         { href: '/plannering', title: 'Planering', ...baseExtra['/planering'] },
         { href: '/tidrapport', title: 'Tidrapport', ...baseExtra['/tidrapport'] },
+        { href: '/mina-dokument', title: 'Mina dokument', ...baseExtra['/mina-dokument'] },
         { href: '/dokument', title: 'Dokument', ...baseExtra['/dokument'] },
         { href: '/admin', title: 'Admin', ...baseExtra['/admin'] },
         { href: '/offert', title: 'Skapa offert', ...baseExtra['/offert'] },
@@ -297,6 +308,20 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
           </section>
         )}
         {/* Tasks section */}
+        <section
+          style={{
+            border: '1px solid #e5e7eb',
+            background: '#fff',
+            borderRadius: 16,
+            padding: isSmall ? (isXS ? 14 : 18) : 24,
+            display: 'grid',
+            gap: isSmall ? 18 : 24,
+            order: mini ? -1 : 0
+          }}
+        >
+          <DashboardDocumentApprovals compact={isSmall || mini} />
+        </section>
+
         <section
           style={{
             border: '1px solid #e5e7eb',
