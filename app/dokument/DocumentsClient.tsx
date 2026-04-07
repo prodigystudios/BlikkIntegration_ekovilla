@@ -303,12 +303,18 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
   };
 
   const downloadFile = async (id: string) => {
+    const popup = window.open('', '_blank', 'noopener,noreferrer');
     try {
       const res = await fetch(`/api/documents/files/download?id=${encodeURIComponent(id)}&download=1`, { cache: 'no-store' });
       const j = await res.json();
       if (!res.ok || !j?.ok || !j?.url) throw new Error(j?.error || 'Kunde inte skapa nedladdningslänk');
-      window.open(j.url, '_blank', 'noopener,noreferrer');
+      if (popup && !popup.closed) {
+        popup.location.href = j.url;
+      } else {
+        window.location.href = j.url;
+      }
     } catch (e: any) {
+      if (popup && !popup.closed) popup.close();
       toast.error(e?.message || 'Kunde inte ladda ner');
     }
   };
