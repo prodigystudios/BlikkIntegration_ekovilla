@@ -69,36 +69,23 @@ export default function MyDocumentsClient() {
     load();
   }, [load]);
 
-  const openExternalUrl = useCallback((url: string, popup: Window | null) => {
-    if (popup && !popup.closed) {
-      popup.location.href = url;
-      return;
-    }
-    window.location.href = url;
-  }, []);
-
   const openItem = useCallback(async (item: MyDocumentItem) => {
-    if (!item.file?.id) return;
     setBusyId(item.publicationId);
-    const popup = window.open('', '_blank', 'noopener,noreferrer');
     try {
-      const [openRes, fileRes] = await Promise.all([
-        fetch(`/api/documents/publications/${encodeURIComponent(item.publicationId)}/open`, { method: 'POST' }),
-        fetch(`/api/documents/files/download?id=${encodeURIComponent(item.file.id)}`, { cache: 'no-store' }),
-      ]);
-      const openJson = await openRes.json().catch(() => ({}));
-      const fileJson = await fileRes.json().catch(() => ({}));
-      if (!openRes.ok || !openJson?.ok) throw new Error(openJson?.error || 'Kunde inte registrera öppning');
-      if (!fileRes.ok || !fileJson?.ok || !fileJson?.url) throw new Error(fileJson?.error || 'Kunde inte öppna dokument');
-      openExternalUrl(fileJson.url, popup);
-      await load();
+      const url = `/api/documents/publications/${encodeURIComponent(item.publicationId)}/open`;
+      const popup = window.open(url, '_blank');
+      if (!popup) {
+        window.location.href = url;
+      }
+      setTimeout(() => {
+        load();
+      }, 1200);
     } catch (e: any) {
-      if (popup && !popup.closed) popup.close();
       toast.error(e?.message || 'Kunde inte öppna dokument');
     } finally {
       setBusyId(null);
     }
-  }, [load, openExternalUrl, toast]);
+  }, [load, toast]);
 
   const approveItem = useCallback(async (item: MyDocumentItem) => {
     setBusyId(item.publicationId);

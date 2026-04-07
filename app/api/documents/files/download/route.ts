@@ -16,6 +16,7 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const id = (searchParams.get('id') || '').trim();
   const download = (searchParams.get('download') || '').trim();
+  const redirect = (searchParams.get('redirect') || '').trim();
   if (!id) return NextResponse.json({ ok: false, error: 'missing_id' }, { status: 400 });
 
   const { data, error } = await supabase
@@ -36,6 +37,11 @@ export async function GET(req: NextRequest) {
     .createSignedUrl(path, 60 * 30, shouldDownload ? { download: fileName } : undefined);
   if (sErr || !signed?.signedUrl) {
     return NextResponse.json({ ok: false, error: sErr?.message || 'failed_signed_url' }, { status: 500 });
+  }
+
+  const shouldRedirect = redirect === '1' || redirect.toLowerCase() === 'true';
+  if (shouldRedirect) {
+    return NextResponse.redirect(signed.signedUrl, { status: 302 });
   }
 
   return NextResponse.json({ ok: true, url: signed.signedUrl }, { status: 200, headers: new Headers({ 'Cache-Control': 'no-store' }) });
