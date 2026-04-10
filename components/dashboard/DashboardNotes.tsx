@@ -171,16 +171,16 @@ export function DashboardNotes({ compact }: { compact?: boolean }) {
         </h2>
         <div style={{ marginLeft:'auto', display:'flex', gap:compact?4:6 }}>
           {(['all','open','done'] as const).map(f => (
-            <button key={f} onClick={()=>setFilter(f)} style={{ ...filterBtn, ...(filter===f? filterBtnActive : {}) }}>{f==='all'?'Alla': f==='open'?'Öppna':'Klart'}</button>
+            <button key={f} onClick={()=>setFilter(f)} style={{ ...filterBtn, ...(filter===f? filterBtnActive : {}), ...(compact ? compactFilterBtn : {}) }}>{f==='all'?'Alla': f==='open'?'Öppna':'Klart'}</button>
           ))}
         </div>
       </div>
       {error && (
         <div style={{ fontSize:12, color:'#b91c1c' }}>{error}</div>
       )}
-      <form onSubmit={e=>{e.preventDefault(); addItem();}} style={{ display:'flex', gap:compact?6:8 }}>
+      <form onSubmit={e=>{e.preventDefault(); addItem();}} style={{ display:'flex', gap:compact?6:8, alignItems:'stretch' }}>
         <input value={draft} onChange={e=>setDraft(e.target.value)} placeholder="Lägg till anteckning eller uppgift" style={{ ...input, fontSize: compact?13:14, padding: compact? '6px 8px':'8px 10px' }} />
-        <button type="submit" style={{ ...btnPrimary, padding: compact? '6px 12px':'8px 14px', fontSize: compact?13:14 }} disabled={!draft.trim()}>Lägg till</button>
+        <button type="submit" style={{ ...btnPrimary, padding: compact? '6px 10px':'8px 14px', fontSize: compact?13:14, minWidth: compact ? 82 : 96 }} disabled={!draft.trim()}>Lägg till</button>
       </form>
       {loading && <p style={{ margin:0, fontSize:12, color:'#6b7280' }}>Laddar…</p>}
       {!loading && items.length === 0 && (
@@ -225,8 +225,8 @@ function NoteRow({ item, onToggle, onRemove, onEdit, compact }: { item: NoteItem
           <input autoFocus value={draft} onChange={e=>setDraft(e.target.value)} onBlur={()=>{ setEditing(false); setDraft(item.text); }} style={{ ...input, padding: compact? '3px 5px':'4px 6px', fontSize:compact?12.5:13, width:'100%' }} />
         </form>
       )}
-      <button onClick={()=>setEditing(true)} style={{ ...iconBtn, padding: compact? '3px 4px':'4px 6px', fontSize: compact?11:12 }} aria-label="Redigera">✏️</button>
-      <button onClick={onRemove} style={{ ...iconBtn, padding: compact? '3px 4px':'4px 6px', fontSize: compact?11:12, color:'#b91c1c' }} aria-label="Ta bort">🗑️</button>
+      <button onClick={()=>setEditing(true)} style={{ ...iconBtn, padding: compact? '3px 5px':'4px 6px', fontSize: compact?11:12 }} aria-label="Redigera">Red.</button>
+      <button onClick={onRemove} style={{ ...iconBtn, padding: compact? '3px 5px':'4px 6px', fontSize: compact?11:12, color:'#b91c1c' }} aria-label="Ta bort">Ta bort</button>
     </li>
   );
 }
@@ -236,6 +236,7 @@ const input: React.CSSProperties = { padding:'8px 10px', border:'1px solid #d1d5
 const btnPrimary: React.CSSProperties = { padding:'8px 14px', borderRadius:8, border:'1px solid #111827', background:'#111827', color:'#fff', fontSize:14, cursor:'pointer', fontWeight:500 };
 const filterBtn: React.CSSProperties = { padding:'6px 12px', borderRadius:999, background:'#fff', border:'1px solid #d1d5db', cursor:'pointer', fontSize:12, color:'#111827' };
 const filterBtnActive: React.CSSProperties = { background:'#2563eb', color:'#fff', border:'1px solid #2563eb' };
+const compactFilterBtn: React.CSSProperties = { padding:'6px 10px', fontSize:11.5 };
 const iconBtn: React.CSSProperties = { padding:'4px 6px', fontSize:12, lineHeight:1, cursor:'pointer', background:'#f1f5f9', borderRadius:6, border:'1px solid #e2e8f0' };
 const miniBtn: React.CSSProperties = { padding:'6px 10px', background:'#334155', color:'#fff', borderRadius:6, fontSize:12, cursor:'pointer', border:'1px solid #334155' };
 const checkBtn: React.CSSProperties = { width:20, height:20, borderRadius:6, border:'1px solid #cbd5e1', background:'#fff', display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer' };

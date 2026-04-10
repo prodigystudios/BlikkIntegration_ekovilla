@@ -22,7 +22,7 @@ const baseTile: React.CSSProperties = {
   background: 'linear-gradient(145deg,#ffffff,#f8fafc)',
   textDecoration: 'none',
   color: '#111827',
-  boxShadow: '0 4px 10px rgba(0,0,0,0.03)',
+  boxShadow: '0 10px 24px rgba(15,23,42,0.05)',
   transition: 'border-color .15s, box-shadow .15s, transform .15s',
   outline: 'none',
 };
@@ -51,7 +51,7 @@ export function QuickLinksGrid({ links, compact, extraCompact }: { links: QuickL
               alignItems: 'center',
               justifyContent: 'flex-start',
               gap: 6,
-              padding: extraCompact ? 6 : compact ? 8 : 10,
+              padding: extraCompact ? 10 : compact ? 12 : 10,
               background: isDesktopy ? 'transparent' : 'transparent',
               border: 'none',
               outline: 'none',
@@ -61,12 +61,15 @@ export function QuickLinksGrid({ links, compact, extraCompact }: { links: QuickL
             }}
             aria-disabled={link.disabled || undefined}
           >
-            <span style={{ display:'inline-flex', width: extraCompact ? 28 : compact ? 32 : 36, height: extraCompact ? 28 : compact ? 32 : 36, alignItems:'center', justifyContent:'center', color:'#4f46e5' }}>
+            <span style={{ display:'inline-flex', width: extraCompact ? 32 : compact ? 36 : 36, height: extraCompact ? 32 : compact ? 36 : 36, alignItems:'center', justifyContent:'center', color: isDesktopy ? '#2563eb' : '#4f46e5', background: isDesktopy ? '#eff6ff' : '#eef2ff', borderRadius: 12 }}>
               {link.icon}
             </span>
-            <div style={{ fontSize: extraCompact ? 12 : compact ? 13 : 14, fontWeight: 700, letterSpacing: -0.2, textAlign: 'center', color:'#111827' }}>
+            <div style={{ fontSize: extraCompact ? 12 : compact ? 13 : 14, fontWeight: 700, letterSpacing: -0.2, textAlign: 'center', color:'#111827', lineHeight: 1.25 }}>
               {link.title}
             </div>
+            {isDesktopy && (
+              <div style={{ fontSize: 12, lineHeight: 1.4, textAlign: 'center', color:'#64748b' }}>{link.desc}</div>
+            )}
             {link.disabled && (
               <span style={{ fontSize:9, fontWeight:600, background:'#f1f5f9', color:'#475569', padding:'2px 5px', borderRadius:999, border:'1px solid #e2e8f0' }}>{link.disabledNote || 'Kommer snart'}</span>
             )}
@@ -77,7 +80,7 @@ export function QuickLinksGrid({ links, compact, extraCompact }: { links: QuickL
         if (isDesktopy) {
           const tile: React.CSSProperties = {
             ...baseTile,
-            padding: '14px 14px 16px',
+            padding: '16px 16px 18px',
             borderRadius: 16,
             cursor: link.disabled ? 'not-allowed' : 'pointer',
             opacity: link.disabled ? 0.7 : 1,
@@ -113,14 +116,14 @@ export function QuickLinksGrid({ links, compact, extraCompact }: { links: QuickL
 
 // Horizontal scroll strip for mobile (saves vertical space)
 export function QuickLinksStrip({ links, compact, extraCompact }: { links: QuickLink[]; compact?: boolean; extraCompact?: boolean }) {
-  const tileMin = extraCompact ? 100 : (compact ? 110 : 140);
+  const tileMin = extraCompact ? 104 : (compact ? 112 : 140);
   return (
     <div
       role="navigation"
       aria-label="Snabba genvägar"
       style={{
         display: 'flex',
-        gap: 12,
+        gap: 10,
         overflowX: 'auto',
         WebkitOverflowScrolling: 'touch',
         paddingBottom: 4,
@@ -138,21 +141,23 @@ export function QuickLinksStrip({ links, compact, extraCompact }: { links: Quick
               display: 'flex',
               flexDirection: 'column',
               alignItems: 'center',
-              gap: 6,
-              padding: extraCompact ? 6 : 8,
-              background: 'transparent',
-              border: 'none',
+              gap: 5,
+              padding: extraCompact ? '10px 8px' : '12px 10px',
+              background: 'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)',
+              border: '1px solid #e2e8f0',
+              borderRadius: 16,
               outline: 'none',
               cursor: link.disabled ? 'not-allowed' : 'pointer',
               opacity: link.disabled ? 0.55 : 1,
               textDecoration: 'none',
+              boxShadow: '0 8px 18px rgba(15,23,42,0.04)',
             }}
             aria-disabled={link.disabled || undefined}
           >
-            <span style={{ display:'inline-flex', width: extraCompact ? 28 : 30, height: extraCompact ? 28 : 30, alignItems:'center', justifyContent:'center', color:'#4f46e5' }}>
+            <span style={{ display:'inline-flex', width: extraCompact ? 28 : 32, height: extraCompact ? 28 : 32, alignItems:'center', justifyContent:'center', color:'#4f46e5', background:'#eef2ff', borderRadius:12 }}>
               {link.icon}
             </span>
-            <div style={{ fontSize: extraCompact ? 12 : 13, fontWeight: 600, letterSpacing: -0.2, textAlign: 'center', color:'#111827', maxWidth: tileMin }}>
+            <div style={{ fontSize: extraCompact ? 11.5 : 12.5, fontWeight: 700, letterSpacing: -0.2, textAlign: 'center', color:'#111827', maxWidth: tileMin, lineHeight: 1.2 }}>
               {link.title}
             </div>
             {link.disabled && (

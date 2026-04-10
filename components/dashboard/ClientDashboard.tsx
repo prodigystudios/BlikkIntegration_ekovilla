@@ -237,6 +237,40 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
 
   // Toast
   const toast = useToast();
+  const todayMeta = useMemo(() => {
+    const now = new Date();
+    const weekday = now.toLocaleDateString('sv-SE', { weekday: 'long' });
+    const monthDay = now.toLocaleDateString('sv-SE', { day: 'numeric', month: 'long' });
+    const hour = now.getHours();
+    const greeting = hour < 10 ? 'God morgon' : hour < 17 ? 'Hej' : 'God kväll';
+    return {
+      greeting,
+      weekday: weekday.charAt(0).toUpperCase() + weekday.slice(1),
+      monthDay,
+    };
+  }, []);
+
+  const heroCardStyle: React.CSSProperties = {
+    border: '1px solid #dbe4ef',
+    background: 'linear-gradient(135deg, #f7fbf8 0%, #eff8f1 48%, #f8fbff 100%)',
+    borderRadius: 22,
+    padding: isSmall ? (isXS ? 14 : 16) : 24,
+    display: 'grid',
+    gap: isSmall ? 12 : 18,
+    boxShadow: '0 14px 34px rgba(15, 23, 42, 0.06)',
+    overflow: 'hidden',
+    position: 'relative'
+  };
+
+  const surfaceCardStyle: React.CSSProperties = {
+    border: '1px solid #e5e7eb',
+    background: '#fff',
+    borderRadius: isSmall ? 18 : 20,
+    padding: isSmall ? (isXS ? 14 : 18) : 24,
+    display: 'grid',
+    gap: isSmall ? 16 : 22,
+    boxShadow: '0 10px 26px rgba(15, 23, 42, 0.04)'
+  };
 
   return (
     <>
@@ -264,58 +298,89 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
         </aside>
       )}
       <div className="dash-main-col" style={{ flex:1, display:'flex', flexDirection:'column', gap: mini ? 24 : (isSmall ? 20 : 32) }}>
-        <header style={{ display: 'flex', alignItems: isSmall ? 'flex-end' : 'center', gap: 12, justifyContent:'space-between', flexWrap:'wrap' }}>
-          <h1 style={{ margin: 0, fontSize: isSmall ? (isXS ? 22 : 24) : 30, letterSpacing: -0.5 }}>Översikt</h1>
-          <div style={{ display:'flex', gap:10, flexWrap:'wrap' }}>
-            <button type="button" onClick={()=>{ setTimePrefill(null); setTimeModalOpen(true); }}
-              style={{ display:'inline-flex', alignItems:'center', gap:8, fontSize:12, fontWeight:600, padding:'10px 14px', border:'1px solid #16a34a', background:'#16a34a', color:'#fff', borderRadius:10, boxShadow:'0 2px 4px rgba(16,185,129,0.35)', cursor:'pointer' }}
-            >
-              <span aria-hidden style={{ display:'inline-flex' }}>
-                <svg width="16" height="16" viewBox="0 0 24 24" strokeWidth={2} stroke="#fff" fill="none"><path d="M12 5v14M5 12h14" strokeLinecap="round" strokeLinejoin="round"/></svg>
-              </span>
-              Rapportera tid
-            </button>
-          </div>
-        </header>
-        {!mini && (
-          <section
-            style={{
-              border: '1px solid #e5e7eb',
-              background: '#fff',
-              borderRadius: 16,
-              padding: isSmall ? (isXS ? 10 : 14) : 24,
-              display: 'grid',
-              gap: isSmall ? 10 : 20,
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap:12 }}>
-              <h2 style={{ margin: 0, fontSize: isSmall ? 16 : 20 }}>Snabba genvägar</h2>
-              <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-                <button onClick={()=>setMini(true)} style={miniToggleBtn} aria-label="Minimera och visa endast ikoner" title="Minimera och visa endast ikoner">Minimera</button>
+        <section style={heroCardStyle}>
+          <div style={{ position:'absolute', right: isSmall ? -26 : -18, top: isSmall ? -42 : -54, width: isSmall ? 140 : 190, height: isSmall ? 140 : 190, borderRadius:'50%', background:'radial-gradient(circle, rgba(22,163,74,0.14) 0%, rgba(22,163,74,0) 70%)' }} />
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent:'space-between', gap: 12, flexWrap:'wrap', position:'relative' }}>
+            <div style={{ display:'grid', gap: isSmall ? 8 : 10, maxWidth: 680 }}>
+              <div style={{ display:'inline-flex', alignItems:'center', gap:8, width:'fit-content', padding:'6px 10px', borderRadius:999, background:'rgba(255,255,255,0.82)', border:'1px solid #d9e5dc', color:'#166534', fontSize:11, fontWeight:700, letterSpacing:0.3, textTransform:'uppercase' }}>
+                {todayMeta.greeting}
+                <span style={{ width:4, height:4, borderRadius:'50%', background:'#22c55e' }} />
+                {todayMeta.weekday}
+              </div>
+              <div style={{ display:'grid', gap:6 }}>
+                <h1 style={{ margin: 0, fontSize: isSmall ? (isXS ? 26 : 30) : 38, lineHeight: 1.02, letterSpacing: -1.1, color:'#0f172a' }}>Översikt</h1>
+                <p style={{ margin: 0, fontSize: isSmall ? 13 : 16, lineHeight: 1.4, color:'#475569', maxWidth: isSmall ? 520 : 560 }}>
+                  Börja med dagens viktigaste saker. Snabb åtkomst till tidrapport, dokument och dina vanligaste genvägar.
+                </p>
               </div>
             </div>
-            {isSmall && (
-              <div style={{ display:'flex', alignItems:'center', gap:6, color:'#64748b', fontSize:11 }}>
-                <span>Svep i sidled för fler genvägar</span>
-                <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path fill="#94a3b8" d="M8 5l7 7-7 7"/></svg>
+            <div style={{ display:'grid', gap:10, minWidth: isSmall ? '100%' : 240 }}>
+              <button type="button" onClick={()=>{ setTimePrefill(null); setTimeModalOpen(true); }}
+                style={{ display:'inline-flex', alignItems:'center', justifyContent:'center', gap:8, fontSize:13, fontWeight:700, padding: isSmall ? '12px 16px' : '13px 18px', border:'1px solid #16a34a', background:'#16a34a', color:'#fff', borderRadius:14, boxShadow:'0 12px 20px rgba(22,163,74,0.18)', cursor:'pointer' }}
+              >
+                <span aria-hidden style={{ display:'inline-flex' }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" strokeWidth={2} stroke="#fff" fill="none"><path d="M12 5v14M5 12h14" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                </span>
+                Rapportera tid
+              </button>
+              <div style={{ display:'grid', gridTemplateColumns: isSmall ? '1fr' : 'repeat(2, minmax(0, 1fr))', gap:10 }}>
+                <div style={{ border:'1px solid rgba(148,163,184,0.24)', background:'rgba(255,255,255,0.72)', borderRadius:16, padding: isSmall ? '10px 12px' : '12px 14px', display:'flex', alignItems:'center', justifyContent:'space-between', gap:12, flexWrap:'wrap' }}>
+                  <div style={{ display:'grid', gap:2 }}>
+                    <span style={{ fontSize:11, fontWeight:700, letterSpacing:0.3, textTransform:'uppercase', color:'#64748b' }}>Idag</span>
+                    <strong style={{ fontSize: isSmall ? 15 : 16, color:'#0f172a' }}>{todayMeta.monthDay}</strong>
+                  </div>
+                  <span style={{ fontSize:12, color:'#64748b' }}>Fokus på det viktigaste först.</span>
+                </div>
+                {!isSmall && (
+                  <div style={{ border:'1px solid rgba(148,163,184,0.24)', background:'rgba(255,255,255,0.72)', borderRadius:16, padding:'12px 14px', display:'grid', gap:4 }}>
+                    <span style={{ fontSize:11, fontWeight:700, letterSpacing:0.3, textTransform:'uppercase', color:'#64748b' }}>Snabbt nu</span>
+                    <strong style={{ fontSize: 16, color:'#0f172a' }}>Öppna dokument</strong>
+                    <a href="/mina-dokument" style={{ fontSize:12, fontWeight:700, color:'#2563eb', textDecoration:'none' }}>Gå till mina dokument</a>
+                  </div>
+                )}
               </div>
-            )}
-            {isSmall ? (
-              <QuickLinksStrip links={links} compact={true} extraCompact={isXS} />
-            ) : (
-              <QuickLinksGrid links={links} compact={false} extraCompact={false} />
-            )}
-          </section>
+            </div>
+          </div>
+
+          {!mini && (
+            <div style={{ display:'grid', gap: isSmall ? 8 : 10 }}>
+              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:12, flexWrap:'wrap' }}>
+                <div style={{ display:'grid', gap:4 }}>
+                  <h2 style={{ margin:0, fontSize:isSmall ? 16 : 19, color:'#0f172a' }}>Snabba genvägar</h2>
+                  {!isSmall && <p style={{ margin:0, fontSize:13, color:'#64748b' }}>Det du använder mest ska ligga först och kräva så lite scroll som möjligt.</p>}
+                </div>
+                <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                  {isSmall && (
+                    <span style={{ display:'inline-flex', alignItems:'center', gap:6, color:'#64748b', fontSize:11 }}>
+                      Svep för fler
+                      <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path fill="#94a3b8" d="M8 5l7 7-7 7"/></svg>
+                    </span>
+                  )}
+                  <button onClick={()=>setMini(true)} style={miniToggleBtn} aria-label="Minimera och visa endast ikoner" title="Minimera och visa endast ikoner">Minimera</button>
+                </div>
+              </div>
+              {isSmall ? (
+                <QuickLinksStrip links={links} compact={true} extraCompact={isXS} />
+              ) : (
+                <QuickLinksGrid links={links} compact={false} extraCompact={false} />
+              )}
+            </div>
+          )}
+        </section>
+
+        {effectiveRole !== 'sales' && (
+          <div style={{ order: isSmall ? -1 as any : 0 }}>
+            <DashboardSchedule compact={isSmall || mini} onReportTime={(info: { projectId?: string; projectName?: string; orderNumber?: string; day?: string }) => {
+              const label = info.orderNumber ? `#${info.orderNumber}` : (info.projectName || info.projectId || '');
+              setTimePrefill({ project: label, projectId: info.projectId, date: info.day });
+              setTimeModalOpen(true);
+            }} />
+          </div>
         )}
         {/* Tasks section */}
         <section
           style={{
-            border: '1px solid #e5e7eb',
-            background: '#fff',
-            borderRadius: 16,
-            padding: isSmall ? (isXS ? 14 : 18) : 24,
-            display: 'grid',
-            gap: isSmall ? 18 : 24,
+            ...surfaceCardStyle,
             order: mini ? -1 : 0
           }}
         >
@@ -324,12 +389,7 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
 
         <section
           style={{
-            border: '1px solid #e5e7eb',
-            background: '#fff',
-            borderRadius: 16,
-            padding: isSmall ? (isXS ? 14 : 18) : 24,
-            display: 'grid',
-            gap: isSmall ? 18 : 24,
+            ...surfaceCardStyle,
             order: mini ? -1 : 0
           }}
         >
@@ -339,28 +399,12 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
         {/* Notes always visible; floats to top when mini */}
         <section
           style={{
-            border: '1px solid #e5e7eb',
-            background: '#fff',
-            borderRadius: 16,
-            padding: isSmall ? (isXS ? 14 : 18) : 24,
-            display: 'grid',
-            gap: isSmall ? 18 : 24,
+            ...surfaceCardStyle,
             order: mini ? -1 : 0
           }}
         >
           <DashboardNotes compact={isSmall || mini} />
         </section>
-
-        {/* Admin-only: Work schedule for current/next week */}
-        {effectiveRole !== 'sales' && (
-          <div style={{ order: isSmall ? -2 as any : 0 }}>
-            <DashboardSchedule compact={isSmall || mini} onReportTime={(info: { projectId?: string; projectName?: string; orderNumber?: string; day?: string }) => {
-              const label = info.orderNumber ? `#${info.orderNumber}` : (info.projectName || info.projectId || '');
-              setTimePrefill({ project: label, projectId: info.projectId, date: info.day });
-              setTimeModalOpen(true);
-            }} />
-          </div>
-        )}
       </div>
       <TimeReportModal open={timeModalOpen} onClose={()=>setTimeModalOpen(false)}
         initialProject={timePrefill?.project || null}
@@ -402,7 +446,6 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
     </>
   );
 }
-
 const miniToggleBtn: React.CSSProperties = {
   border:'1px solid #e5e7eb',
   background:'#fff',

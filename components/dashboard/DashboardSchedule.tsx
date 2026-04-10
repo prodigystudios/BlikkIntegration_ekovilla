@@ -3,8 +3,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useProjectComments, formatRelativeTime } from '../../lib/useProjectComments';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 
-type WeekMode = 'current' | 'next';
-
 function startOfISOWeek(d: Date) {
   const day = d.getDay(); // 0..6, 1=Mon
   const mondayDelta = (day + 6) % 7; // days since Monday
@@ -15,10 +13,17 @@ function startOfISOWeek(d: Date) {
 }
 function addDays(d: Date, n: number) { const x = new Date(d); x.setDate(x.getDate() + n); return x; }
 function toISODateLocal(d: Date) { const y = d.getFullYear(); const m = String(d.getMonth()+1).padStart(2,'0'); const dd = String(d.getDate()).padStart(2,'0'); return `${y}-${m}-${dd}`; }
+function getISOWeekNumber(d: Date) {
+  const date = new Date(d);
+  date.setHours(0, 0, 0, 0);
+  date.setDate(date.getDate() + 3 - ((date.getDay() + 6) % 7));
+  const week1 = new Date(date.getFullYear(), 0, 4);
+  return 1 + Math.round(((date.getTime() - week1.getTime()) / 86400000 - 3 + ((week1.getDay() + 6) % 7)) / 7);
+}
 
 export default function DashboardSchedule({ compact = false, onReportTime }: { compact?: boolean; onReportTime?: (info: { projectId?: string; projectName?: string; orderNumber?: string; day?: string }) => void }) {
   const supabase = createClientComponentClient();
-  const [mode, setMode] = useState<WeekMode>('current');
+  const [weekOffset, setWeekOffset] = useState(0);
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [segmentSortIndexMap, setSegmentSortIndexMap] = useState<Record<string, number | null>>({});
@@ -113,14 +118,16 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
   const range = useMemo(() => {
     const today = new Date();
     const weekStart = startOfISOWeek(today);
-    const base = mode === 'current' ? weekStart : addDays(weekStart, 7);
+    const base = addDays(weekStart, weekOffset * 7);
     const startISO = toISODateLocal(base);
     const endISO = toISODateLocal(addDays(base, 6));
-    const label = mode === 'current' ? 'Denna vecka' : 'Nästa vecka';
+    const weekNumber = getISOWeekNumber(base);
+    const year = base.getFullYear();
+    const label = weekOffset === 0 ? 'Denna vecka' : weekOffset === -1 ? 'Förra veckan' : weekOffset === 1 ? 'Nästa vecka' : weekOffset < 0 ? `${Math.abs(weekOffset)} veckor bak` : `${weekOffset} veckor fram`;
     // Build Mon..Sun ISO dates; only show Mon..Fri selector
     const days = Array.from({ length: 7 }, (_, i) => toISODateLocal(addDays(base, i)));
-    return { startISO, endISO, label, weekStartISO: startISO, days };
-  }, [mode]);
+    return { startISO, endISO, label, weekNumber, year, weekStartISO: startISO, days };
+  }, [weekOffset]);
 
   useEffect(() => {
     // Load current user and name
@@ -438,55 +445,93 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
     return { accent: '#64748b', badgeBg: '#f1f5f9', badgeFg: '#334155', label: null as string | null };
   }, []);
 
+  const selectedDayLabel = dayIdx == null ? 'Alla dagar' : ['Måndag', 'Tisdag', 'Onsdag', 'Torsdag', 'Fredag'][dayIdx];
+  const visibleJobCount = grouped.reduce((sum, group) => sum + group.arr.length, 0);
+  const scheduleCardStyle: React.CSSProperties = {
+    border: compact ? '1px solid #dbe4ef' : '1px solid #d5e1ee',
+    background: 'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)',
+    borderRadius: compact ? 18 : 20,
+    padding: compact ? 12 : 18,
+    display: 'grid',
+    gap: compact ? 10 : 14,
+    boxShadow: '0 10px 28px rgba(15,23,42,0.05)'
+  };
+
   return (
     <section
-      style={{
-        border: '1px solid #e5e7eb',
-        background: '#fff',
-        borderRadius: 16,
-        padding: compact ? 10 : 18,
-        display: 'grid',
-        gap: compact ? 8 : 14,
-      }}
+      style={scheduleCardStyle}
     >
-      <div style={{ display:'flex', alignItems:'center', gap:compact ? 6 : 10, flexWrap:'wrap' }}>
-        <h2 style={{ margin:0, fontSize: compact ? 14 : 16 }}>Arbetsschema</h2>
-        <span style={{ fontSize: compact ? 11 : 12, color:'#64748b' }}>{range.label} • {range.startISO} – {range.endISO}</span>
-        <div style={{ marginLeft:'auto', display:'inline-flex', gap:6, flexWrap:'wrap' }}>
+      <div style={{ display:'grid', gap: compact ? 8 : 10 }}>
+        <div style={{ display:'flex', alignItems:'flex-start', gap:compact ? 8 : 12, justifyContent:'space-between', flexWrap:'wrap' }}>
+          <div style={{ display:'grid', gap:4 }}>
+            <div style={{ display:'inline-flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
+              <h2 style={{ margin:0, fontSize: compact ? 15 : 18, color:'#0f172a' }}>Arbetsschema</h2>
+              <span style={{ display:'inline-flex', alignItems:'center', gap:6, padding:'4px 8px', borderRadius:999, background:'#eef6ff', border:'1px solid #dbeafe', color:'#1d4ed8', fontSize: compact ? 10.5 : 11, fontWeight:700 }}>
+                Vecka {range.weekNumber}
+              </span>
+            </div>
+            <span style={{ fontSize: compact ? 11 : 12, color:'#64748b' }}>{range.label} • {range.startISO} – {range.endISO}</span>
+          </div>
+          <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
+            <span style={{ display:'inline-flex', alignItems:'center', gap:6, padding:'5px 9px', borderRadius:999, background:'#ffffff', border:'1px solid #dbe4ef', color:'#334155', fontSize: compact ? 10.5 : 11.5, fontWeight:600 }}>
+              {visibleJobCount} {visibleJobCount === 1 ? 'jobb' : 'jobb'}
+            </span>
+            <span style={{ display:'inline-flex', alignItems:'center', gap:6, padding:'5px 9px', borderRadius:999, background:'#ffffff', border:'1px solid #dbe4ef', color:'#334155', fontSize: compact ? 10.5 : 11.5, fontWeight:600 }}>
+              {selectedDayLabel}
+            </span>
+          </div>
+        </div>
+
+        <div style={{ display:'grid', gridTemplateColumns:'minmax(0,1fr) auto minmax(0,1fr)', alignItems:'center', gap:6, padding: compact ? 6 : 8, borderRadius:14, background:'#f8fafc', border:'1px solid #e2e8f0', width:'100%', boxSizing:'border-box' }}>
           <button
             type="button"
-            onClick={()=>setMode('current')}
-            aria-pressed={mode==='current'}
+            onClick={()=>setWeekOffset(prev => prev - 1)}
             style={{
               fontSize: compact ? 11 : 12,
-              padding: compact ? '2px 7px' : '4px 10px',
-              border:'1px solid ' + (mode==='current' ? '#111827' : '#e5e7eb'),
-              borderRadius:8,
-              background:'#fff',
+              padding: compact ? '5px 10px' : '6px 12px',
+              border:'1px solid transparent',
+              borderRadius:10,
+              background:'#ffffff',
               color:'#111827',
-              fontWeight: mode==='current' ? 600 : 500,
+              fontWeight: 600,
+              boxShadow:'0 2px 8px rgba(15,23,42,0.08)',
+              justifySelf:'start',
+              width:'fit-content'
             }}
-          >Denna vecka</button>
+          >
+            ← Föregående
+          </button>
+          <div style={{ display:'inline-flex', alignItems:'center', justifyContent:'center', minWidth: compact ? 116 : 132, padding: compact ? '5px 10px' : '6px 12px', borderRadius:10, color:'#0f172a', fontSize: compact ? 11 : 12, fontWeight:700 }}>
+            Vecka {range.weekNumber}
+          </div>
           <button
             type="button"
-            onClick={()=>setMode('next')}
-            aria-pressed={mode==='next'}
+            onClick={()=>setWeekOffset(prev => prev + 1)}
             style={{
               fontSize: compact ? 11 : 12,
-              padding: compact ? '2px 7px' : '4px 10px',
-              border:'1px solid ' + (mode==='next' ? '#111827' : '#e5e7eb'),
-              borderRadius:8,
-              background:'#fff',
+              padding: compact ? '5px 10px' : '6px 12px',
+              border:'1px solid transparent',
+              borderRadius:10,
+              background:'#ffffff',
               color:'#111827',
-              fontWeight: mode==='next' ? 600 : 500,
+              fontWeight: 600,
+              boxShadow:'0 2px 8px rgba(15,23,42,0.08)',
+              justifySelf:'end',
+              width:'fit-content'
             }}
-          >Nästa vecka</button>
+          >
+            Nästa →
+          </button>
         </div>
       </div>
 
       {/* Mon–Fri selector */}
-      <div style={{ display:'flex', gap:6, flexWrap:'wrap', alignItems:'center' }}>
-        <span style={{ fontSize:12, color:'#64748b' }}>Visa dag:</span>
+      <div style={{ display:'grid', gap:8, padding: compact ? '10px 10px 8px' : '12px', borderRadius:16, background:'#ffffff', border:'1px solid #e2e8f0' }}>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:12, flexWrap:'wrap' }}>
+          <span style={{ fontSize:12, color:'#64748b', fontWeight:600 }}>Visa dag</span>
+          <span style={{ fontSize: compact ? 10.5 : 11.5, color:'#64748b' }}>{selectedDayLabel}</span>
+        </div>
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(6, minmax(0, 1fr))', gap:6, alignItems:'stretch', width:'100%' }}>
         {['Mån','Tis','Ons','Tor','Fre'].map((label, idx) => {
           const active = dayIdx===idx;
           return (
@@ -497,13 +542,15 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
               aria-pressed={active}
               style={{
                 fontSize: compact ? 11 : 12,
-                padding: compact ? '4px 9px' : '6px 12px',
+                padding: compact ? '5px 10px' : '6px 12px',
                 border:'1px solid ' + (active ? '#0284c7' : '#e2e8f0'),
                 borderRadius:999,
-                background: active ? '#0284c7' : '#f8fafc',
+                background: active ? 'linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%)' : '#f8fafc',
                 color: active ? '#ffffff' : '#334155',
                 fontWeight: active ? 700 : 500,
-                boxShadow: active ? '0 1px 1px rgba(2,132,199,0.25)' : '0 1px 1px rgba(0,0,0,0.02)'
+                boxShadow: active ? '0 8px 18px rgba(2,132,199,0.24)' : '0 1px 1px rgba(0,0,0,0.02)',
+                width:'100%',
+                justifyContent:'center'
               }}
               title={range.days[idx]}
             >{label}</button>
@@ -518,21 +565,28 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
               aria-pressed={active}
               style={{
                 fontSize: compact ? 11 : 12,
-                padding: compact ? '4px 9px' : '6px 12px',
+                padding: compact ? '5px 10px' : '6px 12px',
                 border:'1px solid ' + (active ? '#0284c7' : '#e2e8f0'),
                 borderRadius:999,
-                background: active ? '#0284c7' : '#f8fafc',
+                background: active ? 'linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%)' : '#f8fafc',
                 color: active ? '#ffffff' : '#334155',
                 fontWeight: active ? 700 : 500,
-                boxShadow: active ? '0 1px 1px rgba(2,132,199,0.25)' : '0 1px 1px rgba(0,0,0,0.02)'
+                boxShadow: active ? '0 8px 18px rgba(2,132,199,0.24)' : '0 1px 1px rgba(0,0,0,0.02)',
+                width:'100%',
+                justifyContent:'center'
               }}
             >Alla</button>
           );
         })()}
+        </div>
       </div>
 
-      {loading && <div style={{ fontSize:12, color:'#64748b' }}>Laddar…</div>}
-      {!loading && grouped.length === 0 && <div style={{ fontSize:12, color:'#64748b' }}>Inga jobb planerade för vald period.</div>}
+      {loading && <div style={{ fontSize:12, color:'#64748b', padding:'2px 2px 0 2px' }}>Laddar…</div>}
+      {!loading && grouped.length === 0 && (
+        <div style={{ display:'inline-flex', alignItems:'center', gap:8, width:'fit-content', padding: compact ? '9px 11px' : '10px 12px', borderRadius:999, background:'#f8fafc', border:'1px solid #e2e8f0', fontSize:12, color:'#64748b' }}>
+          Inga jobb planerade för vald period.
+        </div>
+      )}
 
       {!loading && grouped.length > 0 && (
         <div style={{ display:'grid', gap: compact ? 8 : 10 }}>
@@ -570,6 +624,15 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                   const theme = getMaterialTheme(it.job_type);
                   const bagLabel = typeof it.bag_count === 'number' ? `${it.bag_count} säckar${theme.label ? ' ' + theme.label : ''}` : null;
                   const reported = it.segment_id ? (reportedBySegment.get(it.segment_id) || 0) : 0;
+                  const positionLabel = (() => {
+                    const hasTruck = !!it.truck;
+                    if (!hasTruck) return null;
+                    const sameTruckSorted = arrSorted.filter((x: any) => x.truck === it.truck);
+                    const pos = Math.max(0, sameTruckSorted.findIndex((x: any) => (x.segment_id || '') === (it.segment_id || '')));
+                    const total = sameTruckSorted.length;
+                    if (total <= 0) return null;
+                    return `${pos + 1}/${total}`;
+                  })();
                   const crewNames = (() => {
                     const arr = segmentCrewMap[it.segment_id] || [];
                     const uniq = Array.from(new Set(arr.map(m => (m.name || '').trim()).filter(Boolean)));
@@ -583,53 +646,60 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                       role="button"
                       tabIndex={0}
                       style={{
-                        border:'1px solid #e5e7eb',
-                        borderLeft: `4px solid ${theme.accent}`,
-                        borderRadius:10,
-                        padding: compact ? 8 : 10,
+                        border:'1px solid #dbe4ef',
+                        borderLeft: `3px solid ${theme.accent}`,
+                        borderRadius:14,
+                        padding: compact ? 10 : 12,
                         cursor:'pointer',
-                        background:'#ffffff',
-                        boxShadow:'0 1px 2px rgba(0,0,0,0.04)',
-                        position:'relative'
+                        background:'linear-gradient(180deg, #ffffff 0%, #fcfdff 100%)',
+                        boxShadow:'0 8px 18px rgba(15,23,42,0.05)',
+                        position:'relative',
+                        display:'grid',
+                        gap: compact ? 8 : 10
                       }}
                     >
-                      {(() => {
-                        const hasTruck = !!it.truck;
-                        if (!hasTruck) return null;
-                        const sameTruckSorted = arrSorted.filter((x: any) => x.truck === it.truck);
-                        const pos = Math.max(0, sameTruckSorted.findIndex((x: any) => (x.segment_id || '') === (it.segment_id || '')));
-                        const total = sameTruckSorted.length;
-                        if (total <= 0) return null;
-                        const label = `${pos + 1}/${total}`;
-                        return (
-                          <span title="Placering i dag/lastbil" style={{ position:'absolute', bottom: 8, right: 10, background:'#111827', color:'#fff', fontSize: 10, padding:'4px 6px', borderRadius:8, border:'1px solid #334155' }}>
-                            {label}
-                          </span>
-                        );
-                      })()}
-                      <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-                        <div style={{ width:8, height:8, borderRadius:999, background: theme.accent, opacity:0.9 }} />
-                        <span style={{ fontWeight:700, letterSpacing:0.1, fontSize: compact ? 12 : 13, color:'#0f172a', flex:1, minWidth:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{title}</span>
-                        {/* Chevron */}
-                        <svg width={16} height={16} viewBox="0 0 24 24" aria-hidden="true" focusable="false" style={{ color:'#94a3b8' }}>
-                          <path fill="currentColor" d="M9 18l6-6-6-6" />
-                        </svg>
-                        {onReportTime && (
-                          <button
-                            type="button"
-                            onClick={(e) => { e.stopPropagation(); onReportTime({ projectId: String(it.project_id || ''), projectName: it.project_name, orderNumber: it.order_number ? String(it.order_number) : undefined, day: (it.job_day || it.start_day) ? String(it.job_day || it.start_day) : undefined }); }}
-                            style={{ fontSize: compact ? 10 : 11, padding: compact ? '4px 6px' : '6px 8px', border:'1px solid #16a34a', background:'#16a34a', color:'#fff', borderRadius:6, display:'inline-flex', alignItems:'center', gap:4 }}
-                            aria-label="Rapportera tid för detta jobb"
-                          >
-                            <svg width={12} height={12} viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" fill="none"><path d="M12 5v14M5 12h14" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                            Tid
-                          </button>
-                        )}
+                      <div style={{ display:'grid', gridTemplateColumns:'minmax(0,1fr) auto', gap:10, alignItems:'start' }}>
+                        <div style={{ display:'grid', gap:6, minWidth:0 }}>
+                          <div style={{ display:'flex', alignItems:'center', gap:8, minWidth:0 }}>
+                            <div style={{ width:10, height:10, borderRadius:999, background: theme.accent, opacity:0.9, boxShadow:`0 0 0 4px ${theme.accent}14` }} />
+                            <span style={{ fontWeight:800, letterSpacing:-0.1, fontSize: compact ? 12.5 : 13.5, lineHeight:1.3, color:'#0f172a', flex:1, minWidth:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{title}</span>
+                          </div>
+                          {it.truck && (
+                            <div style={{ display:'inline-flex', alignItems:'center', gap:6, width:'fit-content', fontSize: compact ? 10.5 : 11, color:'#64748b', background:'#f8fafc', border:'1px solid #e2e8f0', padding:'4px 8px', borderRadius:999 }}>
+                              <svg width={14} height={14} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                <path fill="currentColor" d="M3 4h11v8h-1.5a2.5 2.5 0 0 0-2.45 2H8A3 3 0 0 0 5 17H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zm13 5h2.586A2 2 0 0 1 20 9.586L21.414 11A2 2 0 0 1 22 12.414V16a1 1 0 0 1-1 1h-1a3 3 0 0 0-3-3h-1V9zM7 18a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm10 0a2 2 0 1 0 0-4 2 2 0 0 0 0 4z" />
+                              </svg>
+                              {it.truck}
+                            </div>
+                          )}
+                        </div>
+                        <div style={{ display:'grid', justifyItems:'end', gap:8 }}>
+                          {onReportTime && (
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); onReportTime({ projectId: String(it.project_id || ''), projectName: it.project_name, orderNumber: it.order_number ? String(it.order_number) : undefined, day: (it.job_day || it.start_day) ? String(it.job_day || it.start_day) : undefined }); }}
+                              style={{ fontSize: compact ? 10.5 : 11, padding: compact ? '6px 10px' : '7px 11px', border:'1px solid #16a34a', background:'#16a34a', color:'#fff', borderRadius:10, display:'inline-flex', alignItems:'center', gap:5, boxShadow:'0 8px 16px rgba(22,163,74,0.16)' }}
+                              aria-label="Rapportera tid för detta jobb"
+                            >
+                              <svg width={12} height={12} viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" fill="none"><path d="M12 5v14M5 12h14" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                              Tid
+                            </button>
+                          )}
+                          <div style={{ display:'inline-flex', alignItems:'center', gap:8 }}>
+                            <svg width={16} height={16} viewBox="0 0 24 24" aria-hidden="true" focusable="false" style={{ color:'#94a3b8' }}>
+                              <path fill="currentColor" d="M9 18l6-6-6-6" />
+                            </svg>
+                            {positionLabel && (
+                              <span title="Placering i dag/lastbil" style={{ background:'#0f172a', color:'#fff', fontSize: 10, fontWeight:700, padding:'4px 7px', borderRadius:999, border:'1px solid #334155', minWidth:34, textAlign:'center' }}>
+                                {positionLabel}
+                              </span>
+                            )}
+                          </div>
+                        </div>
                       </div>
                       <div style={{ display:'flex', gap:6, flexWrap:'wrap', marginTop: compact ? 6 : 8 }}>
                         {bagLabel && (
-                          <span style={{ display:'inline-flex', alignItems:'center', gap:6, fontSize: compact ? 10.5 : 11, color: theme.badgeFg, background: theme.badgeBg, border:`1px solid ${theme.accent}30`, padding:'3px 8px', borderRadius:999 }}>
-                            {/* Bag icon */}
+                          <span style={{ display:'inline-flex', alignItems:'center', gap:6, fontSize: compact ? 10.5 : 11, color: theme.badgeFg, background: '#ffffff', border:`1px solid ${theme.accent}26`, padding:'5px 9px', borderRadius:999, boxShadow:'inset 0 0 0 1px rgba(255,255,255,0.5)' }}>
                             <svg width={14} height={14} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                               <path fill="currentColor" d="M7 6h10l1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L7 6zm1-2a4 4 0 0 1 8 0v2H8V4zm2 0a2 2 0 1 1 4 0v2h-4V4z" />
                             </svg>
@@ -637,26 +707,15 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                           </span>
                         )}
                           {reported > 0 && (
-                            <span style={{ display:'inline-flex', alignItems:'center', gap:6, fontSize: compact ? 10.5 : 11, color:'#0f172a', background:'#ecfeff', border:'1px solid #bae6fd', padding:'3px 8px', borderRadius:999 }} title={`Rapporterat: ${reported} säckar`}>
-                              {/* Check icon */}
+                            <span style={{ display:'inline-flex', alignItems:'center', gap:6, fontSize: compact ? 10.5 : 11, color:'#0f172a', background:'#f8fdff', border:'1px solid #bae6fd', padding:'5px 9px', borderRadius:999 }} title={`Rapporterat: ${reported} säckar`}>
                               <svg width={14} height={14} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                                 <path fill="currentColor" d="M9 16.2l-3.5-3.5L4 14.2 9 19l12-12-1.5-1.5z" />
                               </svg>
                               Rapporterat: {reported}
                             </span>
                           )}
-                        {it.truck && (
-                          <span style={{ display:'inline-flex', alignItems:'center', gap:6, fontSize: compact ? 10.5 : 11, color:'#334155', background:'#f1f5f9', border:'1px solid #e2e8f0', padding:'3px 8px', borderRadius:999 }}>
-                            {/* Truck icon */}
-                            <svg width={14} height={14} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                              <path fill="currentColor" d="M3 4h11v8h-1.5a2.5 2.5 0 0 0-2.45 2H8A3 3 0 0 0 5 17H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zm13 5h2.586A2 2 0 0 1 20 9.586L21.414 11A2 2 0 0 1 22 12.414V16a1 1 0 0 1-1 1h-1a3 3 0 0 0-3-3h-1V9zM7 18a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm10 0a2 2 0 1 0 0-4 2 2 0 0 0 0 4z" />
-                            </svg>
-                            {it.truck}
-                          </span>
-                        )}
                         {crewNames.length > 0 && (
-                          <span style={{ display:'inline-flex', alignItems:'center', gap:6, fontSize: compact ? 10.5 : 11, color:'#334155', background:'#fafafa', border:'1px solid #e5e7eb', padding:'3px 8px', borderRadius:999 }} title={`Team: ${crewNames.join(', ')}`}>
-                            {/* Users icon */}
+                          <span style={{ display:'inline-flex', alignItems:'center', gap:6, fontSize: compact ? 10.5 : 11, color:'#334155', background:'#fafafa', border:'1px solid #e5e7eb', padding:'5px 9px', borderRadius:999 }} title={`Team: ${crewNames.join(', ')}`}>
                             <svg width={14} height={14} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                               <path fill="currentColor" d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5s-3 1.34-3 3 1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h10v-2.5C11 14.17 6.33 13 4 13zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h8v-2.5c0-2.33-4.67-3.5-7-3.5z"/>
                             </svg>

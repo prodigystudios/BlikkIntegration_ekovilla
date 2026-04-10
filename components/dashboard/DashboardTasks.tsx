@@ -90,6 +90,7 @@ export default function DashboardTasks({ compact }: { compact?: boolean }) {
     const byDue = (a: Task, b: Task) => (a.due_date||'9999-12-31').localeCompare(b.due_date||'9999-12-31') || a.created_at.localeCompare(b.created_at) * -1;
     return { open: open.sort(byDue), done: done.sort((a,b)=> b.updated_at.localeCompare(a.updated_at)) };
   }, [items]);
+  const visibleOpen = compact ? grouped.open.slice(0, 3) : grouped.open;
 
   const markDone = async (id: string, done: boolean) => {
     const prev = items;
@@ -100,25 +101,41 @@ export default function DashboardTasks({ compact }: { compact?: boolean }) {
 
   return (
     <div style={{ display:'flex', flexDirection:'column', gap: compact?12:16 }}>
-      <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-        <h2 style={{ margin:0, fontSize: compact?16:20, display:'flex', alignItems:'center', gap:8 }}>
-          Uppgifter
-          <span style={{ display:'inline-flex', alignItems:'center', gap:4, fontSize:11, fontWeight:500, color: live==='on'? '#059669': live==='connecting'? '#d97706':'#6b7280' }}>
-            <span style={{ width:8, height:8, borderRadius:'50%', background: live==='on'? '#10b981': live==='connecting'? '#f59e0b':'#9ca3af' }} />
-            {live==='on' ? 'Live' : live==='connecting' ? 'Ansluter…' : 'Offline'}
-          </span>
-        </h2>
+      <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', gap:12, flexWrap:'wrap' }}>
+        <div style={{ display:'grid', gap:4 }}>
+          <h2 style={{ margin:0, fontSize: compact?16:20, display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
+            Uppgifter
+            <span style={{ display:'inline-flex', alignItems:'center', gap:4, fontSize:11, fontWeight:500, color: live==='on'? '#059669': live==='connecting'? '#d97706':'#6b7280' }}>
+              <span style={{ width:8, height:8, borderRadius:'50%', background: live==='on'? '#10b981': live==='connecting'? '#f59e0b':'#9ca3af' }} />
+              {live==='on' ? 'Live' : live==='connecting' ? 'Ansluter…' : 'Offline'}
+            </span>
+          </h2>
+          {(!compact || grouped.open.length > 0) && <p style={{ margin:0, fontSize: compact?12:13, color:'#64748b' }}>Visa det som fortfarande kräver åtgärd först, och dölj resten tills det behövs.</p>}
+        </div>
+        <div style={{ display:'inline-flex', alignItems:'center', gap:8, padding:'6px 10px', borderRadius:999, background:'#f8fafc', border:'1px solid #e2e8f0', color:'#334155', fontSize:11.5, fontWeight:700 }}>
+          {grouped.open.length} öppna
+        </div>
       </div>
       {loading && <p style={{ margin:0, fontSize:12, color:'#6b7280' }}>Laddar…</p>}
       {error && <p style={{ margin:0, fontSize:12, color:'#b91c1c' }}>{error}</p>}
       {!loading && grouped.open.length === 0 && grouped.done.length === 0 && (
         <p style={{ margin:0, fontSize: compact?12:14, color:'#6b7280' }}>Inga uppgifter ännu.</p>
       )}
+      {!loading && grouped.open.length === 0 && grouped.done.length > 0 && (
+        <div style={{ display:'inline-flex', alignItems:'center', gap:8, width:'fit-content', padding: compact ? '8px 10px' : '10px 12px', borderRadius:999, background:'#f8fafc', border:'1px solid #e2e8f0', color:'#475569', fontSize: compact ? 12 : 13, fontWeight:600 }}>
+          Inga öppna uppgifter just nu.
+        </div>
+      )}
       {grouped.open.length > 0 && (
         <div style={{ display:'grid', gap:8 }}>
-          {grouped.open.map(t => (
+          {visibleOpen.map(t => (
             <TaskRow key={t.id} t={t} onToggle={() => markDone(t.id, true)} compact={compact} />
           ))}
+          {compact && grouped.open.length > visibleOpen.length && (
+            <div style={{ fontSize:12, color:'#64748b', padding:'2px 2px 0 2px' }}>
+              +{grouped.open.length - visibleOpen.length} fler öppna uppgifter visas i full vy.
+            </div>
+          )}
         </div>
       )}
       {grouped.done.length > 0 && (

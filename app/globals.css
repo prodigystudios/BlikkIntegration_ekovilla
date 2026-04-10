@@ -404,6 +404,29 @@ select.select-field.status-select--lost {
 .header-app { height: calc(var(--header-base) + var(--safe-top)); padding-top: var(--safe-top); }
 .content-offset { padding-top: calc(var(--header-base) + var(--safe-top) + var(--content-gap)); }
 
+.header-brand-link {
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.header-brand-image {
+  max-width: clamp(118px, 30vw, 188px);
+  height: auto;
+}
+
+@media (max-width: 640px) {
+  .header-app {
+    padding-left: 12px !important;
+    padding-right: 12px !important;
+    gap: 12px !important;
+    box-shadow: 0 6px 18px rgba(15,23,42,0.08) !important;
+  }
+
+  .header-brand-image {
+    max-width: 132px;
+  }
+}
+
 /* Ensure canvases render with a white background on iOS Safari to avoid black backing-store artifacts */
 /* Signature UI appearance: white background via CSS, not pixels, to keep PNG export transparent */
 .signature-surface { background-color: #ffffff !important; }

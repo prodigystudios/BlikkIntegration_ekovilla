@@ -19,5 +19,5 @@ export default function HeaderTitle() {
   else if (pathname.startsWith('/admin')) title = 'Admin';
   else if(pathname.startsWith('/tidrapport')) title = 'Tidrapportering';
   else if(pathname.startsWith('/kund/offert')) title = 'Beställningsbekräftelse';
-  return <strong style={{ letterSpacing: 0.2, marginLeft:36, marginTop:4 }}>{title}</strong>;
+  return <strong style={{fontSize: '14px', letterSpacing: 0.2, marginLeft: 16, marginTop: 4}}>{title}</strong>;
 }
