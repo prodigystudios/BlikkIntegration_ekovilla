@@ -100,6 +100,8 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
   const [publishMetaLoading, setPublishMetaLoading] = useState(false);
   const [publishMetaError, setPublishMetaError] = useState<string | null>(null);
   const [publishStatusUi, setPublishStatusUi] = useState<PublishStatusUiState | null>(null);
+  const [isCompactViewport, setIsCompactViewport] = useState(false);
+  const [showExplorerOnMobile, setShowExplorerOnMobile] = useState(true);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const createFolderNameRef = useRef<HTMLInputElement | null>(null);
 
@@ -125,6 +127,23 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const media = window.matchMedia('(max-width: 980px)');
+    const update = () => setIsCompactViewport(media.matches);
+    update();
+    if (typeof media.addEventListener === 'function') {
+      media.addEventListener('change', update);
+      return () => media.removeEventListener('change', update);
+    }
+    media.addListener(update);
+    return () => media.removeListener(update);
+  }, []);
+
+  useEffect(() => {
+    if (!isCompactViewport) setShowExplorerOnMobile(true);
+  }, [isCompactViewport]);
 
   // Clear preview on navigation between folders
   useEffect(() => {
@@ -572,9 +591,19 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
     return cols;
   }, [breadcrumbs]);
 
+  const visibleExplorerColumns = useMemo(() => {
+    return explorerColumns.filter((col, index) => {
+      if (index === 0) return true;
+      const hasFolders = (folderLists[col.parentId || 'root'] || []).length > 0;
+      const isCreateTarget = createFolderUi?.parentId === col.parentId;
+      return hasFolders || isCreateTarget;
+    });
+  }, [createFolderUi?.parentId, explorerColumns, folderLists]);
+
   function renderFolderList(parentId: string | null, selectedId: string | null) {
     const key = parentId || 'root';
     const list = folderLists[key] || [];
+    const depth = parentId ? Math.min(breadcrumbs.findIndex(b => b.id === parentId) + 1, 3) : 0;
     if (!list.length) {
       return <div style={{ padding: 10, color: '#6b7280', fontSize: 13 }}>Inga mappar</div>;
     }
@@ -582,7 +611,7 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
       <div style={{ padding: 10, display: 'grid', gap: 8 }}>
         {list.map(f => {
           const active = selectedId === f.id || (!selectedId && folderId === f.id);
-          const showActions = effectiveCanEdit && (active || hoveredFolderId === f.id);
+          const showActions = effectiveCanEdit && (active || hoveredFolderId === f.id || isCompactViewport);
           const colorDot = folderColorHex(f.color);
           return (
             <div
@@ -601,9 +630,9 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
                 onClick={() => openFolder(f.id)}
                 style={{
                   width: '100%',
-                  border: '1px solid ' + (active ? '#c7d2fe' : 'transparent'),
-                  background: active ? 'linear-gradient(135deg,#eef2ff,#e0e7ff)' : 'transparent',
-                  borderRadius: 10,
+                  border: '1px solid ' + (active ? '#bfdbfe' : '#e2e8f0'),
+                  background: active ? 'linear-gradient(135deg,#eef4ff,#e0ecff)' : '#fff',
+                  borderRadius: 12,
                   padding: '10px 12px',
                   cursor: 'pointer',
                   textAlign: 'left',
@@ -613,15 +642,19 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
                   gap: 8,
                   color: '#111827',
                   fontWeight: active ? 800 : 600,
+                  position: 'relative',
+                  boxShadow: active ? '0 8px 18px rgba(59,130,246,0.10)' : '0 2px 6px rgba(15,23,42,0.02)',
                 }}
               >
+                <span aria-hidden style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 4, borderTopLeftRadius: 12, borderBottomLeftRadius: 12, background: active ? '#3b82f6' : depth > 0 ? '#dbeafe' : '#e5e7eb' }} />
+                {depth > 0 ? <span aria-hidden style={{ width: depth * 10, height: 1, background: '#dbe4ef', flex: '0 0 auto' }} /> : null}
                 {colorDot ? (
                   <span aria-hidden style={{ width: 10, height: 10, borderRadius: 999, background: colorDot, flex: '0 0 auto' }} />
                 ) : (
                   <span aria-hidden style={{ width: 10, height: 10, borderRadius: 999, background: '#e5e7eb', flex: '0 0 auto' }} />
                 )}
-                <span aria-hidden style={{ fontSize: 14 }}>📁</span>
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
+                <span aria-hidden style={{ fontSize: 14, opacity: active ? 1 : 0.72 }}>📁</span>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13 }}>{f.name}</span>
               </button>
 
               {effectiveCanEdit && (
@@ -643,9 +676,9 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
                     title="Byt namn"
                     aria-label="Byt namn"
                     style={{
-                      padding: '6px 8px',
+                      padding: '5px 7px',
                       borderRadius: 10,
-                      fontSize: 13,
+                      fontSize: 12,
                       border: '1px solid #e5e7eb',
                       background: '#fff',
                       color: '#111827',
@@ -662,9 +695,9 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
                     title="Ta bort (mappen måste vara tom)"
                     aria-label="Ta bort"
                     style={{
-                      padding: '6px 8px',
+                      padding: '5px 7px',
                       borderRadius: 10,
-                      fontSize: 13,
+                      fontSize: 12,
                       border: '1px solid #e5e7eb',
                       background: '#fff',
                       color: '#991b1b',
@@ -683,61 +716,189 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
     );
   }
 
+  const actionButtonStyle: React.CSSProperties = {
+    ...buttonSecondary,
+    padding: isCompactViewport ? '8px 10px' : '10px 12px',
+    fontSize: isCompactViewport ? 13 : 14,
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  };
+
+  const renderFileActions = (file: FileRow | SearchFileRow) => (
+    <div style={{ display: 'flex', gap: 8, justifyContent: isCompactViewport ? 'stretch' : 'flex-end', flexWrap: 'wrap' }}>
+      <button type="button" onClick={() => previewFile(file)} disabled={previewLoading} style={actionButtonStyle}>
+        Förhandsgranska
+      </button>
+      <button type="button" onClick={() => downloadFile(file.id)} style={actionButtonStyle}>
+        Ladda ner
+      </button>
+      {effectiveCanEdit && (
+        <button type="button" onClick={() => openPublishStatus(file)} disabled={!!busy} style={actionButtonStyle}>
+          Status
+        </button>
+      )}
+      {effectiveCanEdit && (
+        <button type="button" onClick={() => openPublish(file)} disabled={!!busy} style={actionButtonStyle}>
+          Publicera
+        </button>
+      )}
+      {effectiveCanEdit && (
+        <button type="button" onClick={() => deleteFile(file.id)} disabled={!!busy} style={{ ...actionButtonStyle, color: '#991b1b' }}>
+          Ta bort
+        </button>
+      )}
+    </div>
+  );
+
+  const renderFileCollection = (files: Array<FileRow | SearchFileRow>, includeFolderName: boolean) => {
+    if (isCompactViewport) {
+      return (
+        <div style={{ display: 'grid', gap: 10, padding: 12 }}>
+          {files.map(file => {
+            const folderName = includeFolderName && 'folder_name' in file ? file.folder_name : null;
+            return (
+              <div key={file.id} style={{ border: '1px solid #e2e8f0', borderRadius: 14, padding: '12px 12px 10px', background: '#fff', boxShadow: '0 6px 18px rgba(15,23,42,0.04)', display: 'grid', gap: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, minWidth: 0 }}>
+                  <span aria-hidden style={{ fontSize: 18, lineHeight: 1 }}>📄</span>
+                  <div style={{ minWidth: 0, display: 'grid', gap: 5, flex: 1 }}>
+                    <button type="button" onClick={() => previewFile(file)} style={{ border: 'none', background: 'transparent', padding: 0, cursor: 'pointer', textAlign: 'left', fontWeight: 800, fontSize: 14, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {file.file_name}
+                    </button>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                      {folderName ? <span style={softMetaChip}>Mapp: {folderName || 'Rot'}</span> : null}
+                      <span style={softMetaChip}>{formatBytes(file.size_bytes) || 'Okänd storlek'}</span>
+                    </div>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', color: '#64748b', fontSize: 12 }}>
+                  <span>Skapad {new Date(file.created_at).toLocaleString('sv-SE')}</span>
+                </div>
+                <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(132px, 1fr))' }}>
+                  {renderFileActions(file)}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
+
+    const columns = includeFolderName
+      ? (effectiveCanEdit ? '1fr 220px 120px 160px 340px' : '1fr 220px 120px 160px 240px')
+      : (effectiveCanEdit ? '1fr 120px 160px 340px' : '1fr 120px 160px 240px');
+
+    return (
+      <div>
+        <div style={{ display: 'grid', gridTemplateColumns: columns, padding: '10px 12px', background: 'linear-gradient(180deg,#ffffff,#f8fafc)', fontSize: 11, color: '#64748b', fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0.3 }}>
+          <div>Dokument</div>
+          {includeFolderName ? <div>Plats</div> : null}
+          <div>Storlek</div>
+          <div>Skapad</div>
+          <div>Åtgärder</div>
+        </div>
+        {files.map(file => {
+          const folderName = includeFolderName && 'folder_name' in file ? file.folder_name : null;
+          const extension = file.file_name.split('.').pop()?.toUpperCase() || 'FIL';
+          return (
+            <div key={file.id} style={{ display: 'grid', gridTemplateColumns: columns, padding: '12px 12px', borderTop: '1px solid #eef2f7', alignItems: 'center', gap: 10, background: '#fff' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+                <div style={{ width: 34, height: 34, borderRadius: 10, border: '1px solid #dbe4ef', background: 'linear-gradient(180deg,#ffffff,#f8fafc)', display: 'grid', placeItems: 'center', color: '#334155', fontSize: 10, fontWeight: 800, flex: '0 0 auto' }}>
+                  {extension}
+                </div>
+                <div style={{ minWidth: 0, display: 'grid', gap: 4 }}>
+                  <button type="button" onClick={() => previewFile(file)} style={{ border: 'none', background: 'transparent', padding: 0, cursor: 'pointer', textAlign: 'left', fontWeight: 800, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: 13 }}>
+                    {file.file_name}
+                  </button>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                    <span style={softMetaChip}>{extension}</span>
+                    {!includeFolderName ? <span style={softMetaChip}>{formatBytes(file.size_bytes) || 'Okänd storlek'}</span> : null}
+                  </div>
+                </div>
+              </div>
+              {includeFolderName ? <div style={{ color: '#6b7280', fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{folderName || 'Rot'}</div> : null}
+              <div style={{ color: '#475569', fontSize: 13, fontWeight: 600 }}>{formatBytes(file.size_bytes)}</div>
+              <div style={{ color: '#64748b', fontSize: 13 }}>{new Date(file.created_at).toLocaleString('sv-SE')}</div>
+              {renderFileActions(file)}
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
   return (
-    <section style={{ marginTop: 14 }}>
-      {/* Top bar */}
+    <section style={{ marginTop: 14, display: 'grid', gap: 14 }}>
       <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
+        border: '1px solid #dbe4ef',
+        background: 'linear-gradient(180deg, #ffffff 0%, #f7fbff 100%)',
+        borderRadius: 18,
+        padding: isCompactViewport ? '14px 14px 12px' : '16px 18px 14px',
+        display: 'grid',
         gap: 12,
-        flexWrap: 'wrap',
-        border: '1px solid #e5e7eb',
-        background: 'linear-gradient(145deg,#ffffff,#f8fafc)',
-        borderRadius: 14,
-        padding: '10px 12px',
+        boxShadow: '0 12px 30px rgba(15,23,42,0.05)',
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <button type="button" onClick={goRoot} style={buttonSecondary} disabled={loading}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 14, flexWrap: 'wrap' }}>
+          <div style={{ display: 'grid', gap: 6, maxWidth: 720 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.4, textTransform: 'uppercase', color: '#2563eb', background: '#dbeafe', border: '1px solid #bfdbfe', borderRadius: 999, padding: '4px 9px' }}>Dokumentcenter</span>
+              <span style={{ fontSize: 11, color: '#64748b' }}>{currentFolderName ? `Aktiv mapp: ${currentFolderName}` : 'Rotnivå'}</span>
+            </div>
+            <div style={{ fontSize: isCompactViewport ? 28 : 32, lineHeight: 1.05, fontWeight: 800, color: '#0f172a' }}>Dokument</div>
+            <div style={{ fontSize: 14, color: '#475569', maxWidth: 760 }}>Navigera mappar, undermappar och filer i en tydligare arbetsyta. På mobil kan mappanelen döljas så att fillistan får mer utrymme.</div>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            {isCompactViewport && (
+              <button type="button" onClick={() => setShowExplorerOnMobile(v => !v)} style={actionButtonStyle}>
+                {showExplorerOnMobile ? 'Dölj mappar' : 'Visa mappar'}
+              </button>
+            )}
+            {effectiveCanEdit && (
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ ...buttonStyle, padding: isCompactViewport ? '8px 12px' : '10px 12px', fontSize: isCompactViewport ? 13 : 14 }}>
+                  {busy === 'upload' && uploadProgress
+                    ? `Laddar upp (${uploadProgress.current}/${uploadProgress.total})…`
+                    : 'Ladda upp'}
+                </span>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  onChange={(e) => onUploadFiles(e.target.files)}
+                  disabled={!!busy}
+                  style={{ display: 'none' }}
+                />
+              </label>
+            )}
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <button type="button" onClick={goRoot} style={{ ...actionButtonStyle, background: breadcrumbs.length ? '#fff' : 'linear-gradient(135deg,#e8f0ff,#dbeafe)', borderColor: breadcrumbs.length ? '#e5e7eb' : '#bfdbfe' }} disabled={loading}>
             Dokument
           </button>
+          {breadcrumbs.length === 0 ? <span style={{ fontSize: 12, color: '#64748b' }}>Rot</span> : null}
           {breadcrumbs.map((b) => (
             <React.Fragment key={b.id}>
-              <span style={{ color: '#9ca3af' }}>/</span>
+              <span style={{ color: '#cbd5e1', fontWeight: 700 }}>/</span>
               <button
                 type="button"
                 onClick={() => openFolder(b.id)}
-                style={{ ...buttonSecondary, padding: '8px 10px' }}
+                style={{ ...actionButtonStyle, padding: '8px 10px' }}
                 disabled={loading}
               >
                 {b.name}
               </button>
             </React.Fragment>
           ))}
-          {!breadcrumbs.length && (
-            <span style={{ color: '#6b7280', fontSize: 13 }}>Rot</span>
-          )}
         </div>
 
-        {effectiveCanEdit && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ ...buttonSecondary, padding: '10px 12px' }}>
-                {busy === 'upload' && uploadProgress
-                  ? `Laddar upp (${uploadProgress.current}/${uploadProgress.total})…`
-                  : 'Ladda upp'}
-              </span>
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                onChange={(e) => onUploadFiles(e.target.files)}
-                disabled={!!busy}
-                style={{ display: 'none' }}
-              />
-            </label>
-          </div>
-        )}
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <span style={softMetaChip}>{data?.folders.length || 0} mappar i nivån</span>
+          <span style={softMetaChip}>{data?.files.length || 0} filer i vyn</span>
+          <span style={softMetaChip}>{fileSearchMode === 'all' ? 'Sökning i alla mappar' : 'Sökning i aktuell mapp'}</span>
+        </div>
       </div>
 
       {showInitialLoading && (
@@ -751,33 +912,39 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
 
       {data && (
         <div style={{
-          marginTop: 14,
-          display: 'flex',
-          gap: 12,
-          alignItems: 'stretch',
+          display: 'grid',
+          gridTemplateColumns: isCompactViewport ? '1fr' : 'minmax(300px, 360px) minmax(0, 1fr)',
+          gap: 14,
+          alignItems: 'start',
         }}>
           {/* Left explorer */}
+          {(!isCompactViewport || showExplorerOnMobile) && (
           <aside style={{
-            flex: '0 0 auto',
-            display: 'flex',
-            gap: 12,
-            overflowX: 'auto',
-            paddingBottom: 4,
-            maxWidth: 'min(75vw, 980px)',
+            display: 'grid',
+            gap: 10,
+            position: isCompactViewport ? 'static' : 'sticky',
+            top: isCompactViewport ? undefined : 84,
           }}>
-            {explorerColumns.map(col => (
+            <div style={{ padding: '12px 14px', border: '1px solid #dbe4ef', borderRadius: 16, background: '#fff', boxShadow: '0 10px 24px rgba(15,23,42,0.04)', display: 'grid', gap: 4 }}>
+              <strong style={{ fontSize: 13, color: '#0f172a' }}>Mappnavigering</strong>
+              <span style={{ fontSize: 12, color: '#64748b' }}>Hoppa mellan nivåer och skapa nya mappar där du står.</span>
+            </div>
+            {visibleExplorerColumns.map(col => (
               <div key={col.key} style={{
-                width: 450,
-                border: '1px solid #e5e7eb',
-                borderRadius: 14,
+                width: '100%',
+                border: '1px solid #dbe4ef',
+                borderRadius: 16,
                 overflow: 'hidden',
                 background: '#fff',
-                boxShadow: '0 4px 10px rgba(0,0,0,0.03)',
+                boxShadow: '0 10px 24px rgba(15,23,42,0.04)',
               }}>
-                <div style={{ padding: '10px 10px', borderBottom: '1px solid #e5e7eb', background: '#f9fafb' }}>
+                <div style={{ padding: '11px 12px', borderBottom: '1px solid #e5e7eb', background: 'linear-gradient(180deg,#fbfdff,#f8fafc)' }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                    <div style={{ flex: '1 1 auto', minWidth: 0, fontSize: 12, color: '#6b7280', fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {col.title}
+                    <div style={{ display: 'grid', gap: 2, minWidth: 0 }}>
+                      <div style={{ flex: '1 1 auto', minWidth: 0, fontSize: 12, color: '#6b7280', fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {col.title}
+                      </div>
+                      <span style={{ fontSize: 11, color: '#94a3b8' }}>{(folderLists[col.parentId || 'root'] || []).length} mappar</span>
                     </div>
                     {effectiveCanEdit && (
                       <button
@@ -786,7 +953,7 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
                         disabled={!!busy}
                         title="Skapa ny mapp här"
                         style={{
-                          ...buttonSecondary,
+                          ...actionButtonStyle,
                           flex: '0 0 auto',
                           padding: '6px 8px',
                           fontSize: 12,
@@ -876,84 +1043,150 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
                     </div>
                   )}
                 </div>
-                <div style={{ maxHeight: 'calc(100dvh - 280px)', overflowY: 'auto' }}>
+                <div style={{ maxHeight: isCompactViewport ? 'none' : 'calc(100dvh - 320px)', overflowY: 'auto' }}>
                   {renderFolderList(col.parentId, col.selectedId)}
                 </div>
               </div>
             ))}
           </aside>
+          )}
 
           {/* Main documents pane */}
           <div style={{
-            flex: '1 1 auto',
             minWidth: 0,
-            border: '1px solid #e5e7eb',
-            borderRadius: 14,
+            border: '1px solid #dbe4ef',
+            borderRadius: 16,
             overflow: 'hidden',
             background: '#fff',
-            boxShadow: '0 4px 10px rgba(0,0,0,0.03)',
+            boxShadow: '0 12px 28px rgba(15,23,42,0.05)',
           }}>
             <div style={{
-              padding: '12px 12px',
+              padding: isCompactViewport ? '14px 12px' : '14px 14px',
               borderBottom: '1px solid #e5e7eb',
-              background: '#f9fafb',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: 10,
-              flexWrap: 'wrap',
+              background: 'linear-gradient(180deg,#fbfdff,#f8fafc)',
+              display: 'grid',
+              gap: 12,
             }}>
-              <div>
-                <div style={{ fontWeight: 800, color: '#111827' }}>
-                  {currentFolderName ? currentFolderName : 'Rot'}
+              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                <div style={{ display: 'grid', gap: 4 }}>
+                  <div style={{ fontWeight: 800, color: '#111827', fontSize: 18 }}>
+                    {currentFolderName ? currentFolderName : 'Rot'}
+                  </div>
+                  <div style={{ fontSize: 12, color: '#6b7280' }}>
+                    {loading
+                      ? 'Uppdaterar…'
+                      : fileSearchMode === 'all'
+                        ? `${globalSearchResults?.length ?? 0} träffar i alla mappar`
+                        : (fileSearch.trim()
+                          ? `${filteredFiles.length} av ${data.files.length} filer`
+                          : `${data.files.length} filer`
+                        )}
+                  </div>
                 </div>
-                <div style={{ fontSize: 12, color: '#6b7280' }}>
-                  {loading
-                    ? 'Uppdaterar…'
-                    : (fileSearch.trim()
-                      ? `${filteredFiles.length} av ${data.files.length} filer`
-                      : `${data.files.length} filer`
-                    )}
-                </div>
-              </div>
 
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <button
                   type="button"
                   onClick={() => setFileSearchMode(m => (m === 'folder' ? 'all' : 'folder'))}
                   style={{
-                    ...buttonSecondary,
-                    padding: '10px 12px',
+                    ...actionButtonStyle,
                     background: fileSearchMode === 'all' ? 'linear-gradient(135deg,#eef2ff,#e0e7ff)' : '#fff',
                     border: '1px solid ' + (fileSearchMode === 'all' ? '#c7d2fe' : '#e5e7eb'),
                   }}
                   title={fileSearchMode === 'all' ? 'Söker i alla mappar' : 'Söker i aktuell mapp'}
                 >
-                  {fileSearchMode === 'all' ? 'Sök: Alla mappar' : 'Sök: Denna mapp'}
+                  {fileSearchMode === 'all' ? 'Sök i alla mappar' : 'Sök i denna mapp'}
                 </button>
+              </div>
 
-                <input
-                  value={fileSearch}
-                  onChange={(e) => setFileSearch(e.target.value)}
-                  placeholder={fileSearchMode === 'all' ? 'Sök filer i alla mappar…' : 'Sök filer…'}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Escape') setFileSearch('');
-                  }}
-                  style={{
-                    padding: '10px 12px',
-                    borderRadius: 10,
-                    border: '1px solid #e5e7eb',
-                    background: '#fff',
-                    fontSize: 14,
-                    minWidth: 260,
-                  }}
-                />
-                {fileSearch.trim() && (
-                  <button type="button" onClick={() => setFileSearch('')} style={buttonSecondary}>
-                    Rensa
+              <div style={{ display: 'grid', gap: 10, gridTemplateColumns: isCompactViewport ? '1fr' : 'minmax(0, 1fr) auto', alignItems: 'end' }}>
+                <label style={{ display: 'grid', gap: 6 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.2, textTransform: 'uppercase', color: '#475569' }}>
+                    {fileSearchMode === 'all' ? 'Sök i hela dokumentarkivet' : 'Sök i aktuell mapp'}
+                  </span>
+                  <input
+                    value={fileSearch}
+                    onChange={(e) => setFileSearch(e.target.value)}
+                    placeholder={fileSearchMode === 'all' ? 'Sök filer i alla mappar…' : 'Sök filer…'}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Escape') setFileSearch('');
+                    }}
+                    style={{
+                      padding: '10px 12px',
+                      borderRadius: 12,
+                      border: '1px solid #dbe4ef',
+                      background: '#fff',
+                      fontSize: 14,
+                      width: '100%',
+                      boxSizing: 'border-box',
+                    }}
+                  />
+                </label>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                  {fileSearch.trim() && (
+                    <button type="button" onClick={() => setFileSearch('')} style={actionButtonStyle}>
+                      Rensa sökning
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div style={{ padding: isCompactViewport ? '12px' : '14px', borderBottom: '1px solid #eef2f7', background: '#ffffff', display: 'grid', gap: 10 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+                <div style={{ display: 'grid', gap: 2 }}>
+                  <strong style={{ fontSize: 13, color: '#0f172a' }}>Undermappar</strong>
+                  <span style={{ fontSize: 12, color: '#64748b' }}>
+                    {data.folders.length > 0
+                      ? `Snabbåtkomst till ${data.folders.length} undermappar i ${currentFolderName || 'Rot'}.`
+                      : `Det finns inga undermappar i ${currentFolderName || 'Rot'} just nu.`}
+                  </span>
+                </div>
+                {effectiveCanEdit && (
+                  <button type="button" onClick={() => openCreateFolder(folderId || null)} style={actionButtonStyle} disabled={!!busy}>
+                    + Ny undermapp
                   </button>
                 )}
               </div>
+
+              {data.folders.length > 0 ? (
+                <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
+                  {data.folders.map(folder => {
+                    const colorDot = folderColorHex(folder.color);
+                    return (
+                      <button
+                        key={folder.id}
+                        type="button"
+                        onClick={() => openFolder(folder.id)}
+                        style={{
+                          display: 'grid',
+                          gap: 8,
+                          padding: '12px 12px 11px',
+                          borderRadius: 14,
+                          border: '1px solid #dbe4ef',
+                          background: 'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)',
+                          textAlign: 'left',
+                          cursor: 'pointer',
+                          boxShadow: '0 6px 18px rgba(15,23,42,0.04)',
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                          <span aria-hidden style={{ width: 10, height: 10, borderRadius: 999, background: colorDot || '#cbd5e1', flex: '0 0 auto' }} />
+                          <span aria-hidden style={{ fontSize: 15 }}>📁</span>
+                          <span style={{ fontSize: 13, fontWeight: 800, color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{folder.name}</span>
+                        </div>
+                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                          <span style={softMetaChip}>Öppna mapp</span>
+                          <span style={softMetaChip}>Skapad {folder.created_at.slice(0, 10)}</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div style={{ border: '1px dashed #cbd5e1', borderRadius: 14, padding: '14px 12px', background: '#f8fafc', color: '#64748b', fontSize: 13 }}>
+                  Inga undermappar här ännu.
+                </div>
+              )}
             </div>
 
             {(previewLoading || previewError || preview) && (
@@ -1014,14 +1247,6 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
 
             {fileSearchMode === 'all' ? (
               <div>
-                <div style={{ display: 'grid', gridTemplateColumns: effectiveCanEdit ? '1fr 220px 120px 160px 340px' : '1fr 220px 120px 160px 240px', padding: '10px 12px', background: '#ffffff', fontSize: 12, color: '#6b7280', fontWeight: 800 }}>
-                  <div>Namn</div>
-                  <div>Mapp</div>
-                  <div>Storlek</div>
-                  <div>Skapad</div>
-                  <div>Åtgärder</div>
-                </div>
-
                 {globalSearchError && (
                   <div style={{ padding: 14, color: '#b91c1c' }}>{globalSearchError}</div>
                 )}
@@ -1038,42 +1263,7 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
                 )}
 
                 {!globalSearchLoading && !globalSearchError && (globalSearchResults && globalSearchResults.length > 0) && (
-                  globalSearchResults.map(file => (
-                    <div key={file.id} style={{ display: 'grid', gridTemplateColumns: effectiveCanEdit ? '1fr 220px 120px 160px 340px' : '1fr 220px 120px 160px 240px', padding: '10px 12px', borderTop: '1px solid #e5e7eb', alignItems: 'center', gap: 10 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-                        <span aria-hidden style={{ fontSize: 16 }}>📄</span>
-                        <button type="button" onClick={() => previewFile(file)} style={{ border: 'none', background: 'transparent', padding: 0, cursor: 'pointer', textAlign: 'left', fontWeight: 800, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {file.file_name}
-                        </button>
-                      </div>
-                      <div style={{ color: '#6b7280', fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{file.folder_name || 'Rot'}</div>
-                      <div style={{ color: '#6b7280', fontSize: 13 }}>{formatBytes(file.size_bytes)}</div>
-                      <div style={{ color: '#6b7280', fontSize: 13 }}>{new Date(file.created_at).toLocaleString('sv-SE')}</div>
-                      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-                        <button type="button" onClick={() => previewFile(file)} disabled={previewLoading} style={buttonSecondary}>
-                          Förhandsgranska
-                        </button>
-                        <button type="button" onClick={() => downloadFile(file.id)} style={buttonSecondary}>
-                          Ladda ner
-                        </button>
-                        {effectiveCanEdit && (
-                          <button type="button" onClick={() => openPublishStatus(file)} disabled={!!busy} style={buttonSecondary}>
-                            Status
-                          </button>
-                        )}
-                        {effectiveCanEdit && (
-                          <button type="button" onClick={() => openPublish(file)} disabled={!!busy} style={buttonSecondary}>
-                            Publicera
-                          </button>
-                        )}
-                        {effectiveCanEdit && (
-                          <button type="button" onClick={() => deleteFile(file.id)} disabled={!!busy} style={{ ...buttonSecondary, color: '#991b1b' }}>
-                            Ta bort
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  ))
+                  renderFileCollection(globalSearchResults, true)
                 )}
               </div>
             ) : data.files.length === 0 ? (
@@ -1081,49 +1271,7 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
             ) : filteredFiles.length === 0 ? (
               <div style={{ padding: 14, color: '#6b7280' }}>Inga träffar.</div>
             ) : (
-              <div>
-                <div style={{ display: 'grid', gridTemplateColumns: effectiveCanEdit ? '1fr 120px 160px 340px' : '1fr 120px 160px 240px', padding: '10px 12px', background: '#ffffff', fontSize: 12, color: '#6b7280', fontWeight: 800 }}>
-                  <div>Namn</div>
-                  <div>Storlek</div>
-                  <div>Skapad</div>
-                  <div>Åtgärder</div>
-                </div>
-                {filteredFiles.map(file => (
-                  <div key={file.id} style={{ display: 'grid', gridTemplateColumns: effectiveCanEdit ? '1fr 120px 160px 340px' : '1fr 120px 160px 240px', padding: '10px 12px', borderTop: '1px solid #e5e7eb', alignItems: 'center', gap: 10 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-                      <span aria-hidden style={{ fontSize: 16 }}>📄</span>
-                      <button type="button" onClick={() => previewFile(file)} style={{ border: 'none', background: 'transparent', padding: 0, cursor: 'pointer', textAlign: 'left', fontWeight: 800, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {file.file_name}
-                      </button>
-                    </div>
-                    <div style={{ color: '#6b7280', fontSize: 13 }}>{formatBytes(file.size_bytes)}</div>
-                    <div style={{ color: '#6b7280', fontSize: 13 }}>{new Date(file.created_at).toLocaleString('sv-SE')}</div>
-                    <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-                      <button type="button" onClick={() => previewFile(file)} disabled={previewLoading} style={buttonSecondary}>
-                        Förhandsgranska
-                      </button>
-                      <button type="button" onClick={() => downloadFile(file.id)} style={buttonSecondary}>
-                        Ladda ner
-                      </button>
-                      {effectiveCanEdit && (
-                        <button type="button" onClick={() => openPublishStatus(file)} disabled={!!busy} style={buttonSecondary}>
-                          Status
-                        </button>
-                      )}
-                      {effectiveCanEdit && (
-                        <button type="button" onClick={() => openPublish(file)} disabled={!!busy} style={buttonSecondary}>
-                          Publicera
-                        </button>
-                      )}
-                      {effectiveCanEdit && (
-                        <button type="button" onClick={() => deleteFile(file.id)} disabled={!!busy} style={{ ...buttonSecondary, color: '#991b1b' }}>
-                          Ta bort
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
+              renderFileCollection(filteredFiles, false)
             )}
           </div>
         </div>
@@ -1147,26 +1295,28 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
         >
           <div
             style={{
-              width: 'min(820px, 100%)',
+              width: 'min(860px, 100%)',
               maxHeight: '90vh',
               overflow: 'auto',
-              borderRadius: 18,
+              borderRadius: 22,
               background: '#fff',
-              border: '1px solid #e5e7eb',
-              boxShadow: '0 24px 60px rgba(0,0,0,0.22)',
-              padding: 22,
+              border: '1px solid #dbe4ef',
+              boxShadow: '0 24px 60px rgba(15,23,42,0.22)',
+              padding: 0,
               display: 'grid',
-              gap: 18,
             }}
             onClick={(event) => event.stopPropagation()}
           >
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start' }}>
-              <div>
+            <div style={{ padding: '18px 20px 16px', borderBottom: '1px solid #e5e7eb', background: 'linear-gradient(180deg,#fbfdff,#f8fafc)', display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start' }}>
+              <div style={{ display: 'grid', gap: 6 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.3, textTransform: 'uppercase', color: '#2563eb' }}>Kvittensflöde</span>
                 <h3 style={{ margin: 0, fontSize: 22 }}>Publicera dokument för kvittens</h3>
-                <p style={{ margin: '6px 0 0', color: '#6b7280' }}>{publishUi.file.file_name}</p>
+                <p style={{ margin: 0, color: '#6b7280' }}>{publishUi.file.file_name}</p>
               </div>
               <button type="button" onClick={closePublish} style={buttonSecondary}>Stäng</button>
             </div>
+
+            <div style={{ padding: 20, display: 'grid', gap: 18 }}>
 
             <div style={{ display: 'grid', gap: 14 }}>
               <label style={{ display: 'grid', gap: 6 }}>
@@ -1210,7 +1360,7 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
                 />
               </label>
 
-              <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontWeight: 600, color: '#111827' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontWeight: 600, color: '#111827', padding: '12px 14px', borderRadius: 14, border: '1px solid #dbe4ef', background: '#f8fbff' }}>
                 <input
                   type="checkbox"
                   checked={publishUi.requiresApproval}
@@ -1270,6 +1420,7 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
                 <button type="button" onClick={submitPublish} disabled={busy === 'publish'} style={buttonStyle}>Publicera</button>
               </div>
             </div>
+            </div>
           </div>
         </div>
       )}
@@ -1292,26 +1443,28 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
         >
           <div
             style={{
-              width: 'min(1080px, 100%)',
+              width: 'min(1100px, 100%)',
               maxHeight: '90vh',
               overflow: 'auto',
-              borderRadius: 18,
+              borderRadius: 22,
               background: '#fff',
-              border: '1px solid #e5e7eb',
-              boxShadow: '0 24px 60px rgba(0,0,0,0.22)',
-              padding: 22,
+              border: '1px solid #dbe4ef',
+              boxShadow: '0 24px 60px rgba(15,23,42,0.22)',
+              padding: 0,
               display: 'grid',
-              gap: 18,
             }}
             onClick={(event) => event.stopPropagation()}
           >
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start' }}>
-              <div>
+            <div style={{ padding: '18px 20px 16px', borderBottom: '1px solid #e5e7eb', background: 'linear-gradient(180deg,#fbfdff,#f8fafc)', display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start' }}>
+              <div style={{ display: 'grid', gap: 6 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.3, textTransform: 'uppercase', color: '#2563eb' }}>Uppföljning</span>
                 <h3 style={{ margin: 0, fontSize: 22 }}>Kvittensstatus</h3>
-                <p style={{ margin: '6px 0 0', color: '#6b7280' }}>{publishStatusUi.file.file_name}</p>
+                <p style={{ margin: 0, color: '#6b7280' }}>{publishStatusUi.file.file_name}</p>
               </div>
               <button type="button" onClick={closePublishStatus} style={buttonSecondary}>Stäng</button>
             </div>
+
+            <div style={{ padding: 20, display: 'grid', gap: 18 }}>
 
             {publishStatusUi.loadingPublications && <div style={{ color: '#6b7280' }}>Laddar publiceringar…</div>}
             {!publishStatusUi.loadingPublications && publishStatusUi.publications.length === 0 && (
@@ -1320,7 +1473,7 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
 
             {!publishStatusUi.loadingPublications && publishStatusUi.publications.length > 0 && (
               <>
-                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', padding: '12px 14px', border: '1px solid #e5e7eb', borderRadius: 16, background: '#f8fafc' }}>
                   {publishStatusUi.publications.map(publication => {
                     const active = publication.id === publishStatusUi.selectedPublicationId;
                     return (
@@ -1361,7 +1514,7 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
 
                     <div style={{ display: 'grid', gap: 8 }}>
                       {status.items.map(item => (
-                        <div key={item.userId} style={{ border: '1px solid #e5e7eb', borderRadius: 12, padding: '12px 14px', display: 'grid', gap: 8, background: '#fff' }}>
+                        <div key={item.userId} style={{ border: '1px solid #e2e8f0', borderRadius: 16, padding: '14px 14px 12px', display: 'grid', gap: 10, background: 'linear-gradient(180deg,#ffffff,#fbfdff)' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                             <strong>{item.name}</strong>
                             <span style={{ color: '#6b7280', fontSize: 13 }}>{item.role}</span>
@@ -1396,6 +1549,7 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
                 })()}
               </>
             )}
+            </div>
           </div>
         </div>
       )}
@@ -1448,6 +1602,18 @@ const countChip: React.CSSProperties = {
   color: '#3730a3',
   fontSize: 12,
   fontWeight: 700,
+};
+
+const softMetaChip: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  padding: '4px 8px',
+  borderRadius: 999,
+  background: '#f8fafc',
+  color: '#475569',
+  fontSize: 12,
+  fontWeight: 700,
+  border: '1px solid #e2e8f0',
 };
 
 const minorChip: React.CSSProperties = {
