@@ -5277,7 +5277,7 @@ export default function PlanneringPage() {
         {(sidebarCollapsed || isNarrow) ? null : (
           <div style={{
             display: 'grid',
-            gap: 16,
+            gap: 14,
             position: 'sticky',
             top: 75,
             alignSelf: 'start',
@@ -5286,14 +5286,18 @@ export default function PlanneringPage() {
             paddingRight: 4
           }}>
             {/* Search & manual add */}
-            <div style={{ display: 'grid', gap: 10 }}>
+            <div style={{ display: 'grid', gap: 10, padding: 12, border: '1px solid #dbe4ef', borderRadius: 14, background: 'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)', boxShadow: '0 10px 24px rgba(15,23,42,0.05)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                <strong style={{ fontSize: 13, color: '#0f172a' }}>Projektpanel</strong>
+                <span style={{ fontSize: 10, color: '#64748b', background: '#f8fafc', border: '1px solid #e2e8f0', padding: '3px 8px', borderRadius: 999 }}>Sök och lägg till</span>
+              </div>
               <form onSubmit={searchByOrderNumber} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                 <input value={searchOrder} onChange={e => setSearchOrder(e.target.value)} placeholder="Sök ordernummer..." style={{ flex: 1, border: '1px solid #d1d5db', borderRadius: 6, padding: '6px 8px', fontSize: 13 }} />
                 <button type="submit" disabled={!searchOrder.trim() || searchLoading} className="btn--plain btn--xs" style={{ border: '1px solid #d1d5db', borderRadius: 6, padding: '5px 10px', background: '#fff' }}>{searchLoading ? 'Söker…' : 'Sök'}</button>
                 {searchOrder && !searchLoading && <button type="button" className="btn--plain btn--xs" style={{ fontSize: 11 }} onClick={() => { setSearchOrder(''); setSearchError(null); }}>Rensa</button>}
               </form>
               {searchError && <div style={{ fontSize: 11, color: '#b91c1c' }}>{searchError}</div>}
-              <div style={{ padding: 10, border: '1px solid #e2e8f0', borderRadius: 8, background: '#f8fafc', display: 'grid', gap: 8 }}>
+              <div style={{ padding: 10, border: '1px solid #e2e8f0', borderRadius: 12, background: '#f8fafc', display: 'grid', gap: 8 }}>
                 <strong style={{ fontSize: 13, color: '#1e293b' }}>Lägg till manuellt</strong>
                 <form onSubmit={addManualProject} style={{ display: 'grid', gap: 6 }}>
                   <div style={{ display: 'flex', gap: 6 }}>
@@ -5311,7 +5315,7 @@ export default function PlanneringPage() {
             </div>
 
             {searchedProjects.length > 0 && (
-              <div style={{ display: 'grid', gap: 8 }}>
+              <div style={{ display: 'grid', gap: 8, padding: 12, border: '1px solid #dbe4ef', borderRadius: 14, background: '#ffffff', boxShadow: '0 8px 20px rgba(15,23,42,0.04)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <h2 style={{ fontSize: 14, margin: 0 }}>Sökresultat</h2>
                   <button type="button" className="btn--plain btn--xs" style={{ fontSize: 11 }} onClick={() => setRecentSearchedIds([])}>Rensa</button>
@@ -5350,7 +5354,7 @@ export default function PlanneringPage() {
               style={{
                 padding: 12,
                 border: holdDropActive ? '2px solid #f59e0b' : '2px dashed #f59e0b',
-                borderRadius: 10,
+                borderRadius: 14,
                 background: holdDropActive ? 'linear-gradient(135deg, #fef3c7, #ffffff)' : 'linear-gradient(135deg, #fffbeb, #ffffff)',
                 boxShadow: holdDropActive ? '0 0 0 4px rgba(245, 158, 11, 0.22), 0 12px 30px rgba(245, 158, 11, 0.18)' : '0 10px 22px rgba(245, 158, 11, 0.10)',
                 display: 'grid',
@@ -5434,7 +5438,7 @@ export default function PlanneringPage() {
               )}
             </div>
 
-            <div style={{ display: 'grid', gap: 8 }}>
+            <div style={{ display: 'grid', gap: 8, padding: 12, border: '1px solid #dbe4ef', borderRadius: 14, background: '#ffffff', boxShadow: '0 8px 20px rgba(15,23,42,0.04)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <h2 style={{ fontSize: 15, margin: 0 }}>Projekt</h2>
                 <button className="btn--sm btn--primary" onClick={() => refreshInitialProjects(10)} disabled={projectsRefreshLoading} title="Uppdatera projekt">
@@ -5524,17 +5528,28 @@ export default function PlanneringPage() {
             realtimePaused={realtimePaused}
             realtimeStatus={realtimeStatus}
           />
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <button
-              type="button"
-              className="btn--plain btn--sm"
-              onClick={() => setShowActivity(v => !v)}
-              style={{ border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 10px', fontSize: 12 }}
-            >{showActivity ? 'Dölj aktivitetslogg' : 'Visa aktivitetslogg'}</button>
+          <div style={{ display: 'grid', gap: 10, padding: '10px 12px', border: '1px solid #dbe4ef', borderRadius: 14, background: '#ffffff', boxShadow: '0 8px 22px rgba(15,23,42,0.04)' }}>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap' }}>
+              <div style={{ display: 'grid', gap: 2 }}>
+                <strong style={{ fontSize: 13, color: '#0f172a' }}>Planeringsverktyg</strong>
+                <span style={{ fontSize: 11, color: '#64748b' }}>Aktivitetslogg, lagstatus och snabbfilter samlade ovanför kalendern.</span>
+              </div>
+              <button
+                type="button"
+                className="btn--plain btn--sm"
+                onClick={() => setShowActivity(v => !v)}
+                style={{ border: '1px solid #d1d5db', borderRadius: 10, padding: '6px 10px', fontSize: 12, background: showActivity ? '#eef2ff' : '#fff', color: showActivity ? '#312e81' : '#111827', fontWeight: 600 }}
+              >{showActivity ? 'Dölj aktivitetslogg' : 'Visa aktivitetslogg'}</button>
+            </div>
           </div>
           {/* Modal for activity log */}
           <ActivityLogModal open={showActivity} onClose={() => setShowActivity(false)} startISO={currentMonthRange.startISO} endISO={currentMonthRange.endISO} projectOrderMap={projectOrderMap} />
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', fontSize: 11, alignItems: 'stretch' }}>
+          <div style={{ display: 'grid', gap: 8, padding: '9px 12px', border: '1px solid #dbe4ef', borderRadius: 14, background: 'linear-gradient(180deg, #ffffff 0%, #fbfdff 100%)', boxShadow: '0 8px 22px rgba(15,23,42,0.04)' }}>
+            <div style={{ display: 'grid', gap: 2 }}>
+              <strong style={{ fontSize: 13, color: '#0f172a' }}>Lag och lastbilar</strong>
+              <span style={{ fontSize: 11, color: '#64748b' }}>Se bemanning, depåkoppling och snabb info utan att öppna adminläget.</span>
+            </div>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', fontSize: 11, alignItems: 'stretch' }}>
             {trucks.map(tName => {
               const tRec = planningTrucks.find(pt => pt.name === tName);
               const c = truckColors[tName];
@@ -5543,10 +5558,10 @@ export default function PlanneringPage() {
                 // For legacy/default trucks without DB record, render compact only
                 return (
                   <div key={tName}
-                    style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 10px', border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff', minWidth: 170 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ width: 16, height: 16, background: c.bg, border: `3px solid ${c.border}`, borderRadius: 6 }} />
-                      <span style={{ fontWeight: 700, color: c.text }}>{tName}</span>
+                    style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 9px', border: '1px solid #e2e8f0', borderRadius: 12, background: '#fff', minWidth: 148, boxShadow: '0 2px 8px rgba(15,23,42,0.03)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ width: 12, height: 12, background: c.bg, border: `2px solid ${c.border}`, borderRadius: 4, flex: '0 0 auto' }} />
+                      <span style={{ fontWeight: 700, color: c.text, fontSize: 11, lineHeight: 1.2 }}>{tName}</span>
                     </div>
                   </div>
                 );
@@ -5570,34 +5585,32 @@ export default function PlanneringPage() {
                   onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setExpandedTrucks(prev => ({ ...prev, [tName]: !prev[tName] })); } }}
                   style={{
                     display: 'flex', flexDirection: 'column', gap: 4,
-                    padding: '8px 10px',
-                    border: `1px solid ${isOpen ? '#cbd5e1' : '#e5e7eb'}`,
-                    borderRadius: 10,
-                    background: '#fff',
-                    minWidth: 180,
-                    boxShadow: isOpen ? '0 6px 16px rgba(2,6,23,0.06)' : 'none',
-                    transition: 'box-shadow 150ms ease, border-color 150ms ease'
+                    padding: isOpen ? '8px 10px' : '6px 9px',
+                    border: `1px solid ${isOpen ? '#bfdbfe' : '#e2e8f0'}`,
+                    borderRadius: 12,
+                    background: isOpen ? 'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)' : '#fff',
+                    minWidth: isOpen ? 185 : 148,
+                    boxShadow: isOpen ? '0 8px 18px rgba(2,6,23,0.08)' : '0 2px 8px rgba(15,23,42,0.03)',
+                    transition: 'box-shadow 150ms ease, border-color 150ms ease, min-width 150ms ease, background 150ms ease'
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ width: 16, height: 16, background: c.bg, border: `3px solid ${c.border}`, borderRadius: 6 }} />
-                    <span style={{ fontWeight: 700, color: c.text }}>{tName}</span>
-                    <span aria-hidden style={{ marginLeft: 'auto', fontSize: 12, color: '#64748b' }}>{isOpen ? '▲' : '▼'}</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                    <span style={{ width: 12, height: 12, background: c.bg, border: `2px solid ${c.border}`, borderRadius: 4, flex: '0 0 auto' }} />
+                    <span style={{ fontWeight: 700, color: c.text, fontSize: 11, lineHeight: 1.2, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tName}</span>
+                    <span aria-hidden style={{ marginLeft: 'auto', fontSize: 10, color: '#64748b', flex: '0 0 auto' }}>{isOpen ? '▲' : '▼'}</span>
                   </div>
                   <div aria-hidden={!isOpen} style={{
                     overflow: 'hidden',
-                    maxHeight: isOpen ? 200 : 0,
+                    maxHeight: isOpen ? 160 : 0,
                     opacity: isOpen ? 1 : 0,
                     transition: 'max-height 200ms ease, opacity 150ms ease',
-                    display: 'grid', gap: 6, paddingTop: isOpen ? 6 : 0
+                    display: 'grid', gap: 5, paddingTop: isOpen ? 5 : 0
                   }}>
-                    <div style={{ fontSize: 12, color: '#475569' }}>
-                      <span style={{ fontWeight: 600, color: '#374151' }}>Team: </span>
-                      {teamNames || 'Ej tilldelad'}
+                    <div style={{ fontSize: 11, color: '#475569', lineHeight: 1.35 }}>
+                      <span style={{ fontWeight: 600, color: '#374151' }}>Team:</span> {teamNames || 'Ej tilldelad'}
                     </div>
-                    <div style={{ fontSize: 12, color: '#475569' }}>
-                      <span style={{ fontWeight: 600, color: '#374151' }}>Depå: </span>
-                      {depotName}
+                    <div style={{ fontSize: 11, color: '#475569', lineHeight: 1.35 }}>
+                      <span style={{ fontWeight: 600, color: '#374151' }}>Depå:</span> {depotName}
                     </div>
                   </div>
                 </div>
@@ -5624,6 +5637,7 @@ export default function PlanneringPage() {
                 </form>
               </div>
             )}
+            </div>
           </div>
           {/* Depå overview + Leveranser as cards */}
           {(depots.length > 0 || upcomingDeliveriesForView.length > 0) && (
@@ -5705,34 +5719,46 @@ export default function PlanneringPage() {
           {/* (Removed duplicate corrupt admin depot panel block) */}
 
           {/* Filters below truck cards */}
-          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center', padding: '8px 10px', border: '1px solid #e5e7eb', borderRadius: 10, background: '#ffffff' }}>
-            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-              <label style={{ fontSize: 12, color: '#374151', display: 'inline-block', width: 'auto' }}>Sök i kalender:</label>
-              <input value={calendarSearch} onChange={e => setCalendarSearch(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); if (calendarMatchDays.length > 0) navigateToMatch((matchIndex + 1) % calendarMatchDays.length); } }} style={{ width: 190, border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 6px', fontSize: 12 }} placeholder="#1234 eller namn" />
-              {calendarSearch && <button type="button" className="btn--plain btn--xs" style={{ fontSize: 11 }} onClick={() => setCalendarSearch('')}>X</button>}
-              <button type="button" className="btn--plain btn--xs" disabled={!firstCalendarMatchDay} onClick={jumpToFirstMatch} style={{ fontSize: 11, border: '1px solid #d1d5db', borderRadius: 6, padding: '2px 8px', background: firstCalendarMatchDay ? '#fff' : '#f3f4f6', opacity: firstCalendarMatchDay ? 1 : 0.5 }}>Hoppa</button>
+          <div style={{ display: 'grid', gap: 10, padding: '10px 12px 12px', border: '1px solid #dbe4ef', borderRadius: 14, background: '#ffffff', boxShadow: '0 8px 22px rgba(15,23,42,0.04)' }}>
+            <div style={{ display: 'grid', gap: 2 }}>
+              <strong style={{ fontSize: 13, color: '#0f172a' }}>Kalenderfilter</strong>
+              <span style={{ fontSize: 11, color: '#64748b' }}>Sök först och smalna sedan av kalendern med vecka, lastbil och sälj.</span>
             </div>
-            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-              <label style={{ fontSize: 12, color: '#374151', display: 'inline-block', width: 'auto' }}>Visa vecka:</label>
-              <select value={selectedWeekKey} onChange={e => setSelectedWeekKey(e.target.value)} style={{ width: 200, fontSize: 12, padding: '4px 6px', border: '1px solid #d1d5db', borderRadius: 6, background: '#fff' }}>
+            <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'minmax(260px, 1.35fr) repeat(3, minmax(170px, 1fr))', alignItems: 'stretch' }}>
+            <div style={{ display: 'grid', gap: 7, alignItems: 'center', padding: '10px 11px', border: '1px solid #e2e8f0', borderRadius: 12, background: '#fbfdff' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+                <label style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.2, textTransform: 'uppercase', color: '#475569', display: 'inline-block', width: 'auto' }}>Sök i kalender</label>
+                {calendarSearch ? <span style={{ fontSize: 10, color: '#0f766e', background: '#ecfeff', border: '1px solid #99f6e4', padding: '2px 7px', borderRadius: 999 }}>Aktivt filter</span> : <span style={{ fontSize: 10, color: '#64748b' }}>Order eller namn</span>}
+              </div>
+              <input value={calendarSearch} onChange={e => setCalendarSearch(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); if (calendarMatchDays.length > 0) navigateToMatch((matchIndex + 1) % calendarMatchDays.length); } }} style={{ width: '100%', border: '1px solid #cbd5e1', borderRadius: 9, padding: '8px 10px', fontSize: 12, background: '#fff' }} placeholder="#1234 eller namn" />
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                {calendarSearch && <button type="button" className="btn--plain btn--xs" style={{ fontSize: 11 }} onClick={() => setCalendarSearch('')}>Rensa</button>}
+                <button type="button" className="btn--plain btn--xs" disabled={!firstCalendarMatchDay} onClick={jumpToFirstMatch} style={{ fontSize: 11, border: '1px solid #d1d5db', borderRadius: 8, padding: '4px 8px', background: firstCalendarMatchDay ? '#fff' : '#f3f4f6', opacity: firstCalendarMatchDay ? 1 : 0.5 }}>Hoppa till träff</button>
+              </div>
+            </div>
+            <div style={{ display: 'grid', gap: 7, alignItems: 'center', padding: '10px 11px', border: '1px solid #e2e8f0', borderRadius: 12, background: '#fbfdff' }}>
+              <label style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.2, textTransform: 'uppercase', color: '#475569', display: 'inline-block', width: 'auto' }}>Vecka</label>
+              <select value={selectedWeekKey} onChange={e => setSelectedWeekKey(e.target.value)} style={{ width: '100%', fontSize: 12, padding: '8px 10px', border: '1px solid #cbd5e1', borderRadius: 9, background: '#fff' }}>
                 <option value="">Alla veckor</option>
                 {weekOptions.map(o => (
                   <option key={o.key} value={o.key}>{o.label}</option>
                 ))}
               </select>
-              {selectedWeekKey && <button type="button" className="btn--plain btn--xs" style={{ fontSize: 11 }} onClick={() => setSelectedWeekKey('')}>Rensa</button>}
+              <div style={{ minHeight: 22, display: 'flex', alignItems: 'center' }}>
+                {selectedWeekKey ? <button type="button" className="btn--plain btn--xs" style={{ fontSize: 11 }} onClick={() => setSelectedWeekKey('')}>Rensa veckofilter</button> : <span style={{ fontSize: 10, color: '#64748b' }}>Visar alla veckor</span>}
+              </div>
             </div>
-            <div style={{ display: 'flex', gap: 6, alignItems: 'center', position: 'relative' }} ref={truckFilterRef}>
-              <label style={{ fontSize: 12, color: '#374151' }}>Lastbil(er):</label>
+            <div style={{ display: 'grid', gap: 7, alignItems: 'center', position: 'relative', padding: '10px 11px', border: '1px solid #e2e8f0', borderRadius: 12, background: '#fbfdff' }} ref={truckFilterRef}>
+              <label style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.2, textTransform: 'uppercase', color: '#475569' }}>Lastbil(er)</label>
               <button type="button" onClick={() => setTruckFilterOpen(o => !o)} aria-haspopup="true" aria-expanded={truckFilterOpen}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, padding: '4px 6px', border: '1px solid #d1d5db', borderRadius: 6, background: '#fff', cursor: 'pointer', minWidth: 200 }}>
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, padding: '8px 10px', border: '1px solid #cbd5e1', borderRadius: 9, background: '#fff', cursor: 'pointer', width: '100%', minWidth: 0 }}>
                 {(!allSelected && truckFilters.length === 1) && (() => { const t = truckFilters[0]; const swc = t === 'UNASSIGNED' ? '#94a3b8' : (truckColors[t]?.border || '#94a3b8'); const sw: React.CSSProperties = { width: 12, height: 12, borderRadius: 4, border: `2px solid ${swc}`, background: '#fff' }; return <span aria-hidden style={sw} />; })()}
-                <span style={{ fontWeight: 600, color: '#111827' }}>{summaryLabel}</span>
+                <span style={{ fontWeight: 600, color: '#111827', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{summaryLabel}</span>
                 <span style={{ fontSize: 10, color: '#64748b' }}>{truckFilterOpen ? '▲' : '▼'}</span>
               </button>
-              {truckFilters.length > 0 && (
-                <button type="button" className="btn--plain btn--xs" onClick={() => setTruckFilters([])} style={{ fontSize: 11 }}>Rensa</button>
-              )}
+              <div style={{ minHeight: 22, display: 'flex', alignItems: 'center' }}>
+                {truckFilters.length > 0 ? <button type="button" className="btn--plain btn--xs" onClick={() => setTruckFilters([])} style={{ fontSize: 11, width: 'fit-content' }}>Rensa lastbilar</button> : <span style={{ fontSize: 10, color: '#64748b' }}>Alla lag syns</span>}
+              </div>
               {truckFilterOpen && (
                 <div role="menu" aria-label="Välj lastbilar" style={{ position: 'absolute', top: '100%', left: 0, marginTop: 6, zIndex: 50, minWidth: 240, background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 10, boxShadow: '0 6px 16px rgba(0,0,0,0.18)', padding: 8, display: 'grid', gap: 6 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #f1f5f9', paddingBottom: 4 }}>
@@ -5762,14 +5788,17 @@ export default function PlanneringPage() {
                 </div>
               )}
             </div>
-            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-              <label style={{ fontSize: 12, color: '#374151', display: 'inline-block', width: 'auto' }}>Sälj:</label>
-              <select value={salesFilter} onChange={e => setSalesFilter(e.target.value)} style={{ width: 190, fontSize: 12, padding: '4px 6px', border: '1px solid #d1d5db', borderRadius: 6, background: '#fff' }}>
+            <div style={{ display: 'grid', gap: 7, alignItems: 'center', padding: '10px 11px', border: '1px solid #e2e8f0', borderRadius: 12, background: '#fbfdff' }}>
+              <label style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.2, textTransform: 'uppercase', color: '#475569', display: 'inline-block', width: 'auto' }}>Sälj</label>
+              <select value={salesFilter} onChange={e => setSalesFilter(e.target.value)} style={{ width: '100%', fontSize: 12, padding: '8px 10px', border: '1px solid #cbd5e1', borderRadius: 9, background: '#fff' }}>
                 <option value="">Alla</option>
                 <option value="__NONE__">(Ingen)</option>
                 {distinctSales.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
-              {salesFilter && <button type="button" className="btn--plain btn--xs" style={{ fontSize: 11 }} onClick={() => setSalesFilter('')}>Rensa</button>}
+              <div style={{ minHeight: 22, display: 'flex', alignItems: 'center' }}>
+                {salesFilter ? <button type="button" className="btn--plain btn--xs" style={{ fontSize: 11 }} onClick={() => setSalesFilter('')}>Rensa säljfilter</button> : <span style={{ fontSize: 10, color: '#64748b' }}>Alla säljansvariga</span>}
+              </div>
+            </div>
             </div>
           </div>
 

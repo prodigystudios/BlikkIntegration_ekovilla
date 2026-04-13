@@ -411,9 +411,9 @@ export default function CalendarDayList(props: CalendarDayListProps) {
                               )}
                               <span style={{ fontWeight: 600, color: isDelivery ? (isDeliveryOutbound ? '#3a2200' : '#18065fff') : (display ? display.text : '#312e81'), display: 'flex', alignItems: 'center', columnGap: 6, rowGap: 2, flexWrap: 'wrap' }}>
                                 {it.project.orderNumber ? (
-                                  <span style={{ fontFamily: 'ui-monospace, monospace', background: '#ffffff', color: display ? display.text : '#312e81', border: `1px solid ${cardBorder}`, padding: '1px 4px', borderRadius: 4, whiteSpace: 'nowrap' }} title="Ordernummer">#{it.project.orderNumber}</span>
+                                  <span style={{ fontFamily: 'ui-monospace, monospace', background: '#ffffffd9', color: display ? display.text : '#312e81', border: `1px solid ${cardBorder}`, padding: '2px 6px', borderRadius: 999, whiteSpace: 'nowrap', fontSize: 9 }} title="Ordernummer">#{it.project.orderNumber}</span>
                                 ) : null}
-                                <span title={it.project.name} style={{ color: isDelivery ? '#ffffffff' : (display ? display.text : '#312e81'), fontWeight: 600, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>{it.project.name}</span>
+                                <span title={it.project.name} style={{ color: isDelivery ? '#ffffffff' : (display ? display.text : '#312e81'), fontWeight: 700, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>{it.project.name}</span>
                                 {isDelivery && (
                                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                                     <span style={{ fontSize: 9, background: isDeliveryOutbound ? '#b45309' : '#15803d', color: '#fff', padding: '2px 6px', borderRadius: 6, fontWeight: 600 }}>
@@ -427,7 +427,7 @@ export default function CalendarDayList(props: CalendarDayListProps) {
                               </span>
                               {/* Show project address for normal segments and outgoing deliveries */}
                               {(!isDelivery || isDeliveryOutbound) && isStart && projectAddresses[it.project.id] && (
-                                <span style={{ fontSize: 9, color: '#64748b' }}>
+                                <span style={{ fontSize: 9, color: '#64748b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={projectAddresses[it.project.id]}>
                                   {projectAddresses[it.project.id]}
                                 </span>
                               )}
@@ -440,7 +440,7 @@ export default function CalendarDayList(props: CalendarDayListProps) {
                               )}
                               {/* Show customer for normal segments and outgoing deliveries */}
                               {(!isDelivery || isDeliveryOutbound) && isStart && (
-                                <span style={{ color: display ? display.text : '#6366f1' }}>{it.project.customer}</span>
+                                <span style={{ color: display ? display.text : '#6366f1', fontSize: 9.5, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={it.project.customer}>{it.project.customer}</span>
                               )}
                               {/* Show project status for normal segments and outgoing deliveries */}
                               {(!isDelivery || isDeliveryOutbound) && isStart && projectStatuses && projectStatuses[it.project.id] && (() => {
@@ -456,10 +456,10 @@ export default function CalendarDayList(props: CalendarDayListProps) {
                                 }
                                 return (
                                   <span>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 2px'}}>
-                                      <span style={{ fontSize: 9, color: textColor, background: bg, padding: '4px 6px', borderRadius: 6, border: `1px solid ${border}` }}> {projectStatuses[it.project.id]}</span>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', paddingTop: 2 }}>
+                                      <span style={{ fontSize: 8.5, color: textColor, background: bg, padding: '3px 7px', borderRadius: 999, border: `1px solid ${border}`, fontWeight: 700 }}>{projectStatuses[it.project.id]}</span>
                                       {!isDelivery && isStart && hasEgenkontroll(it.project.orderNumber) && (
-                                        <span title="Egenkontroll rapporterad" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 9, background: '#ecfdf5', color: '#047857', padding: '4px 6px', borderRadius: 6, border: '1px solid #6ee7b7' }}>
+                                        <span title="Egenkontroll rapporterad" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 8.5, background: '#ecfdf5', color: '#047857', padding: '3px 7px', borderRadius: 999, border: '1px solid #6ee7b7', fontWeight: 600 }}>
                                           <span style={{ display: 'inline-grid', placeItems: 'center', width: 10, height: 10, borderRadius: 999, background: '#059669', color: '#fff', fontSize: 8, fontWeight: 800 }}>✓</span>
                                           Egenkontroll
                                         </span>
@@ -469,12 +469,12 @@ export default function CalendarDayList(props: CalendarDayListProps) {
                                 );
                               })()}
                                   {!isDelivery && isStart && segmentCrew[it.segmentId] && segmentCrew[it.segmentId].length > 0 && (
-                                    <span style={{ fontSize: 9, color: display ? display.text : '#334155', background: '#ffffff50', padding: '1px 5px', borderRadius: 10, border: `1px solid ${cardBorder}55` }} title={`Team: ${segmentCrew[it.segmentId].map(m => m.name).join(', ')}`}>
+                                    <span style={{ fontSize: 8.5, color: display ? display.text : '#334155', background: '#ffffff50', padding: '2px 7px', borderRadius: 999, border: `1px solid ${cardBorder}44` }} title={`Team: ${segmentCrew[it.segmentId].map(m => m.name).join(', ')}`}>
                                       Team: {segmentCrew[it.segmentId].map(m => m.name).join(', ')}
                                     </span>
                                   )}
                               {!isDelivery && (it.bagCount != null || it.jobType) && (
-                                <span style={{ fontSize: 11, color: display ? display.text : '#374151' }}>
+                                <span style={{ fontSize: 9.5, color: display ? display.text : '#374151', background: '#ffffff40', padding: '2px 7px', borderRadius: 999, border: `1px solid ${cardBorder}44`, width: 'fit-content' }}>
                                   <BagUsageText
                                     status={bagUsageStatusByProject?.get(it.project.id)}
                                     plan={it.bagCount}
@@ -485,19 +485,21 @@ export default function CalendarDayList(props: CalendarDayListProps) {
                                 </span>
                               )}
                               {!isDelivery && isStart && scheduleMeta[it.project.id]?.actual_bags_used != null && (
-                                <span style={{ fontSize: 9, color: display ? display.text : '#1e293b', background: '#ffffff50', padding: '2px 5px', borderRadius: 10, border: `1px solid ${cardBorder}55` }} title={`Rapporterat: ${scheduleMeta[it.project.id]?.actual_bags_used} säckar`}>
+                                <span style={{ fontSize: 8.5, color: display ? display.text : '#1e293b', background: '#ffffff40', padding: '2px 7px', borderRadius: 999, border: `1px solid ${cardBorder}44`, width: 'fit-content' }} title={`Rapporterat: ${scheduleMeta[it.project.id]?.actual_bags_used} säckar`}>
                                   säckar blåsta {scheduleMeta[it.project.id]!.actual_bags_used} st
                                 </span>
                               )}
                               {!isDelivery && (
-                                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginTop: 4 }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                                  <span style={{ fontSize: 8.5, color: display ? display.text : '#64748b', opacity: 0.88 }}>{it.truck || 'Ej tilldelad'}</span>
+                                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                                   {isStart && (
                                     <button
                                       type="button"
                                       onClick={(e) => { e.stopPropagation(); pauseSegmentToHold(it.segmentId); }}
                                       className="btn--plain btn--xs"
                                       title="Pausa (flytta till Pausade jobb)"
-                                      style={{ fontSize: 9, background: '#fff7ed', border: '1px solid #fdba74', color: '#9a3412', borderRadius: 4, padding: '1px 6px', textTransform: 'none' }}
+                                      style={{ fontSize: 8.5, background: '#fff7ed', border: '1px solid #fdba74', color: '#9a3412', borderRadius: 999, padding: '2px 7px', textTransform: 'none' }}
                                     >
                                       Pausa
                                     </button>
@@ -507,10 +509,11 @@ export default function CalendarDayList(props: CalendarDayListProps) {
                                     onClick={(e) => { e.stopPropagation(); setSelectedProjectId(it.project.id); }}
                                     className="btn--plain btn--xs"
                                     title="Lägg till ny separat dag"
-                                    style={{ fontSize: 9, background: '#ecfdf5', border: '1px solid #6ee7b7', color: '#047857', borderRadius: 4, padding: '1px 4px', textTransform: 'none' }}
+                                    style={{ fontSize: 8.5, background: '#ecfdf5', border: '1px solid #6ee7b7', color: '#047857', borderRadius: 999, padding: '2px 7px', textTransform: 'none', fontWeight: 600 }}
                                   >
                                     Lägg till dag
                                   </button>
+                                  </div>
                                 </div>
                               )}
                               {!isDelivery && isStart && rowCreatorLabel(it.segmentId) && (

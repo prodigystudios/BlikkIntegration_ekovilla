@@ -276,23 +276,24 @@ export default function CalendarMonthGrid(props: CalendarMonthGridProps) {
                           style={{
                             position: 'relative',
                             border: `1px solid ${highlight ? '#f59e0b' : (hoveredSegmentId === it.segmentId ? '#6366f1' : cardBorder)}`,
+                            borderLeft: `4px solid ${cardBorder}`,
                             background: cardBg,
-                            borderRadius: 6,
-                            padding: 5,
+                            borderRadius: 10,
+                            padding: 7,
                             fontSize: 11,
-                            lineHeight: 1.15,
+                            lineHeight: 1.2,
                             cursor: (readOnly || isDelivery) ? 'default' : 'grab',
                             display: 'grid',
-                            gap: 4,
+                            gap: 5,
                             opacity: isMid ? 0.95 : 1,
                             boxShadow: highlight
                               ? '0 0 0 3px rgba(245,158,11,0.35)'
-                              : (hoveredSegmentId === it.segmentId ? '0 0 0 3px rgba(99,102,241,0.35)' : 'none'),
-                            transition: 'border-color .15s, box-shadow .15s'
+                              : (hoveredSegmentId === it.segmentId ? '0 0 0 3px rgba(99,102,241,0.22), 0 10px 18px rgba(15,23,42,0.08)' : '0 2px 6px rgba(15,23,42,0.04)'),
+                            transition: 'border-color .15s, box-shadow .15s, transform .15s'
                           }}
                         >
                           {orderBadge && (
-                            <span style={{ position: 'absolute', top: 4, right: 4, background: '#f5f4f4ff', color: '#000000ff', fontSize: 12, padding: '3px 6px', borderRadius: 8, border: '1px solid #33415553' }} title="Placering i dag/lastbil">
+                            <span style={{ position: 'absolute', top: 6, right: 6, background: '#ffffffd9', color: '#0f172a', fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 999, border: '1px solid #cbd5e1' }} title="Placering i dag/lastbil">
                               {orderBadge}
                             </span>
                           )}
@@ -300,12 +301,12 @@ export default function CalendarMonthGrid(props: CalendarMonthGridProps) {
                             <span style={{ position: 'absolute', top: -8, right: 4, background: '#6366f1', color: '#fff', fontSize: 9, padding: '2px 6px', borderRadius: 8, boxShadow: '0 2px 4px rgba(0,0,0,0.15)' }}>Redigera</span>
                           )}
                           {/* Inline Egenkontroll indicator moved next to title below */}
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                             <span style={{ fontWeight: 600, color: isDelivery ? (isDeliveryOutbound ? '#3a2200' : '#18065fff') : (display ? display.text : '#312e81'), display: 'flex', alignItems: 'center', columnGap: 6, rowGap: 2, flexWrap: 'wrap' }}>
                               {it.project.orderNumber ? (
-                                <span style={{ fontFamily: 'ui-monospace, monospace', background: '#ffffff', color: display ? display.text : '#312e81', border: `1px solid ${cardBorder}`, padding: '1px 4px', borderRadius: 4, whiteSpace: 'nowrap' }} title="Ordernummer">#{it.project.orderNumber}</span>
+                                <span style={{ fontFamily: 'ui-monospace, monospace', background: '#ffffffd9', color: display ? display.text : '#312e81', border: `1px solid ${cardBorder}`, padding: '2px 6px', borderRadius: 999, whiteSpace: 'nowrap', fontSize: 10 }} title="Ordernummer">#{it.project.orderNumber}</span>
                               ) : null}
-                              <span title={it.project.name} style={{ color: isDelivery ? '#ffffffff' : (display ? display.text : '#312e81'), fontWeight: 600, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>{it.project.name}</span>
+                              <span title={it.project.name} style={{ color: isDelivery ? '#ffffffff' : (display ? display.text : '#312e81'), fontWeight: 700, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%', letterSpacing: '-0.01em' }}>{it.project.name}</span>
                               {isDelivery && (
                                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                                   <span style={{ fontSize: 9, background: isDeliveryOutbound ? '#b45309' : '#15803d', color: '#fff', padding: '2px 6px', borderRadius: 6, fontWeight: 600 }}>
@@ -320,7 +321,7 @@ export default function CalendarMonthGrid(props: CalendarMonthGridProps) {
                             </span>
                             {/* Show project address for normal segments and outgoing deliveries (Utleverans) */}
                             {(!isDelivery || isDeliveryOutbound) && isStart && projectAddresses[it.project.id] && (
-                              <span style={{ fontSize: 10, color: '#64748b' }}>
+                              <span style={{ fontSize: 10, color: '#64748b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={projectAddresses[it.project.id]}>
                                 {projectAddresses[it.project.id]}
                               </span>
                             )}
@@ -343,14 +344,14 @@ export default function CalendarMonthGrid(props: CalendarMonthGridProps) {
                                   names = segNames;
                                 }
                                 return names.length > 0 ? (
-                                  <span style={{ fontSize: 10, color: display ? display.text : '#334155', background: '#ffffff50', padding: '2px 6px', borderRadius: 10, border: `1px solid ${cardBorder}55` }} title={`Team: ${names.join(', ')}`}>
+                                  <span style={{ fontSize: 9, color: display ? display.text : '#334155', background: '#ffffff66', padding: '2px 7px', borderRadius: 999, border: `1px solid ${cardBorder}44` }} title={`Team: ${names.join(', ')}`}>
                                     Team: {names.join(', ')}
                                   </span>
                                 ) : null;
                               })()
                             )}
                             {/* Show customer for normal segments and outgoing deliveries */}
-                            {(!isDelivery || isDeliveryOutbound) && isStart && <span style={{ color: display ? display.text : '#6366f1' }}>{it.project.customer}</span>}
+                            {(!isDelivery || isDeliveryOutbound) && isStart && <span style={{ color: display ? display.text : '#6366f1', fontSize: 10.5, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={it.project.customer}>{it.project.customer}</span>}
                             {/* Show project status if available, with color badge */}
                             {(!isDelivery || isDeliveryOutbound) && isStart && projectStatuses && projectStatuses[it.project.id] && (() => {
                               const col = projectStatusColors?.[it.project.id];
@@ -365,10 +366,10 @@ export default function CalendarMonthGrid(props: CalendarMonthGridProps) {
                               }
                               return (
                                 <span>
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 2px'}}>
-                                    <span style={{ fontSize: 10, color: textColor, background: bg, padding: '4px 6px', borderRadius: 6, border: `2px solid ${border}` }}> {projectStatuses[it.project.id]}</span>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', paddingTop: 2 }}>
+                                    <span style={{ fontSize: 9, color: textColor, background: bg, padding: '3px 7px', borderRadius: 999, border: `1px solid ${border}`, fontWeight: 700 }}>{projectStatuses[it.project.id]}</span>
                                     {!isDelivery && isStart && hasEgenkontroll(it.project.orderNumber) && (
-                                      <span title="Egenkontroll rapporterad" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10, background: '#ecfdf5', color: '#047857', padding: '4px 6px', borderRadius: 6, border: '1px solid #6ee7b7' }}>
+                                      <span title="Egenkontroll rapporterad" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 9, background: '#ecfdf5', color: '#047857', padding: '3px 7px', borderRadius: 999, border: '1px solid #6ee7b7', fontWeight: 600 }}>
                                         <span style={{ display: 'inline-grid', placeItems: 'center', width: 12, height: 12, borderRadius: 999, background: '#059669', color: '#fff', fontSize: 9, fontWeight: 800 }}>✓</span>
                                         Egenkontroll
                                       </span>
@@ -377,9 +378,9 @@ export default function CalendarMonthGrid(props: CalendarMonthGridProps) {
                                 </span>
                               );
                             })()}
-                            {!isDelivery && isStart && it.project.salesResponsible && <span style={{ fontSize: 10, color: display ? display.text : '#334155', background: '#ffffff30', padding: '2px 6px', borderRadius: 12, border: `1px solid ${cardBorder}55` }}>Sälj: {it.project.salesResponsible}</span>}
+                            {!isDelivery && isStart && it.project.salesResponsible && <span style={{ fontSize: 9, color: display ? display.text : '#334155', background: '#ffffff40', padding: '2px 7px', borderRadius: 999, border: `1px solid ${cardBorder}44` }}>Sälj: {it.project.salesResponsible}</span>}
                             {!isDelivery && (it.bagCount != null || it.jobType) && (
-                              <span style={{ fontSize: 11, color: display ? display.text : '#374151' }}>
+                              <span style={{ fontSize: 10, color: display ? display.text : '#374151', background: '#ffffff40', padding: '2px 7px', borderRadius: 999, border: `1px solid ${cardBorder}44`, width: 'fit-content' }}>
                                 <BagUsageText
                                   status={bagUsageStatusByProject?.get(it.project.id)}
                                   plan={it.bagCount}
@@ -390,19 +391,21 @@ export default function CalendarMonthGrid(props: CalendarMonthGridProps) {
                               </span>
                             )}
                             {!isDelivery && isStart && scheduleMeta[it.project.id]?.actual_bags_used != null && (
-                              <span style={{ fontSize: 10, color: display ? display.text : '#1e293b', background: '#ffffff50', padding: '4px 6px', borderRadius: 10, border: `1px solid ${cardBorder}55` }} title={`Rapporterat: ${scheduleMeta[it.project.id]?.actual_bags_used} säckar`}>
+                              <span style={{ fontSize: 9, color: display ? display.text : '#1e293b', background: '#ffffff50', padding: '2px 7px', borderRadius: 999, border: `1px solid ${cardBorder}44`, width: 'fit-content' }} title={`Rapporterat: ${scheduleMeta[it.project.id]?.actual_bags_used} säckar`}>
                                 säckar blåsta {scheduleMeta[it.project.id]!.actual_bags_used} st
                               </span>
                             )}
                             {!isDelivery && (
-                              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 4 }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                                <span style={{ fontSize: 9, color: display ? display.text : '#64748b', opacity: 0.88 }}>{it.truck || 'Ej tilldelad'}</span>
+                                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                                 {isStart && (
                                   <button
                                     type="button"
                                     onClick={(e) => { e.stopPropagation(); pauseSegmentToHold(it.segmentId); }}
                                     className="btn--plain btn--xs"
                                     title="Pausa (flytta till Pausade jobb)"
-                                    style={{ fontSize: 10, background: '#fff7ed', border: '1px solid #fdba74', color: '#9a3412', borderRadius: 4, padding: '2px 6px', marginRight: 6 }}
+                                    style={{ fontSize: 9, background: '#fff7ed', border: '1px solid #fdba74', color: '#9a3412', borderRadius: 999, padding: '2px 7px', marginRight: 0 }}
                                   >
                                     Pausa
                                   </button>
@@ -412,10 +415,11 @@ export default function CalendarMonthGrid(props: CalendarMonthGridProps) {
                                   onClick={(e) => { e.stopPropagation(); setSelectedProjectId(it.project.id); }}
                                   className="btn--plain btn--xs"
                                   title="Lägg till ny separat dag"
-                                  style={{ fontSize: 10, background: '#ecfdf5', border: '1px solid #6ee7b7', color: '#047857', borderRadius: 4, padding: '2px 4px' }}
+                                  style={{ fontSize: 9, background: '#ecfdf5', border: '1px solid #6ee7b7', color: '#047857', borderRadius: 999, padding: '2px 7px', fontWeight: 600 }}
                                 >
                                   Lägg till dag
                                 </button>
+                                </div>
                               </div>
                             )}
                           </div>
