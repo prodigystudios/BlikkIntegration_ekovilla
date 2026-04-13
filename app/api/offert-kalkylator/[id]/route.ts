@@ -71,6 +71,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     if ('salesperson' in (body || {})) update.salesperson = typeof body?.salesperson === 'string' ? body.salesperson.trim() : '';
     if ('salespersonPhone' in (body || {})) update.salesperson_phone = typeof body?.salespersonPhone === 'string' ? body.salespersonPhone.trim() : '';
     if ('status' in (body || {})) update.status = typeof body?.status === 'string' ? body.status.trim() : '';
+    if ('internalNote' in (body || {})) update.internal_note = typeof body?.internalNote === 'string' ? body.internalNote.trim() : '';
     if ('nextMeetingDate' in (body || {})) {
       const nextMeetingDate = typeof body?.nextMeetingDate === 'string' ? body.nextMeetingDate.trim() : '';
       update.next_meeting_date = nextMeetingDate || null;
@@ -108,7 +109,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       .update(update)
       .eq('id', id)
       .eq('user_id', user.id)
-      .select('id, offert_number_year, offert_number_seq, name, address, city, phone, quote_date, salesperson, salesperson_phone, status, next_meeting_date, created_at, subtotal, total_before_rot, rot_amount, total_after_rot')
+      .select('id, offert_number_year, offert_number_seq, name, address, city, phone, quote_date, salesperson, salesperson_phone, status, next_meeting_date, internal_note, created_at, updated_at, subtotal, total_before_rot, rot_amount, total_after_rot')
       .single();
 
     if (error) throw error;

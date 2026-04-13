@@ -52,6 +52,7 @@ function SelectNumber({
       <span style={{ color: '#334155' }}>{suffix}</span>
       <select
         className="select-field"
+        style={selectFieldStyle}
         value={String(value)}
         disabled={disabled}
         onChange={(e) => onChange(toNum(e.target.value))}
@@ -63,6 +64,34 @@ function SelectNumber({
         ))}
       </select>
     </label>
+  );
+}
+
+function SectionCard({
+  title,
+  description,
+  children,
+  tone = 'default',
+}: {
+  title: string;
+  description?: string;
+  children: any;
+  tone?: 'default' | 'muted' | 'accent';
+}) {
+  const background = tone === 'accent'
+    ? 'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)'
+    : tone === 'muted'
+      ? 'linear-gradient(180deg, #fbfdff 0%, #f8fafc 100%)'
+      : '#ffffff';
+  const border = tone === 'accent' ? '#dbeafe' : '#e5e7eb';
+  return (
+    <section style={{ border: `1px solid ${border}`, borderRadius: 18, padding: 16, background, display: 'grid', gap: 12, boxShadow: '0 10px 24px rgba(15,23,42,0.04)' }}>
+      <div style={{ display: 'grid', gap: 4 }}>
+        <strong style={{ fontSize: 12, letterSpacing: 0.35, textTransform: 'uppercase', color: '#0f172a' }}>{title}</strong>
+        {description ? <span style={{ fontSize: 12, color: '#64748b' }}>{description}</span> : null}
+      </div>
+      {children}
+    </section>
   );
 }
 
@@ -116,6 +145,7 @@ function OffertKalkylatorInner() {
   const [customerSubmittedAt, setCustomerSubmittedAt] = useState<string | null>(null);
   const [loadingCustomerData, setLoadingCustomerData] = useState(false);
   const [customerResponse, setCustomerResponse] = useState<CustomerResponseRow | null>(null);
+  const [isNarrow, setIsNarrow] = useState(false);
 
   const lastAutoLoadedIdRef = useRef<string | null>(null);
 
@@ -360,23 +390,58 @@ function OffertKalkylatorInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams, router]);
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const media = window.matchMedia('(max-width: 940px)');
+    const update = () => setIsNarrow(media.matches);
+    update();
+    if (typeof media.addEventListener === 'function') {
+      media.addEventListener('change', update);
+      return () => media.removeEventListener('change', update);
+    }
+    media.addListener(update);
+    return () => media.removeListener(update);
+  }, []);
+
+  const customerStatusLabel = customerStatus === 'submitted'
+    ? 'Inskickat'
+    : customerStatus === 'pending'
+      ? 'Väntar på kund'
+      : customerStatus === 'revoked'
+        ? 'Ersatt av ny länk'
+        : 'Ingen länk';
+
   return (
-    <div style={{ padding: 16, maxWidth: 980, margin: '0 auto', display: 'grid', gap: 14 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
-        <div style={{ display: 'grid', gap: 4 }}>
-          <h1 style={{ margin: 0, fontSize: 18 }}>Offertkalkylator</h1>
-          <p style={{ margin: 0, fontSize: 12, color: '#64748b' }}>
-            Summerar valda rader, lägger på marginal och etableringskostnad, och räknar ROT.
-          </p>
+    <div style={{ padding: isNarrow ? 14 : 18, maxWidth: 1180, margin: '0 auto', display: 'grid', gap: 16 }}>
+      <div style={{ border: '1px solid #dbe4ef', borderRadius: 24, padding: isNarrow ? '16px 16px 14px' : '20px 22px 18px', background: 'linear-gradient(180deg, #ffffff 0%, #f7fbff 100%)', display: 'grid', gap: 14, boxShadow: '0 14px 36px rgba(15,23,42,0.05)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
+          <div style={{ display: 'grid', gap: 6, maxWidth: 760 }}>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+              <span style={heroEyebrowStyle}>Offertverktyg</span>
+              <span style={{ fontSize: 11, color: '#64748b' }}>{showActiveSummary ? 'Aktiv offert laddad' : 'Ny offert'}</span>
+            </div>
+            <h1 style={{ margin: 0, fontSize: isNarrow ? 28 : 34, lineHeight: 1.05, color: '#0f172a' }}>Offertkalkylator</h1>
+            <p style={{ margin: 0, fontSize: 14, color: '#475569', maxWidth: 760 }}>
+              Summerar valda rader, lägger på marginal och etableringskostnad och räknar ROT i en tydligare arbetsyta.
+            </p>
+          </div>
+          <Link className="btn--plain btn--sm" href="/offert/kalkylator/sparade" style={{ ...ghostLinkStyle, alignSelf: 'flex-start' }}>
+            Sparade offerter
+          </Link>
         </div>
-        <Link className="btn--plain btn--sm" href="/offert/kalkylator/sparade">
-          Sparade offerter
-        </Link>
+
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <span style={metaChipStyle}>Före ROT: {formatKr(totals.totalBeforeRot)}</span>
+          <span style={metaChipStyle}>Efter ROT: {formatKr(totals.totalAfterRot)}</span>
+          <span style={metaChipStyle}>Rader: {totals.lines.length}</span>
+          {activeOffertNumber ? <span style={metaChipStyle}>Offertnummer: {activeOffertNumber}</span> : null}
+        </div>
       </div>
 
-      <section style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: 12, background: '#ffffff', display: 'grid', gap: 10 }}>
-        <strong style={{ fontSize: 13 }}>BAS</strong>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isNarrow ? '1fr' : 'minmax(0, 1.05fr) minmax(340px, 0.95fr)', gap: 16, alignItems: 'start' }}>
+        <div style={{ display: 'grid', gap: 14 }}>
+          <SectionCard title="Bas" description="Grundpåslag som påverkar hela kalkylen." tone="accent">
+        <div style={{ display: 'grid', gridTemplateColumns: isNarrow ? '1fr' : 'repeat(2, minmax(0, 1fr))', gap: 12 }}>
           <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
             <span style={{ color: '#334155' }}>Etablering (kr)</span>
             <input
@@ -384,7 +449,7 @@ function OffertKalkylatorInner() {
               min={0}
               value={String(state.etableringKr)}
               onChange={(e) => setState((s) => ({ ...s, etableringKr: toNum(e.target.value) }))}
-              style={{ padding: '10px 12px', border: '1px solid #e5e7eb', borderRadius: 8 }}
+              style={textInputStyle}
             />
           </label>
           <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
@@ -394,21 +459,126 @@ function OffertKalkylatorInner() {
               min={0}
               value={String(state.marginalKr)}
               onChange={(e) => setState((s) => ({ ...s, marginalKr: toNum(e.target.value) }))}
-              style={{ padding: '10px 12px', border: '1px solid #e5e7eb', borderRadius: 8 }}
+              style={textInputStyle}
             />
           </label>
         </div>
-      </section>
+          </SectionCard>
+
+          <div style={{ display: 'grid', gridTemplateColumns: isNarrow ? '1fr' : 'repeat(2, minmax(0, 1fr))', gap: 14 }}>
+            <SectionCard title="Isolering" description="Yta och höjd för isoleringsjobb.">
+              <div style={{ display: 'grid', gridTemplateColumns: isNarrow ? '1fr' : 'repeat(2, minmax(0, 1fr))', gap: 12 }}>
+                <SelectNumber
+                  value={state.isoleringKvm}
+                  onChange={(n) => setState((s) => ({ ...s, isoleringKvm: n }))}
+                  max={400}
+                  suffix="kvm"
+                />
+                <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
+                  <span style={{ color: '#334155' }}>höjd cm</span>
+                  <select
+                    className="select-field"
+                    style={selectFieldStyle}
+                    value={state.isoleringHojd}
+                    onChange={(e) => setState((s) => ({ ...s, isoleringHojd: e.target.value as IsoleringHojd }))}
+                  >
+                    <option value="25-35">25–35</option>
+                    <option value="45-55">45–55</option>
+                  </select>
+                </label>
+              </div>
+            </SectionCard>
+
+            <SectionCard title="Landgång" description="Meter som ska byggas eller justeras.">
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 12, maxWidth: isNarrow ? '100%' : 260 }}>
+                <SelectNumber
+                  value={state.landgangM}
+                  onChange={(n) => setState((s) => ({ ...s, landgangM: n }))}
+                  max={100}
+                  suffix="m"
+                />
+              </div>
+            </SectionCard>
+
+            <SectionCard title="Mögelbehandling" description="Antal kvadratmeter som behandlas.">
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 12, maxWidth: isNarrow ? '100%' : 260 }}>
+                <SelectNumber
+                  value={state.mogelbehandlingKvm}
+                  onChange={(n) => setState((s) => ({ ...s, mogelbehandlingKvm: n }))}
+                  max={400}
+                  suffix="kvm"
+                />
+              </div>
+            </SectionCard>
+
+            <SectionCard title="Utsugning" description="Yta och höjd för utsugning.">
+              <div style={{ display: 'grid', gridTemplateColumns: isNarrow ? '1fr' : 'repeat(2, minmax(0, 1fr))', gap: 12 }}>
+                <SelectNumber
+                  value={state.utsugningKvm}
+                  onChange={(n) => setState((s) => ({ ...s, utsugningKvm: n }))}
+                  max={400}
+                  suffix="kvm"
+                />
+                <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
+                  <span style={{ color: '#334155' }}>höjd cm</span>
+                  <select
+                    className="select-field"
+                    style={selectFieldStyle}
+                    value={state.utsugningHojd}
+                    onChange={(e) => setState((s) => ({ ...s, utsugningHojd: e.target.value as UtsugningHojd }))}
+                  >
+                    <option value="20">20</option>
+                    <option value="21-40">21–40</option>
+                  </select>
+                </label>
+              </div>
+            </SectionCard>
+
+            <SectionCard title="Tätskikt" description="Tätskikt som ska läggas per kvadratmeter.">
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 12, maxWidth: isNarrow ? '100%' : 260 }}>
+                <SelectNumber value={state.tatskiktKvm} onChange={(n) => setState((s) => ({ ...s, tatskiktKvm: n }))} max={400} suffix="kvm" />
+              </div>
+            </SectionCard>
+          </div>
+
+          <SectionCard title="Övrigt" description="Extra tillval och kompletteringar för jobbet.">
+            <div style={{ display: 'grid', gridTemplateColumns: isNarrow ? '1fr' : 'repeat(2, minmax(0, 1fr))', gap: 12 }}>
+              <SelectNumber value={state.sargSt} onChange={(n) => setState((s) => ({ ...s, sargSt: n }))} max={20} suffix="Sarg (st)" />
+              <SelectNumber
+                value={state.tatningslistTakluckaSt}
+                onChange={(n) => setState((s) => ({ ...s, tatningslistTakluckaSt: n }))}
+                max={20}
+                suffix="Tätningslist runt taklucka (st)"
+              />
+              <SelectNumber value={state.brandmattaSt} onChange={(n) => setState((s) => ({ ...s, brandmattaSt: n }))} max={20} suffix="Brandmatta (st)" />
+              <SelectNumber
+                value={state.rorIsolering30mmSt}
+                onChange={(n) => setState((s) => ({ ...s, rorIsolering30mmSt: n }))}
+                max={50}
+                suffix="Rörisolering 30mm (st)"
+              />
+              <SelectNumber value={state.elverkSt} onChange={(n) => setState((s) => ({ ...s, elverkSt: n }))} max={20} suffix="Elverk (st)" />
+              <SelectNumber
+                value={state.takfotsTattingVindavledareSt}
+                onChange={(n) => setState((s) => ({ ...s, takfotsTattingVindavledareSt: n }))}
+                max={200}
+                suffix="Takfots tätning/vindavledare (st)"
+              />
+            </div>
+          </SectionCard>
+        </div>
+
+        <div style={{ display: 'grid', gap: 14, position: isNarrow ? 'static' : 'sticky', top: 84 }}>
 
       {showActiveSummary && (
-        <section style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: 12, background: '#ffffff', display: 'grid', gap: 8 }}>
+        <SectionCard title="Aktiv offert" description="Nuvarande laddad offert och eventuell kundstatus." tone="accent">
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', alignItems: 'baseline' }}>
-            <strong style={{ fontSize: 13 }}>AKTIV OFFERT</strong>
+            <span style={metaChipStyle}>{activeOffertNumber || 'Utan offertnummer'}</span>
             {activeCreatedAt && (
               <span style={{ fontSize: 12, color: '#64748b' }}>Laddad: {new Date(activeCreatedAt).toLocaleString('sv-SE')}</span>
             )}
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10, fontSize: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: isNarrow ? '1fr' : 'repeat(2, minmax(0, 1fr))', gap: 10, fontSize: 12 }}>
             <div><span style={{ color: '#64748b' }}>Offertnummer:</span> {activeOffertNumber || '—'}</div>
             <div><span style={{ color: '#64748b' }}>Namn:</span> {quoteName.trim() || '—'}</div>
             <div><span style={{ color: '#64748b' }}>Datum:</span> {quoteDate.trim() || '—'}</div>
@@ -439,12 +609,7 @@ function OffertKalkylatorInner() {
               <div style={{ display: 'grid', gap: 8 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
                   <div style={{ fontSize: 12, color: '#64748b' }}>
-                    Kunduppgifter: {
-                      customerStatus === 'submitted' ? 'Inskickat' :
-                      customerStatus === 'pending' ? 'Väntar på kund' :
-                      customerStatus === 'revoked' ? 'Ersatt av ny länk' :
-                      'Ingen länk'
-                    }
+                    Kunduppgifter: {customerStatusLabel}
                     {customerSubmittedAt && customerStatus === 'submitted' && (
                       <span> ({new Date(customerSubmittedAt).toLocaleString('sv-SE')})</span>
                     )}
@@ -459,9 +624,9 @@ function OffertKalkylatorInner() {
                 )}
 
                 {customerResponse && (
-                  <div style={{ display: 'grid', gap: 8, marginTop: 2 }}>
+                  <div style={{ display: 'grid', gap: 8, marginTop: 2, padding: 12, border: '1px solid #e2e8f0', borderRadius: 14, background: '#fff' }}>
                     <strong style={{ fontSize: 12 }}>KUNDSVAR</strong>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10, fontSize: 12 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: isNarrow ? '1fr' : 'repeat(2, minmax(0, 1fr))', gap: 10, fontSize: 12 }}>
                       <div><span style={{ color: '#64748b' }}>Namn 1:</span> {customerResponse.person1_name || '—'}</div>
                       <div><span style={{ color: '#64748b' }}>Personnr 1:</span> {customerResponse.person1_personnummer || '—'}</div>
                       <div><span style={{ color: '#64748b' }}>Namn 2:</span> {customerResponse.person2_name || '—'}</div>
@@ -487,172 +652,83 @@ function OffertKalkylatorInner() {
               </div>
             </>
           )}
-        </section>
+        </SectionCard>
       )}
 
-      {/* ISOLE RING */}
-      <section style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: 12, background: '#ffffff', display: 'grid', gap: 10 }}>
-        <strong style={{ fontSize: 13 }}>ISOLERING</strong>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
-          <SelectNumber
-            value={state.isoleringKvm}
-            onChange={(n) => setState((s) => ({ ...s, isoleringKvm: n }))}
-            max={400}
-            suffix="kvm"
-          />
-          <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
-            <span style={{ color: '#334155' }}>höjd cm</span>
-            <select
-              className="select-field"
-              value={state.isoleringHojd}
-              onChange={(e) => setState((s) => ({ ...s, isoleringHojd: e.target.value as IsoleringHojd }))}
-            >
-              <option value="25-35">25–35</option>
-              <option value="45-55">45–55</option>
-            </select>
-          </label>
-        </div>
-      </section>
+      <SectionCard title="Summa" description="Summering av valda rader, marginal och ROT." tone="muted">
+        <div style={{ display: 'grid', gap: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: isNarrow ? '1fr' : 'repeat(3, minmax(0, 1fr))', gap: 10 }}>
+            <div style={resultStatCardStyle}>
+              <span style={resultStatLabelStyle}>Delsumma</span>
+              <strong style={resultStatValueStyle}>{formatKr(totals.subtotal)}</strong>
+            </div>
+            <div style={resultStatCardStyle}>
+              <span style={resultStatLabelStyle}>Före ROT</span>
+              <strong style={resultStatValueStyle}>{formatKr(totals.totalBeforeRot)}</strong>
+            </div>
+            <div style={{ ...resultStatCardStyle, background: 'linear-gradient(180deg, #eff6ff 0%, #dbeafe 100%)', border: '1px solid #bfdbfe' }}>
+              <span style={resultStatLabelStyle}>Efter ROT</span>
+              <strong style={{ ...resultStatValueStyle, color: '#1d4ed8' }}>{formatKr(totals.totalAfterRot)}</strong>
+            </div>
+          </div>
 
-      {/* LANDGÅNG */}
-      <section style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: 12, background: '#ffffff', display: 'grid', gap: 10 }}>
-        <strong style={{ fontSize: 13 }}>LANDGÅNG</strong>
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 10, maxWidth: 240 }}>
-          <SelectNumber
-            value={state.landgangM}
-            onChange={(n) => setState((s) => ({ ...s, landgangM: n }))}
-            max={100}
-            suffix="m"
-          />
-        </div>
-      </section>
-
-      {/* ÖVRIGT */}
-      <section style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: 12, background: '#ffffff', display: 'grid', gap: 10 }}>
-        <strong style={{ fontSize: 13 }}>ÖVRIGT</strong>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
-          <SelectNumber value={state.sargSt} onChange={(n) => setState((s) => ({ ...s, sargSt: n }))} max={20} suffix="Sarg (st)" />
-          <SelectNumber
-            value={state.tatningslistTakluckaSt}
-            onChange={(n) => setState((s) => ({ ...s, tatningslistTakluckaSt: n }))}
-            max={20}
-            suffix="Tätningslist runt taklucka (st)"
-          />
-          <SelectNumber value={state.brandmattaSt} onChange={(n) => setState((s) => ({ ...s, brandmattaSt: n }))} max={20} suffix="Brandmatta (st)" />
-          <SelectNumber
-            value={state.rorIsolering30mmSt}
-            onChange={(n) => setState((s) => ({ ...s, rorIsolering30mmSt: n }))}
-            max={50}
-            suffix="Rörisolering 30mm (st)"
-          />
-          <SelectNumber value={state.elverkSt} onChange={(n) => setState((s) => ({ ...s, elverkSt: n }))} max={20} suffix="Elverk (st)" />
-          <SelectNumber
-            value={state.takfotsTattingVindavledareSt}
-            onChange={(n) => setState((s) => ({ ...s, takfotsTattingVindavledareSt: n }))}
-            max={200}
-            suffix="Takfots tätning/vindavledare (st)"
-          />
-        </div>
-      </section>
-
-      {/* MÖGELBEHANDLING */}
-      <section style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: 12, background: '#ffffff', display: 'grid', gap: 10 }}>
-        <strong style={{ fontSize: 13 }}>MÖGELBEHANDLING</strong>
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 10, maxWidth: 240 }}>
-          <SelectNumber
-            value={state.mogelbehandlingKvm}
-            onChange={(n) => setState((s) => ({ ...s, mogelbehandlingKvm: n }))}
-            max={400}
-            suffix="kvm"
-          />
-        </div>
-      </section>
-
-      {/* UTSUGNING */}
-      <section style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: 12, background: '#ffffff', display: 'grid', gap: 10 }}>
-        <strong style={{ fontSize: 13 }}>UTSUGNING</strong>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
-          <SelectNumber
-            value={state.utsugningKvm}
-            onChange={(n) => setState((s) => ({ ...s, utsugningKvm: n }))}
-            max={400}
-            suffix="kvm"
-          />
-          <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
-            <span style={{ color: '#334155' }}>höjd cm</span>
-            <select
-              className="select-field"
-              value={state.utsugningHojd}
-              onChange={(e) => setState((s) => ({ ...s, utsugningHojd: e.target.value as UtsugningHojd }))}
-            >
-              <option value="20">20</option>
-              <option value="21-40">21–40</option>
-            </select>
-          </label>
-        </div>
-      </section>
-
-      {/* TÄTSKIKT */}
-      <section style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: 12, background: '#ffffff', display: 'grid', gap: 10 }}>
-        <strong style={{ fontSize: 13 }}>TÄTSKIKT</strong>
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 10, maxWidth: 240 }}>
-          <SelectNumber value={state.tatskiktKvm} onChange={(n) => setState((s) => ({ ...s, tatskiktKvm: n }))} max={400} suffix="kvm" />
-        </div>
-      </section>
-
-      {/* RESULTAT */}
-      <section style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: 12, background: '#f8fafc', display: 'grid', gap: 10 }}>
-        <strong style={{ fontSize: 13 }}>SUMMA</strong>
-
-        <div style={{ display: 'grid', gap: 6 }}>
           {totals.lines.length === 0 ? (
-            <div style={{ fontSize: 12, color: '#64748b' }}>Välj minst en rad för att räkna.</div>
+            <div style={{ border: '1px dashed #cbd5e1', borderRadius: 14, padding: '14px 12px', background: '#ffffff', fontSize: 12, color: '#64748b' }}>
+              Välj minst en rad för att räkna.
+            </div>
           ) : (
-            totals.lines.map((l) => (
-              <div key={l.key} style={{ display: 'flex', gap: 10, justifyContent: 'space-between', fontSize: 12 }}>
-                <div style={{ color: '#0f172a' }}>{l.label}</div>
-                <div style={{ color: '#334155', whiteSpace: 'nowrap' }}>
-                  {l.qty} {l.unit} × {formatKr(l.unitPrice)} = {formatKr(l.lineTotal)}
+            <div style={{ display: 'grid', gap: 8 }}>
+              {totals.lines.map((l) => (
+                <div key={l.key} style={{ display: 'grid', gridTemplateColumns: isNarrow ? '1fr' : 'minmax(0, 1fr) auto', gap: 10, alignItems: 'center', padding: '11px 12px', borderRadius: 14, border: '1px solid #e2e8f0', background: '#ffffff' }}>
+                  <div style={{ display: 'grid', gap: 4 }}>
+                    <div style={{ color: '#0f172a', fontSize: 13, fontWeight: 700 }}>{l.label}</div>
+                    <div style={{ fontSize: 12, color: '#64748b' }}>{l.qty} {l.unit} × {formatKr(l.unitPrice)}</div>
+                  </div>
+                  <div style={{ color: '#0f172a', whiteSpace: 'nowrap', fontSize: 13, fontWeight: 800 }}>{formatKr(l.lineTotal)}</div>
                 </div>
-              </div>
-            ))
+              ))}
+            </div>
           )}
 
-          <div style={{ height: 1, background: '#e5e7eb', margin: '6px 0' }} />
+          <div style={{ display: 'grid', gap: 8, padding: '12px 12px 10px', borderRadius: 16, border: '1px solid #dbe4ef', background: '#ffffff' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, gap: 10 }}>
+              <div style={{ color: '#64748b' }}>Delsumma</div>
+              <div style={{ whiteSpace: 'nowrap', color: '#0f172a', fontWeight: 700 }}>{formatKr(totals.subtotal)}</div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, gap: 10 }}>
+              <div style={{ color: '#64748b' }}>Etableringskostnad</div>
+              <div style={{ whiteSpace: 'nowrap', color: '#0f172a', fontWeight: 700 }}>{formatKr(totals.etablering)}</div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, gap: 10 }}>
+              <div style={{ color: '#64748b' }}>Marginal</div>
+              <div style={{ whiteSpace: 'nowrap', color: '#0f172a', fontWeight: 700 }}>{formatKr(totals.marginal)}</div>
+            </div>
 
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
-            <div>Delsumma</div>
-            <div style={{ whiteSpace: 'nowrap' }}>{formatKr(totals.subtotal)}</div>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
-            <div>Etableringskostnad</div>
-            <div style={{ whiteSpace: 'nowrap' }}>{formatKr(totals.etablering)}</div>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
-            <div>Marginal</div>
-            <div style={{ whiteSpace: 'nowrap' }}>{formatKr(totals.marginal)}</div>
-          </div>
+            <div style={{ height: 1, background: '#e5e7eb', margin: '4px 0' }} />
 
-          <div style={{ height: 1, background: '#e5e7eb', margin: '6px 0' }} />
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, gap: 10, fontWeight: 700 }}>
+              <div style={{ color: '#0f172a' }}>Totalsumma före ROT</div>
+              <div style={{ whiteSpace: 'nowrap', color: '#0f172a' }}>{formatKr(totals.totalBeforeRot)}</div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, gap: 10 }}>
+              <div style={{ color: '#92400e' }}>ROT-avdrag</div>
+              <div style={{ whiteSpace: 'nowrap', color: '#92400e', fontWeight: 700 }}>− {formatKr(totals.rotAmount)}</div>
+            </div>
 
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, fontWeight: 700 }}>
-            <div>Totalsumma (innan ROT)</div>
-            <div style={{ whiteSpace: 'nowrap' }}>{formatKr(totals.totalBeforeRot)}</div>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
-            <div>ROT</div>
-            <div style={{ whiteSpace: 'nowrap' }}>− {formatKr(totals.rotAmount)}</div>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, fontWeight: 700 }}>
-            <div>Totalsumma (efter ROT)</div>
-            <div style={{ whiteSpace: 'nowrap' }}>{formatKr(totals.totalAfterRot)}</div>
+            <div style={{ height: 1, background: '#c7d2fe', margin: '4px 0' }} />
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, padding: '12px 12px', borderRadius: 14, background: 'linear-gradient(180deg, #eff6ff 0%, #dbeafe 100%)', border: '1px solid #bfdbfe' }}>
+              <div style={{ display: 'grid', gap: 2 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.25, textTransform: 'uppercase', color: '#1d4ed8' }}>Slutpris</span>
+                <strong style={{ fontSize: 13, color: '#1e3a8a' }}>Totalsumma efter ROT</strong>
+              </div>
+              <div style={{ whiteSpace: 'nowrap', fontSize: 20, lineHeight: 1, fontWeight: 800, color: '#1d4ed8' }}>{formatKr(totals.totalAfterRot)}</div>
+            </div>
           </div>
         </div>
-      </section>
+      </SectionCard>
 
-      {/* SPARA */}
-      <section style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: 12, background: '#ffffff', display: 'grid', gap: 10 }}>
-        <strong style={{ fontSize: 13 }}>SPARA OFFERT</strong>
+      <SectionCard title="Spara offert" description="Spara ny offert eller uppdatera en redan laddad offert." tone="accent">
         <div style={{ display: 'grid', gap: 10 }}>
           {saveNotice && (
             <div
@@ -681,14 +757,14 @@ function OffertKalkylatorInner() {
               </Link>
             </div>
           )}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: isNarrow ? '1fr' : 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
             <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
               <span style={{ color: '#334155' }}>Namn *</span>
               <input
                 value={quoteName}
                 onChange={(e) => setQuoteName(e.target.value)}
                 placeholder="T.ex. Villa Andersson"
-                style={{ padding: '10px 12px', border: '1px solid #e5e7eb', borderRadius: 8 }}
+                style={textInputStyle}
               />
             </label>
             <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
@@ -697,7 +773,7 @@ function OffertKalkylatorInner() {
                 type="date"
                 value={quoteDate}
                 onChange={(e) => setQuoteDate(e.target.value)}
-                style={{ padding: '10px 12px', border: '1px solid #e5e7eb', borderRadius: 8 }}
+                style={textInputStyle}
               />
             </label>
             <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
@@ -706,17 +782,17 @@ function OffertKalkylatorInner() {
                 type="date"
                 value={nextMeetingDate}
                 onChange={(e) => setNextMeetingDate(e.target.value)}
-                style={{ padding: '10px 12px', border: '1px solid #e5e7eb', borderRadius: 8 }}
+                style={textInputStyle}
               />
             </label>
             <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
               <span style={{ color: '#334155' }}>Adress *</span>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 6 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: isNarrow ? '1fr' : '1fr auto', gap: 6 }}>
                 <input
                   value={address}
                   onChange={(e) => setAddress(e.target.value)}
                   placeholder="Gata 1"
-                  style={{ padding: '10px 12px', border: '1px solid #e5e7eb', borderRadius: 8 }}
+                  style={textInputStyle}
                 />
                 <button
                   type="button"
@@ -735,7 +811,7 @@ function OffertKalkylatorInner() {
                 value={city}
                 onChange={(e) => setCity(e.target.value)}
                 placeholder="Stad"
-                style={{ padding: '10px 12px', border: '1px solid #e5e7eb', borderRadius: 8 }}
+                style={textInputStyle}
               />
             </label>
             <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
@@ -745,7 +821,7 @@ function OffertKalkylatorInner() {
                 onChange={(e) => setPhone(e.target.value)}
                 placeholder="070-123 45 67"
                 inputMode="tel"
-                style={{ padding: '10px 12px', border: '1px solid #e5e7eb', borderRadius: 8 }}
+                style={textInputStyle}
               />
             </label>
             <label style={{ display: 'grid', gap: 4, fontSize: 12, gridColumn: '1 / -1' }}>
@@ -755,7 +831,7 @@ function OffertKalkylatorInner() {
                 onChange={(e) => setSalesperson(e.target.value)}
                 placeholder="Namn på referens"
                 disabled={!!profileName}
-                style={{ padding: '10px 12px', border: '1px solid #e5e7eb', borderRadius: 8 }}
+                style={textInputStyle}
               />
             </label>
 
@@ -767,7 +843,7 @@ function OffertKalkylatorInner() {
                 placeholder="070-123 45 67"
                 inputMode="tel"
                 disabled={!!String(profilePhone || '').trim()}
-                style={{ padding: '10px 12px', border: '1px solid #e5e7eb', borderRadius: 8 }}
+                style={textInputStyle}
               />
             </label>
 
@@ -778,7 +854,7 @@ function OffertKalkylatorInner() {
                 onChange={(e) => setOvrigInfo(e.target.value)}
                 placeholder="T.ex. portkod, särskilda önskemål, intern notering"
                 rows={3}
-                style={{ padding: '10px 12px', border: '1px solid #e5e7eb', borderRadius: 8, resize: 'vertical' }}
+                style={{ ...textInputStyle, resize: 'vertical', minHeight: 88 }}
               />
             </label>
           </div>
@@ -812,10 +888,97 @@ function OffertKalkylatorInner() {
             </button>
           </div>
         </div>
-      </section>
+      </SectionCard>
+        </div>
+      </div>
     </div>
   );
 }
+
+const heroEyebrowStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  padding: '4px 9px',
+  borderRadius: 999,
+  background: '#dbeafe',
+  border: '1px solid #bfdbfe',
+  color: '#2563eb',
+  fontSize: 11,
+  fontWeight: 700,
+  letterSpacing: 0.35,
+  textTransform: 'uppercase',
+};
+
+const metaChipStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  padding: '5px 9px',
+  borderRadius: 999,
+  background: '#ffffff',
+  border: '1px solid #dbe4ef',
+  color: '#334155',
+  fontSize: 12,
+  fontWeight: 700,
+};
+
+const ghostLinkStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  padding: '10px 12px',
+  borderRadius: 12,
+  border: '1px solid #dbe4ef',
+  background: '#fff',
+  color: '#0f172a',
+  fontWeight: 600,
+  textDecoration: 'none',
+};
+
+const textInputStyle: React.CSSProperties = {
+  width: '100%',
+  padding: '10px 12px',
+  border: '1px solid #dbe4ef',
+  borderRadius: 12,
+  background: '#fff',
+  color: '#0f172a',
+  fontSize: 14,
+  boxSizing: 'border-box',
+};
+
+const selectFieldStyle: React.CSSProperties = {
+  width: '100%',
+  padding: '10px 12px',
+  border: '1px solid #dbe4ef',
+  borderRadius: 12,
+  background: '#fff',
+  color: '#0f172a',
+  fontSize: 14,
+  boxSizing: 'border-box',
+};
+
+const resultStatCardStyle: React.CSSProperties = {
+  display: 'grid',
+  gap: 6,
+  padding: '12px 12px 10px',
+  borderRadius: 14,
+  border: '1px solid #dbe4ef',
+  background: '#ffffff',
+};
+
+const resultStatLabelStyle: React.CSSProperties = {
+  fontSize: 11,
+  fontWeight: 700,
+  letterSpacing: 0.25,
+  textTransform: 'uppercase',
+  color: '#64748b',
+};
+
+const resultStatValueStyle: React.CSSProperties = {
+  fontSize: 18,
+  lineHeight: 1.1,
+  color: '#0f172a',
+  fontWeight: 800,
+};
 
 export default function OffertKalkylatorPage() {
   return (
