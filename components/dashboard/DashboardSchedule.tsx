@@ -860,53 +860,54 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
             location: directoryMatch?.location || null,
           };
         })();
+        const isDesktopModal = !compact;
         return (
           <div style={{ position: 'fixed', inset:0, zIndex: 260, background: 'rgba(15,23,42,0.56)', backdropFilter:'blur(4px)', display:'flex', alignItems: compact ? 'flex-start' : 'center', justifyContent:'center', padding: compact ? 'calc(env(safe-area-inset-top, 0px) + 72px) 12px 20px' : 24 }} onClick={closeDetail}>
-            <div role="dialog" aria-modal="true" aria-busy={detailLoading ? true : undefined} onClick={e => e.stopPropagation()} style={{ width: 'min(760px, 94vw)', maxHeight: compact ? 'calc(100vh - env(safe-area-inset-top, 0px) - 104px)' : '84vh', overflowY: 'auto', background:'#fff', border:'1px solid #dbe4ef', borderRadius:20, boxShadow:'0 24px 60px rgba(15,23,42,0.28)', display:'grid', gap:14, padding:16 }}>
-              <div style={{ display:'grid', gap:12, padding:'14px', borderRadius:18, border:`1px solid ${detailTheme.accent}22`, background:'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)' }}>
+            <div role="dialog" aria-modal="true" aria-busy={detailLoading ? true : undefined} onClick={e => e.stopPropagation()} style={{ width: compact ? 'min(760px, 94vw)' : 'min(660px, 88vw)', maxHeight: compact ? 'calc(100vh - env(safe-area-inset-top, 0px) - 104px)' : '78vh', overflowY: 'auto', background:'#fff', border:'1px solid #dbe4ef', borderRadius: isDesktopModal ? 16 : 20, boxShadow:'0 24px 60px rgba(15,23,42,0.28)', display:'grid', gap: isDesktopModal ? 10 : 14, padding: isDesktopModal ? 12 : 16 }}>
+              <div style={{ display:'grid', gap: isDesktopModal ? 10 : 12, padding: isDesktopModal ? '10px 12px' : '14px', borderRadius: isDesktopModal ? 14 : 18, border:`1px solid ${detailTheme.accent}22`, background:'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)' }}>
                 <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', gap:10, flexWrap:'wrap' }}>
                   <div style={{ display:'grid', gap:8, minWidth:0 }}>
                     <div style={{ display:'inline-flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
-                      <span style={{ display:'inline-flex', alignItems:'center', gap:6, padding:'4px 8px', borderRadius:999, background:`${detailTheme.badgeBg}`, color:detailTheme.badgeFg, fontSize:11, fontWeight:700 }}>
+                      <span style={{ display:'inline-flex', alignItems:'center', gap:6, padding: isDesktopModal ? '3px 7px' : '4px 8px', borderRadius:999, background:`${detailTheme.badgeBg}`, color:detailTheme.badgeFg, fontSize: isDesktopModal ? 10 : 11, fontWeight:700 }}>
                         {detailBase?.job_type || 'Planering'}
                       </span>
-                      {segId && reportedTotal > 0 && <span style={{ display:'inline-flex', alignItems:'center', gap:6, padding:'4px 8px', borderRadius:999, background:'#ecfeff', color:'#0f766e', fontSize:11, fontWeight:700 }}>Rapporterat {reportedTotal} säckar</span>}
+                      {segId && reportedTotal > 0 && <span style={{ display:'inline-flex', alignItems:'center', gap:6, padding: isDesktopModal ? '3px 7px' : '4px 8px', borderRadius:999, background:'#ecfeff', color:'#0f766e', fontSize: isDesktopModal ? 10 : 11, fontWeight:700 }}>Rapporterat {reportedTotal} säckar</span>}
                     </div>
-                    <strong style={{ fontSize:20, lineHeight:1.15, color:'#0f172a' }}>{headerTitle}</strong>
-                    {detailBase?.customer && <span style={{ fontSize:14, color:'#475569', fontWeight:600 }}>{detailBase.customer}</span>}
+                    <strong style={{ fontSize: isDesktopModal ? 16 : 20, lineHeight:1.15, color:'#0f172a' }}>{headerTitle}</strong>
+                    {detailBase?.customer && <span style={{ fontSize: isDesktopModal ? 12 : 14, color:'#475569', fontWeight:600 }}>{detailBase.customer}</span>}
                     <div style={{ display:'flex', gap:8, flexWrap:'wrap', alignItems:'center' }}>
-                      {detailBase?.truck && <span style={{ fontSize:11, color:'#475569', background:'#f8fafc', border:'1px solid #e2e8f0', padding:'4px 8px', borderRadius: 999 }}>Lastbil: {detailBase.truck}</span>}
-                      {typeof detailBase?.bag_count === 'number' && <span style={{ fontSize:11, color:'#475569', background:'#f8fafc', border:'1px solid #e2e8f0', padding:'4px 8px', borderRadius: 999 }}>Plan: {detailBase.bag_count} säckar</span>}
+                      {detailBase?.truck && <span style={{ fontSize:10.5, color:'#475569', background:'#f8fafc', border:'1px solid #e2e8f0', padding: isDesktopModal ? '3px 7px' : '4px 8px', borderRadius: 999 }}>Lastbil: {detailBase.truck}</span>}
+                      {typeof detailBase?.bag_count === 'number' && <span style={{ fontSize:10.5, color:'#475569', background:'#f8fafc', border:'1px solid #e2e8f0', padding: isDesktopModal ? '3px 7px' : '4px 8px', borderRadius: 999 }}>Plan: {detailBase.bag_count} säckar</span>}
                     </div>
                   </div>
-                  <div style={{ display:'grid', gap:8, width: compact ? '100%' : 'min(100%, 240px)', gridTemplateColumns: '1fr', alignItems:'stretch' }}>
+                  <div style={{ display:'grid', gap: isDesktopModal ? 5 : 8, width: compact ? '100%' : 'min(100%, 104px)', gridTemplateColumns: '1fr', alignItems:'stretch' }}>
                     {detailBase?.order_number && (
                       <a
                         href={`/egenkontroll?orderId=${encodeURIComponent(String(detailBase.order_number))}`}
                         className="btn--plain btn--sm"
-                        style={{ display:'inline-flex', alignItems:'center', justifyContent:'center', width:'100%', boxSizing:'border-box', background:'#f0fdf4', border:'1px solid #86efac', color:'#166534', borderRadius:12, padding:'10px 12px', fontSize: compact ? 12 : 13, fontWeight:700, textDecoration:'none', minHeight:42, lineHeight:1.2 }}
+                        style={{ display:'inline-flex', alignItems:'center', justifyContent:'center', width:'100%', boxSizing:'border-box', background:'#f0fdf4', border:'1px solid #86efac', color:'#166534', borderRadius: isDesktopModal ? 8 : 12, padding: isDesktopModal ? '5px 8px' : '10px 12px', fontSize: isDesktopModal ? 9 : 12, fontWeight:700, textDecoration:'none', minHeight: isDesktopModal ? 0 : 42, lineHeight:1.2 }}
                       >Starta egenkontroll</a>
                     )}
                     {onReportTime && (
                       <button
                         onClick={() => onReportTime({ projectId: String(detailBase?.project_id || ''), projectName: detailBase?.project_name, orderNumber: detailBase?.order_number ? String(detailBase.order_number) : undefined, day: (detailBase?.job_day || detailBase?.start_day) ? String(detailBase?.job_day || detailBase?.start_day) : undefined })}
                         className="btn--plain btn--sm"
-                        style={{ display:'inline-flex', alignItems:'center', justifyContent:'center', width:'100%', boxSizing:'border-box', background:'#16a34a', border:'1px solid #16a34a', color:'#fff', borderRadius:12, padding:'10px 12px', fontSize: compact ? 12 : 13, fontWeight:700, boxShadow:'0 10px 18px rgba(22,163,74,0.16)', minHeight:42, lineHeight:1.2, order: compact ? -1 : undefined }}
+                        style={{ display:'inline-flex', alignItems:'center', justifyContent:'center', width:'100%', boxSizing:'border-box', background:'#16a34a', border:'1px solid #16a34a', color:'#fff', borderRadius: isDesktopModal ? 8 : 12, padding: isDesktopModal ? '5px 8px' : '10px 12px', fontSize: isDesktopModal ? 9 : 12, fontWeight:700, boxShadow: isDesktopModal ? '0 6px 12px rgba(22,163,74,0.12)' : '0 10px 18px rgba(22,163,74,0.16)', minHeight: isDesktopModal ? 0 : 42, lineHeight:1.2, order: compact ? -1 : undefined }}
                       >Rapportera tid</button>
                     )}
-                    <button onClick={closeDetail} className="btn--plain btn--sm" style={{ display:'inline-flex', alignItems:'center', justifyContent:'center', width:'100%', boxSizing:'border-box', background:'#fff5f5', border:'1px solid #fecaca', color:'#b91c1c', borderRadius:12, padding:'10px 12px', fontSize: compact ? 12 : 13, fontWeight:700, minHeight:42, lineHeight:1.2 }}>Stäng</button>
+                    <button onClick={closeDetail} className="btn--plain btn--sm" style={{ display:'inline-flex', alignItems:'center', justifyContent:'center', width:'100%', boxSizing:'border-box', background:'#fff5f5', border:'1px solid #fecaca', color:'#b91c1c', borderRadius: isDesktopModal ? 8 : 12, padding: isDesktopModal ? '5px 8px' : '10px 12px', fontSize: isDesktopModal ? 9 : 12, fontWeight:700, minHeight: isDesktopModal ? 0 : 42, lineHeight:1.2 }}>Stäng</button>
                   </div>
                 </div>
                 {(mapsHref || detailBase?.customer || phoneList.length > 0 || sellerInfo.name || sellerInfo.email || sellerInfo.phone) && (
-                  <div style={{ display:'grid', gridTemplateColumns: compact ? '1fr' : 'repeat(auto-fit, minmax(220px, 1fr))', gap:10 }}>
+                  <div style={{ display:'grid', gridTemplateColumns: compact ? '1fr' : 'repeat(3, minmax(0, 1fr))', gap: isDesktopModal ? 8 : 10 }}>
                   {(detailBase?.customer || phoneList.length > 0) && (
-                  <div style={{ display:'grid', gap:6, padding:'12px 12px 10px', borderRadius:14, background:'#ffffff', border:'1px solid #e2e8f0' }}>
-                    <span style={{ fontSize:12, color:'#334155', fontWeight:700 }}>Kontakt</span>
-                    {detailBase?.customer && <span style={{ fontSize:14, color:'#334155', lineHeight:1.4 }}>{detailBase.customer}</span>}
+                  <div style={{ display:'grid', gap:6, padding: isDesktopModal ? '8px 9px' : '12px 12px 10px', borderRadius: isDesktopModal ? 10 : 14, background:'#ffffff', border:'1px solid #e2e8f0' }}>
+                    <span style={{ fontSize:11, color:'#334155', fontWeight:700 }}>Kontakt</span>
+                    {detailBase?.customer && <span style={{ fontSize: isDesktopModal ? 12 : 14, color:'#334155', lineHeight:1.35 }}>{detailBase.customer}</span>}
                     {phoneList.length > 0 ? (
                       <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
                         {phoneList.map(p => (
-                          <a key={p.display} href={`tel:${p.tel}`} style={{ fontSize:12, color:'#0369a1', textDecoration:'none', border:'1px solid #cbd5e1', background:'#f0f9ff', padding:'4px 10px', borderRadius:999 }}>Ring {p.display}</a>
+                          <a key={p.display} href={`tel:${p.tel}`} style={{ fontSize: isDesktopModal ? 9 : 12, color:'#0369a1', textDecoration:'none', border:'1px solid #cbd5e1', background:'#f0f9ff', padding: isDesktopModal ? '3px 7px' : '4px 10px', borderRadius:999 }}>Ring {p.display}</a>
                         ))}
                       </div>
                     ) : (
@@ -915,27 +916,27 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                   </div>
                   )}
                   {(sellerInfo.name || sellerInfo.email || sellerInfo.phone) && (
-                  <div style={{ display:'grid', gap:6, padding:'12px 12px 10px', borderRadius:14, background:'#ffffff', border:'1px solid #e2e8f0' }}>
-                    <span style={{ fontSize:12, color:'#334155', fontWeight:700 }}>Ansvarig säljare</span>
-                    {sellerInfo.name && <span style={{ fontSize:14, color:'#334155', lineHeight:1.4 }}>{sellerInfo.name}</span>}
-                    {(sellerInfo.role || sellerInfo.location) && <span style={{ fontSize:12, color:'#64748b' }}>{[sellerInfo.role, sellerInfo.location].filter(Boolean).join(' • ')}</span>}
+                  <div style={{ display:'grid', gap:6, padding: isDesktopModal ? '8px 9px' : '12px 12px 10px', borderRadius: isDesktopModal ? 10 : 14, background:'#ffffff', border:'1px solid #e2e8f0' }}>
+                    <span style={{ fontSize:11, color:'#334155', fontWeight:700 }}>Ansvarig säljare</span>
+                    {sellerInfo.name && <span style={{ fontSize: isDesktopModal ? 12 : 14, color:'#334155', lineHeight:1.35 }}>{sellerInfo.name}</span>}
+                    {(sellerInfo.role || sellerInfo.location) && <span style={{ fontSize: isDesktopModal ? 10 : 12, color:'#64748b' }}>{[sellerInfo.role, sellerInfo.location].filter(Boolean).join(' • ')}</span>}
                     <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
                       {sellerInfo.tel && sellerInfo.phone && (
-                        <a href={`tel:${sellerInfo.tel}`} style={{ fontSize:12, color:'#0369a1', textDecoration:'none', border:'1px solid #cbd5e1', background:'#f0f9ff', padding:'4px 10px', borderRadius:999 }}>Ring {sellerInfo.phone}</a>
+                        <a href={`tel:${sellerInfo.tel}`} style={{ fontSize: isDesktopModal ? 9 : 12, color:'#0369a1', textDecoration:'none', border:'1px solid #cbd5e1', background:'#f0f9ff', padding: isDesktopModal ? '3px 7px' : '4px 10px', borderRadius:999 }}>Ring {sellerInfo.phone}</a>
                       )}
                       {sellerInfo.email && (
-                        <a href={`mailto:${sellerInfo.email}`} style={{ fontSize:12, color:'#0369a1', textDecoration:'none', border:'1px solid #cbd5e1', background:'#f8fafc', padding:'4px 10px', borderRadius:999 }}>Maila</a>
+                        <a href={`mailto:${sellerInfo.email}`} style={{ fontSize: isDesktopModal ? 9 : 12, color:'#0369a1', textDecoration:'none', border:'1px solid #cbd5e1', background:'#f8fafc', padding: isDesktopModal ? '3px 7px' : '4px 10px', borderRadius:999 }}>Maila</a>
                       )}
                     </div>
                   </div>
                   )}
                   {mapsHref && (
-                  <div style={{ display:'grid', gap:6, padding:'12px 12px 10px', borderRadius:14, background:'#ffffff', border:'1px solid #e2e8f0' }}>
+                  <div style={{ display:'grid', gap:6, padding: isDesktopModal ? '8px 9px' : '12px 12px 10px', borderRadius: isDesktopModal ? 10 : 14, background:'#ffffff', border:'1px solid #e2e8f0' }}>
                     <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:10, flexWrap:'wrap' }}>
-                      <span style={{ fontSize:12, color:'#334155', fontWeight:700 }}>Adress</span>
-                      <a href={mapsHref} target="_blank" rel="noopener noreferrer" className="btn--plain btn--xs" style={{ fontSize:11, border:'1px solid #cbd5e1', borderRadius:999, padding:'4px 10px', color:'#0369a1', background:'#e0f2fe', textDecoration:'none' }}>Öppna i Kartor</a>
+                      <span style={{ fontSize:11, color:'#334155', fontWeight:700 }}>Adress</span>
+                      <a href={mapsHref} target="_blank" rel="noopener noreferrer" className="btn--plain btn--xs" style={{ fontSize: isDesktopModal ? 9 : 11, border:'1px solid #cbd5e1', borderRadius:999, padding: isDesktopModal ? '3px 7px' : '4px 10px', color:'#0369a1', background:'#e0f2fe', textDecoration:'none' }}>Öppna i Kartor</a>
                     </div>
-                    <span style={{ fontSize:14, color:'#334155', lineHeight:1.4 }}>{address}</span>
+                    <span style={{ fontSize: isDesktopModal ? 12 : 14, color:'#334155', lineHeight:1.35 }}>{address}</span>
                   </div>
                   )}
                   </div>
@@ -963,22 +964,22 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
               {detailError && <div style={{ fontSize:12, color:'#b91c1c', background:'#fef2f2', border:'1px solid #fecaca', padding:'6px 8px', borderRadius:8 }}>Fel: {detailError}</div>}
               <div style={{ display:'grid', gap:12 }}>
                 {description && (
-                  <div style={{ display:'grid', gap:8, padding:'14px', borderRadius:16, border:'1px solid #e2e8f0', background:'#ffffff' }}>
-                    <span style={{ fontSize:13, color:'#334155', fontWeight:700 }}>Beskrivning</span>
-                    <p style={{ fontSize:14, lineHeight:1.5, color:'#475569', whiteSpace:'pre-wrap', margin:0 }}>{description}</p>
+                  <div style={{ display:'grid', gap: isDesktopModal ? 6 : 8, padding: isDesktopModal ? '10px 12px' : '14px', borderRadius: isDesktopModal ? 12 : 16, border:'1px solid #e2e8f0', background:'#ffffff' }}>
+                    <span style={{ fontSize: isDesktopModal ? 11 : 13, color:'#334155', fontWeight:700 }}>Beskrivning</span>
+                    <p style={{ fontSize: isDesktopModal ? 11 : 14, lineHeight:1.45, color:'#475569', whiteSpace:'pre-wrap', margin:0 }}>{description}</p>
                   </div>
                 )}
                 {/* Project comments */}
                 {detailBase?.project_id && (
-                  <div style={{ display:'grid', gap:8, padding:'14px', borderRadius:16, border:'1px solid #e2e8f0', background:'#ffffff' }}>
+                  <div style={{ display:'grid', gap: isDesktopModal ? 6 : 8, padding: isDesktopModal ? '10px 12px' : '14px', borderRadius: isDesktopModal ? 12 : 16, border:'1px solid #e2e8f0', background:'#ffffff' }}>
                     <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-                      <strong style={{ fontSize:14, color:'#0f172a' }}>Kommentarer</strong>
+                      <strong style={{ fontSize: isDesktopModal ? 12 : 14, color:'#0f172a' }}>Kommentarer</strong>
                       <div style={{ height:1, background:'#e5e7eb', flex:1 }} />
                       <button
                         type="button"
                         onClick={() => refreshComments(true)}
                         className="btn--plain btn--xs"
-                        style={{ fontSize:11, padding:'5px 10px', border:'1px solid #cbd5e1', background:'#f1f5f9', color:'#0f172a', borderRadius:999 }}
+                        style={{ fontSize: isDesktopModal ? 9 : 11, padding: isDesktopModal ? '3px 7px' : '5px 10px', border:'1px solid #cbd5e1', background:'#f1f5f9', color:'#0f172a', borderRadius:999 }}
                       >Uppdatera</button>
                     </div>
                     {commentsLoading && comments.length === 0 && <div style={{ fontSize:12, color:'#64748b' }}>Hämtar kommentarer…</div>}
@@ -987,12 +988,12 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                     {!commentsLoading && !commentsError && comments.length > 0 && (
                       <div style={{ display:'grid', gap:6 }}>
                         {comments.slice(0,10).map(c => (
-                          <div key={c.id} style={{ display:'grid', gap:5, border:'1px solid #e2e8f0', background:'#fbfdff', borderRadius:12, padding:'10px 12px' }}>
+                          <div key={c.id} style={{ display:'grid', gap:4, border:'1px solid #e2e8f0', background:'#fbfdff', borderRadius: isDesktopModal ? 10 : 12, padding: isDesktopModal ? '7px 9px' : '10px 12px' }}>
                             <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
                               {c.userName && <span style={{ fontSize:11, color:'#475569', fontWeight:700 }}>{c.userName}</span>}
                               {c.createdAt && <span style={{ fontSize:10, color:'#64748b' }}>{formatRelativeTime(c.createdAt)}</span>}
                             </div>
-                            <div style={{ fontSize:13, lineHeight:1.45, color:'#334155', whiteSpace:'pre-wrap' }}>{c.text}</div>
+                            <div style={{ fontSize: isDesktopModal ? 11 : 13, lineHeight:1.4, color:'#334155', whiteSpace:'pre-wrap' }}>{c.text}</div>
                           </div>
                         ))}
                         {comments.length > 10 && <div style={{ fontSize:11, color:'#64748b' }}>Visar 10 av {comments.length} kommentarer.</div>}
@@ -1001,9 +1002,9 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                   </div>
                 )}
                 {/* Rapportering UI for installers */}
-                <div style={{ display:'grid', gap:10, background:'linear-gradient(180deg, #f8fafc 0%, #ffffff 100%)', border:'1px solid #dbe4ef', borderRadius:16, padding:14 }}>
+                <div style={{ display:'grid', gap: isDesktopModal ? 8 : 10, background:'linear-gradient(180deg, #f8fafc 0%, #ffffff 100%)', border:'1px solid #dbe4ef', borderRadius: isDesktopModal ? 12 : 16, padding: isDesktopModal ? 10 : 14 }}>
                   <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-                    <strong style={{ fontSize:14, color:'#0f172a' }}>Rapportering</strong>
+                    <strong style={{ fontSize: isDesktopModal ? 12 : 14, color:'#0f172a' }}>Rapportering</strong>
                     <div style={{ height:1, background:'#e5e7eb', flex:1 }} />
                     {segId && <span style={{ fontSize:11, color:'#64748b', fontWeight:600 }}>Totalt: {reportedTotal} säckar</span>}
                   </div>
@@ -1012,24 +1013,24 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                     <>
                       {!segId && <div style={{ fontSize:12, color:'#64748b' }}>Denna post saknar segment-id (kan inte rapportera säckar), men du kan skicka en kommentar.</div>}
                       <div style={{ display:'grid', gap:10 }}>
-                        <div style={{ display:'grid', gridTemplateColumns: compact ? '1fr' : 'repeat(auto-fit, minmax(160px, 1fr))', gap:10 }}>
+                        <div style={{ display:'grid', gridTemplateColumns: compact ? '1fr' : 'repeat(2, minmax(0, 1fr))', gap: isDesktopModal ? 8 : 10 }}>
                         <label style={{ display:'grid', gap:5, fontSize:12, minWidth:0 }}>
                           <span>Dag</span>
-                          <input type="date" value={reportDraft.day} onChange={e => setReportDraft(d => ({ ...d, day: e.target.value }))} style={{ width:'100%', boxSizing:'border-box', minWidth:0, padding:'10px 12px', border:'1px solid #cbd5e1', borderRadius:12, background:'#fff' }} />
+                          <input type="date" value={reportDraft.day} onChange={e => setReportDraft(d => ({ ...d, day: e.target.value }))} style={{ width:'100%', boxSizing:'border-box', minWidth:0, padding: isDesktopModal ? '7px 9px' : '10px 12px', border:'1px solid #cbd5e1', borderRadius: isDesktopModal ? 10 : 12, background:'#fff', fontSize: isDesktopModal ? 11 : undefined }} />
                         </label>
                         {segId && (
                           <label style={{ display:'grid', gap:5, fontSize:12, minWidth:0 }}>
                             <span>Antal säckar</span>
-                            <input type="number" min={1} value={reportDraft.amount} onChange={e => setReportDraft(d => ({ ...d, amount: e.target.value }))} placeholder="t.ex. 8" style={{ width:'100%', boxSizing:'border-box', minWidth:0, padding:'10px 12px', border:'1px solid #cbd5e1', borderRadius:12, background:'#fff' }} />
+                            <input type="number" min={1} value={reportDraft.amount} onChange={e => setReportDraft(d => ({ ...d, amount: e.target.value }))} placeholder="t.ex. 8" style={{ width:'100%', boxSizing:'border-box', minWidth:0, padding: isDesktopModal ? '7px 9px' : '10px 12px', border:'1px solid #cbd5e1', borderRadius: isDesktopModal ? 10 : 12, background:'#fff', fontSize: isDesktopModal ? 11 : undefined }} />
                           </label>
                         )}
                         </div>
                         <div style={{ display:'grid', gridTemplateColumns: compact ? '1fr' : 'minmax(0,1fr) auto', gap:10, alignItems:'end' }}>
                         <label style={{ display:'grid', gap:5, fontSize:12, minWidth:0 }}>
                           <span>Kommentar</span>
-                          <textarea value={commentDraft} onChange={e => setCommentDraft(e.target.value)} placeholder="t.ex. 25 kvm klart / kunde inte utföra p.g.a. ..." rows={3} style={{ width:'100%', boxSizing:'border-box', minWidth:0, padding:'10px 12px', border:'1px solid #cbd5e1', borderRadius:12, resize:'vertical', background:'#fff' }} />
+                          <textarea value={commentDraft} onChange={e => setCommentDraft(e.target.value)} placeholder="t.ex. 25 kvm klart / kunde inte utföra p.g.a. ..." rows={isDesktopModal ? 2 : 3} style={{ width:'100%', boxSizing:'border-box', minWidth:0, padding: isDesktopModal ? '7px 9px' : '10px 12px', border:'1px solid #cbd5e1', borderRadius: isDesktopModal ? 10 : 12, resize:'vertical', background:'#fff', fontSize: isDesktopModal ? 11 : undefined }} />
                         </label>
-                        <button type="button" onClick={addPartialReport} disabled={reportSending} className="btn--plain btn--sm" style={{ alignSelf:'stretch', minHeight: compact ? 42 : 44, padding:'10px 16px', border:'1px solid #16a34a', background: reportSending ? '#86efac' : '#16a34a', color:'#fff', borderRadius:12, fontWeight:700, boxShadow:'0 10px 18px rgba(22,163,74,0.16)', width: compact ? '100%' : undefined }}>
+                        <button type="button" onClick={addPartialReport} disabled={reportSending} className="btn--plain btn--sm" style={{ alignSelf:'stretch', minHeight: compact ? 42 : 36, padding: isDesktopModal ? '8px 14px' : '10px 16px', border:'1px solid #16a34a', background: reportSending ? '#86efac' : '#16a34a', color:'#fff', borderRadius: isDesktopModal ? 10 : 12, fontWeight:700, boxShadow: isDesktopModal ? '0 6px 12px rgba(22,163,74,0.12)' : '0 10px 18px rgba(22,163,74,0.16)', width: compact ? '100%' : undefined, fontSize: isDesktopModal ? 11 : undefined }}>
                           {reportSending ? 'Skickar…' : 'Skicka'}
                         </button>
                         </div>
