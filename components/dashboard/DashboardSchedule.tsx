@@ -20,6 +20,22 @@ function getISOWeekNumber(d: Date) {
   const week1 = new Date(date.getFullYear(), 0, 4);
   return 1 + Math.round(((date.getTime() - week1.getTime()) / 86400000 - 3 + ((week1.getDay() + 6) % 7)) / 7);
 }
+function normalizePersonName(value: string | null | undefined) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+type ContactDirectoryEntry = {
+  name: string;
+  phone: string;
+  role?: string | null;
+  location?: string | null;
+  category?: string | null;
+};
 
 export default function DashboardSchedule({ compact = false, onReportTime }: { compact?: boolean; onReportTime?: (info: { projectId?: string; projectName?: string; orderNumber?: string; day?: string }) => void }) {
   const supabase = createClientComponentClient();
@@ -52,6 +68,35 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
   const [segmentReportsMap, setSegmentReportsMap] = useState<Record<string, SegmentReport[]>>({}); // key: segment_id
   // Per-segment extra crew map for rendering team on cards
   const [segmentCrewMap, setSegmentCrewMap] = useState<Record<string, Array<{ id: string | null; name: string }>>>({});
+  const [contactDirectory, setContactDirectory] = useState<ContactDirectoryEntry[]>([]);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const res = await fetch('/api/contacts', { cache: 'no-store' });
+        if (!res.ok) return;
+        const json = await res.json();
+        if (!active || !json || typeof json !== 'object') return;
+        const rows = Array.isArray((json as any).contacts) ? (json as any).contacts : [];
+        const entries: ContactDirectoryEntry[] = [];
+        for (const row of rows) {
+          if (!row || typeof row !== 'object' || !row.name || !row.phone) continue;
+          entries.push({
+            name: String(row.name),
+            phone: String(row.phone),
+            role: row.role ? String(row.role) : null,
+            location: row.location ? String(row.location) : null,
+            category: row.category ? String(row.category) : null,
+          });
+        }
+        setContactDirectory(entries);
+      } catch {
+        // ignore directory lookup failures
+      }
+    })();
+    return () => { active = false; };
+  }, []);
 
   const openDetail = useCallback(async (it: any) => {
     setDetailOpen(true);
@@ -759,31 +804,142 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
         const segId = detailBase?.segment_id as string | undefined;
         const segReports = segId ? (segmentReportsMap[segId] || []) : [];
         const reportedTotal = segReports.reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
+        const detailTheme = getMaterialTheme(detailBase?.job_type);
+        const sellerInfo = (() => {
+          const normalizePhone = (value: string | null) => {
+            if (!value) return null;
+            const cleaned = value.replace(/[^\d+]/g, '');
+            if (!cleaned) return null;
+            if (cleaned.startsWith('+')) return cleaned;
+            if (cleaned.startsWith('0')) return `+46${cleaned.slice(1)}`;
+            return cleaned.startsWith('46') ? `+${cleaned}` : cleaned;
+          };
+          const pickSeller = (input: any) => {
+            if (!input) return { name: null as string | null, email: null as string | null, phone: null as string | null };
+            if (typeof input === 'string') return { name: input, email: null, phone: null };
+            if (Array.isArray(input)) {
+              const names = input.map((entry: any) => entry?.name || entry?.fullName || entry?.title || null).filter(Boolean);
+              const firstWithContact = input.find((entry: any) => entry && (entry.email || entry.mail || entry.phone || entry.mobilePhone || entry.mobile || entry.phoneNumber));
+              return {
+                name: names.length ? names.join(', ') : null,
+                email: firstWithContact?.email || firstWithContact?.mail || null,
+                phone: firstWithContact?.phone || firstWithContact?.mobilePhone || firstWithContact?.mobile || firstWithContact?.phoneNumber || null,
+              };
+            }
+            if (typeof input === 'object') {
+              return {
+                name: input.name || input.fullName || input.title || null,
+                email: input.email || input.mail || null,
+                phone: input.phone || input.mobilePhone || input.mobile || input.phoneNumber || null,
+              };
+            }
+            return { name: null, email: null, phone: null };
+          };
+          const findDirectoryMatch = (sellerName: string | null) => {
+            const normalized = normalizePersonName(sellerName);
+            if (!normalized) return null;
+            const exact = contactDirectory.find(entry => normalizePersonName(entry.name) === normalized);
+            if (exact) return exact;
+            return contactDirectory.find(entry => {
+              const candidate = normalizePersonName(entry.name);
+              return candidate.includes(normalized) || normalized.includes(candidate);
+            }) || null;
+          };
+          const picked = pickSeller(raw?.salesResponsible || raw?.salesResponsibleUser || raw?.salesUser || raw?.salesRep || raw?.responsibleSalesUser);
+          const name = picked.name || raw?.salesResponsibleName || raw?.salesResponsibleFullName || null;
+          const email = picked.email || raw?.salesResponsibleEmail || raw?.salesEmail || raw?.responsibleSalesEmail || null;
+          const directoryMatch = findDirectoryMatch(name);
+          const phone = picked.phone || raw?.salesResponsiblePhone || raw?.salesPhone || raw?.responsibleSalesPhone || raw?.salesResponsibleMobile || raw?.salesMobile || directoryMatch?.phone || null;
+          const tel = normalizePhone(phone);
+          return {
+            name,
+            email,
+            phone,
+            tel,
+            role: directoryMatch?.role || null,
+            location: directoryMatch?.location || null,
+          };
+        })();
         return (
-          <div style={{ position: 'fixed', inset:0, zIndex: 260, background: 'rgba(15,23,42,0.5)', backdropFilter:'blur(3px)', display:'flex', alignItems:'center', justifyContent:'center', padding:16 }} onClick={closeDetail}>
-            <div role="dialog" aria-modal="true" aria-busy={detailLoading ? true : undefined} onClick={e => e.stopPropagation()} style={{ width: 'min(720px, 92vw)', maxHeight: '80vh', overflowY: 'auto', background:'#fff', border:'1px solid #e2e8f0', borderRadius:12, boxShadow:'0 12px 30px rgba(0,0,0,0.25)', display:'grid', gap:12, padding:16 }}>
-              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:8, flexWrap:'wrap' }}>
-                <div style={{ display:'grid', gap:6, minWidth:0 }}>
-                  <strong style={{ fontSize:16, color:'#0f172a' }}>{headerTitle}</strong>
-                  {detailBase?.customer && <span style={{ fontSize:12, color:'#475569' }}>{detailBase.customer}</span>}
+          <div style={{ position: 'fixed', inset:0, zIndex: 260, background: 'rgba(15,23,42,0.56)', backdropFilter:'blur(4px)', display:'flex', alignItems: compact ? 'flex-start' : 'center', justifyContent:'center', padding: compact ? 'calc(env(safe-area-inset-top, 0px) + 72px) 12px 20px' : 24 }} onClick={closeDetail}>
+            <div role="dialog" aria-modal="true" aria-busy={detailLoading ? true : undefined} onClick={e => e.stopPropagation()} style={{ width: 'min(760px, 94vw)', maxHeight: compact ? 'calc(100vh - env(safe-area-inset-top, 0px) - 104px)' : '84vh', overflowY: 'auto', background:'#fff', border:'1px solid #dbe4ef', borderRadius:20, boxShadow:'0 24px 60px rgba(15,23,42,0.28)', display:'grid', gap:14, padding:16 }}>
+              <div style={{ display:'grid', gap:12, padding:'14px', borderRadius:18, border:`1px solid ${detailTheme.accent}22`, background:'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)' }}>
+                <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', gap:10, flexWrap:'wrap' }}>
+                  <div style={{ display:'grid', gap:8, minWidth:0 }}>
+                    <div style={{ display:'inline-flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
+                      <span style={{ display:'inline-flex', alignItems:'center', gap:6, padding:'4px 8px', borderRadius:999, background:`${detailTheme.badgeBg}`, color:detailTheme.badgeFg, fontSize:11, fontWeight:700 }}>
+                        {detailBase?.job_type || 'Planering'}
+                      </span>
+                      {segId && reportedTotal > 0 && <span style={{ display:'inline-flex', alignItems:'center', gap:6, padding:'4px 8px', borderRadius:999, background:'#ecfeff', color:'#0f766e', fontSize:11, fontWeight:700 }}>Rapporterat {reportedTotal} säckar</span>}
+                    </div>
+                    <strong style={{ fontSize:20, lineHeight:1.15, color:'#0f172a' }}>{headerTitle}</strong>
+                    {detailBase?.customer && <span style={{ fontSize:14, color:'#475569', fontWeight:600 }}>{detailBase.customer}</span>}
+                    <div style={{ display:'flex', gap:8, flexWrap:'wrap', alignItems:'center' }}>
+                      {detailBase?.truck && <span style={{ fontSize:11, color:'#475569', background:'#f8fafc', border:'1px solid #e2e8f0', padding:'4px 8px', borderRadius: 999 }}>Lastbil: {detailBase.truck}</span>}
+                      {typeof detailBase?.bag_count === 'number' && <span style={{ fontSize:11, color:'#475569', background:'#f8fafc', border:'1px solid #e2e8f0', padding:'4px 8px', borderRadius: 999 }}>Plan: {detailBase.bag_count} säckar</span>}
+                    </div>
+                  </div>
+                  <div style={{ display:'grid', gap:8, width: compact ? '100%' : 'min(100%, 240px)', gridTemplateColumns: '1fr', alignItems:'stretch' }}>
+                    {detailBase?.order_number && (
+                      <a
+                        href={`/egenkontroll?orderId=${encodeURIComponent(String(detailBase.order_number))}`}
+                        className="btn--plain btn--sm"
+                        style={{ display:'inline-flex', alignItems:'center', justifyContent:'center', width:'100%', boxSizing:'border-box', background:'#f0fdf4', border:'1px solid #86efac', color:'#166534', borderRadius:12, padding:'10px 12px', fontSize: compact ? 12 : 13, fontWeight:700, textDecoration:'none', minHeight:42, lineHeight:1.2 }}
+                      >Starta egenkontroll</a>
+                    )}
+                    {onReportTime && (
+                      <button
+                        onClick={() => onReportTime({ projectId: String(detailBase?.project_id || ''), projectName: detailBase?.project_name, orderNumber: detailBase?.order_number ? String(detailBase.order_number) : undefined, day: (detailBase?.job_day || detailBase?.start_day) ? String(detailBase?.job_day || detailBase?.start_day) : undefined })}
+                        className="btn--plain btn--sm"
+                        style={{ display:'inline-flex', alignItems:'center', justifyContent:'center', width:'100%', boxSizing:'border-box', background:'#16a34a', border:'1px solid #16a34a', color:'#fff', borderRadius:12, padding:'10px 12px', fontSize: compact ? 12 : 13, fontWeight:700, boxShadow:'0 10px 18px rgba(22,163,74,0.16)', minHeight:42, lineHeight:1.2, order: compact ? -1 : undefined }}
+                      >Rapportera tid</button>
+                    )}
+                    <button onClick={closeDetail} className="btn--plain btn--sm" style={{ display:'inline-flex', alignItems:'center', justifyContent:'center', width:'100%', boxSizing:'border-box', background:'#fff5f5', border:'1px solid #fecaca', color:'#b91c1c', borderRadius:12, padding:'10px 12px', fontSize: compact ? 12 : 13, fontWeight:700, minHeight:42, lineHeight:1.2 }}>Stäng</button>
+                  </div>
                 </div>
-                <div style={{ display:'inline-flex', gap:8, alignItems:'center' }}>
-                  {detailBase?.order_number && (
-                    <a
-                      href={`/egenkontroll?orderId=${encodeURIComponent(String(detailBase.order_number))}`}
-                      className="btn--plain btn--sm"
-                      style={{ background:'#dcfce7', border:'1px solid #86efac', color:'#166534', borderRadius:6, padding:'6px 10px', fontSize:12 }}
-                    >Starta egenkontroll</a>
+                {(mapsHref || detailBase?.customer || phoneList.length > 0 || sellerInfo.name || sellerInfo.email || sellerInfo.phone) && (
+                  <div style={{ display:'grid', gridTemplateColumns: compact ? '1fr' : 'repeat(auto-fit, minmax(220px, 1fr))', gap:10 }}>
+                  {(detailBase?.customer || phoneList.length > 0) && (
+                  <div style={{ display:'grid', gap:6, padding:'12px 12px 10px', borderRadius:14, background:'#ffffff', border:'1px solid #e2e8f0' }}>
+                    <span style={{ fontSize:12, color:'#334155', fontWeight:700 }}>Kontakt</span>
+                    {detailBase?.customer && <span style={{ fontSize:14, color:'#334155', lineHeight:1.4 }}>{detailBase.customer}</span>}
+                    {phoneList.length > 0 ? (
+                      <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
+                        {phoneList.map(p => (
+                          <a key={p.display} href={`tel:${p.tel}`} style={{ fontSize:12, color:'#0369a1', textDecoration:'none', border:'1px solid #cbd5e1', background:'#f0f9ff', padding:'4px 10px', borderRadius:999 }}>Ring {p.display}</a>
+                        ))}
+                      </div>
+                    ) : (
+                      <span style={{ fontSize:12, color:'#64748b' }}>Inget telefonnummer hittades i beskrivningen.</span>
+                    )}
+                  </div>
                   )}
-                  {onReportTime && (
-                    <button
-                      onClick={() => onReportTime({ projectId: String(detailBase?.project_id || ''), projectName: detailBase?.project_name, orderNumber: detailBase?.order_number ? String(detailBase.order_number) : undefined, day: (detailBase?.job_day || detailBase?.start_day) ? String(detailBase?.job_day || detailBase?.start_day) : undefined })}
-                      className="btn--plain btn--sm"
-                      style={{ background:'#16a34a', border:'1px solid #16a34a', color:'#fff', borderRadius:6, padding:'6px 10px', fontSize:12 }}
-                    >Rapportera tid</button>
+                  {(sellerInfo.name || sellerInfo.email || sellerInfo.phone) && (
+                  <div style={{ display:'grid', gap:6, padding:'12px 12px 10px', borderRadius:14, background:'#ffffff', border:'1px solid #e2e8f0' }}>
+                    <span style={{ fontSize:12, color:'#334155', fontWeight:700 }}>Ansvarig säljare</span>
+                    {sellerInfo.name && <span style={{ fontSize:14, color:'#334155', lineHeight:1.4 }}>{sellerInfo.name}</span>}
+                    {(sellerInfo.role || sellerInfo.location) && <span style={{ fontSize:12, color:'#64748b' }}>{[sellerInfo.role, sellerInfo.location].filter(Boolean).join(' • ')}</span>}
+                    <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
+                      {sellerInfo.tel && sellerInfo.phone && (
+                        <a href={`tel:${sellerInfo.tel}`} style={{ fontSize:12, color:'#0369a1', textDecoration:'none', border:'1px solid #cbd5e1', background:'#f0f9ff', padding:'4px 10px', borderRadius:999 }}>Ring {sellerInfo.phone}</a>
+                      )}
+                      {sellerInfo.email && (
+                        <a href={`mailto:${sellerInfo.email}`} style={{ fontSize:12, color:'#0369a1', textDecoration:'none', border:'1px solid #cbd5e1', background:'#f8fafc', padding:'4px 10px', borderRadius:999 }}>Maila</a>
+                      )}
+                    </div>
+                  </div>
                   )}
-                  <button onClick={closeDetail} className="btn--plain btn--sm" style={{ background:'#fee2e2', border:'1px solid #fca5a5', color:'#b91c1c', borderRadius:6, padding:'6px 10px', fontSize:12 }}>Stäng</button>
-                </div>
+                  {mapsHref && (
+                  <div style={{ display:'grid', gap:6, padding:'12px 12px 10px', borderRadius:14, background:'#ffffff', border:'1px solid #e2e8f0' }}>
+                    <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:10, flexWrap:'wrap' }}>
+                      <span style={{ fontSize:12, color:'#334155', fontWeight:700 }}>Adress</span>
+                      <a href={mapsHref} target="_blank" rel="noopener noreferrer" className="btn--plain btn--xs" style={{ fontSize:11, border:'1px solid #cbd5e1', borderRadius:999, padding:'4px 10px', color:'#0369a1', background:'#e0f2fe', textDecoration:'none' }}>Öppna i Kartor</a>
+                    </div>
+                    <span style={{ fontSize:14, color:'#334155', lineHeight:1.4 }}>{address}</span>
+                  </div>
+                  )}
+                  </div>
+                )}
               </div>
               {detailLoading && (
                 <div role="status" aria-live="polite" style={{ display:'grid', gap:10, padding:'8px 0' }}>
@@ -806,38 +962,23 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
               )}
               {detailError && <div style={{ fontSize:12, color:'#b91c1c', background:'#fef2f2', border:'1px solid #fecaca', padding:'6px 8px', borderRadius:8 }}>Fel: {detailError}</div>}
               <div style={{ display:'grid', gap:12 }}>
-                {mapsHref && (
-                  <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
-                    <span style={{ fontSize:12, color:'#334155', fontWeight:600 }}>Adress:</span>
-                    <span style={{ fontSize:12, color:'#334155' }}>{address}</span>
-                    <a href={mapsHref} target="_blank" rel="noopener noreferrer" className="btn--plain btn--xs" style={{ fontSize:11, border:'1px solid #cbd5e1', borderRadius:6, padding:'2px 8px', color:'#0369a1', background:'#e0f2fe' }}>Öppna i Kartor</a>
-                  </div>
-                )}
-                {phoneList.length > 0 && (
-                  <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
-                    <span style={{ fontSize:12, color:'#334155', fontWeight:600 }}>Kontakt:</span>
-                    {phoneList.map(p => (
-                      <a key={p.display} href={`tel:${p.tel}`} style={{ fontSize:12, color:'#0369a1', textDecoration:'none', border:'1px solid #cbd5e1', background:'#f0f9ff', padding:'2px 8px', borderRadius:6 }}>{p.display}</a>
-                    ))}
-                  </div>
-                )}
                 {description && (
-                  <div style={{ display:'grid', gap:4 }}>
-                    <span style={{ fontSize:12, color:'#334155', fontWeight:600 }}>Beskrivning</span>
-                    <p style={{ fontSize:12, color:'#475569', whiteSpace:'pre-wrap', margin:0 }}>{description}</p>
+                  <div style={{ display:'grid', gap:8, padding:'14px', borderRadius:16, border:'1px solid #e2e8f0', background:'#ffffff' }}>
+                    <span style={{ fontSize:13, color:'#334155', fontWeight:700 }}>Beskrivning</span>
+                    <p style={{ fontSize:14, lineHeight:1.5, color:'#475569', whiteSpace:'pre-wrap', margin:0 }}>{description}</p>
                   </div>
                 )}
                 {/* Project comments */}
                 {detailBase?.project_id && (
-                  <div style={{ display:'grid', gap:6 }}>
+                  <div style={{ display:'grid', gap:8, padding:'14px', borderRadius:16, border:'1px solid #e2e8f0', background:'#ffffff' }}>
                     <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-                      <strong style={{ fontSize:13, color:'#0f172a' }}>Kommentarer</strong>
+                      <strong style={{ fontSize:14, color:'#0f172a' }}>Kommentarer</strong>
                       <div style={{ height:1, background:'#e5e7eb', flex:1 }} />
                       <button
                         type="button"
                         onClick={() => refreshComments(true)}
                         className="btn--plain btn--xs"
-                        style={{ fontSize:11, padding:'4px 8px', border:'1px solid #cbd5e1', background:'#f1f5f9', color:'#0f172a', borderRadius:6 }}
+                        style={{ fontSize:11, padding:'5px 10px', border:'1px solid #cbd5e1', background:'#f1f5f9', color:'#0f172a', borderRadius:999 }}
                       >Uppdatera</button>
                     </div>
                     {commentsLoading && comments.length === 0 && <div style={{ fontSize:12, color:'#64748b' }}>Hämtar kommentarer…</div>}
@@ -846,12 +987,12 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                     {!commentsLoading && !commentsError && comments.length > 0 && (
                       <div style={{ display:'grid', gap:6 }}>
                         {comments.slice(0,10).map(c => (
-                          <div key={c.id} style={{ display:'grid', gap:4, border:'1px solid #e2e8f0', background:'#fff', borderRadius:8, padding:'6px 8px' }}>
+                          <div key={c.id} style={{ display:'grid', gap:5, border:'1px solid #e2e8f0', background:'#fbfdff', borderRadius:12, padding:'10px 12px' }}>
                             <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
-                              {c.userName && <span style={{ fontSize:11, color:'#475569', fontWeight:600 }}>{c.userName}</span>}
+                              {c.userName && <span style={{ fontSize:11, color:'#475569', fontWeight:700 }}>{c.userName}</span>}
                               {c.createdAt && <span style={{ fontSize:10, color:'#64748b' }}>{formatRelativeTime(c.createdAt)}</span>}
                             </div>
-                            <div style={{ fontSize:12, color:'#334155', whiteSpace:'pre-wrap' }}>{c.text}</div>
+                            <div style={{ fontSize:13, lineHeight:1.45, color:'#334155', whiteSpace:'pre-wrap' }}>{c.text}</div>
                           </div>
                         ))}
                         {comments.length > 10 && <div style={{ fontSize:11, color:'#64748b' }}>Visar 10 av {comments.length} kommentarer.</div>}
@@ -859,53 +1000,51 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                     )}
                   </div>
                 )}
-                <div style={{ display:'flex', gap:8, flexWrap:'wrap', alignItems:'center' }}>
-                  {detailBase?.truck && <span style={{ fontSize:11, color:'#475569', background:'#f1f5f9', border:'1px solid #e2e8f0', padding:'2px 6px', borderRadius: 999 }}>Lastbil: {detailBase.truck}</span>}
-                  {typeof detailBase?.bag_count === 'number' && <span style={{ fontSize:11, color:'#475569', background:'#f1f5f9', border:'1px solid #e2e8f0', padding:'2px 6px', borderRadius: 999 }}>Plan: {detailBase.bag_count} säckar</span>}
-                  {detailBase?.job_type && <span style={{ fontSize:11, color:'#475569', background:'#f1f5f9', border:'1px solid #e2e8f0', padding:'2px 6px', borderRadius: 999 }}>{detailBase.job_type}</span>}
-                  {segId && reportedTotal > 0 && <span style={{ fontSize:11, color:'#0f172a', background:'#ecfeff', border:'1px solid #bae6fd', padding:'2px 6px', borderRadius: 999 }}>Rapporterat: {reportedTotal} säckar</span>}
-                </div>
                 {/* Rapportering UI for installers */}
-                <div style={{ display:'grid', gap:8, background:'#f8fafc', border:'1px solid #e2e8f0', borderRadius:8, padding:10 }}>
+                <div style={{ display:'grid', gap:10, background:'linear-gradient(180deg, #f8fafc 0%, #ffffff 100%)', border:'1px solid #dbe4ef', borderRadius:16, padding:14 }}>
                   <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-                    <strong style={{ fontSize:13, color:'#0f172a' }}>Rapportering</strong>
+                    <strong style={{ fontSize:14, color:'#0f172a' }}>Rapportering</strong>
                     <div style={{ height:1, background:'#e5e7eb', flex:1 }} />
-                    {segId && <span style={{ fontSize:11, color:'#64748b' }}>Totalt: {reportedTotal} säckar</span>}
+                    {segId && <span style={{ fontSize:11, color:'#64748b', fontWeight:600 }}>Totalt: {reportedTotal} säckar</span>}
                   </div>
                   {!detailBase?.project_id && <div style={{ fontSize:12, color:'#64748b' }}>Denna post saknar projekt-id och kan inte rapporteras här.</div>}
                   {detailBase?.project_id && (
                     <>
                       {!segId && <div style={{ fontSize:12, color:'#64748b' }}>Denna post saknar segment-id (kan inte rapportera säckar), men du kan skicka en kommentar.</div>}
-                      <div style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' }}>
-                        <label style={{ display:'grid', gap:4, fontSize:12 }}>
+                      <div style={{ display:'grid', gap:10 }}>
+                        <div style={{ display:'grid', gridTemplateColumns: compact ? '1fr' : 'repeat(auto-fit, minmax(160px, 1fr))', gap:10 }}>
+                        <label style={{ display:'grid', gap:5, fontSize:12, minWidth:0 }}>
                           <span>Dag</span>
-                          <input type="date" value={reportDraft.day} onChange={e => setReportDraft(d => ({ ...d, day: e.target.value }))} style={{ padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }} />
+                          <input type="date" value={reportDraft.day} onChange={e => setReportDraft(d => ({ ...d, day: e.target.value }))} style={{ width:'100%', boxSizing:'border-box', minWidth:0, padding:'10px 12px', border:'1px solid #cbd5e1', borderRadius:12, background:'#fff' }} />
                         </label>
                         {segId && (
-                          <label style={{ display:'grid', gap:4, fontSize:12 }}>
+                          <label style={{ display:'grid', gap:5, fontSize:12, minWidth:0 }}>
                             <span>Antal säckar</span>
-                            <input type="number" min={1} value={reportDraft.amount} onChange={e => setReportDraft(d => ({ ...d, amount: e.target.value }))} placeholder="t.ex. 8" style={{ padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8 }} />
+                            <input type="number" min={1} value={reportDraft.amount} onChange={e => setReportDraft(d => ({ ...d, amount: e.target.value }))} placeholder="t.ex. 8" style={{ width:'100%', boxSizing:'border-box', minWidth:0, padding:'10px 12px', border:'1px solid #cbd5e1', borderRadius:12, background:'#fff' }} />
                           </label>
                         )}
-                        <label style={{ display:'grid', gap:4, fontSize:12, flex:'1 1 260px' }}>
+                        </div>
+                        <div style={{ display:'grid', gridTemplateColumns: compact ? '1fr' : 'minmax(0,1fr) auto', gap:10, alignItems:'end' }}>
+                        <label style={{ display:'grid', gap:5, fontSize:12, minWidth:0 }}>
                           <span>Kommentar</span>
-                          <textarea value={commentDraft} onChange={e => setCommentDraft(e.target.value)} placeholder="t.ex. 25 kvm klart / kunde inte utföra p.g.a. ..." rows={2} style={{ padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:8, resize:'vertical' }} />
+                          <textarea value={commentDraft} onChange={e => setCommentDraft(e.target.value)} placeholder="t.ex. 25 kvm klart / kunde inte utföra p.g.a. ..." rows={3} style={{ width:'100%', boxSizing:'border-box', minWidth:0, padding:'10px 12px', border:'1px solid #cbd5e1', borderRadius:12, resize:'vertical', background:'#fff' }} />
                         </label>
-                        <button type="button" onClick={addPartialReport} disabled={reportSending} className="btn--plain btn--sm" style={{ alignSelf:'end', height:34, padding:'6px 12px', border:'1px solid #16a34a', background: reportSending ? '#86efac' : '#16a34a', color:'#fff', borderRadius:8 }}>
+                        <button type="button" onClick={addPartialReport} disabled={reportSending} className="btn--plain btn--sm" style={{ alignSelf:'stretch', minHeight: compact ? 42 : 44, padding:'10px 16px', border:'1px solid #16a34a', background: reportSending ? '#86efac' : '#16a34a', color:'#fff', borderRadius:12, fontWeight:700, boxShadow:'0 10px 18px rgba(22,163,74,0.16)', width: compact ? '100%' : undefined }}>
                           {reportSending ? 'Skickar…' : 'Skicka'}
                         </button>
+                        </div>
                       </div>
                       {reportError && <div style={{ fontSize:12, color:'#b91c1c', background:'#fef2f2', border:'1px solid #fecaca', padding:'6px 8px', borderRadius:8 }}>{reportError}</div>}
                       {segId && segReports.length > 0 ? (
                         <div style={{ display:'grid', gap:6 }}>
                           {segReports.map(r => (
-                            <div key={r.id} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', border:'1px solid #e5e7eb', background:'#fff', borderRadius:8, padding:'6px 8px' }}>
+                            <div key={r.id} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:8, flexWrap:'wrap', border:'1px solid #e5e7eb', background:'#fff', borderRadius:12, padding:'10px 12px' }}>
                               <div style={{ display:'flex', gap:10, alignItems:'center' }}>
                                 <span style={{ fontSize:12, color:'#0f172a' }}>{r.report_day}</span>
-                                <span style={{ fontSize:12, color:'#334155', background:'#f1f5f9', border:'1px solid #e2e8f0', borderRadius:999, padding:'2px 8px' }}>{r.amount} säckar</span>
+                                <span style={{ fontSize:12, color:'#334155', background:'#f1f5f9', border:'1px solid #e2e8f0', borderRadius:999, padding:'4px 10px' }}>{r.amount} säckar</span>
                                 {r.created_by_name && <span style={{ fontSize:11, color:'#64748b' }}>av {r.created_by_name}</span>}
                               </div>
-                              <button type="button" className="btn--plain btn--xs" onClick={() => deletePartialReport(r.id)} style={{ fontSize:11, padding:'4px 8px', border:'1px solid #fecaca', background:'#fee2e2', color:'#b91c1c', borderRadius:8 }}>Ta bort</button>
+                              <button type="button" className="btn--plain btn--xs" onClick={() => deletePartialReport(r.id)} style={{ fontSize:11, padding:'6px 10px', border:'1px solid #fecaca', background:'#fee2e2', color:'#b91c1c', borderRadius:10 }}>Ta bort</button>
                             </div>
                           ))}
                         </div>

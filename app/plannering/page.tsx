@@ -93,6 +93,14 @@ interface SegmentReport {
   projectId?: string | null; // denormalized project id
 }
 
+type ContactDirectoryEntry = {
+  name: string;
+  phone: string;
+  role?: string | null;
+  location?: string | null;
+  category?: string | null;
+};
+
 type PresenceUser = {
   id?: string | null;
   name?: string | null;
@@ -147,6 +155,15 @@ function mergePresenceUsers(prev: PresenceUser[], incoming: PresenceUser[]) {
     map.set(key, user);
   }
   return Array.from(map.values());
+}
+
+function normalizePersonName(value: string | null | undefined) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
 }
 
 // Small inline control to copy a segment to another truck
@@ -1315,6 +1332,7 @@ export default function PlanneringPage() {
   const [descEditing, setDescEditing] = useState(false);
   const [descDraft, setDescDraft] = useState('');
   const [descSaving, setDescSaving] = useState(false);
+  const [contactDirectory, setContactDirectory] = useState<ContactDirectoryEntry[]>([]);
   // Shared comments hook for detail modal
   const { comments: detailComments, loading: detailCommentsLoading, error: detailCommentsError, refresh: refreshDetailComments } = useProjectComments(detailProjectId, { ttlMs: 120_000 });
   // Lightweight cache of project address lines for card display (DB-sourced only)
@@ -1431,6 +1449,34 @@ export default function PlanneringPage() {
     }
   }, [detailCache, projects]);
   const closeProjectModal = useCallback(() => { setDetailOpen(false); setDetailProjectId(null); setDetailError(null); }, []);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const res = await fetch('/api/contacts', { cache: 'no-store' });
+        if (!res.ok) return;
+        const json = await res.json();
+        if (!active || !json || typeof json !== 'object') return;
+        const rows = Array.isArray((json as any).contacts) ? (json as any).contacts : [];
+        const entries: ContactDirectoryEntry[] = [];
+        for (const row of rows) {
+          if (!row || typeof row !== 'object' || !row.name || !row.phone) continue;
+          entries.push({
+            name: String(row.name),
+            phone: String(row.phone),
+            role: row.role ? String(row.role) : null,
+            location: row.location ? String(row.location) : null,
+            category: row.category ? String(row.category) : null,
+          });
+        }
+        setContactDirectory(entries);
+      } catch {
+        // Ignore contact directory lookup failures in modal enrichment.
+      }
+    })();
+    return () => { active = false; };
+  }, []);
 
   // No lazy fallback: rely only on DB-provided address fields loaded into projectAddresses
 
@@ -4640,6 +4686,61 @@ export default function PlanneringPage() {
           return p?.salesResponsibleName || p?.salesResponsibleFullName || null;
         };
         const seller = deriveSeller(raw) || base?.salesResponsible || null;
+        const sellerInfo = (() => {
+          const normalizePhone = (value: string | null) => {
+            if (!value) return null;
+            const cleaned = value.replace(/[^\d+]/g, '');
+            if (!cleaned) return null;
+            if (cleaned.startsWith('+')) return cleaned;
+            if (cleaned.startsWith('0')) return `+46${cleaned.slice(1)}`;
+            return cleaned.startsWith('46') ? `+${cleaned}` : cleaned;
+          };
+          const pickSeller = (input: any) => {
+            if (!input) return { name: null as string | null, email: null as string | null, phone: null as string | null };
+            if (typeof input === 'string') return { name: input, email: null, phone: null };
+            if (Array.isArray(input)) {
+              const names = input.map((entry: any) => entry?.name || entry?.fullName || entry?.title || null).filter(Boolean);
+              const firstWithContact = input.find((entry: any) => entry && (entry.email || entry.mail || entry.phone || entry.mobilePhone || entry.mobile || entry.phoneNumber));
+              return {
+                name: names.length ? names.join(', ') : null,
+                email: firstWithContact?.email || firstWithContact?.mail || null,
+                phone: firstWithContact?.phone || firstWithContact?.mobilePhone || firstWithContact?.mobile || firstWithContact?.phoneNumber || null,
+              };
+            }
+            if (typeof input === 'object') {
+              return {
+                name: input.name || input.fullName || input.title || null,
+                email: input.email || input.mail || null,
+                phone: input.phone || input.mobilePhone || input.mobile || input.phoneNumber || null,
+              };
+            }
+            return { name: null, email: null, phone: null };
+          };
+          const findDirectoryMatch = (sellerName: string | null) => {
+            const normalized = normalizePersonName(sellerName);
+            if (!normalized) return null;
+            const exact = contactDirectory.find(entry => normalizePersonName(entry.name) === normalized);
+            if (exact) return exact;
+            return contactDirectory.find(entry => {
+              const candidate = normalizePersonName(entry.name);
+              return candidate.includes(normalized) || normalized.includes(candidate);
+            }) || null;
+          };
+          const picked = pickSeller(raw?.salesResponsible || raw?.salesResponsibleUser || raw?.salesUser || raw?.salesRep || raw?.responsibleSalesUser);
+          const name = picked.name || raw?.salesResponsibleName || raw?.salesResponsibleFullName || seller || null;
+          const email = picked.email || raw?.salesResponsibleEmail || raw?.salesEmail || raw?.responsibleSalesEmail || null;
+          const directoryMatch = findDirectoryMatch(name);
+          const phone = picked.phone || raw?.salesResponsiblePhone || raw?.salesPhone || raw?.responsibleSalesPhone || raw?.salesResponsibleMobile || raw?.salesMobile || directoryMatch?.phone || null;
+          const tel = normalizePhone(phone);
+          return {
+            name,
+            email,
+            phone,
+            tel,
+            role: directoryMatch?.role || null,
+            location: directoryMatch?.location || null,
+          };
+        })();
         const projectStatus = (() => {
           const s: any = raw?.status || raw?.state;
           if (!s) return null;
@@ -4648,17 +4749,76 @@ export default function PlanneringPage() {
           return String(s);
         })();
         return (
-          <div style={{ position: 'fixed', inset: 0, zIndex: 1400, background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }} onClick={closeProjectModal}>
-            <div role="dialog" aria-modal="true" aria-busy={detailLoading ? true : undefined} onClick={e => e.stopPropagation()} style={{ width: 'min(720px, 92vw)', maxHeight: '80vh', overflowY: 'auto', background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12, boxShadow: '0 12px 30px rgba(0,0,0,0.25)', display: 'grid', gap: 12, padding: 16 }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <div style={{ display: 'grid', gap: 8 }}>
-                  <strong style={{ fontSize: 18, color: '#0f172a' }}>
-                    {base?.orderNumber ? <span style={{ fontFamily: 'ui-monospace,monospace', fontSize: 13, background: '#eef2ff', border: '1px solid #c7d2fe', color: '#312e81', padding: '2px 6px', borderRadius: 6, marginRight: 8 }}>#{base.orderNumber}</span> : null}
-                    {base?.name || 'Projekt'}
-                  </strong>
-                  <span style={{ fontSize: 12, color: '#475569' }}>{base?.customer}</span>
+          <div style={{ position: 'fixed', inset: 0, zIndex: 1400, background: 'rgba(15,23,42,0.56)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: isNarrow ? 'flex-start' : 'center', justifyContent: 'center', padding: isNarrow ? 'calc(env(safe-area-inset-top, 0px) + 72px) 12px 20px' : 24 }} onClick={closeProjectModal}>
+            <div role="dialog" aria-modal="true" aria-busy={detailLoading ? true : undefined} onClick={e => e.stopPropagation()} style={{ width: 'min(760px, 94vw)', maxHeight: isNarrow ? 'calc(100vh - env(safe-area-inset-top, 0px) - 104px)' : '84vh', overflowY: 'auto', background: '#fff', border: '1px solid #dbe4ef', borderRadius: 20, boxShadow: '0 24px 60px rgba(15,23,42,0.28)', display: 'grid', gap: 14, padding: 16 }}>
+              <div style={{ display: 'grid', gap: 12, padding: 14, borderRadius: 18, border: '1px solid #dbe4ef', background: 'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)' }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+                  <div style={{ display: 'grid', gap: 8, minWidth: 0 }}>
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      {projectStatus && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 8px', borderRadius: 999, background: '#eef2ff', color: '#312e81', fontSize: 11, fontWeight: 700 }}>Status: {String(projectStatus)}</span>}
+                      {(() => { const pid = base?.id; const agg = pid ? (reportedBagsByProject.get(pid) || 0) : 0; return agg > 0 ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 8px', borderRadius: 999, background: '#ecfeff', color: '#0f766e', fontSize: 11, fontWeight: 700 }}>Rapporterat {agg} säckar</span> : null; })()}
+                    </div>
+                    <strong style={{ fontSize: 20, lineHeight: 1.15, color: '#0f172a' }}>
+                      {[base?.orderNumber ? `#${base.orderNumber}` : null, base?.name || 'Projekt'].filter(Boolean).join(' ')}
+                    </strong>
+                    {base?.customer && <span style={{ fontSize: 14, color: '#475569', fontWeight: 600 }}>{base.customer}</span>}
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                      {meta?.truck && <span style={{ fontSize: 11, color: '#475569', background: '#f8fafc', border: '1px solid #e2e8f0', padding: '4px 8px', borderRadius: 999 }}>Lastbil: {meta.truck}</span>}
+                      {typeof meta?.bagCount === 'number' && <span style={{ fontSize: 11, color: '#475569', background: '#f8fafc', border: '1px solid #e2e8f0', padding: '4px 8px', borderRadius: 999 }}>Plan: {meta.bagCount} säckar</span>}
+                      {team.length > 0 && <span style={{ fontSize: 11, color: '#475569', background: '#f8fafc', border: '1px solid #e2e8f0', padding: '4px 8px', borderRadius: 999 }}>Team: {team.join(', ')}</span>}
+                      {meta?.jobType && <span style={{ fontSize: 11, color: '#475569', background: '#f8fafc', border: '1px solid #e2e8f0', padding: '4px 8px', borderRadius: 999 }}>{meta.jobType}</span>}
+                    </div>
+                  </div>
+                  <div style={{ display: 'grid', gap: 8, width: isNarrow ? '100%' : 'min(100%, 240px)', gridTemplateColumns: '1fr', alignItems: 'stretch' }}>
+                    {ekPath && (
+                      <a href={ekPath} className="btn--plain btn--sm" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '100%', boxSizing: 'border-box', background: '#f0fdf4', border: '1px solid #86efac', color: '#166534', borderRadius: 12, padding: '10px 12px', fontSize: isNarrow ? 12 : 13, fontWeight: 700, textDecoration: 'none', minHeight: 42, lineHeight: 1.2 }}>Starta egenkontroll</a>
+                    )}
+                    <button onClick={closeProjectModal} className="btn--plain btn--sm" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '100%', boxSizing: 'border-box', background: '#fff5f5', border: '1px solid #fecaca', color: '#b91c1c', borderRadius: 12, padding: '10px 12px', fontSize: isNarrow ? 12 : 13, fontWeight: 700, minHeight: 42, lineHeight: 1.2 }}>Stäng</button>
+                  </div>
                 </div>
-                <button onClick={closeProjectModal} className="btn--plain btn--sm" style={{ background: '#fee2e2', border: '1px solid #fca5a5', color: '#b91c1c', borderRadius: 6, padding: '6px 10px', fontSize: 12 }}>Stäng</button>
+                {(mapsHref || base?.customer || contactPhones.length > 0 || sellerInfo.name || sellerInfo.email || sellerInfo.phone) && (
+                  <div style={{ display: 'grid', gridTemplateColumns: isNarrow ? '1fr' : 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
+                    {(base?.customer || contactPhones.length > 0) && (
+                      <div style={{ display: 'grid', gap: 6, padding: '12px 12px 10px', borderRadius: 14, background: '#ffffff', border: '1px solid #e2e8f0' }}>
+                        <span style={{ fontSize: 12, color: '#334155', fontWeight: 700 }}>Kontakt</span>
+                        {base?.customer && <span style={{ fontSize: 14, color: '#334155', lineHeight: 1.4 }}>{base.customer}</span>}
+                        {contactPhones.length > 0 ? (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                            {contactPhones.map((ph, i) => (
+                              <a key={ph.tel + ':' + i} href={`tel:${ph.tel}`} style={{ fontSize: 12, color: '#0369a1', textDecoration: 'none', border: '1px solid #cbd5e1', background: '#f0f9ff', padding: '4px 10px', borderRadius: 999 }}>Ring {ph.display}</a>
+                            ))}
+                          </div>
+                        ) : (
+                          <span style={{ fontSize: 12, color: '#64748b' }}>Inget telefonnummer hittades i beskrivningen.</span>
+                        )}
+                      </div>
+                    )}
+                    {(sellerInfo.name || sellerInfo.email || sellerInfo.phone) && (
+                      <div style={{ display: 'grid', gap: 6, padding: '12px 12px 10px', borderRadius: 14, background: '#ffffff', border: '1px solid #e2e8f0' }}>
+                        <span style={{ fontSize: 12, color: '#334155', fontWeight: 700 }}>Ansvarig säljare</span>
+                        {sellerInfo.name && <span style={{ fontSize: 14, color: '#334155', lineHeight: 1.4 }}>{sellerInfo.name}</span>}
+                        {(sellerInfo.role || sellerInfo.location) && <span style={{ fontSize: 12, color: '#64748b' }}>{[sellerInfo.role, sellerInfo.location].filter(Boolean).join(' • ')}</span>}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                          {sellerInfo.tel && sellerInfo.phone && (
+                            <a href={`tel:${sellerInfo.tel}`} style={{ fontSize: 12, color: '#0369a1', textDecoration: 'none', border: '1px solid #cbd5e1', background: '#f0f9ff', padding: '4px 10px', borderRadius: 999 }}>Ring {sellerInfo.phone}</a>
+                          )}
+                          {sellerInfo.email && (
+                            <a href={`mailto:${sellerInfo.email}`} style={{ fontSize: 12, color: '#0369a1', textDecoration: 'none', border: '1px solid #cbd5e1', background: '#f8fafc', padding: '4px 10px', borderRadius: 999 }}>Maila</a>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                    {mapsHref && (
+                      <div style={{ display: 'grid', gap: 6, padding: '12px 12px 10px', borderRadius: 14, background: '#ffffff', border: '1px solid #e2e8f0' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+                          <span style={{ fontSize: 12, color: '#334155', fontWeight: 700 }}>Adress</span>
+                          <a href={mapsHref} target="_blank" rel="noopener noreferrer" className="btn--plain btn--xs" style={{ fontSize: 11, border: '1px solid #cbd5e1', borderRadius: 999, padding: '4px 10px', color: '#0369a1', background: '#e0f2fe', textDecoration: 'none' }}>Öppna i Kartor</a>
+                        </div>
+                        <span style={{ fontSize: 14, color: '#334155', lineHeight: 1.4 }}>{address}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
               {detailLoading && (
                 <div role="status" aria-live="polite" style={{ display: 'grid', gap: 10, padding: '8px 0' }}>
@@ -4681,42 +4841,25 @@ export default function PlanneringPage() {
               )}
               {detailError && <div style={{ fontSize: 12, color: '#b91c1c', background: '#fef2f2', border: '1px solid #fecaca', padding: '6px 8px', borderRadius: 8 }}>Fel: {detailError}</div>}
               <div style={{ display: 'grid', gap: 12 }}>
-                <div style={{ display: 'grid', gap: 6 }}>
-                  {mapsHref && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                      <span style={{ fontSize: 12, color: '#334155', fontWeight: 600 }}>Adress:</span>
-                      <span style={{ fontSize: 12, color: '#334155' }}>{address}</span>
-                      <a href={mapsHref} target="_blank" rel="noopener noreferrer" className="btn--plain btn--xs" style={{ fontSize: 11, border: '1px solid #cbd5e1', borderRadius: 6, padding: '2px 8px', color: '#0369a1', background: '#e0f2fe' }}>Öppna i Kartor</a>
-                    </div>
-                  )}
-                  {contactPhones.length > 0 && (
-                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-                      {contactPhones.map((ph, i) => (
-                        <a key={ph.tel + ':' + i} href={`tel:${ph.tel}`} title={`Ring ${ph.display}`} style={{ fontSize: 11, color: '#065f46', background: '#ecfdf5', border: '1px solid #6ee7b7', padding: '2px 6px', borderRadius: 999, textDecoration: 'none' }}>
-                          Kontakt: {ph.display}
-                        </a>
-                      ))}
-                    </div>
-                  )}
-                  <div style={{ display: 'grid', gap: 6 }}>
-                    <span style={{ fontSize: 12, color: '#334155', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ display: 'grid', gap: 8, padding: '14px', borderRadius: 16, border: '1px solid #e2e8f0', background: '#ffffff' }}>
+                  <span style={{ fontSize: 13, color: '#334155', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                       Beskrivning
                       {!descEditing && (
                         <button type="button" className="btn--plain btn--xs" onClick={() => { setDescDraft(description || ''); setDescEditing(true); }}
-                          style={{ fontSize: 11, padding: '2px 8px', border: '1px solid #cbd5e1', borderRadius: 6, background: '#f8fafc', color: '#0f172a' }}>Redigera</button>
+                          style={{ fontSize: 11, padding: '4px 10px', border: '1px solid #cbd5e1', borderRadius: 999, background: '#f8fafc', color: '#0f172a' }}>Redigera</button>
                       )}
-                    </span>
-                    {!descEditing && (
-                      <p style={{ fontSize: 12, color: '#475569', whiteSpace: 'pre-wrap', margin: 0 }}>{description || '—'}</p>
-                    )}
-                    {descEditing && (
-                      <div style={{ display: 'grid', gap: 8 }}>
+                  </span>
+                  {!descEditing && (
+                    <p style={{ fontSize: 14, lineHeight: 1.5, color: '#475569', whiteSpace: 'pre-wrap', margin: 0 }}>{description || '—'}</p>
+                  )}
+                  {descEditing && (
+                    <div style={{ display: 'grid', gap: 8 }}>
                         <textarea
                           value={descDraft}
                           onChange={(e) => setDescDraft(e.target.value)}
                           rows={6}
                           placeholder="Lägg till beskrivning…"
-                          style={{ width: '100%', fontSize: 12, color: '#0f172a', padding: 8, border: '1px solid #cbd5e1', borderRadius: 8, resize: 'vertical' }}
+                          style={{ width: '100%', boxSizing: 'border-box', fontSize: 14, color: '#0f172a', padding: '10px 12px', border: '1px solid #cbd5e1', borderRadius: 12, resize: 'vertical' }}
                         />
                         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                           <button
@@ -4752,29 +4895,18 @@ export default function PlanneringPage() {
                               }
                             }}
                             className="btn--plain btn--xs"
-                            style={{ fontSize: 12, padding: '6px 10px', border: '1px solid #16a34a', background: '#16a34a', color: '#fff', borderRadius: 8 }}
+                            style={{ fontSize: 12, padding: '8px 12px', border: '1px solid #16a34a', background: '#16a34a', color: '#fff', borderRadius: 10, fontWeight: 700 }}
                           >{descSaving ? 'Sparar…' : 'Spara'}</button>
                           <button
                             type="button"
                             disabled={descSaving}
                             onClick={() => { setDescEditing(false); setDescDraft(''); }}
                             className="btn--plain btn--xs"
-                            style={{ fontSize: 12, padding: '6px 10px', border: '1px solid #cbd5e1', background: '#fff', borderRadius: 8 }}
+                            style={{ fontSize: 12, padding: '8px 12px', border: '1px solid #cbd5e1', background: '#fff', borderRadius: 10 }}
                           >Avbryt</button>
                         </div>
                       </div>
                     )}
-                  </div>
-                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                    {seller && <span style={{ fontSize: 11, color: '#475569', background: '#f1f5f9', border: '1px solid #e2e8f0', padding: '2px 6px', borderRadius: 999 }}>Sälj: {seller}</span>}
-                    {projectStatus && <span style={{ fontSize: 11, color: '#334155', background: '#e2e8f0', border: '1px solid #cbd5e1', padding: '2px 6px', borderRadius: 999 }}>Status: {String(projectStatus)}</span>}
-                    {meta?.truck && <span style={{ fontSize: 11, color: '#475569', background: '#f1f5f9', border: '1px solid #e2e8f0', padding: '2px 6px', borderRadius: 999 }}>Lastbil: {meta.truck}</span>}
-                    {team.length > 0 && <span style={{ fontSize: 11, color: '#475569', background: '#f1f5f9', border: '1px solid #e2e8f0', padding: '2px 6px', borderRadius: 999 }}>Team: {team.join(', ')}</span>}
-                    {typeof meta?.bagCount === 'number' && <span style={{ fontSize: 11, color: '#475569', background: '#f1f5f9', border: '1px solid #e2e8f0', padding: '2px 6px', borderRadius: 999 }}>Plan: {meta.bagCount} säckar</span>}
-                    {(() => { const pid = base?.id; const agg = pid ? (reportedBagsByProject.get(pid) || 0) : 0; return agg > 0 ? <span style={{ fontSize: 11, color: '#1e293b', background: '#ecfeff', border: '1px solid #bae6fd', padding: '2px 6px', borderRadius: 999 }}>Rapporterat: {agg} säckar</span> : null; })()}
-                    {meta?.jobType && <span style={{ fontSize: 11, color: '#475569', background: '#f1f5f9', border: '1px solid #e2e8f0', padding: '2px 6px', borderRadius: 999 }}>{meta.jobType}</span>}
-                    {base?.createdAt && <span style={{ fontSize: 11, color: '#64748b' }}>Skapad {base.createdAt.slice(0, 10)}</span>}
-                  </div>
                 </div>
                 {/* Partial reports history for this project */}
                 {(() => {
@@ -4784,19 +4916,19 @@ export default function PlanneringPage() {
                     .sort((a, b) => (a.reportDay || '').localeCompare(b.reportDay) || (a.createdAt || '').localeCompare(b.createdAt || ''));
                   const total = list.reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
                   return (
-                    <div style={{ display: 'grid', gap: 8 }}>
+                    <div style={{ display: 'grid', gap: 8, padding: '14px', borderRadius: 16, border: '1px solid #e2e8f0', background: '#ffffff' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <strong style={{ fontSize: 13, color: '#0f172a' }}>Delrapporter</strong>
+                        <strong style={{ fontSize: 14, color: '#0f172a' }}>Delrapporter</strong>
                         <div style={{ height: 1, background: '#e5e7eb', flex: 1 }} />
-                        <span style={{ fontSize: 11, color: '#64748b' }}>Totalt: {total} säckar</span>
+                        <span style={{ fontSize: 11, color: '#64748b', fontWeight: 600 }}>Totalt: {total} säckar</span>
                       </div>
                       {list.length > 0 ? (
                         <div style={{ display: 'grid', gap: 6 }}>
                           {list.map(r => (
-                            <div key={r.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', border: '1px solid #e5e7eb', background: '#fff', borderRadius: 8, padding: '6px 8px' }}>
+                            <div key={r.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', border: '1px solid #e5e7eb', background: '#fbfdff', borderRadius: 12, padding: '10px 12px' }}>
                               <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
                                 <span style={{ fontSize: 12, color: '#0f172a' }}>{r.reportDay}</span>
-                                <span style={{ fontSize: 12, color: '#334155', background: '#f1f5f9', border: '1px solid #e2e8f0', borderRadius: 999, padding: '2px 8px' }}>{r.amount} säckar</span>
+                                <span style={{ fontSize: 12, color: '#334155', background: '#f1f5f9', border: '1px solid #e2e8f0', borderRadius: 999, padding: '4px 10px' }}>{r.amount} säckar</span>
                                 {r.createdByName && <span style={{ fontSize: 11, color: '#64748b' }}>av {r.createdByName}</span>}
                                 {r.createdAt && <span style={{ fontSize: 11, color: '#94a3b8' }}>{String(r.createdAt).slice(0, 16).replace('T', ' ')}</span>}
                               </div>
@@ -4810,18 +4942,18 @@ export default function PlanneringPage() {
                   );
                 })()}
                 {(segs.length > 0) && (
-                  <div style={{ display: 'grid', gap: 6 }}>
-                    <strong style={{ fontSize: 13, color: '#0f172a' }}>Planering</strong>
+                  <div style={{ display: 'grid', gap: 6, padding: '14px', borderRadius: 16, border: '1px solid #e2e8f0', background: '#ffffff' }}>
+                    <strong style={{ fontSize: 14, color: '#0f172a' }}>Planering</strong>
                     <div style={{ fontSize: 12, color: '#475569' }}>Öppna en planering (dubbelklicka på en kalenderpost) för att se exakta dagar.</div>
                   </div>
                 )}
                 {/* Comments via shared hook */}
                 {detailProjectId && (
-                  <div style={{ display: 'grid', gap: 8 }}>
+                  <div style={{ display: 'grid', gap: 8, padding: '14px', borderRadius: 16, border: '1px solid #e2e8f0', background: '#ffffff' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <strong style={{ fontSize: 13, color: '#0f172a' }}>Kommentarer</strong>
+                      <strong style={{ fontSize: 14, color: '#0f172a' }}>Kommentarer</strong>
                       <div style={{ height: 1, background: '#e5e7eb', flex: 1 }} />
-                      <button type="button" onClick={() => refreshDetailComments(true)} className="btn--plain btn--xs" style={{ fontSize: 11, padding: '2px 8px', background: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: 6, cursor: 'pointer' }}>Uppdatera</button>
+                      <button type="button" onClick={() => refreshDetailComments(true)} className="btn--plain btn--xs" style={{ fontSize: 11, padding: '5px 10px', background: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: 999, cursor: 'pointer' }}>Uppdatera</button>
                     </div>
                     {detailCommentsLoading && detailComments.length === 0 && <div style={{ fontSize: 12, color: '#64748b' }}>Hämtar kommentarer…</div>}
                     {detailCommentsError && <div style={{ fontSize: 12, color: '#b91c1c' }}>Fel: {detailCommentsError}</div>}
@@ -4829,12 +4961,12 @@ export default function PlanneringPage() {
                     {!detailCommentsLoading && !detailCommentsError && detailComments.length > 0 && (
                       <div style={{ display: 'grid', gap: 6 }}>
                         {detailComments.slice(0, 12).map(c => (
-                          <div key={c.id} style={{ display: 'flex', flexDirection: 'column', gap: 2, border: '1px solid #e2e8f0', background: '#fff', borderRadius: 8, padding: '6px 8px' }}>
+                          <div key={c.id} style={{ display: 'flex', flexDirection: 'column', gap: 5, border: '1px solid #e2e8f0', background: '#fbfdff', borderRadius: 12, padding: '10px 12px' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                              {c.userName && <span style={{ fontSize: 11, color: '#475569', fontWeight: 600 }}>{c.userName}</span>}
+                              {c.userName && <span style={{ fontSize: 11, color: '#475569', fontWeight: 700 }}>{c.userName}</span>}
                               {c.createdAt && <span style={{ fontSize: 10, color: '#64748b' }}>{formatRelativeTime(c.createdAt)}</span>}
                             </div>
-                            <div style={{ fontSize: 12, color: '#334155', whiteSpace: 'pre-wrap' }}>{c.text}</div>
+                            <div style={{ fontSize: 13, lineHeight: 1.45, color: '#334155', whiteSpace: 'pre-wrap' }}>{c.text}</div>
                           </div>
                         ))}
                         {detailComments.length > 12 && <div style={{ fontSize: 11, color: '#64748b' }}>Visar första 12 av {detailComments.length} kommentarer.</div>}
