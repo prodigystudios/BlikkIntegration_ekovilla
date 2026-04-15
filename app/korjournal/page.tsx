@@ -1,7 +1,5 @@
 "use client";
 import { useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 
 // Minimal types
 type Trip = {
@@ -15,6 +13,18 @@ type Trip = {
 };
 
 function pad(n: number) { return n < 10 ? `0${n}` : String(n); }
+function formatMonthLabel(ym: string) {
+  const [yearRaw, monthRaw] = ym.split('-');
+  const year = Number(yearRaw);
+  const month = Number(monthRaw);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) return ym;
+  return new Date(year, month - 1, 1).toLocaleDateString('sv-SE', { month: 'long', year: 'numeric' });
+}
+function formatTripDate(dateString: string) {
+  const date = new Date(dateString);
+  if (Number.isNaN(date.getTime())) return dateString;
+  return date.toLocaleDateString('sv-SE', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+}
 function todayISO() {
   const d = new Date();
   return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
@@ -24,8 +34,6 @@ function uuid() { return Math.random().toString(36).slice(2) + Date.now().toStri
 const STORAGE_KEY = 'korjournal.trips.v1'; // kept for fallback cache
 
 export default function KorjournalPage() {
-  const router = useRouter();
-  const supabase = createClientComponentClient();
   const [trips, setTrips] = useState<Trip[]>([]);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({
@@ -183,6 +191,17 @@ export default function KorjournalPage() {
     (t.endKm as number) >= (t.startKm as number)
   );
   const monthKm = (arr: Trip[]) => arr.reduce((sum, t) => sum + diffKm(t), 0);
+
+  const overview = useMemo(() => {
+    const totalTrips = trips.length;
+    const totalKm = trips.reduce((sum, trip) => sum + diffKm(trip), 0);
+    const incompleteTrips = trips.filter((trip) => !isComplete(trip)).length;
+    const noteTrips = trips.filter((trip) => String(trip.note || '').trim()).length;
+    const favoriteCount = Object.keys(usageStats.startCounts).length + Object.keys(usageStats.endCounts).length;
+    return { totalTrips, totalKm, incompleteTrips, noteTrips, favoriteCount };
+  }, [trips, usageStats]);
+
+  const latestTrip = trips[0] || null;
 
   const resetForm = () => setForm({ date: todayISO(), startAddress: '', endAddress: '', startKm: '', endKm: '', note: '' });
   const closeModal = () => {
@@ -394,39 +413,118 @@ export default function KorjournalPage() {
   };
 
   return (
-    <div style={{ padding: 16 }}>
-      <h1 style={{ margin: '0 0 12px' }}>Körjournal</h1>
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12, alignItems: 'center' }}>
-        <button className="btn--plain btn--sm" onClick={async () => { await supabase.auth.signOut(); router.replace('/auth/sign-in'); }}>
-          Logga ut
-        </button>
-        <div style={{ marginLeft: 'auto' }} />
-  <button className="btn--primary btn--sm" onClick={openNew}>Lägg till resa</button>
-        {topStarts.length > 0 && (
-          <button className="btn--plain btn--sm" onClick={clearUsage} title="Rensa lokala favoritadresser">Rensa favoriter</button>
-        )}
-      </div>
+    <div style={{ padding: 16, maxWidth: 1240, margin: '0 auto', display: 'grid', gap: 18 }}>
+      <section style={{ border: '1px solid #dbe4ef', borderRadius: 28, padding: '20px 20px 18px', background: 'linear-gradient(180deg, #ffffff 0%, #f6fbff 100%)', boxShadow: '0 18px 48px rgba(15,23,42,0.06)', display: 'grid', gap: 18 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+          <div style={{ display: 'grid', gap: 8, maxWidth: 760 }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <span style={korEyebrowStyle}>Körjournal</span>
+              <span style={korChipStyle}>{overview.totalTrips} resor sparade</span>
+              {overview.incompleteTrips > 0 ? <span style={{ ...korChipStyle, background: '#fff7ed', border: '1px solid #fed7aa', color: '#9a3412' }}>{overview.incompleteTrips} kräver komplettering</span> : null}
+            </div>
+            <div style={{ display: 'grid', gap: 6 }}>
+              <h1 style={{ margin: 0, fontSize: 38, lineHeight: 1.02, letterSpacing: -1.2, color: '#0f172a' }}>Översikt</h1>
+            </div>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', marginTop: 8 }}>
+              <button className="btn--primary btn--sm" onClick={openNew} style={{ minWidth: 176, paddingInline: 20, boxShadow: '0 14px 28px rgba(37,99,235,0.22)' }}>
+                Lägg till resa
+              </button>
+            </div>
+          </div>
+          <div style={{ display: 'grid', gap: 8, justifyItems: 'end', minWidth: 220 }}>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              {topStarts.length > 0 && (
+                <button className="btn--plain btn--sm" onClick={clearUsage} title="Rensa lokala favoritadresser">Rensa favoriter</button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 10 }}>
+          <div style={korStatCardStyle}>
+            <span style={korStatLabelStyle}>Totala kilometer</span>
+            <strong style={korStatValueStyle}>{overview.totalKm.toLocaleString('sv-SE')} km</strong>
+          </div>
+          <div style={korStatCardStyle}>
+            <span style={korStatLabelStyle}>Resor</span>
+            <strong style={korStatValueStyle}>{overview.totalTrips}</strong>
+          </div>
+          <div style={korStatCardStyle}>
+            <span style={korStatLabelStyle}>Anteckningar</span>
+            <strong style={korStatValueStyle}>{overview.noteTrips}</strong>
+          </div>
+          <div style={{ ...korStatCardStyle, background: overview.incompleteTrips > 0 ? 'linear-gradient(180deg, #fff7ed 0%, #ffedd5 100%)' : '#ffffff', border: overview.incompleteTrips > 0 ? '1px solid #fed7aa' : '1px solid #dbe4ef' }}>
+            <span style={{ ...korStatLabelStyle, color: overview.incompleteTrips > 0 ? '#9a3412' : '#64748b' }}>Komplettera</span>
+            <strong style={{ ...korStatValueStyle, color: overview.incompleteTrips > 0 ? '#9a3412' : '#0f172a' }}>{overview.incompleteTrips}</strong>
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 10 }}>
+          <div style={korInfoPanelStyle}>
+            <strong style={korInfoTitleStyle}>Senaste registrerade resa</strong>
+            {latestTrip ? (
+              <>
+                <span style={korInfoMainStyle}>{formatTripDate(latestTrip.date)}</span>
+                <span style={korInfoSubStyle}>{latestTrip.startAddress} till {latestTrip.endAddress}</span>
+              </>
+            ) : (
+              <span style={korInfoSubStyle}>Ingen resa registrerad ännu.</span>
+            )}
+          </div>
+          <div style={korInfoPanelStyle}>
+            <strong style={korInfoTitleStyle}>Lokala favoriter</strong>
+            <span style={korInfoMainStyle}>{overview.favoriteCount}</span>
+            <span style={korInfoSubStyle}>Baserat på ofta använda start- och slutadresser för snabbare ifyllnad.</span>
+          </div>
+        </div>
+      </section>
 
       {monthlyGroups.length === 0 && (
-        <div style={{ color: '#6b7280' }}>Inga resor ännu.</div>
+        <div style={{ border: '1px dashed #cbd5e1', borderRadius: 22, padding: '24px 20px', background: '#f8fafc', color: '#64748b', fontSize: 14 }}>
+          Inga resor ännu. Lägg till första resan för att börja bygga upp körjournalen.
+        </div>
       )}
 
       {monthlyGroups.map(([ym, arr]) => (
-        <div key={ym} style={{ border: '1px solid #e5e7eb', borderRadius: 8, marginBottom: 16, overflow: 'hidden' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 10, background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-            <strong>{ym}</strong>
-            <span style={{ color: '#6b7280' }}>Total: {monthKm(arr)} km</span>
-            {arr.some(t => !isComplete(t)) && (
-              <span className="journal-badge journal-badge--warn" title="Ofullständig information: fyll i start/slut km">
-                ⚠️
-              </span>
-            )}
-            <div style={{ marginLeft: 'auto' }} />
-            <button className="btn--success btn--sm" disabled={isExporting} onClick={() => exportMonth(ym, arr)}>Exportera månad (CSV)</button>
+        <section key={ym} style={{ border: '1px solid #dbe4ef', borderRadius: 24, overflow: 'hidden', background: '#ffffff', boxShadow: '0 14px 36px rgba(15,23,42,0.04)' }}>
+          <div style={{ display: 'grid', gap: 14, padding: '16px 16px 14px', background: 'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)', borderBottom: '1px solid #e2e8f0' }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+              <div style={{ display: 'grid', gap: 6 }}>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <strong style={{ fontSize: 22, lineHeight: 1.1, color: '#0f172a', textTransform: 'capitalize' }}>{formatMonthLabel(ym)}</strong>
+                  <span style={korChipStyle}>{arr.length} resor</span>
+                  <span style={korChipStyle}>{monthKm(arr).toLocaleString('sv-SE')} km</span>
+                  {arr.some(t => !isComplete(t)) ? (
+                    <span className="journal-badge journal-badge--warn" title="Ofullständig information: fyll i start/slut km">
+                      Behöver kompletteras
+                    </span>
+                  ) : null}
+                </div>
+                <span style={{ fontSize: 13, color: '#64748b' }}>Månadsvy med både fullständig desktoptabell och kompakt mobilöversikt.</span>
+              </div>
+              <button className="btn--success btn--sm" disabled={isExporting} onClick={() => exportMonth(ym, arr)}>Exportera månad (CSV)</button>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8 }}>
+              <div style={korMiniStatStyle}>
+                <span style={korMiniStatLabelStyle}>Körda kilometer</span>
+                <strong style={korMiniStatValueStyle}>{monthKm(arr).toLocaleString('sv-SE')} km</strong>
+              </div>
+              <div style={korMiniStatStyle}>
+                <span style={korMiniStatLabelStyle}>Kompletta rader</span>
+                <strong style={korMiniStatValueStyle}>{arr.filter(isComplete).length}</strong>
+              </div>
+              <div style={korMiniStatStyle}>
+                <span style={korMiniStatLabelStyle}>Anteckningar</span>
+                <strong style={korMiniStatValueStyle}>{arr.filter((trip) => String(trip.note || '').trim()).length}</strong>
+              </div>
+            </div>
           </div>
+
           {/* Desktop grid */}
-          <div className="journal-desktop">
-            <div className="contacts-header" style={{ gridTemplateColumns: '150px 0.45fr 0.45fr 80px 80px 70px 100px' }}>
+          <div className="journal-desktop" style={{ padding: 14 }}>
+            <div style={{ border: '1px solid #e2e8f0', borderRadius: 20, overflow: 'hidden', background: '#fbfdff' }}>
+            <div className="contacts-header" style={{ gridTemplateColumns: '158px minmax(0,1fr) minmax(0,1fr) 88px 88px 86px 122px', background: '#f8fafc' }}>
               <div className="contacts-cell" style={{ padding: 6 }}>Datum</div>
               <div className="contacts-cell" style={{ padding: 6 }}>Startadress</div>
               <div className="contacts-cell" style={{ padding: 6 }}>Slutadress</div>
@@ -436,81 +534,103 @@ export default function KorjournalPage() {
               <div className="contacts-cell" style={{ padding: 6 }}>Åtgärder</div>
             </div>
             {arr.map(t => (
-              <div key={t.id} className="contacts-row" style={{ display: 'grid', gridTemplateColumns: '150px 0.45fr 0.45fr 80px 80px 70px 100px', borderTop: '1px solid #e5e7eb' }}>
+              <div key={t.id} className="contacts-row" style={{ display: 'grid', gridTemplateColumns: '158px minmax(0,1fr) minmax(0,1fr) 88px 88px 86px 122px', borderTop: '1px solid #e5e7eb', background: isComplete(t) ? '#ffffff' : '#fffaf5' }}>
                 <div className="contacts-cell" style={{ padding: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
                   {!isComplete(t) && <span className="warn" title="Fyll i km-start och km-slut">▲</span>}
-                  <span>{t.date}</span>
+                  <span>{formatTripDate(t.date)}</span>
                 </div>
                 <div className="contacts-cell" style={{ padding: 6, wordBreak: 'break-word' }}>{t.startAddress}</div>
                 <div className="contacts-cell" style={{ padding: 6, wordBreak: 'break-word' }}>{t.endAddress}</div>
-                <div className="contacts-cell" style={{ padding: 6 }}>{t.startKm}</div>
-                <div className="contacts-cell" style={{ padding: 6 }}>{t.endKm}</div>
-                <div className="contacts-cell" style={{ padding: 6, fontWeight: 600 }}>{diffKm(t)}</div>
-                <div className="contacts-cell" style={{ padding: 6, display: 'flex', gap: 4 }}>
+                <div className="contacts-cell" style={{ padding: 6, fontWeight: 700, color: '#334155' }}>{t.startKm ?? '—'}</div>
+                <div className="contacts-cell" style={{ padding: 6, fontWeight: 700, color: '#334155' }}>{t.endKm ?? '—'}</div>
+                <div className="contacts-cell" style={{ padding: 6, fontWeight: 700, color: '#0f172a' }}>{diffKm(t)} km</div>
+                <div className="contacts-cell" style={{ padding: 6, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                   <button className="btn--primary btn--sm" onClick={() => openEdit(t)}>Redigera</button>
                   <button className="btn--danger btn--sm" onClick={() => onDelete(t.id)}>Ta bort</button>
                 </div>
               </div>
             ))}
+            </div>
           </div>
 
           {/* Mobile cards */}
           <div className="journal-mobile">
             {arr.map(t => (
-              <div key={t.id} className="journal-card">
+              <div key={t.id} className="journal-card" style={{ borderRadius: 20, border: '1px solid #dbe4ef', padding: 14, gap: 10, boxShadow: '0 10px 24px rgba(15,23,42,0.04)', background: isComplete(t) ? '#ffffff' : 'linear-gradient(180deg, #fffaf5 0%, #ffffff 100%)' }}>
                 <div className="journal-card-header">
-                  <div className="journal-card-title" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <div className="journal-card-title" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 15 }}>
                     {!isComplete(t) && <span className="warn" title="Fyll i km-start och km-slut">▲</span>}
-                    <span>{t.date}</span>
+                    <span>{formatTripDate(t.date)}</span>
                   </div>
                   <div className="journal-badge">{diffKm(t)} km</div>
                 </div>
-                <div className="journal-line">
-                  <div className="journal-label">Startadress</div>
-                  <div className="journal-address">{t.startAddress}</div>
+                <div style={{ display: 'grid', gap: 6, padding: '10px 12px', borderRadius: 16, background: '#f8fafc', border: '1px solid #eef2f7' }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.35, textTransform: 'uppercase', color: '#64748b' }}>Rutt</div>
+                  <div style={{ display: 'grid', gap: 4 }}>
+                    <div className="journal-address" style={{ fontWeight: 700, color: '#0f172a' }}>{t.startAddress}</div>
+                    <div style={{ fontSize: 12, color: '#94a3b8' }}>till</div>
+                    <div className="journal-address" style={{ fontWeight: 700, color: '#0f172a' }}>{t.endAddress}</div>
+                  </div>
                 </div>
                 <div className="journal-line">
-                  <div className="journal-label">Slutadress</div>
-                  <div className="journal-address">{t.endAddress}</div>
-                </div>
-                <div className="journal-meta">
-                  <div><strong>Start:</strong> {t.startKm}</div>
-                  <div><strong>Slut:</strong> {t.endKm}</div>
+                  <div className="journal-meta" style={{ justifyContent: 'space-between' }}>
+                    <div style={korMetaPillStyle}><strong>Start:</strong> {t.startKm ?? '—'}</div>
+                    <div style={korMetaPillStyle}><strong>Slut:</strong> {t.endKm ?? '—'}</div>
+                  </div>
                 </div>
                 {t.note && (
-                  <div className="journal-note"><strong>Anteckning:</strong> {t.note}</div>
+                  <div className="journal-note" style={{ padding: '10px 12px', borderRadius: 14, background: '#f8fafc', border: '1px solid #eef2f7' }}><strong>Anteckning:</strong> {t.note}</div>
                 )}
-                <div style={{ display: 'flex', gap: 8 }}>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                   <button className="btn--primary btn--sm" onClick={() => openEdit(t)}>Redigera</button>
                   <button className="btn--danger btn--sm" onClick={() => onDelete(t.id)}>Ta bort</button>
                 </div>
               </div>
             ))}
           </div>
-        </div>
+        </section>
       ))}
 
       {/* Modal for new trip */}
       {open && (
-        <div role="dialog" aria-modal="true" style={{ position: 'fixed', inset: 0, zIndex: 2100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div onClick={closeModal} style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.35)' }} />
-          <div style={{ position: 'relative', width: 'min(96vw, 720px)', background: '#fff', borderRadius: 10, boxShadow: '0 10px 30px rgba(0,0,0,0.2)', overflow: 'hidden' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 12, borderBottom: '1px solid #e5e7eb' }}>
-              <strong>{editing ? 'Redigera resa' : 'Ny resa'}</strong>
-              <div style={{ marginLeft: 'auto' }} />
-              <button className="btn--plain btn--sm" onClick={closeModal}>Stäng</button>
+        <div role="dialog" aria-modal="true" style={korModalOverlayStyle}>
+          <div onClick={closeModal} style={{ position: 'absolute', inset: 0, background: 'rgba(15,23,42,0.45)' }} />
+          <div style={korModalCardStyle}>
+            <div style={{ display: 'grid', gap: 14, padding: '18px 18px 16px', borderBottom: '1px solid #e5e7eb', background: 'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)' }}>
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, flexWrap: 'wrap' }}>
+                <div style={{ display: 'grid', gap: 6, minWidth: 0 }}>
+                  <span style={korEyebrowStyle}>{editing ? 'Redigera resa' : 'Ny resa'}</span>
+                  <strong style={{ fontSize: 26, lineHeight: 1.05, color: '#0f172a' }}>{editing ? 'Uppdatera körningen' : 'Registrera ny körning'}</strong>
+                  <span style={{ fontSize: 14, color: '#64748b' }}>Fyll i resa, kilometer och anteckning i ett tydligare arbetsflöde.</span>
+                </div>
+                <div style={{ marginLeft: 'auto' }} />
+                <button className="btn--plain btn--sm" onClick={closeModal}>Stäng</button>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 8 }}>
+                <div style={korMiniStatStyle}>
+                  <span style={korMiniStatLabelStyle}>Läge</span>
+                  <strong style={korMiniStatValueStyle}>{editing ? 'Redigering' : 'Ny registrering'}</strong>
+                </div>
+                <div style={korMiniStatStyle}>
+                  <span style={korMiniStatLabelStyle}>Favoriter</span>
+                  <strong style={korMiniStatValueStyle}>{topStarts.length + topEnds.length}</strong>
+                </div>
+              </div>
             </div>
-            <div style={{ padding: 12, display: 'grid', gap: 10 }}>
-              {error && <div style={{ color: '#b91c1c', fontSize: 13 }}>{error}</div>}
-              <label style={{ display: 'grid', gap: 4 }}>
-                <span>Datum</span>
-                <input type="date" value={form.date} onChange={e => setForm((f:any) => ({ ...f, date: e.target.value }))} />
+            <div style={{ padding: 18, display: 'grid', gap: 14 }}>
+              {error && <div style={{ color: '#b91c1c', fontSize: 13, padding: '12px 14px', borderRadius: 14, border: '1px solid #fecaca', background: '#fef2f2' }}>{error}</div>}
+              <label style={{ display: 'grid', gap: 6 }}>
+                <span style={korFieldLabelStyle}>Datum</span>
+                <input className="text-field" type="date" value={form.date} onChange={e => setForm((f:any) => ({ ...f, date: e.target.value }))} />
               </label>
-              <label style={{ display: 'grid', gap: 4 }}>
-                <span>Startadress</span>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
+              <label style={{ display: 'grid', gap: 6 }}>
+                <span style={korFieldLabelStyle}>Startadress</span>
                 <div style={{ position: 'relative' }}>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 6 }}>
                     <input
+                      className="text-field"
                       list="kor-start-suggestions"
                       value={form.startAddress}
                       onChange={e => setForm((f:any) => ({ ...f, startAddress: e.target.value }))}
@@ -606,11 +726,12 @@ export default function KorjournalPage() {
                   </datalist>
                 )}
               </label>
-              <label style={{ display: 'grid', gap: 4 }}>
-                <span>Slutadress</span>
+              <label style={{ display: 'grid', gap: 6 }}>
+                <span style={korFieldLabelStyle}>Slutadress</span>
                 <div style={{ position: 'relative' }}>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 6 }}>
                     <input
+                      className="text-field"
                       list="kor-end-suggestions"
                       value={form.endAddress}
                       onChange={e => setForm((f:any) => ({ ...f, endAddress: e.target.value }))}
@@ -706,21 +827,22 @@ export default function KorjournalPage() {
                   </datalist>
                 )}
               </label>
-              <div style={{ display: 'grid', gap: 10, gridTemplateColumns: '1fr 1fr' }}>
-                <label style={{ display: 'grid', gap: 4 }}>
-                  <span>Start km</span>
-                  <input inputMode="numeric" value={form.startKm} onChange={e => setForm((f:any) => ({ ...f, startKm: e.target.value }))} placeholder="0" />
+              </div>
+              <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
+                <label style={{ display: 'grid', gap: 6 }}>
+                  <span style={korFieldLabelStyle}>Start km</span>
+                  <input className="text-field" inputMode="numeric" value={form.startKm} onChange={e => setForm((f:any) => ({ ...f, startKm: e.target.value }))} placeholder="0" />
                 </label>
-                <label style={{ display: 'grid', gap: 4 }}>
-                  <span>Slut km</span>
-                  <input inputMode="numeric" value={form.endKm} onChange={e => setForm((f:any) => ({ ...f, endKm: e.target.value }))} placeholder="0" />
+                <label style={{ display: 'grid', gap: 6 }}>
+                  <span style={korFieldLabelStyle}>Slut km</span>
+                  <input className="text-field" inputMode="numeric" value={form.endKm} onChange={e => setForm((f:any) => ({ ...f, endKm: e.target.value }))} placeholder="0" />
                 </label>
               </div>
-              <label style={{ display: 'grid', gap: 4 }}>
-                <span>Anteckning (valfritt)</span>
-                <input value={form.note} onChange={e => setForm((f:any) => ({ ...f, note: e.target.value }))} placeholder="Syfte med resan" />
+              <label style={{ display: 'grid', gap: 6 }}>
+                <span style={korFieldLabelStyle}>Anteckning</span>
+                <textarea className="text-area" value={form.note} onChange={e => setForm((f:any) => ({ ...f, note: e.target.value }))} placeholder="Syfte med resan eller extra kontext" rows={4} />
               </label>
-              <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+              <div style={{ display: 'flex', gap: 8, marginTop: 4, flexWrap: 'wrap' }}>
                 <button className="btn--success btn--sm" onClick={submit} disabled={isSaving}>
                   {isSaving ? 'Sparar…' : 'Spara resa'}
                 </button>
@@ -733,3 +855,145 @@ export default function KorjournalPage() {
     </div>
   );
 }
+
+const korEyebrowStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  padding: '4px 10px',
+  borderRadius: 999,
+  background: '#d9f99d',
+  border: '1px solid #bef264',
+  color: '#3f6212',
+  fontSize: 11,
+  fontWeight: 800,
+  letterSpacing: 0.35,
+  textTransform: 'uppercase',
+};
+
+const korChipStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  padding: '4px 8px',
+  borderRadius: 999,
+  background: '#f8fafc',
+  border: '1px solid #e2e8f0',
+  color: '#475569',
+  fontSize: 12,
+  fontWeight: 700,
+};
+
+const korStatCardStyle: React.CSSProperties = {
+  display: 'grid',
+  gap: 6,
+  padding: '14px 14px 12px',
+  borderRadius: 18,
+  border: '1px solid #dbe4ef',
+  background: '#ffffff',
+};
+
+const korStatLabelStyle: React.CSSProperties = {
+  fontSize: 11,
+  fontWeight: 800,
+  letterSpacing: 0.3,
+  textTransform: 'uppercase',
+  color: '#64748b',
+};
+
+const korStatValueStyle: React.CSSProperties = {
+  fontSize: 28,
+  lineHeight: 1.05,
+  color: '#0f172a',
+  fontWeight: 800,
+};
+
+const korInfoPanelStyle: React.CSSProperties = {
+  display: 'grid',
+  gap: 6,
+  padding: '14px 14px 12px',
+  borderRadius: 18,
+  border: '1px solid #dbe4ef',
+  background: 'linear-gradient(180deg, #ffffff 0%, #f8fafc 100%)',
+};
+
+const korInfoTitleStyle: React.CSSProperties = {
+  fontSize: 12,
+  fontWeight: 800,
+  letterSpacing: 0.32,
+  textTransform: 'uppercase',
+  color: '#64748b',
+};
+
+const korInfoMainStyle: React.CSSProperties = {
+  fontSize: 18,
+  fontWeight: 800,
+  color: '#0f172a',
+};
+
+const korInfoSubStyle: React.CSSProperties = {
+  fontSize: 13,
+  color: '#64748b',
+  lineHeight: 1.45,
+};
+
+const korMiniStatStyle: React.CSSProperties = {
+  display: 'grid',
+  gap: 5,
+  padding: '12px 12px 10px',
+  borderRadius: 16,
+  border: '1px solid #e2e8f0',
+  background: '#ffffff',
+};
+
+const korMiniStatLabelStyle: React.CSSProperties = {
+  fontSize: 11,
+  fontWeight: 800,
+  letterSpacing: 0.3,
+  textTransform: 'uppercase',
+  color: '#64748b',
+};
+
+const korMiniStatValueStyle: React.CSSProperties = {
+  fontSize: 18,
+  fontWeight: 800,
+  color: '#0f172a',
+};
+
+const korMetaPillStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 4,
+  padding: '6px 10px',
+  borderRadius: 999,
+  background: '#f8fafc',
+  border: '1px solid #e2e8f0',
+  fontSize: 12,
+  color: '#334155',
+};
+
+const korModalOverlayStyle: React.CSSProperties = {
+  position: 'fixed',
+  inset: 0,
+  zIndex: 2100,
+  display: 'grid',
+  placeItems: 'center',
+  padding: 'max(16px, calc(env(safe-area-inset-top) + 12px)) max(12px, calc(env(safe-area-inset-right) + 12px)) max(16px, calc(env(safe-area-inset-bottom) + 12px)) max(12px, calc(env(safe-area-inset-left) + 12px))',
+};
+
+const korModalCardStyle: React.CSSProperties = {
+  position: 'relative',
+  width: 'min(96vw, 760px)',
+  maxHeight: 'calc(100vh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 24px)',
+  overflowY: 'auto',
+  background: '#fff',
+  borderRadius: 24,
+  boxShadow: '0 28px 70px rgba(15,23,42,0.24)',
+  border: '1px solid rgba(219,228,239,0.9)',
+};
+
+const korFieldLabelStyle: React.CSSProperties = {
+  fontSize: 12,
+  fontWeight: 800,
+  letterSpacing: 0.28,
+  textTransform: 'uppercase',
+  color: '#475569',
+};

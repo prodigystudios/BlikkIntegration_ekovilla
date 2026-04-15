@@ -348,6 +348,12 @@ select.select-field.status-select--lost {
 .journal-meta { display: flex; gap: 12px; color: #374151; font-size: 13px; flex-wrap: wrap; }
 .journal-note { color: #374151; font-size: 13px; }
 
+@media (max-width: 640px) {
+  .journal-badge {
+    margin-left: 0;
+  }
+}
+
 /* Planner: compact icon button with hover reveal */
 .icon-btn {
   background: transparent;
