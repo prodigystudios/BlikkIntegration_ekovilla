@@ -787,8 +787,8 @@ export default function EgenkontrollPage() {
           <input value={projectNumber} onChange={(e) => setProjectNumber(e.target.value)} placeholder="Fyll i om kunden gett ett projektnummer" style={textFieldStyle} />
         </label>
         <label style={{ display: 'grid', gap: 6 }}>
-          <div style={fieldLabelStyle}>Installatör</div>
-          <input value={installerName} onChange={(e) => { setInstallerName(e.target.value); if (missing.installerName) setMissing(mm => ({ ...mm, installerName: false })); }} placeholder="Namn på installatör" style={{ ...textFieldStyle, border: missing.installerName ? '1px solid #fca5a5' : textFieldStyle.border, background: missing.installerName ? '#fff1f2' : '#fff' }} />
+          <div style={fieldLabelStyle}>Namn på ansvarig installatör</div>
+          <input value={installerName} onChange={(e) => { setInstallerName(e.target.value); if (missing.installerName) setMissing(mm => ({ ...mm, installerName: false })); }} placeholder="Ansvarig installatör" style={{ ...textFieldStyle, border: missing.installerName ? '1px solid #fca5a5' : textFieldStyle.border, background: missing.installerName ? '#fff1f2' : '#fff' }} />
         </label>
         <label style={{ display: 'grid', gap: 6 }}>
           <div style={fieldLabelStyle}>Material</div>
