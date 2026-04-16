@@ -13,7 +13,7 @@ export default function AdminContacts() {
   const [addresses, setAddresses] = useState<Address[]>([]);
   const [activeCat, setActiveCat] = useState<string | null>(null);
   const [view, setView] = useState<'contacts'|'addresses'>('contacts');
-  const [saving, setSaving] = useState(false);
+  const [search, setSearch] = useState('');
 
   async function loadAll() {
     setLoading(true); setError(null);
@@ -39,7 +39,19 @@ export default function AdminContacts() {
   }
   useEffect(() => { loadAll(); }, []);
 
-  const filteredContacts = useMemo(() => contacts.filter(c => !activeCat || c.category_id === activeCat), [contacts, activeCat]);
+  const filteredContacts = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    return contacts.filter(c => {
+      const categoryMatch = !activeCat || c.category_id === activeCat;
+      const termMatch = !term ? true : [c.name, c.phone || '', c.location || '', c.role || ''].some((value) => value.toLowerCase().includes(term));
+      return categoryMatch && termMatch;
+    });
+  }, [contacts, activeCat, search]);
+
+  const filteredAddresses = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    return addresses.filter((address) => !term || [address.name, address.address].some((value) => value.toLowerCase().includes(term)));
+  }, [addresses, search]);
 
   async function createCategory(name: string) {
     const res = await fetch('/api/admin/contacts/categories', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name }) });
@@ -82,16 +94,35 @@ export default function AdminContacts() {
   }
 
   return (
-    <main style={{ padding: 32, maxWidth: 1300, margin: '0 auto', display:'flex', flexDirection:'column', gap:32 }}>
-      <header style={{ display:'flex', alignItems:'center', gap:16, flexWrap:'wrap' }}>
-        <h1 style={{ margin:0, fontSize:30 }}>Admin • Kontakter</h1>
-        <div style={{ marginLeft:'auto', display:'flex', gap:12 }}>
+    <main style={{ padding: 12, display:'grid', gap:20 }}>
+      <section style={{ border:'1px solid #dbe4ef', borderRadius:24, padding:20, background:'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)', boxShadow:'0 14px 36px rgba(15,23,42,0.04)', display:'grid', gap:16 }}>
+        <div style={{ display:'flex', alignItems:'flex-start', gap:16, flexWrap:'wrap' }}>
+          <div style={{ display:'grid', gap:6, maxWidth:760 }}>
+            <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+              <span style={eyebrowStyle}>Kontakter</span>
+              <span style={chipStyle}>{categories.length} kategorier</span>
+              <span style={chipStyle}>{contacts.length} personer</span>
+              <span style={chipStyle}>{addresses.length} adresser</span>
+            </div>
+            <h1 style={{ margin:0, fontSize:30, color:'#0f172a' }}>Kontaktregister med tydligare arbetsyta</h1>
+            <p style={{ margin:0, fontSize:14, color:'#475569', lineHeight:1.55 }}>Hantera kategorier, personer och adresser i samma vy med bättre filtrering och snabbare redigering.</p>
+          </div>
+          <div style={{ marginLeft:'auto', display:'flex', gap:12, flexWrap:'wrap' }}>
           <button onClick={loadAll} disabled={loading} style={btnSecondary}>{loading? 'Laddar...' : 'Uppdatera'}</button>
+          </div>
         </div>
-      </header>
+
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(160px, 1fr))', gap:8 }}>
+          <div style={miniStatStyle}><span style={miniLabelStyle}>Aktiv vy</span><strong style={miniValueStyle}>{view === 'contacts' ? 'Kontakter' : 'Adresser'}</strong></div>
+          <div style={miniStatStyle}><span style={miniLabelStyle}>Vald kategori</span><strong style={miniValueStyle}>{activeCat ? (categories.find(c=>c.id===activeCat)?.name || 'Vald') : 'Alla'}</strong></div>
+          <div style={miniStatStyle}><span style={miniLabelStyle}>Visar</span><strong style={miniValueStyle}>{view === 'contacts' ? filteredContacts.length : filteredAddresses.length}</strong></div>
+        </div>
+      </section>
+
       {error && <div style={{ color:'#b91c1c', fontSize:14 }}>{error}</div>}
       <section style={{ display:'grid', gap:24 }}> 
-        <div style={{ display:'flex', gap:12, flexWrap:'wrap' }}>
+        <div style={{ display:'flex', gap:12, flexWrap:'wrap', justifyContent:'space-between', alignItems:'center' }}>
+          <div style={{ display:'flex', gap:12, flexWrap:'wrap' }}>
           <button
             onClick={()=>setView('contacts')}
             style={{ ...viewTab, ...(view==='contacts'? viewTabActive : {}) }}
@@ -102,12 +133,17 @@ export default function AdminContacts() {
             style={{ ...viewTab, ...(view==='addresses'? viewTabActive : {}) }}
             aria-pressed={view==='addresses'}
           >Adresser</button>
+          </div>
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={view === 'contacts' ? 'Sök namn, telefon, plats eller roll' : 'Sök namn eller adress'} style={{ ...input, minWidth:280 }} />
         </div>
         {view==='contacts' && (
-          <div style={{ display:'grid', gap:24, gridTemplateColumns:'240px 1fr' }}>
-            <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
+          <div style={{ display:'grid', gap:24, gridTemplateColumns:'260px minmax(0, 1fr)' }}>
+            <div style={{ display:'flex', flexDirection:'column', gap:12, border:'1px solid #dbe4ef', background:'#fff', borderRadius:20, padding:18, alignSelf:'start', boxShadow:'0 10px 28px rgba(15,23,42,0.03)' }}>
               <h2 style={{ margin:0, fontSize:16 }}>Kategorier</h2>
               <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+                <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+                  <button onClick={()=>setActiveCat(null)} style={{ ...catBtn, ...(!activeCat? catBtnActive : {}) }}>Alla kategorier</button>
+                </div>
                 {categories.map(cat => (
                   <div key={cat.id} style={{ display:'flex', alignItems:'center', gap:6 }}>
                     <button onClick={()=>setActiveCat(cat.id)} style={{ ...catBtn, ...(activeCat===cat.id? catBtnActive : {}) }}>{cat.name}</button>
@@ -121,9 +157,12 @@ export default function AdminContacts() {
                 <button style={btnPrimary}>Lägg till</button>
               </form>
             </div>
-            <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
-              <h2 style={{ margin:0, fontSize:16 }}>Kontakter {activeCat && '• ' + (categories.find(c=>c.id===activeCat)?.name || '')}</h2>
-              <div style={{ overflowX:'auto', border:'1px solid #e5e7eb', borderRadius:12 }}>
+            <div style={{ display:'flex', flexDirection:'column', gap:16, border:'1px solid #dbe4ef', background:'#fff', borderRadius:20, padding:18, boxShadow:'0 10px 28px rgba(15,23,42,0.03)' }}>
+              <div style={{ display:'grid', gap:4 }}>
+                <h2 style={{ margin:0, fontSize:18 }}>Kontakter {activeCat && '• ' + (categories.find(c=>c.id===activeCat)?.name || '')}</h2>
+                <span style={{ fontSize:13, color:'#64748b' }}>Inline-redigering med snabb filtrering och tydligare tabellstruktur.</span>
+              </div>
+              <div style={{ overflowX:'auto', border:'1px solid #e5e7eb', borderRadius:16 }}>
                 <table style={{ width:'100%', borderCollapse:'collapse', minWidth:700 }}>
                   <thead>
                     <tr style={{ background:'#f9fafb' }}>
@@ -143,6 +182,7 @@ export default function AdminContacts() {
                   </tbody>
                 </table>
               </div>
+              {filteredContacts.length === 0 && <div style={{ fontSize:13, color:'#64748b' }}>Inga kontakter matchar nuvarande filter.</div>}
               {activeCat && (
                 <form onSubmit={e=>{e.preventDefault(); const fd=new FormData(e.currentTarget); const name=String(fd.get('name')||'').trim(); if(!name) return; const phone=String(fd.get('phone')||'').trim(); const location=String(fd.get('location')||'').trim(); const role=String(fd.get('role')||'').trim(); createContact({ category_id: activeCat, name, phone, location, role }); (e.currentTarget as HTMLFormElement).reset(); }} style={{ display:'grid', gap:8, gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))', alignItems:'end' }}>
                   <input name="name" placeholder="Namn" required style={input} />
@@ -156,13 +196,16 @@ export default function AdminContacts() {
           </div>
         )}
         {view==='addresses' && (
-          <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
-            <h2 style={{ margin:0, fontSize:16 }}>Adresser</h2>
-            <div style={{ overflowX:'auto', border:'1px solid #e5e7eb', borderRadius:12 }}>
+          <div style={{ display:'flex', flexDirection:'column', gap:16, border:'1px solid #dbe4ef', background:'#fff', borderRadius:20, padding:18, boxShadow:'0 10px 28px rgba(15,23,42,0.03)' }}>
+            <div style={{ display:'grid', gap:4 }}>
+              <h2 style={{ margin:0, fontSize:18 }}>Adresser</h2>
+              <span style={{ fontSize:13, color:'#64748b' }}>Håll platsregistret uppdaterat för snabbare återanvändning i andra flöden.</span>
+            </div>
+            <div style={{ overflowX:'auto', border:'1px solid #e5e7eb', borderRadius:16 }}>
               <table style={{ width:'100%', borderCollapse:'collapse', minWidth:600 }}>
                 <thead><tr style={{ background:'#f9fafb' }}>{['Namn','Adress',' '].map(h=> <th key={h} style={th}>{h}</th>)}</tr></thead>
                 <tbody>
-                  {addresses.map(a => (
+                  {filteredAddresses.map(a => (
                     <tr key={a.id} style={tr}>
                       <td style={td}><Editable value={a.name} onSave={v=> updateAddress(a.id,{ name:v })} /></td>
                       <td style={td}><Editable value={a.address} onSave={v=> updateAddress(a.id,{ address:v })} /></td>
@@ -172,6 +215,7 @@ export default function AdminContacts() {
                 </tbody>
               </table>
             </div>
+            {filteredAddresses.length === 0 && <div style={{ fontSize:13, color:'#64748b' }}>Inga adresser matchar nuvarande sökning.</div>}
             <form onSubmit={e=>{e.preventDefault(); const fd=new FormData(e.currentTarget); const name=String(fd.get('name')||'').trim(); const address=String(fd.get('address')||'').trim(); if(!name||!address) return; createAddress({ name, address }); (e.currentTarget as HTMLFormElement).reset(); }} style={{ display:'grid', gap:8, gridTemplateColumns:'repeat(auto-fit,minmax(200px,1fr))', alignItems:'end' }}>
               <input name="name" placeholder="Namn" required style={input} />
               <input name="address" placeholder="Adress" required style={input} />
@@ -213,3 +257,9 @@ const catBtn: React.CSSProperties = { padding:'6px 10px', background:'#ffffff', 
 const catBtnActive: React.CSSProperties = { background:'#2563eb', color:'#ffffff', border:'1px solid #2563eb', boxShadow:'0 0 0 1px #2563eb' };
 const viewTab: React.CSSProperties = { padding:'8px 14px', background:'#ffffff', color:'#111827', border:'1px solid #d1d5db', borderRadius:999, fontSize:13, cursor:'pointer', fontWeight:500, transition:'background .15s, color .15s, border-color .15s' };
 const viewTabActive: React.CSSProperties = { background:'#2563eb', color:'#ffffff', border:'1px solid #2563eb' };
+
+const eyebrowStyle: React.CSSProperties = { display:'inline-flex', alignItems:'center', padding:'4px 10px', borderRadius:999, background:'#dbeafe', border:'1px solid #bfdbfe', color:'#2563eb', fontSize:11, fontWeight:800, letterSpacing:0.35, textTransform:'uppercase' };
+const chipStyle: React.CSSProperties = { display:'inline-flex', alignItems:'center', padding:'4px 8px', borderRadius:999, background:'#f8fafc', border:'1px solid #e2e8f0', color:'#475569', fontSize:12, fontWeight:700 };
+const miniStatStyle: React.CSSProperties = { display:'grid', gap:5, padding:'12px 12px 10px', borderRadius:16, border:'1px solid #dbe4ef', background:'#fff' };
+const miniLabelStyle: React.CSSProperties = { fontSize:11, fontWeight:800, letterSpacing:0.3, textTransform:'uppercase', color:'#64748b' };
+const miniValueStyle: React.CSSProperties = { fontSize:20, fontWeight:800, color:'#0f172a' };

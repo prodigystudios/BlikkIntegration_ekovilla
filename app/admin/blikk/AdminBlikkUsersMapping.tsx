@@ -18,6 +18,7 @@ export default function AdminBlikkUsersMapping() {
   const [rows, setRows] = React.useState<ProfileRow[]>([]);
   const [blikkUsers, setBlikkUsers] = React.useState<BlikkUserLite[]>([]);
   const [saving, setSaving] = React.useState<Record<string, boolean>>({});
+  const [search, setSearch] = React.useState('');
 
   React.useEffect(() => {
     (async () => {
@@ -55,20 +56,46 @@ export default function AdminBlikkUsersMapping() {
     }
   }
 
+  const filteredRows = rows.filter((row) => {
+    const term = search.trim().toLowerCase();
+    if (!term) return true;
+    return [row.email, row.full_name || '', row.role, String(row.blikk_id || ''), row.bestMatch?.name || '', row.bestMatch?.email || ''].some((value) => value.toLowerCase().includes(term));
+  });
+
+  const mappedCount = rows.filter((row) => row.blikk_id != null).length;
+  const suggestionCount = rows.filter((row) => row.bestMatch != null).length;
+
   return (
-    <section style={{ border: '1px solid #e5e7eb', background: '#fff', borderRadius: 16, padding: 24, display: 'grid', gap: 16 }}>
-      <h2 style={{ margin: 0, fontSize: 20 }}>Blikk-koppling • Användare</h2>
+    <main style={{ padding:12, display:'grid', gap:20 }}>
+      <section style={{ border: '1px solid #dbe4ef', background: 'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)', borderRadius: 24, padding: 20, display: 'grid', gap: 16, boxShadow:'0 14px 36px rgba(15,23,42,0.04)' }}>
+      <div style={{ display:'flex', justifyContent:'space-between', gap:16, flexWrap:'wrap', alignItems:'flex-start' }}>
+        <div style={{ display:'grid', gap:6, maxWidth:760 }}>
+          <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+            <span style={eyebrowStyle}>Blikk-koppling</span>
+            <span style={chipStyle}>{rows.length} profiler</span>
+            <span style={chipStyle}>{mappedCount} kopplade</span>
+          </div>
+          <h1 style={{ margin: 0, fontSize: 28, color:'#0f172a' }}>Synka profiler mot rätt Blikk-användare</h1>
       <p style={{ margin: 0, color: '#374151', fontSize: 14 }}>
         Matcha interna profiler mot Blikk-användare så tidrapporter och uppgifter får rätt användar-ID.
       </p>
+        </div>
+        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Sök e-post, namn, roll eller Blikk-ID" style={{ ...fieldStyle, minWidth:280 }} />
+      </div>
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(160px, 1fr))', gap:8 }}>
+        <div style={miniStatStyle}><span style={miniLabelStyle}>Kopplade</span><strong style={miniValueStyle}>{mappedCount}</strong></div>
+        <div style={miniStatStyle}><span style={miniLabelStyle}>Förslag finns</span><strong style={miniValueStyle}>{suggestionCount}</strong></div>
+        <div style={miniStatStyle}><span style={miniLabelStyle}>Okopplade</span><strong style={miniValueStyle}>{rows.length - mappedCount}</strong></div>
+      </div>
+      </section>
       {loading && <div>Laddar…</div>}
       {error && <div style={{ color: '#b91c1c', fontSize: 13 }}>{error}</div>}
       {!loading && rows.length === 0 && <div style={{ fontSize: 14, color: '#374151' }}>Inga profiler att visa.</div>}
       {!loading && rows.length > 0 && (
-        <div style={{ overflowX: 'auto' }}>
+        <div style={{ overflowX: 'auto', border:'1px solid #dbe4ef', borderRadius:20, background:'#fff', boxShadow:'0 10px 28px rgba(15,23,42,0.03)' }}>
           <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 900 }}>
             <thead>
-              <tr style={{ textAlign: 'left' }}>
+              <tr style={{ textAlign: 'left', background:'#f8fafc' }}>
                 <th style={thCell}>E-post</th>
                 <th style={thCell}>Namn</th>
                 <th style={thCell}>Roll</th>
@@ -79,7 +106,7 @@ export default function AdminBlikkUsersMapping() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
+              {filteredRows.map((r) => (
                 <tr key={r.id} style={{ borderTop: '1px solid #e5e7eb' }}>
                   <td style={tdCell}>{r.email}</td>
                   <td style={tdCell}>{r.full_name || '—'}</td>
@@ -101,6 +128,14 @@ export default function AdminBlikkUsersMapping() {
                   </td>
                   <td style={tdCell}>
                     <div style={{ display: 'flex', gap: 8 }}>
+                      {r.bestMatch && r.blikk_id == null && (
+                        <button
+                          onClick={() => setRows((list) => list.map((x) => (x.id === r.id ? { ...x, blikk_id: r.bestMatch!.id } : x)))}
+                          style={{ ...saveBtn, background:'#fff', color:'#2563eb', border:'1px solid #bfdbfe' }}
+                        >
+                          Använd förslag
+                        </button>
+                      )}
                       <button
                         onClick={() => saveMapping(r.id, r.blikk_id ?? r.bestMatch?.id ?? null)}
                         disabled={saving[r.id]}
@@ -125,7 +160,8 @@ export default function AdminBlikkUsersMapping() {
           </table>
         </div>
       )}
-    </section>
+      {!loading && rows.length > 0 && filteredRows.length === 0 && <div style={{ fontSize:13, color:'#64748b' }}>Ingen profil matchar nuvarande sökning.</div>}
+    </main>
   );
 }
 
@@ -162,7 +198,8 @@ const fieldStyle: React.CSSProperties = {
   border: '1px solid #d1d5db',
   borderRadius: 8,
   fontSize: 14,
-  outline: 'none'
+  outline: 'none',
+  background: '#fff'
 };
 
 const saveBtn: React.CSSProperties = {
@@ -175,3 +212,9 @@ const saveBtn: React.CSSProperties = {
   fontWeight: 500,
   cursor: 'pointer'
 };
+
+const eyebrowStyle: React.CSSProperties = { display:'inline-flex', alignItems:'center', padding:'4px 10px', borderRadius:999, background:'#dbeafe', border:'1px solid #bfdbfe', color:'#2563eb', fontSize:11, fontWeight:800, letterSpacing:0.35, textTransform:'uppercase' };
+const chipStyle: React.CSSProperties = { display:'inline-flex', alignItems:'center', padding:'4px 8px', borderRadius:999, background:'#f8fafc', border:'1px solid #e2e8f0', color:'#475569', fontSize:12, fontWeight:700 };
+const miniStatStyle: React.CSSProperties = { display:'grid', gap:5, padding:'12px 12px 10px', borderRadius:16, border:'1px solid #dbe4ef', background:'#fff' };
+const miniLabelStyle: React.CSSProperties = { fontSize:11, fontWeight:800, letterSpacing:0.3, textTransform:'uppercase', color:'#64748b' };
+const miniValueStyle: React.CSSProperties = { fontSize:20, fontWeight:800, color:'#0f172a' };

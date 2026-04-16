@@ -1,7 +1,5 @@
 "use client";
 import React, { useEffect, useState } from 'react';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
-import type { UserProfile } from '../../../lib/getUserProfile';
 
 interface AdminUserRow {
   id: string;
@@ -14,10 +12,11 @@ interface AdminUserRow {
 }
 
 export default function AdminUsers() {
-  const supabase = createClientComponentClient();
   const [loading, setLoading] = useState(true);
   const [users, setUsers] = useState<AdminUserRow[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const [roleFilter, setRoleFilter] = useState<'all' | 'member' | 'sales' | 'admin' | 'konsult'>('all');
 
   // Form state
   const [email, setEmail] = useState('');
@@ -64,13 +63,48 @@ export default function AdminUsers() {
     setCreating(false);
   }
 
-  return (
-    <main style={{ padding: 32, maxWidth: 1100, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 32 }}>
-      <h1 style={{ margin: 0, fontSize: 30 }}>Admin • Användare</h1>
+  const filteredUsers = users.filter((user) => {
+    const term = search.trim().toLowerCase();
+    const matchesRole = roleFilter === 'all' ? true : user.role === roleFilter;
+    const matchesTerm = !term
+      ? true
+      : [user.email, user.full_name || '', user.phone || '', (user.tags || []).join(' ')].some((value) => value.toLowerCase().includes(term));
+    return matchesRole && matchesTerm;
+  });
 
-      <section style={{ border: '1px solid #e5e7eb', background: '#fff', borderRadius: 16, padding: 24, display: 'grid', gap: 24 }}>
-        <h2 style={{ margin: 0, fontSize: 20 }}>Skapa ny användare</h2>
-        <form onSubmit={createUser} style={{ display: 'grid', gap: 12, maxWidth: 420 }}>
+  const roleCounts = users.reduce<Record<string, number>>((acc, user) => {
+    acc[user.role] = (acc[user.role] || 0) + 1;
+    return acc;
+  }, {});
+
+  return (
+    <main style={{ padding: 12, display: 'grid', gap: 20 }}>
+      <section style={{ border: '1px solid #dbe4ef', background: 'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)', borderRadius: 24, padding: 20, display: 'grid', gap: 16, boxShadow: '0 14px 36px rgba(15,23,42,0.04)' }}>
+        <div style={{ display:'flex', justifyContent:'space-between', gap:16, flexWrap:'wrap', alignItems:'flex-start' }}>
+          <div style={{ display:'grid', gap:6, maxWidth:720 }}>
+            <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+              <span style={eyebrowStyle}>Användare</span>
+              <span style={chipStyle}>{users.length} totalt</span>
+              <span style={chipStyle}>{roleCounts.admin || 0} admins</span>
+            </div>
+            <h1 style={{ margin:0, fontSize:30, color:'#0f172a' }}>Konton, roller och snabbare administration</h1>
+            <p style={{ margin:0, fontSize:14, color:'#475569', lineHeight:1.55 }}>Skapa användare, uppdatera roller och sök i användarlistan utan att tappa överblicken.</p>
+          </div>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(140px, 1fr))', gap:8, minWidth:'min(100%, 360px)' }}>
+            <div style={miniStatStyle}><span style={miniLabelStyle}>Medlemmar</span><strong style={miniValueStyle}>{roleCounts.member || 0}</strong></div>
+            <div style={miniStatStyle}><span style={miniLabelStyle}>Sales</span><strong style={miniValueStyle}>{roleCounts.sales || 0}</strong></div>
+            <div style={miniStatStyle}><span style={miniLabelStyle}>Konsulter</span><strong style={miniValueStyle}>{roleCounts.konsult || 0}</strong></div>
+          </div>
+        </div>
+      </section>
+
+      <section style={{ display:'grid', gap:20, gridTemplateColumns:'minmax(320px, 420px) minmax(0, 1fr)' }}>
+        <section style={{ border: '1px solid #dbe4ef', background: '#fff', borderRadius: 20, padding: 20, display: 'grid', gap: 18, alignContent:'start', boxShadow:'0 10px 28px rgba(15,23,42,0.03)' }}>
+        <div style={{ display:'grid', gap:4 }}>
+          <h2 style={{ margin: 0, fontSize: 20 }}>Skapa ny användare</h2>
+          <span style={{ fontSize:13, color:'#64748b' }}>Lägg till konto och sätt rätt grundroll direkt.</span>
+        </div>
+        <form onSubmit={createUser} style={{ display: 'grid', gap: 12 }}>
           <input required type="email" placeholder="E-post" value={email} onChange={e => setEmail(e.target.value)} style={fieldStyle} />
           <input required type="password" placeholder="Lösenord" value={password} onChange={e => setPassword(e.target.value)} style={fieldStyle} />
           <input type="text" placeholder="Namn (valfritt)" value={name} onChange={e => setName(e.target.value)} style={fieldStyle} />
@@ -85,15 +119,30 @@ export default function AdminUsers() {
           <button disabled={creating} type="submit" style={buttonStyle}>{creating ? 'Skapar…' : 'Skapa användare'}</button>
           {error && <div style={{ color: '#b91c1c', fontSize: 13 }}>{error}</div>}
         </form>
-      </section>
+        </section>
 
-      <section style={{ border: '1px solid #e5e7eb', background: '#fff', borderRadius: 16, padding: 24, display: 'grid', gap: 16 }}>
-        <h2 style={{ margin: 0, fontSize: 20 }}>Alla användare</h2>
+      <section style={{ border: '1px solid #dbe4ef', background: '#fff', borderRadius: 20, padding: 20, display: 'grid', gap: 16, boxShadow:'0 10px 28px rgba(15,23,42,0.03)' }}>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:12, flexWrap:'wrap' }}>
+          <div style={{ display:'grid', gap:4 }}>
+            <h2 style={{ margin: 0, fontSize: 20 }}>Alla användare</h2>
+            <span style={{ fontSize:13, color:'#64748b' }}>Sök, filtrera och uppdatera direkt i listan.</span>
+          </div>
+          <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Sök e-post, namn, telefon eller tagg" style={{ ...fieldStyle, minWidth: 260 }} />
+            <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value as any)} style={{ ...fieldStyle, minWidth: 140 }}>
+              <option value="all">Alla roller</option>
+              <option value="member">Member</option>
+              <option value="sales">Sales</option>
+              <option value="konsult">Konsult</option>
+              <option value="admin">Admin</option>
+            </select>
+          </div>
+        </div>
         {loading && <div>Laddar…</div>}
         {!loading && users.length === 0 && <div style={{ fontSize: 14, color: '#374151' }}>Inga användare hittades.</div>}
         {!loading && users.length > 0 && (
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 700 }}>
+            <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 840 }}>
               <thead>
                 <tr style={thRowStyle}>
                   <th style={thCell}>E-post</th>
@@ -105,13 +154,15 @@ export default function AdminUsers() {
                 </tr>
               </thead>
               <tbody>
-                {users.map(u => (
+                {filteredUsers.map(u => (
                   <UserRow key={u.id} user={u} onChanged={(nu)=>setUsers(list=>list.map(x=>x.id===nu.id?nu:x))} onDeleted={(id)=>setUsers(list=>list.filter(x=>x.id!==id))} />
                 ))}
               </tbody>
             </table>
           </div>
         )}
+        {!loading && users.length > 0 && filteredUsers.length === 0 && <div style={{ fontSize:14, color:'#64748b' }}>Ingen användare matchar nuvarande sökning eller rollfilter.</div>}
+      </section>
       </section>
     </main>
   );
@@ -268,4 +319,53 @@ const iconBtn: React.CSSProperties = {
   background: '#f3f4f6',
   borderRadius: 6,
   border: '1px solid #e5e7eb'
+};
+
+const eyebrowStyle: React.CSSProperties = {
+  display:'inline-flex',
+  alignItems:'center',
+  padding:'4px 10px',
+  borderRadius:999,
+  background:'#dbeafe',
+  border:'1px solid #bfdbfe',
+  color:'#2563eb',
+  fontSize:11,
+  fontWeight:800,
+  letterSpacing:0.35,
+  textTransform:'uppercase'
+};
+
+const chipStyle: React.CSSProperties = {
+  display:'inline-flex',
+  alignItems:'center',
+  padding:'4px 8px',
+  borderRadius:999,
+  background:'#f8fafc',
+  border:'1px solid #e2e8f0',
+  color:'#475569',
+  fontSize:12,
+  fontWeight:700
+};
+
+const miniStatStyle: React.CSSProperties = {
+  display:'grid',
+  gap:5,
+  padding:'12px 12px 10px',
+  borderRadius:16,
+  border:'1px solid #dbe4ef',
+  background:'#fff'
+};
+
+const miniLabelStyle: React.CSSProperties = {
+  fontSize:11,
+  fontWeight:800,
+  letterSpacing:0.3,
+  textTransform:'uppercase',
+  color:'#64748b'
+};
+
+const miniValueStyle: React.CSSProperties = {
+  fontSize:20,
+  fontWeight:800,
+  color:'#0f172a'
 };

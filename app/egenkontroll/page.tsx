@@ -20,11 +20,24 @@ export default function EgenkontrollPage() {
   // Supabase client (used to persist actual_bags_used to planning_project_meta)
   const supabase = useMemo(() => createClientComponentClient(), []);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [isNarrow, setIsNarrow] = useState(false);
   useEffect(() => {
     let cancelled = false;
     supabase.auth.getUser().then(r => { if (!cancelled) setCurrentUserId(r.data.user?.id || null); });
     return () => { cancelled = true; };
   }, [supabase]);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const media = window.matchMedia('(max-width: 840px)');
+    const update = () => setIsNarrow(media.matches);
+    update();
+    if (typeof media.addEventListener === 'function') {
+      media.addEventListener('change', update);
+      return () => media.removeEventListener('change', update);
+    }
+    media.addListener(update);
+    return () => media.removeListener(update);
+  }, []);
   // Form state
   const [projectNumber, setProjectNumber] = useState('');
   const [installerName, setInstallerName] = useState('');
@@ -195,6 +208,7 @@ export default function EgenkontrollPage() {
 
   // Signature canvas refs/state
   const signatureCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const signatureContainerRef = useRef<HTMLDivElement | null>(null);
   const isDrawingRef = useRef(false);
   const lastPosRef = useRef<{ x: number; y: number } | null>(null);
   const [signatureTimestamp, setSignatureTimestamp] = useState<string | null>(null);
@@ -410,18 +424,35 @@ export default function EgenkontrollPage() {
   // Prepare canvas for high-DPI drawing
   useEffect(() => {
     const canvas = signatureCanvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    const dpr = window.devicePixelRatio || 1;
-    const cssW = 600;
-    const cssH = 180;
-    canvas.width = Math.floor(cssW * dpr);
-    canvas.height = Math.floor(cssH * dpr);
-    canvas.style.width = cssW + 'px';
-    canvas.style.height = cssH + 'px';
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  }, []);
+    const container = signatureContainerRef.current;
+    if (!canvas || !container) return;
+
+    const resizeCanvas = () => {
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      const snapshot = signatureTimestamp ? canvas.toDataURL('image/png') : null;
+      const dpr = window.devicePixelRatio || 1;
+      const measuredWidth = container.getBoundingClientRect().width || container.clientWidth;
+      if (!measuredWidth) return;
+      const cssW = Math.min(600, measuredWidth);
+      const cssH = isNarrow ? 160 : 180;
+      canvas.width = Math.floor(cssW * dpr);
+      canvas.height = Math.floor(cssH * dpr);
+      canvas.style.width = cssW + 'px';
+      canvas.style.height = cssH + 'px';
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, cssW, cssH);
+      if (snapshot) {
+        const img = new Image();
+        img.onload = () => ctx.drawImage(img, 0, 0, cssW, cssH);
+        img.src = snapshot;
+      }
+    };
+
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+    return () => window.removeEventListener('resize', resizeCanvas);
+  }, [isNarrow, signatureTimestamp]);
 
   // Restore draft on mount/order change
   useEffect(() => {
@@ -655,20 +686,49 @@ export default function EgenkontrollPage() {
     }));
   }, [materialUsed]);
 
+  const totalOpenBags = etapperOpen.reduce((sum, row) => sum + (Number(row.antalSack) || 0), 0);
+  const totalClosedBags = etapperClosed.reduce((sum, row) => sum + (Number(row.antalSackKgPerSack) || 0), 0);
+  const totalBags = totalOpenBags + totalClosedBags;
+  const selectedPhotosCount = Number(Boolean(beforePhoto)) + Number(Boolean(afterPhoto));
+
   return (
-    <main style={{ padding: 24, maxWidth: '100%', background: '#ffffffff' }}>
+    <main style={{ padding: isNarrow ? 14 : 22, maxWidth: 1240, margin: '0 auto', display: 'grid', gap: 18, background: '#f8fbff', width: '100%', boxSizing: 'border-box', overflowX: 'clip' }}>
       <Suspense fallback={null}>
         <InitOrderId orderId={orderId} setOrderId={setOrderId} />
       </Suspense>
-      <p>Sök efter order("Använd order nummer ifrån blikk")</p>
 
-      <section style={{ marginTop: 16 }}>
-        <label style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <div>Order nummer</div>
-          <input value={orderId} onChange={(e) => setOrderId(e.target.value)} placeholder="Ange ordernummer" style={{ padding: 8 }} />
+      <section style={heroCardStyle}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap', minWidth: 0 }}>
+          <div style={{ display: 'grid', gap: 8, maxWidth: 760, minWidth: 0, flex: '1 1 320px' }}>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+              <span style={heroEyebrowStyle}>Egenkontroll</span>
+              <span style={heroChipStyle}>{totalBags} säckar registrerade</span>
+              <span style={heroChipStyle}>{selectedPhotosCount} bilder valda</span>
+            </div>
+            <div style={{ display: 'grid', gap: 6, minWidth: 0 }}>
+              <h1 style={{ margin: 0, fontSize: isNarrow ? 30 : 38, lineHeight: 1.02, letterSpacing: -1, color: '#0f172a' }}>Skapa egenkontroll</h1>
+              <p style={{ margin: 0, color: '#475569', fontSize: 16, lineHeight: 1.5 }}>Fyll i detaljer, dokumentera med bilder och signatur, och generera en PDF-rapport att dela med kund och kollegor.</p>
+            </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: isNarrow ? 'repeat(2, minmax(0, 1fr))' : 'repeat(2, minmax(0, 1fr))', gap: 8, minWidth: 0, width: isNarrow ? '100%' : 340, maxWidth: '100%', flex: isNarrow ? '1 1 100%' : '0 1 340px' }}>
+            <div style={heroStatCardStyle}><span style={heroStatLabelStyle}>Öppna etapper</span><strong style={heroStatValueStyle}>{etapperOpen.length}</strong></div>
+            <div style={heroStatCardStyle}><span style={heroStatLabelStyle}>Slutna etapper</span><strong style={heroStatValueStyle}>{etapperClosed.length}</strong></div>
+          </div>
+        </div>
+      </section>
+
+      <section style={sectionCardStyle}>
+        <div style={{ display: 'grid', gap: 6 }}>
+          <h2 style={sectionTitleStyle}>Hämta projekt</h2>
+          <p style={sectionIntroStyle}>Sök efter order med ordernummer från Blikk och kontrollera att projektdetaljerna stämmer innan du fortsätter.</p>
+        </div>
+        <label style={{ display: 'grid', gap: 8 }}>
+          <div style={fieldLabelStyle}>Ordernummer</div>
+          <input value={orderId} onChange={(e) => setOrderId(e.target.value)} placeholder="Ange ordernummer" style={textFieldStyle} />
           <button
             type="button"
-            style={{ padding: 12, opacity: projectLoading ? 0.7 : 1, cursor: projectLoading ? 'not-allowed' : 'pointer' }}
+            className="btn--primary btn--med"
+            style={{ opacity: projectLoading ? 0.7 : 1, cursor: projectLoading ? 'not-allowed' : 'pointer', width: isNarrow ? '100%' : 'fit-content' }}
             onClick={onLookup}
             disabled={projectLoading}
             aria-busy={projectLoading}
@@ -680,56 +740,59 @@ export default function EgenkontrollPage() {
           <div style={{ marginTop: 8, color: '#6b7280', fontSize: 14 }}>Hämtar projektdetaljer…</div>
         )}
         {project && (
-          <div style={{ border: '1px solid #ddd', padding: 12 }}>
+          <div style={{ border: '1px solid #dbe4ef', borderRadius: 18, padding: 14, background: '#f8fafc' }}>
             {project.error ? (
               <div style={{ color: 'crimson' }}>Error: {project.error}</div>
             ) : (
-              <div>
-                <div><strong>Order number:</strong> {project.orderNumber}</div>
-                <div><strong>ID:</strong> {project.id}</div>
-                <div><strong>Kund/Beställare:</strong> {project?.customer?.name}</div>
-                <div><strong>Beskrivning:</strong> {String(project.description)}</div>
+              <div style={{ display: 'grid', gridTemplateColumns: isNarrow ? '1fr' : 'repeat(2, minmax(0, 1fr))', gap: 12 }}>
+                <div style={summaryCardStyle}><span style={summaryLabelStyle}>Ordernummer</span><strong style={summaryValueStyle}>{project.orderNumber || '—'}</strong></div>
+                <div style={summaryCardStyle}><span style={summaryLabelStyle}>Projekt-ID</span><strong style={summaryValueStyle}>{project.id || '—'}</strong></div>
+                <div style={summaryCardStyle}><span style={summaryLabelStyle}>Kund/Beställare</span><strong style={summaryValueStyle}>{project?.customer?.name || '—'}</strong></div>
+                <div style={summaryCardStyle}><span style={summaryLabelStyle}>Beskrivning</span><strong style={{ ...summaryValueStyle, fontSize: 14, lineHeight: 1.45 }}>{String(project.description || '—')}</strong></div>
               </div>
             )}
           </div>
         )}
       </section>
 
-      <section style={{ marginTop: 24, display: 'flex', flexDirection: 'column', gap: 16, width: '100%', maxWidth: 720, alignSelf: 'stretch' }}>
-        <h2>Projektdetaljer</h2>
-        <h3>SE TILL ATT INFORMATIONEN SOM HÄMTATS FRÅN BLIKK STÄMMER</h3>
-        <label>
-          <div>Kund/Beställare</div>
-          <input value={clientName} onChange={(e) => { setClientName(e.target.value); if (missing.clientName) setMissing(mm => ({ ...mm, clientName: false })); }} placeholder="Kund/Beställare" style={{ width: '100%', maxWidth: '100%', boxSizing: 'border-box', padding: 8, border: missing.clientName ? '1px solid #fca5a5' : undefined, background: missing.clientName ? '#fff1f2' : undefined }} />
+      <section style={sectionCardStyle}>
+        <div style={{ display: 'grid', gap: 6 }}>
+          <h2 style={sectionTitleStyle}>Projektdetaljer</h2>
+          <p style={sectionIntroStyle}>Gå igenom kund, adress och installationsuppgifter. Fälten markerar tydligt om något obligatoriskt saknas.</p>
+        </div>
+        <div style={{ display: 'grid', gap: 14, gridTemplateColumns: isNarrow ? '1fr' : 'repeat(2, minmax(0, 1fr))' }}>
+        <label style={{ display: 'grid', gap: 6 }}>
+          <div style={fieldLabelStyle}>Kund/Beställare</div>
+          <input value={clientName} onChange={(e) => { setClientName(e.target.value); if (missing.clientName) setMissing(mm => ({ ...mm, clientName: false })); }} placeholder="Kund/Beställare" style={{ ...textFieldStyle, border: missing.clientName ? '1px solid #fca5a5' : textFieldStyle.border, background: missing.clientName ? '#fff1f2' : '#fff' }} />
         </label>
-        <div style={{ display: 'grid', gap: 8, width: '100%' }}>
-          <div>Adress</div>
-          <input value={workStreet} onChange={(e) => { setWorkStreet(e.target.value); if (missing.workStreet) setMissing(mm => ({ ...mm, workStreet: false })); }} placeholder="Gatuadress" style={{ width: '100%', maxWidth: '100%', boxSizing: 'border-box', padding: 8, border: missing.workStreet ? '1px solid #fca5a5' : undefined, background: missing.workStreet ? '#fff1f2' : undefined }} />
-          <div style={{ display: 'flex', gap: 8, width: '100%', alignItems: 'stretch' }}>
-            <input value={workPostalCode} onChange={(e) => { setWorkPostalCode(e.target.value); if (missing.workPostalCode) setMissing(mm => ({ ...mm, workPostalCode: false })); }} placeholder="Postnummer" style={{ flex: 1, minWidth: 0, padding: 8, border: missing.workPostalCode ? '1px solid #fca5a5' : undefined, background: missing.workPostalCode ? '#fff1f2' : undefined }} />
-            <input value={workCity} onChange={(e) => { setWorkCity(e.target.value); if (missing.workCity) setMissing(mm => ({ ...mm, workCity: false })); }} placeholder="Stad" style={{ flex: 2, minWidth: 0, padding: 8, border: missing.workCity ? '1px solid #fca5a5' : undefined, background: missing.workCity ? '#fff1f2' : undefined }} />
+        <div style={{ display: 'grid', gap: 8 }}>
+          <div style={fieldLabelStyle}>Adress</div>
+          <input value={workStreet} onChange={(e) => { setWorkStreet(e.target.value); if (missing.workStreet) setMissing(mm => ({ ...mm, workStreet: false })); }} placeholder="Gatuadress" style={{ ...textFieldStyle, border: missing.workStreet ? '1px solid #fca5a5' : textFieldStyle.border, background: missing.workStreet ? '#fff1f2' : '#fff' }} />
+          <div style={{ display: 'grid', gap: 8, gridTemplateColumns: isNarrow ? '1fr' : 'minmax(120px, 0.8fr) minmax(0, 1.2fr)' }}>
+            <input value={workPostalCode} onChange={(e) => { setWorkPostalCode(e.target.value); if (missing.workPostalCode) setMissing(mm => ({ ...mm, workPostalCode: false })); }} placeholder="Postnummer" style={{ ...textFieldStyle, border: missing.workPostalCode ? '1px solid #fca5a5' : textFieldStyle.border, background: missing.workPostalCode ? '#fff1f2' : '#fff' }} />
+            <input value={workCity} onChange={(e) => { setWorkCity(e.target.value); if (missing.workCity) setMissing(mm => ({ ...mm, workCity: false })); }} placeholder="Stad" style={{ ...textFieldStyle, border: missing.workCity ? '1px solid #fca5a5' : textFieldStyle.border, background: missing.workCity ? '#fff1f2' : '#fff' }} />
           </div>
         </div>
-        <label>
-          <div>Installationsdatum</div>
+        <label style={{ display: 'grid', gap: 6 }}>
+          <div style={fieldLabelStyle}>Installationsdatum</div>
           <input
             type="date"
             value={installationDate}
             onChange={(e) => { setInstallationDate(e.target.value); if (missing.installationDate) setMissing(mm => ({ ...mm, installationDate: false })); }}
-            style={{ width: '100%', maxWidth: '100%', boxSizing: 'border-box', padding: 8, border: missing.installationDate ? '1px solid #fca5a5' : undefined, background: missing.installationDate ? '#fff1f2' : undefined }}
+            style={{ ...textFieldStyle, border: missing.installationDate ? '1px solid #fca5a5' : textFieldStyle.border, background: missing.installationDate ? '#fff1f2' : '#fff' }}
           />
         </label>
-        <label>
-          <div>Projektnummer(OBS FYLL I DETTA OM NI FÅTT ETT PROJEKT NUMMER FRÅN KUND)</div>
-          <input value={projectNumber} onChange={(e) => setProjectNumber(e.target.value)} placeholder="Projektnummer" style={{ width: '100%', maxWidth: '100%', boxSizing: 'border-box', padding: 8 }} />
+        <label style={{ display: 'grid', gap: 6 }}>
+          <div style={fieldLabelStyle}>Projektnummer</div>
+          <input value={projectNumber} onChange={(e) => setProjectNumber(e.target.value)} placeholder="Fyll i om kunden gett ett projektnummer" style={textFieldStyle} />
         </label>
-        <label>
-          <div>Installatör</div>
-          <input value={installerName} onChange={(e) => { setInstallerName(e.target.value); if (missing.installerName) setMissing(mm => ({ ...mm, installerName: false })); }} placeholder="Namn på installatör" style={{ width: '100%', maxWidth: '100%', boxSizing: 'border-box', padding: 8, border: missing.installerName ? '1px solid #fca5a5' : undefined, background: missing.installerName ? '#fff1f2' : undefined }} />
+        <label style={{ display: 'grid', gap: 6 }}>
+          <div style={fieldLabelStyle}>Installatör</div>
+          <input value={installerName} onChange={(e) => { setInstallerName(e.target.value); if (missing.installerName) setMissing(mm => ({ ...mm, installerName: false })); }} placeholder="Namn på installatör" style={{ ...textFieldStyle, border: missing.installerName ? '1px solid #fca5a5' : textFieldStyle.border, background: missing.installerName ? '#fff1f2' : '#fff' }} />
         </label>
-        <label>
-          <div>Material</div>
-          <select className="select-field" value={materialUsed} onChange={(e) => { setMaterialUsed(e.target.value); if (missing.materialUsed) setMissing(mm => ({ ...mm, materialUsed: false })); }} style={{ width: '100%', maxWidth: '100%', boxSizing: 'border-box', border: missing.materialUsed ? '1px solid #fca5a5' : undefined, background: missing.materialUsed ? '#fff1f2' : undefined }}>
+        <label style={{ display: 'grid', gap: 6 }}>
+          <div style={fieldLabelStyle}>Material</div>
+          <select className="select-field" value={materialUsed} onChange={(e) => { setMaterialUsed(e.target.value); if (missing.materialUsed) setMissing(mm => ({ ...mm, materialUsed: false })); }} style={{ ...selectFieldStyle, border: missing.materialUsed ? '1px solid #fca5a5' : selectFieldStyle.border, background: missing.materialUsed ? '#fff1f2' : '#fff' }}>
             <option value="">Välj material</option>
             <option value="Ekovilla Cellulosa Lösull CE ETA-09/0081">Ekovilla Cellulosa Lösull CE ETA-09/0081</option>
             <option value="Knauf Supafil Frame Lösull B0709EPCR">Knauf Supafil Frame Lösull B0709EPCR</option>
@@ -743,78 +806,78 @@ export default function EgenkontrollPage() {
             </small>
           )}
         </label>
-        <div style={{ borderTop: '1px solid #e5e7eb', display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <h3>Kontroller</h3>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <input type="checkbox" checked={eavesVentOk} onChange={(e) => setEavesVentOk(e.target.checked)} />
-              <span>Takfotsventilation OK?</span>
-            </label>
-            <input value={eavesVentComment} onChange={(e) => setEavesVentComment(e.target.value)} placeholder="Kommentar (Takfotsventilation)" style={{ padding: 8 }} />
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <input type="checkbox" checked={carpentryOk} onChange={(e) => setCarpentryOk(e.target.checked)} />
-              <span>Snickerier OK?</span>
-            </label>
-            <input value={carpentryComment} onChange={(e) => setCarpentryComment(e.target.value)} placeholder="Kommentar (Snickerier)" style={{ padding: 8 }} />
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <input type="checkbox" checked={waterproofingOk} onChange={(e) => setWaterproofingOk(e.target.checked)} />
-              <span>Tätskikt OK?</span>
-            </label>
-            <input value={waterproofingComment} onChange={(e) => setWaterproofingComment(e.target.value)} placeholder="Kommentar (Tätskikt)" style={{ padding: 8 }} />
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <input type="checkbox" checked={genomforningarOk} onChange={(e) => setGenomforningarOk(e.target.checked)} />
-              <span>Genomförningar OK?</span>
-            </label>
-            <input value={genomforningarComment} onChange={(e) => setGenomforningarComment(e.target.value)} placeholder="Kommentar (Genomförningar)" style={{ padding: 8 }} />
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <input type="checkbox" checked={grovstadningOk} onChange={(e) => setGrovstadningOk(e.target.checked)} />
-              <span>Grovstädning OK?</span>
-            </label>
-            <input value={grovstadningComment} onChange={(e) => setGrovstadningComment(e.target.value)} placeholder="Kommentar (Grovstädning)" style={{ padding: 8 }} />
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <input type="checkbox" checked={markskyltOk} onChange={(e) => setMarkskyltOk(e.target.checked)} />
-              <span>Märkskylt OK?</span>
-            </label>
-            <input value={markskyltComment} onChange={(e) => setMarkskyltComment(e.target.value)} placeholder="Kommentar (Märkskylt)" style={{ padding: 8 }} />
-            <input value={ovrigaKommentarer} onChange={(e) => setOvrigaKommentarer(e.target.value)} placeholder="Övriga kommentarer" style={{ padding: 8 }} />
+        </div>
+        <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: 8, display: 'grid', gap: 12 }}>
+          <h3 style={subsectionTitleStyle}>Kontroller</h3>
+          <div style={{ display: 'grid', gridTemplateColumns: isNarrow ? '1fr' : 'repeat(2, minmax(0, 1fr))', gap: 12 }}>
+            <ControlCard label="Takfotsventilation" checked={eavesVentOk} onChange={setEavesVentOk} comment={eavesVentComment} onCommentChange={setEavesVentComment} placeholder="Kommentar om takfotsventilation" />
+            <ControlCard label="Snickerier" checked={carpentryOk} onChange={setCarpentryOk} comment={carpentryComment} onCommentChange={setCarpentryComment} placeholder="Kommentar om snickerier" />
+            <ControlCard label="Tätskikt" checked={waterproofingOk} onChange={setWaterproofingOk} comment={waterproofingComment} onCommentChange={setWaterproofingComment} placeholder="Kommentar om tätskikt" />
+            <ControlCard label="Genomförningar" checked={genomforningarOk} onChange={setGenomforningarOk} comment={genomforningarComment} onCommentChange={setGenomforningarComment} placeholder="Kommentar om genomförningar" />
+            <ControlCard label="Grovstädning" checked={grovstadningOk} onChange={setGrovstadningOk} comment={grovstadningComment} onCommentChange={setGrovstadningComment} placeholder="Kommentar om grovstädning" />
+            <ControlCard label="Märkskylt" checked={markskyltOk} onChange={setMarkskyltOk} comment={markskyltComment} onCommentChange={setMarkskyltComment} placeholder="Kommentar om märkskylt" />
           </div>
+          <label style={{ display: 'grid', gap: 6 }}>
+            <div style={fieldLabelStyle}>Övriga kommentarer</div>
+            <textarea value={ovrigaKommentarer} onChange={(e) => setOvrigaKommentarer(e.target.value)} placeholder="Övriga kommentarer" rows={3} style={textAreaStyle} />
+          </label>
         </div>
       </section>
 
       {/* Batch & rating fields (NOT included in PDF) */}
-      <section style={{ borderTop: '1px solid #e5e7eb', paddingTop: 2 }}>
-        <h3>Batch & materialbedömning</h3>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, maxWidth: 720 }}>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
-            <label style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: '1 1 200px', minWidth: 180 }}>
-              <span style={{ fontSize: 12, fontWeight: 600 }}>Batch / Säcksnummer (frivilligt)</span>
-              <input value={batchNumber} onChange={(e) => setBatchNumber(e.target.value)} placeholder="Batchnummer" style={{ padding: '6px 8px' }} />
+      <section style={sectionCardStyle}>
+        <h3 style={subsectionTitleStyle}>Batch & materialbedömning</h3>
+        <div style={{ display: 'grid', gap: 12, gridTemplateColumns: isNarrow ? '1fr' : 'minmax(220px, 1.5fr) repeat(2, minmax(140px, 1fr))' }}>
+            <label style={{ display: 'grid', gap: 6 }}>
+              <span style={fieldLabelStyle}>Batch / säcksnummer</span>
+              <input value={batchNumber} onChange={(e) => setBatchNumber(e.target.value)} placeholder="Batchnummer" style={textFieldStyle} />
             </label>
-            <label style={{ display: 'flex', flexDirection: 'column', gap: 4, width: 140 }}>
-              <span style={{ fontSize: 12, fontWeight: 600 }}>Dammighet 1–10</span>
-              <input type="number" min={1} max={10} inputMode="numeric" value={dammighet} onChange={(e) => { const v = e.target.value; if (v === '') return setDammighet(''); const num = Number(v); if (!Number.isNaN(num) && num >= 1 && num <= 10) setDammighet(String(num)); }} placeholder="-" style={{ padding: '6px 8px' }} />
+            <label style={{ display: 'grid', gap: 6 }}>
+              <span style={fieldLabelStyle}>Dammighet 1–10</span>
+              <input type="number" min={1} max={10} inputMode="numeric" value={dammighet} onChange={(e) => { const v = e.target.value; if (v === '') return setDammighet(''); const num = Number(v); if (!Number.isNaN(num) && num >= 1 && num <= 10) setDammighet(String(num)); }} placeholder="-" style={textFieldStyle} />
             </label>
-            <label style={{ display: 'flex', flexDirection: 'column', gap: 4, width: 140 }}>
-              <span style={{ fontSize: 12, fontWeight: 600 }}>Klumpighet 1–10</span>
-              <input type="number" min={1} max={10} inputMode="numeric" value={klumpighet} onChange={(e) => { const v = e.target.value; if (v === '') return setKlumpighet(''); const num = Number(v); if (!Number.isNaN(num) && num >= 1 && num <= 10) setKlumpighet(String(num)); }} placeholder="-" style={{ padding: '6px 8px' }} />
+            <label style={{ display: 'grid', gap: 6 }}>
+              <span style={fieldLabelStyle}>Klumpighet 1–10</span>
+              <input type="number" min={1} max={10} inputMode="numeric" value={klumpighet} onChange={(e) => { const v = e.target.value; if (v === '') return setKlumpighet(''); const num = Number(v); if (!Number.isNaN(num) && num >= 1 && num <= 10) setKlumpighet(String(num)); }} placeholder="-" style={textFieldStyle} />
             </label>
           </div>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 14px', borderRadius: 16, border: '1px solid #e2e8f0', background: '#f8fafc' }}>
             <input type="checkbox" checked={flufferUsed} onChange={(e) => setFlufferUsed(e.target.checked)} />
             <span style={{ fontSize: 13 }}>Fluffer använd</span>
           </label>
           <small style={{ color: '#6b7280' }}>Intern uppföljning: dessa värden följer inte med till Egenkontroll.</small>
-        </div>
       </section>
 
-      <section style={{ borderTop: '1px solid #e5e7eb', paddingTop: 12 }}>
-        <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: 12 }}>
+      <section style={sectionCardStyle}>
+        <div style={{ display: 'grid', gap: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <h3>Etapper (öppet)</h3>
+            <h3 style={subsectionTitleStyle}>Etapper (öppet)</h3>
             <button className='btn--med' type="button" onClick={addEtappOpenRow} disabled={etapperOpen.length >= 3} title={etapperOpen.length >= 3 ? 'Max 3 rader' : ''} style={{ opacity: etapperOpen.length >= 3 ? 0.5 : 1, cursor: etapperOpen.length >= 3 ? 'not-allowed' : 'pointer' }}>
               + Lägg till rad
             </button>
           </div>
+          {isNarrow ? (
+            <div style={{ display: 'grid', gap: 12 }}>
+              {etapperOpen.map((row, idx) => (
+                <div key={idx} style={{ ...mobileRowCardStyle, border: openErrorIdxs.includes(idx) ? '1px solid #fca5a5' : mobileRowCardStyle.border, background: openErrorIdxs.includes(idx) ? '#fff1f2' : mobileRowCardStyle.background }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                    <strong style={{ color: '#0f172a' }}>Rad {idx + 1}</strong>
+                    <button className='btn--danger btn--sm' type="button" onClick={() => removeEtappOpenRow(idx)}>Ta bort</button>
+                  </div>
+                  <div style={mobileFieldGridStyle}>
+                    <MobileField label="Etapp"><input value={row.etapp || ''} onChange={(e) => updateEtappOpenRow(idx, { etapp: e.target.value })} placeholder="Etapp (öppet)" style={textFieldStyle} /></MobileField>
+                    <MobileField label="Yta m²"><input value={row.ytaM2 || ''} onChange={(e) => updateEtappOpenRow(idx, { ytaM2: e.target.value })} placeholder="m²" style={textFieldStyle} /></MobileField>
+                    <MobileField label="Beställd tjocklek"><input value={row.bestalldTjocklek || ''} onChange={(e) => updateEtappOpenRow(idx, { bestalldTjocklek: e.target.value })} placeholder="mm" style={textFieldStyle} /></MobileField>
+                    <MobileField label="Sättningspåslag %"><input value={row.sattningsprocent || ''} onChange={(e) => updateEtappOpenRow(idx, { sattningsprocent: e.target.value })} placeholder="%" style={textFieldStyle} /></MobileField>
+                    <MobileField label="Installerad tjocklek"><input value={row.installeradTjocklek || ''} onChange={(e) => updateEtappOpenRow(idx, { installeradTjocklek: e.target.value })} placeholder="mm" style={textFieldStyle} /></MobileField>
+                    <MobileField label="Antal säck"><input value={row.antalSack || ''} onChange={(e) => updateEtappOpenRow(idx, { antalSack: e.target.value })} placeholder="antal" style={textFieldStyle} /></MobileField>
+                    <MobileField label="Installerad densitet"><input value={row.installeradDensitet || ''} onChange={(e) => updateEtappOpenRow(idx, { installeradDensitet: e.target.value })} placeholder="kg/m³" style={textFieldStyle} /></MobileField>
+                    <MobileField label="Lambdavärde"><input value={row.lambdavarde || ''} onChange={(e) => updateEtappOpenRow(idx, { lambdavarde: e.target.value })} placeholder="W/m²K" style={textFieldStyle} /></MobileField>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
           <div className="hscroll" style={{ width: '100%', overflowX: 'auto', overflowY: 'hidden', maxWidth: '100%', WebkitOverflowScrolling: 'touch' }}>
             <div style={{ display: 'grid', gridTemplateColumns: '140px 100px 220px 130px 240px 170px 150px 170px', gap: 8, alignItems: 'center', fontWeight: 600, fontSize: 12, padding: '6px 0', minWidth: (140 + 100 + 220 + 130 + 240 + 170 + 150 + 170) + (7 * 8) }}>
               <div>Etapp (öppet)</div>
@@ -842,15 +905,37 @@ export default function EgenkontrollPage() {
               </div>
             ))}
           </div>
+          )}
         </div>
 
-        <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: 12 }}>
+        <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: 12, display: 'grid', gap: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <h3>Etapper (slutet)</h3>
+            <h3 style={subsectionTitleStyle}>Etapper (slutet)</h3>
             <button className='btn--med' type="button" onClick={addEtappClosedRow} disabled={etapperClosed.length >= 3} title={etapperClosed.length >= 3 ? 'Max 3 rader' : ''} style={{ opacity: etapperClosed.length >= 3 ? 0.5 : 1, cursor: etapperClosed.length >= 3 ? 'not-allowed' : 'pointer' }}>
               + Lägg till rad
             </button>
           </div>
+          {isNarrow ? (
+            <div style={{ display: 'grid', gap: 12 }}>
+              {etapperClosed.map((row, idx) => (
+                <div key={idx} style={{ ...mobileRowCardStyle, border: closedErrorIdxs.includes(idx) ? '1px solid #fca5a5' : mobileRowCardStyle.border, background: closedErrorIdxs.includes(idx) ? '#fff1f2' : mobileRowCardStyle.background }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                    <strong style={{ color: '#0f172a' }}>Rad {idx + 1}</strong>
+                    <button className='btn--danger btn--sm' type="button" onClick={() => removeEtappClosedRow(idx)}>Ta bort</button>
+                  </div>
+                  <div style={mobileFieldGridStyle}>
+                    <MobileField label="Etapp"><input value={row.etapp || ''} onChange={(e) => updateEtappClosedRow(idx, { etapp: e.target.value })} placeholder="Etapp (slutet)" style={textFieldStyle} /></MobileField>
+                    <MobileField label="Yta m²"><input value={row.ytaM2 || ''} onChange={(e) => updateEtappClosedRow(idx, { ytaM2: e.target.value })} placeholder="m²" style={textFieldStyle} /></MobileField>
+                    <MobileField label="Beställd tjocklek"><input value={row.bestalldTjocklek || ''} onChange={(e) => updateEtappClosedRow(idx, { bestalldTjocklek: e.target.value })} placeholder="mm" style={textFieldStyle} /></MobileField>
+                    <MobileField label="Uppmätt tjocklek"><input value={row.uppmatTjocklek || ''} onChange={(e) => updateEtappClosedRow(idx, { uppmatTjocklek: e.target.value })} placeholder="mm" style={textFieldStyle} /></MobileField>
+                    <MobileField label="Antal säck"><input value={row.antalSackKgPerSack || ''} onChange={(e) => updateEtappClosedRow(idx, { antalSackKgPerSack: e.target.value })} placeholder="antal" style={textFieldStyle} /></MobileField>
+                    <MobileField label="Installerad densitet"><input value={row.installeradDensitet || ''} onChange={(e) => updateEtappClosedRow(idx, { installeradDensitet: e.target.value })} placeholder="kg/m³" style={textFieldStyle} /></MobileField>
+                    <MobileField label="Lambdavärde"><input value={row.lambdavarde || ''} onChange={(e) => updateEtappClosedRow(idx, { lambdavarde: e.target.value })} placeholder="W/m²K" style={textFieldStyle} /></MobileField>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
           <div className="hscroll" style={{ width: '100%', overflowX: 'auto', overflowY: 'hidden', maxWidth: '100%', WebkitOverflowScrolling: 'touch' }}>
             <div style={{ display: 'grid', gridTemplateColumns: '140px 100px 160px 160px 170px 170px 170px', gap: 8, alignItems: 'center', fontWeight: 600, fontSize: 12, padding: '6px 0', minWidth: (140 + 100 + 160 + 160 + 170 + 170 + 170) + (6 * 8) }}>
               <div>Etapp (slutet)</div>
@@ -876,13 +961,14 @@ export default function EgenkontrollPage() {
               </div>
             ))}
           </div>
+          )}
         </div>
       </section>
 
       {/* Optional photos */}
-      <section style={{ borderTop: '1px solid #e5e7eb', paddingTop: 12 }}>
-        <h3>Projektbilder</h3>
-        <div style={{ display: 'grid', gap: 12, maxWidth: 600 }}>
+      <section style={sectionCardStyle}>
+        <h3 style={subsectionTitleStyle}>Projektbilder</h3>
+        <div style={{ display: 'grid', gap: 12, maxWidth: 720 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <button type="button" className="btn--primary btn--med" onClick={() => beforeInputRef.current?.click()}>Välj före-bild</button>
             <span style={{ color: beforePhoto ? '#111827' : '#6b7280', fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '60%' }}>
@@ -901,18 +987,18 @@ export default function EgenkontrollPage() {
         </div>
       </section>
 
-      <section style={{ borderTop: '1px solid #e5e7eb', paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <h3>Signatur</h3>
-        <div>
-          <label style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
-            <span>Datum och ort</span>
-            <input value={signatureDateCity} onChange={(e) => { setSignatureDateCity(e.target.value); if (missing.signatureDateCity) setMissing(mm => ({ ...mm, signatureDateCity: false })); }} placeholder="YYYY-MM-DD, Ort" style={{ padding: 8, maxWidth: 400, border: missing.signatureDateCity ? '1px solid #fca5a5' : undefined, background: missing.signatureDateCity ? '#fff1f2' : undefined }} />
+      <section style={sectionCardStyle}>
+        <h3 style={subsectionTitleStyle}>Signatur</h3>
+        <div style={{ width: '100%', minWidth: 0 }}>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8, width: '100%', minWidth: 0 }}>
+            <span style={fieldLabelStyle}>Datum och ort</span>
+            <input value={signatureDateCity} onChange={(e) => { setSignatureDateCity(e.target.value); if (missing.signatureDateCity) setMissing(mm => ({ ...mm, signatureDateCity: false })); }} placeholder="YYYY-MM-DD, Ort" style={{ ...textFieldStyle, width: '100%', maxWidth: isNarrow ? '100%' : 420, border: missing.signatureDateCity ? '1px solid #fca5a5' : textFieldStyle.border, background: missing.signatureDateCity ? '#fff1f2' : '#fff' }} />
           </label>
-          <div className="signature-container" style={{ border: '1px solid #d1d5db', borderRadius: 6, overflow: 'hidden', width: '100%', maxWidth: 600, background: '#fff' }}>
+          <div ref={signatureContainerRef} className="signature-container" style={{ border: '1px solid #d1d5db', borderRadius: 12, overflow: 'hidden', width: '100%', minWidth: 0, maxWidth: isNarrow ? '100%' : 600, boxSizing: 'border-box', background: '#fff' }}>
             <canvas
               ref={signatureCanvasRef}
               className="signature-surface"
-              style={{ width: 600, height: 180, display: 'block', background: '#fff', touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none' }}
+              style={{ width: '100%', height: isNarrow ? 160 : 180, display: 'block', background: '#fff', touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none' }}
               onMouseDown={handleStart}
               onMouseMove={handleMove}
               onMouseUp={handleEnd}
@@ -932,10 +1018,10 @@ export default function EgenkontrollPage() {
         </div>
       </section>
 
-      <section style={{ borderTop: '1px solid #e5e7eb', paddingTop: 2 }}>
-        <h3>Övrig rapportering (till Blikk)</h3>
+      <section style={sectionCardStyle}>
+        <h3 style={subsectionTitleStyle}>Övrig rapportering (till Blikk)</h3>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 720 }}>
-          <textarea value={ovrigRapportering} onChange={(e) => setOvrigRapportering(e.target.value)} placeholder="Skriv valfri extra rapportering som ska skickas till Blikk under RAPPORTERING" rows={3} style={{ padding: 8, resize: 'vertical' }} />
+          <textarea value={ovrigRapportering} onChange={(e) => setOvrigRapportering(e.target.value)} placeholder="Skriv valfri extra rapportering som ska skickas till Blikk under RAPPORTERING" rows={3} style={textAreaStyle} />
           <small style={{ color: '#6b7280' }}>Detta fält hamnar under "Antal säckar" i projektkommentaren i Blikk.</small>
         </div>
       </section>
@@ -966,9 +1052,9 @@ export default function EgenkontrollPage() {
         </div>
       )}
 
-      <section style={{ marginTop: 24, display: 'grid', gap: 12, maxWidth: 600, minWidth: 0 }}>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <button className="btn--primary btn--lg" disabled={isSaving} onClick={async () => {
+      <section style={{ ...sectionCardStyle, position: 'sticky', bottom: 12, zIndex: 5, boxShadow: '0 18px 36px rgba(15,23,42,0.12)', width: '100%', boxSizing: 'border-box', overflow: 'hidden' }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexDirection: isNarrow ? 'column' : 'row', minWidth: 0 }}>
+          <button className="btn--plain btn--lg" disabled={isSaving} onClick={async () => {
             if (isSaving) return;
             setIsPreviewing(true);
             setMessage('Genererar förhandsvisning…');
@@ -1012,7 +1098,7 @@ export default function EgenkontrollPage() {
             } catch (e: any) {
               setToast({ text: e?.message || 'Misslyckades att förhandsvisa PDF', type: 'error' });
             } finally { setIsPreviewing(false); }
-          }}>Förhandsvisa</button>
+          }} style={{ flex: 1, width: isNarrow ? '100%' : undefined }}>{isPreviewing ? 'Genererar…' : 'Förhandsvisa'}</button>
           <button className="btn--success btn--lg" disabled={isSaving} onClick={async () => {
             if (isSaving) return;
             setMessage('Sparar…');
@@ -1196,7 +1282,7 @@ export default function EgenkontrollPage() {
             } finally {
               setIsSaving(false);
             }
-          }}>Spara till Arkiv</button>
+          }} style={{ flex: 1, width: isNarrow ? '100%' : undefined }}>Spara till Arkiv</button>
         </div>
         {message && !toast && <div>{message}</div>}
       </section>
@@ -1233,3 +1319,196 @@ export default function EgenkontrollPage() {
     </main>
   );
 }
+
+function MobileField({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label style={{ display: 'grid', gap: 6 }}>
+      <span style={fieldLabelStyle}>{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function ControlCard({ label, checked, onChange, comment, onCommentChange, placeholder }: { label: string; checked: boolean; onChange: (next: boolean) => void; comment: string; onCommentChange: (next: string) => void; placeholder: string }) {
+  return (
+    <div style={{ display: 'grid', gap: 10, padding: '14px 14px 12px', borderRadius: 18, border: '1px solid #dbe4ef', background: '#fff' }}>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+        <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+        <span style={{ fontWeight: 700, color: '#0f172a' }}>{label} OK?</span>
+      </label>
+      <input value={comment} onChange={(e) => onCommentChange(e.target.value)} placeholder={placeholder} style={textFieldStyle} />
+    </div>
+  );
+}
+
+const heroCardStyle: React.CSSProperties = {
+  border: '1px solid #dbe4ef',
+  borderRadius: 28,
+  padding: '20px 20px 18px',
+  background: 'linear-gradient(180deg, #ffffff 0%, #f7fbff 100%)',
+  boxShadow: '0 18px 46px rgba(15,23,42,0.05)',
+  display: 'grid',
+  gap: 16,
+};
+
+const heroEyebrowStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  padding: '4px 10px',
+  borderRadius: 999,
+  background: '#d1fae5',
+  border: '1px solid #a7f3d0',
+  color: '#047857',
+  fontSize: 11,
+  fontWeight: 800,
+  letterSpacing: 0.35,
+  textTransform: 'uppercase',
+};
+
+const heroChipStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  padding: '4px 8px',
+  borderRadius: 999,
+  background: '#f8fafc',
+  border: '1px solid #e2e8f0',
+  color: '#475569',
+  fontSize: 12,
+  fontWeight: 700,
+};
+
+const heroStatCardStyle: React.CSSProperties = {
+  display: 'grid',
+  gap: 5,
+  minWidth: 0,
+  padding: '12px 12px 10px',
+  borderRadius: 16,
+  border: '1px solid #dbe4ef',
+  background: '#fff',
+};
+
+const heroStatLabelStyle: React.CSSProperties = {
+  fontSize: 11,
+  fontWeight: 800,
+  letterSpacing: 0.3,
+  textTransform: 'uppercase',
+  color: '#64748b',
+};
+
+const heroStatValueStyle: React.CSSProperties = {
+  fontSize: 22,
+  fontWeight: 800,
+  color: '#0f172a',
+};
+
+const sectionCardStyle: React.CSSProperties = {
+  border: '1px solid #dbe4ef',
+  borderRadius: 24,
+  padding: '18px 18px 16px',
+  minWidth: 0,
+  boxSizing: 'border-box',
+  background: '#fff',
+  boxShadow: '0 14px 32px rgba(15,23,42,0.04)',
+  display: 'grid',
+  gap: 14,
+};
+
+const sectionTitleStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: 24,
+  color: '#0f172a',
+};
+
+const subsectionTitleStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: 20,
+  color: '#0f172a',
+};
+
+const sectionIntroStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: 13,
+  color: '#64748b',
+  lineHeight: 1.55,
+};
+
+const fieldLabelStyle: React.CSSProperties = {
+  fontSize: 12,
+  fontWeight: 800,
+  letterSpacing: 0.28,
+  textTransform: 'uppercase',
+  color: '#475569',
+};
+
+const textFieldStyle: React.CSSProperties = {
+  width: '100%',
+  boxSizing: 'border-box',
+  padding: '11px 12px',
+  border: '1px solid #dbe4ef',
+  borderRadius: 14,
+  fontSize: 14,
+  background: '#fff',
+  color: '#0f172a',
+};
+
+const selectFieldStyle: React.CSSProperties = {
+  width: '100%',
+  boxSizing: 'border-box',
+  padding: '11px 12px',
+  border: '1px solid #dbe4ef',
+  borderRadius: 14,
+  fontSize: 14,
+  background: '#fff',
+  color: '#0f172a',
+};
+
+const textAreaStyle: React.CSSProperties = {
+  width: '100%',
+  boxSizing: 'border-box',
+  padding: '11px 12px',
+  border: '1px solid #dbe4ef',
+  borderRadius: 14,
+  fontSize: 14,
+  lineHeight: 1.5,
+  background: '#fff',
+  color: '#0f172a',
+  resize: 'vertical',
+};
+
+const summaryCardStyle: React.CSSProperties = {
+  display: 'grid',
+  gap: 5,
+  minWidth: 0,
+  padding: '12px 12px 10px',
+  borderRadius: 16,
+  border: '1px solid #dbe4ef',
+  background: '#fff',
+};
+
+const summaryLabelStyle: React.CSSProperties = {
+  fontSize: 11,
+  fontWeight: 800,
+  letterSpacing: 0.3,
+  textTransform: 'uppercase',
+  color: '#64748b',
+};
+
+const summaryValueStyle: React.CSSProperties = {
+  fontSize: 16,
+  fontWeight: 800,
+  color: '#0f172a',
+};
+
+const mobileRowCardStyle: React.CSSProperties = {
+  display: 'grid',
+  gap: 12,
+  padding: '14px 14px 12px',
+  borderRadius: 18,
+  border: '1px solid #dbe4ef',
+  background: '#fff',
+};
+
+const mobileFieldGridStyle: React.CSSProperties = {
+  display: 'grid',
+  gap: 10,
+};

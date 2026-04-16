@@ -44,10 +44,26 @@ export default function AdminNews() {
   }
 
   return (
-    <main style={{ padding: 32, maxWidth: 900, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 18 }}>
-      <h1 style={{ margin: 0, fontSize: 30 }}>Admin • Nyheter</h1>
+    <main style={{ padding: 12, display: 'grid', gap: 20, maxWidth: 1100, margin: '0 auto' }}>
+      <section style={{ border: '1px solid #dbe4ef', background: 'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)', borderRadius: 24, padding: 20, display: 'grid', gap: 16, boxShadow:'0 14px 36px rgba(15,23,42,0.04)' }}>
+        <div style={{ display:'flex', justifyContent:'space-between', gap:16, flexWrap:'wrap', alignItems:'flex-start' }}>
+          <div style={{ display:'grid', gap:6, maxWidth:700 }}>
+            <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+              <span style={eyebrowStyle}>Nyheter</span>
+              <span style={chipStyle}>{headline.trim().length} tecken i rubrik</span>
+            </div>
+            <h1 style={{ margin: 0, fontSize: 30, color:'#0f172a' }}>Publicera dashboardnyheter med bättre kontroll</h1>
+            <p style={{ margin:0, fontSize:14, color:'#475569', lineHeight:1.55 }}>Skriv nyheten, förhandsgranska hur den läses och publicera när innehållet känns klart.</p>
+          </div>
+          <div style={miniStatStyle}>
+            <span style={miniLabelStyle}>Status</span>
+            <strong style={miniValueStyle}>{status === 'saved' ? 'Sparad' : status === 'saving' ? 'Sparar…' : 'Redigeras'}</strong>
+          </div>
+        </div>
+      </section>
 
-      <section style={{ border: '1px solid #e5e7eb', background: '#fff', borderRadius: 16, padding: 24, display: 'grid', gap: 14 }}>
+      <section style={{ display:'grid', gap:20, gridTemplateColumns:'minmax(0, 1.1fr) minmax(320px, 0.9fr)' }}>
+      <section style={{ border: '1px solid #e5e7eb', background: '#fff', borderRadius: 20, padding: 20, display: 'grid', gap: 14, boxShadow:'0 10px 28px rgba(15,23,42,0.03)' }}>
         <h2 style={{ margin: 0, fontSize: 18 }}>Skapa ny nyhet</h2>
         <form onSubmit={submit} style={{ display: 'grid', gap: 12 }}>
           <label style={labelStyle}>
@@ -99,6 +115,22 @@ export default function AdminNews() {
           Nyheten visas som en modal på dashboarden en gång per nyhet (per webbläsare) via localStorage.
         </div>
       </section>
+
+      <section style={{ border: '1px solid #e5e7eb', background: '#fff', borderRadius: 20, padding: 20, display: 'grid', gap: 14, alignContent:'start', boxShadow:'0 10px 28px rgba(15,23,42,0.03)' }}>
+        <h2 style={{ margin:0, fontSize:18 }}>Förhandsvisning</h2>
+        <div style={{ border:'1px solid #dbe4ef', borderRadius:20, padding:16, background:'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)', display:'grid', gap:12 }}>
+          {imageUrl.trim() ? (
+            <div style={{ width:'100%', aspectRatio:'16 / 9', borderRadius:16, backgroundImage:`url(${imageUrl.trim()})`, backgroundSize:'cover', backgroundPosition:'center', border:'1px solid #dbe4ef' }} />
+          ) : (
+            <div style={{ width:'100%', aspectRatio:'16 / 9', borderRadius:16, border:'1px dashed #cbd5e1', display:'grid', placeItems:'center', color:'#94a3b8', fontSize:13 }}>Ingen bild vald</div>
+          )}
+          <div style={{ display:'grid', gap:8 }}>
+            <strong style={{ fontSize:22, lineHeight:1.15, color:'#0f172a' }}>{headline.trim() || 'Rubriken visas här'}</strong>
+            <p style={{ margin:0, fontSize:14, lineHeight:1.6, color:'#475569', whiteSpace:'pre-wrap' }}>{body.trim() || 'Brödtexten visas här när du börjar skriva nyheten.'}</p>
+          </div>
+        </div>
+      </section>
+      </section>
     </main>
   );
 }
@@ -129,3 +161,9 @@ const buttonStyle: React.CSSProperties = {
   fontWeight: 600,
   cursor: 'pointer'
 };
+
+const eyebrowStyle: React.CSSProperties = { display:'inline-flex', alignItems:'center', padding:'4px 10px', borderRadius:999, background:'#dbeafe', border:'1px solid #bfdbfe', color:'#2563eb', fontSize:11, fontWeight:800, letterSpacing:0.35, textTransform:'uppercase' };
+const chipStyle: React.CSSProperties = { display:'inline-flex', alignItems:'center', padding:'4px 8px', borderRadius:999, background:'#f8fafc', border:'1px solid #e2e8f0', color:'#475569', fontSize:12, fontWeight:700 };
+const miniStatStyle: React.CSSProperties = { display:'grid', gap:5, padding:'12px 12px 10px', borderRadius:16, border:'1px solid #dbe4ef', background:'#fff', minWidth:160 };
+const miniLabelStyle: React.CSSProperties = { fontSize:11, fontWeight:800, letterSpacing:0.3, textTransform:'uppercase', color:'#64748b' };
+const miniValueStyle: React.CSSProperties = { fontSize:20, fontWeight:800, color:'#0f172a' };
