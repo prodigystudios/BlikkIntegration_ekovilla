@@ -821,6 +821,7 @@ export default function PlanneringPage() {
   // Admin config modal (to declutter main page)
   const [adminModalOpen, setAdminModalOpen] = useState(false);
   const [adminModalTab, setAdminModalTab] = useState<'trucks' | 'depots' | 'deliveries' | 'jobtypes' | 'assignments'>('trucks');
+  const [selectedAdminTruckId, setSelectedAdminTruckId] = useState<string | null>(null);
   // Hide inline admin panels on main page (creation and depot totals) – manage via modal instead
   const showInlineAdminPanels = false;
 
@@ -2468,6 +2469,34 @@ export default function PlanneringPage() {
     }
     return Object.values(byKey);
   }, [deliveries]);
+
+  const adminTabs = useMemo(() => ([
+    { id: 'trucks' as const, label: 'Lastbilar', description: 'Lag, namn, färg och depåkoppling', count: planningTrucks.length },
+    { id: 'depots' as const, label: 'Depåer', description: 'Lagerläge och materialnivåer', count: depots.length },
+    { id: 'deliveries' as const, label: 'Leveranser', description: 'Planera och tillämpa påfyllnad', count: groupedDeliveries.length },
+    { id: 'assignments' as const, label: 'Veckotilldelningar', description: 'Tilldelning av bemanning per lag', count: trucks.length },
+    { id: 'jobtypes' as const, label: 'Jobbtyper', description: 'Färger och materialkoppling', count: allJobTypes.length },
+  ]), [planningTrucks.length, depots.length, groupedDeliveries.length, trucks.length, allJobTypes.length]);
+
+  const sortedPlanningTrucks = useMemo(() => {
+    return [...planningTrucks].sort((a, b) => a.name.localeCompare(b.name, 'sv'));
+  }, [planningTrucks]);
+
+  const selectedAdminTruck = useMemo(() => {
+    if (!sortedPlanningTrucks.length) return null;
+    return sortedPlanningTrucks.find((truck) => truck.id === selectedAdminTruckId) || sortedPlanningTrucks[0];
+  }, [sortedPlanningTrucks, selectedAdminTruckId]);
+
+  useEffect(() => {
+    if (!adminModalOpen || adminModalTab !== 'trucks') return;
+    if (!sortedPlanningTrucks.length) {
+      if (selectedAdminTruckId !== null) setSelectedAdminTruckId(null);
+      return;
+    }
+    if (!selectedAdminTruckId || !sortedPlanningTrucks.some((truck) => truck.id === selectedAdminTruckId)) {
+      setSelectedAdminTruckId(sortedPlanningTrucks[0].id);
+    }
+  }, [adminModalOpen, adminModalTab, sortedPlanningTrucks, selectedAdminTruckId]);
 
   // Upcoming deliveries for current view (selected week or visible month)
   const upcomingDeliveriesForView = useMemo(() => {
@@ -5805,122 +5834,268 @@ export default function PlanneringPage() {
           {/* Admin settings modal */}
           {isAdmin && adminModalOpen && (
             <div role="dialog" aria-modal="true" aria-label="Admin-inställningar" onClick={() => setAdminModalOpen(false)}
-              style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.35)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-              <div onClick={e => e.stopPropagation()} style={{ width: 'min(100%, 1080px)',minHeight: '60vh', maxHeight: '90vh', overflow: 'auto', background: '#fff', border: '1px solid #e5e7eb', borderRadius: 12, boxShadow: '0 20px 40px rgba(0,0,0,0.15)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 14px', borderBottom: '1px solid #e5e7eb' }}>
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <button onClick={() => setAdminModalTab('trucks')} style={{ padding: '6px 10px', border: '1px solid ' + (adminModalTab === 'trucks' ? '#111827' : '#e5e7eb'), borderRadius: 8, background: adminModalTab === 'trucks' ? '#111827' : '#fff', color: adminModalTab === 'trucks' ? '#fff' : '#111827', fontSize: 13, fontWeight: 600 }}>Lastbilar</button>
-                    <button onClick={() => setAdminModalTab('depots')} style={{ padding: '6px 10px', border: '1px solid ' + (adminModalTab === 'depots' ? '#111827' : '#e5e7eb'), borderRadius: 8, background: adminModalTab === 'depots' ? '#111827' : '#fff', color: adminModalTab === 'depots' ? '#fff' : '#111827', fontSize: 13, fontWeight: 600 }}>Depåer</button>
-                    <button onClick={() => setAdminModalTab('deliveries')} style={{ padding: '6px 10px', border: '1px solid ' + (adminModalTab === 'deliveries' ? '#111827' : '#e5e7eb'), borderRadius: 8, background: adminModalTab === 'deliveries' ? '#111827' : '#fff', color: adminModalTab === 'deliveries' ? '#fff' : '#111827', fontSize: 13, fontWeight: 600 }}>Leveranser</button>
-                    <button onClick={() => setAdminModalTab('assignments')} style={{ padding: '6px 10px', border: '1px solid ' + (adminModalTab === 'assignments' ? '#111827' : '#e5e7eb'), borderRadius: 8, background: adminModalTab === 'assignments' ? '#111827' : '#fff', color: adminModalTab === 'assignments' ? '#fff' : '#111827', fontSize: 13, fontWeight: 600 }}>Veckotilldelningar</button>
-                    <button onClick={() => setAdminModalTab('jobtypes')} style={{ padding: '6px 10px', border: '1px solid ' + (adminModalTab === 'jobtypes' ? '#111827' : '#e5e7eb'), borderRadius: 8, background: adminModalTab === 'jobtypes' ? '#111827' : '#fff', color: adminModalTab === 'jobtypes' ? '#fff' : '#111827', fontSize: 13, fontWeight: 600 }}>Jobbtyper</button>
-                  </div>
-                  <button onClick={() => setAdminModalOpen(false)} className="btn--danger btn--med" aria-label="Stäng" style={{}}>Stäng</button>
-                </div>
-                <div style={{ padding: 14, display: 'grid', gap: 12 }}>
-                  {adminModalTab === 'trucks' && (
-                    <div style={{ display: 'grid', gap: 12 }}>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
-                        {[...planningTrucks].sort((a, b) => a.name.localeCompare(b.name, 'sv')).map(tRec => {
-                          const currentColor = truckColorOverrides[tRec.name] || tRec.color || defaultTruckColors[tRec.name] || '#6366f1';
-                          const edit = editingTeamNames[tRec.id] || { team1: tRec.team_member1_name || '', team2: tRec.team_member2_name || '', team1Id: tRec.team1_id || null, team2Id: tRec.team2_id || null };
-                          const changed = (
-                            edit.team1 !== (tRec.team_member1_name || '') ||
-                            edit.team2 !== (tRec.team_member2_name || '') ||
-                            ((edit as any).team1Id ?? null) !== (tRec.team1_id ?? null) ||
-                            ((edit as any).team2Id ?? null) !== (tRec.team2_id ?? null)
-                          );
-                          const status = truckSaveStatus[tRec.id];
-                          return (
-                            <div key={tRec.id} style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: 10, border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff' }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                                <span style={{ width: 16, height: 16, background: currentColor, border: '3px solid #cbd5e1', borderRadius: 6 }} />
-                                <input
-                                  value={editingTruckNames[tRec.id] ?? tRec.name}
-                                  onChange={e => setEditingTruckNames(prev => ({ ...prev, [tRec.id]: e.target.value }))}
-                                  placeholder="Namn på lastbil"
-                                  style={{ flex: '1 1 200px', minWidth: 140, padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }}
-                                />
-                                <button
-                                  type="button"
-                                  className="btn--plain btn--xs"
-                                  onClick={() => updateTruckName(tRec, editingTruckNames[tRec.id] ?? tRec.name)}
-                                  disabled={(editingTruckNames[tRec.id] ?? tRec.name).trim() === tRec.name || truckNameStatus[tRec.id] === 'saving'}
-                                  style={{ fontSize: 12, padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8, background: '#fff' }}
-                                >
-                                  {truckNameStatus[tRec.id] === 'saving' ? 'Sparar…' : 'Spara namn'}
-                                </button>
-                                {truckNameStatus[tRec.id] === 'saved' && <span style={{ fontSize: 12, color: '#059669' }}>✓</span>}
-                                {truckNameErrors[tRec.id] && <span style={{ fontSize: 12, color: '#b91c1c' }}>{truckNameErrors[tRec.id]}</span>}
-                                <input type="color" value={currentColor as string} onChange={e => updateTruckColor(tRec, e.target.value)} style={{ marginLeft: 'auto', width: 28, height: 28, border: '1px solid #cbd5e1', borderRadius: 6, background: '#fff' }} />
-                              </div>
-                              <div style={{ display: 'grid', gap: 8 }}>
-                                <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
-                                  <span>Team leader</span>
-                                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                                    <select
-                                      value={edit.team1Id || tRec.team1_id || ''}
-                                      onChange={e => { const val = e.target.value || null; updateTruckTeamId(tRec, 1, val); const nm = crewList.find(c => c.id === val)?.name || ''; if (nm) updateTruckTeamName(tRec, 1, nm); }}
-                                      style={{ flex: 1, padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }}
-                                    >
-                                      <option value="">Ej tilldelad</option>
-                                      {crewList.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                                    </select>
-                                    <span style={{ fontSize: 11, color: '#6b7280' }}>{(edit.team1 ?? tRec.team_member1_name) || ''}</span>
-                                  </div>
-                                </label>
-                                <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
-                                  <span>personal</span>
-                                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                                    <select
-                                      value={edit.team2Id || tRec.team2_id || ''}
-                                      onChange={e => { const val = e.target.value || null; updateTruckTeamId(tRec, 2, val); const nm = crewList.find(c => c.id === val)?.name || ''; if (nm) updateTruckTeamName(tRec, 2, nm); }}
-                                      style={{ flex: 1, padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }}
-                                    >
-                                      <option value="">Ej tilldelad</option>
-                                      {crewList.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                                    </select>
-                                    <span style={{ fontSize: 11, color: '#6b7280' }}>{(edit.team2 ?? tRec.team_member2_name) || ''}</span>
-                                  </div>
-                                </label>
-                                <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
-                                  <span>Depå</span>
-                                  <select value={tRec.depot_id || ''} onChange={e => updateTruckDepot(tRec, e.target.value || null)} style={{ padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }}>
-                                    <option value="">Ingen depå</option>
-                                    {depots.map(d => (<option key={d.id} value={d.id}>{d.name}</option>))}
-                                  </select>
-                                </label>
-                              </div>
-                              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                                <button type="button" disabled={!changed || status?.status === 'saving'} onClick={() => saveTruckTeamNames(tRec)} className="btn--primary btn--sm" style={{opacity: 0.7}}>Spara</button>
-                                <button type="button" onClick={() => { if (typeof window !== 'undefined') { const ok = window.confirm(`Ta bort lastbil \"${tRec.name}\"?`); if (!ok) return; } deleteTruck(tRec); }} className="btn--plain btn--sm" style={{ fontSize: 12, padding: '6px 8px', border: '1px solid #fecaca', background: '#fef2f2', color: '#b91c1c', borderRadius: 8 }}>Ta bort</button>
-                                {status?.status === 'saving' && <span style={{ fontSize: 12, color: '#64748b' }}>Sparar…</span>}
-                                {status?.status === 'saved' && <span style={{ fontSize: 12, color: '#059669' }}>✓ Sparad</span>}
-                                {status?.status === 'error' && <span style={{ fontSize: 12, color: '#b91c1c' }}>Fel</span>}
-                              </div>
-                            </div>
-                          );
-                        })}
+              style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.42)', backdropFilter: 'blur(6px)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: isNarrow ? 8 : 22 }}>
+              <div onClick={e => e.stopPropagation()} style={{ width: 'min(1360px, calc(100vw - 32px))', height: isNarrow ? 'min(calc(100dvh - 16px), 980px)' : 'min(94vh, 920px)', overflow: 'hidden', background: '#f8fbff', border: '1px solid rgba(219,228,239,0.95)', borderRadius: isNarrow ? 18 : 24, boxShadow: '0 24px 64px rgba(15,23,42,0.24)', display: 'grid', gridTemplateRows: 'auto 1fr' }}>
+                <div style={{ display: 'grid', gap: 14, padding: isNarrow ? '16px 16px 14px' : '18px 20px 16px', borderBottom: '1px solid #dbe4ef', background: 'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)' }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
+                    <div style={{ display: 'grid', gap: 8, minWidth: 0 }}>
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', padding: '6px 10px', borderRadius: 999, background: '#e0f2fe', border: '1px solid #bae6fd', color: '#0369a1', fontSize: 11, fontWeight: 800, letterSpacing: 0.32, textTransform: 'uppercase' }}>Planering Admin</span>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', padding: '6px 10px', borderRadius: 999, background: '#ffffff', border: '1px solid #dbe4ef', color: '#475569', fontSize: 12, fontWeight: 600 }}>{adminTabs.find((tab) => tab.id === adminModalTab)?.label}</span>
                       </div>
-                      <div style={{ paddingTop: 6, borderTop: '1px dashed #e5e7eb' }}>
-                        <form onSubmit={e => { e.preventDefault(); createTruck(); }} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                          <input value={newTruckName} onChange={e => { setTruckCreateError(''); setNewTruckName(e.target.value); }} placeholder="Ny lastbil" disabled={isCreatingTruck} style={{ minWidth: 220, padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }} />
-                          <select value={newTruckDepotId} onChange={e => { setTruckCreateError(''); setNewTruckDepotId(e.target.value); }} disabled={isCreatingTruck} style={{ minWidth: 200, padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }}>
-                            <option value="">Välj depå (valfritt)</option>
-                            {depots.map(d => (<option key={d.id} value={d.id}>{d.name}</option>))}
-                          </select>
-                          {truckCreateError && <div style={{ fontSize: 12, color: '#b91c1c' }}>{truckCreateError}</div>}
-                          <button type="submit" disabled={!newTruckName.trim() || isCreatingTruck} className="btn--plain btn--xs" style={{ fontSize: 12, padding: '6px 10px', border: '1px solid #7dd3fc', background: '#e0f2fe', color: '#0369a1', borderRadius: 8 }}>{isCreatingTruck ? 'Lägger till…' : 'Lägg till'}</button>
-                        </form>
+                      <div style={{ display: 'grid', gap: 4 }}>
+                        <h2 style={{ margin: 0, fontSize: isNarrow ? 24 : 30, lineHeight: 1.05, letterSpacing: -0.8, color: '#0f172a' }}>Admininställningar för planeringen</h2>
+                        <p style={{ margin: 0, maxWidth: 760, color: '#475569', fontSize: 13, lineHeight: 1.6 }}>En samlad arbetsyta för lag, depåer, leveranser och inställningar. Målet här är snabb överblick först och redigering när du faktiskt valt vad du jobbar med.</p>
+                      </div>
+                    </div>
+                    <div style={{ display: 'grid', gap: 10, minWidth: isNarrow ? '100%' : 260, justifyItems: isNarrow ? 'stretch' : 'end' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8, width: isNarrow ? '100%' : 320 }}>
+                        <div style={{ display: 'grid', gap: 4, padding: '10px 12px', borderRadius: 16, border: '1px solid #dbe4ef', background: '#fff' }}><span style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.28, textTransform: 'uppercase', color: '#64748b' }}>Lastbilar</span><strong style={{ fontSize: 20, color: '#0f172a' }}>{planningTrucks.length}</strong></div>
+                        <div style={{ display: 'grid', gap: 4, padding: '10px 12px', borderRadius: 16, border: '1px solid #dbe4ef', background: '#fff' }}><span style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.28, textTransform: 'uppercase', color: '#64748b' }}>Depåer</span><strong style={{ fontSize: 20, color: '#0f172a' }}>{depots.length}</strong></div>
+                        <div style={{ display: 'grid', gap: 4, padding: '10px 12px', borderRadius: 16, border: '1px solid #dbe4ef', background: '#fff' }}><span style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.28, textTransform: 'uppercase', color: '#64748b' }}>Leveranser</span><strong style={{ fontSize: 20, color: '#0f172a' }}>{groupedDeliveries.length}</strong></div>
+                      </div>
+                      <button onClick={() => setAdminModalOpen(false)} className="btn--plain btn--med" aria-label="Stäng" style={{ border: '1px solid #cbd5e1', background: '#fff', color: '#0f172a', borderRadius: 12, padding: '10px 14px', fontWeight: 700, width: isNarrow ? '100%' : 'fit-content' }}>Stäng adminläge</button>
+                    </div>
+                  </div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: isNarrow ? '1fr' : '270px minmax(0, 1fr)', minHeight: 0 }}>
+                  <aside style={{ borderRight: isNarrow ? 'none' : '1px solid #dbe4ef', borderBottom: isNarrow ? '1px solid #dbe4ef' : 'none', background: '#f8fbff', padding: isNarrow ? '12px 14px' : '16px 14px', display: 'grid', gap: 12, alignContent: 'start', overflowY: 'auto' }}>
+                    <div style={{ display: 'grid', gap: 4 }}>
+                      <strong style={{ fontSize: 12, letterSpacing: 0.24, textTransform: 'uppercase', color: '#475569' }}>Områden</strong>
+                      <span style={{ fontSize: 12, color: '#64748b' }}>Välj ett område för att visa detaljer och redigering.</span>
+                    </div>
+                    <div style={{ display: 'grid', gap: 8, gridTemplateColumns: isNarrow ? 'repeat(auto-fit, minmax(180px, 1fr))' : '1fr' }}>
+                      {adminTabs.map((tab) => {
+                        const active = adminModalTab === tab.id;
+                        return (
+                          <button
+                            key={tab.id}
+                            type="button"
+                            onClick={() => setAdminModalTab(tab.id)}
+                            style={{
+                              display: 'grid',
+                              gap: 6,
+                              textAlign: 'left',
+                              padding: '12px 12px 11px',
+                              borderRadius: 16,
+                              border: `1px solid ${active ? '#0f172a' : '#dbe4ef'}`,
+                              background: active ? '#0f172a' : '#fff',
+                              color: active ? '#fff' : '#0f172a',
+                              boxShadow: active ? '0 12px 28px rgba(15,23,42,0.18)' : '0 6px 18px rgba(15,23,42,0.05)',
+                              cursor: 'pointer'
+                            }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                              <strong style={{ fontSize: 14 }}>{tab.label}</strong>
+                              <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 28, height: 28, borderRadius: 999, background: active ? 'rgba(255,255,255,0.14)' : '#f8fafc', border: active ? '1px solid rgba(255,255,255,0.16)' : '1px solid #e2e8f0', color: active ? '#fff' : '#475569', fontSize: 12, fontWeight: 700 }}>{tab.count}</span>
+                            </div>
+                            <span style={{ fontSize: 12, lineHeight: 1.45, color: active ? 'rgba(255,255,255,0.78)' : '#64748b' }}>{tab.description}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </aside>
+                  <div style={{ minWidth: 0, minHeight: 0, overflow: 'auto', padding: isNarrow ? 14 : 18, display: 'grid', gap: 16 }}>
+                  {adminModalTab === 'trucks' && (
+                    <div style={{ display: 'grid', gap: 14 }}>
+                      <div style={{ display: 'grid', gap: 4 }}>
+                        <h3 style={{ margin: 0, fontSize: 22, color: '#0f172a' }}>Lag och lastbilar</h3>
+                        <p style={{ margin: 0, fontSize: 13, color: '#64748b', lineHeight: 1.55 }}>Välj ett lag i listan för att redigera namn, färg, bemanning och depå. Det gör vyn lugnare än att visa alla formulär samtidigt.</p>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: isNarrow ? '1fr' : '360px minmax(0, 1fr)', gap: 18, alignItems: 'start' }}>
+                        <div style={{ display: 'grid', gap: 12 }}>
+                          <div style={{ display: 'grid', gap: 8, padding: 12, borderRadius: 18, border: '1px solid #dbe4ef', background: '#fff', boxShadow: '0 12px 26px rgba(15,23,42,0.05)' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                              <strong style={{ fontSize: 14, color: '#0f172a' }}>Tillgängliga lag</strong>
+                              <span style={{ fontSize: 12, color: '#64748b' }}>{sortedPlanningTrucks.length} st</span>
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: isNarrow ? 'none' : 440, overflowY: 'auto', overflowX: 'hidden', paddingRight: 10, scrollbarGutter: 'stable' }}>
+                              {sortedPlanningTrucks.map((truck) => {
+                                const active = selectedAdminTruck?.id === truck.id;
+                                const colorValue = truckColorOverrides[truck.name] || truck.color || defaultTruckColors[truck.name] || '#6366f1';
+                                const teamSummary = [truck.team_member1_name, truck.team_member2_name].filter(Boolean).join(' • ') || 'Ingen bemanning vald';
+                                const depotName = depots.find((depot) => depot.id === truck.depot_id)?.name || 'Ingen depå';
+                                const dirty = Boolean(editingTruckNames[truck.id]) || Boolean(editingTeamNames[truck.id]);
+                                return (
+                                  <button
+                                    key={truck.id}
+                                    type="button"
+                                    onClick={() => setSelectedAdminTruckId(truck.id)}
+                                    style={{
+                                      display: 'flex',
+                                      flexDirection: 'column',
+                                      gap: 8,
+                                      alignItems: 'stretch',
+                                      width: '100%',
+                                      boxSizing: 'border-box',
+                                      textAlign: 'left',
+                                      padding: '12px 12px 11px',
+                                      borderRadius: 16,
+                                      border: `1px solid ${active ? '#0f172a' : '#dbe4ef'}`,
+                                      background: active ? 'linear-gradient(180deg, #0f172a 0%, #1e293b 100%)' : '#fff',
+                                      color: active ? '#fff' : '#0f172a',
+                                      cursor: 'pointer',
+                                      boxShadow: active ? '0 16px 34px rgba(15,23,42,0.18)' : '0 8px 18px rgba(15,23,42,0.04)'
+                                    }}
+                                  >
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, width: '100%' }}>
+                                      <span style={{ width: 16, height: 16, borderRadius: 5, background: colorValue, border: active ? '2px solid rgba(255,255,255,0.48)' : '2px solid #dbe4ef', flex: '0 0 auto' }} />
+                                      <strong style={{ fontSize: 14, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{truck.name}</strong>
+                                      {dirty && <span style={{ marginLeft: 'auto', flex: '0 0 auto', fontSize: 10, fontWeight: 800, padding: '3px 7px', borderRadius: 999, background: active ? 'rgba(255,255,255,0.12)' : '#fef3c7', color: active ? '#fff' : '#92400e', border: active ? '1px solid rgba(255,255,255,0.14)' : '1px solid #fde68a' }}>Ändrad</span>}
+                                    </div>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, width: '100%', alignItems: 'flex-start' }}>
+                                      <span style={{ display: 'block', width: '100%', fontSize: 12, lineHeight: 1.45, color: active ? 'rgba(255,255,255,0.8)' : '#475569', wordBreak: 'break-word' }}>{teamSummary}</span>
+                                      <span style={{ display: 'block', width: '100%', fontSize: 11, lineHeight: 1.45, color: active ? 'rgba(255,255,255,0.72)' : '#64748b', wordBreak: 'break-word' }}>Depå: {depotName}</span>
+                                    </div>
+                                  </button>
+                                );
+                              })}
+                              {sortedPlanningTrucks.length === 0 && <div style={{ fontSize: 13, color: '#64748b' }}>Inga lastbilar upplagda än.</div>}
+                            </div>
+                          </div>
+                          <div style={{ display: 'grid', gap: 10, padding: 12, borderRadius: 18, border: '1px solid #dbe4ef', background: '#fff', boxShadow: '0 12px 26px rgba(15,23,42,0.05)' }}>
+                            <div style={{ display: 'grid', gap: 3 }}>
+                              <strong style={{ fontSize: 14, color: '#0f172a' }}>Lägg till nytt lag</strong>
+                              <span style={{ fontSize: 12, color: '#64748b' }}>Skapa ett nytt lastbilslag och koppla det direkt till rätt depå om du vill.</span>
+                            </div>
+                            <form onSubmit={e => { e.preventDefault(); createTruck(); }} style={{ display: 'grid', gap: 8 }}>
+                              <input value={newTruckName} onChange={e => { setTruckCreateError(''); setNewTruckName(e.target.value); }} placeholder="Ny lastbil" disabled={isCreatingTruck} style={{ width: '100%', boxSizing: 'border-box', padding: '10px 12px', border: '1px solid #cbd5e1', borderRadius: 12, background: '#fff' }} />
+                              <select value={newTruckDepotId} onChange={e => { setTruckCreateError(''); setNewTruckDepotId(e.target.value); }} disabled={isCreatingTruck} style={{ width: '100%', boxSizing: 'border-box', padding: '10px 12px', border: '1px solid #cbd5e1', borderRadius: 12, background: '#fff' }}>
+                                <option value="">Välj depå (valfritt)</option>
+                                {depots.map(d => (<option key={d.id} value={d.id}>{d.name}</option>))}
+                              </select>
+                              {truckCreateError && <div style={{ fontSize: 12, color: '#b91c1c' }}>{truckCreateError}</div>}
+                              <button type="submit" disabled={!newTruckName.trim() || isCreatingTruck} className="btn--plain btn--sm" style={{ border: '1px solid #7dd3fc', background: '#e0f2fe', color: '#0369a1', borderRadius: 12, padding: '10px 12px', fontWeight: 700, width: '100%' }}>{isCreatingTruck ? 'Lägger till…' : 'Lägg till lag'}</button>
+                            </form>
+                          </div>
+                        </div>
+                        <div style={{ display: 'grid', gap: 12 }}>
+                          {selectedAdminTruck ? (() => {
+                            const tRec = selectedAdminTruck;
+                            const currentColor = truckColorOverrides[tRec.name] || tRec.color || defaultTruckColors[tRec.name] || '#6366f1';
+                            const edit = editingTeamNames[tRec.id] || { team1: tRec.team_member1_name || '', team2: tRec.team_member2_name || '', team1Id: tRec.team1_id || null, team2Id: tRec.team2_id || null };
+                            const changed = (
+                              edit.team1 !== (tRec.team_member1_name || '') ||
+                              edit.team2 !== (tRec.team_member2_name || '') ||
+                              ((edit as any).team1Id ?? null) !== (tRec.team1_id ?? null) ||
+                              ((edit as any).team2Id ?? null) !== (tRec.team2_id ?? null)
+                            );
+                            const nameChanged = (editingTruckNames[tRec.id] ?? tRec.name).trim() !== tRec.name;
+                            const status = truckSaveStatus[tRec.id];
+                            const assignedCrewCount = Number(Boolean(tRec.team_member1_name)) + Number(Boolean(tRec.team_member2_name));
+                            return (
+                              <>
+                                <div style={{ display: 'grid', gap: 12, padding: isNarrow ? 14 : 16, borderRadius: 22, border: '1px solid #dbe4ef', background: '#fff', boxShadow: '0 14px 30px rgba(15,23,42,0.06)' }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 14, flexWrap: 'wrap' }}>
+                                    <div style={{ display: 'grid', gap: 8, minWidth: 0 }}>
+                                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                                        <span style={{ width: 18, height: 18, borderRadius: 6, background: currentColor, border: '3px solid #dbe4ef', flex: '0 0 auto' }} />
+                                        <span style={{ display: 'inline-flex', alignItems: 'center', padding: '6px 10px', borderRadius: 999, background: '#f8fafc', border: '1px solid #dbe4ef', color: '#475569', fontSize: 11, fontWeight: 800, letterSpacing: 0.28, textTransform: 'uppercase' }}>Valt lag</span>
+                                      </div>
+                                      <div style={{ display: 'grid', gap: 3 }}>
+                                        <h4 style={{ margin: 0, fontSize: isNarrow ? 24 : 28, lineHeight: 1.02, color: '#0f172a' }}>{tRec.name}</h4>
+                                        <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: '#64748b', maxWidth: 640 }}>Uppdatera namn, färg, bemanning och depå för laget. Namn sparas separat, medan bemanning sparas tillsammans när du är klar.</p>
+                                      </div>
+                                    </div>
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8, minWidth: isNarrow ? '100%' : 320 }}>
+                                      <div style={{ display: 'grid', gap: 4, padding: '10px 12px', borderRadius: 16, border: '1px solid #dbe4ef', background: '#f8fbff' }}><span style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.28, textTransform: 'uppercase', color: '#64748b' }}>Bemanning</span><strong style={{ fontSize: 20, color: '#0f172a' }}>{assignedCrewCount}/2</strong></div>
+                                      <div style={{ display: 'grid', gap: 4, padding: '10px 12px', borderRadius: 16, border: '1px solid #dbe4ef', background: '#f8fbff' }}><span style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.28, textTransform: 'uppercase', color: '#64748b' }}>Depå</span><strong style={{ fontSize: 15, color: '#0f172a' }}>{depots.find((depot) => depot.id === tRec.depot_id)?.name || 'Ingen'}</strong></div>
+                                      <div style={{ display: 'grid', gap: 4, padding: '10px 12px', borderRadius: 16, border: '1px solid #dbe4ef', background: '#f8fbff' }}><span style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.28, textTransform: 'uppercase', color: '#64748b' }}>Status</span><strong style={{ fontSize: 15, color: status?.status === 'error' ? '#b91c1c' : status?.status === 'saved' ? '#059669' : '#0f172a' }}>{status?.status === 'saving' ? 'Sparar…' : status?.status === 'saved' ? 'Sparad' : status?.status === 'error' ? 'Fel' : 'Redo'}</strong></div>
+                                    </div>
+                                  </div>
+                                </div>
+                                <div style={{ display: 'grid', gap: 16, gridTemplateColumns: isNarrow ? '1fr' : 'minmax(0, 1.3fr) minmax(340px, 0.92fr)' }}>
+                                  <div style={{ display: 'grid', gap: 12, padding: isNarrow ? 14 : 16, borderRadius: 22, border: '1px solid #dbe4ef', background: '#fff', boxShadow: '0 14px 30px rgba(15,23,42,0.06)' }}>
+                                    <div style={{ display: 'grid', gap: 4 }}>
+                                      <strong style={{ fontSize: 16, color: '#0f172a' }}>Grundinställningar</strong>
+                                      <span style={{ fontSize: 12, color: '#64748b' }}>Snabba ändringar för hur laget visas och vilken depå det utgår från.</span>
+                                    </div>
+                                    <div style={{ display: 'grid', gap: 12, gridTemplateColumns: isNarrow ? '1fr' : 'minmax(0, 1fr) 120px' }}>
+                                      <label style={{ display: 'grid', gap: 6 }}>
+                                        <span style={{ fontSize: 12, fontWeight: 800, letterSpacing: 0.24, textTransform: 'uppercase', color: '#475569' }}>Namn på lag</span>
+                                        <input value={editingTruckNames[tRec.id] ?? tRec.name} onChange={e => setEditingTruckNames(prev => ({ ...prev, [tRec.id]: e.target.value }))} placeholder="Namn på lastbil" style={{ width: '100%', boxSizing: 'border-box', padding: '10px 12px', border: '1px solid #cbd5e1', borderRadius: 12, background: '#fff' }} />
+                                      </label>
+                                      <label style={{ display: 'grid', gap: 6 }}>
+                                        <span style={{ fontSize: 12, fontWeight: 800, letterSpacing: 0.24, textTransform: 'uppercase', color: '#475569' }}>Färg</span>
+                                        <input type="color" value={currentColor as string} onChange={e => updateTruckColor(tRec, e.target.value)} style={{ width: '100%', height: 44, padding: 4, border: '1px solid #cbd5e1', borderRadius: 12, background: '#fff' }} />
+                                      </label>
+                                    </div>
+                                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                                      <button type="button" className="btn--plain btn--sm" onClick={() => updateTruckName(tRec, editingTruckNames[tRec.id] ?? tRec.name)} disabled={!nameChanged || truckNameStatus[tRec.id] === 'saving'} style={{ border: '1px solid #cbd5e1', background: '#fff', borderRadius: 12, padding: '10px 12px', fontWeight: 700 }}>{truckNameStatus[tRec.id] === 'saving' ? 'Sparar namn…' : 'Spara namn'}</button>
+                                      {truckNameStatus[tRec.id] === 'saved' && <span style={{ fontSize: 12, color: '#059669' }}>Namnet sparades.</span>}
+                                      {truckNameErrors[tRec.id] && <span style={{ fontSize: 12, color: '#b91c1c' }}>{truckNameErrors[tRec.id]}</span>}
+                                    </div>
+                                    <div style={{ display: 'grid', gap: 10 }}>
+                                      <strong style={{ fontSize: 15, color: '#0f172a' }}>Bemanning</strong>
+                                      <div style={{ display: 'grid', gap: 10, padding: '14px 14px 12px', borderRadius: 18, border: '1px solid #dbe4ef', background: '#f8fbff' }}>
+                                        <label style={{ display: 'grid', gap: 8, alignContent: 'start' }}>
+                                          <span style={{ fontSize: 12, fontWeight: 800, letterSpacing: 0.24, textTransform: 'uppercase', color: '#475569' }}>Team leader</span>
+                                          <select value={edit.team1Id || tRec.team1_id || ''} onChange={e => { const val = e.target.value || null; updateTruckTeamId(tRec, 1, val); const nm = crewList.find(c => c.id === val)?.name || ''; if (nm) updateTruckTeamName(tRec, 1, nm); }} style={{ width: '100%', boxSizing: 'border-box', padding: '10px 12px', border: '1px solid #cbd5e1', borderRadius: 12, background: '#fff' }}>
+                                            <option value="">Ej tilldelad</option>
+                                            {crewList.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                          </select>
+                                          <span style={{ fontSize: 12, color: '#64748b', lineHeight: 1.45, wordBreak: 'break-word' }}>{(edit.team1 ?? tRec.team_member1_name) || 'Ingen vald'}</span>
+                                        </label>
+                                        <div style={{ height: 1, background: '#dbe4ef' }} />
+                                        <label style={{ display: 'grid', gap: 8, alignContent: 'start' }}>
+                                          <span style={{ fontSize: 12, fontWeight: 800, letterSpacing: 0.24, textTransform: 'uppercase', color: '#475569' }}>Personal</span>
+                                          <select value={edit.team2Id || tRec.team2_id || ''} onChange={e => { const val = e.target.value || null; updateTruckTeamId(tRec, 2, val); const nm = crewList.find(c => c.id === val)?.name || ''; if (nm) updateTruckTeamName(tRec, 2, nm); }} style={{ width: '100%', boxSizing: 'border-box', padding: '10px 12px', border: '1px solid #cbd5e1', borderRadius: 12, background: '#fff' }}>
+                                            <option value="">Ej tilldelad</option>
+                                            {crewList.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                          </select>
+                                          <span style={{ fontSize: 12, color: '#64748b', lineHeight: 1.45, wordBreak: 'break-word' }}>{(edit.team2 ?? tRec.team_member2_name) || 'Ingen vald'}</span>
+                                        </label>
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <div style={{ display: 'grid', gap: 14, alignContent: 'start' }}>
+                                    <div style={{ display: 'grid', gap: 10, padding: isNarrow ? 14 : 16, borderRadius: 22, border: '1px solid #dbe4ef', background: '#fff', boxShadow: '0 14px 30px rgba(15,23,42,0.06)' }}>
+                                      <div style={{ display: 'grid', gap: 4 }}>
+                                        <strong style={{ fontSize: 16, color: '#0f172a' }}>Depå och publicering</strong>
+                                        <span style={{ fontSize: 12, color: '#64748b' }}>Spara bemanningen när du känner dig klar. Depå uppdateras direkt.</span>
+                                      </div>
+                                      <label style={{ display: 'grid', gap: 6 }}>
+                                        <span style={{ fontSize: 12, fontWeight: 800, letterSpacing: 0.24, textTransform: 'uppercase', color: '#475569' }}>Depå</span>
+                                        <select value={tRec.depot_id || ''} onChange={e => updateTruckDepot(tRec, e.target.value || null)} style={{ width: '100%', boxSizing: 'border-box', padding: '10px 12px', border: '1px solid #cbd5e1', borderRadius: 12, background: '#fff' }}>
+                                          <option value="">Ingen depå</option>
+                                          {depots.map(d => (<option key={d.id} value={d.id}>{d.name}</option>))}
+                                        </select>
+                                      </label>
+                                      <button type="button" disabled={!changed || status?.status === 'saving'} onClick={() => saveTruckTeamNames(tRec)} className="btn--primary btn--sm" style={{ opacity: !changed || status?.status === 'saving' ? 0.6 : 1, borderRadius: 12, minHeight: 44 }}>{status?.status === 'saving' ? 'Sparar bemanning…' : 'Spara bemanning'}</button>
+                                      {status?.status === 'saved' && <span style={{ fontSize: 12, color: '#059669' }}>Bemanningen sparades.</span>}
+                                      {status?.status === 'error' && <span style={{ fontSize: 12, color: '#b91c1c' }}>Något gick fel när bemanningen skulle sparas.</span>}
+                                    </div>
+                                    <div style={{ display: 'grid', gap: 10, padding: isNarrow ? 14 : 16, borderRadius: 22, border: '1px solid #fecaca', background: '#fff5f5', boxShadow: '0 14px 30px rgba(185,28,28,0.08)' }}>
+                                      <div style={{ display: 'grid', gap: 4 }}>
+                                        <strong style={{ fontSize: 16, color: '#7f1d1d' }}>Riskzon</strong>
+                                        <span style={{ fontSize: 12, color: '#991b1b', lineHeight: 1.55 }}>Ta bort lag endast om det inte längre ska användas i planeringen. Den här åtgärden hålls avskild från bemanningen för att minska risken för felklick.</span>
+                                      </div>
+                                      <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+                                        <button type="button" onClick={() => { if (typeof window !== 'undefined') { const ok = window.confirm(`Ta bort lastbil \"${tRec.name}\"?`); if (!ok) return; } deleteTruck(tRec); }} className="btn--plain btn--sm" style={{ border: '1px solid #fca5a5', background: '#fff', color: '#b91c1c', borderRadius: 12, minHeight: 44, fontWeight: 700, minWidth: 180 }}>Ta bort lag</button>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              </>
+                            );
+                          })() : (
+                            <div style={{ padding: 18, borderRadius: 22, border: '1px solid #dbe4ef', background: '#fff', color: '#64748b' }}>Välj ett lag i vänsterspalten för att börja redigera.</div>
+                          )}
+                        </div>
                       </div>
                     </div>
                   )}
                   {adminModalTab === 'depots' && (
                     <div style={{ display: 'grid', gap: 12 }}>
-                      <form onSubmit={createDepot} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                        <input value={newDepotName} onChange={e => setNewDepotName(e.target.value)} placeholder="Ny depå" style={{ minWidth: 240, padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }} />
-                        <button type="submit" disabled={!newDepotName.trim()} className="btn--plain btn--xs" style={{ fontSize: 12, padding: '6px 10px', border: '1px solid #7dd3fc', background: '#e0f2fe', color: '#0369a1', borderRadius: 8 }}>Lägg till</button>
-                      </form>
+                      <div style={{ display: 'grid', gap: 4 }}>
+                        <h3 style={{ margin: 0, fontSize: 22, color: '#0f172a' }}>Depåer</h3>
+                        <p style={{ margin: 0, fontSize: 13, color: '#64748b', lineHeight: 1.55 }}>Här sköter du depånamn och materialnivåer. Fälten sparas när du lämnar dem, så den här vyn ska vara snabb att jobba i.</p>
+                      </div>
+                      <div style={{ display: 'grid', gap: 12, padding: 14, borderRadius: 22, border: '1px solid #dbe4ef', background: '#fff', boxShadow: '0 14px 30px rgba(15,23,42,0.06)' }}>
+                        <form onSubmit={createDepot} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                          <input value={newDepotName} onChange={e => setNewDepotName(e.target.value)} placeholder="Ny depå" style={{ minWidth: 240, padding: '10px 12px', border: '1px solid #cbd5e1', borderRadius: 12 }} />
+                          <button type="submit" disabled={!newDepotName.trim()} className="btn--plain btn--sm" style={{ border: '1px solid #7dd3fc', background: '#e0f2fe', color: '#0369a1', borderRadius: 12, padding: '10px 12px', fontWeight: 700 }}>Lägg till depå</button>
+                        </form>
                       <div style={{ display: 'grid', gap: 8 }}>
                         {depots.map(dep => {
                           const edit = depotEdits[dep.id] || {};
@@ -5928,54 +6103,60 @@ export default function PlanneringPage() {
                           const vitVal = edit.material_vitull_total ?? (dep.material_vitull_total == null ? '' : String(dep.material_vitull_total));
                           const saveBoth = () => upsertDepotTotals(dep.id, ekoVal, vitVal);
                           return (
-                            <div key={dep.id} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto auto', alignItems: 'center', gap: 10, padding: '6px 8px', border: '1px solid #e5e7eb', borderRadius: 8 }}>
+                            <div key={dep.id} style={{ display: 'grid', gridTemplateColumns: isNarrow ? '1fr' : '1fr auto auto auto', alignItems: 'center', gap: 10, padding: '12px 12px 11px', border: '1px solid #e5e7eb', borderRadius: 16, background: '#f8fbff' }}>
                               <div style={{ fontWeight: 600 }}>{dep.name}</div>
                               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                                 <label style={{ fontSize: 12 }}>Eko</label>
-                                <input inputMode="numeric" pattern="[0-9]*" value={ekoVal} onChange={e => setDepotEdits(prev => ({ ...prev, [dep.id]: { ...prev[dep.id], material_ekovilla_total: e.target.value } }))} onBlur={saveBoth} placeholder="Antal" style={{ width: 90, padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }} />
+                                <input inputMode="numeric" pattern="[0-9]*" value={ekoVal} onChange={e => setDepotEdits(prev => ({ ...prev, [dep.id]: { ...prev[dep.id], material_ekovilla_total: e.target.value } }))} onBlur={saveBoth} placeholder="Antal" style={{ width: 90, padding: '10px 12px', border: '1px solid #cbd5e1', borderRadius: 12 }} />
                               </div>
                               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                                 <label style={{ fontSize: 12 }}>Vit</label>
-                                <input inputMode="numeric" pattern="[0-9]*" value={vitVal} onChange={e => setDepotEdits(prev => ({ ...prev, [dep.id]: { ...prev[dep.id], material_vitull_total: e.target.value } }))} onBlur={saveBoth} placeholder="Antal" style={{ width: 90, padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }} />
+                                <input inputMode="numeric" pattern="[0-9]*" value={vitVal} onChange={e => setDepotEdits(prev => ({ ...prev, [dep.id]: { ...prev[dep.id], material_vitull_total: e.target.value } }))} onBlur={saveBoth} placeholder="Antal" style={{ width: 90, padding: '10px 12px', border: '1px solid #cbd5e1', borderRadius: 12 }} />
                               </div>
-                              <button type="button" onClick={() => deleteDepot(dep)} className="btn--plain btn--xs" style={{ fontSize: 12, padding: '6px 10px', border: '1px solid #fecaca', background: '#fef2f2', color: '#b91c1c', borderRadius: 8 }}>Ta bort</button>
+                              <button type="button" onClick={() => deleteDepot(dep)} className="btn--plain btn--sm" style={{ border: '1px solid #fecaca', background: '#fef2f2', color: '#b91c1c', borderRadius: 12, padding: '10px 12px', fontWeight: 700 }}>Ta bort</button>
                             </div>
                           );
                         })}
                         {depots.length === 0 && <div style={{ color: '#6b7280' }}>Inga depåer</div>}
                       </div>
+                      </div>
                     </div>
                   )}
                   {adminModalTab === 'deliveries' && (
                     <div style={{ display: 'grid', gap: 12 }}>
-                      <div style={{ display: 'grid', gap: 8, padding: '8px 10px', border: '1px dashed #cbd5e1', borderRadius: 10, background: '#f8fafc' }}>
+                      <div style={{ display: 'grid', gap: 4 }}>
+                        <h3 style={{ margin: 0, fontSize: 22, color: '#0f172a' }}>Leveranser</h3>
+                        <p style={{ margin: 0, fontSize: 13, color: '#64748b', lineHeight: 1.55 }}>Planera materialflödet till depåerna och tillämpa leveranser som nått dagens datum när de faktiskt ska bokföras i lagret.</p>
+                      </div>
+                      <div style={{ display: 'grid', gap: 12, padding: 14, borderRadius: 22, border: '1px solid #dbe4ef', background: '#fff', boxShadow: '0 14px 30px rgba(15,23,42,0.06)' }}>
+                        <div style={{ display: 'grid', gap: 8, padding: '12px 12px 11px', border: '1px dashed #cbd5e1', borderRadius: 16, background: '#f8fafc' }}>
                         <div style={{ fontWeight: 700, color: '#0f172a' }}>Planera leverans</div>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(160px, 1fr))', gap: 8, alignItems: 'center' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: isNarrow ? '1fr' : 'repeat(4, minmax(160px, 1fr))', gap: 8, alignItems: 'center' }}>
                           <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
                             <span>Depå</span>
-                            <select value={newDelivery.depotId} onChange={e => setNewDelivery(prev => ({ ...prev, depotId: e.target.value }))} style={{ padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }}>
+                            <select value={newDelivery.depotId} onChange={e => setNewDelivery(prev => ({ ...prev, depotId: e.target.value }))} style={{ padding: '10px 12px', border: '1px solid #cbd5e1', borderRadius: 12 }}>
                               <option value="">Välj depå</option>
                               {depots.map(d => (<option key={d.id} value={d.id}>{d.name}</option>))}
                             </select>
                           </label>
                           <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
                             <span>Material</span>
-                            <select value={newDelivery.materialKind} onChange={e => setNewDelivery(prev => ({ ...prev, materialKind: e.target.value as any }))} style={{ padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }}>
+                            <select value={newDelivery.materialKind} onChange={e => setNewDelivery(prev => ({ ...prev, materialKind: e.target.value as any }))} style={{ padding: '10px 12px', border: '1px solid #cbd5e1', borderRadius: 12 }}>
                               <option value="Ekovilla">Ekovilla</option>
                               <option value="Vitull">Vitull</option>
                             </select>
                           </label>
                           <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
                             <span>Antal</span>
-                            <input inputMode="numeric" pattern="[0-9]*" value={newDelivery.amount} onChange={e => setNewDelivery(prev => ({ ...prev, amount: e.target.value }))} placeholder="t.ex. 30" style={{ padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }} />
+                            <input inputMode="numeric" pattern="[0-9]*" value={newDelivery.amount} onChange={e => setNewDelivery(prev => ({ ...prev, amount: e.target.value }))} placeholder="t.ex. 30" style={{ padding: '10px 12px', border: '1px solid #cbd5e1', borderRadius: 12 }} />
                           </label>
                           <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
                             <span>Datum</span>
-                            <input type="date" value={newDelivery.date} onChange={e => setNewDelivery(prev => ({ ...prev, date: e.target.value }))} style={{ padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }} />
+                            <input type="date" value={newDelivery.date} onChange={e => setNewDelivery(prev => ({ ...prev, date: e.target.value }))} style={{ padding: '10px 12px', border: '1px solid #cbd5e1', borderRadius: 12 }} />
                           </label>
                         </div>
                         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                          <button type="button" onClick={createPlannedDelivery} disabled={savingDelivery === 'saving'} className="btn--plain btn--xs" style={{ fontSize: 12, padding: '6px 10px', border: '1px solid #16a34a', background: '#dcfce7', color: '#166534', borderRadius: 8 }}>Spara leverans</button>
+                          <button type="button" onClick={createPlannedDelivery} disabled={savingDelivery === 'saving'} className="btn--plain btn--sm" style={{ border: '1px solid #16a34a', background: '#dcfce7', color: '#166534', borderRadius: 12, padding: '10px 12px', fontWeight: 700 }}>Spara leverans</button>
                           {savingDelivery === 'saving' && <span style={{ fontSize: 12, color: '#64748b' }}>Sparar…</span>}
                           {savingDelivery === 'saved' && <span style={{ fontSize: 12, color: '#059669' }}>✓ Sparad</span>}
                           {savingDelivery === 'error' && <span style={{ fontSize: 12, color: '#b91c1c' }}>Fel</span>}
@@ -6010,8 +6191,8 @@ export default function PlanneringPage() {
                                 setSavingDelivery('error');
                               }
                             }}
-                            className="btn--plain btn--xs"
-                            style={{ fontSize: 12, padding: '6px 10px', border: '1px solid #16a34a', background: '#16a34a', color: '#fff', borderRadius: 8, boxShadow: '0 2px 4px rgba(16,185,129,0.4)' }}
+                            className="btn--plain btn--sm"
+                            style={{ border: '1px solid #16a34a', background: '#16a34a', color: '#fff', borderRadius: 12, padding: '10px 12px', boxShadow: '0 2px 4px rgba(16,185,129,0.4)', fontWeight: 700 }}
                           >
                             Tillämpa dagens leveranser
                           </button>
@@ -6024,27 +6205,27 @@ export default function PlanneringPage() {
                           const dep = depots.find(d => d.id === group.depotId);
                           const header = `${group.date} • ${dep ? dep.name : 'Okänd depå'} • ${group.material}`;
                           return (
-                            <div key={`${group.depotId}|${group.date}|${group.material}`} style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: 8, background: '#fff', display: 'grid', gap: 6 }}>
+                            <div key={`${group.depotId}|${group.date}|${group.material}`} style={{ border: '1px solid #e5e7eb', borderRadius: 16, padding: 12, background: '#f8fbff', display: 'grid', gap: 8 }}>
                               <div style={{ fontWeight: 600 }}>{header}</div>
                               <div style={{ display: 'grid', gap: 6 }}>
                                 {group.items.map(item => {
                                   const edit = editingDeliveries[item.id] || { depotId: item.depot_id, materialKind: item.material_kind, amount: String(item.amount), date: item.delivery_date };
                                   return (
-                                    <div key={item.id} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: 8, alignItems: 'center' }}>
-                                      <select value={edit.depotId} onChange={e => setEditingDeliveries(prev => ({ ...prev, [item.id]: { ...edit, depotId: e.target.value } }))} style={{ padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }}>
+                                    <div key={item.id} style={{ display: 'grid', gridTemplateColumns: isNarrow ? '1fr' : '1fr 1fr 1fr auto', gap: 8, alignItems: 'center', padding: '10px 10px 9px', borderRadius: 14, border: '1px solid #e2e8f0', background: '#fff' }}>
+                                      <select value={edit.depotId} onChange={e => setEditingDeliveries(prev => ({ ...prev, [item.id]: { ...edit, depotId: e.target.value } }))} style={{ padding: '10px 12px', border: '1px solid #cbd5e1', borderRadius: 12 }}>
                                         {depots.map(d => (<option key={d.id} value={d.id}>{d.name}</option>))}
                                       </select>
-                                      <select value={edit.materialKind} onChange={e => setEditingDeliveries(prev => ({ ...prev, [item.id]: { ...edit, materialKind: e.target.value as any } }))} style={{ padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }}>
+                                      <select value={edit.materialKind} onChange={e => setEditingDeliveries(prev => ({ ...prev, [item.id]: { ...edit, materialKind: e.target.value as any } }))} style={{ padding: '10px 12px', border: '1px solid #cbd5e1', borderRadius: 12 }}>
                                         <option value="Ekovilla">Ekovilla</option>
                                         <option value="Vitull">Vitull</option>
                                       </select>
                                       <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                                        <input inputMode="numeric" pattern="[0-9]*" value={edit.amount} onChange={e => setEditingDeliveries(prev => ({ ...prev, [item.id]: { ...edit, amount: e.target.value } }))} style={{ width: 80, padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }} />
-                                        <input type="date" value={edit.date} onChange={e => setEditingDeliveries(prev => ({ ...prev, [item.id]: { ...edit, date: e.target.value } }))} style={{ padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 8 }} />
+                                        <input inputMode="numeric" pattern="[0-9]*" value={edit.amount} onChange={e => setEditingDeliveries(prev => ({ ...prev, [item.id]: { ...edit, amount: e.target.value } }))} style={{ width: 90, padding: '10px 12px', border: '1px solid #cbd5e1', borderRadius: 12 }} />
+                                        <input type="date" value={edit.date} onChange={e => setEditingDeliveries(prev => ({ ...prev, [item.id]: { ...edit, date: e.target.value } }))} style={{ padding: '10px 12px', border: '1px solid #cbd5e1', borderRadius: 12 }} />
                                       </div>
                                       <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
-                                        <button type="button" onClick={() => updatePlannedDelivery(item.id)} className="btn--plain btn--xs" style={{ fontSize: 12, padding: '6px 10px', border: '1px solid #cbd5e1', background: '#fff', borderRadius: 8 }}>Spara</button>
-                                        <button type="button" onClick={() => deletePlannedDelivery(item.id)} className="btn--plain btn--xs" style={{ fontSize: 12, padding: '6px 10px', border: '1px solid #fecaca', background: '#fef2f2', color: '#b91c1c', borderRadius: 8 }}>Ta bort</button>
+                                        <button type="button" onClick={() => updatePlannedDelivery(item.id)} className="btn--plain btn--sm" style={{ border: '1px solid #cbd5e1', background: '#fff', borderRadius: 12, padding: '10px 12px', fontWeight: 700 }}>Spara</button>
+                                        <button type="button" onClick={() => deletePlannedDelivery(item.id)} className="btn--plain btn--sm" style={{ border: '1px solid #fecaca', background: '#fef2f2', color: '#b91c1c', borderRadius: 12, padding: '10px 12px', fontWeight: 700 }}>Ta bort</button>
                                       </div>
                                     </div>
                                   );
@@ -6054,19 +6235,32 @@ export default function PlanneringPage() {
                           );
                         })}
                       </div>
+                      </div>
                     </div>
                   )}
                   {adminModalTab === 'assignments' && (
                     <div style={{ display: 'grid', gap: 12 }}>
-                      {/* Weekly crew assignments per truck, managed separately from truck settings */}
-                      <TruckAssignmentsInline trucks={trucks} crewList={crewList} truckColors={truckColors} />
+                      <div style={{ display: 'grid', gap: 4 }}>
+                        <h3 style={{ margin: 0, fontSize: 22, color: '#0f172a' }}>Veckotilldelningar</h3>
+                        <p style={{ margin: 0, fontSize: 13, color: '#64748b', lineHeight: 1.55 }}>Använd den här ytan när du behöver tillfälliga bemanningstilldelningar utan att ändra grundbemanningen på laget.</p>
+                      </div>
+                      <div style={{ display: 'grid', gap: 12, padding: 14, borderRadius: 22, border: '1px solid #dbe4ef', background: '#fff', boxShadow: '0 14px 30px rgba(15,23,42,0.06)' }}>
+                        <TruckAssignmentsInline trucks={trucks} crewList={crewList} truckColors={truckColors} />
+                      </div>
                     </div>
                   )}
                   {adminModalTab === 'jobtypes' && (
                     <div style={{ display: 'grid', gap: 12 }}>
-                      <AdminJobTypes />
+                      <div style={{ display: 'grid', gap: 4 }}>
+                        <h3 style={{ margin: 0, fontSize: 22, color: '#0f172a' }}>Jobbtyper</h3>
+                        <p style={{ margin: 0, fontSize: 13, color: '#64748b', lineHeight: 1.55 }}>Hantera kategorier, färger och materialkopplingar som används i planeringskort och kalenderstatusar.</p>
+                      </div>
+                      <div style={{ display: 'grid', gap: 12, padding: 14, borderRadius: 22, border: '1px solid #dbe4ef', background: '#fff', boxShadow: '0 14px 30px rgba(15,23,42,0.06)' }}>
+                        <AdminJobTypes />
+                      </div>
                     </div>
                   )}
+                  </div>
                 </div>
               </div>
             </div>
