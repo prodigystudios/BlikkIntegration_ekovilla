@@ -1051,6 +1051,8 @@ export default function PlanneringPage() {
   const [realtimeStatus, setRealtimeStatus] = useState<'connecting' | 'live' | 'error'>('connecting');
   const [realtimePaused, setRealtimePaused] = useState(false);
   const planningChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const resumeResyncPendingRef = useRef(false);
+  const reloadPlannerSnapshotRef = useRef<(() => Promise<void>) | null>(null);
   const lastActivityRef = useRef<number>(Date.now());
   const [forceChannelRerender, setForceChannelRerender] = useState(0);
   const [idlePromptVisible, setIdlePromptVisible] = useState(false);
@@ -1086,6 +1088,223 @@ export default function PlanneringPage() {
   const [emailToast, setEmailToast] = useState<{ pid: string; msg: string } | null>(null);
   // Client notification tracking (local only for now)
   const [pendingNotifyProjectId, setPendingNotifyProjectId] = useState<string | null>(null);
+
+  const reloadVisibleNotes = useCallback(async () => {
+    const { start, end } = getVisibleCalendarRange(monthOffset);
+    const startISO = fmtDate(start);
+    const endISO = fmtDate(end);
+    const rows = await listDayNotes(startISO, endISO);
+    const map = new Map<string, DayNote>();
+    for (const r of rows) map.set(r.note_day, r);
+    setNotesByDay(map);
+  }, [monthOffset]);
+
+  const reloadPlannerSnapshot = useCallback(async ({ includeAuth = false, includeDirectory = false, includeVisibleNotes = false }: { includeAuth?: boolean; includeDirectory?: boolean; includeVisibleNotes?: boolean } = {}) => {
+    try {
+      setSyncing(true);
+      if (includeAuth) {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          setCurrentUserId(user.id);
+          let resolvedName: string | null = null;
+          const { data: profile } = await supabase.from('profiles').select('full_name, role').eq('id', user.id).maybeSingle();
+          if (profile) {
+            if ((profile as any).full_name) {
+              resolvedName = (profile as any).full_name as string;
+            }
+            const role = (profile as any).role as string | null | undefined;
+            if (role === 'admin') setIsAdmin(true);
+            if (role === 'konsult' || role === 'readonly') setIsReadOnly(true);
+          }
+          if (!resolvedName) {
+            const meta: any = user.user_metadata || {};
+            resolvedName = meta.full_name || meta.name || null;
+          }
+          if (!resolvedName && user.email) {
+            resolvedName = user.email.split('@')[0];
+          }
+          if (resolvedName) setCurrentUserName(resolvedName);
+        }
+      }
+
+      const { data: segs, error: segErr } = await supabase.from('planning_segments').select('*');
+      if (segErr) throw segErr;
+      const { data: metas, error: metaErr } = await supabase.from('planning_project_meta').select('*');
+      if (metaErr) throw metaErr;
+
+      try {
+        const { data: repRows, error: repErr } = await supabase.from('planning_segment_reports').select('*');
+        if (repErr) console.warn('[planning] segment reports load error', repErr);
+        else if (Array.isArray(repRows)) {
+          setSegmentReports(repRows.map((r: any) => ({ id: r.id, segmentId: r.segment_id, reportDay: r.report_day, amount: r.amount, createdBy: r.created_by ?? null, createdByName: r.created_by_name ?? null, createdAt: r.created_at || null, projectId: (r as any).project_id ?? null })));
+        }
+      } catch (e) {
+        console.warn('[planning] segment reports load exception', e);
+      }
+
+      try {
+        const { data: crewRows, error: crewErr } = await supabase.from('planning_segment_team_members').select('*');
+        if (crewErr) console.warn('[planning] segment crew load error', crewErr);
+        else if (Array.isArray(crewRows)) {
+          const map: Record<string, Array<{ id: string | null; name: string }>> = {};
+          for (const row of crewRows) {
+            const sid = (row as any).segment_id as string;
+            if (!map[sid]) map[sid] = [];
+            map[sid].push({ id: (row as any).member_id || null, name: (row as any).member_name || '' });
+          }
+          setSegmentCrew(map);
+        }
+      } catch (e) {
+        console.warn('[planning] segment crew load exception', e);
+      }
+
+      try {
+        const { data: trucksData, error: trucksErr } = await supabase.from('planning_trucks').select('*').order('name');
+        if (trucksErr) console.warn('[planning] trucks load error', trucksErr);
+        else if (Array.isArray(trucksData)) {
+          setPlanningTrucks(trucksData.map(t => ({ id: t.id, name: t.name, color: t.color, team_member1_name: t.team_member1_name, team_member2_name: t.team_member2_name, depot_id: (t as any).depot_id || null, team1_id: (t as any).team1_id || null, team2_id: (t as any).team2_id || null })));
+          setTruckColorOverrides(prev => {
+            const next: Record<string, string> = {};
+            for (const [name, color] of Object.entries(prev)) {
+              if (!trucksData.some(t => t.name === name)) continue;
+              next[name] = color;
+            }
+            for (const t of trucksData) {
+              if (t.color) next[t.name] = t.color;
+            }
+            return next;
+          });
+        }
+      } catch (e) {
+        console.warn('[planning] could not load trucks', e);
+      }
+
+      try {
+        const { data: depRows, error: depErr } = await supabase.from('planning_depots').select('*').order('name');
+        if (depErr) console.warn('[planning] depots load error', depErr);
+        else if (Array.isArray(depRows)) setDepots(depRows as any);
+      } catch (e) {
+        console.warn('[planning] depots load exception', e);
+      }
+
+      try {
+        const { data: delRows, error: delErr } = await supabase.from('planning_depot_deliveries').select('*').order('delivery_date');
+        if (delErr) console.warn('[planning] deliveries load error', delErr);
+        else if (Array.isArray(delRows)) setDeliveries(delRows as any);
+      } catch (e) {
+        console.warn('[planning] deliveries load exception', e);
+      }
+
+      if (Array.isArray(segs)) {
+        setScheduledSegments(segs.map(s => ({
+          id: s.id,
+          projectId: s.project_id,
+          startDay: s.start_day,
+          endDay: s.end_day,
+          createdBy: s.created_by,
+          createdByName: s.created_by_name,
+          depotId: (s as any).depot_id ?? null,
+          sortIndex: (s as any).sort_index ?? null,
+          truck: (s as any).truck ?? null,
+          jobType: (s as any).job_type ?? null,
+          onHold: (s as any).on_hold ?? false,
+          onHoldAt: (s as any).on_hold_at ?? null,
+          onHoldBy: (s as any).on_hold_by ?? null,
+        })));
+        setProjects(prev => {
+          const map = new Map(prev.map(p => [p.id, p]));
+          for (const s of segs) {
+            if (!map.has(s.project_id)) {
+              map.set(s.project_id, {
+                id: s.project_id,
+                name: s.project_name,
+                customer: s.customer || '',
+                orderNumber: s.order_number || null,
+                createdAt: s.created_at || new Date().toISOString(),
+                status: s.is_manual ? 'MANUELL' : 'unknown',
+                isManual: s.is_manual,
+                customerId: s.customer_id ?? null,
+                customerEmail: s.customer_email ?? null,
+                salesResponsible: s.sales_responsible ?? null
+              });
+            }
+          }
+          return Array.from(map.values());
+        });
+      }
+
+      if (Array.isArray(metas)) {
+        const metaObj: any = {};
+        for (const m of metas) metaObj[m.project_id] = {
+          projectId: m.project_id,
+          truck: m.truck,
+          bagCount: m.bag_count,
+          jobType: m.job_type,
+          color: m.color,
+          client_notified: m.client_notified,
+          client_notified_at: m.client_notified_at,
+          client_notified_by: m.client_notified_by,
+          actual_bags_used: m.actual_bags_used,
+          actual_bags_set_at: m.actual_bags_set_at,
+          actual_bags_set_by: m.actual_bags_set_by,
+          delivery_sent: (m as any).delivery_sent ?? null,
+          delivery_sent_at: (m as any).delivery_sent_at ?? null,
+          delivery_sent_by: (m as any).delivery_sent_by ?? null,
+          status_label: (m as any).status_label ?? null,
+          status_color: (m as any).status_color ?? null,
+        };
+        setScheduleMeta(metaObj);
+        try {
+          const addrMap: Record<string, string> = {};
+          for (const m of metas) {
+            const street = (m as any).address_street as string | null | undefined;
+            const postal = (m as any).address_postal as string | null | undefined;
+            const city = (m as any).address_city as string | null | undefined;
+            const parts = [street, city].filter(Boolean) as string[];
+            if (street && city && postal) {
+              addrMap[m.project_id] = `${street}, ${city}`;
+            } else if (parts.length) {
+              addrMap[m.project_id] = parts.join(', ');
+            }
+          }
+          if (Object.keys(addrMap).length) setProjectAddresses(prev => ({ ...addrMap, ...prev }));
+        } catch { /* ignore */ }
+      }
+
+      if (includeVisibleNotes) {
+        try {
+          await reloadVisibleNotes();
+        } catch (e) {
+          console.warn('[planning] visible notes reload failed', e);
+        }
+      }
+
+      if (includeDirectory) {
+        try {
+          const dirRes = await fetch('/api/planning/sales-directory');
+          if (dirRes.ok) {
+            const j = await dirRes.json();
+            const names: string[] = Array.isArray(j.users) ? j.users.map((u: any) => u.name).filter((v: any): v is string => typeof v === 'string' && v.trim().length > 0) : [];
+            const trimmed = names.map(n => n.trim());
+            const unique: string[] = Array.from(new Set(trimmed)).filter(n => n.length > 0).sort((a, b) => a.localeCompare(b));
+            setSalesDirectory(unique);
+          } else {
+            console.warn('[planning] directory fetch failed status', dirRes.status);
+          }
+        } catch (e) {
+          console.warn('[planning] could not load sales directory', e);
+        }
+      }
+    } catch (e) {
+      console.warn('[planning] snapshot reload failed', e);
+    } finally {
+      setSyncing(false);
+    }
+  }, [monthOffset, reloadVisibleNotes, supabase]);
+
+  useEffect(() => {
+    reloadPlannerSnapshotRef.current = () => reloadPlannerSnapshot({ includeVisibleNotes: true });
+  }, [reloadPlannerSnapshot]);
   // Job type/material color mapping (from admin settings)
   const [jobTypeColors, setJobTypeColors] = useState<Record<string, string>>({});
   const allJobTypes = useMemo(() => {
@@ -1563,192 +1782,8 @@ export default function PlanneringPage() {
   }, [realtimePaused, supabase]);
 
   useEffect(() => {
-    (async () => {
-      try {
-        setSyncing(true);
-        // Load user first (client-side auth context)
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
-          setCurrentUserId(user.id);
-          // Try profile table for display name
-          let resolvedName: string | null = null;
-          const { data: profile } = await supabase.from('profiles').select('full_name, role').eq('id', user.id).maybeSingle();
-          if (profile) {
-            if ((profile as any).full_name) {
-              resolvedName = (profile as any).full_name as string;
-            }
-            const role = (profile as any).role as string | null | undefined;
-            if (role === 'admin') setIsAdmin(true);
-            if (role === 'konsult' || role === 'readonly') setIsReadOnly(true);
-          }
-          if (!resolvedName) {
-            const meta: any = user.user_metadata || {};
-            resolvedName = meta.full_name || meta.name || null;
-          }
-          if (!resolvedName && user.email) {
-            resolvedName = user.email.split('@')[0];
-          }
-          if (resolvedName) setCurrentUserName(resolvedName);
-        }
-        const { data: segs, error: segErr } = await supabase.from('planning_segments').select('*');
-        if (segErr) throw segErr;
-        const { data: metas, error: metaErr } = await supabase.from('planning_project_meta').select('*');
-        if (metaErr) throw metaErr;
-        // Load segment reports (partial bag reports)
-        try {
-          const { data: repRows, error: repErr } = await supabase.from('planning_segment_reports').select('*');
-          if (repErr) console.warn('[planning] segment reports load error', repErr);
-          else if (Array.isArray(repRows)) {
-            setSegmentReports(repRows.map((r: any) => ({ id: r.id, segmentId: r.segment_id, reportDay: r.report_day, amount: r.amount, createdBy: r.created_by ?? null, createdByName: r.created_by_name ?? null, createdAt: r.created_at || null, projectId: (r as any).project_id ?? null })));
-          }
-        } catch (e) {
-          console.warn('[planning] segment reports load exception', e);
-        }
-        // Load per-segment crew assignments
-        try {
-          const { data: crewRows, error: crewErr } = await supabase.from('planning_segment_team_members').select('*');
-          if (crewErr) console.warn('[planning] segment crew load error', crewErr);
-          else if (Array.isArray(crewRows)) {
-            const map: Record<string, Array<{ id: string | null; name: string }>> = {};
-            for (const row of crewRows) {
-              const sid = (row as any).segment_id as string;
-              if (!map[sid]) map[sid] = [];
-              map[sid].push({ id: (row as any).member_id || null, name: (row as any).member_name || '' });
-            }
-            setSegmentCrew(map);
-          }
-        } catch (e) {
-          console.warn('[planning] segment crew load exception', e);
-        }
-        // Load dynamic trucks (open select) - team names are free text
-        try {
-          const { data: trucksData, error: trucksErr } = await supabase.from('planning_trucks').select('*').order('name');
-          if (trucksErr) console.warn('[planning] trucks load error', trucksErr);
-          else if (Array.isArray(trucksData)) {
-            setPlanningTrucks(trucksData.map(t => ({ id: t.id, name: t.name, color: t.color, team_member1_name: t.team_member1_name, team_member2_name: t.team_member2_name, depot_id: (t as any).depot_id || null, team1_id: (t as any).team1_id || null, team2_id: (t as any).team2_id || null })));
-            setTruckColorOverrides(prev => {
-              const c = { ...prev };
-              for (const t of trucksData) if (t.color) c[t.name] = t.color;
-              return c;
-            });
-          }
-        } catch (e) { console.warn('[planning] could not load trucks', e); }
-
-        // Load depåer (loading sites)
-        try {
-          const { data: depRows, error: depErr } = await supabase.from('planning_depots').select('*').order('name');
-          if (depErr) console.warn('[planning] depots load error', depErr);
-          else if (Array.isArray(depRows)) setDepots(depRows as any);
-        } catch (e) {
-          console.warn('[planning] depots load exception', e);
-        }
-        // Load planned deliveries
-        try {
-          const { data: delRows, error: delErr } = await supabase.from('planning_depot_deliveries').select('*').order('delivery_date');
-          if (delErr) console.warn('[planning] deliveries load error', delErr);
-          else if (Array.isArray(delRows)) setDeliveries(delRows as any);
-        } catch (e) {
-          console.warn('[planning] deliveries load exception', e);
-        }
-        // Normalize into local shapes
-        if (Array.isArray(segs)) {
-          setScheduledSegments(segs.map(s => ({
-            id: s.id,
-            projectId: s.project_id,
-            startDay: s.start_day,
-            endDay: s.end_day,
-            createdBy: s.created_by,
-            createdByName: s.created_by_name,
-            depotId: (s as any).depot_id ?? null,
-            sortIndex: (s as any).sort_index ?? null,
-            truck: (s as any).truck ?? null,
-            jobType: (s as any).job_type ?? null,
-            onHold: (s as any).on_hold ?? false,
-            onHoldAt: (s as any).on_hold_at ?? null,
-            onHoldBy: (s as any).on_hold_by ?? null,
-          })));
-          // Inject projects from segments if not already present
-          setProjects(prev => {
-            const map = new Map(prev.map(p => [p.id, p]));
-            for (const s of segs) {
-              if (!map.has(s.project_id)) {
-                map.set(s.project_id, {
-                  id: s.project_id,
-                  name: s.project_name,
-                  customer: s.customer || '',
-                  orderNumber: s.order_number || null,
-                  createdAt: s.created_at || new Date().toISOString(),
-                  status: s.is_manual ? 'MANUELL' : 'unknown',
-                  isManual: s.is_manual,
-                  customerId: s.customer_id ?? null,
-                  customerEmail: s.customer_email ?? null,
-                  salesResponsible: s.sales_responsible ?? null
-                });
-              }
-            }
-            return Array.from(map.values());
-          });
-        }
-        if (Array.isArray(metas)) {
-          const metaObj: any = {};
-          for (const m of metas) metaObj[m.project_id] = {
-            projectId: m.project_id,
-            truck: m.truck,
-            bagCount: m.bag_count,
-            jobType: m.job_type,
-            color: m.color,
-            client_notified: m.client_notified,
-            client_notified_at: m.client_notified_at,
-            client_notified_by: m.client_notified_by,
-            actual_bags_used: m.actual_bags_used,
-            actual_bags_set_at: m.actual_bags_set_at,
-            actual_bags_set_by: m.actual_bags_set_by,
-            delivery_sent: (m as any).delivery_sent ?? null,
-            delivery_sent_at: (m as any).delivery_sent_at ?? null,
-            delivery_sent_by: (m as any).delivery_sent_by ?? null,
-            status_label: (m as any).status_label ?? null,
-            status_color: (m as any).status_color ?? null,
-          };
-          setScheduleMeta(metaObj);
-          // Prefill address cache from stored meta if available
-          try {
-            const addrMap: Record<string, string> = {};
-            for (const m of metas) {
-              const street = (m as any).address_street as string | null | undefined;
-              const postal = (m as any).address_postal as string | null | undefined;
-              const city = (m as any).address_city as string | null | undefined;
-              const parts = [street, city].filter(Boolean) as string[];
-              // If postal is available, include it between street and city if street exists
-              if (street && city && postal) {
-                addrMap[m.project_id] = `${street}, ${city}`; // keep concise; we can add postal if desired
-              } else if (parts.length) {
-                addrMap[m.project_id] = parts.join(', ');
-              }
-            }
-            if (Object.keys(addrMap).length) setProjectAddresses(prev => ({ ...addrMap, ...prev }));
-          } catch { /* ignore */ }
-        }
-        // Fetch complete sales/admin directory via internal API (service role backed)
-        try {
-          const dirRes = await fetch('/api/planning/sales-directory');
-          if (dirRes.ok) {
-            const j = await dirRes.json();
-            const names: string[] = Array.isArray(j.users) ? j.users.map((u: any) => u.name).filter((v: any): v is string => typeof v === 'string' && v.trim().length > 0) : [];
-            const trimmed = names.map(n => n.trim());
-            const unique: string[] = Array.from(new Set(trimmed)).filter(n => n.length > 0).sort((a, b) => a.localeCompare(b));
-            setSalesDirectory(unique);
-          } else {
-            console.warn('[planning] directory fetch failed status', dirRes.status);
-          }
-        } catch (e) {
-          console.warn('[planning] could not load sales directory', e);
-        }
-      } catch (e) {
-        console.warn('[planning] initial load failed', e);
-      } finally { setSyncing(false); }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    void reloadPlannerSnapshot({ includeAuth: true, includeDirectory: true });
+  }, [reloadPlannerSnapshot]);
 
   // Reset report draft when switching segment in editor
   useEffect(() => {
@@ -1976,6 +2011,10 @@ export default function PlanneringPage() {
       .subscribe(status => {
         if (status === 'SUBSCRIBED') {
           setRealtimeStatus('live');
+          if (resumeResyncPendingRef.current) {
+            resumeResyncPendingRef.current = false;
+            void reloadPlannerSnapshotRef.current?.();
+          }
           // Track current viewer with metadata
           void (async () => {
             const selfPresence = {
@@ -2003,6 +2042,8 @@ export default function PlanneringPage() {
             })();
           }, 30000);
           (channel as any)._presenceInterval = presenceInterval;
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          setRealtimeStatus('error');
         }
       });
     planningChannelRef.current = channel;
@@ -2019,6 +2060,7 @@ export default function PlanneringPage() {
         supabase.removeChannel(planningChannelRef.current);
         planningChannelRef.current = null;
       }
+      resumeResyncPendingRef.current = true;
       setRealtimePaused(true);
       setRealtimeStatus('connecting');
     } catch {}
