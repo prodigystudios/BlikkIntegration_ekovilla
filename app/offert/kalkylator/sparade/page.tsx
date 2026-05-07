@@ -9,6 +9,8 @@ import { useToast } from '@/lib/Toast';
 
 type SavedItem = {
   id: string;
+  user_id?: string | null;
+  owner_name?: string | null;
   offert_number_year?: number | null;
   offert_number_seq?: number | null;
   name: string;
@@ -58,6 +60,12 @@ export default function SparadeOfferterPage() {
   const toast = useToast();
   const router = useRouter();
   const [items, setItems] = useState<SavedItem[]>([]);
+  const [canViewAll, setCanViewAll] = useState(false);
+  const [currentUserId, setCurrentUserId] = useState('');
+  const [listScope, setListScope] = useState<'mine' | 'all'>('mine');
+  const [salespersonFilter, setSalespersonFilter] = useState('all');
+  const [nameQuery, setNameQuery] = useState('');
+  const [activeStatusFilter, setActiveStatusFilter] = useState<'all' | 'Återkoppling' | 'Bekräftad' | 'Förlorad'>('all');
   const [loadingList, setLoadingList] = useState(false);
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -158,10 +166,13 @@ export default function SparadeOfferterPage() {
   const refreshList = async () => {
     setLoadingList(true);
     try {
-      const res = await fetch('/api/offert-kalkylator', { method: 'GET' });
+      const query = listScope === 'all' ? '?scope=all' : '';
+      const res = await fetch(`/api/offert-kalkylator${query}`, { method: 'GET' });
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error || 'Kunde inte hämta sparade offerter.');
       setItems(Array.isArray(json?.items) ? json.items : []);
+      setCanViewAll(Boolean(json?.canViewAll));
+      setCurrentUserId(String(json?.currentUserId || ''));
     } catch (e: any) {
       toast.error(e?.message || String(e));
     } finally {
@@ -172,7 +183,13 @@ export default function SparadeOfferterPage() {
   useEffect(() => {
     refreshList();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [listScope]);
+
+  useEffect(() => {
+    if (!canViewAll || listScope !== 'all') {
+      setSalespersonFilter('all');
+    }
+  }, [canViewAll, listScope]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -232,7 +249,36 @@ export default function SparadeOfferterPage() {
     return arr;
   }, [items, sortMode]);
 
+  const salespersonOptions = useMemo(() => {
+    const labels = new Set<string>();
+    for (const item of items) {
+      const label = String(item.salesperson || item.owner_name || '').trim();
+      if (label) labels.add(label);
+    }
+    return Array.from(labels).sort((a, b) => a.localeCompare(b, 'sv', { sensitivity: 'base' }));
+  }, [items]);
+
+  const scopeItems = useMemo(() => {
+    if (listScope !== 'all' || salespersonFilter === 'all') return sortedItems;
+    return sortedItems.filter((item) => {
+      const label = String(item.salesperson || item.owner_name || '').trim();
+      return label === salespersonFilter;
+    });
+  }, [listScope, salespersonFilter, sortedItems]);
+
+  const filteredItems = useMemo(() => {
+    const query = nameQuery.trim().toLocaleLowerCase('sv-SE');
+    return scopeItems.filter((item) => {
+      const matchesName = !query || String(item.name || '').toLocaleLowerCase('sv-SE').includes(query);
+      const matchesStatus = activeStatusFilter === 'all' || String(item.status || 'Återkoppling') === activeStatusFilter;
+      return matchesName && matchesStatus;
+    });
+  }, [activeStatusFilter, nameQuery, scopeItems]);
+
   const selectedItem = useMemo(() => items.find((item) => item.id === selectedId) ?? null, [items, selectedId]);
+  const selectedItemIsOtherOwners = Boolean(
+    selectedItem && canViewAll && listScope === 'all' && String(selectedItem.user_id || '') && String(selectedItem.user_id || '') !== currentUserId,
+  );
 
   const activityItems = useMemo(() => {
     if (!selectedItem) return [] as Array<{ id: string; label: string; detail: string; tone: 'neutral' | 'success' | 'warning'; at?: string | null }>;
@@ -385,7 +431,7 @@ export default function SparadeOfferterPage() {
           <div style={{ display: 'grid', gap: 6, maxWidth: 760 }}>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
               <span style={heroEyebrowStyle}>Offertarkiv</span>
-              <span style={{ fontSize: 11, color: '#64748b' }}>{items.length} sparade offerter</span>
+              <span style={{ fontSize: 11, color: '#64748b' }}>{filteredItems.length} sparade offerter</span>
             </div>
             <h1 style={{ margin: 0, fontSize: isNarrow ? 28 : 34, lineHeight: 1.05, color: '#0f172a' }}>Sparade offerter</h1>
             <p style={{ margin: 0, fontSize: 14, color: '#475569', maxWidth: 760 }}>Här kan du sortera, öppna, dela och följa upp tidigare offerter i en tydligare översikt.</p>
@@ -396,45 +442,154 @@ export default function SparadeOfferterPage() {
         </div>
 
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <span style={metaChipStyle}>{items.length} totalt</span>
-          <span style={metaChipStyle}>{sortedItems.filter((item) => String(item.status || 'Återkoppling') === 'Bekräftad').length} bekräftade</span>
-          <span style={metaChipStyle}>{sortedItems.filter((item) => String(item.status || 'Återkoppling') === 'Återkoppling').length} återkoppling</span>
+          <span style={metaChipStyle}>{filteredItems.length} totalt</span>
+          {canViewAll ? <span style={metaChipStyle}>{listScope === 'all' ? 'Visar alla offerter' : 'Visar mina offerter'}</span> : null}
+          {listScope === 'all' && salespersonFilter !== 'all' ? <span style={metaChipStyle}>Säljare {salespersonFilter}</span> : null}
+          {nameQuery.trim() ? <span style={metaChipStyle}>Sökning: {nameQuery.trim()}</span> : null}
+          <span style={metaChipStyle}>{filteredItems.filter((item) => String(item.status || 'Återkoppling') === 'Bekräftad').length} bekräftade</span>
+          <span style={metaChipStyle}>{filteredItems.filter((item) => String(item.status || 'Återkoppling') === 'Återkoppling').length} återkoppling</span>
         </div>
       </div>
 
-      <section style={{ border: '1px solid #dbe4ef', borderRadius: 20, padding: 14, background: '#ffffff', display: 'grid', gap: 12, boxShadow: '0 12px 28px rgba(15,23,42,0.04)' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          <div style={{ display: 'grid', gap: 3 }}>
-            <strong style={{ fontSize: 12, letterSpacing: 0.35, textTransform: 'uppercase', color: '#0f172a' }}>Lista</strong>
-            <span style={{ fontSize: 12, color: '#64748b' }}>Sortera offertlistan och öppna rätt ärende snabbare.</span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#334155' }}>
+      <section style={{ border: '1px solid #dbe4ef', borderRadius: 20, padding: 12, background: '#ffffff', display: 'grid', gap: 12, boxShadow: '0 12px 28px rgba(15,23,42,0.04)' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isNarrow ? '1fr' : 'minmax(240px, 280px) minmax(0, 1fr)', gap: 12, alignItems: 'start' }}>
+          <aside
+            style={{
+              position: isNarrow ? 'static' : 'sticky',
+              top: isNarrow ? undefined : 'max(10px, calc(env(safe-area-inset-top) + 10px))',
+              display: 'grid',
+              gap: 10,
+              padding: isNarrow ? '12px' : '14px',
+              borderRadius: 18,
+              border: '1px solid rgba(219, 228, 239, 0.95)',
+              background: 'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)',
+              boxShadow: '0 10px 22px rgba(15,23,42,0.05)',
+              alignContent: 'start',
+            }}
+          >
+            <div style={{ display: 'grid', gap: 4 }}>
+              <strong style={{ fontSize: 12, letterSpacing: 0.35, textTransform: 'uppercase', color: '#0f172a' }}>Filtrera listan</strong>
+              <span style={{ fontSize: 11, color: '#64748b', lineHeight: 1.45 }}>Sök, sortera och avgränsa resultatet medan du scrollar i listan.</span>
+            </div>
+
+            <label style={{ display: 'grid', gap: 6, fontSize: 12, color: '#334155' }}>
+              <span>Sök kund</span>
+              <input
+                type="search"
+                value={nameQuery}
+                onChange={(e) => setNameQuery(e.target.value)}
+                placeholder="Kundnamn"
+                style={{ ...selectFieldStyle, padding: '7px 10px' }}
+              />
+            </label>
+
+            {canViewAll ? (
+              <label style={{ display: 'grid', gap: 6, fontSize: 12, color: '#334155' }}>
+                <span>Visa</span>
+                <select className="select-field" style={selectFieldStyle} value={listScope} onChange={(e) => setListScope(e.target.value as 'mine' | 'all')}>
+                  <option value="mine">Mina offerter</option>
+                  <option value="all">Alla offerter</option>
+                </select>
+              </label>
+            ) : null}
+
+            {canViewAll && listScope === 'all' ? (
+              <label style={{ display: 'grid', gap: 6, fontSize: 12, color: '#334155' }}>
+                <span>Säljare</span>
+                <select className="select-field" style={selectFieldStyle} value={salespersonFilter} onChange={(e) => setSalespersonFilter(e.target.value)}>
+                  <option value="all">Alla säljare</option>
+                  {salespersonOptions.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+
+            <label style={{ display: 'grid', gap: 6, fontSize: 12, color: '#334155' }}>
               <span>Sortera</span>
               <select className="select-field" style={selectFieldStyle} value={sortMode} onChange={(e) => setSortMode(e.target.value as SortMode)}>
-                <option value="created_desc">Senast Sparad</option>
+                <option value="created_desc">Senast sparad</option>
                 <option value="created_asc">Äldst sparad</option>
                 <option value="quote_date_desc">Offertdatum (nyast)</option>
                 <option value="quote_date_asc">Offertdatum (äldst)</option>
-                <option value="name_asc">Namn (A–Ö)</option>
-                <option value="name_desc">Namn (Ö–A)</option>
-                <option value="status_asc">Status (Återkoppling → Förlorad)</option>
-                <option value="status_desc">Status (Förlorad → Återkoppling)</option>
+                <option value="name_asc">Namn (A-Ö)</option>
+                <option value="name_desc">Namn (Ö-A)</option>
+                <option value="status_asc">Status (Återkoppling till Förlorad)</option>
+                <option value="status_desc">Status (Förlorad till Återkoppling)</option>
                 <option value="total_after_rot_desc">Efter ROT (högst)</option>
                 <option value="total_after_rot_asc">Efter ROT (lägst)</option>
               </select>
             </label>
-            <button className="btn--plain btn--sm" onClick={refreshList} disabled={loadingList}>
-              {loadingList ? 'Uppdaterar…' : 'Uppdatera'}
-            </button>
-          </div>
-        </div>
 
-        {items.length === 0 ? (
-          <div style={{ fontSize: 12, color: '#64748b', border: '1px dashed #cbd5e1', borderRadius: 16, padding: '16px 14px', background: '#f8fafc' }}>Inga sparade offerter ännu.</div>
-        ) : (
-          <div style={{ display: 'grid', gap: 8 }}>
-            {sortedItems.map((it) => (
+            <div style={{ display: 'grid', gap: 6 }}>
+              <button className="btn--plain btn--sm" onClick={refreshList} disabled={loadingList}>
+                {loadingList ? 'Uppdaterar…' : 'Uppdatera'}
+              </button>
+              {(nameQuery.trim() || salespersonFilter !== 'all' || listScope !== 'mine') ? (
+                <button
+                  className="btn--plain btn--sm"
+                  onClick={() => {
+                    setNameQuery('');
+                    setSalespersonFilter('all');
+                    setActiveStatusFilter('all');
+                    setListScope('mine');
+                  }}
+                >
+                  Rensa filter
+                </button>
+              ) : null}
+            </div>
+
+            <div style={{ display: 'grid', gap: 6, paddingTop: 4 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.25 }}>Snabbstatus</span>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                <button type="button" style={statusFilterChipStyle(activeStatusFilter === 'all')} onClick={() => setActiveStatusFilter('all')}>
+                  Alla
+                </button>
+                <button type="button" style={statusFilterChipStyle(activeStatusFilter === 'Återkoppling')} onClick={() => setActiveStatusFilter('Återkoppling')}>
+                  Återkoppling
+                </button>
+                <button type="button" style={statusFilterChipStyle(activeStatusFilter === 'Bekräftad')} onClick={() => setActiveStatusFilter('Bekräftad')}>
+                  Bekräftad
+                </button>
+                <button type="button" style={statusFilterChipStyle(activeStatusFilter === 'Förlorad')} onClick={() => setActiveStatusFilter('Förlorad')}>
+                  Förlorad
+                </button>
+              </div>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                <span style={compactMetaChipStyle}>{filteredItems.length} totalt</span>
+                <span style={compactMetaChipStyle}>{filteredItems.filter((item) => String(item.status || 'Återkoppling') === 'Bekräftad').length} bekräftade</span>
+                <span style={compactMetaChipStyle}>{filteredItems.filter((item) => String(item.status || 'Återkoppling') === 'Återkoppling').length} återkoppling</span>
+              </div>
+            </div>
+          </aside>
+
+          <div style={{ display: 'grid', gap: 10, minWidth: 0 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10, flexWrap: 'wrap', padding: '4px 2px 0' }}>
+              <div style={{ display: 'grid', gap: 4 }}>
+                <strong style={{ fontSize: 12, letterSpacing: 0.35, textTransform: 'uppercase', color: '#0f172a' }}>Lista</strong>
+                <span style={{ fontSize: 11, color: '#64748b' }}>Resultatet ligger till höger medan filtren stannar kvar till vänster.</span>
+              </div>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                {canViewAll ? <span style={compactMetaChipStyle}>{listScope === 'all' ? 'Visar alla offerter' : 'Visar mina offerter'}</span> : null}
+                {listScope === 'all' && salespersonFilter !== 'all' ? <span style={compactMetaChipStyle}>Säljare {salespersonFilter}</span> : null}
+                {nameQuery.trim() ? <span style={compactMetaChipStyle}>Sökning: {nameQuery.trim()}</span> : null}
+              </div>
+            </div>
+
+            {filteredItems.length === 0 ? (
+              <div style={{ fontSize: 12, color: '#64748b', border: '1px dashed #cbd5e1', borderRadius: 16, padding: '16px 14px', background: '#f8fafc' }}>
+                {nameQuery.trim() ? 'Ingen offert matchade sökningen.' : 'Inga sparade offerter ännu.'}
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gap: 6 }}>
+                {filteredItems.map((it) => {
+                  const ownerLabel = String(it.owner_name || it.salesperson || '').trim();
+                  const isOtherOwners = canViewAll && listScope === 'all' && String(it.user_id || '') && String(it.user_id || '') !== currentUserId;
+
+                  return (
               <div
                 key={it.id}
                 role="button"
@@ -449,17 +604,17 @@ export default function SparadeOfferterPage() {
                     setSelectedId(it.id);
                   }
                 }}
-                style={{ border: '1px solid #e2e8f0', borderRadius: 18, padding: '14px 14px 12px', display: 'grid', gap: 12, background: 'linear-gradient(180deg, #ffffff 0%, #fbfdff 100%)', boxShadow: hoveredId === it.id || selectedId === it.id ? '0 16px 30px rgba(15,23,42,0.07)' : '0 10px 22px rgba(15,23,42,0.03)', transition: 'box-shadow 160ms ease, border-color 160ms ease', borderColor: hoveredId === it.id || selectedId === it.id ? '#cbd5e1' : '#e2e8f0', cursor: 'pointer', outline: 'none' }}
+                style={{ border: '1px solid #e2e8f0', borderRadius: 16, padding: '11px 12px 10px', display: 'grid', gap: 9, background: isOtherOwners ? 'linear-gradient(180deg, #fffbeb 0%, #fff7d6 100%)' : 'linear-gradient(180deg, #ffffff 0%, #fbfdff 100%)', boxShadow: hoveredId === it.id || selectedId === it.id ? '0 14px 24px rgba(15,23,42,0.07)' : '0 8px 16px rgba(15,23,42,0.03)', transition: 'box-shadow 160ms ease, border-color 160ms ease', borderColor: isOtherOwners ? '#fcd34d' : hoveredId === it.id || selectedId === it.id ? '#cbd5e1' : '#e2e8f0', cursor: 'pointer', outline: 'none' }}
               >
-                <div style={{ display: 'grid', gridTemplateColumns: isNarrow ? '1fr' : 'minmax(0, 1fr) auto', gap: 12, alignItems: 'start' }}>
-                  <div style={{ display: 'grid', gap: 6 }}>
-                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                      <div style={{ fontWeight: 800, fontSize: 14, color: '#0f172a' }}>{it.name}</div>
+                <div style={{ display: 'grid', gridTemplateColumns: isNarrow ? '1fr' : 'minmax(0, 1fr) auto', gap: 10, alignItems: 'start' }}>
+                  <div style={{ display: 'grid', gap: 5 }}>
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <div style={{ fontWeight: 800, fontSize: 13, color: '#0f172a' }}>{it.name}</div>
                       {formatOffertNumber(it.offert_number_year, it.offert_number_seq) && (
                         <span
                           style={{
-                            fontSize: 11,
-                            padding: '2px 8px',
+                            fontSize: 10,
+                            padding: '2px 7px',
                             borderRadius: 999,
                             border: '1px solid #e5e7eb',
                             background: '#f8fafc',
@@ -474,6 +629,7 @@ export default function SparadeOfferterPage() {
                       <span style={{ ...metaChipStyle, background: statusTone(String(it.status || 'Återkoppling')).bg, border: `1px solid ${statusTone(String(it.status || 'Återkoppling')).border}`, color: statusTone(String(it.status || 'Återkoppling')).text }}>
                         {String(it.status || 'Återkoppling')}
                       </span>
+                      {isOtherOwners ? <span style={otherOwnerBadgeStyle}>Annan säljares offert{ownerLabel ? `: ${ownerLabel}` : ''}</span> : null}
                       {String(it.customer_submitted_at || '').trim() && (
                         <span
                           style={{
@@ -491,35 +647,39 @@ export default function SparadeOfferterPage() {
                         </span>
                       )}
                     </div>
-                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                      <span style={metaChipStyle}>{it.address}</span>
-                      <span style={metaChipStyle}>{it.city}</span>
-                      <span style={metaChipStyle}>Offertdatum {it.quote_date}</span>
-                      <span style={metaChipStyle}>{it.salesperson}</span>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                      <span style={compactMetaChipStyle}>{it.address}</span>
+                      <span style={compactMetaChipStyle}>{it.city}</span>
+                      <span style={compactMetaChipStyle}>Offertdatum {it.quote_date}</span>
+                      <span style={compactMetaChipStyle}>{it.salesperson}</span>
                     </div>
+                    {isOtherOwners ? <div style={{ fontSize: 11, color: '#92400e', fontWeight: 700 }}>Du tittar på {ownerLabel || 'en annan säljares'} offert.</div> : null}
                     {it.next_meeting_date && (
-                      <div style={{ fontSize: 12, color: '#64748b' }}>Nästa möte: {String(it.next_meeting_date)}</div>
+                      <div style={{ fontSize: 11, color: '#64748b' }}>Nästa möte: {String(it.next_meeting_date)}</div>
                     )}
-                    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
-                      <span style={{ fontSize: 12, color: '#94a3b8' }}>{new Date(it.created_at).toLocaleString('sv-SE')}</span>
-                      <span style={{ fontSize: 12, fontWeight: 700, color: '#2563eb' }}>Klicka för detaljer</span>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                      <span style={{ fontSize: 11, color: '#94a3b8' }}>{new Date(it.created_at).toLocaleString('sv-SE')}</span>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: '#2563eb' }}>Klicka för detaljer</span>
                     </div>
                   </div>
-                  <div style={{ display: 'grid', gap: 8, textAlign: isNarrow ? 'left' : 'right', justifyItems: isNarrow ? 'start' : 'end' }}>
-                    <div style={{ padding: '10px 12px', borderRadius: 14, border: '1px solid #bfdbfe', background: 'linear-gradient(180deg, #eff6ff 0%, #dbeafe 100%)', minWidth: isNarrow ? 'auto' : 150 }}>
-                      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.25, textTransform: 'uppercase', color: '#1d4ed8' }}>Efter ROT</div>
-                      <div style={{ fontWeight: 800, fontSize: 18, color: '#1d4ed8', marginTop: 4 }}>{formatKr(it.total_after_rot)}</div>
+                  <div style={{ display: 'grid', gap: 6, textAlign: isNarrow ? 'left' : 'right', justifyItems: isNarrow ? 'start' : 'end' }}>
+                    <div style={{ padding: '8px 10px', borderRadius: 12, border: '1px solid #bfdbfe', background: 'linear-gradient(180deg, #eff6ff 0%, #dbeafe 100%)', minWidth: isNarrow ? 'auto' : 138 }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.25, textTransform: 'uppercase', color: '#1d4ed8' }}>Efter ROT</div>
+                      <div style={{ fontWeight: 800, fontSize: 16, color: '#1d4ed8', marginTop: 3 }}>{formatKr(it.total_after_rot)}</div>
                     </div>
-                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: isNarrow ? 'flex-start' : 'flex-end' }}>
-                      <span style={metaChipStyle}>Före ROT {formatKr(it.total_before_rot)}</span>
-                      <span style={metaChipStyle}>ROT {formatKr(it.rot_amount)}</span>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: isNarrow ? 'flex-start' : 'flex-end' }}>
+                      <span style={compactMetaChipStyle}>Före ROT {formatKr(it.total_before_rot)}</span>
+                      <span style={compactMetaChipStyle}>ROT {formatKr(it.rot_amount)}</span>
                     </div>
                   </div>
                 </div>
               </div>
-            ))}
+                  );
+                })}
+              </div>
+            )}
           </div>
-        )}
+        </div>
       </section>
 
       {selectedItem ? (
@@ -560,6 +720,15 @@ export default function SparadeOfferterPage() {
                 Stäng
               </button>
             </div>
+
+            {selectedItemIsOtherOwners ? (
+              <div style={otherOwnerNoticeStyle}>
+                <strong style={{ fontSize: 13, color: '#92400e' }}>Adminvy: annan säljares offert</strong>
+                <span style={{ fontSize: 12, color: '#92400e' }}>
+                  {String(selectedItem.owner_name || selectedItem.salesperson || '').trim() || 'Annan säljare'} ansvarar för den här offerten, men du kan fortfarande granska och hantera den härifrån.
+                </span>
+              </div>
+            ) : null}
 
             <div style={{ display: 'grid', gridTemplateColumns: isNarrow ? '1fr' : 'repeat(4, minmax(0, 1fr))', gap: 10 }}>
               <div style={previewStatCardStyle}>
@@ -767,6 +936,40 @@ const metaChipStyle: React.CSSProperties = {
   border: '1px solid #e2e8f0',
 };
 
+const compactMetaChipStyle: React.CSSProperties = {
+  ...metaChipStyle,
+  padding: '3px 7px',
+  fontSize: 11,
+};
+
+const otherOwnerBadgeStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  padding: '3px 9px',
+  borderRadius: 999,
+  background: '#fef3c7',
+  color: '#92400e',
+  border: '1px solid #fcd34d',
+  fontSize: 11,
+  fontWeight: 800,
+};
+
+function statusFilterChipStyle(active: boolean): React.CSSProperties {
+  return {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '6px 9px',
+    borderRadius: 999,
+    border: active ? '1px solid #93c5fd' : '1px solid #dbe4ef',
+    background: active ? '#dbeafe' : '#ffffff',
+    color: active ? '#1d4ed8' : '#475569',
+    fontSize: 11,
+    fontWeight: 700,
+    cursor: 'pointer',
+  };
+}
+
 const selectFieldStyle: React.CSSProperties = {
   width: '100%',
   padding: '8px 10px',
@@ -873,6 +1076,15 @@ const modalSectionStyle: React.CSSProperties = {
   borderRadius: 18,
   border: '1px solid #dbe4ef',
   background: '#ffffff',
+};
+
+const otherOwnerNoticeStyle: React.CSSProperties = {
+  display: 'grid',
+  gap: 6,
+  padding: '12px 14px',
+  borderRadius: 16,
+  border: '1px solid #fcd34d',
+  background: 'linear-gradient(180deg, #fffbeb 0%, #fef3c7 100%)',
 };
 
 const modalSectionTitleStyle: React.CSSProperties = {

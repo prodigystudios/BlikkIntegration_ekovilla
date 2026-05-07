@@ -5,6 +5,8 @@ import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { computeOffertKalkylator, OFFERT_KALKYLATOR_DEFAULT_STATE } from '@/lib/offertKalkylator';
+import { adminSupabase } from '@/lib/adminSupabase';
+import { applyOffertOwnerScope, getOffertAccessContext } from '@/lib/offertAccess';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -93,16 +95,22 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
     const id = String(params?.id || '').trim();
     if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
 
-    const supabase = createRouteHandlerClient({ cookies });
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const access = await getOffertAccessContext();
+    if (!access.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { data: item, error } = await supabase
-      .from('offert_calculations')
-      .select('id, offert_number_year, offert_number_seq, created_at, name, address, city, phone, quote_date, salesperson, salesperson_phone, next_meeting_date, status, payload, subtotal, total_before_rot, rot_amount, total_after_rot')
-      .eq('id', id)
-      .eq('user_id', user.id)
-      .single();
+    const includeAll = access.canViewAll;
+    const db = includeAll && adminSupabase ? adminSupabase : createRouteHandlerClient({ cookies });
+
+    const scopedQuery = applyOffertOwnerScope(
+      db
+        .from('offert_calculations')
+        .select('id, offert_number_year, offert_number_seq, created_at, name, address, city, phone, quote_date, salesperson, salesperson_phone, next_meeting_date, status, payload, subtotal, total_before_rot, rot_amount, total_after_rot')
+        .eq('id', id),
+      access.userId,
+      includeAll,
+    );
+
+    const { data: item, error } = await scopedQuery.single();
 
     if (error) throw error;
     if (!item) return NextResponse.json({ error: 'Not found' }, { status: 404 });

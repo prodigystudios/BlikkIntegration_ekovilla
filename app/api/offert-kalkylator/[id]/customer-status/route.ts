@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { adminSupabase } from '@/lib/adminSupabase';
+import { applyOffertOwnerScope, getOffertAccessContext } from '@/lib/offertAccess';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -10,19 +11,21 @@ export async function GET(_req: Request, ctx: { params: { id: string } }) {
   try {
     if (!adminSupabase) return NextResponse.json({ error: 'Admin supabase not configured' }, { status: 500 });
 
-    const supabase = createRouteHandlerClient({ cookies });
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const access = await getOffertAccessContext();
+    if (!access.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const offertId = (ctx?.params?.id || '').trim();
     if (!offertId) return NextResponse.json({ error: 'Missing offert id' }, { status: 400 });
 
-    const { data: offer, error: offerErr } = await adminSupabase
-      .from('offert_calculations')
-      .select('id')
-      .eq('id', offertId)
-      .eq('user_id', user.id)
-      .maybeSingle();
+    const offerQuery = applyOffertOwnerScope(
+      adminSupabase
+        .from('offert_calculations')
+        .select('id')
+        .eq('id', offertId),
+      access.userId,
+      access.canViewAll,
+    );
+    const { data: offer, error: offerErr } = await offerQuery.maybeSingle();
     if (offerErr) throw offerErr;
     if (!offer) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 

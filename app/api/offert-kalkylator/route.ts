@@ -3,25 +3,59 @@ import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { computeOffertKalkylator, OFFERT_KALKYLATOR_DEFAULT_STATE } from '@/lib/offertKalkylator';
 import { adminSupabase } from '@/lib/adminSupabase';
+import { applyOffertOwnerScope, getOffertAccessContext } from '@/lib/offertAccess';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
-    const supabase = createRouteHandlerClient({ cookies });
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const access = await getOffertAccessContext();
+    if (!access.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { data, error } = await supabase
+    const requestedAll = req.nextUrl.searchParams.get('scope') === 'all';
+    const includeAll = requestedAll && access.canViewAll;
+    const db = includeAll && adminSupabase ? adminSupabase : access.supabase;
+
+    const scopedQuery = applyOffertOwnerScope(
+      db
       .from('offert_calculations')
-      .select('id, offert_number_year, offert_number_seq, name, address, city, phone, quote_date, salesperson, salesperson_phone, status, next_meeting_date, internal_note, created_at, updated_at, subtotal, total_before_rot, rot_amount, total_after_rot')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false });
+      .select('id, user_id, offert_number_year, offert_number_seq, name, address, city, phone, quote_date, salesperson, salesperson_phone, status, next_meeting_date, internal_note, created_at, updated_at, subtotal, total_before_rot, rot_amount, total_after_rot')
+      .order('created_at', { ascending: false }),
+      access.userId,
+      includeAll,
+    );
+
+    const { data, error } = await scopedQuery;
 
     if (error) throw error;
 
     const items = (data ?? []) as any[];
+
+    if (adminSupabase && items.length > 0) {
+      const ownerIds = Array.from(new Set(items.map((item) => String(item.user_id || '').trim()).filter(Boolean)));
+      if (ownerIds.length > 0) {
+        const { data: profiles, error: profileErr } = await adminSupabase
+          .from('profiles')
+          .select('id, full_name')
+          .in('id', ownerIds);
+
+        if (profileErr) {
+          if (process.env.NODE_ENV !== 'production') console.warn('[offert-kalkylator GET] owner lookup failed', profileErr.message);
+        } else {
+          const ownerNames = new Map<string, string>();
+          for (const profile of (profiles || []) as any[]) {
+            const ownerId = String(profile?.id || '').trim();
+            const fullName = String(profile?.full_name || '').trim();
+            if (ownerId) ownerNames.set(ownerId, fullName);
+          }
+
+          for (const item of items) {
+            (item as any).owner_name = ownerNames.get(String(item.user_id || '').trim()) || null;
+          }
+        }
+      }
+    }
 
     // Optional: attach customer-response status per offer.
     if (adminSupabase && items.length > 0) {
@@ -29,7 +63,6 @@ export async function GET() {
       const { data: reqRows, error: reqErr } = await adminSupabase
         .from('offert_customer_requests')
         .select('offert_id, submitted_at')
-        .eq('seller_user_id', user.id)
         .eq('status', 'submitted')
         .in('offert_id', ids);
 
@@ -53,7 +86,12 @@ export async function GET() {
       }
     }
 
-    return NextResponse.json({ items });
+    return NextResponse.json({
+      items,
+      canViewAll: access.canViewAll,
+      currentUserId: access.userId,
+      currentUserName: access.profileName,
+    });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message ?? 'Unknown error' }, { status: 500 });
   }

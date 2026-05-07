@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { computeOffertKalkylator, OFFERT_KALKYLATOR_DEFAULT_STATE } from '@/lib/offertKalkylator';
+import { adminSupabase } from '@/lib/adminSupabase';
+import { applyOffertOwnerScope, getOffertAccessContext } from '@/lib/offertAccess';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -11,16 +11,19 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
     const id = String(params?.id || '');
     if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
 
-    const supabase = createRouteHandlerClient({ cookies });
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const access = await getOffertAccessContext();
+    if (!access.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { data, error } = await supabase
-      .from('offert_calculations')
-      .select('*')
-      .eq('id', id)
-      .eq('user_id', user.id)
-      .single();
+    const includeAll = access.canViewAll;
+    const db = includeAll && adminSupabase ? adminSupabase : access.supabase;
+
+    const scopedQuery = applyOffertOwnerScope(
+      db.from('offert_calculations').select('*').eq('id', id),
+      access.userId,
+      includeAll,
+    );
+
+    const { data, error } = await scopedQuery.single();
 
     if (error) throw error;
     return NextResponse.json({ item: data });
@@ -34,15 +37,19 @@ export async function DELETE(_req: NextRequest, { params }: { params: { id: stri
     const id = String(params?.id || '');
     if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
 
-    const supabase = createRouteHandlerClient({ cookies });
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const access = await getOffertAccessContext();
+    if (!access.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { error } = await supabase
-      .from('offert_calculations')
-      .delete()
-      .eq('id', id)
-      .eq('user_id', user.id);
+    const includeAll = access.canViewAll;
+    const db = includeAll && adminSupabase ? adminSupabase : access.supabase;
+
+    const scopedQuery = applyOffertOwnerScope(
+      db.from('offert_calculations').delete().eq('id', id),
+      access.userId,
+      includeAll,
+    );
+
+    const { error } = await scopedQuery;
 
     if (error) throw error;
     return NextResponse.json({ ok: true });
@@ -56,9 +63,11 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     const id = String(params?.id || '');
     if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
 
-    const supabase = createRouteHandlerClient({ cookies });
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const access = await getOffertAccessContext();
+    if (!access.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+    const includeAll = access.canViewAll;
+    const db = includeAll && adminSupabase ? adminSupabase : access.supabase;
 
     const body = await req.json();
 
@@ -104,13 +113,17 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
     if (Object.keys(update).length === 0) return NextResponse.json({ error: 'Nothing to update' }, { status: 400 });
 
-    const { data, error } = await supabase
-      .from('offert_calculations')
-      .update(update)
-      .eq('id', id)
-      .eq('user_id', user.id)
-      .select('id, offert_number_year, offert_number_seq, name, address, city, phone, quote_date, salesperson, salesperson_phone, status, next_meeting_date, internal_note, created_at, updated_at, subtotal, total_before_rot, rot_amount, total_after_rot')
-      .single();
+    const scopedQuery = applyOffertOwnerScope(
+      db
+        .from('offert_calculations')
+        .update(update)
+        .eq('id', id)
+        .select('id, offert_number_year, offert_number_seq, name, address, city, phone, quote_date, salesperson, salesperson_phone, status, next_meeting_date, internal_note, created_at, updated_at, subtotal, total_before_rot, rot_amount, total_after_rot'),
+      access.userId,
+      includeAll,
+    );
+
+    const { data, error } = await scopedQuery.single();
 
     if (error) throw error;
     return NextResponse.json({ item: data });

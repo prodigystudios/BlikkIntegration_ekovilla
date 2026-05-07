@@ -16,6 +16,8 @@ type PagedList<T> = {
   items: T[];
 };
 
+const MAX_ETAPP_ROWS = 6;
+
 export default function EgenkontrollPage() {
   // Supabase client (used to persist actual_bags_used to planning_project_meta)
   const supabase = useMemo(() => createClientComponentClient(), []);
@@ -98,7 +100,7 @@ export default function EgenkontrollPage() {
 
   const addEtappOpenRow = () =>
     setEtapperOpen((rows) => {
-      if (rows.length >= 3) return rows; // cap at 3 rows
+      if (rows.length >= MAX_ETAPP_ROWS) return rows;
       return [
         ...rows,
         { lambdavarde: MATERIALS[materialUsed]?.lambda },
@@ -145,7 +147,7 @@ export default function EgenkontrollPage() {
 
   const addEtappClosedRow = () =>
     setEtapperClosed((rows) => {
-      if (rows.length >= 3) return rows; // cap at 3 rows
+      if (rows.length >= MAX_ETAPP_ROWS) return rows;
       return [
         ...rows,
         { lambdavarde: MATERIALS[materialUsed]?.lambda },
@@ -180,13 +182,17 @@ export default function EgenkontrollPage() {
     return () => clearTimeout(t);
   }, [toast]);
   const [orderId, setOrderId] = useState('');
+  const shouldAutoLookupRef = useRef(false);
   // Read orderId from query (e.g., /egenkontroll?orderId=1234) via Suspense-wrapped child to satisfy Next.js CSR bailout requirement
   function InitOrderId({ orderId, setOrderId }: { orderId: string; setOrderId: (v: string) => void }) {
     const searchParams = useSearchParams();
     useEffect(() => {
       try {
         const initial = searchParams.get('orderId') || searchParams.get('order') || '';
-        if (initial && !orderId) setOrderId(initial);
+        if (initial && !orderId) {
+          shouldAutoLookupRef.current = true;
+          setOrderId(initial);
+        }
       } catch {}
     }, [searchParams, orderId, setOrderId]);
     return null;
@@ -197,7 +203,10 @@ export default function EgenkontrollPage() {
       if (orderId) return;
       const url = new URL(window.location.href);
       const initial = url.searchParams.get('orderId') || url.searchParams.get('order') || '';
-      if (initial) setOrderId(initial);
+      if (initial) {
+        shouldAutoLookupRef.current = true;
+        setOrderId(initial);
+      }
     } catch {}
     // run only on mount
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -365,8 +374,8 @@ export default function EgenkontrollPage() {
       if (typeof d.dammighet === 'string') setDammighet(d.dammighet);
       if (typeof d.klumpighet === 'string') setKlumpighet(d.klumpighet);
       if (typeof d.signatureDateCity === 'string') setSignatureDateCity(d.signatureDateCity);
-      if (Array.isArray(d.etapperOpen)) setEtapperOpen(d.etapperOpen.slice(0, 3));
-      if (Array.isArray(d.etapperClosed)) setEtapperClosed(d.etapperClosed.slice(0, 3));
+      if (Array.isArray(d.etapperOpen)) setEtapperOpen(d.etapperOpen.slice(0, MAX_ETAPP_ROWS));
+      if (Array.isArray(d.etapperClosed)) setEtapperClosed(d.etapperClosed.slice(0, MAX_ETAPP_ROWS));
     } catch {}
   }
   const getCanvasPos = (e: React.MouseEvent | React.TouchEvent) => {
@@ -562,8 +571,8 @@ export default function EgenkontrollPage() {
       const desc: string = String(project?.description ?? '').trim();
       if (desc && etapperOpen.length === 0 && etapperClosed.length === 0) {
         const parsed = parseDescriptionToRows(desc);
-        if (parsed.open.length) setEtapperOpen(parsed.open.slice(0, 3));
-        if (parsed.closed.length) setEtapperClosed(parsed.closed.slice(0, 3));
+        if (parsed.open.length) setEtapperOpen(parsed.open.slice(0, MAX_ETAPP_ROWS));
+        if (parsed.closed.length) setEtapperClosed(parsed.closed.slice(0, MAX_ETAPP_ROWS));
       }
     } catch {}
   }, [project]);
@@ -628,8 +637,9 @@ export default function EgenkontrollPage() {
   // If orderId was provided from URL, auto-run lookup once it becomes non-empty
   const didAutoRef = useRef(false);
   useEffect(() => {
-    if (!didAutoRef.current && orderId && orderId.trim()) {
+    if (!didAutoRef.current && shouldAutoLookupRef.current && orderId && orderId.trim()) {
       didAutoRef.current = true;
+      shouldAutoLookupRef.current = false;
       onLookup();
     }
   }, [orderId]);
@@ -852,7 +862,7 @@ export default function EgenkontrollPage() {
         <div style={{ display: 'grid', gap: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <h3 style={subsectionTitleStyle}>Etapper (öppet)</h3>
-            <button className='btn--med' type="button" onClick={addEtappOpenRow} disabled={etapperOpen.length >= 3} title={etapperOpen.length >= 3 ? 'Max 3 rader' : ''} style={{ opacity: etapperOpen.length >= 3 ? 0.5 : 1, cursor: etapperOpen.length >= 3 ? 'not-allowed' : 'pointer' }}>
+            <button className='btn--med' type="button" onClick={addEtappOpenRow} disabled={etapperOpen.length >= MAX_ETAPP_ROWS} title={etapperOpen.length >= MAX_ETAPP_ROWS ? `Max ${MAX_ETAPP_ROWS} rader` : ''} style={{ opacity: etapperOpen.length >= MAX_ETAPP_ROWS ? 0.5 : 1, cursor: etapperOpen.length >= MAX_ETAPP_ROWS ? 'not-allowed' : 'pointer' }}>
               + Lägg till rad
             </button>
           </div>
@@ -911,7 +921,7 @@ export default function EgenkontrollPage() {
         <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: 12, display: 'grid', gap: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <h3 style={subsectionTitleStyle}>Etapper (slutet)</h3>
-            <button className='btn--med' type="button" onClick={addEtappClosedRow} disabled={etapperClosed.length >= 3} title={etapperClosed.length >= 3 ? 'Max 3 rader' : ''} style={{ opacity: etapperClosed.length >= 3 ? 0.5 : 1, cursor: etapperClosed.length >= 3 ? 'not-allowed' : 'pointer' }}>
+            <button className='btn--med' type="button" onClick={addEtappClosedRow} disabled={etapperClosed.length >= MAX_ETAPP_ROWS} title={etapperClosed.length >= MAX_ETAPP_ROWS ? `Max ${MAX_ETAPP_ROWS} rader` : ''} style={{ opacity: etapperClosed.length >= MAX_ETAPP_ROWS ? 0.5 : 1, cursor: etapperClosed.length >= MAX_ETAPP_ROWS ? 'not-allowed' : 'pointer' }}>
               + Lägg till rad
             </button>
           </div>
