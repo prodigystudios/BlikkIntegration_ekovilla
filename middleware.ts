@@ -13,10 +13,12 @@ export async function middleware(req: NextRequest) {
   const isAuthPage = pathname.startsWith('/auth');
   const isApiAuth = pathname.startsWith('/api/auth');
   const isApi = pathname.startsWith('/api');
+  const isReminderDispatchApi = pathname === '/api/dashboard-notes/reminders/dispatch';
   const isPublicCustomerOffertPage = pathname.startsWith('/kund/offert/');
   const isPublicCustomerOffertApi = pathname.startsWith('/api/kund/offert/');
 
   if (isApiAuth) return NextResponse.next();
+  if (isReminderDispatchApi) return NextResponse.next();
   if (isPublicCustomerOffertPage || isPublicCustomerOffertApi) return NextResponse.next();
 
   const res = NextResponse.next();
