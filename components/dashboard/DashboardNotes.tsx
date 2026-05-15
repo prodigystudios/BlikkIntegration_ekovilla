@@ -16,6 +16,7 @@ interface NoteItem {
 
 const STORAGE_KEY = 'dashboard_notes_v1';
 const PUSH_DEBUG_STORAGE_KEY = 'dashboard_notes_push_debug_v1';
+const REMINDER_INTERVAL_MINUTES = 5;
 
 export function DashboardNotes({ compact }: { compact?: boolean }) {
   const toast = useToast();
@@ -271,7 +272,7 @@ export function DashboardNotes({ compact }: { compact?: boolean }) {
 
   const saveReminder = useCallback(async (id: string, reminderAt: string | null) => {
     const current = items.find(i => i.id === id) || null;
-    const nextReminder = reminderAt ? new Date(reminderAt).toISOString() : null;
+    const nextReminder = reminderAt ? roundReminderToInterval(reminderAt).toISOString() : null;
     setItems(list => list.map(i => i.id === id ? { ...i, reminderAt: nextReminder, reminderSentAt: null, syncing: true } : i));
     const { error: updErr } = await supabase
       .from('dashboard_notes')
@@ -507,6 +508,8 @@ function NoteRow({ item, onToggle, onRemove, onEdit, onSaveReminder, compact }: 
   const [reminderDraft, setReminderDraft] = useState(toDateTimeLocalValue(item.reminderAt));
   useEffect(()=>{ setDraft(item.text); }, [item.text]);
   useEffect(() => { setReminderDraft(toDateTimeLocalValue(item.reminderAt)); }, [item.reminderAt]);
+  const expectedDispatch = item.reminderAt ? getExpectedDispatchTime(item.reminderAt) : null;
+
   return (
   <li style={{ display:'grid', gap:8, background:'#f8fafc', border:'1px solid #e2e8f0', borderRadius:10, padding: compact? '8px 10px':'10px 12px', opacity:item.syncing?0.7:1 }}>
       <div style={{ display:'flex', alignItems:'center', gap:compact?8:10 }}>
@@ -534,7 +537,8 @@ function NoteRow({ item, onToggle, onRemove, onEdit, onSaveReminder, compact }: 
         <input
           type="datetime-local"
           value={reminderDraft}
-          onChange={e=>setReminderDraft(e.target.value)}
+          onChange={e=>setReminderDraft(normalizeReminderDraftValue(e.target.value))}
+          step={REMINDER_INTERVAL_MINUTES * 60}
           disabled={item.done}
           style={{ ...input, padding: compact? '5px 7px':'6px 8px', fontSize: compact?12:13, minWidth: compact ? 180 : 210 }}
         />
@@ -548,6 +552,7 @@ function NoteRow({ item, onToggle, onRemove, onEdit, onSaveReminder, compact }: 
         )}
         <span style={{ fontSize:11, color:'#64748b' }}>
           {item.reminderAt ? `Påminnelse ${formatReminder(item.reminderAt)}` : 'Ingen påminnelse satt'}
+          {expectedDispatch ? ` • skickas cirka ${formatReminder(expectedDispatch)}` : ''}
           {item.reminderSentAt ? ` • skickad ${formatReminder(item.reminderSentAt)}` : ''}
         </span>
       </div>
@@ -557,7 +562,7 @@ function NoteRow({ item, onToggle, onRemove, onEdit, onSaveReminder, compact }: 
 
 function toDateTimeLocalValue(value: string | null) {
   if (!value) return '';
-  const date = new Date(value);
+  const date = roundReminderToInterval(value);
   if (Number.isNaN(date.getTime())) return '';
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -565,6 +570,28 @@ function toDateTimeLocalValue(value: string | null) {
   const hours = String(date.getHours()).padStart(2, '0');
   const minutes = String(date.getMinutes()).padStart(2, '0');
   return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
+function normalizeReminderDraftValue(value: string) {
+  if (!value) return '';
+  return toDateTimeLocalValue(roundReminderToInterval(value).toISOString());
+}
+
+function roundReminderToInterval(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return date;
+
+  date.setSeconds(0, 0);
+  const minutes = date.getMinutes();
+  const roundedMinutes = Math.ceil(minutes / REMINDER_INTERVAL_MINUTES) * REMINDER_INTERVAL_MINUTES;
+  date.setMinutes(roundedMinutes);
+  return date;
+}
+
+function getExpectedDispatchTime(value: string) {
+  const reminderAt = roundReminderToInterval(value);
+  if (Number.isNaN(reminderAt.getTime())) return null;
+  return reminderAt.toISOString();
 }
 
 function formatReminder(value: string | null) {
