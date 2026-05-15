@@ -189,13 +189,14 @@ Setup:
 - Kör migrationen `supabase/sql/20260507_dashboard_notes_push_reminders.sql` i Supabase.
 - Sätt `PUSH_VAPID_PUBLIC_KEY`, `PUSH_VAPID_PRIVATE_KEY` och `PUSH_VAPID_SUBJECT` lokalt och i Vercel.
 - Sätt `CRON_SECRET` i Vercel.
-- `vercel.json` kör `/api/dashboard-notes/reminders/dispatch` var femte minut.
+- `vercel.json` kör `/api/dashboard-notes/reminders/dispatch` en gång i timmen på Hobby-planen.
 
 Notes:
 
 - Routen accepterar Vercels `Authorization: Bearer <CRON_SECRET>` för schemalagda anrop.
 - För manuella serveranrop stöds fortfarande `REMINDER_DISPATCH_SECRET` via `x-reminder-secret`.
 - Testknappen i DashboardNotes kan ligga kvar som manuell fallback, men behövs inte för normal drift när cronen är aktiv.
+- Om ni uppgraderar till Pro kan cron-schemat sänkas igen, till exempel till var femte minut.
 - Pushdiagnostik i DashboardNotes är dold i normal drift. Lägg till `?pushdebug=1` i URL:en för att visa den, eller `?pushdebug=0` för att stänga av den igen.
 
 ## Dokument (filsystem)
