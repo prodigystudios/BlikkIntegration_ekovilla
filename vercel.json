@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/dashboard-notes/reminders/dispatch",
+      "schedule": "*/5 * * * *"
+    }
+  ]
+}

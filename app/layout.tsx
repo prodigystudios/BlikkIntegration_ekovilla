@@ -81,9 +81,15 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       <Script id="sw-register" strategy="afterInteractive">
         {`
           if ('serviceWorker' in navigator) {
-            window.addEventListener('load', () => {
+            const registerServiceWorker = () => {
               navigator.serviceWorker.register('/sw.js').catch(() => {});
-            });
+            };
+
+            if (document.readyState === 'complete') {
+              registerServiceWorker();
+            } else {
+              window.addEventListener('load', registerServiceWorker, { once: true });
+            }
           }
         `}
       </Script>

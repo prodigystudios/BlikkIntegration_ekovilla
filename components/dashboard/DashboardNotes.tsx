@@ -1,21 +1,80 @@
 "use client";
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
+import { useToast } from '@/lib/Toast';
 
-interface NoteItem { id: string; text: string; done: boolean; created: number; syncing?: boolean; error?: string; }
+interface NoteItem {
+  id: string;
+  text: string;
+  done: boolean;
+  created: number;
+  reminderAt: string | null;
+  reminderSentAt: string | null;
+  syncing?: boolean;
+  error?: string;
+}
 
 const STORAGE_KEY = 'dashboard_notes_v1';
+const PUSH_DEBUG_STORAGE_KEY = 'dashboard_notes_push_debug_v1';
 
 export function DashboardNotes({ compact }: { compact?: boolean }) {
+  const toast = useToast();
   const [items, setItems] = useState<NoteItem[]>([]);
   const [draft, setDraft] = useState('');
   const [filter, setFilter] = useState<'all'|'open'|'done'>('all');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [pushSupported, setPushSupported] = useState(false);
+  const [pushEnabled, setPushEnabled] = useState(false);
+  const [notificationPermission, setNotificationPermission] = useState<'default' | 'denied' | 'granted'>('default');
+  const [pushPublicKey, setPushPublicKey] = useState<string>('');
+  const [pushLoading, setPushLoading] = useState(false);
+  const [dispatching, setDispatching] = useState(false);
+  const [pushDiagnostics, setPushDiagnostics] = useState<string[]>([]);
+  const [pushDebugMode, setPushDebugMode] = useState(false);
   const supabase = createClientComponentClient();
   const mounted = useRef(false);
   const [userId, setUserId] = useState<string | null>(null);
   const [live, setLive] = useState<'connecting'|'on'|'off'>('off');
+
+  const syncPushState = useCallback(async () => {
+    if (typeof window === 'undefined') return;
+    const supported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+    setPushSupported(supported);
+    if (!supported) return;
+    setNotificationPermission(Notification.permission);
+    try {
+      const registration = await navigator.serviceWorker.ready;
+      const subscription = await registration.pushManager.getSubscription();
+      setPushEnabled(Boolean(subscription));
+      if (subscription) {
+        await fetch('/api/push/subscription', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ subscription: subscription.toJSON(), userAgent: navigator.userAgent }),
+        }).catch(() => null);
+      }
+    } catch {
+      setPushEnabled(false);
+    }
+  }, []);
+
+  const loadPushPublicKey = useCallback(async () => {
+    try {
+      const res = await fetch('/api/push/public-key');
+      const json = await res.json().catch(() => null);
+      if (!res.ok) {
+        setPushDiagnostics((prev) => [...prev.slice(-7), `public-key: ${String(json?.error || res.status)}`]);
+        setPushPublicKey('');
+        return;
+      }
+      setPushPublicKey(String(json?.publicKey || ''));
+      setPushDiagnostics((prev) => [...prev.slice(-7), 'public-key: loaded']);
+    } catch {
+      setPushDiagnostics((prev) => [...prev.slice(-7), 'public-key: fetch failed']);
+      setPushPublicKey('');
+    }
+  }, []);
 
   // Initial load: fetch from Supabase; fallback to localStorage if offline / error
   useEffect(() => {
@@ -32,10 +91,17 @@ export function DashboardNotes({ compact }: { compact?: boolean }) {
         setUserId(user.id);
         const { data, error: selErr } = await supabase
           .from('dashboard_notes')
-          .select('id,text,done,created_at')
+          .select('id,text,done,created_at,reminder_at,reminder_sent_at')
           .order('created_at', { ascending: true });
         if (selErr) throw selErr;
-        const rows = (data || []).map(r => ({ id: r.id, text: r.text, done: r.done, created: new Date(r.created_at).getTime() } as NoteItem));
+        const rows = (data || []).map(r => ({
+          id: r.id,
+          text: r.text,
+          done: r.done,
+          created: new Date(r.created_at).getTime(),
+          reminderAt: r.reminder_at || null,
+          reminderSentAt: r.reminder_sent_at || null,
+        } as NoteItem));
         setItems(rows);
         try { localStorage.setItem(STORAGE_KEY, JSON.stringify(rows)); } catch {}
       } catch (e:any) {
@@ -47,6 +113,41 @@ export function DashboardNotes({ compact }: { compact?: boolean }) {
       }
     })();
   }, [supabase]);
+
+  useEffect(() => {
+    void syncPushState();
+  }, [syncPushState]);
+
+  useEffect(() => {
+    void loadPushPublicKey();
+  }, [loadPushPublicKey]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const params = new URLSearchParams(window.location.search);
+    const pushDebug = params.get('pushdebug');
+
+    if (pushDebug === '1') {
+      setPushDebugMode(true);
+      try {
+        localStorage.setItem(PUSH_DEBUG_STORAGE_KEY, '1');
+      } catch {}
+      return;
+    }
+
+    if (pushDebug === '0') {
+      setPushDebugMode(false);
+      try {
+        localStorage.removeItem(PUSH_DEBUG_STORAGE_KEY);
+      } catch {}
+      return;
+    }
+
+    try {
+      setPushDebugMode(localStorage.getItem(PUSH_DEBUG_STORAGE_KEY) === '1');
+    } catch {}
+  }, []);
 
   // Realtime subscription
   useEffect(() => {
@@ -65,11 +166,25 @@ export function DashboardNotes({ compact }: { compact?: boolean }) {
             case 'INSERT': {
               const r: any = payload.new;
               if (prev.some(p => p.id === r.id)) return prev.map(p => p.id === r.id ? { ...p, syncing: false } : p);
-              return [...prev, { id: r.id, text: r.text, done: r.done, created: new Date(r.created_at).getTime() }];
+              return [...prev, {
+                id: r.id,
+                text: r.text,
+                done: r.done,
+                created: new Date(r.created_at).getTime(),
+                reminderAt: r.reminder_at || null,
+                reminderSentAt: r.reminder_sent_at || null,
+              }];
             }
             case 'UPDATE': {
               const r: any = payload.new;
-              return prev.map(p => p.id === r.id ? { ...p, text: r.text, done: r.done, syncing: false } : p);
+              return prev.map(p => p.id === r.id ? {
+                ...p,
+                text: r.text,
+                done: r.done,
+                reminderAt: r.reminder_at || null,
+                reminderSentAt: r.reminder_sent_at || null,
+                syncing: false,
+              } : p);
             }
             case 'DELETE': {
               const r: any = payload.old;
@@ -105,19 +220,26 @@ export function DashboardNotes({ compact }: { compact?: boolean }) {
       return;
     }
     const tempId = crypto.randomUUID();
-    const optimistic: NoteItem = { id: tempId, text, done: false, created: Date.now(), syncing: true };
+    const optimistic: NoteItem = { id: tempId, text, done: false, created: Date.now(), reminderAt: null, reminderSentAt: null, syncing: true };
     setItems(list => [...list, optimistic]);
     setDraft('');
     const { data, error: insErr } = await supabase
       .from('dashboard_notes')
       .insert({ text, done: false, user_id: userId })
-      .select('id,text,done,created_at')
+      .select('id,text,done,created_at,reminder_at,reminder_sent_at')
       .single();
     if (insErr || !data) {
       setItems(list => list.map(i => i.id === tempId ? { ...i, syncing: false, error: 'Ej sparad' } : i));
       return;
     }
-    setItems(list => list.map(i => i.id === tempId ? { id: data.id, text: data.text, done: data.done, created: new Date(data.created_at).getTime() } : i));
+    setItems(list => list.map(i => i.id === tempId ? {
+      id: data.id,
+      text: data.text,
+      done: data.done,
+      created: new Date(data.created_at).getTime(),
+      reminderAt: data.reminder_at || null,
+      reminderSentAt: data.reminder_sent_at || null,
+    } : i));
   }, [draft, supabase, userId]);
 
   const toggle = async (id: string) => {
@@ -146,6 +268,148 @@ export function DashboardNotes({ compact }: { compact?: boolean }) {
     const { error: updErr } = await supabase.from('dashboard_notes').update({ text }).eq('id', id);
     setItems(list => list.map(i => i.id === id ? { ...i, syncing: !!updErr } : i));
   };
+
+  const saveReminder = useCallback(async (id: string, reminderAt: string | null) => {
+    const current = items.find(i => i.id === id) || null;
+    const nextReminder = reminderAt ? new Date(reminderAt).toISOString() : null;
+    setItems(list => list.map(i => i.id === id ? { ...i, reminderAt: nextReminder, reminderSentAt: null, syncing: true } : i));
+    const { error: updErr } = await supabase
+      .from('dashboard_notes')
+      .update({ reminder_at: nextReminder, reminder_sent_at: null })
+      .eq('id', id);
+    if (updErr) {
+      setItems(list => list.map(i => i.id === id ? { ...i, reminderAt: current?.reminderAt || null, reminderSentAt: current?.reminderSentAt || null, syncing: false } : i));
+      toast.error('Kunde inte spara påminnelsen.');
+      return;
+    }
+    setItems(list => list.map(i => i.id === id ? { ...i, syncing: false } : i));
+    toast.success(nextReminder ? 'Påminnelse sparad.' : 'Påminnelse borttagen.');
+  }, [items, supabase, toast]);
+
+  const enablePush = useCallback(async () => {
+    if (!pushSupported) {
+      toast.error('Den här enheten stöder inte pushnotiser.');
+      return;
+    }
+    setPushLoading(true);
+    setPushDiagnostics([]);
+    try {
+      setPushDiagnostics((prev) => [...prev, `env: standalone=${String(window.matchMedia('(display-mode: standalone)').matches)} secure=${String(window.isSecureContext)} permission=${Notification.permission}`]);
+      const registrationPromise = navigator.serviceWorker.getRegistration('/sw.js').then((registration) => registration || navigator.serviceWorker.ready);
+      setPushDiagnostics((prev) => [...prev, 'service-worker: awaiting registration']);
+      let publicKey = pushPublicKey;
+      if (!publicKey) {
+        const keyRes = await fetch('/api/push/public-key');
+        const keyJson = await keyRes.json().catch(() => null);
+        if (!keyRes.ok) throw new Error(keyJson?.error || 'Kunde inte läsa push-nyckel.');
+        publicKey = String(keyJson?.publicKey || '');
+        setPushPublicKey(publicKey);
+        setPushDiagnostics((prev) => [...prev, 'public-key: loaded during activation']);
+      }
+
+      const permission = await Notification.requestPermission();
+      setNotificationPermission(permission);
+      setPushDiagnostics((prev) => [...prev, `permission: ${permission}`]);
+      if (permission !== 'granted') {
+        throw new Error('Notiser måste tillåtas för att påminnelser ska nå telefonen.');
+      }
+
+      const registration = await registrationPromise;
+      setPushDiagnostics((prev) => [...prev, `service-worker: ready scope=${registration.scope}`]);
+      let subscription = await registration.pushManager.getSubscription();
+      setPushDiagnostics((prev) => [...prev, `subscription: existing=${subscription ? 'yes' : 'no'}`]);
+      if (!subscription) {
+        setPushDiagnostics((prev) => [...prev, 'subscription: creating']);
+        subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: base64ToUint8Array(publicKey),
+        });
+        setPushDiagnostics((prev) => [...prev, 'subscription: created']);
+      }
+
+      setPushDiagnostics((prev) => [...prev, 'subscription: saving to backend']);
+      const saveRes = await fetch('/api/push/subscription', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subscription: subscription.toJSON(), userAgent: navigator.userAgent }),
+      });
+      const saveJson = await saveRes.json().catch(() => null);
+      if (!saveRes.ok) throw new Error(saveJson?.error || 'Kunde inte aktivera push.');
+      setPushDiagnostics((prev) => [...prev, 'subscription: saved']);
+
+      setPushEnabled(true);
+      toast.success('Mobilnotiser aktiverade.');
+    } catch (e: any) {
+      const message = String(e?.message || e || 'Kunde inte aktivera notiser.');
+      const name = String(e?.name || 'Error');
+      setPushDiagnostics((prev) => [...prev, `error: ${name}: ${message}`, `permission-now: ${Notification.permission}`]);
+      if (/denied permission|notallowederror|permission denied/i.test(message)) {
+        toast.error('iPhone nekade push-prenumerationen efter prompten. Det brukar bero på att iOS tappat användargesten eller att PWA-instansen har ett sparat notisläge.');
+      } else {
+        toast.error(message);
+      }
+    } finally {
+      setPushLoading(false);
+    }
+  }, [pushPublicKey, pushSupported, toast]);
+
+  const disablePush = useCallback(async () => {
+    if (!pushSupported) return;
+    setPushLoading(true);
+    try {
+      const registration = await navigator.serviceWorker.ready;
+      const subscription = await registration.pushManager.getSubscription();
+      if (subscription) {
+        await fetch('/api/push/subscription', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ endpoint: subscription.endpoint }),
+        });
+        await subscription.unsubscribe();
+      }
+      setPushEnabled(false);
+      toast.success('Mobilnotiser avaktiverade.');
+    } catch (e: any) {
+      toast.error(e?.message || 'Kunde inte stänga av notiser.');
+    } finally {
+      setPushLoading(false);
+    }
+  }, [pushSupported, toast]);
+
+  const dispatchDueReminders = useCallback(async () => {
+    setDispatching(true);
+    try {
+      const res = await fetch('/api/dashboard-notes/reminders/dispatch', { method: 'POST' });
+      const json = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(json?.error || 'Kunde inte köra påminnelserna.');
+      const sent = Array.isArray(json?.results) ? json.results.reduce((sum: number, item: any) => sum + Number(item?.sent || 0), 0) : 0;
+      if (sent > 0) {
+        toast.success(`${sent} pushnotis${sent === 1 ? '' : 'er'} skickad${sent === 1 ? '' : 'e'}.`);
+      } else {
+        toast.success('Inga förfallna påminnelser att skicka just nu.');
+      }
+      await syncPushState();
+    } catch (e: any) {
+      toast.error(e?.message || 'Kunde inte köra påminnelserna.');
+    } finally {
+      setDispatching(false);
+    }
+  }, [syncPushState, toast]);
+
+  const togglePushDebugMode = useCallback(() => {
+    setPushDebugMode((prev) => {
+      const next = !prev;
+      try {
+        if (next) {
+          localStorage.setItem(PUSH_DEBUG_STORAGE_KEY, '1');
+        } else {
+          localStorage.removeItem(PUSH_DEBUG_STORAGE_KEY);
+        }
+      } catch {}
+      return next;
+    });
+  }, []);
+
   const clearDone = async () => {
     const doneIds = items.filter(i => i.done).map(i => i.id);
     if (!doneIds.length) return;
@@ -178,6 +442,41 @@ export function DashboardNotes({ compact }: { compact?: boolean }) {
       {error && (
         <div style={{ fontSize:12, color:'#b91c1c' }}>{error}</div>
       )}
+      <div style={{ display:'flex', gap:compact?6:8, flexWrap:'wrap', alignItems:'center' }}>
+        <span style={{ ...pushStateBadge, color: pushEnabled ? '#166534' : '#475569', background: pushEnabled ? '#dcfce7' : '#f8fafc', borderColor: pushEnabled ? '#86efac' : '#d1d5db' }}>
+          {pushSupported ? (pushEnabled ? 'Mobilnotiser aktiva' : notificationPermission === 'denied' ? 'Notiser blockerade' : 'Mobilnotiser av') : 'Push stöds inte här'}
+        </span>
+        {pushSupported && !pushEnabled && (
+          <button type="button" onClick={enablePush} style={{ ...miniBtn, background:'#111827', border:'1px solid #111827' }} disabled={pushLoading}>
+            {pushLoading ? 'Aktiverar…' : 'Aktivera mobilnotiser'}
+          </button>
+        )}
+        {pushSupported && pushEnabled && (
+          <button type="button" onClick={disablePush} style={miniBtn} disabled={pushLoading}>
+            {pushLoading ? 'Uppdaterar…' : 'Stäng av notiser'}
+          </button>
+        )}
+        <button type="button" onClick={dispatchDueReminders} style={{ ...miniBtn, background:'#2563eb', border:'1px solid #2563eb' }} disabled={dispatching}>
+          {dispatching ? 'Kör…' : 'Kör förfallna påminnelser nu'}
+        </button>
+        {pushDebugMode && (
+          <button type="button" onClick={togglePushDebugMode} style={miniBtn}>
+            Dölj pushdebug
+          </button>
+        )}
+      </div>
+      {pushDebugMode && (
+        <div style={{ display:'grid', gap:4, padding:'10px 12px', border:'1px solid #cbd5e1', borderRadius:10, background:'#f8fafc' }}>
+          <strong style={{ fontSize:12, color:'#334155' }}>Pushdiagnostik</strong>
+          <div style={{ fontSize:11, color:'#64748b' }}>Aktiverat via <strong>?pushdebug=1</strong>. Stäng av med knappen ovan eller <strong>?pushdebug=0</strong>.</div>
+          {pushDiagnostics.length === 0 && (
+            <div style={{ fontSize:11, color:'#475569', fontFamily:'ui-monospace, SFMono-Regular, Menlo, monospace' }}>Inga pushhändelser loggade ännu.</div>
+          )}
+          {pushDiagnostics.map((line, index) => (
+            <div key={`${index}-${line}`} style={{ fontSize:11, color:'#475569', fontFamily:'ui-monospace, SFMono-Regular, Menlo, monospace' }}>{line}</div>
+          ))}
+        </div>
+      )}
       <form onSubmit={e=>{e.preventDefault(); addItem();}} style={{ display:'flex', gap:compact?6:8, alignItems:'stretch' }}>
         <input value={draft} onChange={e=>setDraft(e.target.value)} placeholder="Lägg till anteckning eller uppgift" style={{ ...input, fontSize: compact?13:14, padding: compact? '6px 8px':'8px 10px' }} />
         <button type="submit" style={{ ...btnPrimary, padding: compact? '6px 10px':'8px 14px', fontSize: compact?13:14, minWidth: compact ? 82 : 96 }} disabled={!draft.trim()}>Lägg till</button>
@@ -189,7 +488,7 @@ export function DashboardNotes({ compact }: { compact?: boolean }) {
       {items.length > 0 && (
         <ul style={{ listStyle:'none', padding:0, margin:0, display:'flex', flexDirection:'column', gap:compact?4:6 }}>
           {visible.sort((a,b)=> a.done===b.done ? b.created - a.created : a.done?1:-1).map(item => (
-            <NoteRow key={item.id} item={item} onToggle={()=>toggle(item.id)} onRemove={()=>remove(item.id)} onEdit={(t)=>edit(item.id,t)} compact={compact} />
+            <NoteRow key={item.id} item={item} onToggle={()=>toggle(item.id)} onRemove={()=>remove(item.id)} onEdit={(t)=>edit(item.id,t)} onSaveReminder={(value)=>saveReminder(item.id, value)} compact={compact} />
           ))}
         </ul>
       )}
@@ -202,33 +501,88 @@ export function DashboardNotes({ compact }: { compact?: boolean }) {
   );
 }
 
-function NoteRow({ item, onToggle, onRemove, onEdit, compact }: { item: NoteItem; onToggle: ()=>void; onRemove: ()=>void; onEdit:(t:string)=>void; compact?: boolean }) {
+function NoteRow({ item, onToggle, onRemove, onEdit, onSaveReminder, compact }: { item: NoteItem; onToggle: ()=>void; onRemove: ()=>void; onEdit:(t:string)=>void; onSaveReminder:(value:string | null)=>void; compact?: boolean }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(item.text);
+  const [reminderDraft, setReminderDraft] = useState(toDateTimeLocalValue(item.reminderAt));
   useEffect(()=>{ setDraft(item.text); }, [item.text]);
+  useEffect(() => { setReminderDraft(toDateTimeLocalValue(item.reminderAt)); }, [item.reminderAt]);
   return (
-  <li style={{ display:'flex', alignItems:'center', gap:compact?8:10, background:'#f8fafc', border:'1px solid #e2e8f0', borderRadius:10, padding: compact? '6px 10px':'8px 12px', opacity:item.syncing?0.7:1 }}>
-      <button onClick={onToggle} aria-label={item.done? 'Markera som ej klar':'Markera som klar'} style={{ ...checkBtn, width: compact?18:20, height: compact?18:20, ...(item.done? checkBtnDone : {}) }}>
-        {item.done && (
-          <svg width="14" height="14" viewBox="0 0 24 24" stroke="#fff" strokeWidth={3} fill="none"><path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" /></svg>
+  <li style={{ display:'grid', gap:8, background:'#f8fafc', border:'1px solid #e2e8f0', borderRadius:10, padding: compact? '8px 10px':'10px 12px', opacity:item.syncing?0.7:1 }}>
+      <div style={{ display:'flex', alignItems:'center', gap:compact?8:10 }}>
+        <button onClick={onToggle} aria-label={item.done? 'Markera som ej klar':'Markera som klar'} style={{ ...checkBtn, width: compact?18:20, height: compact?18:20, ...(item.done? checkBtnDone : {}) }}>
+          {item.done && (
+            <svg width="14" height="14" viewBox="0 0 24 24" stroke="#fff" strokeWidth={3} fill="none"><path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" /></svg>
+          )}
+        </button>
+        {!editing && (
+          <div onDoubleClick={()=>setEditing(true)} style={{ flex:1, fontSize:compact?13:14, color:item.done? '#64748b':'#111827', textDecoration:item.done?'line-through':'none', cursor:'text', display:'flex', alignItems:'center', gap:6, flexWrap:'wrap' }}>
+            <span>{item.text}</span>
+            {item.syncing && !item.error && <span style={{ fontSize:10, color:'#6b7280' }}>⟳</span>}
+            {item.error && <span style={{ fontSize:10, color:'#b91c1c' }} title={item.error}>⚠</span>}
+          </div>
         )}
-      </button>
-      {!editing && (
-        <div onDoubleClick={()=>setEditing(true)} style={{ flex:1, fontSize:compact?13:14, color:item.done? '#64748b':'#111827', textDecoration:item.done?'line-through':'none', cursor:'text', display:'flex', alignItems:'center', gap:6 }}>
-          <span>{item.text}</span>
-          {item.syncing && !item.error && <span style={{ fontSize:10, color:'#6b7280' }}>⟳</span>}
-          {item.error && <span style={{ fontSize:10, color:'#b91c1c' }} title={item.error}>⚠</span>}
-        </div>
-      )}
-      {editing && (
-        <form onSubmit={e=>{e.preventDefault(); onEdit(draft.trim() || item.text); setEditing(false);}} style={{ flex:1 }}>
-          <input autoFocus value={draft} onChange={e=>setDraft(e.target.value)} onBlur={()=>{ setEditing(false); setDraft(item.text); }} style={{ ...input, padding: compact? '3px 5px':'4px 6px', fontSize:compact?12.5:13, width:'100%' }} />
-        </form>
-      )}
-      <button onClick={()=>setEditing(true)} style={{ ...iconBtn, padding: compact? '3px 5px':'4px 6px', fontSize: compact?11:12 }} aria-label="Redigera">Red.</button>
-      <button onClick={onRemove} style={{ ...iconBtn, padding: compact? '3px 5px':'4px 6px', fontSize: compact?11:12, color:'#b91c1c' }} aria-label="Ta bort">Ta bort</button>
+        {editing && (
+          <form onSubmit={e=>{e.preventDefault(); onEdit(draft.trim() || item.text); setEditing(false);}} style={{ flex:1 }}>
+            <input autoFocus value={draft} onChange={e=>setDraft(e.target.value)} onBlur={()=>{ setEditing(false); setDraft(item.text); }} style={{ ...input, padding: compact? '3px 5px':'4px 6px', fontSize:compact?12.5:13, width:'100%' }} />
+          </form>
+        )}
+        <button onClick={()=>setEditing(true)} style={{ ...iconBtn, padding: compact? '3px 5px':'4px 6px', fontSize: compact?11:12 }} aria-label="Redigera">Red.</button>
+        <button onClick={onRemove} style={{ ...iconBtn, padding: compact? '3px 5px':'4px 6px', fontSize: compact?11:12, color:'#b91c1c' }} aria-label="Ta bort">Ta bort</button>
+      </div>
+      <div style={{ display:'flex', gap:6, flexWrap:'wrap', alignItems:'center' }}>
+        <input
+          type="datetime-local"
+          value={reminderDraft}
+          onChange={e=>setReminderDraft(e.target.value)}
+          disabled={item.done}
+          style={{ ...input, padding: compact? '5px 7px':'6px 8px', fontSize: compact?12:13, minWidth: compact ? 180 : 210 }}
+        />
+        <button type="button" onClick={()=>onSaveReminder(reminderDraft || null)} style={{ ...iconBtn, background:'#111827', color:'#fff', border:'1px solid #111827' }} disabled={item.done}>
+          Spara påminnelse
+        </button>
+        {item.reminderAt && (
+          <button type="button" onClick={()=>{ setReminderDraft(''); onSaveReminder(null); }} style={iconBtn}>
+            Rensa
+          </button>
+        )}
+        <span style={{ fontSize:11, color:'#64748b' }}>
+          {item.reminderAt ? `Påminnelse ${formatReminder(item.reminderAt)}` : 'Ingen påminnelse satt'}
+          {item.reminderSentAt ? ` • skickad ${formatReminder(item.reminderSentAt)}` : ''}
+        </span>
+      </div>
     </li>
   );
+}
+
+function toDateTimeLocalValue(value: string | null) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
+function formatReminder(value: string | null) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString('sv-SE');
+}
+
+function base64ToUint8Array(value: string) {
+  const padding = '='.repeat((4 - (value.length % 4)) % 4);
+  const normalized = (value + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(normalized);
+  const output = new Uint8Array(raw.length);
+  for (let index = 0; index < raw.length; index += 1) {
+    output[index] = raw.charCodeAt(index);
+  }
+  return output;
 }
 
 // Shared styles (mirrors admin styling look & feel)
@@ -241,5 +595,6 @@ const iconBtn: React.CSSProperties = { padding:'4px 6px', fontSize:12, lineHeigh
 const miniBtn: React.CSSProperties = { padding:'6px 10px', background:'#334155', color:'#fff', borderRadius:6, fontSize:12, cursor:'pointer', border:'1px solid #334155' };
 const checkBtn: React.CSSProperties = { width:20, height:20, borderRadius:6, border:'1px solid #cbd5e1', background:'#fff', display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer' };
 const checkBtnDone: React.CSSProperties = { background:'#16a34a', border:'1px solid #16a34a' };
+const pushStateBadge: React.CSSProperties = { display:'inline-flex', alignItems:'center', padding:'6px 10px', borderRadius:999, border:'1px solid #d1d5db', fontSize:11.5, fontWeight:700 };
 
 export default DashboardNotes;

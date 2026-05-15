@@ -180,6 +180,24 @@ Environment variables required (set locally and in Vercel):
 - `SUPABASE_SERVICE_ROLE_KEY`
 - (optional) `SUPABASE_ANON_KEY` if you plan to use client-side auth later
 
+## DashboardNotes påminnelser
+
+DashboardNotes push-påminnelser kan köras automatiskt i Vercel utan att någon trycker på knappen i UI:t.
+
+Setup:
+
+- Kör migrationen `supabase/sql/20260507_dashboard_notes_push_reminders.sql` i Supabase.
+- Sätt `PUSH_VAPID_PUBLIC_KEY`, `PUSH_VAPID_PRIVATE_KEY` och `PUSH_VAPID_SUBJECT` lokalt och i Vercel.
+- Sätt `CRON_SECRET` i Vercel.
+- `vercel.json` kör `/api/dashboard-notes/reminders/dispatch` var femte minut.
+
+Notes:
+
+- Routen accepterar Vercels `Authorization: Bearer <CRON_SECRET>` för schemalagda anrop.
+- För manuella serveranrop stöds fortfarande `REMINDER_DISPATCH_SECRET` via `x-reminder-secret`.
+- Testknappen i DashboardNotes kan ligga kvar som manuell fallback, men behövs inte för normal drift när cronen är aktiv.
+- Pushdiagnostik i DashboardNotes är dold i normal drift. Lägg till `?pushdebug=1` i URL:en för att visa den, eller `?pushdebug=0` för att stänga av den igen.
+
 ## Dokument (filsystem)
 
 The page `/dokument` provides a simple folder/subfolder document library backed by:
