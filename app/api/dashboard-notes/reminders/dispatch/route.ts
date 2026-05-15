@@ -1,0 +1,160 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { cookies } from 'next/headers';
+import { createServerComponentClient } from '@supabase/auth-helpers-nextjs';
+import { adminSupabase } from '@/lib/adminSupabase';
+import { isWebPushConfigured, sendWebPush } from '@/lib/webPush';
+
+export const dynamic = 'force-dynamic';
+
+type DueNote = {
+  id: string;
+  user_id: string;
+  text: string;
+  reminder_at: string | null;
+  reminder_sent_at: string | null;
+  done: boolean;
+};
+
+type PushRow = {
+  id: string;
+  endpoint: string;
+  p256dh: string;
+  auth: string;
+};
+
+async function getUserId() {
+  const supabase = createServerComponentClient({ cookies });
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  return user?.id || null;
+}
+
+function isAuthorizedCron(req: NextRequest) {
+  const customSecret = (process.env.REMINDER_DISPATCH_SECRET || '').trim();
+  const cronSecret = (process.env.CRON_SECRET || '').trim();
+  const headerSecret = String(req.headers.get('x-reminder-secret') || '').trim();
+  const authHeader = String(req.headers.get('authorization') || '').trim();
+  const bearerToken = authHeader.toLowerCase().startsWith('bearer ') ? authHeader.slice(7).trim() : '';
+
+  if (customSecret && headerSecret === customSecret) return true;
+  if (customSecret && bearerToken === customSecret) return true;
+  if (cronSecret && bearerToken === cronSecret) return true;
+  return false;
+}
+
+async function dispatchReminders(req: NextRequest) {
+  if (!adminSupabase) {
+    return NextResponse.json({ ok: false, error: 'Admin-klient saknas.' }, { status: 500 });
+  }
+  if (!isWebPushConfigured()) {
+    return NextResponse.json({ ok: false, error: 'Push är inte konfigurerat.' }, { status: 503 });
+  }
+
+  const isCronCall = isAuthorizedCron(req);
+  const currentUserId = isCronCall ? null : await getUserId();
+
+  if (!isCronCall && !currentUserId) {
+    return NextResponse.json({ ok: false, error: 'Ej inloggad.' }, { status: 401 });
+  }
+
+  let query = adminSupabase
+    .from('dashboard_notes')
+    .select('id,user_id,text,reminder_at,reminder_sent_at,done')
+    .not('reminder_at', 'is', null)
+    .is('reminder_sent_at', null)
+    .eq('done', false)
+    .lte('reminder_at', new Date().toISOString())
+    .order('reminder_at', { ascending: true })
+    .limit(50);
+
+  if (currentUserId) {
+    query = query.eq('user_id', currentUserId);
+  }
+
+  const { data: dueNotes, error: dueError } = await query;
+  if (dueError) {
+    return NextResponse.json({ ok: false, error: dueError.message }, { status: 500 });
+  }
+
+  const results: Array<{ noteId: string; sent: number; failed: number; skipped: boolean }> = [];
+
+  for (const note of (dueNotes || []) as DueNote[]) {
+    const { data: subscriptions, error: subError } = await adminSupabase
+      .from('dashboard_push_subscriptions')
+      .select('id,endpoint,p256dh,auth')
+      .eq('user_id', note.user_id);
+
+    if (subError) {
+      results.push({ noteId: note.id, sent: 0, failed: 1, skipped: true });
+      continue;
+    }
+
+    if (!subscriptions?.length) {
+      results.push({ noteId: note.id, sent: 0, failed: 0, skipped: true });
+      continue;
+    }
+
+    let sentCount = 0;
+    let failedCount = 0;
+
+    for (const subscription of subscriptions as PushRow[]) {
+      try {
+        await sendWebPush(
+          {
+            endpoint: subscription.endpoint,
+            keys: { p256dh: subscription.p256dh, auth: subscription.auth },
+          },
+          {
+            title: 'Påminnelse',
+            body: note.text,
+            tag: `dashboard-note-${note.id}`,
+            url: '/',
+            noteId: note.id,
+            reminderAt: note.reminder_at,
+          },
+        );
+        sentCount += 1;
+        await adminSupabase
+          .from('dashboard_push_subscriptions')
+          .update({ last_success_at: new Date().toISOString(), last_error: null })
+          .eq('id', subscription.id);
+      } catch (error: any) {
+        failedCount += 1;
+        const statusCode = Number(error?.statusCode || 0);
+        const message = String(error?.body || error?.message || 'Push send failed');
+        if (statusCode === 404 || statusCode === 410) {
+          await adminSupabase.from('dashboard_push_subscriptions').delete().eq('id', subscription.id);
+        } else {
+          await adminSupabase
+            .from('dashboard_push_subscriptions')
+            .update({ last_failure_at: new Date().toISOString(), last_error: message.slice(0, 1000) })
+            .eq('id', subscription.id);
+        }
+      }
+    }
+
+    if (sentCount > 0) {
+      await adminSupabase
+        .from('dashboard_notes')
+        .update({ reminder_sent_at: new Date().toISOString() })
+        .eq('id', note.id);
+    }
+
+    results.push({ noteId: note.id, sent: sentCount, failed: failedCount, skipped: false });
+  }
+
+  return NextResponse.json({ ok: true, processed: results.length, results });
+}
+
+export async function POST(req: NextRequest) {
+  return dispatchReminders(req);
+}
+
+export async function GET(req: NextRequest) {
+  if (!isAuthorizedCron(req)) {
+    return NextResponse.json({ ok: false, error: 'Method not allowed.' }, { status: 405 });
+  }
+
+  return dispatchReminders(req);
+}

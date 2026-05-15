@@ -5,24 +5,26 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-  "start": "next start",
-  "type-check": "tsc --noEmit"
+    "start": "next start",
+    "type-check": "tsc --noEmit"
   },
   "dependencies": {
+    "@supabase/auth-helpers-nextjs": "^0.10.0",
+    "@supabase/supabase-js": "2.45.4",
     "next": "14.2.5",
+    "pdf-lib": "^1.17.1",
     "react": "18.3.1",
     "react-dom": "18.3.1",
-  "@supabase/auth-helpers-nextjs": "^0.10.0",
-  "@supabase/supabase-js": "2.45.4",
-  "zod": "3.23.8",
-  "pdf-lib": "^1.17.1",
-  "resend": "^4.0.0"
+    "resend": "^4.0.0",
+    "web-push": "^3.6.7",
+    "zod": "3.23.8"
   },
   "devDependencies": {
     "@types/node": "20.12.12",
     "@types/react": "18.3.5",
     "@types/react-dom": "18.3.0",
-  "typescript": "5.5.4"
+    "@types/web-push": "^3.6.4",
+    "typescript": "5.5.4"
   },
   "engines": {
     "node": ">=18.17"
