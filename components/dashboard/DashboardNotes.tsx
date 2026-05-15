@@ -22,6 +22,7 @@ export function DashboardNotes({ compact }: { compact?: boolean }) {
   const toast = useToast();
   const [items, setItems] = useState<NoteItem[]>([]);
   const [draft, setDraft] = useState('');
+  const [newReminderDraft, setNewReminderDraft] = useState('');
   const [filter, setFilter] = useState<'all'|'open'|'done'>('all');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -220,13 +221,15 @@ export function DashboardNotes({ compact }: { compact?: boolean }) {
       setError('Ingen användare inloggad.');
       return;
     }
+    const nextReminder = newReminderDraft ? roundReminderToInterval(newReminderDraft).toISOString() : null;
     const tempId = crypto.randomUUID();
-    const optimistic: NoteItem = { id: tempId, text, done: false, created: Date.now(), reminderAt: null, reminderSentAt: null, syncing: true };
+    const optimistic: NoteItem = { id: tempId, text, done: false, created: Date.now(), reminderAt: nextReminder, reminderSentAt: null, syncing: true };
     setItems(list => [...list, optimistic]);
     setDraft('');
+    setNewReminderDraft('');
     const { data, error: insErr } = await supabase
       .from('dashboard_notes')
-      .insert({ text, done: false, user_id: userId })
+      .insert({ text, done: false, user_id: userId, reminder_at: nextReminder })
       .select('id,text,done,created_at,reminder_at,reminder_sent_at')
       .single();
     if (insErr || !data) {
@@ -423,17 +426,26 @@ export function DashboardNotes({ compact }: { compact?: boolean }) {
   };
 
   const visible = items.filter(i => filter==='all' ? true : filter==='open' ? !i.done : i.done);
+  const openCount = items.filter(i => !i.done).length;
+  const doneCount = items.length - openCount;
+  const composerExpectedDispatch = newReminderDraft ? getExpectedDispatchTime(newReminderDraft) : null;
 
   return (
     <div style={{ display:'flex', flexDirection:'column', gap:compact?12:16 }}>
-      <div style={{ display:'flex', alignItems:'center', gap:compact?8:12, flexWrap: compact? 'wrap':'nowrap' }}>
-        <h2 style={{ margin:0, fontSize:compact?16:20, display:'flex', alignItems:'center', gap:8 }}>
+      <div style={{ display:'flex', alignItems:'flex-start', gap:compact?8:12, flexWrap:'wrap' }}>
+        <div style={{ display:'grid', gap:6 }}>
+          <h2 style={{ margin:0, fontSize:compact?16:20, display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
           Anteckningar & Todo
           <span style={{ display:'inline-flex', alignItems:'center', gap:4, fontSize:11, fontWeight:500, color: live==='on'? '#059669': live==='connecting'? '#d97706':'#6b7280' }}>
             <span style={{ width:8, height:8, borderRadius:'50%', background: live==='on'? '#10b981': live==='connecting'? '#f59e0b':'#9ca3af', boxShadow: live==='on'? '0 0 4px #10b981':'' }} />
             {live==='on' ? 'Live' : live==='connecting' ? 'Ansluter…' : 'Offline'}
           </span>
-        </h2>
+          </h2>
+          <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+            <span style={summaryPill}>{openCount} öppna</span>
+            <span style={summaryPillMuted}>{doneCount} klara</span>
+          </div>
+        </div>
         <div style={{ marginLeft:'auto', display:'flex', gap:compact?4:6 }}>
           {(['all','open','done'] as const).map(f => (
             <button key={f} onClick={()=>setFilter(f)} style={{ ...filterBtn, ...(filter===f? filterBtnActive : {}), ...(compact ? compactFilterBtn : {}) }}>{f==='all'?'Alla': f==='open'?'Öppna':'Klart'}</button>
@@ -443,10 +455,18 @@ export function DashboardNotes({ compact }: { compact?: boolean }) {
       {error && (
         <div style={{ fontSize:12, color:'#b91c1c' }}>{error}</div>
       )}
-      <div style={{ display:'flex', gap:compact?6:8, flexWrap:'wrap', alignItems:'center' }}>
-        <span style={{ ...pushStateBadge, color: pushEnabled ? '#166534' : '#475569', background: pushEnabled ? '#dcfce7' : '#f8fafc', borderColor: pushEnabled ? '#86efac' : '#d1d5db' }}>
+      <section style={sectionCard}>
+        <div style={{ display:'grid', gap:10 }}>
+          <div style={{ display:'flex', justifyContent:'space-between', gap:12, flexWrap:'wrap', alignItems:'center' }}>
+            <div style={{ display:'grid', gap:4 }}>
+              <strong style={sectionTitle}>Notiser på den här enheten</strong>
+              <span style={helperText}>Push används när en påminnelse blir förfallen. Automatisk körning sker i 5-minutersintervall.</span>
+            </div>
+            <span style={{ ...pushStateBadge, color: pushEnabled ? '#166534' : '#475569', background: pushEnabled ? '#dcfce7' : '#f8fafc', borderColor: pushEnabled ? '#86efac' : '#d1d5db' }}>
           {pushSupported ? (pushEnabled ? 'Mobilnotiser aktiva' : notificationPermission === 'denied' ? 'Notiser blockerade' : 'Mobilnotiser av') : 'Push stöds inte här'}
         </span>
+          </div>
+          <div style={{ display:'flex', gap:compact?6:8, flexWrap:'wrap', alignItems:'center' }}>
         {pushSupported && !pushEnabled && (
           <button type="button" onClick={enablePush} style={{ ...miniBtn, background:'#111827', border:'1px solid #111827' }} disabled={pushLoading}>
             {pushLoading ? 'Aktiverar…' : 'Aktivera mobilnotiser'}
@@ -465,7 +485,9 @@ export function DashboardNotes({ compact }: { compact?: boolean }) {
             Dölj pushdebug
           </button>
         )}
-      </div>
+          </div>
+        </div>
+      </section>
       {pushDebugMode && (
         <div style={{ display:'grid', gap:4, padding:'10px 12px', border:'1px solid #cbd5e1', borderRadius:10, background:'#f8fafc' }}>
           <strong style={{ fontSize:12, color:'#334155' }}>Pushdiagnostik</strong>
@@ -478,13 +500,61 @@ export function DashboardNotes({ compact }: { compact?: boolean }) {
           ))}
         </div>
       )}
-      <form onSubmit={e=>{e.preventDefault(); addItem();}} style={{ display:'flex', gap:compact?6:8, alignItems:'stretch' }}>
-        <input value={draft} onChange={e=>setDraft(e.target.value)} placeholder="Lägg till anteckning eller uppgift" style={{ ...input, fontSize: compact?13:14, padding: compact? '6px 8px':'8px 10px' }} />
-        <button type="submit" style={{ ...btnPrimary, padding: compact? '6px 10px':'8px 14px', fontSize: compact?13:14, minWidth: compact ? 82 : 96 }} disabled={!draft.trim()}>Lägg till</button>
-      </form>
+      <section style={sectionCard}>
+        <form onSubmit={e=>{e.preventDefault(); addItem();}} style={{ display:'grid', gap:12 }}>
+          <div style={{ display:'grid', gap:4 }}>
+            <strong style={sectionTitle}>Ny anteckning</strong>
+            <span style={helperText}>Skriv uppgiften och lägg till en valfri påminnelse direkt. Tider avrundas uppåt till nästa 5-minutersfönster.</span>
+          </div>
+          <textarea
+            value={draft}
+            onChange={e=>setDraft(e.target.value)}
+            placeholder="Vad behöver du komma ihåg?"
+            rows={compact ? 2 : 3}
+            style={{ ...textareaInput, fontSize: compact?13:14 }}
+          />
+          <div style={{ display:'grid', gap:8 }}>
+            <div style={{ display:'flex', justifyContent:'space-between', gap:8, flexWrap:'wrap', alignItems:'center' }}>
+              <span style={fieldLabel}>Påminnelse</span>
+              <span style={fieldHint}>{composerExpectedDispatch ? `Skickas cirka ${formatReminder(composerExpectedDispatch)}` : 'Ingen påminnelse vald'}</span>
+            </div>
+            <div style={{ display:'flex', gap:8, flexWrap:'wrap', alignItems:'center' }}>
+              <input
+                type="datetime-local"
+                value={newReminderDraft}
+                onChange={e=>setNewReminderDraft(normalizeReminderDraftValue(e.target.value))}
+                step={REMINDER_INTERVAL_MINUTES * 60}
+                style={{ ...input, flex:'1 1 220px', minWidth: compact ? 180 : 240 }}
+              />
+              {newReminderDraft && (
+                <button type="button" onClick={()=>setNewReminderDraft('')} style={secondaryBtn}>
+                  Rensa tid
+                </button>
+              )}
+            </div>
+            <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+              <button type="button" onClick={()=>setNewReminderDraft(getRelativeReminderDraftValue(15))} style={quickActionBtn}>Om 15 min</button>
+              <button type="button" onClick={()=>setNewReminderDraft(getRelativeReminderDraftValue(30))} style={quickActionBtn}>Om 30 min</button>
+              <button type="button" onClick={()=>setNewReminderDraft(getRelativeReminderDraftValue(60))} style={quickActionBtn}>Om 1 timme</button>
+              <button type="button" onClick={()=>setNewReminderDraft(getTomorrowReminderDraftValue(8, 0))} style={quickActionBtn}>Imorgon 08:00</button>
+            </div>
+          </div>
+          <div style={{ display:'flex', justifyContent:'space-between', gap:10, flexWrap:'wrap', alignItems:'center' }}>
+            <span style={helperText}>{newReminderDraft ? 'Påminnelsen följer med direkt när anteckningen skapas.' : 'Du kan även lägga till eller ändra påminnelsen i efterhand.'}</span>
+            <button type="submit" style={{ ...btnPrimary, minWidth: compact ? 140 : 170 }} disabled={!draft.trim()}>
+              Lägg till anteckning
+            </button>
+          </div>
+        </form>
+      </section>
       {loading && <p style={{ margin:0, fontSize:12, color:'#6b7280' }}>Laddar…</p>}
       {!loading && items.length === 0 && (
         <p style={{ margin:0, fontSize:compact?12:14, color:'#6b7280' }}>Inga anteckningar ännu. Lägg till din första ovan.</p>
+      )}
+      {!loading && items.length > 0 && visible.length === 0 && (
+        <p style={{ margin:0, fontSize:compact?12:14, color:'#6b7280' }}>
+          {filter === 'open' ? 'Inga öppna anteckningar just nu.' : 'Inga klara anteckningar just nu.'}
+        </p>
       )}
       {items.length > 0 && (
         <ul style={{ listStyle:'none', padding:0, margin:0, display:'flex', flexDirection:'column', gap:compact?4:6 }}>
@@ -511,16 +581,18 @@ function NoteRow({ item, onToggle, onRemove, onEdit, onSaveReminder, compact }: 
   const expectedDispatch = item.reminderAt ? getExpectedDispatchTime(item.reminderAt) : null;
 
   return (
-  <li style={{ display:'grid', gap:8, background:'#f8fafc', border:'1px solid #e2e8f0', borderRadius:10, padding: compact? '8px 10px':'10px 12px', opacity:item.syncing?0.7:1 }}>
-      <div style={{ display:'flex', alignItems:'center', gap:compact?8:10 }}>
+  <li style={{ ...noteCard, padding: compact? '10px 12px':'14px 16px', opacity:item.syncing?0.7:1 }}>
+      <div style={{ display:'flex', justifyContent:'space-between', gap:12, alignItems:'flex-start', flexWrap:'wrap' }}>
+        <div style={{ display:'flex', alignItems:'flex-start', gap:compact?8:10, flex:'1 1 320px', minWidth:0 }}>
         <button onClick={onToggle} aria-label={item.done? 'Markera som ej klar':'Markera som klar'} style={{ ...checkBtn, width: compact?18:20, height: compact?18:20, ...(item.done? checkBtnDone : {}) }}>
           {item.done && (
             <svg width="14" height="14" viewBox="0 0 24 24" stroke="#fff" strokeWidth={3} fill="none"><path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" /></svg>
           )}
         </button>
+        <div style={{ display:'grid', gap:8, flex:1, minWidth:0 }}>
         {!editing && (
-          <div onDoubleClick={()=>setEditing(true)} style={{ flex:1, fontSize:compact?13:14, color:item.done? '#64748b':'#111827', textDecoration:item.done?'line-through':'none', cursor:'text', display:'flex', alignItems:'center', gap:6, flexWrap:'wrap' }}>
-            <span>{item.text}</span>
+          <div onDoubleClick={()=>setEditing(true)} style={{ fontSize:compact?13:15, color:item.done? '#64748b':'#111827', textDecoration:item.done?'line-through':'none', cursor:'text', display:'flex', alignItems:'center', gap:6, flexWrap:'wrap', lineHeight:1.45 }}>
+            <span style={{ fontWeight:600 }}>{item.text}</span>
             {item.syncing && !item.error && <span style={{ fontSize:10, color:'#6b7280' }}>⟳</span>}
             {item.error && <span style={{ fontSize:10, color:'#b91c1c' }} title={item.error}>⚠</span>}
           </div>
@@ -530,27 +602,41 @@ function NoteRow({ item, onToggle, onRemove, onEdit, onSaveReminder, compact }: 
             <input autoFocus value={draft} onChange={e=>setDraft(e.target.value)} onBlur={()=>{ setEditing(false); setDraft(item.text); }} style={{ ...input, padding: compact? '3px 5px':'4px 6px', fontSize:compact?12.5:13, width:'100%' }} />
           </form>
         )}
-        <button onClick={()=>setEditing(true)} style={{ ...iconBtn, padding: compact? '3px 5px':'4px 6px', fontSize: compact?11:12 }} aria-label="Redigera">Red.</button>
-        <button onClick={onRemove} style={{ ...iconBtn, padding: compact? '3px 5px':'4px 6px', fontSize: compact?11:12, color:'#b91c1c' }} aria-label="Ta bort">Ta bort</button>
+          <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+            <span style={item.done ? statusPillDone : statusPillOpen}>{item.done ? 'Klar' : 'Öppen'}</span>
+            {item.reminderAt && <span style={statusPillMuted}>Påminnelse aktiv</span>}
+          </div>
+        </div>
+        </div>
+        <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+          <button onClick={()=>setEditing(true)} style={secondaryBtn} aria-label="Redigera">Redigera</button>
+          <button onClick={onRemove} style={dangerBtn} aria-label="Ta bort">Ta bort</button>
+        </div>
       </div>
-      <div style={{ display:'flex', gap:6, flexWrap:'wrap', alignItems:'center' }}>
-        <input
-          type="datetime-local"
-          value={reminderDraft}
-          onChange={e=>setReminderDraft(normalizeReminderDraftValue(e.target.value))}
-          step={REMINDER_INTERVAL_MINUTES * 60}
-          disabled={item.done}
-          style={{ ...input, padding: compact? '5px 7px':'6px 8px', fontSize: compact?12:13, minWidth: compact ? 180 : 210 }}
-        />
-        <button type="button" onClick={()=>onSaveReminder(reminderDraft || null)} style={{ ...iconBtn, background:'#111827', color:'#fff', border:'1px solid #111827' }} disabled={item.done}>
-          Spara påminnelse
-        </button>
-        {item.reminderAt && (
-          <button type="button" onClick={()=>{ setReminderDraft(''); onSaveReminder(null); }} style={iconBtn}>
-            Rensa
+      <div style={reminderBox}>
+        <div style={{ display:'flex', justifyContent:'space-between', gap:8, flexWrap:'wrap', alignItems:'center' }}>
+          <strong style={{ fontSize:13, color:'#0f172a' }}>Påminnelse</strong>
+          <span style={fieldHint}>Skickas i 5-minutersintervall</span>
+        </div>
+        <div style={{ display:'flex', gap:8, flexWrap:'wrap', alignItems:'center' }}>
+          <input
+            type="datetime-local"
+            value={reminderDraft}
+            onChange={e=>setReminderDraft(normalizeReminderDraftValue(e.target.value))}
+            step={REMINDER_INTERVAL_MINUTES * 60}
+            disabled={item.done}
+            style={{ ...input, flex:'1 1 220px', minWidth: compact ? 180 : 240 }}
+          />
+          <button type="button" onClick={()=>onSaveReminder(reminderDraft || null)} style={{ ...btnPrimary, minWidth: compact ? 140 : 156 }} disabled={item.done}>
+            Spara påminnelse
           </button>
-        )}
-        <span style={{ fontSize:11, color:'#64748b' }}>
+          {item.reminderAt && (
+            <button type="button" onClick={()=>{ setReminderDraft(''); onSaveReminder(null); }} style={secondaryBtn}>
+              Rensa tid
+            </button>
+          )}
+        </div>
+        <span style={{ fontSize:12, color:'#64748b', lineHeight:1.5 }}>
           {item.reminderAt ? `Påminnelse ${formatReminder(item.reminderAt)}` : 'Ingen påminnelse satt'}
           {expectedDispatch ? ` • skickas cirka ${formatReminder(expectedDispatch)}` : ''}
           {item.reminderSentAt ? ` • skickad ${formatReminder(item.reminderSentAt)}` : ''}
@@ -594,6 +680,18 @@ function getExpectedDispatchTime(value: string) {
   return reminderAt.toISOString();
 }
 
+function getRelativeReminderDraftValue(minutesFromNow: number) {
+  const date = new Date(Date.now() + minutesFromNow * 60 * 1000);
+  return toDateTimeLocalValue(date.toISOString());
+}
+
+function getTomorrowReminderDraftValue(hours: number, minutes: number) {
+  const date = new Date();
+  date.setDate(date.getDate() + 1);
+  date.setHours(hours, minutes, 0, 0);
+  return toDateTimeLocalValue(date.toISOString());
+}
+
 function formatReminder(value: string | null) {
   if (!value) return '';
   const date = new Date(value);
@@ -614,6 +712,7 @@ function base64ToUint8Array(value: string) {
 
 // Shared styles (mirrors admin styling look & feel)
 const input: React.CSSProperties = { padding:'8px 10px', border:'1px solid #d1d5db', borderRadius:8, fontSize:14, outline:'none', background:'#fff' };
+const textareaInput: React.CSSProperties = { ...input, minHeight:92, resize:'vertical', width:'100%', lineHeight:1.5, fontFamily:'inherit' };
 const btnPrimary: React.CSSProperties = { padding:'8px 14px', borderRadius:8, border:'1px solid #111827', background:'#111827', color:'#fff', fontSize:14, cursor:'pointer', fontWeight:500 };
 const filterBtn: React.CSSProperties = { padding:'6px 12px', borderRadius:999, background:'#fff', border:'1px solid #d1d5db', cursor:'pointer', fontSize:12, color:'#111827' };
 const filterBtnActive: React.CSSProperties = { background:'#2563eb', color:'#fff', border:'1px solid #2563eb' };
@@ -623,5 +722,20 @@ const miniBtn: React.CSSProperties = { padding:'6px 10px', background:'#334155',
 const checkBtn: React.CSSProperties = { width:20, height:20, borderRadius:6, border:'1px solid #cbd5e1', background:'#fff', display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer' };
 const checkBtnDone: React.CSSProperties = { background:'#16a34a', border:'1px solid #16a34a' };
 const pushStateBadge: React.CSSProperties = { display:'inline-flex', alignItems:'center', padding:'6px 10px', borderRadius:999, border:'1px solid #d1d5db', fontSize:11.5, fontWeight:700 };
+const sectionCard: React.CSSProperties = { display:'grid', gap:10, padding:'16px 18px', border:'1px solid #e2e8f0', borderRadius:16, background:'linear-gradient(180deg, #ffffff 0%, #f8fafc 100%)', boxShadow:'0 6px 20px rgba(15, 23, 42, 0.05)' };
+const sectionTitle: React.CSSProperties = { fontSize:14, color:'#0f172a' };
+const helperText: React.CSSProperties = { fontSize:12, color:'#64748b', lineHeight:1.5 };
+const fieldLabel: React.CSSProperties = { fontSize:12, fontWeight:700, color:'#334155', letterSpacing:'0.01em' };
+const fieldHint: React.CSSProperties = { fontSize:11, color:'#64748b' };
+const secondaryBtn: React.CSSProperties = { padding:'8px 12px', background:'#ffffff', color:'#0f172a', borderRadius:8, fontSize:12.5, cursor:'pointer', border:'1px solid #cbd5e1', fontWeight:600, whiteSpace:'nowrap' };
+const quickActionBtn: React.CSSProperties = { padding:'7px 10px', background:'#eff6ff', color:'#1d4ed8', borderRadius:999, fontSize:12, cursor:'pointer', border:'1px solid #bfdbfe', fontWeight:600, whiteSpace:'nowrap' };
+const dangerBtn: React.CSSProperties = { padding:'8px 12px', background:'#fff1f2', color:'#be123c', borderRadius:8, fontSize:12.5, cursor:'pointer', border:'1px solid #fecdd3', fontWeight:600, whiteSpace:'nowrap' };
+const summaryPill: React.CSSProperties = { display:'inline-flex', alignItems:'center', padding:'5px 10px', borderRadius:999, background:'#dcfce7', color:'#166534', fontSize:11.5, fontWeight:700 };
+const summaryPillMuted: React.CSSProperties = { display:'inline-flex', alignItems:'center', padding:'5px 10px', borderRadius:999, background:'#e2e8f0', color:'#475569', fontSize:11.5, fontWeight:700 };
+const noteCard: React.CSSProperties = { display:'grid', gap:12, background:'#ffffff', border:'1px solid #e2e8f0', borderRadius:16, boxShadow:'0 6px 20px rgba(15, 23, 42, 0.05)' };
+const reminderBox: React.CSSProperties = { display:'grid', gap:8, padding:'12px', border:'1px solid #dbeafe', borderRadius:12, background:'#f8fbff' };
+const statusPillOpen: React.CSSProperties = { display:'inline-flex', alignItems:'center', padding:'4px 9px', borderRadius:999, background:'#dbeafe', color:'#1d4ed8', fontSize:11, fontWeight:700 };
+const statusPillDone: React.CSSProperties = { display:'inline-flex', alignItems:'center', padding:'4px 9px', borderRadius:999, background:'#dcfce7', color:'#166534', fontSize:11, fontWeight:700 };
+const statusPillMuted: React.CSSProperties = { display:'inline-flex', alignItems:'center', padding:'4px 9px', borderRadius:999, background:'#f1f5f9', color:'#475569', fontSize:11, fontWeight:700 };
 
 export default DashboardNotes;
