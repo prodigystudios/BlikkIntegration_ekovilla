@@ -615,37 +615,37 @@ function NoteRow({ item, onToggle, onRemove, onEdit, onSaveReminder, compact }: 
   return (
   <li style={{ ...noteCard, padding: compact? '10px 12px':'14px 16px', opacity:item.syncing?0.7:1 }}>
       <div style={{ display:'flex', justifyContent:'space-between', gap:12, alignItems:'flex-start', flexWrap:'wrap' }}>
-        <div style={{ display:'flex', alignItems:'flex-start', gap:compact?8:10, flex:'1 1 320px', minWidth:0 }}>
-        <button onClick={onToggle} aria-label={item.done? 'Markera som ej klar':'Markera som klar'} style={item.done ? completePillBtnDone : completePillBtn}>
-          <span style={{ ...checkBtn, width: compact?16:18, height: compact?16:18, ...(item.done? checkBtnDone : {}) }}>
-            {item.done && (
-              <svg width="12" height="12" viewBox="0 0 24 24" stroke="#fff" strokeWidth={3} fill="none"><path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" /></svg>
-            )}
-          </span>
-          <span style={{ fontSize:12, fontWeight:700, color:item.done ? '#166534' : '#0f172a', lineHeight:1.2, whiteSpace:'nowrap' }}>
-            {item.done ? 'Öppna igen' : 'Klar'}
-          </span>
-        </button>
-        <div style={{ display:'grid', gap:8, flex:1, minWidth:0 }}>
-        {!editing && (
-          <div onDoubleClick={()=>setEditing(true)} style={{ fontSize:compact?13:15, color:item.done? '#64748b':'#111827', textDecoration:item.done?'line-through':'none', cursor:'text', display:'flex', alignItems:'center', gap:6, flexWrap:'wrap', lineHeight:1.45 }}>
-            <span style={{ fontWeight:600 }}>{item.text}</span>
-            {item.syncing && !item.error && <span style={{ fontSize:10, color:'#6b7280' }}>⟳</span>}
-            {item.error && <span style={{ fontSize:10, color:'#b91c1c' }} title={item.error}>⚠</span>}
-          </div>
-        )}
-        {editing && (
-          <form onSubmit={e=>{e.preventDefault(); onEdit(draft.trim() || item.text); setEditing(false);}} style={{ flex:1 }}>
-            <input autoFocus value={draft} onChange={e=>setDraft(e.target.value)} onBlur={()=>{ setEditing(false); setDraft(item.text); }} style={{ ...input, padding: compact? '3px 5px':'4px 6px', fontSize:compact?12.5:13, width:'100%' }} />
-          </form>
-        )}
-          <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
-            <span style={item.done ? statusPillDone : statusPillOpen}>{item.done ? 'Klar' : 'Öppen'}</span>
-            {item.reminderAt && <span style={statusPillMuted}>Påminnelse aktiv</span>}
+        <div style={{ display:'grid', gap:10, flex:'1 1 420px', minWidth:0 }}>
+          {!editing && (
+            <div onDoubleClick={()=>setEditing(true)} style={{ fontSize:compact?13:15, color:item.done? '#64748b':'#111827', textDecoration:item.done?'line-through':'none', cursor:'text', display:'flex', alignItems:'center', gap:6, flexWrap:'wrap', lineHeight:1.45 }}>
+              <span style={{ fontWeight:600 }}>{item.text}</span>
+              {item.syncing && !item.error && <span style={{ fontSize:10, color:'#6b7280' }}>⟳</span>}
+              {item.error && <span style={{ fontSize:10, color:'#b91c1c' }} title={item.error}>⚠</span>}
+            </div>
+          )}
+          {editing && (
+            <form onSubmit={e=>{e.preventDefault(); onEdit(draft.trim() || item.text); setEditing(false);}} style={{ flex:1 }}>
+              <input autoFocus value={draft} onChange={e=>setDraft(e.target.value)} onBlur={()=>{ setEditing(false); setDraft(item.text); }} style={{ ...input, padding: compact? '3px 5px':'4px 6px', fontSize:compact?12.5:13, width:'100%' }} />
+            </form>
+          )}
+          <div style={{ display:'flex', justifyContent:'space-between', gap:10, flexWrap:'wrap', alignItems:'center' }}>
+            <div style={{ display:'flex', gap:8, flexWrap:'wrap', alignItems:'center' }}>
+              <span style={item.done ? statusPillDone : statusPillOpen}>{item.done ? 'Klar' : 'Öppen'}</span>
+              {item.reminderAt && <span style={statusPillMuted}>Påminnelse aktiv</span>}
+            </div>
           </div>
         </div>
-        </div>
-        <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+        <div style={{ display:'flex', gap:8, flexWrap:'wrap', alignItems:'center', justifyContent:'flex-end' }}>
+          <button onClick={onToggle} aria-label={item.done? 'Markera som ej klar':'Markera som klar'} style={item.done ? completePillBtnDone : completePillBtn}>
+            <span style={{ ...checkBtn, width: compact?16:18, height: compact?16:18, ...(item.done? checkBtnDone : {}) }}>
+              {item.done && (
+                <svg width="12" height="12" viewBox="0 0 24 24" stroke="#fff" strokeWidth={3} fill="none"><path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" /></svg>
+              )}
+            </span>
+            <span style={{ fontSize:12, fontWeight:700, color:item.done ? '#166534' : '#0f172a', lineHeight:1.2, whiteSpace:'nowrap' }}>
+              {item.done ? 'Öppna igen' : 'Markera klar'}
+            </span>
+          </button>
           <button onClick={()=>setEditing(true)} style={secondaryBtn} aria-label="Redigera">Redigera</button>
           <button onClick={onRemove} style={dangerBtn} aria-label="Ta bort">Ta bort</button>
         </div>
