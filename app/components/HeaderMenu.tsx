@@ -1,10 +1,9 @@
 "use client";
-import { useEffect, useRef, useState, useMemo } from "react";
+import { useEffect, useRef, useState } from "react";
 import ProfileMenu from "./ProfileMenu";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { UserRole } from "../../lib/roles";
-import { filterLinks } from "../../lib/roles";
 
 function IconMenu(props: React.SVGProps<SVGSVGElement>) {
   return (
@@ -129,6 +128,7 @@ export default function HeaderMenu({ role, fullName }: { role: UserRole | null, 
   const panelRef = useRef<HTMLDivElement | null>(null);
   const firstLinkRef = useRef<HTMLAnchorElement | null>(null);
   const pathname = usePathname();
+  const isConsultant = role === 'konsult';
 
   // Close on Esc and click outside; lock body scroll when open
   useEffect(() => {
@@ -182,8 +182,6 @@ export default function HeaderMenu({ role, fullName }: { role: UserRole | null, 
       document.body.style.overflow = '';
     };
   }, [open]);
-
-  const navLinks = useMemo(() => filterLinks(role), [role]);
 
   // Detect mobile (simple viewport width check) – no SSR mismatch since this runs only client side.
   useEffect(() => {
@@ -267,24 +265,28 @@ export default function HeaderMenu({ role, fullName }: { role: UserRole | null, 
               <IconDoc />
               <span>Dokument & Information</span>
             </Link>
-            <Link href="/nyheter" prefetch={false} onClick={() => setOpen(false)}
-              aria-current={pathname?.startsWith('/nyheter') ? 'page' : undefined}
-              className={`menu-link${pathname?.startsWith('/nyheter') ? ' is-active' : ''}`}>
-              <IconDoc />
-              <span>Nyheter</span>
-            </Link>
-            <Link href="/bestallning-klader" prefetch={true} onClick={() => setOpen(false)}
-              aria-current={pathname === '/bestallning-klader' ? 'page' : undefined}
-              className={`menu-link${pathname === '/bestallning-klader' ? ' is-active' : ''}`}>
-              <IconShirt />
-              <span>Beställning kläder</span>
-            </Link>
-            <Link href="/material-kvalitet" prefetch={false} onClick={() => setOpen(false)}
-              aria-current={pathname === '/material-kvalitet' ? 'page' : undefined}
-              className={`menu-link${pathname === '/material-kvalitet' ? ' is-active' : ''}`}>
-              <IconArchive />
-              <span>Materialkvalitet</span>
-            </Link>
+            {!isConsultant && (
+              <>
+                <Link href="/nyheter" prefetch={false} onClick={() => setOpen(false)}
+                  aria-current={pathname?.startsWith('/nyheter') ? 'page' : undefined}
+                  className={`menu-link${pathname?.startsWith('/nyheter') ? ' is-active' : ''}`}>
+                  <IconDoc />
+                  <span>Nyheter</span>
+                </Link>
+                <Link href="/bestallning-klader" prefetch={true} onClick={() => setOpen(false)}
+                  aria-current={pathname === '/bestallning-klader' ? 'page' : undefined}
+                  className={`menu-link${pathname === '/bestallning-klader' ? ' is-active' : ''}`}>
+                  <IconShirt />
+                  <span>Beställning kläder</span>
+                </Link>
+                <Link href="/material-kvalitet" prefetch={false} onClick={() => setOpen(false)}
+                  aria-current={pathname === '/material-kvalitet' ? 'page' : undefined}
+                  className={`menu-link${pathname === '/material-kvalitet' ? ' is-active' : ''}`}>
+                  <IconArchive />
+                  <span>Materialkvalitet</span>
+                </Link>
+              </>
+            )}
             {(role === 'member' || role === 'admin') && (
               <Link href="/tidrapport" prefetch={false} onClick={() => setOpen(false)}
                 aria-current={pathname === '/tidrapport' ? 'page' : undefined}
@@ -298,25 +300,35 @@ export default function HeaderMenu({ role, fullName }: { role: UserRole | null, 
             {role !== 'member' && (
               <div>
               <div role="separator" aria-hidden style={{ height: 1, background: '#e5e7eb', margin: '8px 8px' }} />
-              <div style={{ fontSize: 12, color: '#6b7280', margin: '6px 8px' }}>Säljare</div>
+              <div style={{ fontSize: 12, color: '#6b7280', margin: '6px 8px' }}>{isConsultant ? 'Kalkylator' : 'Säljare'}</div>
+              <Link href="/offert/kalkylator" prefetch={true} onClick={() => setOpen(false)}
+                aria-current={pathname === '/offert/kalkylator' ? 'page' : undefined}
+                className={`menu-link${pathname === '/offert/kalkylator' ? ' is-active' : ''}`}>
+                <IconOffert />
+                <span>Kalkylator Försäljning Privat</span>
+              </Link>
               {/* <Link href="/offert" prefetch={true} onClick={() => setOpen(false)}
                 aria-current={pathname === '/offert' ? 'page' : undefined}
                 className={`menu-link${pathname === '/offert' ? ' is-active' : ''}`}>
                 <IconOffert />
                 <span>Offert</span>
               </Link> */}
-                <Link href="/korjournal" prefetch={true} onClick={() => setOpen(false)}
-                aria-current={pathname === '/korjournal' ? 'page' : undefined}
-                className={`menu-link${pathname === '/korjournal' ? ' is-active' : ''}`}>
-                <IconCar />
-                <span>Körjournal</span>
-                </Link>
-                <Link href="/plannering" prefetch={false} onClick={() => setOpen(false)}
-                aria-current={pathname === '/plannering' ? 'page' : undefined}
-                className={`menu-link${pathname === '/plannering' ? ' is-active' : ''}`}>
-                <IconCalendar />
-                <span>Plannering</span>
-              </Link>
+                {!isConsultant && (
+                  <>
+                    <Link href="/korjournal" prefetch={true} onClick={() => setOpen(false)}
+                    aria-current={pathname === '/korjournal' ? 'page' : undefined}
+                    className={`menu-link${pathname === '/korjournal' ? ' is-active' : ''}`}>
+                    <IconCar />
+                    <span>Körjournal</span>
+                    </Link>
+                    <Link href="/plannering" prefetch={false} onClick={() => setOpen(false)}
+                    aria-current={pathname === '/plannering' ? 'page' : undefined}
+                    className={`menu-link${pathname === '/plannering' ? ' is-active' : ''}`}>
+                    <IconCalendar />
+                    <span>Plannering</span>
+                  </Link>
+                  </>
+                )}
             </div>
             )}
           </nav>
