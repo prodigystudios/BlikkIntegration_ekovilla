@@ -172,9 +172,8 @@ export default function ProfilePageClient() {
 
           <div style={heroContentStyle}>
             <div style={{ display: 'grid', gap: 8, maxWidth: 720 }}>
-              <h1 style={heroTitleStyle}>En renare överblick över din profil</h1>
               <p style={heroTextStyle}>
-                Uppdatera dina kontaktuppgifter, se anställningsinformationen och komplettera känsliga uppgifter utan att allt känns lika tungt på en gång.
+                Uppdatera dina kontaktuppgifter, se anställningsinformationen och komplettera känsliga uppgifter
               </p>
             </div>
 
@@ -207,10 +206,8 @@ export default function ProfilePageClient() {
           <form onSubmit={handleSubmit} style={{ ...mainCardStyle, display: 'grid', gap: 18 }}>
             <div style={sectionHeaderStyle}>
               <div style={{ display: 'grid', gap: 4 }}>
-                <span style={sectionEyebrowStyle}>Egen uppdatering</span>
                 <h2 style={sectionTitleStyle}>Kontakt och vardagsinfo</h2>
               </div>
-              <p style={sectionTextStyle}>Den här delen använder du för sådant som ska vara enkelt att hålla aktuellt i vardagen.</p>
             </div>
 
             <div style={formGridStyle}>
@@ -242,7 +239,6 @@ export default function ProfilePageClient() {
                   <span style={sectionEyebrowStyle}>Läsöversikt</span>
                   <h2 style={sectionTitleStyle}>Anställningsuppgifter</h2>
                 </div>
-                <p style={sectionTextStyle}>Visas för transparens men uppdateras av admin så att informationen håller ihop internt.</p>
               </div>
 
               <div style={compactInfoGridStyle}>
@@ -259,10 +255,8 @@ export default function ProfilePageClient() {
             <section style={{ ...sideCardStyle, display: 'grid', gap: 14 }}>
               <div style={sectionHeaderStyle}>
                 <div style={{ display: 'grid', gap: 4 }}>
-                  <span style={sectionEyebrowStyle}>Separat säker del</span>
                   <h2 style={sectionTitleStyle}>Löne- och identitetsuppgifter</h2>
                 </div>
-                <p style={sectionTextStyle}>Här fyller du i känsliga uppgifter själv. Efter sparning visas de bara maskerat i profilen.</p>
               </div>
 
               <div style={compactInfoGridStyle}>
