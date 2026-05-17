@@ -173,7 +173,6 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
     if (role === 'konsult') {
       return [
         { href: '/offert/kalkylator', title: 'Kalkylator Försäljning Privat', ...baseExtra['/offert/kalkylator'] },
-        { href: '/plannering', title: 'Planering', ...baseExtra['/planering'] },
         { href: '/dokument', title: 'Dokument', ...baseExtra['/dokument'] },
         { href: '/kontakt-lista', title: 'Kontakt', ...baseExtra['/kontakt-lista'] },
       ];

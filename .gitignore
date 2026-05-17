@@ -6,3 +6,4 @@ node_modules/
 tsconfig.tsbuildinfo
 build_output.log
 build_output.txt
+build_result.log
