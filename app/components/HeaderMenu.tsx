@@ -124,7 +124,6 @@ function IconOffert(props: React.SVGProps<SVGSVGElement>) {
 
 export default function HeaderMenu({ role, fullName }: { role: UserRole | null, fullName?: string | null }) {
   const [open, setOpen] = useState(false);
-  const [isMobile, setIsMobile] = useState(false);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const firstLinkRef = useRef<HTMLAnchorElement | null>(null);
   const pathname = usePathname();
@@ -183,16 +182,9 @@ export default function HeaderMenu({ role, fullName }: { role: UserRole | null, 
     };
   }, [open]);
 
-  // Detect mobile (simple viewport width check) – no SSR mismatch since this runs only client side.
-  useEffect(() => {
-    function update() { setIsMobile(window.innerWidth < 640); }
-    update();
-    window.addEventListener('resize', update);
-    return () => window.removeEventListener('resize', update);
-  }, []);
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-  {!isMobile && <ProfileMenu fullName={fullName || null} role={role} />}
+      <ProfileMenu fullName={fullName || null} role={role} />
       <button
         type="button"
         aria-haspopup="dialog"
