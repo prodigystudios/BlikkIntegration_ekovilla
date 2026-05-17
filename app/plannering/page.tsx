@@ -2159,11 +2159,13 @@ export default function PlanneringPage() {
             if (jt.startsWith('eko')) return 'Ekovilla';
             return undefined;
           })();
+          const orderNumber = projects.find((project) => project.id === segEditor.projectId)?.orderNumber || undefined;
           const resp = await fetch('/api/planning/consume-bags', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               projectId: segEditor.projectId,
+              orderNumber,
               installationDate: day,
               totalBags: amt,
               segmentId: segEditor.segmentId,

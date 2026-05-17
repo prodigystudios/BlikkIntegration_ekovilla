@@ -5,6 +5,7 @@ import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 type UsageRow = {
   id: string;
   project_id: string;
+  order_number?: string | null;
   installation_date: string | null;
   depot_id: string;
   bags_used: number;
@@ -105,6 +106,7 @@ export default function AdminDepotUsage() {
       const meta = projectMeta[row.project_id];
       return [
         row.project_id,
+        row.order_number || '',
         meta?.orderNumber || '',
         meta?.projectName || '',
         depotName(row.depot_id),
@@ -168,7 +170,7 @@ export default function AdminDepotUsage() {
               <div style={usageMetaGridStyle}>
                 <div style={usageMetaCardStyle}>
                   <span style={usageMetaLabelStyle}>Order</span>
-                  <strong style={usageMetaValueStyle}>{projectLabel(r.project_id)}</strong>
+                  <strong style={usageMetaValueStyle}>{r.order_number ? `#${r.order_number}` : projectLabel(r.project_id)}</strong>
                   <span style={usageMetaSubtleStyle}>Projekt-ID: {r.project_id}</span>
                 </div>
                 <div style={usageMetaCardStyle}>

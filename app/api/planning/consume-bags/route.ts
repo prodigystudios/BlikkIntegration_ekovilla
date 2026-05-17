@@ -5,6 +5,7 @@ import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 
 type Body = {
   projectId: string;
+  orderNumber?: string;
   installationDate?: string; // YYYY-MM-DD
   totalBags: number;
   reportKey?: string; // unique key to avoid double-decrement, e.g. archive path
@@ -28,6 +29,9 @@ export async function POST(req: NextRequest) {
     const json = (await req.json()) as Body;
     const projectId = String(json.projectId || '').trim();
     const totalBags = Number(json.totalBags);
+    const orderNumber = json.orderNumber && String(json.orderNumber).trim()
+      ? String(json.orderNumber).trim()
+      : undefined;
     const installationDate = json.installationDate && /\d{4}-\d{2}-\d{2}/.test(json.installationDate)
       ? json.installationDate
       : undefined;
@@ -165,6 +169,7 @@ export async function POST(req: NextRequest) {
       try {
         const ins = await admin.from('planning_depot_usage').insert({
           project_id: projectId,
+          order_number: orderNumber || null,
           installation_date: installationDate || null,
           depot_id: depotId,
           bags_used: Math.round(totalBags),

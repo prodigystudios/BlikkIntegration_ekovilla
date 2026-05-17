@@ -420,6 +420,7 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               projectId,
+              orderNumber: detailBase?.order_number ? String(detailBase.order_number) : undefined,
               installationDate: day,
               totalBags: amount,
               segmentId: segId,
