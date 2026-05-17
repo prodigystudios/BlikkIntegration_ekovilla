@@ -1,5 +1,6 @@
 "use client";
 import React, { useEffect, useState } from 'react';
+import Link from 'next/link';
 
 interface AdminUserRow {
   id: string;
@@ -151,6 +152,7 @@ export default function AdminUsers() {
                   <th style={thCell}>Roll</th>
                   <th style={thCell}>Taggar</th>
                   <th style={thCell}>Skapad</th>
+                  <th style={thCell}>Profil</th>
                 </tr>
               </thead>
               <tbody>
@@ -297,6 +299,9 @@ function UserRow({ user, onChanged, onDeleted }: { user: AdminUserRow; onChanged
           )}
         </div>
       </td>
+      <td style={tdCell}>
+        <Link href={`/admin/users/${user.id}`} style={profileLinkStyle}>Öppna</Link>
+      </td>
     </tr>
   );
 }
@@ -319,6 +324,20 @@ const iconBtn: React.CSSProperties = {
   background: '#f3f4f6',
   borderRadius: 6,
   border: '1px solid #e5e7eb'
+};
+
+const profileLinkStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  padding: '8px 10px',
+  borderRadius: 8,
+  border: '1px solid #cbd5e1',
+  background: '#f8fafc',
+  color: '#0f172a',
+  fontSize: 13,
+  fontWeight: 700,
+  textDecoration: 'none'
 };
 
 const eyebrowStyle: React.CSSProperties = {

@@ -136,6 +136,14 @@ export default function ProfileMenu({ fullName, role }: { fullName: string | nul
           {!fullName && <div style={{ padding: '0 8px 8px', fontSize: 11, color: '#6b7280' }}>Namn saknas.</div>}
           <button
             role="menuitem"
+            onClick={() => { setOpen(false); router.push('/profil'); }}
+            className="btn--plain"
+            style={{ width: '100%', textAlign: 'left', padding: '8px 10px', borderRadius: 8 }}
+          >
+            Min profil
+          </button>
+          <button
+            role="menuitem"
             onClick={logout}
             className="btn--plain"
             style={{ width: '100%', textAlign: 'left', padding: '8px 10px', borderRadius: 8 }}

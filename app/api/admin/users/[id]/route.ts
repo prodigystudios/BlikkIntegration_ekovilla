@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getUserProfile } from '../../../../../lib/getUserProfile';
 import { adminSupabase } from '../../../../../lib/adminSupabase';
+import {
+  buildAdminDetailUpdates,
+  buildAdminProfileUpdates,
+  buildSensitiveProfileUpdates,
+} from '../../../../../lib/profileDetails';
 
 async function requireAdmin() {
   const profile = await getUserProfile();
@@ -17,6 +22,10 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   const body = await req.json();
   let { role, full_name, disabled, tags, phone } = body as { role?: string; full_name?: string; disabled?: boolean; tags?: string[]; phone?: string };
   if (role === 'readonly') role = 'konsult';
+
+  const profileUpdates = buildAdminProfileUpdates(body || {});
+  const detailUpdates = buildAdminDetailUpdates(body || {});
+  const sensitiveUpdates = buildSensitiveProfileUpdates(body || {});
 
   // Update profile name if provided
   let nameUpdated = false;
@@ -48,12 +57,41 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     if (phoneErr) return NextResponse.json({ error: 'failed updating phone', details: phoneErr.message }, { status: 500 });
     phoneUpdated = true;
   }
+
+  const remainingProfileUpdates = { ...profileUpdates };
+  delete remainingProfileUpdates.full_name;
+  delete remainingProfileUpdates.phone;
+
+  let profileDetailsUpdated = false;
+  if (Object.keys(remainingProfileUpdates).length) {
+    const { error: profileErr } = await adminSupabase.from('profiles').update(remainingProfileUpdates).eq('id', id);
+    if (profileErr) return NextResponse.json({ error: 'failed updating profile fields', details: profileErr.message }, { status: 500 });
+    profileDetailsUpdated = true;
+  }
+
+  let employeeDetailsUpdated = false;
+  if (Object.keys(detailUpdates).length) {
+    const { error: detailErr } = await adminSupabase
+      .from('employee_profile_details')
+      .upsert({ user_id: id, ...detailUpdates }, { onConflict: 'user_id' });
+    if (detailErr) return NextResponse.json({ error: 'failed updating employee details', details: detailErr.message }, { status: 500 });
+    employeeDetailsUpdated = true;
+  }
+
+  let sensitiveUpdated = false;
+  if (Object.keys(sensitiveUpdates).length) {
+    const { error: sensitiveErr } = await adminSupabase
+      .from('employee_sensitive_details')
+      .upsert({ user_id: id, ...sensitiveUpdates }, { onConflict: 'user_id' });
+    if (sensitiveErr) return NextResponse.json({ error: 'failed updating sensitive details', details: sensitiveErr.message }, { status: 500 });
+    sensitiveUpdated = true;
+  }
   // Disable/enable user (Supabase: update user) if requested
   if (typeof disabled === 'boolean') {
     // Supabase JS v2 doesn't expose direct 'banned' flag; placeholder for future
   }
 
-  return NextResponse.json({ ok: true, nameUpdated, roleUpdated, tagsUpdated, phoneUpdated });
+  return NextResponse.json({ ok: true, nameUpdated, roleUpdated, tagsUpdated, phoneUpdated, profileDetailsUpdated, employeeDetailsUpdated, sensitiveUpdated });
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
