@@ -65,7 +65,7 @@ export default function AdminDepotUsage() {
   const uniqueDepots = new Set(filtered.map((row) => row.depot_id)).size;
 
   return (
-    <main style={{ padding: 12, display:'grid', gap:20 }}>
+    <main style={{ padding: 12, display:'grid', gap:20, maxWidth:1240, margin:'0 auto' }}>
       <section style={{ border:'1px solid #dbe4ef', borderRadius:24, padding:20, background:'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)', boxShadow:'0 14px 36px rgba(15,23,42,0.04)', display:'grid', gap:16 }}>
         <div style={{ display:'flex', justifyContent:'space-between', gap:16, alignItems:'flex-start', flexWrap:'wrap' }}>
           <div style={{ display:'grid', gap:6, maxWidth:760 }}>
@@ -77,7 +77,7 @@ export default function AdminDepotUsage() {
             <h1 style={{ margin:0, fontSize:28, color:'#0f172a' }}>Förbrukning och uttag i ett tydligare flöde</h1>
             <p style={{ margin:0, fontSize:14, color:'#475569', lineHeight:1.55 }}>Följ senaste depåuttag, filtrera på projekt eller depå och få en snabb summering av förbrukningen.</p>
           </div>
-          <div style={{ display:'flex', gap: 12, alignItems:'center', flexWrap:'wrap' }}>
+          <div style={{ display:'flex', gap: 12, alignItems:'center', flexWrap:'wrap', width:'min(100%, 460px)' }}>
         <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Sök projekt, depå eller nyckel" style={{ ...fieldStyle, minWidth:260 }} />
         <label style={{ display:'flex', gap:8, alignItems:'center' }}>
           Visa dagar:
@@ -103,18 +103,30 @@ export default function AdminDepotUsage() {
       ) : (
         <div style={{ display:'grid', gap: 10 }}>
           {filtered.map(r => (
-            <div key={r.id} style={{ display:'grid', gridTemplateColumns:'minmax(0, 1fr) minmax(0, 1fr) auto auto', gap:10, alignItems:'center', padding:'12px 14px', border:'1px solid #dbe4ef', borderRadius:16, background:'#fff', boxShadow:'0 8px 20px rgba(15,23,42,0.03)' }}>
-              <div>
-                <div style={{ fontWeight:700, color:'#0f172a' }}>{depotName(r.depot_id)}</div>
-                <div style={{ fontSize:12, color:'#6b7280' }}>{new Date(r.created_at).toLocaleString('sv-SE')}</div>
+            <article key={r.id} style={usageCardStyle}>
+              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:12, flexWrap:'wrap' }}>
+                <div style={{ display:'grid', gap:4, minWidth:0, flex:'1 1 220px' }}>
+                  <div style={{ fontWeight:700, color:'#0f172a' }}>{depotName(r.depot_id)}</div>
+                  <div style={{ fontSize:12, color:'#6b7280' }}>{new Date(r.created_at).toLocaleString('sv-SE')}</div>
+                </div>
+                <div style={bagsBadgeStyle}>{r.bags_used} säckar</div>
               </div>
-              <div>
-                <div style={{ fontWeight:700, color:'#0f172a' }}>Projekt: {r.project_id}</div>
-                <div style={{ fontSize:12, color:'#6b7280' }}>Installationsdatum: {r.installation_date || '—'}</div>
+
+              <div style={usageMetaGridStyle}>
+                <div style={usageMetaCardStyle}>
+                  <span style={usageMetaLabelStyle}>Projekt</span>
+                  <strong style={usageMetaValueStyle}>{r.project_id}</strong>
+                </div>
+                <div style={usageMetaCardStyle}>
+                  <span style={usageMetaLabelStyle}>Installationsdatum</span>
+                  <strong style={usageMetaValueStyle}>{r.installation_date || '—'}</strong>
+                </div>
+                <div style={usageMetaCardStyle}>
+                  <span style={usageMetaLabelStyle}>Källa</span>
+                  <strong style={usageMetaValueStyle}>{r.source_key || '—'}</strong>
+                </div>
               </div>
-              <div style={{ justifySelf:'end', fontWeight:800, color:'#0f172a' }}>{r.bags_used} säckar</div>
-              <div style={{ justifySelf:'end', fontSize:12, color:'#6b7280' }}>{r.source_key || '—'}</div>
-            </div>
+            </article>
           ))}
           {filtered.length === 0 && <div style={{ color:'#6b7280' }}>Inga uttag funna.</div>}
         </div>
@@ -129,3 +141,9 @@ const fieldStyle: React.CSSProperties = { padding:'8px 10px', border:'1px solid 
 const miniStatStyle: React.CSSProperties = { display:'grid', gap:5, padding:'12px 12px 10px', borderRadius:16, border:'1px solid #dbe4ef', background:'#fff' };
 const miniLabelStyle: React.CSSProperties = { fontSize:11, fontWeight:800, letterSpacing:0.3, textTransform:'uppercase', color:'#64748b' };
 const miniValueStyle: React.CSSProperties = { fontSize:20, fontWeight:800, color:'#0f172a' };
+const usageCardStyle: React.CSSProperties = { display:'grid', gap:12, padding:'14px 14px 12px', border:'1px solid #dbe4ef', borderRadius:18, background:'#fff', boxShadow:'0 8px 20px rgba(15,23,42,0.03)' };
+const bagsBadgeStyle: React.CSSProperties = { display:'inline-flex', alignItems:'center', justifyContent:'center', padding:'8px 10px', borderRadius:999, background:'#eff6ff', border:'1px solid #bfdbfe', color:'#1d4ed8', fontSize:13, fontWeight:800, whiteSpace:'nowrap' };
+const usageMetaGridStyle: React.CSSProperties = { display:'grid', gap:10, gridTemplateColumns:'repeat(auto-fit, minmax(180px, 1fr))' };
+const usageMetaCardStyle: React.CSSProperties = { display:'grid', gap:4, padding:'10px 12px', border:'1px solid #e2e8f0', borderRadius:14, background:'#f8fbff' };
+const usageMetaLabelStyle: React.CSSProperties = { fontSize:11, fontWeight:800, letterSpacing:0.3, textTransform:'uppercase', color:'#64748b' };
+const usageMetaValueStyle: React.CSSProperties = { fontSize:14, fontWeight:700, color:'#0f172a', wordBreak:'break-word' };

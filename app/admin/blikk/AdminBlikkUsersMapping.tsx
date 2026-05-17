@@ -66,7 +66,7 @@ export default function AdminBlikkUsersMapping() {
   const suggestionCount = rows.filter((row) => row.bestMatch != null).length;
 
   return (
-    <main style={{ padding:12, display:'grid', gap:20 }}>
+    <main style={{ padding:12, display:'grid', gap:20, maxWidth:1280, margin:'0 auto' }}>
       <section style={{ border: '1px solid #dbe4ef', background: 'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)', borderRadius: 24, padding: 20, display: 'grid', gap: 16, boxShadow:'0 14px 36px rgba(15,23,42,0.04)' }}>
       <div style={{ display:'flex', justifyContent:'space-between', gap:16, flexWrap:'wrap', alignItems:'flex-start' }}>
         <div style={{ display:'grid', gap:6, maxWidth:760 }}>
@@ -92,72 +92,85 @@ export default function AdminBlikkUsersMapping() {
       {error && <div style={{ color: '#b91c1c', fontSize: 13 }}>{error}</div>}
       {!loading && rows.length === 0 && <div style={{ fontSize: 14, color: '#374151' }}>Inga profiler att visa.</div>}
       {!loading && rows.length > 0 && (
-        <div style={{ overflowX: 'auto', border:'1px solid #dbe4ef', borderRadius:20, background:'#fff', boxShadow:'0 10px 28px rgba(15,23,42,0.03)' }}>
-          <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 900 }}>
-            <thead>
-              <tr style={{ textAlign: 'left', background:'#f8fafc' }}>
-                <th style={thCell}>E-post</th>
-                <th style={thCell}>Namn</th>
-                <th style={thCell}>Roll</th>
-                <th style={thCell}>Nuvarande Blikk-ID</th>
-                <th style={thCell}>Förslag</th>
-                <th style={thCell}>Välj Blikk-användare</th>
-                <th style={thCell}></th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredRows.map((r) => (
-                <tr key={r.id} style={{ borderTop: '1px solid #e5e7eb' }}>
-                  <td style={tdCell}>{r.email}</td>
-                  <td style={tdCell}>{r.full_name || '—'}</td>
-                  <td style={tdCell}>{r.role}</td>
-                  <td style={tdCell}>{r.blikk_id ?? '—'}</td>
-                  <td style={tdCell}>
-                    {r.bestMatch ? (
-                      <span title={r.bestMatch.email || undefined}>#{r.bestMatch.id} • {r.bestMatch.name || r.bestMatch.email || '—'}</span>
+        <div style={cardListStyle}>
+          {filteredRows.map((row) => {
+            const selectedId = row.blikk_id ?? row.bestMatch?.id ?? null;
+            const status = row.blikk_id != null ? 'Kopplad' : row.bestMatch ? 'Förslag finns' : 'Okopplad';
+
+            return (
+              <article key={row.id} style={mappingCardStyle}>
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:12, flexWrap:'wrap' }}>
+                  <div style={{ display:'grid', gap:6, minWidth:0, flex:'1 1 260px' }}>
+                    <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
+                      <strong style={{ fontSize:16, color:'#0f172a' }}>{row.full_name || 'Namn saknas'}</strong>
+                      <span style={rolePillStyle}>{row.role}</span>
+                      <span style={statusPillStyle(status)}>{status}</span>
+                    </div>
+                    <span style={{ fontSize:13, color:'#64748b', wordBreak:'break-all' }}>{row.email}</span>
+                  </div>
+                  <div style={{ display:'grid', gap:6, justifyItems:'end' }}>
+                    <span style={metaLabelStyle}>Nuvarande Blikk-ID</span>
+                    <strong style={{ fontSize:18, color:'#0f172a' }}>{row.blikk_id ?? '—'}</strong>
+                  </div>
+                </div>
+
+                <div style={mappingGridStyle}>
+                  <div style={infoCardStyle}>
+                    <span style={metaLabelStyle}>Förslag</span>
+                    {row.bestMatch ? (
+                      <div style={{ display:'grid', gap:2 }}>
+                        <strong style={{ color:'#0f172a' }}>#{row.bestMatch.id} • {row.bestMatch.name || row.bestMatch.email || '—'}</strong>
+                        <span style={{ fontSize:12, color:'#64748b' }}>{row.bestMatch.email || 'Ingen e-post'}</span>
+                      </div>
                     ) : (
-                      <span style={{ color: '#6b7280' }}>Ingen</span>
+                      <span style={{ color:'#64748b', fontSize:13 }}>Ingen tydlig matchning hittades.</span>
                     )}
-                  </td>
-                  <td style={tdCell}>
+                  </div>
+
+                  <div style={infoCardStyle}>
+                    <span style={metaLabelStyle}>Välj Blikk-användare</span>
                     <BlikkUserSelect
                       users={blikkUsers}
-                      value={r.blikk_id ?? r.bestMatch?.id ?? null}
-                      onChange={(val) => setRows((list) => list.map((x) => (x.id === r.id ? { ...x, blikk_id: val } : x)))}
+                      value={selectedId}
+                      onChange={(val) => setRows((list) => list.map((x) => (x.id === row.id ? { ...x, blikk_id: val } : x)))}
                     />
-                  </td>
-                  <td style={tdCell}>
-                    <div style={{ display: 'flex', gap: 8 }}>
-                      {r.bestMatch && r.blikk_id == null && (
-                        <button
-                          onClick={() => setRows((list) => list.map((x) => (x.id === r.id ? { ...x, blikk_id: r.bestMatch!.id } : x)))}
-                          style={{ ...saveBtn, background:'#fff', color:'#2563eb', border:'1px solid #bfdbfe' }}
-                        >
-                          Använd förslag
-                        </button>
-                      )}
+                  </div>
+                </div>
+
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', gap:12, flexWrap:'wrap' }}>
+                  <span style={{ fontSize:12, color:'#64748b' }}>
+                    Spara när rätt Blikk-användare är vald för att låsa kopplingen på profilen.
+                  </span>
+                  <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+                    {row.bestMatch && row.blikk_id == null && (
                       <button
-                        onClick={() => saveMapping(r.id, r.blikk_id ?? r.bestMatch?.id ?? null)}
-                        disabled={saving[r.id]}
-                        style={saveBtn}
+                        onClick={() => setRows((list) => list.map((x) => (x.id === row.id ? { ...x, blikk_id: row.bestMatch!.id } : x)))}
+                        style={{ ...saveBtn, background:'#fff', color:'#2563eb', border:'1px solid #bfdbfe' }}
                       >
-                        {saving[r.id] ? 'Sparar…' : 'Spara'}
+                        Använd förslag
                       </button>
-                      {r.blikk_id != null && (
-                        <button
-                          onClick={() => saveMapping(r.id, null)}
-                          disabled={saving[r.id]}
-                          style={{ ...saveBtn, background: '#fff', color: '#111827', border: '1px solid #d1d5db' }}
-                        >
-                          Rensa
-                        </button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                    )}
+                    <button
+                      onClick={() => saveMapping(row.id, selectedId)}
+                      disabled={saving[row.id]}
+                      style={saveBtn}
+                    >
+                      {saving[row.id] ? 'Sparar…' : 'Spara koppling'}
+                    </button>
+                    {row.blikk_id != null && (
+                      <button
+                        onClick={() => saveMapping(row.id, null)}
+                        disabled={saving[row.id]}
+                        style={{ ...saveBtn, background: '#fff', color: '#111827', border: '1px solid #d1d5db' }}
+                      >
+                        Rensa
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </article>
+            );
+          })}
         </div>
       )}
       {!loading && rows.length > 0 && filteredRows.length === 0 && <div style={{ fontSize:13, color:'#64748b' }}>Ingen profil matchar nuvarande sökning.</div>}
@@ -167,7 +180,7 @@ export default function AdminBlikkUsersMapping() {
 
 function BlikkUserSelect({ users, value, onChange }: { users: BlikkUserLite[]; value: number | null; onChange: (v: number | null) => void }) {
   return (
-    <select value={value == null ? '' : String(value)} onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)} style={{ ...fieldStyle, minWidth: 280 }}>
+    <select value={value == null ? '' : String(value)} onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)} style={{ ...fieldStyle, minWidth: 0, width:'100%' }}>
       <option value="">— Välj —</option>
       {users.map((u) => (
         <option key={u.id} value={u.id}>
@@ -178,19 +191,34 @@ function BlikkUserSelect({ users, value, onChange }: { users: BlikkUserLite[]; v
   );
 }
 
-const thCell: React.CSSProperties = {
-  padding: '6px 8px',
-  fontSize: 12,
-  textTransform: 'uppercase',
-  letterSpacing: 0.5,
-  fontWeight: 600,
-  color: '#374151'
+const cardListStyle: React.CSSProperties = {
+  display:'grid',
+  gap:12
 };
 
-const tdCell: React.CSSProperties = {
-  padding: '8px 8px',
-  fontSize: 14,
-  color: '#111827'
+const mappingCardStyle: React.CSSProperties = {
+  display:'grid',
+  gap:16,
+  padding:'16px 16px 14px',
+  border:'1px solid #dbe4ef',
+  borderRadius:20,
+  background:'#fff',
+  boxShadow:'0 10px 28px rgba(15,23,42,0.03)'
+};
+
+const mappingGridStyle: React.CSSProperties = {
+  display:'grid',
+  gap:12,
+  gridTemplateColumns:'repeat(auto-fit, minmax(240px, 1fr))'
+};
+
+const infoCardStyle: React.CSSProperties = {
+  display:'grid',
+  gap:8,
+  padding:'12px 12px 10px',
+  border:'1px solid #e2e8f0',
+  borderRadius:16,
+  background:'#f8fbff'
 };
 
 const fieldStyle: React.CSSProperties = {
@@ -211,6 +239,42 @@ const saveBtn: React.CSSProperties = {
   color: '#fff',
   fontWeight: 500,
   cursor: 'pointer'
+};
+
+const rolePillStyle: React.CSSProperties = {
+  display:'inline-flex',
+  alignItems:'center',
+  padding:'4px 8px',
+  borderRadius:999,
+  background:'#eff6ff',
+  border:'1px solid #bfdbfe',
+  color:'#334155',
+  fontSize:11,
+  fontWeight:800,
+  textTransform:'uppercase',
+  letterSpacing:0.35
+};
+
+const statusPillStyle = (status: string): React.CSSProperties => ({
+  display:'inline-flex',
+  alignItems:'center',
+  padding:'4px 8px',
+  borderRadius:999,
+  background: status === 'Kopplad' ? '#dcfce7' : status === 'Förslag finns' ? '#fef3c7' : '#f8fafc',
+  border:'1px solid ' + (status === 'Kopplad' ? '#bbf7d0' : status === 'Förslag finns' ? '#fde68a' : '#e2e8f0'),
+  color:'#475569',
+  fontSize:11,
+  fontWeight:800,
+  letterSpacing:0.3,
+  textTransform:'uppercase'
+});
+
+const metaLabelStyle: React.CSSProperties = {
+  fontSize:11,
+  fontWeight:800,
+  letterSpacing:0.3,
+  textTransform:'uppercase',
+  color:'#64748b'
 };
 
 const eyebrowStyle: React.CSSProperties = { display:'inline-flex', alignItems:'center', padding:'4px 10px', borderRadius:999, background:'#dbeafe', border:'1px solid #bfdbfe', color:'#2563eb', fontSize:11, fontWeight:800, letterSpacing:0.35, textTransform:'uppercase' };

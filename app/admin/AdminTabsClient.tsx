@@ -41,8 +41,8 @@ export default function AdminTabsClient() {
   const currentTab = tabs.find((item) => item.id === tab) || tabs[0];
 
   return (
-    <div style={{ display:'grid', gap:20, padding:'20px 20px 28px', maxWidth: 1460, margin:'0 auto' }}>
-      <section style={{ border:'1px solid #dbe4ef', borderRadius:28, padding:'20px 20px 18px', background:'linear-gradient(180deg, #ffffff 0%, #f7fbff 100%)', boxShadow:'0 18px 46px rgba(15,23,42,0.05)', display:'grid', gap:16 }}>
+    <div style={pageStyle}>
+      <section style={heroStyle}>
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:16, flexWrap:'wrap' }}>
           <div style={{ display:'grid', gap:8, maxWidth:760 }}>
             <div style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' }}>
@@ -66,7 +66,7 @@ export default function AdminTabsClient() {
           </div>
         </div>
 
-        <div style={{ display:'flex', gap:10, flexWrap:'wrap' }}>
+        <div style={tabRowStyle}>
           {tabs.map((tabDef) => (
             <button key={tabDef.id} onClick={()=>setTab(tabDef.id)} style={tabBtn(tab===tabDef.id)}>
               <span style={{ fontWeight:700 }}>{tabDef.label}</span>
@@ -75,16 +75,47 @@ export default function AdminTabsClient() {
           ))}
         </div>
       </section>
-      <div>
+      <section style={contentPanelStyle}>
         {tab==='users' && <AdminUsers />}
         {tab==='contacts' && <AdminContacts />}
         {tab==='depots' && <AdminDepotUsage />}
         {tab==='blikk' && <AdminBlikkUsersMapping />}
         {tab==='news' && <AdminNews />}
-      </div>
+      </section>
     </div>
   );
 }
+
+const pageStyle: React.CSSProperties = {
+  display:'grid',
+  gap:20,
+  padding:'20px 20px 28px',
+  maxWidth: 1460,
+  margin:'0 auto'
+};
+
+const heroStyle: React.CSSProperties = {
+  border:'1px solid #dbe4ef',
+  borderRadius:28,
+  padding:'20px 20px 18px',
+  background:'linear-gradient(180deg, #ffffff 0%, #f7fbff 100%)',
+  boxShadow:'0 18px 46px rgba(15,23,42,0.05)',
+  display:'grid',
+  gap:16
+};
+
+const tabRowStyle: React.CSSProperties = {
+  display:'flex',
+  gap:10,
+  flexWrap:'wrap'
+};
+
+const contentPanelStyle: React.CSSProperties = {
+  border:'1px solid #e2e8f0',
+  borderRadius:30,
+  background:'linear-gradient(180deg, #f8fbff 0%, #ffffff 100%)',
+  boxShadow:'0 18px 44px rgba(15,23,42,0.04)'
+};
 
 const tabBtn = (active:boolean): React.CSSProperties => ({
   display:'grid',
