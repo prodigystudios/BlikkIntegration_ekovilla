@@ -18,7 +18,7 @@ const STORAGE_KEY = 'dashboard_notes_v1';
 const PUSH_DEBUG_STORAGE_KEY = 'dashboard_notes_push_debug_v1';
 const REMINDER_INTERVAL_MINUTES = 5;
 
-export function DashboardNotes({ compact }: { compact?: boolean }) {
+export function DashboardNotes({ compact, desktopMode }: { compact?: boolean; desktopMode?: boolean }) {
   const toast = useToast();
   const [items, setItems] = useState<NoteItem[]>([]);
   const [draft, setDraft] = useState('');
@@ -438,6 +438,8 @@ export function DashboardNotes({ compact }: { compact?: boolean }) {
   const openCount = items.filter(i => !i.done).length;
   const doneCount = items.length - openCount;
   const composerExpectedDispatch = newReminderDraft ? getExpectedDispatchTime(newReminderDraft) : null;
+  const utilityCardStyle = desktopMode ? compactUtilityCard : sectionCard;
+  const shouldConstrainList = !!desktopMode && visible.length > 4;
 
   return (
     <div style={{ display:'flex', flexDirection:'column', gap:compact?12:16 }}>
@@ -464,12 +466,12 @@ export function DashboardNotes({ compact }: { compact?: boolean }) {
       {error && (
         <div style={{ fontSize:12, color:'#b91c1c' }}>{error}</div>
       )}
-      <section style={sectionCard}>
+      <section style={utilityCardStyle}>
         <div style={{ display:'grid', gap:10 }}>
           <div style={{ display:'flex', justifyContent:'space-between', gap:12, flexWrap:'wrap', alignItems:'center' }}>
             <div style={{ display:'grid', gap:4 }}>
               <strong style={sectionTitle}>Notiser på den här enheten</strong>
-              <span style={helperText}>Push används när en påminnelse blir förfallen. Automatisk körning sker i 5-minutersintervall.</span>
+              {(!desktopMode || pushPanelOpen) && <span style={helperText}>Push används när en påminnelse blir förfallen. Automatisk körning sker i 5-minutersintervall.</span>}
             </div>
             <div style={{ display:'flex', gap:8, flexWrap:'wrap', alignItems:'center' }}>
               <span style={{ ...pushStateBadge, color: pushEnabled ? '#166534' : '#475569', background: pushEnabled ? '#dcfce7' : '#f8fafc', borderColor: pushEnabled ? '#86efac' : '#d1d5db' }}>
@@ -516,12 +518,12 @@ export function DashboardNotes({ compact }: { compact?: boolean }) {
           ))}
         </div>
       )}
-      <section style={sectionCard}>
+      <section style={utilityCardStyle}>
         <div style={{ display:'grid', gap:12 }}>
           <div style={{ display:'flex', justifyContent:'space-between', gap:12, flexWrap:'wrap', alignItems:'center' }}>
             <div style={{ display:'grid', gap:4 }}>
               <strong style={sectionTitle}>Ny anteckning</strong>
-              <span style={helperText}>Öppna formuläret när du vill lägga till något nytt. Tider avrundas uppåt till nästa 5-minutersfönster.</span>
+              {(!desktopMode || composerOpen) && <span style={helperText}>Öppna formuläret när du vill lägga till något nytt. Tider avrundas uppåt till nästa 5-minutersfönster.</span>}
             </div>
             <button type="button" onClick={() => setComposerOpen((prev) => !prev)} style={addComposerBtn} aria-expanded={composerOpen}>
               <span style={addComposerIcon}>{composerOpen ? '−' : '+'}</span>
@@ -583,11 +585,13 @@ export function DashboardNotes({ compact }: { compact?: boolean }) {
         </p>
       )}
       {items.length > 0 && (
-        <ul style={{ listStyle:'none', padding:0, margin:0, display:'flex', flexDirection:'column', gap:compact?4:6 }}>
-          {visible.sort((a,b)=> a.done===b.done ? b.created - a.created : a.done?1:-1).map(item => (
-            <NoteRow key={item.id} item={item} onToggle={()=>toggle(item.id)} onRemove={()=>remove(item.id)} onEdit={(t)=>edit(item.id,t)} onSaveReminder={(value)=>saveReminder(item.id, value)} compact={compact} />
-          ))}
-        </ul>
+        <div style={shouldConstrainList ? constrainedListWrap : undefined}>
+          <ul style={{ listStyle:'none', padding:0, margin:0, display:'flex', flexDirection:'column', gap:compact?4:6 }}>
+            {visible.sort((a,b)=> a.done===b.done ? b.created - a.created : a.done?1:-1).map(item => (
+              <NoteRow key={item.id} item={item} onToggle={()=>toggle(item.id)} onRemove={()=>remove(item.id)} onEdit={(t)=>edit(item.id,t)} onSaveReminder={(value)=>saveReminder(item.id, value)} compact={compact} desktopMode={desktopMode} />
+            ))}
+          </ul>
+        </div>
       )}
       {items.some(i=>i.done) && (
         <div style={{ display:'flex', justifyContent:'flex-end' }}>
@@ -598,7 +602,7 @@ export function DashboardNotes({ compact }: { compact?: boolean }) {
   );
 }
 
-function NoteRow({ item, onToggle, onRemove, onEdit, onSaveReminder, compact }: { item: NoteItem; onToggle: ()=>void; onRemove: ()=>void; onEdit:(t:string)=>void; onSaveReminder:(value:string | null)=>void; compact?: boolean }) {
+function NoteRow({ item, onToggle, onRemove, onEdit, onSaveReminder, compact, desktopMode }: { item: NoteItem; onToggle: ()=>void; onRemove: ()=>void; onEdit:(t:string)=>void; onSaveReminder:(value:string | null)=>void; compact?: boolean; desktopMode?: boolean }) {
   const [editing, setEditing] = useState(false);
   const [reminderOpen, setReminderOpen] = useState(false);
   const [draft, setDraft] = useState(item.text);
@@ -631,7 +635,6 @@ function NoteRow({ item, onToggle, onRemove, onEdit, onSaveReminder, compact }: 
           <div style={{ display:'flex', justifyContent:'space-between', gap:10, flexWrap:'wrap', alignItems:'center' }}>
             <div style={{ display:'flex', gap:8, flexWrap:'wrap', alignItems:'center' }}>
               <span style={item.done ? statusPillDone : statusPillOpen}>{item.done ? 'Klar' : 'Öppen'}</span>
-              {item.reminderAt && <span style={statusPillMuted}>Påminnelse aktiv</span>}
             </div>
           </div>
         </div>
@@ -646,50 +649,55 @@ function NoteRow({ item, onToggle, onRemove, onEdit, onSaveReminder, compact }: 
               {item.done ? 'Öppna igen' : 'Markera klar'}
             </span>
           </button>
-          <button onClick={()=>setEditing(true)} style={secondaryBtn} aria-label="Redigera">Redigera</button>
-          <button onClick={onRemove} style={dangerBtn} aria-label="Ta bort">Ta bort</button>
+          <button onClick={()=>setEditing(true)} style={desktopMode ? subtleActionBtn : secondaryBtn} aria-label="Redigera">Redigera</button>
+          <button onClick={onRemove} style={desktopMode ? subtleDangerBtn : dangerBtn} aria-label="Ta bort">Ta bort</button>
         </div>
       </div>
-      <div style={reminderBox}>
-        <div style={{ display:'flex', justifyContent:'space-between', gap:8, flexWrap:'wrap', alignItems:'center' }}>
+      <div style={reminderMetaRow}>
+        <div style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap', minWidth:0 }}>
+          {item.reminderAt ? (
+            <span style={subtleReminderPill}>Påminn {formatReminderShort(item.reminderAt)}</span>
+          ) : (
+            <span style={subtleMetaText}>Ingen påminnelse</span>
+          )}
+          {item.reminderSentAt && (
+            <span style={subtleMetaText}>Senast skickad {formatReminderShort(item.reminderSentAt)}</span>
+          )}
+        </div>
+        <button type="button" onClick={() => setReminderOpen((prev) => !prev)} style={compactSecondaryBtn} disabled={item.done}>
+          {reminderOpen ? 'Stäng' : item.reminderAt ? 'Ändra påminnelse' : 'Lägg till påminnelse'}
+        </button>
+      </div>
+      {reminderOpen && (
+        <div style={reminderBox}>
           <div style={{ display:'grid', gap:4 }}>
-            <strong style={{ fontSize:13, color:'#0f172a' }}>Påminnelse</strong>
-            <span style={{ fontSize:12, color:'#64748b', lineHeight:1.5 }}>
-              {item.reminderAt ? `Påminnelse ${formatReminder(item.reminderAt)}` : 'Ingen påminnelse satt'}
+            <strong style={{ fontSize:12.5, color:'#0f172a' }}>Påminnelse</strong>
+            <span style={{ fontSize:11.5, color:'#64748b', lineHeight:1.45 }}>
+              {item.reminderAt ? `Aktiv ${formatReminder(item.reminderAt)}` : 'Ingen tid satt'}
               {expectedDispatch ? ` • skickas cirka ${formatReminder(expectedDispatch)}` : ''}
-              {item.reminderSentAt ? ` • skickad ${formatReminder(item.reminderSentAt)}` : ''}
             </span>
           </div>
-          <button type="button" onClick={() => setReminderOpen((prev) => !prev)} style={secondaryBtn} disabled={item.done}>
-            {reminderOpen ? 'Dölj tid' : item.reminderAt ? 'Ändra tid' : 'Lägg till tid'}
-          </button>
-        </div>
-        {reminderOpen && (
-          <>
-            <div style={{ display:'flex', justifyContent:'space-between', gap:8, flexWrap:'wrap', alignItems:'center' }}>
-              <span style={fieldHint}>Skickas i 5-minutersintervall</span>
-            </div>
-            <div style={{ display:'flex', gap:8, flexWrap:'wrap', alignItems:'center' }}>
-              <input
-                type="datetime-local"
-                value={reminderDraft}
-                onChange={e=>setReminderDraft(normalizeReminderDraftValue(e.target.value))}
-                step={REMINDER_INTERVAL_MINUTES * 60}
-                disabled={item.done}
-                style={{ ...input, flex:'1 1 220px', minWidth: compact ? 180 : 240 }}
-              />
-              <button type="button" onClick={()=>{ onSaveReminder(reminderDraft || null); setReminderOpen(false); }} style={{ ...btnPrimary, minWidth: compact ? 140 : 156 }} disabled={item.done}>
-                Spara påminnelse
+          <div style={{ display:'flex', gap:8, flexWrap:'wrap', alignItems:'center' }}>
+            <input
+              type="datetime-local"
+              value={reminderDraft}
+              onChange={e=>setReminderDraft(normalizeReminderDraftValue(e.target.value))}
+              step={REMINDER_INTERVAL_MINUTES * 60}
+              disabled={item.done}
+              style={{ ...input, flex:'1 1 220px', minWidth: compact ? 180 : 240 }}
+            />
+            <button type="button" onClick={()=>{ onSaveReminder(reminderDraft || null); setReminderOpen(false); }} style={{ ...btnPrimary, minWidth: compact ? 140 : 156 }} disabled={item.done}>
+              Spara
+            </button>
+            {item.reminderAt && (
+              <button type="button" onClick={()=>{ setReminderDraft(''); onSaveReminder(null); setReminderOpen(false); }} style={compactSecondaryBtn}>
+                Rensa
               </button>
-              {item.reminderAt && (
-                <button type="button" onClick={()=>{ setReminderDraft(''); onSaveReminder(null); setReminderOpen(false); }} style={secondaryBtn}>
-                  Rensa tid
-                </button>
-              )}
-            </div>
-          </>
-        )}
-      </div>
+            )}
+          </div>
+          <span style={fieldHint}>Skickas i 5-minutersintervall.</span>
+        </div>
+      )}
     </li>
   );
 }
@@ -747,6 +755,18 @@ function formatReminder(value: string | null) {
   return date.toLocaleString('sv-SE');
 }
 
+function formatReminderShort(value: string | null) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString('sv-SE', {
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 function base64ToUint8Array(value: string) {
   const padding = '='.repeat((4 - (value.length % 4)) % 4);
   const normalized = (value + padding).replace(/-/g, '+').replace(/_/g, '/');
@@ -771,17 +791,25 @@ const checkBtn: React.CSSProperties = { width:20, height:20, borderRadius:6, bor
 const checkBtnDone: React.CSSProperties = { background:'#16a34a', border:'1px solid #16a34a' };
 const pushStateBadge: React.CSSProperties = { display:'inline-flex', alignItems:'center', padding:'6px 10px', borderRadius:999, border:'1px solid #d1d5db', fontSize:11.5, fontWeight:700 };
 const sectionCard: React.CSSProperties = { display:'grid', gap:10, padding:'16px 18px', border:'1px solid #e2e8f0', borderRadius:16, background:'linear-gradient(180deg, #ffffff 0%, #f8fafc 100%)', boxShadow:'0 6px 20px rgba(15, 23, 42, 0.05)' };
+const compactUtilityCard: React.CSSProperties = { display:'grid', gap:8, padding:'12px 14px', border:'1px solid #e2e8f0', borderRadius:14, background:'#fbfdff', boxShadow:'0 4px 14px rgba(15, 23, 42, 0.04)' };
 const sectionTitle: React.CSSProperties = { fontSize:14, color:'#0f172a' };
 const helperText: React.CSSProperties = { fontSize:12, color:'#64748b', lineHeight:1.5 };
 const fieldLabel: React.CSSProperties = { fontSize:12, fontWeight:700, color:'#334155', letterSpacing:'0.01em' };
 const fieldHint: React.CSSProperties = { fontSize:11, color:'#64748b' };
 const secondaryBtn: React.CSSProperties = { padding:'8px 12px', background:'#ffffff', color:'#0f172a', borderRadius:8, fontSize:12.5, cursor:'pointer', border:'1px solid #cbd5e1', fontWeight:600, whiteSpace:'nowrap' };
+const compactSecondaryBtn: React.CSSProperties = { padding:'6px 10px', background:'#ffffff', color:'#334155', borderRadius:999, fontSize:11.5, cursor:'pointer', border:'1px solid #dbe4ef', fontWeight:700, whiteSpace:'nowrap' };
 const quickActionBtn: React.CSSProperties = { padding:'7px 10px', background:'#eff6ff', color:'#1d4ed8', borderRadius:999, fontSize:12, cursor:'pointer', border:'1px solid #bfdbfe', fontWeight:600, whiteSpace:'nowrap' };
 const dangerBtn: React.CSSProperties = { padding:'8px 12px', background:'#fff1f2', color:'#be123c', borderRadius:8, fontSize:12.5, cursor:'pointer', border:'1px solid #fecdd3', fontWeight:600, whiteSpace:'nowrap' };
+const subtleActionBtn: React.CSSProperties = { padding:'6px 9px', background:'#ffffff', color:'#475569', borderRadius:999, fontSize:11.5, cursor:'pointer', border:'1px solid #e2e8f0', fontWeight:700, whiteSpace:'nowrap' };
+const subtleDangerBtn: React.CSSProperties = { padding:'6px 9px', background:'#fff7f7', color:'#be123c', borderRadius:999, fontSize:11.5, cursor:'pointer', border:'1px solid #ffe4e6', fontWeight:700, whiteSpace:'nowrap' };
 const summaryPill: React.CSSProperties = { display:'inline-flex', alignItems:'center', padding:'5px 10px', borderRadius:999, background:'#dcfce7', color:'#166534', fontSize:11.5, fontWeight:700 };
 const summaryPillMuted: React.CSSProperties = { display:'inline-flex', alignItems:'center', padding:'5px 10px', borderRadius:999, background:'#e2e8f0', color:'#475569', fontSize:11.5, fontWeight:700 };
 const noteCard: React.CSSProperties = { display:'grid', gap:12, background:'#ffffff', border:'1px solid #e2e8f0', borderRadius:16, boxShadow:'0 6px 20px rgba(15, 23, 42, 0.05)' };
-const reminderBox: React.CSSProperties = { display:'grid', gap:8, padding:'12px', border:'1px solid #dbeafe', borderRadius:12, background:'#f8fbff' };
+const constrainedListWrap: React.CSSProperties = { maxHeight: 560, overflowY:'auto', paddingRight:4 };
+const reminderMetaRow: React.CSSProperties = { display:'flex', justifyContent:'space-between', gap:10, flexWrap:'wrap', alignItems:'center', paddingTop:2, borderTop:'1px solid #eef2f7' };
+const reminderBox: React.CSSProperties = { display:'grid', gap:8, padding:'10px 12px', border:'1px solid #e2e8f0', borderRadius:12, background:'#fbfdff' };
+const subtleReminderPill: React.CSSProperties = { display:'inline-flex', alignItems:'center', padding:'4px 9px', borderRadius:999, background:'#eff6ff', color:'#1d4ed8', fontSize:11, fontWeight:700 };
+const subtleMetaText: React.CSSProperties = { fontSize:11.5, color:'#64748b', lineHeight:1.4 };
 const statusPillOpen: React.CSSProperties = { display:'inline-flex', alignItems:'center', padding:'4px 9px', borderRadius:999, background:'#dbeafe', color:'#1d4ed8', fontSize:11, fontWeight:700 };
 const statusPillDone: React.CSSProperties = { display:'inline-flex', alignItems:'center', padding:'4px 9px', borderRadius:999, background:'#dcfce7', color:'#166534', fontSize:11, fontWeight:700 };
 const statusPillMuted: React.CSSProperties = { display:'inline-flex', alignItems:'center', padding:'4px 9px', borderRadius:999, background:'#f1f5f9', color:'#475569', fontSize:11, fontWeight:700 };

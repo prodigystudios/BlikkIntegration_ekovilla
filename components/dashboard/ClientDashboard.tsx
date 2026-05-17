@@ -1,6 +1,6 @@
 "use client";
 import React, { useMemo, useEffect, useState } from 'react';
-import { QuickLinksGrid, QuickLink, QuickLinksIconBar, QuickLinksStrip } from './QuickLinks';
+import { QuickLinksGrid, QuickLink, QuickLinksIconBar, QuickLinksSidebar, QuickLinksStrip } from './QuickLinks';
 import DashboardNotes from './DashboardNotes';
 import dynamic from 'next/dynamic';
 const DashboardSchedule = dynamic(() => import('./DashboardSchedule'));
@@ -9,7 +9,6 @@ import DashboardDocumentApprovals from './DashboardDocumentApprovals';
 import TimeReportModal from './TimeReportModal';
 import { useToast } from '@/lib/Toast';
 import type { UserRole } from '../../lib/roles';
-import { filterLinks, NAV_LINKS } from '../../lib/roles';
 import NewsModal, { type NewsItem } from './NewsModal';
 
 // Base mapping of NAV_LINKS (contains all). We'll adapt to QuickLink shape.
@@ -114,6 +113,8 @@ const baseExtra: Record<string, Omit<QuickLink, 'href' | 'title'>> = {
 // Dashboard main component (expects role only after cleanup of deprecated userQuickHrefs prop)
 export function ClientDashboard({ role }: { role: UserRole | null }) {
   const NEWS_SEEN_KEY = 'dashboard.news.lastSeenId';
+  const DESKTOP_BREAKPOINT = 1180;
+  const stickyTop = 92;
 
   // konsult should have the same viewing permissions as sales.
   const effectiveRole: UserRole | null = role === 'konsult' ? 'sales' : role;
@@ -121,11 +122,13 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
   // Responsive flags (client-only)
   const [isSmall, setIsSmall] = useState(false); // <= 640px
   const [isXS, setIsXS] = useState(false); // <= 420px
+  const [isDesktop, setIsDesktop] = useState(false);
   useEffect(() => {
     const calc = () => {
       const w = window.innerWidth;
       setIsSmall(w <= 768);
       setIsXS(w <= 460);
+      setIsDesktop(w >= DESKTOP_BREAKPOINT);
     };
     calc();
     window.addEventListener('resize', calc);
@@ -217,6 +220,9 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
     ];
   }, [effectiveRole, role]);
   const [mini, setMini] = useState(false);
+  const [showDesktopApprovals, setShowDesktopApprovals] = useState(true);
+  const [showAllDesktopLinks, setShowAllDesktopLinks] = useState(false);
+  const [showDesktopTasks, setShowDesktopTasks] = useState(true);
   const [timeModalOpen, setTimeModalOpen] = useState(false);
   const [timePrefill, setTimePrefill] = useState<{ project?: string; projectId?: string; date?: string } | null>(null);
   // Persist mini preference in localStorage
@@ -237,6 +243,7 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
 
   // Toast
   const toast = useToast();
+  const desktopSidebarLinks = useMemo(() => showAllDesktopLinks ? links : links.slice(0, 6), [links, showAllDesktopLinks]);
   const todayMeta = useMemo(() => {
     const now = new Date();
     const weekday = now.toLocaleDateString('sv-SE', { weekday: 'long' });
@@ -254,9 +261,9 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
     border: '1px solid #dbe4ef',
     background: 'linear-gradient(135deg, #f7fbf8 0%, #eff8f1 48%, #f8fbff 100%)',
     borderRadius: 22,
-    padding: isSmall ? (isXS ? 14 : 16) : 24,
+    padding: isDesktop ? 22 : isSmall ? (isXS ? 14 : 16) : 24,
     display: 'grid',
-    gap: isSmall ? 12 : 18,
+    gap: isDesktop ? 16 : isSmall ? 12 : 18,
     boxShadow: '0 14px 34px rgba(15, 23, 42, 0.06)',
     overflow: 'hidden',
     position: 'relative'
@@ -272,140 +279,216 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
     boxShadow: '0 10px 26px rgba(15, 23, 42, 0.04)'
   };
 
+  const desktopShellStyle: React.CSSProperties = {
+    padding: 24,
+    maxWidth: 1580,
+    margin: '0 auto',
+    display: 'grid',
+    gridTemplateColumns: 'minmax(220px, 260px) minmax(0, 1.6fr) minmax(280px, 340px)',
+    gap: 24,
+    alignItems: 'start'
+  };
+
+  const desktopRailStyle: React.CSSProperties = {
+    position: 'sticky',
+    top: stickyTop,
+    display: 'grid',
+    gap: 18,
+    alignSelf: 'start'
+  };
+
+  const desktopMainStyle: React.CSSProperties = {
+    display: 'grid',
+    gap: 24,
+    minWidth: 0,
+  };
+
+  const desktopQuickLinksCardStyle: React.CSSProperties = {
+    ...surfaceCardStyle,
+    padding: 18,
+    gap: 14,
+  };
+
+  const desktopDenseCardStyle: React.CSSProperties = {
+    ...surfaceCardStyle,
+    padding: 20,
+    gap: 16,
+  };
+
+  const renderHeroSection = (showQuickLinks: boolean) => (
+    <section style={heroCardStyle}>
+      <div style={{ position:'absolute', right: isSmall ? -26 : -18, top: isSmall ? -42 : -54, width: isSmall ? 140 : 190, height: isSmall ? 140 : 190, borderRadius:'50%', background:'radial-gradient(circle, rgba(22,163,74,0.14) 0%, rgba(22,163,74,0) 70%)' }} />
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent:'space-between', gap: 12, flexWrap:'wrap', position:'relative' }}>
+        <div style={{ display:'grid', gap: isSmall ? 8 : 10, maxWidth: isDesktop ? '100%' : 680 }}>
+          <div style={{ display:'inline-flex', alignItems:'center', gap:8, width:'fit-content', padding:'6px 10px', borderRadius:999, background:'rgba(255,255,255,0.82)', border:'1px solid #d9e5dc', color:'#166534', fontSize:11, fontWeight:700, letterSpacing:0.3, textTransform:'uppercase' }}>
+            {todayMeta.greeting}
+            <span style={{ width:4, height:4, borderRadius:'50%', background:'#22c55e' }} />
+            {todayMeta.weekday}
+          </div>
+          <div style={{ display:'grid', gap:6 }}>
+            <h1 style={{ margin: 0, fontSize: isSmall ? (isXS ? 26 : 30) : isDesktop ? 34 : 38, lineHeight: 1.02, letterSpacing: -1.1, color:'#0f172a' }}>Översikt</h1>
+            <p style={{ margin: 0, fontSize: isSmall ? 13 : 15, lineHeight: 1.45, color:'#475569', maxWidth: isDesktop ? 720 : isSmall ? 520 : 560 }}>
+              {isDesktop
+                ? 'Välkommen till din dashboard! Här har vi samlat allt du behöver för att snabbt komma igång med dagens arbete och hålla koll på det som är viktigt.'
+                : 'Börja med dagens viktigaste saker. Snabb åtkomst till tidrapport, dokument och dina vanligaste genvägar.'}
+            </p>
+          </div>
+        </div>
+        <div style={{ display:'grid', gap:10, minWidth: isSmall ? '100%' : isDesktop ? 260 : 240 }}>
+          <button type="button" onClick={()=>{ setTimePrefill(null); setTimeModalOpen(true); }}
+            style={{ display:'inline-flex', alignItems:'center', justifyContent:'center', gap:8, fontSize:13, fontWeight:700, padding: isSmall ? '12px 16px' : '13px 18px', border:'1px solid #16a34a', background:'#16a34a', color:'#fff', borderRadius:14, boxShadow:'0 12px 20px rgba(22,163,74,0.18)', cursor:'pointer' }}
+          >
+            <span aria-hidden style={{ display:'inline-flex' }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" strokeWidth={2} stroke="#fff" fill="none"><path d="M12 5v14M5 12h14" strokeLinecap="round" strokeLinejoin="round"/></svg>
+            </span>
+            Rapportera tid
+          </button>
+          <div style={{ display:'grid', gridTemplateColumns: isSmall || isDesktop ? '1fr' : 'repeat(2, minmax(0, 1fr))', gap:10 }}>
+            <div style={{ border:'1px solid rgba(148,163,184,0.24)', background:'rgba(255,255,255,0.72)', borderRadius:16, padding: isSmall ? '10px 12px' : '12px 14px', display:'flex', alignItems:'center', justifyContent:'space-between', gap:12, flexWrap:'wrap' }}>
+              <div style={{ display:'grid', gap:2 }}>
+                <span style={{ fontSize:11, fontWeight:700, letterSpacing:0.3, textTransform:'uppercase', color:'#64748b' }}>Idag</span>
+                <strong style={{ fontSize: isSmall ? 15 : 16, color:'#0f172a' }}>{todayMeta.monthDay}</strong>
+              </div>
+              <span style={{ fontSize:12, color:'#64748b' }}>Fokus på det viktigaste först.</span>
+            </div>
+            {!isSmall && !isDesktop && (
+              <div style={{ border:'1px solid rgba(148,163,184,0.24)', background:'rgba(255,255,255,0.72)', borderRadius:16, padding:'12px 14px', display:'grid', gap:4 }}>
+                <span style={{ fontSize:11, fontWeight:700, letterSpacing:0.3, textTransform:'uppercase', color:'#64748b' }}>Snabbt nu</span>
+                <strong style={{ fontSize: 16, color:'#0f172a' }}>Öppna dokument</strong>
+                <a href="/mina-dokument" style={{ fontSize:12, fontWeight:700, color:'#2563eb', textDecoration:'none' }}>Gå till mina dokument</a>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {showQuickLinks && !mini && (
+        <div style={{ display:'grid', gap: isSmall ? 8 : 10 }}>
+          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:12, flexWrap:'wrap' }}>
+            <div style={{ display:'grid', gap:4 }}>
+              <h2 style={{ margin:0, fontSize:isSmall ? 16 : 19, color:'#0f172a' }}>Snabba genvägar</h2>
+              {!isSmall && <p style={{ margin:0, fontSize:13, color:'#64748b' }}>Det du använder mest ska ligga först och kräva så lite scroll som möjligt.</p>}
+            </div>
+            <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+              {isSmall && (
+                <span style={{ display:'inline-flex', alignItems:'center', gap:6, color:'#64748b', fontSize:11 }}>
+                  Svep för fler
+                  <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path fill="#94a3b8" d="M8 5l7 7-7 7"/></svg>
+                </span>
+              )}
+              <button onClick={()=>setMini(true)} style={miniToggleBtn} aria-label="Minimera och visa endast ikoner" title="Minimera och visa endast ikoner">Minimera</button>
+            </div>
+          </div>
+          {isSmall ? (
+            <QuickLinksStrip links={links} compact={true} extraCompact={isXS} />
+          ) : (
+            <QuickLinksGrid links={links} compact={false} extraCompact={false} />
+          )}
+        </div>
+      )}
+    </section>
+  );
+
   return (
     <>
       {newsItem && (
         <NewsModal open={newsOpen} item={newsItem} onClose={closeNews} />
       )}
-    <main
-      className="dash-layout"
-      style={{
-        padding: isSmall ? (isXS ? 10 : 14) : 24,
-        maxWidth: mini ? 1400 : 1200,
-        margin: '0 auto',
-        display: 'flex',
-        flexDirection: mini ? 'row' : 'column',
-        gap: mini ? 24 : (isSmall ? 20 : 32),
-        alignItems: mini ? 'flex-start' : 'stretch'
-      }}
-    >
-      {mini && (
-        <aside className="dash-sidebar" style={{ position:'sticky', top: 12, display:'flex', flexDirection:'column', gap:14, minWidth:72 }}>
-          <div style={{ display:'flex', justifyContent:'center' }}>
-            <button onClick={()=>setMini(false)} style={miniToggleBtn} aria-label="Expandera genvägar">»</button>
-          </div>
-          <QuickLinksIconBar links={links} />
-        </aside>
-      )}
-      <div className="dash-main-col" style={{ flex:1, display:'flex', flexDirection:'column', gap: mini ? 24 : (isSmall ? 20 : 32) }}>
-        <section style={heroCardStyle}>
-          <div style={{ position:'absolute', right: isSmall ? -26 : -18, top: isSmall ? -42 : -54, width: isSmall ? 140 : 190, height: isSmall ? 140 : 190, borderRadius:'50%', background:'radial-gradient(circle, rgba(22,163,74,0.14) 0%, rgba(22,163,74,0) 70%)' }} />
-          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent:'space-between', gap: 12, flexWrap:'wrap', position:'relative' }}>
-            <div style={{ display:'grid', gap: isSmall ? 8 : 10, maxWidth: 680 }}>
-              <div style={{ display:'inline-flex', alignItems:'center', gap:8, width:'fit-content', padding:'6px 10px', borderRadius:999, background:'rgba(255,255,255,0.82)', border:'1px solid #d9e5dc', color:'#166534', fontSize:11, fontWeight:700, letterSpacing:0.3, textTransform:'uppercase' }}>
-                {todayMeta.greeting}
-                <span style={{ width:4, height:4, borderRadius:'50%', background:'#22c55e' }} />
-                {todayMeta.weekday}
+    <main className="dash-layout" style={isDesktop ? desktopShellStyle : {
+      padding: isSmall ? (isXS ? 10 : 14) : 24,
+      maxWidth: mini ? 1400 : 1200,
+      margin: '0 auto',
+      display: 'flex',
+      flexDirection: mini ? 'row' : 'column',
+      gap: mini ? 24 : (isSmall ? 20 : 32),
+      alignItems: mini ? 'flex-start' : 'stretch'
+    }}>
+      {isDesktop ? (
+        <>
+          <aside style={desktopRailStyle}>
+            <section style={desktopQuickLinksCardStyle}>
+              <div style={{ display:'grid', gap:4 }}>
+                <h2 style={{ margin:0, fontSize:18, color:'#0f172a' }}>Snabba genvägar</h2>
+                <p style={{ margin:0, fontSize:12.5, color:'#64748b', lineHeight:1.45 }}>Lägg det du öppnar ofta nära till hands i stället för mitt i arbetsflödet.</p>
               </div>
-              <div style={{ display:'grid', gap:6 }}>
-                <h1 style={{ margin: 0, fontSize: isSmall ? (isXS ? 26 : 30) : 38, lineHeight: 1.02, letterSpacing: -1.1, color:'#0f172a' }}>Översikt</h1>
-                <p style={{ margin: 0, fontSize: isSmall ? 13 : 16, lineHeight: 1.4, color:'#475569', maxWidth: isSmall ? 520 : 560 }}>
-                  Börja med dagens viktigaste saker. Snabb åtkomst till tidrapport, dokument och dina vanligaste genvägar.
-                </p>
-              </div>
-            </div>
-            <div style={{ display:'grid', gap:10, minWidth: isSmall ? '100%' : 240 }}>
-              <button type="button" onClick={()=>{ setTimePrefill(null); setTimeModalOpen(true); }}
-                style={{ display:'inline-flex', alignItems:'center', justifyContent:'center', gap:8, fontSize:13, fontWeight:700, padding: isSmall ? '12px 16px' : '13px 18px', border:'1px solid #16a34a', background:'#16a34a', color:'#fff', borderRadius:14, boxShadow:'0 12px 20px rgba(22,163,74,0.18)', cursor:'pointer' }}
-              >
-                <span aria-hidden style={{ display:'inline-flex' }}>
-                  <svg width="16" height="16" viewBox="0 0 24 24" strokeWidth={2} stroke="#fff" fill="none"><path d="M12 5v14M5 12h14" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                </span>
-                Rapportera tid
-              </button>
-              <div style={{ display:'grid', gridTemplateColumns: isSmall ? '1fr' : 'repeat(2, minmax(0, 1fr))', gap:10 }}>
-                <div style={{ border:'1px solid rgba(148,163,184,0.24)', background:'rgba(255,255,255,0.72)', borderRadius:16, padding: isSmall ? '10px 12px' : '12px 14px', display:'flex', alignItems:'center', justifyContent:'space-between', gap:12, flexWrap:'wrap' }}>
-                  <div style={{ display:'grid', gap:2 }}>
-                    <span style={{ fontSize:11, fontWeight:700, letterSpacing:0.3, textTransform:'uppercase', color:'#64748b' }}>Idag</span>
-                    <strong style={{ fontSize: isSmall ? 15 : 16, color:'#0f172a' }}>{todayMeta.monthDay}</strong>
-                  </div>
-                  <span style={{ fontSize:12, color:'#64748b' }}>Fokus på det viktigaste först.</span>
-                </div>
-                {!isSmall && (
-                  <div style={{ border:'1px solid rgba(148,163,184,0.24)', background:'rgba(255,255,255,0.72)', borderRadius:16, padding:'12px 14px', display:'grid', gap:4 }}>
-                    <span style={{ fontSize:11, fontWeight:700, letterSpacing:0.3, textTransform:'uppercase', color:'#64748b' }}>Snabbt nu</span>
-                    <strong style={{ fontSize: 16, color:'#0f172a' }}>Öppna dokument</strong>
-                    <a href="/mina-dokument" style={{ fontSize:12, fontWeight:700, color:'#2563eb', textDecoration:'none' }}>Gå till mina dokument</a>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {!mini && (
-            <div style={{ display:'grid', gap: isSmall ? 8 : 10 }}>
-              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:12, flexWrap:'wrap' }}>
-                <div style={{ display:'grid', gap:4 }}>
-                  <h2 style={{ margin:0, fontSize:isSmall ? 16 : 19, color:'#0f172a' }}>Snabba genvägar</h2>
-                  {!isSmall && <p style={{ margin:0, fontSize:13, color:'#64748b' }}>Det du använder mest ska ligga först och kräva så lite scroll som möjligt.</p>}
-                </div>
-                <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-                  {isSmall && (
-                    <span style={{ display:'inline-flex', alignItems:'center', gap:6, color:'#64748b', fontSize:11 }}>
-                      Svep för fler
-                      <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path fill="#94a3b8" d="M8 5l7 7-7 7"/></svg>
-                    </span>
-                  )}
-                  <button onClick={()=>setMini(true)} style={miniToggleBtn} aria-label="Minimera och visa endast ikoner" title="Minimera och visa endast ikoner">Minimera</button>
-                </div>
-              </div>
-              {isSmall ? (
-                <QuickLinksStrip links={links} compact={true} extraCompact={isXS} />
-              ) : (
-                <QuickLinksGrid links={links} compact={false} extraCompact={false} />
+              <QuickLinksSidebar links={desktopSidebarLinks} />
+              {links.length > 6 && (
+                <button
+                  type="button"
+                  onClick={() => setShowAllDesktopLinks((prev) => !prev)}
+                  style={{ ...miniToggleBtn, width:'100%', justifyContent:'center', padding:'10px 12px', fontSize:12.5, fontWeight:700 }}
+                >
+                  {showAllDesktopLinks ? 'Visa färre' : `Visa fler (${links.length - 6})`}
+                </button>
               )}
-            </div>
-          )}
-        </section>
+            </section>
+          </aside>
 
-        {effectiveRole !== 'sales' && (
-          <div style={{ order: isSmall ? -1 as any : 0 }}>
-            <DashboardSchedule compact={isSmall || mini} onReportTime={(info: { projectId?: string; projectName?: string; orderNumber?: string; day?: string }) => {
-              const label = info.orderNumber ? `#${info.orderNumber}` : (info.projectName || info.projectId || '');
-              setTimePrefill({ project: label, projectId: info.projectId, date: info.day });
-              setTimeModalOpen(true);
-            }} />
+          <div className="dash-main-col" style={desktopMainStyle}>
+            {renderHeroSection(false)}
+
+            <section style={{ ...surfaceCardStyle, minHeight: 0 }}>
+              <DashboardNotes compact desktopMode />
+            </section>
+
+            {effectiveRole !== 'sales' && (
+              <section style={surfaceCardStyle}>
+                <DashboardSchedule compact={false} onReportTime={(info: { projectId?: string; projectName?: string; orderNumber?: string; day?: string }) => {
+                  const label = info.orderNumber ? `#${info.orderNumber}` : (info.projectName || info.projectId || '');
+                  setTimePrefill({ project: label, projectId: info.projectId, date: info.day });
+                  setTimeModalOpen(true);
+                }} />
+              </section>
+            )}
           </div>
-        )}
-        {/* Tasks section */}
-        <section
-          style={{
-            ...surfaceCardStyle,
-            order: mini ? -1 : 0
-          }}
-        >
-          <DashboardDocumentApprovals compact={isSmall || mini} />
-        </section>
 
-        <section
-          style={{
-            ...surfaceCardStyle,
-            order: mini ? -1 : 0
-          }}
-        >
-          <DashboardTasks compact={isSmall || mini} />
-        </section>
+          <aside style={desktopRailStyle}>
+            {showDesktopApprovals && (
+              <section style={desktopDenseCardStyle}>
+                <DashboardDocumentApprovals compact hideWhenEmpty onVisibilityChange={setShowDesktopApprovals} />
+              </section>
+            )}
+            {showDesktopTasks && (
+              <section style={desktopDenseCardStyle}>
+                <DashboardTasks compact hideWhenEmpty onVisibilityChange={setShowDesktopTasks} />
+              </section>
+            )}
+          </aside>
+        </>
+      ) : (
+        <>
+          {mini && (
+            <aside className="dash-sidebar" style={{ position:'sticky', top: 12, display:'flex', flexDirection:'column', gap:14, minWidth:72 }}>
+              <div style={{ display:'flex', justifyContent:'center' }}>
+                <button onClick={()=>setMini(false)} style={miniToggleBtn} aria-label="Expandera genvägar">»</button>
+              </div>
+              <QuickLinksIconBar links={links} />
+            </aside>
+          )}
+          <div className="dash-main-col" style={{ flex:1, display:'flex', flexDirection:'column', gap: mini ? 24 : (isSmall ? 20 : 32) }}>
+            {renderHeroSection(true)}
 
-        {/* Notes always visible; floats to top when mini */}
-        <section
-          style={{
-            ...surfaceCardStyle,
-            order: mini ? -1 : 0
-          }}
-        >
-          <DashboardNotes compact={isSmall || mini} />
-        </section>
-      </div>
+            {effectiveRole !== 'sales' && (
+              <div style={{ order: isSmall ? -1 as React.CSSProperties['order'] : 0 }}>
+                <DashboardSchedule compact={isSmall || mini} onReportTime={(info: { projectId?: string; projectName?: string; orderNumber?: string; day?: string }) => {
+                  const label = info.orderNumber ? `#${info.orderNumber}` : (info.projectName || info.projectId || '');
+                  setTimePrefill({ project: label, projectId: info.projectId, date: info.day });
+                  setTimeModalOpen(true);
+                }} />
+              </div>
+            )}
+            <section style={{ ...surfaceCardStyle, order: mini ? -1 : 0 }}>
+              <DashboardDocumentApprovals compact={isSmall || mini} />
+            </section>
+            <section style={{ ...surfaceCardStyle, order: mini ? -1 : 0 }}>
+              <DashboardTasks compact={isSmall || mini} />
+            </section>
+            <section style={{ ...surfaceCardStyle, order: mini ? -1 : 0 }}>
+              <DashboardNotes compact={isSmall || mini} />
+            </section>
+          </div>
+        </>
+      )}
       <TimeReportModal open={timeModalOpen} onClose={()=>setTimeModalOpen(false)}
         initialProject={timePrefill?.project || null}
         initialProjectId={timePrefill?.projectId || null}

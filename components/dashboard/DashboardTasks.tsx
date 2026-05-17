@@ -15,7 +15,7 @@ type Task = {
   source: string | null;
 };
 
-export default function DashboardTasks({ compact }: { compact?: boolean }) {
+export default function DashboardTasks({ compact, hideWhenEmpty, onVisibilityChange }: { compact?: boolean; hideWhenEmpty?: boolean; onVisibilityChange?: (visible: boolean) => void }) {
   const supabase = createClientComponentClient();
   const [userId, setUserId] = useState<string | null>(null);
   const [items, setItems] = useState<Task[]>([]);
@@ -91,6 +91,11 @@ export default function DashboardTasks({ compact }: { compact?: boolean }) {
     return { open: open.sort(byDue), done: done.sort((a,b)=> b.updated_at.localeCompare(a.updated_at)) };
   }, [items]);
   const visibleOpen = compact ? grouped.open.slice(0, 3) : grouped.open;
+  const shouldRender = loading || !!error || items.length > 0;
+
+  useEffect(() => {
+    onVisibilityChange?.(shouldRender);
+  }, [onVisibilityChange, shouldRender]);
 
   const markDone = async (id: string, done: boolean) => {
     const prev = items;
@@ -98,6 +103,10 @@ export default function DashboardTasks({ compact }: { compact?: boolean }) {
     const { error: err } = await supabase.from('tasks').update({ status: done ? 'done' : 'open' }).eq('id', id);
     if (err) setItems(prev);
   };
+
+  if (hideWhenEmpty && !shouldRender) {
+    return null;
+  }
 
   return (
     <div style={{ display:'flex', flexDirection:'column', gap: compact?12:16 }}>

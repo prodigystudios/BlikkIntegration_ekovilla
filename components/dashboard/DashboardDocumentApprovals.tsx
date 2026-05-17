@@ -15,7 +15,7 @@ function isCompleted(item: DashboardDocumentItem) {
   return !!item.receipt?.approvedAt || (!item.requiresApproval && !!item.receipt?.firstOpenedAt);
 }
 
-export default function DashboardDocumentApprovals({ compact }: { compact?: boolean }) {
+export default function DashboardDocumentApprovals({ compact, hideWhenEmpty, onVisibilityChange }: { compact?: boolean; hideWhenEmpty?: boolean; onVisibilityChange?: (visible: boolean) => void }) {
   const [items, setItems] = useState<DashboardDocumentItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -46,9 +46,18 @@ export default function DashboardDocumentApprovals({ compact }: { compact?: bool
     [items]
   );
   const pendingCount = items.filter(item => !isCompleted(item)).length;
+  const shouldRender = loading || !!error || pendingCount > 0;
   const highlightTone = pendingCount > 0
     ? { border: '1px solid #bfdbfe', background: 'linear-gradient(180deg, #eff6ff 0%, #ffffff 100%)' }
     : { border: '1px solid #e5e7eb', background: '#ffffff' };
+
+  useEffect(() => {
+    onVisibilityChange?.(shouldRender);
+  }, [onVisibilityChange, shouldRender]);
+
+  if (hideWhenEmpty && !shouldRender) {
+    return null;
+  }
 
   return (
     <div style={{ display: 'grid', gap: compact ? 10 : 14 }}>

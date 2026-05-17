@@ -218,3 +218,52 @@ export function QuickLinksIconBar({ links, activeHref }: { links: QuickLink[]; a
     </nav>
   );
 }
+
+export function QuickLinksSidebar({ links }: { links: QuickLink[] }) {
+  return (
+    <nav aria-label="Snabba genvägar" style={{ display:'grid', gap:8 }}>
+      {links.map(link => {
+        const content = (
+          <div
+            style={{
+              display:'grid',
+              gridTemplateColumns:'40px minmax(0, 1fr)',
+              gap:12,
+              alignItems:'center',
+              padding:'12px 12px 12px 10px',
+              border:'1px solid #e5e7eb',
+              borderRadius:14,
+              background:'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)',
+              color:'#0f172a',
+              cursor: link.disabled ? 'not-allowed' : 'pointer',
+              opacity: link.disabled ? 0.6 : 1,
+              boxShadow:'0 8px 20px rgba(15,23,42,0.04)',
+              textDecoration:'none',
+            }}
+            aria-disabled={link.disabled || undefined}
+          >
+            <span style={{ display:'inline-flex', width:40, height:40, alignItems:'center', justifyContent:'center', borderRadius:12, background:'#eef2ff', color:'#4f46e5' }}>
+              {link.icon}
+            </span>
+            <span style={{ display:'grid', gap:3, minWidth:0 }}>
+              <span style={{ fontSize:13.5, fontWeight:700, letterSpacing:-0.2, lineHeight:1.2 }}>{link.title}</span>
+              <span style={{ fontSize:11.5, color:'#64748b', lineHeight:1.35 }}>{link.desc}</span>
+              {link.disabled && (
+                <span style={{ display:'inline-flex', width:'fit-content', marginTop:2, fontSize:9, fontWeight:700, background:'#f1f5f9', color:'#475569', padding:'2px 6px', borderRadius:999, border:'1px solid #e2e8f0' }}>
+                  {link.disabledNote || 'Kommer snart'}
+                </span>
+              )}
+            </span>
+          </div>
+        );
+
+        if (link.disabled) return <div key={link.href}>{content}</div>;
+        return (
+          <Link key={link.href} href={link.href} style={{ textDecoration:'none' }}>
+            {content}
+          </Link>
+        );
+      })}
+    </nav>
+  );
+}
