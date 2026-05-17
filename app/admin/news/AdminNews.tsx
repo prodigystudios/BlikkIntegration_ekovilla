@@ -44,13 +44,14 @@ export default function AdminNews() {
   }
 
   return (
-    <main style={{ padding: 12, display: 'grid', gap: 20, maxWidth: 1100, margin: '0 auto' }}>
+    <main style={{ padding: 12, display: 'grid', gap: 20, maxWidth: 1240, margin: '0 auto' }}>
       <section style={{ border: '1px solid #dbe4ef', background: 'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)', borderRadius: 24, padding: 20, display: 'grid', gap: 16, boxShadow:'0 14px 36px rgba(15,23,42,0.04)' }}>
         <div style={{ display:'flex', justifyContent:'space-between', gap:16, flexWrap:'wrap', alignItems:'flex-start' }}>
           <div style={{ display:'grid', gap:6, maxWidth:700 }}>
             <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
               <span style={eyebrowStyle}>Nyheter</span>
               <span style={chipStyle}>{headline.trim().length} tecken i rubrik</span>
+              <span style={chipStyle}>{body.trim().length} tecken i text</span>
             </div>
             <h1 style={{ margin: 0, fontSize: 30, color:'#0f172a' }}>Publicera dashboardnyheter med bättre kontroll</h1>
             <p style={{ margin:0, fontSize:14, color:'#475569', lineHeight:1.55 }}>Skriv nyheten, förhandsgranska hur den läses och publicera när innehållet känns klart.</p>
@@ -62,7 +63,7 @@ export default function AdminNews() {
         </div>
       </section>
 
-      <section style={{ display:'grid', gap:20, gridTemplateColumns:'minmax(0, 1.1fr) minmax(320px, 0.9fr)' }}>
+      <section style={{ display:'grid', gap:20, gridTemplateColumns:'minmax(0, 1.1fr) minmax(320px, 0.9fr)', alignItems:'start' }}>
       <section style={{ border: '1px solid #e5e7eb', background: '#fff', borderRadius: 20, padding: 20, display: 'grid', gap: 14, boxShadow:'0 10px 28px rgba(15,23,42,0.03)' }}>
         <h2 style={{ margin: 0, fontSize: 18 }}>Skapa ny nyhet</h2>
         <form onSubmit={submit} style={{ display: 'grid', gap: 12 }}>
@@ -113,6 +114,11 @@ export default function AdminNews() {
 
         <div style={{ fontSize: 12, color: '#6b7280' }}>
           Nyheten visas som en modal på dashboarden en gång per nyhet (per webbläsare) via localStorage.
+        </div>
+
+        <div style={{ display:'grid', gap:8, padding:'12px 14px', border:'1px solid #e2e8f0', borderRadius:16, background:'#f8fbff' }}>
+          <strong style={{ fontSize:13, color:'#0f172a' }}>Snabb check innan publicering</strong>
+          <span style={{ fontSize:12, color:'#64748b' }}>Håll rubriken kort, skriv ett tydligt syfte först och lägg bara till bild när den faktiskt tillför sammanhang.</span>
         </div>
       </section>
 

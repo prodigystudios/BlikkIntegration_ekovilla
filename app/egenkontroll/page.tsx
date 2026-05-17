@@ -1268,6 +1268,7 @@ export default function EgenkontrollPage() {
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
                               projectId: String(blikkProjectId),
+                              orderNumber: project?.orderNumber || undefined,
                               installationDate: installationDate || undefined,
                               totalBags: totalBags2,
                               reportKey,

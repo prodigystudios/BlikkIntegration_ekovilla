@@ -94,7 +94,7 @@ export default function AdminContacts() {
   }
 
   return (
-    <main style={{ padding: 12, display:'grid', gap:20 }}>
+    <main style={{ padding: 12, display:'grid', gap:20, maxWidth:1400, margin:'0 auto' }}>
       <section style={{ border:'1px solid #dbe4ef', borderRadius:24, padding:20, background:'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)', boxShadow:'0 14px 36px rgba(15,23,42,0.04)', display:'grid', gap:16 }}>
         <div style={{ display:'flex', alignItems:'flex-start', gap:16, flexWrap:'wrap' }}>
           <div style={{ display:'grid', gap:6, maxWidth:760 }}>
@@ -134,10 +134,10 @@ export default function AdminContacts() {
             aria-pressed={view==='addresses'}
           >Adresser</button>
           </div>
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={view === 'contacts' ? 'Sök namn, telefon, plats eller roll' : 'Sök namn eller adress'} style={{ ...input, minWidth:280 }} />
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={view === 'contacts' ? 'Sök namn, telefon, plats eller roll' : 'Sök namn eller adress'} style={{ ...input, minWidth:280, width:'min(100%, 360px)' }} />
         </div>
         {view==='contacts' && (
-          <div style={{ display:'grid', gap:24, gridTemplateColumns:'260px minmax(0, 1fr)' }}>
+          <div style={{ display:'grid', gap:24, gridTemplateColumns:'minmax(250px, 300px) minmax(0, 1fr)', alignItems:'start' }}>
             <div style={{ display:'flex', flexDirection:'column', gap:12, border:'1px solid #dbe4ef', background:'#fff', borderRadius:20, padding:18, alignSelf:'start', boxShadow:'0 10px 28px rgba(15,23,42,0.03)' }}>
               <h2 style={{ margin:0, fontSize:16 }}>Kategorier</h2>
               <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
