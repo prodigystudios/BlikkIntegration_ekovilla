@@ -78,31 +78,93 @@ export function buildPlanningNotificationEmail(input: PlanningNotificationEmailI
     ['Lastbil', input.truck || 'Ej tilldelad'],
   ];
 
+  const summaryRowsHtml = summaryRows.map(([label, value]) => `
+    <tr>
+      <td style="padding:0 0 12px;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#f8fafc" style="width:100%;background-color:#f8fafc;border:1px solid #dbe4ef;border-radius:14px;">
+          <tr>
+            <td width="140" valign="top" style="width:140px;padding:14px 16px 14px 16px;font-size:12px;line-height:18px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#475569;">${escapeHtml(label)}</td>
+            <td valign="top" style="padding:14px 16px 14px 0;font-size:15px;line-height:24px;color:#0f172a;">${escapeHtml(value)}</td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  `).join('');
+
+  const sellerRowHtml = (input.salesResponsible || input.sellerEmail || input.sellerPhone) ? `
+    <tr>
+      <td style="padding:0 0 12px;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#f8fafc" style="width:100%;background-color:#f8fafc;border:1px solid #dbe4ef;border-radius:14px;">
+          <tr>
+            <td width="140" valign="top" style="width:140px;padding:14px 16px 14px 16px;font-size:12px;line-height:18px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#475569;">Ansvarig säljare</td>
+            <td valign="top" style="padding:14px 16px 14px 0;font-size:15px;line-height:24px;color:#0f172a;">
+              <div style="font-weight:600;color:#0f172a;">${escapeHtml(input.salesResponsible || 'Ekovilla')}</div>
+              ${input.sellerEmail ? `<div style="margin-top:6px;color:#334155;">E-post: <a href="mailto:${escapeHtml(input.sellerEmail)}" style="color:#0f766e;text-decoration:none;">${escapeHtml(input.sellerEmail)}</a></div>` : ''}
+              ${input.sellerPhone ? `<div style="margin-top:6px;color:#334155;">Telefon: <a href="tel:${escapeHtml(input.sellerPhone)}" style="color:#0f766e;text-decoration:none;">${escapeHtml(input.sellerPhone)}</a></div>` : ''}
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  ` : '';
+
   const html = `
-    <div style="margin:0;padding:24px;background:#f4f7fb;font-family:Arial,sans-serif;color:#0f172a;">
-      <div style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #dbe4ef;border-radius:20px;overflow:hidden;box-shadow:0 18px 40px rgba(15,23,42,0.08);">
-        <div style="padding:24px 28px 16px;background-color:#0a6a31;color:#ffffff;border-bottom:6px solid #84c11f;">
-          ${input.logoUrl ? `<div style="margin:0 0 14px;"><img src="${escapeHtml(input.logoUrl)}" alt="Ekovilla" style="display:block;height:34px;width:auto;max-width:190px;" /></div>` : `<div style="font-size:12px;letter-spacing:0.16em;text-transform:uppercase;opacity:0.84;">Ekovilla</div>`}
-          <div style="display:inline-block;margin:0 0 10px;padding:6px 10px;background:#ffffff;color:#0a6a31;border-radius:999px;font-size:11px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;">Planering</div>
-          <h1 style="margin:0;font-size:28px;line-height:1.1;color:#ffffff;">Orderbekräftelse</h1>
-          <p style="margin:10px 0 0;font-size:15px;line-height:1.6;max-width:520px;color:#f0fdf4;">Hej${input.customerName ? ` ${escapeHtml(input.customerName)}` : ''}, vi vill informera att ert arbete nu är planerat.</p>
-        </div>
-        <div style="padding:24px 28px 10px;">
-          <div style="display:grid;gap:12px;margin-bottom:18px;">
-            ${summaryRows.map(([label, value]) => `<div style="display:grid;grid-template-columns:140px 1fr;gap:10px;padding:10px 12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;"><div style="font-size:12px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:0.08em;">${escapeHtml(label)}</div><div style="font-size:14px;color:#0f172a;">${escapeHtml(value)}</div></div>`).join('')}
-            ${(input.salesResponsible || input.sellerEmail || input.sellerPhone) ? `<div style="display:grid;grid-template-columns:140px 1fr;gap:10px;padding:10px 12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;"><div style="font-size:12px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:0.08em;">Ansvarig säljare</div><div style="display:grid;gap:4px;font-size:14px;color:#0f172a;"><div style="font-weight:600;">${escapeHtml(input.salesResponsible || 'Ekovilla')}</div>${input.sellerEmail ? `<div>E-post: <a href="mailto:${escapeHtml(input.sellerEmail)}" style="color:#0f766e;text-decoration:none;">${escapeHtml(input.sellerEmail)}</a></div>` : ''}${input.sellerPhone ? `<div>Telefon: <a href="tel:${escapeHtml(input.sellerPhone)}" style="color:#0f766e;text-decoration:none;">${escapeHtml(input.sellerPhone)}</a></div>` : ''}</div></div>` : ''}
-          </div>
-          <div style="padding:18px 18px 16px;background:#f8fafc;border:1px solid #dbe4ef;border-radius:16px;">
-            <p style="margin:0 0 10px;font-size:14px;line-height:1.6;">${escapeHtml(orderLine)}</p>
-            <p style="margin:0;font-size:14px;line-height:1.7;color:#334155;">${escapeHtml(messageBody)}</p>
-          </div>
-        </div>
-        <div style="padding:18px 28px 26px;">
-          <p style="margin:0;font-size:14px;line-height:1.7;">Vänligen<br /><strong>Ekovilla</strong></p>
-          <p style="margin:14px 0 0;font-size:12px;line-height:1.6;color:#64748b;">Detta mail skickades automatiskt från bokning@ekovilla.se via planeringen.</p>
-        </div>
-      </div>
-    </div>
+    <!DOCTYPE html>
+    <html lang="sv">
+      <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta name="color-scheme" content="light only" />
+        <meta name="supported-color-schemes" content="light only" />
+        <title>${escapeHtml(subject)}</title>
+      </head>
+      <body style="margin:0;padding:0;background-color:#f4f7fb;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#f4f7fb" style="width:100%;background-color:#f4f7fb;margin:0;padding:0;">
+          <tr>
+            <td align="center" style="padding:32px 24px;">
+              <table role="presentation" width="640" cellspacing="0" cellpadding="0" border="0" bgcolor="#ffffff" style="width:100%;max-width:640px;background-color:#ffffff;border:1px solid #dbe4ef;border-radius:20px;overflow:hidden;">
+                <tr>
+                  <td bgcolor="#0a6a31" style="padding:30px 32px 24px;background-color:#0a6a31;border-bottom:6px solid #84c11f;">
+                    ${input.logoUrl ? `<div style="margin:0 0 18px;"><img src="${escapeHtml(input.logoUrl)}" alt="Ekovilla" style="display:block;height:34px;width:auto;max-width:190px;border:0;" /></div>` : `<div style="font-size:12px;line-height:18px;letter-spacing:0.16em;text-transform:uppercase;color:#d1fae5;">Ekovilla</div>`}
+                    <div style="margin:0 0 14px;">
+                      <span style="display:inline-block;padding:6px 10px;background-color:#ffffff;color:#0a6a31;border-radius:999px;font-size:11px;line-height:14px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;">Planering</span>
+                    </div>
+                    <div style="font-size:28px;line-height:34px;font-weight:700;color:#ffffff;">Orderbekräftelse</div>
+                    <div style="margin-top:14px;font-size:15px;line-height:26px;color:#f0fdf4;max-width:520px;">Hej${input.customerName ? ` ${escapeHtml(input.customerName)}` : ''}, vi vill informera att ert arbete nu är planerat.</div>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:30px 20px 16px 20px;">
+                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;">
+                      ${summaryRowsHtml}
+                      ${sellerRowHtml}
+                      <tr>
+                        <td style="padding:8px 0 0;">
+                          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#f8fafc" style="width:100%;background-color:#f8fafc;border:1px solid #dbe4ef;border-radius:16px;">
+                            <tr>
+                              <td style="padding:22px 22px 20px;font-size:15px;line-height:27px;color:#334155;">
+                                <div style="margin:0 0 14px;color:#0f172a;">${escapeHtml(orderLine)}</div>
+                                <div style="color:#334155;">${escapeHtml(messageBody)}</div>
+                              </td>
+                            </tr>
+                          </table>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:24px 32px 30px;">
+                    <div style="font-size:14px;line-height:27px;color:#0f172a;">Vänligen<br /><strong>Ekovilla</strong></div>
+                    <div style="margin-top:16px;font-size:12px;line-height:21px;color:#64748b;">Detta mail skickades automatiskt från <a href="mailto:bokning@ekovilla.se" style="color:#2563eb;text-decoration:none;">bokning@ekovilla.se</a> via planeringen.</div>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      </body>
+    </html>
   `;
 
   return { subject, html, text };
