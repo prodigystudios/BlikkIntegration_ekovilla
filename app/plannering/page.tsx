@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { useToast } from '@/lib/Toast';
 import { useProjectComments, formatRelativeTime } from '@/lib/useProjectComments';
 import TruckAssignmentsInline from './components/TruckAssignmentsInline';
-import { startOfMonth, endOfMonth, fmtDate, isoWeekNumber, isoWeekYear, isoWeekKey, startOfIsoWeek, endOfIsoWeek, mondayFromIsoWeekKey } from './_lib/date';
+import { startOfMonth, endOfMonth, fmtDate, formatDateTimeStockholm, isoWeekNumber, isoWeekYear, isoWeekKey, startOfIsoWeek, endOfIsoWeek, mondayFromIsoWeekKey } from './_lib/date';
 import { deriveColors, creatorColor, creatorInitials } from './_lib/colors';
 import EmailSummaryPanel from './components/EmailSummaryPanel';
 import ActivityLogModal from './components/ActivityLogModal';
@@ -4699,8 +4699,8 @@ export default function PlanneringPage() {
                           return <div style={{ fontSize: 11, color: '#64748b' }}>Skicka planeringsmail till kunden härifrån.</div>;
                         }
                         const actor = scheduleMeta[p.id]?.client_notified_by;
-                        const notifiedAt = scheduleMeta[p.id]?.client_notified_at;
-                        const timeText = notifiedAt ? ` ${String(notifiedAt).slice(0, 16).replace('T', ' ')}` : '';
+                        const notifiedAt = formatDateTimeStockholm(scheduleMeta[p.id]?.client_notified_at);
+                        const timeText = notifiedAt ? ` ${notifiedAt}` : '';
                         return <div style={{ fontSize: 11, color: '#065f46' }}>{actor ? `Notifierad av ${actor}${timeText}` : 'Kund markerad som notifierad'}</div>;
                       })()}
                     </>

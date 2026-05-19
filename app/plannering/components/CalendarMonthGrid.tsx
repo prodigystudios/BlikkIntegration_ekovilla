@@ -2,7 +2,7 @@
 import React from 'react';
 import { useTruckAssignments } from '@/lib/TruckAssignmentsContext';
 import BagUsageText from './BagUsageText';
-import { isoWeekNumber, isoWeekKey, isWeekend, getSwedishPublicHolidays, isSwedishHoliday } from '../_lib/date';
+import { formatDateTimeStockholm, isoWeekNumber, isoWeekKey, isWeekend, getSwedishPublicHolidays, isSwedishHoliday } from '../_lib/date';
 import type { DayNote } from '@/lib/dayNotes';
 import DayNoteEditor from './DayNoteEditor';
 
@@ -367,13 +367,13 @@ export default function CalendarMonthGrid(props: CalendarMonthGridProps) {
                               }
                               const clientNotified = !!scheduleMeta[it.project.id]?.client_notified;
                               const clientNotifiedBy = scheduleMeta[it.project.id]?.client_notified_by;
-                              const clientNotifiedAt = scheduleMeta[it.project.id]?.client_notified_at;
+                              const clientNotifiedAt = formatDateTimeStockholm(scheduleMeta[it.project.id]?.client_notified_at);
                               if (!projectStatus && !clientNotified && !hasEgenkontroll(it.project.orderNumber)) return null;
                               return (
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', paddingTop: 2 }}>
                                   {projectStatus ? <span style={{ fontSize: 9, color: textColor, background: bg, padding: '3px 7px', borderRadius: 999, border: `1px solid ${border}`, fontWeight: 700 }}>{projectStatus}</span> : null}
                                   {clientNotified ? (
-                                    <span title={clientNotifiedBy ? `Kund notifierad av ${clientNotifiedBy}${clientNotifiedAt ? ` ${String(clientNotifiedAt).slice(0, 16).replace('T', ' ')}` : ''}` : 'Kund notifierad'} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 9, background: '#d1fae5', color: '#065f46', padding: '3px 7px', borderRadius: 999, border: '1px solid #6ee7b7', fontWeight: 700 }}>
+                                    <span title={clientNotifiedBy ? `Kund notifierad av ${clientNotifiedBy}${clientNotifiedAt ? ` ${clientNotifiedAt}` : ''}` : 'Kund notifierad'} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 9, background: '#d1fae5', color: '#065f46', padding: '3px 7px', borderRadius: 999, border: '1px solid #6ee7b7', fontWeight: 700 }}>
                                       <span style={{ display: 'inline-grid', placeItems: 'center', width: 12, height: 12, borderRadius: 999, background: '#059669', color: '#fff', fontSize: 9, fontWeight: 800 }}>✓</span>
                                       Notifierad
                                     </span>
