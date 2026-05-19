@@ -81,10 +81,11 @@ export function buildPlanningNotificationEmail(input: PlanningNotificationEmailI
   const html = `
     <div style="margin:0;padding:24px;background:#f4f7fb;font-family:Arial,sans-serif;color:#0f172a;">
       <div style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #dbe4ef;border-radius:20px;overflow:hidden;box-shadow:0 18px 40px rgba(15,23,42,0.08);">
-        <div style="padding:24px 28px;background:linear-gradient(135deg,#005f2b 0%,#0a6a31 42%,#84c11f 100%);color:#ffffff;">
+        <div style="padding:24px 28px 16px;background-color:#0a6a31;color:#ffffff;border-bottom:6px solid #84c11f;">
           ${input.logoUrl ? `<div style="margin:0 0 14px;"><img src="${escapeHtml(input.logoUrl)}" alt="Ekovilla" style="display:block;height:34px;width:auto;max-width:190px;" /></div>` : `<div style="font-size:12px;letter-spacing:0.16em;text-transform:uppercase;opacity:0.84;">Ekovilla</div>`}
-          <h1 style="margin:10px 0 0;font-size:28px;line-height:1.1;">Orderbekräftelse</h1>
-          <p style="margin:10px 0 0;font-size:15px;line-height:1.6;max-width:520px;">Hej${input.customerName ? ` ${escapeHtml(input.customerName)}` : ''}, vi vill informera att ert arbete nu är planerat.</p>
+          <div style="display:inline-block;margin:0 0 10px;padding:6px 10px;background:#ffffff;color:#0a6a31;border-radius:999px;font-size:11px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;">Planering</div>
+          <h1 style="margin:0;font-size:28px;line-height:1.1;color:#ffffff;">Orderbekräftelse</h1>
+          <p style="margin:10px 0 0;font-size:15px;line-height:1.6;max-width:520px;color:#f0fdf4;">Hej${input.customerName ? ` ${escapeHtml(input.customerName)}` : ''}, vi vill informera att ert arbete nu är planerat.</p>
         </div>
         <div style="padding:24px 28px 10px;">
           <div style="display:grid;gap:12px;margin-bottom:18px;">
