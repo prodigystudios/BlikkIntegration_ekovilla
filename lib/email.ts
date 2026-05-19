@@ -3,6 +3,8 @@ type SendEmailArgs = {
   subject: string;
   html?: string;
   text?: string;
+  from?: string;
+  replyTo?: string | string[];
 };
 
 function env(name: string): string {
@@ -11,7 +13,7 @@ function env(name: string): string {
 
 export async function sendEmail(args: SendEmailArgs): Promise<void> {
   const apiKey = env('RESEND_API_KEY');
-  const from = env('MAIL_FROM');
+  const from = (args.from || env('MAIL_FROM')).trim();
 
   if (!apiKey || !from) {
     if (process.env.NODE_ENV === 'production') {
@@ -30,12 +32,16 @@ export async function sendEmail(args: SendEmailArgs): Promise<void> {
   const resend = new Resend(apiKey);
 
   const to = Array.isArray(args.to) ? args.to : [args.to];
+  const replyTo = args.replyTo
+    ? (Array.isArray(args.replyTo) ? args.replyTo : [args.replyTo]).map((item) => String(item).trim()).filter(Boolean)
+    : undefined;
   const html = args.html || undefined;
   const text = typeof args.text === 'string' ? args.text : '';
 
   const res = await resend.emails.send({
     from,
     to,
+    replyTo,
     subject: args.subject,
     html,
     text,

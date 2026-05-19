@@ -81,6 +81,36 @@ interface ProjectScheduleMeta {
   status_color?: string | null;
 }
 
+type PlanningEmailItem = {
+  segmentId: string;
+  project: Project;
+  truck?: string | null;
+  day?: string;
+  startDay?: string;
+  endDay?: string;
+};
+
+type PlanningEmailPreview = {
+  startDay: string;
+  endDay: string;
+  dateText: string;
+  effectiveTruck: string | null;
+  orderInDay: number | null;
+  totalInDay: number;
+  orderLine: string;
+};
+
+type PlanningEmailDialogState = {
+  item: PlanningEmailItem;
+  detectedEmail: string;
+  manualEmail: string;
+  customMessage: string;
+  recipientMode: 'detected' | 'manual';
+  sending: boolean;
+  error: string | null;
+  preview: PlanningEmailPreview;
+};
+
 // Partial bag reporting per segment/day
 interface SegmentReport {
   id: string;
@@ -1086,8 +1116,7 @@ export default function PlanneringPage() {
   // On-demand client email fetch: status map per project
   const [emailFetchStatus, setEmailFetchStatus] = useState<Record<string, 'idle' | 'loading' | 'error'>>({});
   const [emailToast, setEmailToast] = useState<{ pid: string; msg: string } | null>(null);
-  // Client notification tracking (local only for now)
-  const [pendingNotifyProjectId, setPendingNotifyProjectId] = useState<string | null>(null);
+  const [planningEmailDialog, setPlanningEmailDialog] = useState<PlanningEmailDialogState | null>(null);
 
   const reloadVisibleNotes = useCallback(async () => {
     const { start, end } = getVisibleCalendarRange(monthOffset);
@@ -1448,22 +1477,19 @@ export default function PlanneringPage() {
     }
   }, []);
 
-  const openMailForSegment = useCallback((it: any, email: string) => {
-    // Resolve segment + date span (allow explicit overrides from callers like the editor modal)
+  const buildPlanningEmailPreview = useCallback((it: PlanningEmailItem): PlanningEmailPreview => {
     const seg = scheduledSegments.find(s => s.id === it.segmentId);
     const startDay = it.startDay || (seg?.startDay) || it.day;
     const endDay = it.endDay || (seg?.endDay) || it.day;
+    if (!startDay || !endDay) throw new Error('Saknar datum för planeringsmail.');
     const single = startDay === endDay;
     const dateText = single ? startDay : `${startDay} – ${endDay}`;
 
-    // Resolve truck for messaging: prefer the card's truck, else project meta's truck
     const metaTruck = scheduleMeta[it.project.id]?.truck || null;
     const effectiveTruck: string | null = (it.truck ?? metaTruck) || null;
 
-    // Determine reference day to compute order-in-day (use the clicked card's day, else startDay)
     const refDay = it.day || startDay;
 
-    // Compute position within same-truck jobs for that day, following the same sort logic as UI
     let orderInDay: number | null = null;
     let totalInDay = 0;
     if (refDay) {
@@ -1491,56 +1517,114 @@ export default function PlanneringPage() {
       const idx = sorted.findIndex(x => x.segmentId === it.segmentId);
       orderInDay = idx >= 0 ? idx + 1 : null;
     }
-
-    const subject = encodeURIComponent(`Planerad isolering ${dateText} (${it.project.name}) Ordernummer #${it.project.orderNumber}`);
     const orderLine = (orderInDay && totalInDay)
-      ? `du är planerad som Nr: ${orderInDay} av ${totalInDay} på lastbilen "${effectiveTruck || 'Ej tilldelad'}". Installatören kommer ringa dig på morgon vid installations tillfälle och meddela ungefärlig ankomst tid.`
+      ? `Du är planerad som nr ${orderInDay} av ${totalInDay} på lastbilen "${effectiveTruck || 'Ej tilldelad'}".`
       : `Lastbil: ${effectiveTruck || 'Ej tilldelad'}`;
-    const bodyLines = [
-      'ORDERBEKRÄFTELSE',
-      '',
 
-      'Hej,',
-      '',
-      'Vi vill informera att arbetet är planerat:',
-      `Projekt: ${it.project.name}`,
-      `Datum: ${dateText}`,
-      `Ordernummer: ${it.project.orderNumber}`,
-      orderLine,
-      '',
-      'Återkom gärna om något behöver justeras.',
-      '',
-      'Vänligen',
-      '',
-      (it.project.salesResponsible ? it.project.salesResponsible : 'Ekovilla')
-    ].join('\n');
-    const href = `mailto:${encodeURIComponent(email)}?subject=${subject}&body=${encodeURIComponent(bodyLines)}`;
-    if (typeof window !== 'undefined') window.location.href = href;
-    setTimeout(() => setPendingNotifyProjectId(it.project.id), 200);
+    return { startDay, endDay, dateText, effectiveTruck, orderInDay, totalInDay, orderLine };
   }, [scheduledSegments, scheduleMeta, projects]);
 
-  const handleEmailClick = useCallback(async (it: any) => {
+  const closePlanningEmailDialog = useCallback(() => {
+    setPlanningEmailDialog(prev => prev?.sending ? prev : null);
+  }, []);
+
+  const handleEmailClick = useCallback(async (it: PlanningEmailItem) => {
     const pid = it.project.id as string;
     const current = projects.find(p => p.id === pid);
     if (!current) return;
+    if (!it.segmentId) { toast.error('Spara sektionen innan du skickar planeringsmail.'); return; }
     if (emailFetchStatus[pid] === 'loading') return; // de-dup
-    if (current.customerEmail) { openMailForSegment(it, current.customerEmail); return; }
+    let resolvedEmail = (current.customerEmail || '').trim().toLowerCase();
     setEmailFetchStatus(prev => ({ ...prev, [pid]: 'loading' }));
     setEmailToast({ pid, msg: 'Förbereder mail…' });
     try {
-      const cid = await ensureCustomerIdForProject(pid);
-      if (!cid) { alert('Kunde inte hitta kund-id för detta projekt.'); setEmailFetchStatus(prev => ({ ...prev, [pid]: 'error' })); setEmailToast(null); return; }
-      const email = await fetchContactEmailByCustomerId(cid);
-      if (!email) { alert('Ingen e‑postadress hittades för kunden.'); setEmailFetchStatus(prev => ({ ...prev, [pid]: 'error' })); setEmailToast(null); return; }
-      setProjects(prev => prev.map(p => p.id === pid ? { ...p, customerEmail: email } : p));
-      openMailForSegment(it, email);
+      if (!resolvedEmail) {
+        const cid = await ensureCustomerIdForProject(pid).catch(() => null);
+        if (cid) {
+          const email = await fetchContactEmailByCustomerId(cid).catch(() => null);
+          if (email) {
+            resolvedEmail = email.trim().toLowerCase();
+            setProjects(prev => prev.map(p => p.id === pid ? { ...p, customerEmail: resolvedEmail } : p));
+          }
+        }
+      }
+      const preview = buildPlanningEmailPreview(it);
+      setPlanningEmailDialog({
+        item: it,
+        detectedEmail: resolvedEmail,
+        manualEmail: '',
+        customMessage: '',
+        recipientMode: resolvedEmail ? 'detected' : 'manual',
+        sending: false,
+        error: null,
+        preview,
+      });
       setEmailFetchStatus(prev => ({ ...prev, [pid]: 'idle' }));
       setEmailToast(null);
-    } catch {
+    } catch (e: any) {
       setEmailFetchStatus(prev => ({ ...prev, [pid]: 'error' }));
       setEmailToast(null);
+      toast.error(e?.message || 'Kunde inte förbereda planeringsmail.');
     }
-  }, [projects, emailFetchStatus, ensureCustomerIdForProject, fetchContactEmailByCustomerId, openMailForSegment]);
+  }, [projects, emailFetchStatus, ensureCustomerIdForProject, fetchContactEmailByCustomerId, buildPlanningEmailPreview, toast]);
+
+  const submitPlanningEmail = useCallback(async () => {
+    if (!planningEmailDialog) return;
+    const pid = planningEmailDialog.item.project.id;
+    const recipientEmail = (planningEmailDialog.recipientMode === 'manual'
+      ? planningEmailDialog.manualEmail
+      : planningEmailDialog.detectedEmail).trim().toLowerCase();
+    if (!recipientEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipientEmail)) {
+      setPlanningEmailDialog(prev => prev ? { ...prev, error: 'Ange en giltig e-postadress innan utskick.' } : prev);
+      return;
+    }
+    setPlanningEmailDialog(prev => prev ? { ...prev, sending: true, error: null } : prev);
+    setEmailFetchStatus(prev => ({ ...prev, [pid]: 'loading' }));
+    try {
+      const res = await fetch('/api/planning/notify-customer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: planningEmailDialog.item.project.id,
+          segmentId: planningEmailDialog.item.segmentId,
+          recipientEmail,
+          recipientSource: planningEmailDialog.recipientMode,
+          startDay: planningEmailDialog.preview.startDay,
+          endDay: planningEmailDialog.preview.endDay,
+          truck: planningEmailDialog.preview.effectiveTruck,
+          orderInDay: planningEmailDialog.preview.orderInDay,
+          totalInDay: planningEmailDialog.preview.totalInDay || null,
+          projectName: planningEmailDialog.item.project.name,
+          customerName: planningEmailDialog.item.project.customer || null,
+          orderNumber: planningEmailDialog.item.project.orderNumber || null,
+          salesResponsible: planningEmailDialog.item.project.salesResponsible || null,
+          customMessage: planningEmailDialog.customMessage.trim() || null,
+          actorUserId: currentUserId,
+          actorUserName: currentUserName,
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.error || 'Kunde inte skicka planeringsmail.');
+      setScheduleMeta(prev => ({
+        ...prev,
+        [pid]: {
+          ...(prev[pid] || { projectId: pid }),
+          client_notified: true,
+          client_notified_at: json?.clientNotifiedAt || new Date().toISOString(),
+          client_notified_by: json?.clientNotifiedBy || currentUserName || currentUserId || 'okänd',
+        }
+      }));
+      if (planningEmailDialog.recipientMode === 'detected' || !planningEmailDialog.item.project.customerEmail) {
+        setProjects(prev => prev.map(p => p.id === pid ? { ...p, customerEmail: json?.recipientEmail || recipientEmail } : p));
+      }
+      setPlanningEmailDialog(null);
+      setEmailFetchStatus(prev => ({ ...prev, [pid]: 'idle' }));
+      toast.success(`Planeringsmail skickat till ${json?.recipientEmail || recipientEmail}.`);
+    } catch (e: any) {
+      setPlanningEmailDialog(prev => prev ? { ...prev, sending: false, error: e?.message || 'Kunde inte skicka planeringsmail.' } : prev);
+      setEmailFetchStatus(prev => ({ ...prev, [pid]: 'error' }));
+    }
+  }, [planningEmailDialog, currentUserId, currentUserName, toast]);
 
   // Project detail modal
   const [detailOpen, setDetailOpen] = useState(false);
@@ -4598,10 +4682,10 @@ export default function PlanneringPage() {
                   {p && (
                     <button
                       type="button"
-                      onClick={() => handleEmailClick({ segmentId: segEditor.segmentId, project: p, truck: segEditor.truck, day: segEditor.startDay, startDay: segEditor.startDay, endDay: segEditor.endDay })}
-                      disabled={emailFetchStatus[p.id] === 'loading'}
+                      onClick={() => { if (!segEditor.segmentId) return; handleEmailClick({ segmentId: segEditor.segmentId, project: p, truck: segEditor.truck, day: segEditor.startDay, startDay: segEditor.startDay, endDay: segEditor.endDay }); }}
+                      disabled={!segEditor.segmentId || emailFetchStatus[p.id] === 'loading'}
                       className="btn--plain btn--xs"
-                      title={scheduleMeta[p.id]?.client_notified ? (scheduleMeta[p.id]?.client_notified_by ? `Notifierad av ${scheduleMeta[p.id]!.client_notified_by}` : 'Kund markerad som notifierad') : 'Skicka planeringsmail'}
+                      title={!segEditor.segmentId ? 'Spara sektionen först' : scheduleMeta[p.id]?.client_notified ? (scheduleMeta[p.id]?.client_notified_by ? `Notifierad av ${scheduleMeta[p.id]!.client_notified_by}` : 'Kund markerad som notifierad') : 'Skicka planeringsmail'}
                       style={{ fontSize: 12, border: '1px solid ' + (scheduleMeta[p.id]?.client_notified ? '#047857' : '#7dd3fc'), background: scheduleMeta[p.id]?.client_notified ? '#059669' : '#e0f2fe', color: scheduleMeta[p.id]?.client_notified ? '#fff' : '#0369a1', borderRadius: 10, padding: '8px 12px' }}
                     >
                       {scheduleMeta[p.id]?.client_notified ? 'Notifierad ✓' : 'Maila kund'}
@@ -4681,6 +4765,77 @@ export default function PlanneringPage() {
           </div>
         </>
       )}
+      {planningEmailDialog && (() => {
+        const selectedEmail = (planningEmailDialog.recipientMode === 'manual' ? planningEmailDialog.manualEmail : planningEmailDialog.detectedEmail).trim();
+        const canSend = !!selectedEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(selectedEmail) && !planningEmailDialog.sending;
+        return (
+          <div style={{ position: 'fixed', inset: 0, zIndex: 3050, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+            <div role="dialog" aria-modal="true" aria-labelledby="planning-email-dialog-title" style={{ width: 'min(780px, calc(100vw - 24px))', maxHeight: '90vh', overflow: 'auto', boxSizing: 'border-box', background: '#fff', border: '1px solid #dbe4ef', borderRadius: 20, boxShadow: '0 18px 50px rgba(15,23,42,0.22)', display: 'grid', gap: 18, padding: 22 }}>
+              <div style={{ display: 'grid', gap: 6 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'start' }}>
+                  <div style={{ display: 'grid', gap: 6, minWidth: 0 }}>
+                    <h3 id="planning-email-dialog-title" style={{ margin: 0, fontSize: 22, color: '#0f172a' }}>Skicka planeringsmail</h3>
+                    <p style={{ margin: 0, fontSize: 13, color: '#475569', lineHeight: 1.55 }}>Bekräfta mottagare innan orderbekräftelsen skickas från <strong>bokning@ekovilla.se</strong>.</p>
+                  </div>
+                  <button type="button" onClick={closePlanningEmailDialog} disabled={planningEmailDialog.sending} style={{ border: '1px solid #cbd5e1', background: '#fff', color: '#334155', borderRadius: 10, padding: '6px 10px', fontSize: 12, cursor: planningEmailDialog.sending ? 'default' : 'pointer' }}>Stäng</button>
+                </div>
+              </div>
+              <div style={{ display: 'grid', gap: 10, padding: 14, border: '1px solid #dbe4ef', borderRadius: 16, background: '#f8fbff' }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#334155', letterSpacing: '.08em', textTransform: 'uppercase' }}>Sammanfattning</div>
+                <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
+                  <div style={{ minWidth: 0, padding: '10px 12px', borderRadius: 12, border: '1px solid #e2e8f0', background: '#fff' }}><div style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase' }}>Projekt</div><div style={{ fontSize: 14, color: '#0f172a', fontWeight: 600, overflowWrap: 'anywhere' }}>{planningEmailDialog.item.project.name}</div></div>
+                  <div style={{ minWidth: 0, padding: '10px 12px', borderRadius: 12, border: '1px solid #e2e8f0', background: '#fff' }}><div style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase' }}>Ordernummer</div><div style={{ fontSize: 14, color: '#0f172a', fontWeight: 600, overflowWrap: 'anywhere' }}>{planningEmailDialog.item.project.orderNumber || 'Ej angivet'}</div></div>
+                  <div style={{ minWidth: 0, padding: '10px 12px', borderRadius: 12, border: '1px solid #e2e8f0', background: '#fff' }}><div style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase' }}>Kund</div><div style={{ fontSize: 14, color: '#0f172a', fontWeight: 600, overflowWrap: 'anywhere' }}>{planningEmailDialog.item.project.customer || 'Ej angiven'}</div></div>
+                  <div style={{ minWidth: 0, padding: '10px 12px', borderRadius: 12, border: '1px solid #e2e8f0', background: '#fff' }}><div style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase' }}>Datum</div><div style={{ fontSize: 14, color: '#0f172a', fontWeight: 600, overflowWrap: 'anywhere' }}>{planningEmailDialog.preview.dateText}</div></div>
+                  <div style={{ minWidth: 0, padding: '10px 12px', borderRadius: 12, border: '1px solid #e2e8f0', background: '#fff' }}><div style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase' }}>Lastbil</div><div style={{ fontSize: 14, color: '#0f172a', fontWeight: 600, overflowWrap: 'anywhere' }}>{planningEmailDialog.preview.effectiveTruck || 'Ej tilldelad'}</div></div>
+                  <div style={{ minWidth: 0, padding: '10px 12px', borderRadius: 12, border: '1px solid #e2e8f0', background: '#fff' }}><div style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase' }}>Avsändare</div><div style={{ fontSize: 14, color: '#0f172a', fontWeight: 600, overflowWrap: 'anywhere' }}>{planningEmailDialog.item.project.salesResponsible || 'Ekovilla'}</div></div>
+                </div>
+                <div style={{ fontSize: 12, color: '#475569', lineHeight: 1.55 }}>{planningEmailDialog.preview.orderLine} Mailet innehåller projekt, datum, ordernummer och planerad lastbil.</div>
+              </div>
+              <div style={{ display: 'grid', gap: 12, minWidth: 0 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#334155', letterSpacing: '.08em', textTransform: 'uppercase' }}>Mottagare</div>
+                <label style={{ display: 'grid', gap: 8, width: '100%', minWidth: 0, boxSizing: 'border-box', overflow: 'hidden', padding: 14, paddingRight: 16, borderRadius: 16, border: '1px solid ' + (planningEmailDialog.recipientMode === 'detected' ? '#0ea5e9' : '#dbe4ef'), background: planningEmailDialog.recipientMode === 'detected' ? '#f0f9ff' : '#fff', opacity: planningEmailDialog.detectedEmail ? 1 : 0.6 }}>
+                  <span style={{ display: 'grid', gridTemplateColumns: '18px minmax(0, 1fr)', gap: 10, alignItems: 'start', minWidth: 0, width: '100%', boxSizing: 'border-box' }}>
+                    <input type="radio" name="planning-email-recipient" checked={planningEmailDialog.recipientMode === 'detected'} disabled={!planningEmailDialog.detectedEmail || planningEmailDialog.sending} onChange={() => setPlanningEmailDialog(prev => prev ? { ...prev, recipientMode: 'detected', error: null } : prev)} style={{ marginTop: 2 }} />
+                    <span style={{ display: 'grid', gap: 4, minWidth: 0, width: '100%', boxSizing: 'border-box', paddingRight: 4 }}>
+                      <span style={{ fontSize: 14, fontWeight: 600, color: '#0f172a' }}>Använd hittad e-postadress</span>
+                      <span style={{ display: 'block', maxWidth: '100%', fontSize: 13, color: '#334155', overflowWrap: 'anywhere', wordBreak: 'break-word' }}>{planningEmailDialog.detectedEmail || 'Ingen e-post hittades i kundkortet.'}</span>
+                    </span>
+                  </span>
+                </label>
+                <label style={{ display: 'grid', gap: 8, width: '100%', minWidth: 0, boxSizing: 'border-box', overflow: 'hidden', padding: 14, paddingRight: 16, borderRadius: 16, border: '1px solid ' + (planningEmailDialog.recipientMode === 'manual' ? '#0ea5e9' : '#dbe4ef'), background: planningEmailDialog.recipientMode === 'manual' ? '#f8fbff' : '#fff' }}>
+                  <span style={{ display: 'grid', gridTemplateColumns: '18px minmax(0, 1fr)', gap: 10, alignItems: 'start', minWidth: 0, width: '100%', boxSizing: 'border-box' }}>
+                    <input type="radio" name="planning-email-recipient" checked={planningEmailDialog.recipientMode === 'manual'} disabled={planningEmailDialog.sending} onChange={() => setPlanningEmailDialog(prev => prev ? { ...prev, recipientMode: 'manual', error: null } : prev)} style={{ marginTop: 2 }} />
+                    <span style={{ display: 'grid', gap: 8, minWidth: 0, width: '100%', boxSizing: 'border-box', paddingRight: 4 }}>
+                      <span style={{ fontSize: 14, fontWeight: 600, color: '#0f172a' }}>Ange annan e-postadress</span>
+                      <input type="email" value={planningEmailDialog.manualEmail} onChange={(e) => setPlanningEmailDialog(prev => prev ? { ...prev, manualEmail: e.target.value.toLowerCase(), recipientMode: 'manual', error: null } : prev)} placeholder="namn@foretag.se" disabled={planningEmailDialog.sending} style={{ width: '100%', minWidth: 0, boxSizing: 'border-box', padding: '11px 12px', border: '1px solid #cbd5e1', borderRadius: 12, fontSize: 14, color: '#0f172a', background: '#fff' }} />
+                    </span>
+                  </span>
+                </label>
+              </div>
+              <div style={{ display: 'grid', gap: 8, minWidth: 0 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#334155', letterSpacing: '.08em', textTransform: 'uppercase' }}>Extra information i mailet</div>
+                <textarea
+                  value={planningEmailDialog.customMessage}
+                  onChange={(e) => setPlanningEmailDialog(prev => prev ? { ...prev, customMessage: e.target.value, error: null } : prev)}
+                  placeholder="Skriv valfri information till kunden här. Om du lämnar tomt används standardtexten."
+                  disabled={planningEmailDialog.sending}
+                  rows={4}
+                  style={{ width: '100%', minWidth: 0, boxSizing: 'border-box', resize: 'vertical', padding: '12px 14px', border: '1px solid #cbd5e1', borderRadius: 14, fontSize: 14, lineHeight: 1.55, color: '#0f172a', background: '#fff' }}
+                />
+                <div style={{ fontSize: 12, color: '#64748b', lineHeight: 1.5 }}>Den här texten ersätter standardraden om att kunden kan återkomma om något behöver justeras.</div>
+              </div>
+              {planningEmailDialog.error && (
+                <div style={{ padding: '10px 12px', borderRadius: 12, border: '1px solid #fecaca', background: '#fef2f2', color: '#b91c1c', fontSize: 13 }}>{planningEmailDialog.error}</div>
+              )}
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+                <button type="button" onClick={closePlanningEmailDialog} disabled={planningEmailDialog.sending} style={{ flex: '1 1 180px', border: '1px solid #cbd5e1', background: '#fff', color: '#334155', borderRadius: 12, padding: '10px 14px', fontSize: 13, fontWeight: 600, cursor: planningEmailDialog.sending ? 'default' : 'pointer' }}>Avbryt</button>
+                <button type="button" onClick={submitPlanningEmail} disabled={!canSend} style={{ flex: '1 1 240px', border: '1px solid ' + (canSend ? '#047857' : '#cbd5e1'), background: canSend ? '#059669' : '#e2e8f0', color: canSend ? '#fff' : '#64748b', borderRadius: 12, padding: '10px 14px', fontSize: 13, fontWeight: 700, cursor: canSend ? 'pointer' : 'default' }}>{planningEmailDialog.sending ? 'Skickar…' : 'Skicka orderbekräftelse'}</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
       {!globalReady && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'linear-gradient(135deg,#f8fafc,#e0f2fe)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, fontFamily: 'system-ui, sans-serif' }} aria-busy="true" aria-live="polite">
           <div style={{ display: 'flex', flexDirection: 'column', gap: 20, width: 'min(420px,90%)' }}>
@@ -4713,26 +4868,6 @@ export default function PlanneringPage() {
           </div>
         </div>
       )}
-      {pendingNotifyProjectId && (() => {
-        const project = projects.find(p => p.id === pendingNotifyProjectId);
-        return (
-          <div style={{ position: 'fixed', inset: 0, zIndex: 2000, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-            <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12, padding: '20px 22px', width: 'min(420px,90%)', display: 'grid', gap: 16, boxShadow: '0 8px 30px -6px rgba(0,0,0,0.25)' }}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                <h3 style={{ margin: 0, fontSize: 18, color: '#0f172a' }}>Har kunden notifierats?</h3>
-                <p style={{ margin: 0, fontSize: 13, color: '#475569' }}>Bekräfta att du skickade eller informerade kunden om <strong>{project?.name}</strong>.</p>
-              </div>
-              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                <button type="button" onClick={() => { if (project) markClientNotified(project.id); setPendingNotifyProjectId(null); }} style={{ flex: '1 1 120px', background: '#059669', color: '#fff', border: '1px solid #047857', borderRadius: 8, padding: '10px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Ja, notifierad</button>
-                <button type="button" onClick={() => { setPendingNotifyProjectId(null); }} style={{ flex: '1 1 120px', background: '#f1f5f9', color: '#334155', border: '1px solid #cbd5e1', borderRadius: 8, padding: '10px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Nej / Avbryt</button>
-                {project && scheduleMeta[project.id]?.client_notified && (
-                  <button type="button" onClick={() => { undoClientNotified(project.id); setPendingNotifyProjectId(null); }} style={{ flex: '1 1 100%', background: '#fee2e2', color: '#b91c1c', border: '1px solid #fca5a5', borderRadius: 8, padding: '8px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Ångra tidigare markering</button>
-                )}
-              </div>
-            </div>
-          </div>
-        );
-      })()}
       {/* Project Detail Modal */}
       {detailOpen && (() => {
         const pid = detailProjectId!;
