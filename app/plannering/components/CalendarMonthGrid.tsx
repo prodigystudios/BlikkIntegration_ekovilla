@@ -352,8 +352,9 @@ export default function CalendarMonthGrid(props: CalendarMonthGridProps) {
                             )}
                             {/* Show customer for normal segments and outgoing deliveries */}
                             {(!isDelivery || isDeliveryOutbound) && isStart && <span style={{ color: display ? display.text : '#6366f1', fontSize: 10.5, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={it.project.customer}>{it.project.customer}</span>}
-                            {/* Show project status if available, with color badge */}
-                            {(!isDelivery || isDeliveryOutbound) && isStart && projectStatuses && projectStatuses[it.project.id] && (() => {
+                            {/* Show project badges */}
+                            {(!isDelivery || isDeliveryOutbound) && isStart && (() => {
+                              const projectStatus = projectStatuses?.[it.project.id];
                               const col = projectStatusColors?.[it.project.id];
                               const bg = col ? col : '#ffffff30';
                               const border = col ? col : `${cardBorder}55`;
@@ -364,18 +365,26 @@ export default function CalendarMonthGrid(props: CalendarMonthGridProps) {
                                 const brightness = (r * 299 + g * 587 + b * 114) / 1000;
                                 textColor = brightness < 135 ? '#ffffff' : '#111827';
                               }
+                              const clientNotified = !!scheduleMeta[it.project.id]?.client_notified;
+                              const clientNotifiedBy = scheduleMeta[it.project.id]?.client_notified_by;
+                              const clientNotifiedAt = scheduleMeta[it.project.id]?.client_notified_at;
+                              if (!projectStatus && !clientNotified && !hasEgenkontroll(it.project.orderNumber)) return null;
                               return (
-                                <span>
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', paddingTop: 2 }}>
-                                    <span style={{ fontSize: 9, color: textColor, background: bg, padding: '3px 7px', borderRadius: 999, border: `1px solid ${border}`, fontWeight: 700 }}>{projectStatuses[it.project.id]}</span>
-                                    {!isDelivery && isStart && hasEgenkontroll(it.project.orderNumber) && (
-                                      <span title="Egenkontroll rapporterad" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 9, background: '#ecfdf5', color: '#047857', padding: '3px 7px', borderRadius: 999, border: '1px solid #6ee7b7', fontWeight: 600 }}>
-                                        <span style={{ display: 'inline-grid', placeItems: 'center', width: 12, height: 12, borderRadius: 999, background: '#059669', color: '#fff', fontSize: 9, fontWeight: 800 }}>✓</span>
-                                        Egenkontroll
-                                      </span>
-                                    )}
-                                  </div>
-                                </span>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', paddingTop: 2 }}>
+                                  {projectStatus ? <span style={{ fontSize: 9, color: textColor, background: bg, padding: '3px 7px', borderRadius: 999, border: `1px solid ${border}`, fontWeight: 700 }}>{projectStatus}</span> : null}
+                                  {clientNotified ? (
+                                    <span title={clientNotifiedBy ? `Kund notifierad av ${clientNotifiedBy}${clientNotifiedAt ? ` ${String(clientNotifiedAt).slice(0, 16).replace('T', ' ')}` : ''}` : 'Kund notifierad'} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 9, background: '#d1fae5', color: '#065f46', padding: '3px 7px', borderRadius: 999, border: '1px solid #6ee7b7', fontWeight: 700 }}>
+                                      <span style={{ display: 'inline-grid', placeItems: 'center', width: 12, height: 12, borderRadius: 999, background: '#059669', color: '#fff', fontSize: 9, fontWeight: 800 }}>✓</span>
+                                      Notifierad
+                                    </span>
+                                  ) : null}
+                                  {hasEgenkontroll(it.project.orderNumber) ? (
+                                    <span title="Egenkontroll rapporterad" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 9, background: '#ecfdf5', color: '#047857', padding: '3px 7px', borderRadius: 999, border: '1px solid #6ee7b7', fontWeight: 600 }}>
+                                      <span style={{ display: 'inline-grid', placeItems: 'center', width: 12, height: 12, borderRadius: 999, background: '#059669', color: '#fff', fontSize: 9, fontWeight: 800 }}>✓</span>
+                                      Egenkontroll
+                                    </span>
+                                  ) : null}
+                                </div>
                               );
                             })()}
                             {!isDelivery && isStart && it.project.salesResponsible && <span style={{ fontSize: 9, color: display ? display.text : '#334155', background: '#ffffff40', padding: '2px 7px', borderRadius: 999, border: `1px solid ${cardBorder}44` }}>Sälj: {it.project.salesResponsible}</span>}

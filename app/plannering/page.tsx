@@ -4678,18 +4678,32 @@ export default function PlanneringPage() {
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 12, justifyContent: 'space-between', alignItems: 'center', padding: 12, background: '#f8fafc', borderTop: '1px solid #e5e7eb', flexWrap: 'wrap' }}>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <div style={{ display: 'grid', gap: 6 }}>
                   {p && (
-                    <button
-                      type="button"
-                      onClick={() => { if (!segEditor.segmentId) return; handleEmailClick({ segmentId: segEditor.segmentId, project: p, truck: segEditor.truck, day: segEditor.startDay, startDay: segEditor.startDay, endDay: segEditor.endDay }); }}
-                      disabled={!segEditor.segmentId || emailFetchStatus[p.id] === 'loading'}
-                      className="btn--plain btn--xs"
-                      title={!segEditor.segmentId ? 'Spara sektionen först' : scheduleMeta[p.id]?.client_notified ? (scheduleMeta[p.id]?.client_notified_by ? `Notifierad av ${scheduleMeta[p.id]!.client_notified_by}` : 'Kund markerad som notifierad') : 'Skicka planeringsmail'}
-                      style={{ fontSize: 12, border: '1px solid ' + (scheduleMeta[p.id]?.client_notified ? '#047857' : '#7dd3fc'), background: scheduleMeta[p.id]?.client_notified ? '#059669' : '#e0f2fe', color: scheduleMeta[p.id]?.client_notified ? '#fff' : '#0369a1', borderRadius: 10, padding: '8px 12px' }}
-                    >
-                      {scheduleMeta[p.id]?.client_notified ? 'Notifierad ✓' : 'Maila kund'}
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => { if (!segEditor.segmentId) return; handleEmailClick({ segmentId: segEditor.segmentId, project: p, truck: segEditor.truck, day: segEditor.startDay, startDay: segEditor.startDay, endDay: segEditor.endDay }); }}
+                        disabled={!segEditor.segmentId || emailFetchStatus[p.id] === 'loading'}
+                        className="btn--plain btn--xs"
+                        title={!segEditor.segmentId ? 'Spara sektionen först' : scheduleMeta[p.id]?.client_notified ? (scheduleMeta[p.id]?.client_notified_by ? `Notifierad av ${scheduleMeta[p.id]!.client_notified_by}` : 'Kund markerad som notifierad') : 'Skicka planeringsmail'}
+                        style={{ fontSize: 12, border: '1px solid ' + (scheduleMeta[p.id]?.client_notified ? '#047857' : '#7dd3fc'), background: scheduleMeta[p.id]?.client_notified ? '#059669' : '#e0f2fe', color: scheduleMeta[p.id]?.client_notified ? '#fff' : '#0369a1', borderRadius: 10, padding: '8px 12px', justifySelf: 'start' }}
+                      >
+                        {scheduleMeta[p.id]?.client_notified ? 'Notifierad ✓' : 'Maila kund'}
+                      </button>
+                      {(() => {
+                        if (!segEditor.segmentId) {
+                          return <div style={{ fontSize: 11, color: '#64748b' }}>Spara sektionen först.</div>;
+                        }
+                        if (!scheduleMeta[p.id]?.client_notified) {
+                          return <div style={{ fontSize: 11, color: '#64748b' }}>Skicka planeringsmail till kunden härifrån.</div>;
+                        }
+                        const actor = scheduleMeta[p.id]?.client_notified_by;
+                        const notifiedAt = scheduleMeta[p.id]?.client_notified_at;
+                        const timeText = notifiedAt ? ` ${String(notifiedAt).slice(0, 16).replace('T', ' ')}` : '';
+                        return <div style={{ fontSize: 11, color: '#065f46' }}>{actor ? `Notifierad av ${actor}${timeText}` : 'Kund markerad som notifierad'}</div>;
+                      })()}
+                    </>
                   )}
                   {segEditor.mode === 'edit' && segEditor.segmentId && (
                     confirmDeleteSegmentId === segEditor.segmentId ? (
