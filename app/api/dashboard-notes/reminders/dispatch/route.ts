@@ -9,10 +9,13 @@ export const dynamic = 'force-dynamic';
 type DueNote = {
   id: string;
   user_id: string;
-  text: string;
-  reminder_at: string | null;
+  kind: 'note' | 'meeting' | string;
+  title: string;
+  body: string | null;
+  starts_at: string | null;
+  remind_at: string | null;
   reminder_sent_at: string | null;
-  done: boolean;
+  status: 'active' | 'done' | 'cancelled' | string;
 };
 
 type PushRow = {
@@ -28,6 +31,44 @@ async function getUserId() {
     data: { user },
   } = await supabase.auth.getUser();
   return user?.id || null;
+}
+
+function buildPushTitle(item: DueNote) {
+  if (item.kind === 'meeting') {
+    const when = formatPushWhen(item.starts_at);
+    return when ? `Möte ${when}` : 'Möte snart';
+  }
+  return 'Påminnelse';
+}
+
+function buildPushBody(item: DueNote) {
+  if (item.kind === 'meeting') {
+    const details = [item.title.trim(), truncatePushText(item.body, 72)].filter(Boolean);
+    return details.join(' • ');
+  }
+  const details = [item.title.trim(), truncatePushText(item.body, 96)].filter(Boolean);
+  return details.join(' • ');
+}
+
+function formatPushWhen(value: string | null) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+
+  const now = new Date();
+  const isSameDay = date.getFullYear() === now.getFullYear()
+    && date.getMonth() === now.getMonth()
+    && date.getDate() === now.getDate();
+  const clock = `kl ${date.toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' })}`;
+  if (isSameDay) return `idag ${clock}`;
+  return `${date.toLocaleDateString('sv-SE', { day: 'numeric', month: 'short' })} ${clock}`;
+}
+
+function truncatePushText(value: string | null, maxLength: number) {
+  const text = String(value || '').trim().replace(/\s+/g, ' ');
+  if (!text) return '';
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength - 1).trimEnd()}…`;
 }
 
 function isAuthorizedCron(req: NextRequest) {
@@ -59,13 +100,13 @@ async function dispatchReminders(req: NextRequest) {
   }
 
   let query = adminSupabase
-    .from('dashboard_notes')
-    .select('id,user_id,text,reminder_at,reminder_sent_at,done')
-    .not('reminder_at', 'is', null)
+    .from('dashboard_work_items')
+    .select('id,user_id,kind,title,body,starts_at,remind_at,reminder_sent_at,status')
+    .not('remind_at', 'is', null)
     .is('reminder_sent_at', null)
-    .eq('done', false)
-    .lte('reminder_at', new Date().toISOString())
-    .order('reminder_at', { ascending: true })
+    .eq('status', 'active')
+    .lte('remind_at', new Date().toISOString())
+    .order('remind_at', { ascending: true })
     .limit(50);
 
   if (currentUserId) {
@@ -106,12 +147,14 @@ async function dispatchReminders(req: NextRequest) {
             keys: { p256dh: subscription.p256dh, auth: subscription.auth },
           },
           {
-            title: 'Påminnelse',
-            body: note.text,
-            tag: `dashboard-note-${note.id}`,
+            title: buildPushTitle(note),
+            body: buildPushBody(note),
+            tag: `dashboard-item-${note.id}`,
             url: '/',
             noteId: note.id,
-            reminderAt: note.reminder_at,
+            kind: note.kind,
+            reminderAt: note.remind_at,
+            startsAt: note.starts_at,
           },
         );
         sentCount += 1;
@@ -136,7 +179,7 @@ async function dispatchReminders(req: NextRequest) {
 
     if (sentCount > 0) {
       await adminSupabase
-        .from('dashboard_notes')
+        .from('dashboard_work_items')
         .update({ reminder_sent_at: new Date().toISOString() })
         .eq('id', note.id);
     }

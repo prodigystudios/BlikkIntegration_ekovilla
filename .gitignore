@@ -7,5 +7,7 @@ tsconfig.tsbuildinfo
 build_output.log
 build_output.txt
 build_result.log
+build_run.log
+build.log
 tsc_output.txt
 .agents
