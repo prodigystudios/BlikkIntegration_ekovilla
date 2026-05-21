@@ -14,7 +14,8 @@ export const runtime = 'nodejs';
 const NotifySchema = z.object({
   projectId: z.string().trim().min(1),
   segmentId: z.string().trim().min(1),
-  recipientEmail: z.string().trim().email(),
+  sendEmail: z.boolean().optional().default(true),
+  recipientEmail: z.string().trim().email().nullable().optional(),
   recipientSource: z.enum(['detected', 'manual']).default('detected'),
   sendSms: z.boolean().optional().default(false),
   recipientPhone: z.string().trim().nullable().optional(),
@@ -31,6 +32,21 @@ const NotifySchema = z.object({
   customMessage: z.string().trim().max(2000).nullable().optional(),
   actorUserId: z.string().trim().nullable().optional(),
   actorUserName: z.string().trim().nullable().optional(),
+}).superRefine((value, ctx) => {
+  if (!value.sendEmail && !value.sendSms) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'At least one notification channel must be selected.',
+      path: ['sendEmail'],
+    });
+  }
+  if (value.sendEmail && !value.recipientEmail) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'recipientEmail is required when sendEmail is true.',
+      path: ['recipientEmail'],
+    });
+  }
 });
 
 function env(name: string): string {
@@ -257,8 +273,8 @@ export async function POST(req: NextRequest) {
     const projectData = Number.isFinite(numericProjectId) && numericProjectId > 0
       ? await getBlikk().getProjectById(numericProjectId).catch(() => null)
       : null;
-    let recipientEmail = data.recipientEmail;
-    if (data.recipientSource === 'detected') {
+    let recipientEmail = data.recipientEmail || null;
+    if (data.sendEmail && data.recipientSource === 'detected') {
       const resolved = projectData ? await resolveCustomerEmail(data.projectId).catch(() => null) : null;
       recipientEmail = resolved || recipientEmail;
     }
@@ -269,7 +285,7 @@ export async function POST(req: NextRequest) {
       resolvedPhone = detectedPhone || resolvedPhone;
     }
 
-    if (!recipientEmail) {
+    if (data.sendEmail && !recipientEmail) {
       return NextResponse.json({ error: 'Ingen giltig mottagaradress hittades.' }, { status: 400 });
     }
 
@@ -284,8 +300,8 @@ export async function POST(req: NextRequest) {
       phone: sellerUserMatch?.phone || sellerInfoBase.phone || normalizePhone(sellerDirectoryMatch?.phone || null),
     };
     const origin = getPublicOrigin(req);
-    const email = buildPlanningNotificationEmail({
-      recipientEmail,
+    const email = data.sendEmail ? buildPlanningNotificationEmail({
+      recipientEmail: recipientEmail || '',
       projectName: data.projectName,
       customerName: data.customerName || null,
       orderNumber: data.orderNumber || null,
@@ -299,7 +315,7 @@ export async function POST(req: NextRequest) {
       sellerEmail: sellerInfo.email,
       sellerPhone: sellerInfo.phone,
       logoUrl: `${origin}/brand/Ekovilla_vit.png`,
-    });
+    }) : null;
 
     const actor = data.actorUserName || data.actorUserId || 'okänd';
     const ts = new Date().toISOString();
@@ -308,7 +324,7 @@ export async function POST(req: NextRequest) {
       accepted: boolean;
       error: string | null;
     } = {
-      attempted: true,
+      attempted: data.sendEmail,
       accepted: false,
       error: null,
     };
@@ -326,18 +342,20 @@ export async function POST(req: NextRequest) {
       error: null,
     };
 
-    try {
-      await sendEmail({
-        to: recipientEmail,
-        from: sender,
-        replyTo: sender,
-        subject: email.subject,
-        html: email.html,
-        text: email.text,
-      });
-      emailResult.accepted = true;
-    } catch (error: any) {
-      emailResult.error = String(error?.message || error || 'Unknown email error');
+    if (data.sendEmail && email) {
+      try {
+        await sendEmail({
+          to: recipientEmail || '',
+          from: sender,
+          replyTo: sender,
+          subject: email.subject,
+          html: email.html,
+          text: email.text,
+        });
+        emailResult.accepted = true;
+      } catch (error: any) {
+        emailResult.error = String(error?.message || error || 'Unknown email error');
+      }
     }
 
     if (smsResult.attempted) {

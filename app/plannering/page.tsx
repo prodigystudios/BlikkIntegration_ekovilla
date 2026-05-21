@@ -114,9 +114,11 @@ type PlanningEmailDialogState = {
   manualEmail: string;
   detectedPhone: string;
   manualPhone: string;
+  recipientCustomerName: string;
   customMessage: string;
   recipientMode: 'detected' | 'manual';
   phoneMode: 'detected' | 'manual';
+  sendEmail: boolean;
   sendSms: boolean;
   sending: boolean;
   error: string | null;
@@ -1674,9 +1676,11 @@ export default function PlanneringPage() {
         manualEmail: '',
         detectedPhone: resolvedPhone,
         manualPhone: '',
+        recipientCustomerName: current.customer || '',
         customMessage: '',
         recipientMode: resolvedEmail ? 'detected' : 'manual',
         phoneMode: resolvedPhone ? 'detected' : 'manual',
+        sendEmail: !!resolvedEmail,
         sendSms: !!resolvedPhone,
         sending: false,
         error: null,
@@ -1700,7 +1704,11 @@ export default function PlanneringPage() {
     const recipientPhone = normalizePhone(planningEmailDialog.phoneMode === 'manual'
       ? planningEmailDialog.manualPhone
       : planningEmailDialog.detectedPhone);
-    if (!recipientEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipientEmail)) {
+    if (!planningEmailDialog.sendEmail && !planningEmailDialog.sendSms) {
+      setPlanningEmailDialog(prev => prev ? { ...prev, error: 'Välj minst ett utskick: mail eller SMS.' } : prev);
+      return;
+    }
+    if (planningEmailDialog.sendEmail && (!recipientEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipientEmail))) {
       setPlanningEmailDialog(prev => prev ? { ...prev, error: 'Ange en giltig e-postadress innan utskick.' } : prev);
       return;
     }
@@ -1717,7 +1725,8 @@ export default function PlanneringPage() {
         body: JSON.stringify({
           projectId: planningEmailDialog.item.project.id,
           segmentId: planningEmailDialog.item.segmentId,
-          recipientEmail,
+          sendEmail: planningEmailDialog.sendEmail,
+          recipientEmail: planningEmailDialog.sendEmail ? recipientEmail : null,
           recipientSource: planningEmailDialog.recipientMode,
           sendSms: planningEmailDialog.sendSms,
           recipientPhone: planningEmailDialog.sendSms ? recipientPhone : null,
@@ -1728,7 +1737,7 @@ export default function PlanneringPage() {
           orderInDay: planningEmailDialog.preview.orderInDay,
           totalInDay: planningEmailDialog.preview.totalInDay || null,
           projectName: planningEmailDialog.item.project.name,
-          customerName: planningEmailDialog.item.project.customer || null,
+          customerName: planningEmailDialog.recipientCustomerName.trim() || null,
           orderNumber: planningEmailDialog.item.project.orderNumber || null,
           salesResponsible: planningEmailDialog.item.project.salesResponsible || null,
           customMessage: planningEmailDialog.customMessage.trim() || null,
@@ -1754,19 +1763,24 @@ export default function PlanneringPage() {
           sms_last_error: json?.sms?.error || null,
         }
       }));
-      if (planningEmailDialog.recipientMode === 'detected' || !planningEmailDialog.item.project.customerEmail) {
+      if (planningEmailDialog.sendEmail && (planningEmailDialog.recipientMode === 'detected' || !planningEmailDialog.item.project.customerEmail)) {
         setProjects(prev => prev.map(p => p.id === pid ? {
           ...p,
           customerEmail: json?.recipientEmail || recipientEmail,
           customerPhone: planningEmailDialog.sendSms ? (json?.recipientPhone || recipientPhone) : p.customerPhone,
+        } : p));
+      } else if (planningEmailDialog.sendSms) {
+        setProjects(prev => prev.map(p => p.id === pid ? {
+          ...p,
+          customerPhone: json?.recipientPhone || recipientPhone,
         } : p));
       }
       setPlanningEmailDialog(null);
       setEmailFetchStatus(prev => ({ ...prev, [pid]: 'idle' }));
       if (json?.email?.accepted) {
         toast.success(planningEmailDialog.sendSms && json?.sms?.accepted
-          ? `Planeringsmail och SMS skickat till ${json?.recipientEmail || recipientEmail}.`
-          : `Planeringsmail skickat till ${json?.recipientEmail || recipientEmail}.`);
+          ? `Mail och SMS skickat.`
+          : `Mail skickat till ${json?.recipientEmail || recipientEmail}.`);
       }
       if (planningEmailDialog.sendSms && json?.sms?.accepted && !json?.email?.accepted) {
         toast.success(`SMS skickat till ${json?.recipientPhone || recipientPhone}.`);
@@ -4967,7 +4981,9 @@ export default function PlanneringPage() {
       {planningEmailDialog && (() => {
         const selectedEmail = (planningEmailDialog.recipientMode === 'manual' ? planningEmailDialog.manualEmail : planningEmailDialog.detectedEmail).trim();
         const selectedPhone = normalizePhone(planningEmailDialog.phoneMode === 'manual' ? planningEmailDialog.manualPhone : planningEmailDialog.detectedPhone);
-        const canSend = !!selectedEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(selectedEmail) && (!planningEmailDialog.sendSms || isValidSmsPhone(selectedPhone)) && !planningEmailDialog.sending;
+        const emailReady = !planningEmailDialog.sendEmail || (!!selectedEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(selectedEmail));
+        const smsReady = !planningEmailDialog.sendSms || isValidSmsPhone(selectedPhone);
+        const canSend = (planningEmailDialog.sendEmail || planningEmailDialog.sendSms) && emailReady && smsReady && !planningEmailDialog.sending;
         return (
           <div style={{ position: 'fixed', inset: 0, zIndex: 3050, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
             <div role="dialog" aria-modal="true" aria-labelledby="planning-email-dialog-title" style={{ width: 'min(780px, calc(100vw - 24px))', maxHeight: '90vh', overflow: 'auto', boxSizing: 'border-box', background: '#fff', border: '1px solid #dbe4ef', borderRadius: 20, boxShadow: '0 18px 50px rgba(15,23,42,0.22)', display: 'grid', gap: 18, padding: 22 }}>
@@ -4975,7 +4991,7 @@ export default function PlanneringPage() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'start' }}>
                   <div style={{ display: 'grid', gap: 6, minWidth: 0 }}>
                     <h3 id="planning-email-dialog-title" style={{ margin: 0, fontSize: 22, color: '#0f172a' }}>Skicka orderbekräftelse</h3>
-                    <p style={{ margin: 0, fontSize: 13, color: '#475569', lineHeight: 1.55 }}>Bekräfta mottagare innan orderbekräftelsen skickas från <strong>bokning@ekovilla.se</strong>. Du kan även skicka ett SMS utan svar samtidigt.</p>
+                    <p style={{ margin: 0, fontSize: 13, color: '#475569', lineHeight: 1.55 }}>Bekräfta mottagare innan orderbekräftelsen skickas från <strong>bokning@ekovilla.se</strong>. Du kan skicka mail, SMS eller båda samtidigt.</p>
                   </div>
                   <button type="button" onClick={closePlanningEmailDialog} disabled={planningEmailDialog.sending} style={{ border: '1px solid #cbd5e1', background: '#fff', color: '#334155', borderRadius: 10, padding: '6px 10px', fontSize: 12, cursor: planningEmailDialog.sending ? 'default' : 'pointer' }}>Stäng</button>
                 </div>
@@ -4985,7 +5001,7 @@ export default function PlanneringPage() {
                 <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
                   <div style={{ minWidth: 0, padding: '10px 12px', borderRadius: 12, border: '1px solid #e2e8f0', background: '#fff' }}><div style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase' }}>Projekt</div><div style={{ fontSize: 14, color: '#0f172a', fontWeight: 600, overflowWrap: 'anywhere' }}>{planningEmailDialog.item.project.name}</div></div>
                   <div style={{ minWidth: 0, padding: '10px 12px', borderRadius: 12, border: '1px solid #e2e8f0', background: '#fff' }}><div style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase' }}>Ordernummer</div><div style={{ fontSize: 14, color: '#0f172a', fontWeight: 600, overflowWrap: 'anywhere' }}>{planningEmailDialog.item.project.orderNumber || 'Ej angivet'}</div></div>
-                  <div style={{ minWidth: 0, padding: '10px 12px', borderRadius: 12, border: '1px solid #e2e8f0', background: '#fff' }}><div style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase' }}>Kund</div><div style={{ fontSize: 14, color: '#0f172a', fontWeight: 600, overflowWrap: 'anywhere' }}>{planningEmailDialog.item.project.customer || 'Ej angiven'}</div></div>
+                  <div style={{ minWidth: 0, padding: '10px 12px', borderRadius: 12, border: '1px solid #e2e8f0', background: '#fff' }}><div style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase' }}>Mottagarnamn</div><div style={{ fontSize: 14, color: '#0f172a', fontWeight: 600, overflowWrap: 'anywhere' }}>{planningEmailDialog.recipientCustomerName || 'Ej angivet'}</div></div>
                   <div style={{ minWidth: 0, padding: '10px 12px', borderRadius: 12, border: '1px solid #e2e8f0', background: '#fff' }}><div style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase' }}>Datum</div><div style={{ fontSize: 14, color: '#0f172a', fontWeight: 600, overflowWrap: 'anywhere' }}>{planningEmailDialog.preview.dateText}</div></div>
                   <div style={{ minWidth: 0, padding: '10px 12px', borderRadius: 12, border: '1px solid #e2e8f0', background: '#fff' }}><div style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase' }}>Lastbil</div><div style={{ fontSize: 14, color: '#0f172a', fontWeight: 600, overflowWrap: 'anywhere' }}>{planningEmailDialog.preview.effectiveTruck || 'Ej tilldelad'}</div></div>
                   <div style={{ minWidth: 0, padding: '10px 12px', borderRadius: 12, border: '1px solid #e2e8f0', background: '#fff' }}><div style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase' }}>Avsändare</div><div style={{ fontSize: 14, color: '#0f172a', fontWeight: 600, overflowWrap: 'anywhere' }}>{planningEmailDialog.item.project.salesResponsible || 'Ekovilla'}</div></div>
@@ -4993,10 +5009,25 @@ export default function PlanneringPage() {
                 <div style={{ fontSize: 12, color: '#475569', lineHeight: 1.55 }}>{planningEmailDialog.preview.orderLine} Mailet innehåller projekt, datum, ordernummer och planerad lastbil. Om SMS är aktiverat skickas en kort orderbekräftelse till kundens mobil.</div>
               </div>
               <div style={{ display: 'grid', gap: 12, minWidth: 0 }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: '#334155', letterSpacing: '.08em', textTransform: 'uppercase' }}>Mottagare</div>
-                <label style={{ display: 'grid', gap: 8, width: '100%', minWidth: 0, boxSizing: 'border-box', overflow: 'hidden', padding: 14, paddingRight: 16, borderRadius: 16, border: '1px solid ' + (planningEmailDialog.recipientMode === 'detected' ? '#0ea5e9' : '#dbe4ef'), background: planningEmailDialog.recipientMode === 'detected' ? '#f0f9ff' : '#fff', opacity: planningEmailDialog.detectedEmail ? 1 : 0.6 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: '#334155', letterSpacing: '.08em', textTransform: 'uppercase' }}>Mail</div>
+                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#0f172a', fontWeight: 600 }}>
+                    <input
+                      type="checkbox"
+                      checked={planningEmailDialog.sendEmail}
+                      disabled={planningEmailDialog.sending}
+                      onChange={(e) => setPlanningEmailDialog(prev => prev ? { ...prev, sendEmail: e.target.checked, error: null } : prev)}
+                    />
+                    Skicka mail
+                  </label>
+                </div>
+                <label style={{ display: 'grid', gap: 8 }}>
+                  <span style={{ fontSize: 14, fontWeight: 600, color: '#0f172a' }}>Mottagarnamn i bekräftelsen</span>
+                  <input type="text" value={planningEmailDialog.recipientCustomerName} onChange={(e) => setPlanningEmailDialog(prev => prev ? { ...prev, recipientCustomerName: e.target.value, error: null } : prev)} placeholder="Namn på mottagaren" disabled={planningEmailDialog.sending} style={{ width: '100%', minWidth: 0, boxSizing: 'border-box', padding: '11px 12px', border: '1px solid #cbd5e1', borderRadius: 12, fontSize: 14, color: '#0f172a', background: '#fff' }} />
+                </label>
+                <label style={{ display: 'grid', gap: 8, width: '100%', minWidth: 0, boxSizing: 'border-box', overflow: 'hidden', padding: 14, paddingRight: 16, borderRadius: 16, border: '1px solid ' + (planningEmailDialog.recipientMode === 'detected' ? '#0ea5e9' : '#dbe4ef'), background: planningEmailDialog.recipientMode === 'detected' ? '#f0f9ff' : '#fff', opacity: planningEmailDialog.detectedEmail && planningEmailDialog.sendEmail ? 1 : 0.6 }}>
                   <span style={{ display: 'grid', gridTemplateColumns: '18px minmax(0, 1fr)', gap: 10, alignItems: 'start', minWidth: 0, width: '100%', boxSizing: 'border-box' }}>
-                    <input type="radio" name="planning-email-recipient" checked={planningEmailDialog.recipientMode === 'detected'} disabled={!planningEmailDialog.detectedEmail || planningEmailDialog.sending} onChange={() => setPlanningEmailDialog(prev => prev ? { ...prev, recipientMode: 'detected', error: null } : prev)} style={{ marginTop: 2 }} />
+                    <input type="radio" name="planning-email-recipient" checked={planningEmailDialog.recipientMode === 'detected'} disabled={!planningEmailDialog.detectedEmail || planningEmailDialog.sending || !planningEmailDialog.sendEmail} onChange={() => setPlanningEmailDialog(prev => prev ? { ...prev, recipientMode: 'detected', error: null } : prev)} style={{ marginTop: 2 }} />
                     <span style={{ display: 'grid', gap: 4, minWidth: 0, width: '100%', boxSizing: 'border-box', paddingRight: 4 }}>
                       <span style={{ fontSize: 14, fontWeight: 600, color: '#0f172a' }}>Använd hittad e-postadress</span>
                       <span style={{ display: 'block', maxWidth: '100%', fontSize: 13, color: '#334155', overflowWrap: 'anywhere', wordBreak: 'break-word' }}>{planningEmailDialog.detectedEmail || 'Ingen e-post hittades i kundkortet.'}</span>
@@ -5005,10 +5036,10 @@ export default function PlanneringPage() {
                 </label>
                 <label style={{ display: 'grid', gap: 8, width: '100%', minWidth: 0, boxSizing: 'border-box', overflow: 'hidden', padding: 14, paddingRight: 16, borderRadius: 16, border: '1px solid ' + (planningEmailDialog.recipientMode === 'manual' ? '#0ea5e9' : '#dbe4ef'), background: planningEmailDialog.recipientMode === 'manual' ? '#f8fbff' : '#fff' }}>
                   <span style={{ display: 'grid', gridTemplateColumns: '18px minmax(0, 1fr)', gap: 10, alignItems: 'start', minWidth: 0, width: '100%', boxSizing: 'border-box' }}>
-                    <input type="radio" name="planning-email-recipient" checked={planningEmailDialog.recipientMode === 'manual'} disabled={planningEmailDialog.sending} onChange={() => setPlanningEmailDialog(prev => prev ? { ...prev, recipientMode: 'manual', error: null } : prev)} style={{ marginTop: 2 }} />
+                    <input type="radio" name="planning-email-recipient" checked={planningEmailDialog.recipientMode === 'manual'} disabled={planningEmailDialog.sending || !planningEmailDialog.sendEmail} onChange={() => setPlanningEmailDialog(prev => prev ? { ...prev, recipientMode: 'manual', error: null } : prev)} style={{ marginTop: 2 }} />
                     <span style={{ display: 'grid', gap: 8, minWidth: 0, width: '100%', boxSizing: 'border-box', paddingRight: 4 }}>
                       <span style={{ fontSize: 14, fontWeight: 600, color: '#0f172a' }}>Ange annan e-postadress</span>
-                      <input type="email" value={planningEmailDialog.manualEmail} onChange={(e) => setPlanningEmailDialog(prev => prev ? { ...prev, manualEmail: e.target.value.toLowerCase(), recipientMode: 'manual', error: null } : prev)} placeholder="namn@foretag.se" disabled={planningEmailDialog.sending} style={{ width: '100%', minWidth: 0, boxSizing: 'border-box', padding: '11px 12px', border: '1px solid #cbd5e1', borderRadius: 12, fontSize: 14, color: '#0f172a', background: '#fff' }} />
+                      <input type="email" value={planningEmailDialog.manualEmail} onChange={(e) => setPlanningEmailDialog(prev => prev ? { ...prev, manualEmail: e.target.value.toLowerCase(), recipientMode: 'manual', error: null } : prev)} placeholder="namn@foretag.se" disabled={planningEmailDialog.sending || !planningEmailDialog.sendEmail} style={{ width: '100%', minWidth: 0, boxSizing: 'border-box', padding: '11px 12px', border: '1px solid #cbd5e1', borderRadius: 12, fontSize: 14, color: '#0f172a', background: '#fff' }} />
                     </span>
                   </span>
                 </label>
@@ -5023,7 +5054,7 @@ export default function PlanneringPage() {
                       disabled={planningEmailDialog.sending}
                       onChange={(e) => setPlanningEmailDialog(prev => prev ? { ...prev, sendSms: e.target.checked, error: null } : prev)}
                     />
-                    Skicka även SMS
+                    Skicka SMS
                   </label>
                 </div>
                 <div style={{ fontSize: 12, color: '#64748b', lineHeight: 1.5 }}>SMS skickas via Twilio som en kort envägs orderbekräftelse från Ekovilla.</div>
@@ -5052,11 +5083,11 @@ export default function PlanneringPage() {
                   value={planningEmailDialog.customMessage}
                   onChange={(e) => setPlanningEmailDialog(prev => prev ? { ...prev, customMessage: e.target.value, error: null } : prev)}
                   placeholder="Skriv valfri information till kunden här. Om du lämnar tomt används standardtexten."
-                  disabled={planningEmailDialog.sending}
+                  disabled={planningEmailDialog.sending || !planningEmailDialog.sendEmail}
                   rows={4}
                   style={{ width: '100%', minWidth: 0, boxSizing: 'border-box', resize: 'vertical', padding: '12px 14px', border: '1px solid #cbd5e1', borderRadius: 14, fontSize: 14, lineHeight: 1.55, color: '#0f172a', background: '#fff' }}
                 />
-                <div style={{ fontSize: 12, color: '#64748b', lineHeight: 1.5 }}>Den här texten ersätter standardraden om att kunden kan återkomma om något behöver justeras.</div>
+                <div style={{ fontSize: 12, color: '#64748b', lineHeight: 1.5 }}>{planningEmailDialog.sendEmail ? 'Den här texten ersätter standardraden om att kunden kan återkomma om något behöver justeras.' : 'Mail är inte valt, så den här texten används inte i detta utskick.'}</div>
               </div>
               {planningEmailDialog.error && (
                 <div style={{ padding: '10px 12px', borderRadius: 12, border: '1px solid #fecaca', background: '#fef2f2', color: '#b91c1c', fontSize: 13 }}>{planningEmailDialog.error}</div>

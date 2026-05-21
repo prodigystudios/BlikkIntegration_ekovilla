@@ -30,6 +30,7 @@ export function buildPlanningNotificationSms(args: BuildPlanningNotificationSmsA
     args.sellerPhone || null,
     args.sellerEmail || null,
     'om du har några frågor eller behöver justera något.',
+    `vid ombokning kan du skicka ett mail till bokning@ekovilla.se${args.orderNumber ? ` och bifoga med ert ordernummer ${args.orderNumber}.` : '.'}`,
     'Med vänliga hälsningar Ekovilla',
   ].filter((value): value is string => Boolean(value));
 
