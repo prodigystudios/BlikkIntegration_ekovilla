@@ -14,11 +14,13 @@ export async function middleware(req: NextRequest) {
   const isApiAuth = pathname.startsWith('/api/auth');
   const isApi = pathname.startsWith('/api');
   const isReminderDispatchApi = pathname === '/api/dashboard-notes/reminders/dispatch';
+  const isTwilioSmsStatusApi = pathname === '/api/twilio/sms-status';
   const isPublicCustomerOffertPage = pathname.startsWith('/kund/offert/');
   const isPublicCustomerOffertApi = pathname.startsWith('/api/kund/offert/');
 
   if (isApiAuth) return NextResponse.next();
   if (isReminderDispatchApi) return NextResponse.next();
+  if (isTwilioSmsStatusApi) return NextResponse.next();
   if (isPublicCustomerOffertPage || isPublicCustomerOffertApi) return NextResponse.next();
 
   const res = NextResponse.next();

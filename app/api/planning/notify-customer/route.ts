@@ -4,7 +4,9 @@ import { adminSupabase } from '@/lib/adminSupabase';
 import { getBlikk } from '@/lib/blikk';
 import { sendEmail } from '@/lib/email';
 import { buildPlanningNotificationEmail } from '@/lib/planningNotificationEmail';
+import { buildPlanningNotificationSms } from '@/lib/planningNotificationSms';
 import { getPublicOrigin } from '@/lib/publicOrigin';
+import { sendSms } from '@/lib/sms';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -14,6 +16,9 @@ const NotifySchema = z.object({
   segmentId: z.string().trim().min(1),
   recipientEmail: z.string().trim().email(),
   recipientSource: z.enum(['detected', 'manual']).default('detected'),
+  sendSms: z.boolean().optional().default(false),
+  recipientPhone: z.string().trim().nullable().optional(),
+  recipientPhoneSource: z.enum(['detected', 'manual']).default('detected'),
   startDay: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/),
   endDay: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/),
   truck: z.string().trim().min(1).nullable().optional(),
@@ -38,6 +43,30 @@ function firstEmail(value: unknown): string | null {
   for (const entry of list) {
     const text = String(entry || '').trim();
     if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text)) return text;
+  }
+  return null;
+}
+
+function firstPhone(value: unknown): string | null {
+  if (!value) return null;
+  const list = Array.isArray(value) ? value : [value];
+  for (const entry of list) {
+    if (!entry) continue;
+    if (typeof entry === 'string') {
+      const normalized = normalizePhone(entry);
+      if (normalized) return normalized;
+      continue;
+    }
+    if (typeof entry === 'object') {
+      const candidate = firstPhone([
+        (entry as any).phone,
+        (entry as any).mobile,
+        (entry as any).mobilePhone,
+        (entry as any).phoneNumber,
+        (entry as any).telephone,
+      ]);
+      if (candidate) return candidate;
+    }
   }
   return null;
 }
@@ -67,6 +96,36 @@ async function resolveCustomerEmail(projectId: string): Promise<string | null> {
     contactData?.contact?.Email,
     contactData?.contact?.contactEmail,
     contactData?.contact?.emailCandidates,
+  ]);
+}
+
+async function resolveCustomerPhone(projectId: string): Promise<string | null> {
+  const numericProjectId = Number(projectId);
+  if (!Number.isFinite(numericProjectId) || numericProjectId <= 0) return null;
+
+  const blikk = getBlikk();
+  const projectData: any = await blikk.getProjectById(numericProjectId);
+  const customerIdCandidates = [
+    projectData?.customerId,
+    projectData?.contactId,
+    projectData?.clientId,
+    projectData?.CustomerId,
+    projectData?.customer?.id,
+    projectData?.contact?.id,
+    projectData?.client?.id,
+  ].map((value) => Number(value)).filter((value) => Number.isFinite(value) && value > 0);
+
+  const customerId = customerIdCandidates[0];
+  if (!customerId) return null;
+
+  const contactData: any = await blikk.getContactById(customerId);
+  return firstPhone([
+    contactData?.contact?.phone,
+    contactData?.contact?.mobile,
+    contactData?.contact?.mobilePhone,
+    contactData?.contact?.phoneNumber,
+    contactData?.contact?.phoneCandidates,
+    contactData?.contact?.phones,
   ]);
 }
 
@@ -204,6 +263,12 @@ export async function POST(req: NextRequest) {
       recipientEmail = resolved || recipientEmail;
     }
 
+    let resolvedPhone = normalizePhone(data.recipientPhone || null);
+    if (data.sendSms && data.recipientPhoneSource === 'detected') {
+      const detectedPhone = projectData ? await resolveCustomerPhone(data.projectId).catch(() => null) : null;
+      resolvedPhone = detectedPhone || resolvedPhone;
+    }
+
     if (!recipientEmail) {
       return NextResponse.json({ error: 'Ingen giltig mottagaradress hittades.' }, { status: 400 });
     }
@@ -236,26 +301,119 @@ export async function POST(req: NextRequest) {
       logoUrl: `${origin}/brand/Ekovilla_vit.png`,
     });
 
-    await sendEmail({
-      to: recipientEmail,
-      from: sender,
-      replyTo: sender,
-      subject: email.subject,
-      html: email.html,
-      text: email.text,
-    });
-
     const actor = data.actorUserName || data.actorUserId || 'okänd';
     const ts = new Date().toISOString();
-    const { error: metaError } = await adminSupabase.from('planning_project_meta').upsert({
+    const emailResult: {
+      attempted: boolean;
+      accepted: boolean;
+      error: string | null;
+    } = {
+      attempted: true,
+      accepted: false,
+      error: null,
+    };
+    const smsResult: {
+      attempted: boolean;
+      accepted: boolean;
+      id: string | null;
+      status: string | null;
+      error: string | null;
+    } = {
+      attempted: data.sendSms,
+      accepted: false,
+      id: null,
+      status: null,
+      error: null,
+    };
+
+    try {
+      await sendEmail({
+        to: recipientEmail,
+        from: sender,
+        replyTo: sender,
+        subject: email.subject,
+        html: email.html,
+        text: email.text,
+      });
+      emailResult.accepted = true;
+    } catch (error: any) {
+      emailResult.error = String(error?.message || error || 'Unknown email error');
+    }
+
+    if (smsResult.attempted) {
+      if (!resolvedPhone) {
+        smsResult.error = 'Ingen giltig mottagande mobil hittades.';
+        smsResult.status = 'failed';
+      } else {
+        try {
+          const smsBody = buildPlanningNotificationSms({
+            projectName: data.projectName,
+            orderNumber: data.orderNumber || null,
+            customerName: data.customerName || null,
+            startDay: data.startDay,
+            endDay: data.endDay,
+            truck: data.truck || null,
+            salesResponsible: sellerInfo.name || data.salesResponsible || null,
+            sellerPhone: sellerInfo.phone,
+            sellerEmail: sellerInfo.email,
+          });
+          const smsSend = await sendSms({
+            to: resolvedPhone,
+            body: smsBody,
+          });
+          smsResult.accepted = true;
+          smsResult.id = smsSend.sid;
+          smsResult.status = smsSend.status || 'accepted';
+        } catch (error: any) {
+          smsResult.error = String(error?.message || error || 'Unknown SMS error');
+          smsResult.status = 'failed';
+        }
+      }
+    }
+
+    const metaPayload: Record<string, any> = {
       project_id: data.projectId,
-      client_notified: true,
-      client_notified_at: ts,
-      client_notified_by: actor,
-    });
+    };
+    if (emailResult.accepted) {
+      metaPayload.client_notified = true;
+      metaPayload.client_notified_at = ts;
+      metaPayload.client_notified_by = actor;
+    }
+    if (smsResult.attempted) {
+      metaPayload.sms_notified = smsResult.accepted;
+      metaPayload.sms_notified_at = smsResult.accepted ? ts : null;
+      metaPayload.sms_notified_by = smsResult.accepted ? actor : null;
+      metaPayload.sms_recipient_phone = resolvedPhone;
+      metaPayload.sms_provider_message_id = smsResult.id;
+      metaPayload.sms_delivery_status = smsResult.status;
+      metaPayload.sms_last_error = smsResult.error;
+    }
+
+    const { error: metaError } = await adminSupabase.from('planning_project_meta').upsert(metaPayload);
     if (metaError) throw metaError;
 
-    return NextResponse.json({ ok: true, recipientEmail, clientNotifiedAt: ts, clientNotifiedBy: actor });
+    const ok = emailResult.accepted || smsResult.accepted;
+    if (!ok) {
+      return NextResponse.json({
+        error: emailResult.error || smsResult.error || 'Kunde inte skicka notifieringen.',
+        recipientEmail,
+        recipientPhone: resolvedPhone,
+        email: emailResult,
+        sms: smsResult,
+      }, { status: 502 });
+    }
+
+    return NextResponse.json({
+      ok: true,
+      recipientEmail,
+      recipientPhone: resolvedPhone,
+      clientNotifiedAt: emailResult.accepted ? ts : null,
+      clientNotifiedBy: emailResult.accepted ? actor : null,
+      smsNotifiedAt: smsResult.accepted ? ts : null,
+      smsNotifiedBy: smsResult.accepted ? actor : null,
+      email: emailResult,
+      sms: smsResult,
+    });
   } catch (e: any) {
     console.error('[api/planning/notify-customer] error', e);
     return NextResponse.json({ error: String(e?.message || e || 'Unknown error') }, { status: 500 });

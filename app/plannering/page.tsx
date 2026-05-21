@@ -26,6 +26,7 @@ interface Project {
   customer: string;
   customerId: number | null;
   customerEmail: string | null;
+  customerPhone: string | null;
   createdAt: string; // ISO timestamp
   status: string;
   salesResponsible: string | null;
@@ -71,6 +72,13 @@ interface ProjectScheduleMeta {
   client_notified?: boolean | null;
   client_notified_at?: string | null;
   client_notified_by?: string | null;
+  sms_notified?: boolean | null;
+  sms_notified_at?: string | null;
+  sms_notified_by?: string | null;
+  sms_recipient_phone?: string | null;
+  sms_provider_message_id?: string | null;
+  sms_delivery_status?: string | null;
+  sms_last_error?: string | null;
   actual_bags_used?: number | null;
   actual_bags_set_at?: string | null;
   actual_bags_set_by?: string | null;
@@ -104,8 +112,12 @@ type PlanningEmailDialogState = {
   item: PlanningEmailItem;
   detectedEmail: string;
   manualEmail: string;
+  detectedPhone: string;
+  manualPhone: string;
   customMessage: string;
   recipientMode: 'detected' | 'manual';
+  phoneMode: 'detected' | 'manual';
+  sendSms: boolean;
   sending: boolean;
   error: string | null;
   preview: PlanningEmailPreview;
@@ -196,6 +208,36 @@ function normalizePersonName(value: string | null | undefined) {
     .trim();
 }
 
+function normalizePhone(value: string | null | undefined) {
+  const input = String(value || '').trim();
+  if (!input) return '';
+  const cleaned = input.replace(/[^\d+]/g, '');
+  if (!cleaned) return '';
+  if (cleaned.startsWith('+')) return cleaned;
+  if (cleaned.startsWith('0')) return `+46${cleaned.slice(1)}`;
+  return cleaned.startsWith('46') ? `+${cleaned}` : cleaned;
+}
+
+function isValidSmsPhone(value: string | null | undefined) {
+  const normalized = normalizePhone(value);
+  return /^\+[1-9]\d{7,14}$/.test(normalized);
+}
+
+function describeSmsStatus(meta: ProjectScheduleMeta | undefined) {
+  if (!meta) return null;
+  if (meta.sms_notified) {
+    const actor = meta.sms_notified_by;
+    const sentAt = formatDateTimeStockholm(meta.sms_notified_at);
+    const status = meta.sms_delivery_status ? ` (${meta.sms_delivery_status})` : '';
+    const prefix = actor ? `SMS skickat av ${actor}` : 'SMS skickat';
+    return `${prefix}${sentAt ? ` ${sentAt}` : ''}${status}`;
+  }
+  if (meta.sms_last_error) {
+    return `SMS misslyckades: ${meta.sms_last_error}`;
+  }
+  return null;
+}
+
 // Small inline control to copy a segment to another truck
 function CopyToTruckButton({ segmentId, day, currentTruck, trucks, onCopy }: { segmentId: string; day: string; currentTruck: string | null; trucks: string[]; onCopy: (targetTruck: string) => void }) {
   const [target, setTarget] = useState<string>('');
@@ -230,6 +272,7 @@ function normalizeProject(p: any): Project {
     customer: p.customer || 'Okänd kund',
     customerId: p.customerId != null && p.customerId !== '' ? Number(p.customerId) : null,
     customerEmail: p.customerEmail ?? null,
+    customerPhone: p.customerPhone ?? null,
     createdAt: p.createdAt || new Date().toISOString(),
     status: p.status || 'unknown',
     salesResponsible: p.salesResponsible ?? null,
@@ -297,6 +340,8 @@ export default function PlanneringPage() {
   const lookupInFlightRef = useRef<Map<string, Promise<any>>>(new Map());
   const contactEmailCacheRef = useRef<Map<number, { email: string | null; fetchedAt: number }>>(new Map());
   const contactEmailInFlightRef = useRef<Map<number, Promise<string | null>>>(new Map());
+  const contactPhoneCacheRef = useRef<Map<number, { phone: string | null; fetchedAt: number }>>(new Map());
+  const contactPhoneInFlightRef = useRef<Map<number, Promise<string | null>>>(new Map());
   const lastPartialReportAtRef = useRef<number>(0);
   // Track which project ids came from Blikk API lists/lookups, to avoid extra API calls for statuses
   const apiStatusIdsRef = useRef<Set<string>>(new Set());
@@ -981,6 +1026,7 @@ export default function PlanneringPage() {
       isManual: true,
       customerId: null,
       customerEmail: null,
+      customerPhone: null,
       salesResponsible: null
     };
     setProjects(prev => [proj, ...prev]);
@@ -1254,6 +1300,7 @@ export default function PlanneringPage() {
                 isManual: s.is_manual,
                 customerId: s.customer_id ?? null,
                 customerEmail: s.customer_email ?? null,
+                customerPhone: null,
                 salesResponsible: s.sales_responsible ?? null
               });
             }
@@ -1273,6 +1320,13 @@ export default function PlanneringPage() {
           client_notified: m.client_notified,
           client_notified_at: m.client_notified_at,
           client_notified_by: m.client_notified_by,
+          sms_notified: (m as any).sms_notified ?? null,
+          sms_notified_at: (m as any).sms_notified_at ?? null,
+          sms_notified_by: (m as any).sms_notified_by ?? null,
+          sms_recipient_phone: (m as any).sms_recipient_phone ?? null,
+          sms_provider_message_id: (m as any).sms_provider_message_id ?? null,
+          sms_delivery_status: (m as any).sms_delivery_status ?? null,
+          sms_last_error: (m as any).sms_last_error ?? null,
           actual_bags_used: m.actual_bags_used,
           actual_bags_set_at: m.actual_bags_set_at,
           actual_bags_set_by: m.actual_bags_set_by,
@@ -1477,6 +1531,64 @@ export default function PlanneringPage() {
     }
   }, []);
 
+  const fetchContactPhoneByCustomerId = useCallback(async (customerId: number): Promise<string | null> => {
+    const now = Date.now();
+    const cached = contactPhoneCacheRef.current.get(customerId);
+    if (cached && (now - cached.fetchedAt) < CONTACT_CACHE_TTL) return cached.phone;
+    const inFlight = contactPhoneInFlightRef.current.get(customerId);
+    if (inFlight) return inFlight;
+    const p = (async () => {
+      let attempt = 0;
+      while (attempt < 3) {
+        attempt++;
+        const res = await fetch(`/api/blikk/contacts/${customerId}`);
+        if (res.status === 404) {
+          contactPhoneCacheRef.current.set(customerId, { phone: null, fetchedAt: Date.now() });
+          return null;
+        }
+        if (res.status === 429) {
+          let waitMs = 1000;
+          try {
+            const body = await res.json().catch(() => ({}));
+            if (typeof body?.waitInSeconds === 'number') waitMs = Math.min(body.waitInSeconds, 5) * 1000;
+            else {
+              const ra = Number(res.headers.get('Retry-After'));
+              if (Number.isFinite(ra)) waitMs = Math.max(ra, 1) * 1000;
+            }
+          } catch { /* ignore */ }
+          await new Promise(r => setTimeout(r, waitMs));
+          continue;
+        }
+        if (!res.ok) {
+          if (attempt < 3) {
+            await new Promise(r => setTimeout(r, 200 * attempt));
+            continue;
+          }
+          contactPhoneCacheRef.current.set(customerId, { phone: null, fetchedAt: Date.now() });
+          return null;
+        }
+        const j = await res.json();
+        const phone = normalizePhone(
+          j?.contact?.mobilePhone
+          || j?.contact?.mobile
+          || j?.contact?.phone
+          || j?.contact?.phoneNumber
+          || null,
+        ) || null;
+        contactPhoneCacheRef.current.set(customerId, { phone, fetchedAt: Date.now() });
+        return phone;
+      }
+      contactPhoneCacheRef.current.set(customerId, { phone: null, fetchedAt: Date.now() });
+      return null;
+    })();
+    contactPhoneInFlightRef.current.set(customerId, p);
+    try {
+      return await p;
+    } finally {
+      contactPhoneInFlightRef.current.delete(customerId);
+    }
+  }, []);
+
   const buildPlanningEmailPreview = useCallback((it: PlanningEmailItem): PlanningEmailPreview => {
     const seg = scheduledSegments.find(s => s.id === it.segmentId);
     const startDay = it.startDay || (seg?.startDay) || it.day;
@@ -1535,17 +1647,24 @@ export default function PlanneringPage() {
     if (!it.segmentId) { toast.error('Spara sektionen innan du skickar planeringsmail.'); return; }
     if (emailFetchStatus[pid] === 'loading') return; // de-dup
     let resolvedEmail = (current.customerEmail || '').trim().toLowerCase();
+    let resolvedPhone = normalizePhone(current.customerPhone || null);
     setEmailFetchStatus(prev => ({ ...prev, [pid]: 'loading' }));
-    setEmailToast({ pid, msg: 'Förbereder mail…' });
+    setEmailToast({ pid, msg: 'Förbereder utskick…' });
     try {
-      if (!resolvedEmail) {
+      if (!resolvedEmail || !resolvedPhone) {
         const cid = await ensureCustomerIdForProject(pid).catch(() => null);
         if (cid) {
-          const email = await fetchContactEmailByCustomerId(cid).catch(() => null);
-          if (email) {
-            resolvedEmail = email.trim().toLowerCase();
-            setProjects(prev => prev.map(p => p.id === pid ? { ...p, customerEmail: resolvedEmail } : p));
+          if (!resolvedEmail) {
+            const email = await fetchContactEmailByCustomerId(cid).catch(() => null);
+            if (email) {
+              resolvedEmail = email.trim().toLowerCase();
+            }
           }
+          if (!resolvedPhone) {
+            const phone = await fetchContactPhoneByCustomerId(cid).catch(() => null);
+            if (phone) resolvedPhone = normalizePhone(phone);
+          }
+          setProjects(prev => prev.map(p => p.id === pid ? { ...p, customerEmail: resolvedEmail || p.customerEmail, customerPhone: resolvedPhone || p.customerPhone } : p));
         }
       }
       const preview = buildPlanningEmailPreview(it);
@@ -1553,8 +1672,12 @@ export default function PlanneringPage() {
         item: it,
         detectedEmail: resolvedEmail,
         manualEmail: '',
+        detectedPhone: resolvedPhone,
+        manualPhone: '',
         customMessage: '',
         recipientMode: resolvedEmail ? 'detected' : 'manual',
+        phoneMode: resolvedPhone ? 'detected' : 'manual',
+        sendSms: !!resolvedPhone,
         sending: false,
         error: null,
         preview,
@@ -1564,9 +1687,9 @@ export default function PlanneringPage() {
     } catch (e: any) {
       setEmailFetchStatus(prev => ({ ...prev, [pid]: 'error' }));
       setEmailToast(null);
-      toast.error(e?.message || 'Kunde inte förbereda planeringsmail.');
+      toast.error(e?.message || 'Kunde inte förbereda orderbekräftelsen.');
     }
-  }, [projects, emailFetchStatus, ensureCustomerIdForProject, fetchContactEmailByCustomerId, buildPlanningEmailPreview, toast]);
+  }, [projects, emailFetchStatus, ensureCustomerIdForProject, fetchContactEmailByCustomerId, fetchContactPhoneByCustomerId, buildPlanningEmailPreview, toast]);
 
   const submitPlanningEmail = useCallback(async () => {
     if (!planningEmailDialog) return;
@@ -1574,8 +1697,15 @@ export default function PlanneringPage() {
     const recipientEmail = (planningEmailDialog.recipientMode === 'manual'
       ? planningEmailDialog.manualEmail
       : planningEmailDialog.detectedEmail).trim().toLowerCase();
+    const recipientPhone = normalizePhone(planningEmailDialog.phoneMode === 'manual'
+      ? planningEmailDialog.manualPhone
+      : planningEmailDialog.detectedPhone);
     if (!recipientEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipientEmail)) {
       setPlanningEmailDialog(prev => prev ? { ...prev, error: 'Ange en giltig e-postadress innan utskick.' } : prev);
+      return;
+    }
+    if (planningEmailDialog.sendSms && !isValidSmsPhone(recipientPhone)) {
+      setPlanningEmailDialog(prev => prev ? { ...prev, error: 'Ange ett giltigt mobilnummer i format +4670.... innan SMS skickas.' } : prev);
       return;
     }
     setPlanningEmailDialog(prev => prev ? { ...prev, sending: true, error: null } : prev);
@@ -1589,6 +1719,9 @@ export default function PlanneringPage() {
           segmentId: planningEmailDialog.item.segmentId,
           recipientEmail,
           recipientSource: planningEmailDialog.recipientMode,
+          sendSms: planningEmailDialog.sendSms,
+          recipientPhone: planningEmailDialog.sendSms ? recipientPhone : null,
+          recipientPhoneSource: planningEmailDialog.phoneMode,
           startDay: planningEmailDialog.preview.startDay,
           endDay: planningEmailDialog.preview.endDay,
           truck: planningEmailDialog.preview.effectiveTruck,
@@ -1604,24 +1737,48 @@ export default function PlanneringPage() {
         }),
       });
       const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json?.error || 'Kunde inte skicka planeringsmail.');
+      if (!res.ok) throw new Error(json?.error || 'Kunde inte skicka orderbekräftelsen.');
       setScheduleMeta(prev => ({
         ...prev,
         [pid]: {
           ...(prev[pid] || { projectId: pid }),
-          client_notified: true,
-          client_notified_at: json?.clientNotifiedAt || new Date().toISOString(),
-          client_notified_by: json?.clientNotifiedBy || currentUserName || currentUserId || 'okänd',
+          client_notified: json?.email?.accepted ? true : (prev[pid]?.client_notified ?? null),
+          client_notified_at: json?.clientNotifiedAt || (prev[pid]?.client_notified_at ?? null),
+          client_notified_by: json?.clientNotifiedBy || (prev[pid]?.client_notified_by ?? (currentUserName || currentUserId || 'okänd')),
+          sms_notified: json?.sms?.attempted ? !!json?.sms?.accepted : (prev[pid]?.sms_notified ?? null),
+          sms_notified_at: json?.smsNotifiedAt || (json?.sms?.attempted ? null : (prev[pid]?.sms_notified_at ?? null)),
+          sms_notified_by: json?.smsNotifiedBy || (json?.sms?.attempted && json?.sms?.accepted ? (currentUserName || currentUserId || 'okänd') : (prev[pid]?.sms_notified_by ?? null)),
+          sms_recipient_phone: json?.recipientPhone || (json?.sms?.attempted ? recipientPhone : (prev[pid]?.sms_recipient_phone ?? null)),
+          sms_provider_message_id: json?.sms?.id || (json?.sms?.attempted ? null : (prev[pid]?.sms_provider_message_id ?? null)),
+          sms_delivery_status: json?.sms?.status || (json?.sms?.attempted ? null : (prev[pid]?.sms_delivery_status ?? null)),
+          sms_last_error: json?.sms?.error || null,
         }
       }));
       if (planningEmailDialog.recipientMode === 'detected' || !planningEmailDialog.item.project.customerEmail) {
-        setProjects(prev => prev.map(p => p.id === pid ? { ...p, customerEmail: json?.recipientEmail || recipientEmail } : p));
+        setProjects(prev => prev.map(p => p.id === pid ? {
+          ...p,
+          customerEmail: json?.recipientEmail || recipientEmail,
+          customerPhone: planningEmailDialog.sendSms ? (json?.recipientPhone || recipientPhone) : p.customerPhone,
+        } : p));
       }
       setPlanningEmailDialog(null);
       setEmailFetchStatus(prev => ({ ...prev, [pid]: 'idle' }));
-      toast.success(`Planeringsmail skickat till ${json?.recipientEmail || recipientEmail}.`);
+      if (json?.email?.accepted) {
+        toast.success(planningEmailDialog.sendSms && json?.sms?.accepted
+          ? `Planeringsmail och SMS skickat till ${json?.recipientEmail || recipientEmail}.`
+          : `Planeringsmail skickat till ${json?.recipientEmail || recipientEmail}.`);
+      }
+      if (planningEmailDialog.sendSms && json?.sms?.accepted && !json?.email?.accepted) {
+        toast.success(`SMS skickat till ${json?.recipientPhone || recipientPhone}.`);
+      }
+      if (planningEmailDialog.sendSms && json?.sms?.attempted && !json?.sms?.accepted) {
+        toast.error(json?.sms?.error || 'SMS kunde inte skickas.');
+      }
+      if (!json?.email?.accepted && json?.email?.error) {
+        toast.error(json.email.error);
+      }
     } catch (e: any) {
-      setPlanningEmailDialog(prev => prev ? { ...prev, sending: false, error: e?.message || 'Kunde inte skicka planeringsmail.' } : prev);
+      setPlanningEmailDialog(prev => prev ? { ...prev, sending: false, error: e?.message || 'Kunde inte skicka orderbekräftelsen.' } : prev);
       setEmailFetchStatus(prev => ({ ...prev, [pid]: 'error' }));
     }
   }, [planningEmailDialog, currentUserId, currentUserName, toast]);
@@ -1935,6 +2092,7 @@ export default function PlanneringPage() {
             isManual: row.is_manual,
             customerId: row.customer_id ?? null,
             customerEmail: row.customer_email ?? null,
+            customerPhone: null,
             salesResponsible: row.sales_responsible ?? null
           }]);
         } else if (payload.eventType === 'UPDATE') {
@@ -1987,6 +2145,13 @@ export default function PlanneringPage() {
               client_notified: row.client_notified,
               client_notified_at: row.client_notified_at,
               client_notified_by: row.client_notified_by,
+              sms_notified: row.sms_notified ?? (prev[row.project_id]?.sms_notified ?? null),
+              sms_notified_at: row.sms_notified_at ?? (prev[row.project_id]?.sms_notified_at ?? null),
+              sms_notified_by: row.sms_notified_by ?? (prev[row.project_id]?.sms_notified_by ?? null),
+              sms_recipient_phone: row.sms_recipient_phone ?? (prev[row.project_id]?.sms_recipient_phone ?? null),
+              sms_provider_message_id: row.sms_provider_message_id ?? (prev[row.project_id]?.sms_provider_message_id ?? null),
+              sms_delivery_status: row.sms_delivery_status ?? (prev[row.project_id]?.sms_delivery_status ?? null),
+              sms_last_error: row.sms_last_error ?? (prev[row.project_id]?.sms_last_error ?? null),
               delivery_sent: row.delivery_sent ?? (prev[row.project_id]?.delivery_sent ?? null),
               delivery_sent_at: row.delivery_sent_at ?? (prev[row.project_id]?.delivery_sent_at ?? null),
               delivery_sent_by: row.delivery_sent_by ?? (prev[row.project_id]?.delivery_sent_by ?? null),
@@ -3017,6 +3182,13 @@ export default function PlanneringPage() {
       client_notified: meta.client_notified ?? null,
       client_notified_at: meta.client_notified_at ?? null,
       client_notified_by: meta.client_notified_by ?? null,
+      sms_notified: meta.sms_notified ?? null,
+      sms_notified_at: meta.sms_notified_at ?? null,
+      sms_notified_by: meta.sms_notified_by ?? null,
+      sms_recipient_phone: meta.sms_recipient_phone ?? null,
+      sms_provider_message_id: meta.sms_provider_message_id ?? null,
+      sms_delivery_status: meta.sms_delivery_status ?? null,
+      sms_last_error: meta.sms_last_error ?? null,
       actual_bags_used: meta.actual_bags_used ?? null,
       actual_bags_set_at: meta.actual_bags_set_at ?? null,
   actual_bags_set_by: meta.actual_bags_set_by ?? null,
@@ -3220,6 +3392,7 @@ export default function PlanneringPage() {
         customer: depotName,
         customerId: null,
         customerEmail: null,
+        customerPhone: null,
         createdAt: del.created_at || new Date().toISOString(),
         status: 'delivery',
         salesResponsible: null,
@@ -4686,22 +4859,34 @@ export default function PlanneringPage() {
                         onClick={() => { if (!segEditor.segmentId) return; handleEmailClick({ segmentId: segEditor.segmentId, project: p, truck: segEditor.truck, day: segEditor.startDay, startDay: segEditor.startDay, endDay: segEditor.endDay }); }}
                         disabled={!segEditor.segmentId || emailFetchStatus[p.id] === 'loading'}
                         className="btn--plain btn--xs"
-                        title={!segEditor.segmentId ? 'Spara sektionen först' : scheduleMeta[p.id]?.client_notified ? (scheduleMeta[p.id]?.client_notified_by ? `Notifierad av ${scheduleMeta[p.id]!.client_notified_by}` : 'Kund markerad som notifierad') : 'Skicka planeringsmail'}
+                        title={!segEditor.segmentId ? 'Spara sektionen först' : scheduleMeta[p.id]?.client_notified ? (scheduleMeta[p.id]?.client_notified_by ? `Notifierad av ${scheduleMeta[p.id]!.client_notified_by}` : 'Kund markerad som notifierad') : 'Skicka orderbekräftelse'}
                         style={{ fontSize: 12, border: '1px solid ' + (scheduleMeta[p.id]?.client_notified ? '#047857' : '#7dd3fc'), background: scheduleMeta[p.id]?.client_notified ? '#059669' : '#e0f2fe', color: scheduleMeta[p.id]?.client_notified ? '#fff' : '#0369a1', borderRadius: 10, padding: '8px 12px', justifySelf: 'start' }}
                       >
-                        {scheduleMeta[p.id]?.client_notified ? 'Notifierad ✓' : 'Maila kund'}
+                        {scheduleMeta[p.id]?.client_notified ? 'Notifierad ✓' : 'Notifiera kund'}
                       </button>
                       {(() => {
                         if (!segEditor.segmentId) {
                           return <div style={{ fontSize: 11, color: '#64748b' }}>Spara sektionen först.</div>;
                         }
-                        if (!scheduleMeta[p.id]?.client_notified) {
-                          return <div style={{ fontSize: 11, color: '#64748b' }}>Skicka planeringsmail till kunden härifrån.</div>;
+                        const emailMeta = scheduleMeta[p.id];
+                        const smsText = describeSmsStatus(emailMeta);
+                        if (!emailMeta?.client_notified) {
+                          return (
+                            <div style={{ display: 'grid', gap: 2 }}>
+                              <div style={{ fontSize: 11, color: '#64748b' }}>Skicka orderbekräftelse till kunden härifrån.</div>
+                              {smsText ? <div style={{ fontSize: 11, color: emailMeta?.sms_notified ? '#075985' : '#b45309' }}>{smsText}</div> : null}
+                            </div>
+                          );
                         }
-                        const actor = scheduleMeta[p.id]?.client_notified_by;
-                        const notifiedAt = formatDateTimeStockholm(scheduleMeta[p.id]?.client_notified_at);
+                        const actor = emailMeta?.client_notified_by;
+                        const notifiedAt = formatDateTimeStockholm(emailMeta?.client_notified_at);
                         const timeText = notifiedAt ? ` ${notifiedAt}` : '';
-                        return <div style={{ fontSize: 11, color: '#065f46' }}>{actor ? `Notifierad av ${actor}${timeText}` : 'Kund markerad som notifierad'}</div>;
+                        return (
+                          <div style={{ display: 'grid', gap: 2 }}>
+                            <div style={{ fontSize: 11, color: '#065f46' }}>{actor ? `Notifierad av ${actor}${timeText}` : 'Kund markerad som notifierad'}</div>
+                            {smsText ? <div style={{ fontSize: 11, color: emailMeta?.sms_notified ? '#075985' : '#b45309' }}>{smsText}</div> : null}
+                          </div>
+                        );
                       })()}
                     </>
                   )}
@@ -4781,15 +4966,16 @@ export default function PlanneringPage() {
       )}
       {planningEmailDialog && (() => {
         const selectedEmail = (planningEmailDialog.recipientMode === 'manual' ? planningEmailDialog.manualEmail : planningEmailDialog.detectedEmail).trim();
-        const canSend = !!selectedEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(selectedEmail) && !planningEmailDialog.sending;
+        const selectedPhone = normalizePhone(planningEmailDialog.phoneMode === 'manual' ? planningEmailDialog.manualPhone : planningEmailDialog.detectedPhone);
+        const canSend = !!selectedEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(selectedEmail) && (!planningEmailDialog.sendSms || isValidSmsPhone(selectedPhone)) && !planningEmailDialog.sending;
         return (
           <div style={{ position: 'fixed', inset: 0, zIndex: 3050, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
             <div role="dialog" aria-modal="true" aria-labelledby="planning-email-dialog-title" style={{ width: 'min(780px, calc(100vw - 24px))', maxHeight: '90vh', overflow: 'auto', boxSizing: 'border-box', background: '#fff', border: '1px solid #dbe4ef', borderRadius: 20, boxShadow: '0 18px 50px rgba(15,23,42,0.22)', display: 'grid', gap: 18, padding: 22 }}>
               <div style={{ display: 'grid', gap: 6 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'start' }}>
                   <div style={{ display: 'grid', gap: 6, minWidth: 0 }}>
-                    <h3 id="planning-email-dialog-title" style={{ margin: 0, fontSize: 22, color: '#0f172a' }}>Skicka planeringsmail</h3>
-                    <p style={{ margin: 0, fontSize: 13, color: '#475569', lineHeight: 1.55 }}>Bekräfta mottagare innan orderbekräftelsen skickas från <strong>bokning@ekovilla.se</strong>.</p>
+                    <h3 id="planning-email-dialog-title" style={{ margin: 0, fontSize: 22, color: '#0f172a' }}>Skicka orderbekräftelse</h3>
+                    <p style={{ margin: 0, fontSize: 13, color: '#475569', lineHeight: 1.55 }}>Bekräfta mottagare innan orderbekräftelsen skickas från <strong>bokning@ekovilla.se</strong>. Du kan även skicka ett SMS utan svar samtidigt.</p>
                   </div>
                   <button type="button" onClick={closePlanningEmailDialog} disabled={planningEmailDialog.sending} style={{ border: '1px solid #cbd5e1', background: '#fff', color: '#334155', borderRadius: 10, padding: '6px 10px', fontSize: 12, cursor: planningEmailDialog.sending ? 'default' : 'pointer' }}>Stäng</button>
                 </div>
@@ -4804,7 +4990,7 @@ export default function PlanneringPage() {
                   <div style={{ minWidth: 0, padding: '10px 12px', borderRadius: 12, border: '1px solid #e2e8f0', background: '#fff' }}><div style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase' }}>Lastbil</div><div style={{ fontSize: 14, color: '#0f172a', fontWeight: 600, overflowWrap: 'anywhere' }}>{planningEmailDialog.preview.effectiveTruck || 'Ej tilldelad'}</div></div>
                   <div style={{ minWidth: 0, padding: '10px 12px', borderRadius: 12, border: '1px solid #e2e8f0', background: '#fff' }}><div style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase' }}>Avsändare</div><div style={{ fontSize: 14, color: '#0f172a', fontWeight: 600, overflowWrap: 'anywhere' }}>{planningEmailDialog.item.project.salesResponsible || 'Ekovilla'}</div></div>
                 </div>
-                <div style={{ fontSize: 12, color: '#475569', lineHeight: 1.55 }}>{planningEmailDialog.preview.orderLine} Mailet innehåller projekt, datum, ordernummer och planerad lastbil.</div>
+                <div style={{ fontSize: 12, color: '#475569', lineHeight: 1.55 }}>{planningEmailDialog.preview.orderLine} Mailet innehåller projekt, datum, ordernummer och planerad lastbil. Om SMS är aktiverat skickas en kort orderbekräftelse till kundens mobil.</div>
               </div>
               <div style={{ display: 'grid', gap: 12, minWidth: 0 }}>
                 <div style={{ fontSize: 12, fontWeight: 700, color: '#334155', letterSpacing: '.08em', textTransform: 'uppercase' }}>Mottagare</div>
@@ -4823,6 +5009,39 @@ export default function PlanneringPage() {
                     <span style={{ display: 'grid', gap: 8, minWidth: 0, width: '100%', boxSizing: 'border-box', paddingRight: 4 }}>
                       <span style={{ fontSize: 14, fontWeight: 600, color: '#0f172a' }}>Ange annan e-postadress</span>
                       <input type="email" value={planningEmailDialog.manualEmail} onChange={(e) => setPlanningEmailDialog(prev => prev ? { ...prev, manualEmail: e.target.value.toLowerCase(), recipientMode: 'manual', error: null } : prev)} placeholder="namn@foretag.se" disabled={planningEmailDialog.sending} style={{ width: '100%', minWidth: 0, boxSizing: 'border-box', padding: '11px 12px', border: '1px solid #cbd5e1', borderRadius: 12, fontSize: 14, color: '#0f172a', background: '#fff' }} />
+                    </span>
+                  </span>
+                </label>
+              </div>
+              <div style={{ display: 'grid', gap: 12, minWidth: 0 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: '#334155', letterSpacing: '.08em', textTransform: 'uppercase' }}>SMS</div>
+                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#0f172a', fontWeight: 600 }}>
+                    <input
+                      type="checkbox"
+                      checked={planningEmailDialog.sendSms}
+                      disabled={planningEmailDialog.sending}
+                      onChange={(e) => setPlanningEmailDialog(prev => prev ? { ...prev, sendSms: e.target.checked, error: null } : prev)}
+                    />
+                    Skicka även SMS
+                  </label>
+                </div>
+                <div style={{ fontSize: 12, color: '#64748b', lineHeight: 1.5 }}>SMS skickas via Twilio som en kort envägs orderbekräftelse från Ekovilla.</div>
+                <label style={{ display: 'grid', gap: 8, width: '100%', minWidth: 0, boxSizing: 'border-box', overflow: 'hidden', padding: 14, paddingRight: 16, borderRadius: 16, border: '1px solid ' + (planningEmailDialog.phoneMode === 'detected' ? '#38bdf8' : '#dbe4ef'), background: planningEmailDialog.phoneMode === 'detected' ? '#f0f9ff' : '#fff', opacity: planningEmailDialog.detectedPhone ? 1 : 0.6 }}>
+                  <span style={{ display: 'grid', gridTemplateColumns: '18px minmax(0, 1fr)', gap: 10, alignItems: 'start', minWidth: 0, width: '100%', boxSizing: 'border-box' }}>
+                    <input type="radio" name="planning-sms-recipient" checked={planningEmailDialog.phoneMode === 'detected'} disabled={!planningEmailDialog.detectedPhone || planningEmailDialog.sending || !planningEmailDialog.sendSms} onChange={() => setPlanningEmailDialog(prev => prev ? { ...prev, phoneMode: 'detected', error: null } : prev)} style={{ marginTop: 2 }} />
+                    <span style={{ display: 'grid', gap: 4, minWidth: 0, width: '100%', boxSizing: 'border-box', paddingRight: 4 }}>
+                      <span style={{ fontSize: 14, fontWeight: 600, color: '#0f172a' }}>Använd hittat mobilnummer</span>
+                      <span style={{ display: 'block', maxWidth: '100%', fontSize: 13, color: '#334155', overflowWrap: 'anywhere', wordBreak: 'break-word' }}>{planningEmailDialog.detectedPhone || 'Inget mobilnummer hittades i kundkortet.'}</span>
+                    </span>
+                  </span>
+                </label>
+                <label style={{ display: 'grid', gap: 8, width: '100%', minWidth: 0, boxSizing: 'border-box', overflow: 'hidden', padding: 14, paddingRight: 16, borderRadius: 16, border: '1px solid ' + (planningEmailDialog.phoneMode === 'manual' ? '#38bdf8' : '#dbe4ef'), background: planningEmailDialog.phoneMode === 'manual' ? '#f8fbff' : '#fff' }}>
+                  <span style={{ display: 'grid', gridTemplateColumns: '18px minmax(0, 1fr)', gap: 10, alignItems: 'start', minWidth: 0, width: '100%', boxSizing: 'border-box' }}>
+                    <input type="radio" name="planning-sms-recipient" checked={planningEmailDialog.phoneMode === 'manual'} disabled={planningEmailDialog.sending || !planningEmailDialog.sendSms} onChange={() => setPlanningEmailDialog(prev => prev ? { ...prev, phoneMode: 'manual', error: null } : prev)} style={{ marginTop: 2 }} />
+                    <span style={{ display: 'grid', gap: 8, minWidth: 0, width: '100%', boxSizing: 'border-box', paddingRight: 4 }}>
+                      <span style={{ fontSize: 14, fontWeight: 600, color: '#0f172a' }}>Ange annat mobilnummer</span>
+                      <input type="tel" value={planningEmailDialog.manualPhone} onChange={(e) => setPlanningEmailDialog(prev => prev ? { ...prev, manualPhone: e.target.value, phoneMode: 'manual', error: null } : prev)} placeholder="+46701234567" disabled={planningEmailDialog.sending || !planningEmailDialog.sendSms} style={{ width: '100%', minWidth: 0, boxSizing: 'border-box', padding: '11px 12px', border: '1px solid #cbd5e1', borderRadius: 12, fontSize: 14, color: '#0f172a', background: '#fff' }} />
                     </span>
                   </span>
                 </label>

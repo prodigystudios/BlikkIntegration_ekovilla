@@ -368,7 +368,12 @@ export default function CalendarMonthGrid(props: CalendarMonthGridProps) {
                               const clientNotified = !!scheduleMeta[it.project.id]?.client_notified;
                               const clientNotifiedBy = scheduleMeta[it.project.id]?.client_notified_by;
                               const clientNotifiedAt = formatDateTimeStockholm(scheduleMeta[it.project.id]?.client_notified_at);
-                              if (!projectStatus && !clientNotified && !hasEgenkontroll(it.project.orderNumber)) return null;
+                              const smsNotified = !!scheduleMeta[it.project.id]?.sms_notified;
+                              const smsNotifiedBy = scheduleMeta[it.project.id]?.sms_notified_by;
+                              const smsNotifiedAt = formatDateTimeStockholm(scheduleMeta[it.project.id]?.sms_notified_at);
+                              const smsDeliveryStatus = scheduleMeta[it.project.id]?.sms_delivery_status;
+                              const smsError = scheduleMeta[it.project.id]?.sms_last_error;
+                              if (!projectStatus && !clientNotified && !smsNotified && !smsError && !hasEgenkontroll(it.project.orderNumber)) return null;
                               return (
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', paddingTop: 2 }}>
                                   {projectStatus ? <span style={{ fontSize: 9, color: textColor, background: bg, padding: '3px 7px', borderRadius: 999, border: `1px solid ${border}`, fontWeight: 700 }}>{projectStatus}</span> : null}
@@ -376,6 +381,17 @@ export default function CalendarMonthGrid(props: CalendarMonthGridProps) {
                                     <span title={clientNotifiedBy ? `Kund notifierad av ${clientNotifiedBy}${clientNotifiedAt ? ` ${clientNotifiedAt}` : ''}` : 'Kund notifierad'} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 9, background: '#d1fae5', color: '#065f46', padding: '3px 7px', borderRadius: 999, border: '1px solid #6ee7b7', fontWeight: 700 }}>
                                       <span style={{ display: 'inline-grid', placeItems: 'center', width: 12, height: 12, borderRadius: 999, background: '#059669', color: '#fff', fontSize: 9, fontWeight: 800 }}>✓</span>
                                       Notifierad
+                                    </span>
+                                  ) : null}
+                                  {smsNotified ? (
+                                    <span title={smsNotifiedBy ? `SMS skickat av ${smsNotifiedBy}${smsNotifiedAt ? ` ${smsNotifiedAt}` : ''}${smsDeliveryStatus ? ` (${smsDeliveryStatus})` : ''}` : 'SMS skickat'} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 9, background: '#dbeafe', color: '#1d4ed8', padding: '3px 7px', borderRadius: 999, border: '1px solid #93c5fd', fontWeight: 700 }}>
+                                      <span style={{ display: 'inline-grid', placeItems: 'center', width: 12, height: 12, borderRadius: 999, background: '#2563eb', color: '#fff', fontSize: 9, fontWeight: 800 }}>✓</span>
+                                      SMS
+                                    </span>
+                                  ) : null}
+                                  {!smsNotified && smsError ? (
+                                    <span title={`SMS misslyckades${smsError ? `: ${smsError}` : ''}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 9, background: '#fff7ed', color: '#9a3412', padding: '3px 7px', borderRadius: 999, border: '1px solid #fdba74', fontWeight: 700 }}>
+                                      SMS fel
                                     </span>
                                   ) : null}
                                   {hasEgenkontroll(it.project.orderNumber) ? (
