@@ -1,7 +1,7 @@
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { cookies } from 'next/headers';
 import { NextRequest, NextResponse } from 'next/server';
-import { adminSupabase } from '../../../../lib/adminSupabase';
+import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
 import {
   asRecord,
   buildSensitiveProfileUpdates,
@@ -13,17 +13,18 @@ export const dynamic = 'force-dynamic';
 
 export async function GET() {
   const supabase = createRouteHandlerClient({ cookies });
+  const admin = getOptionalSupabaseAdmin();
   const { data: authData, error: authError } = await supabase.auth.getUser();
 
   if (authError || !authData.user) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
 
-  if (!adminSupabase) {
+  if (!admin) {
     return NextResponse.json({ error: 'service role not configured' }, { status: 500 });
   }
 
-  const { data, error } = await adminSupabase
+  const { data, error } = await admin
     .from('employee_sensitive_details')
     .select(SENSITIVE_PROFILE_SELECT)
     .eq('user_id', authData.user.id)
@@ -38,13 +39,14 @@ export async function GET() {
 
 export async function PUT(req: NextRequest) {
   const supabase = createRouteHandlerClient({ cookies });
+  const admin = getOptionalSupabaseAdmin();
   const { data: authData, error: authError } = await supabase.auth.getUser();
 
   if (authError || !authData.user) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
 
-  if (!adminSupabase) {
+  if (!admin) {
     return NextResponse.json({ error: 'service role not configured' }, { status: 500 });
   }
 
@@ -60,7 +62,7 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: 'no supported fields provided' }, { status: 400 });
   }
 
-  const { error } = await adminSupabase
+  const { error } = await admin
     .from('employee_sensitive_details')
     .upsert({ user_id: authData.user.id, ...updates }, { onConflict: 'user_id' });
 
@@ -68,7 +70,7 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: 'failed updating sensitive profile', details: error.message }, { status: 500 });
   }
 
-  const { data: freshRow, error: freshError } = await adminSupabase
+  const { data: freshRow, error: freshError } = await admin
     .from('employee_sensitive_details')
     .select(SENSITIVE_PROFILE_SELECT)
     .eq('user_id', authData.user.id)

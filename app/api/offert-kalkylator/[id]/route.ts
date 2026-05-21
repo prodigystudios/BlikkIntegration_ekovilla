@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { computeOffertKalkylator, OFFERT_KALKYLATOR_DEFAULT_STATE } from '@/lib/offertKalkylator';
-import { adminSupabase } from '@/lib/adminSupabase';
 import { applyOffertOwnerScope, getOffertAccessContext } from '@/lib/offertAccess';
+import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -15,7 +15,8 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
     if (!access.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const includeAll = access.canViewAll;
-    const db = includeAll && adminSupabase ? adminSupabase : access.supabase;
+    const adminClient = getOptionalSupabaseAdmin();
+    const db = includeAll && adminClient ? adminClient : access.supabase;
 
     const scopedQuery = applyOffertOwnerScope(
       db.from('offert_calculations').select('*').eq('id', id),
@@ -41,7 +42,8 @@ export async function DELETE(_req: NextRequest, { params }: { params: { id: stri
     if (!access.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const includeAll = access.canViewAll;
-    const db = includeAll && adminSupabase ? adminSupabase : access.supabase;
+    const adminClient = getOptionalSupabaseAdmin();
+    const db = includeAll && adminClient ? adminClient : access.supabase;
 
     const scopedQuery = applyOffertOwnerScope(
       db.from('offert_calculations').delete().eq('id', id),
@@ -67,7 +69,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     if (!access.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const includeAll = access.canViewAll;
-    const db = includeAll && adminSupabase ? adminSupabase : access.supabase;
+    const adminClient = getOptionalSupabaseAdmin();
+    const db = includeAll && adminClient ? adminClient : access.supabase;
 
     const body = await req.json();
 

@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { adminSupabase } from '@/lib/adminSupabase';
 import { hashCustomerToken } from '@/lib/offertCustomerTokens';
 import { sendEmail } from '@/lib/email';
 import { getPublicOrigin } from '@/lib/publicOrigin';
+import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -55,7 +55,8 @@ function env(name: string): string {
 
 export async function POST(req: NextRequest, ctx: { params: { token: string } }) {
   try {
-    if (!adminSupabase) return NextResponse.json({ error: 'Server not configured' }, { status: 500 });
+    const supabase = getOptionalSupabaseAdmin();
+    if (!supabase) return NextResponse.json({ error: 'Server not configured' }, { status: 500 });
 
     const token = (ctx?.params?.token || '').trim();
     if (!token) return NextResponse.json({ error: 'Invalid link' }, { status: 404 });
@@ -67,7 +68,7 @@ export async function POST(req: NextRequest, ctx: { params: { token: string } })
 
     const tokenHash = hashCustomerToken(token);
 
-    const { data: requestRow, error: reqErr } = await adminSupabase
+    const { data: requestRow, error: reqErr } = await supabase
       .from('offert_customer_requests')
       .select('id, status, expires_at, revoked_at, offert_id, seller_email')
       .eq('token_hash', tokenHash)
@@ -84,7 +85,7 @@ export async function POST(req: NextRequest, ctx: { params: { token: string } })
 
     const body = parsed.data;
 
-    const { error: insErr } = await adminSupabase
+    const { error: insErr } = await supabase
       .from('offert_customer_responses')
       .insert({
         request_id: requestRow.id,
@@ -107,7 +108,7 @@ export async function POST(req: NextRequest, ctx: { params: { token: string } })
     if (insErr) throw insErr;
 
     const nowIso = new Date().toISOString();
-    const { error: updErr } = await adminSupabase
+    const { error: updErr } = await supabase
       .from('offert_customer_requests')
       .update({ status: 'submitted', submitted_at: nowIso })
       .eq('id', requestRow.id)
@@ -115,7 +116,7 @@ export async function POST(req: NextRequest, ctx: { params: { token: string } })
 
     if (updErr) throw updErr;
 
-    const { data: offer } = await adminSupabase
+    const { data: offer } = await supabase
       .from('offert_calculations')
       .select('id, name, address, city, salesperson')
       .eq('id', requestRow.offert_id)

@@ -1,12 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { computeOffertKalkylator, OFFERT_KALKYLATOR_DEFAULT_STATE } from '@/lib/offertKalkylator';
-import { adminSupabase } from '@/lib/adminSupabase';
 import { applyOffertOwnerScope, getOffertAccessContext } from '@/lib/offertAccess';
+import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -99,7 +97,8 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
     if (!access.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const includeAll = access.canViewAll;
-    const db = includeAll && adminSupabase ? adminSupabase : createRouteHandlerClient({ cookies });
+    const adminClient = getOptionalSupabaseAdmin();
+    const db = includeAll && adminClient ? adminClient : access.supabase;
 
     const scopedQuery = applyOffertOwnerScope(
       db

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { adminSupabase } from '@/lib/adminSupabase';
 import { hashCustomerToken } from '@/lib/offertCustomerTokens';
+import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -14,14 +14,15 @@ function formatOffertNumber(year: any, seq: any) {
 
 export async function GET(req: NextRequest, ctx: { params: { token: string } }) {
   try {
-    if (!adminSupabase) return NextResponse.json({ error: 'Server not configured' }, { status: 500 });
+    const supabase = getOptionalSupabaseAdmin();
+    if (!supabase) return NextResponse.json({ error: 'Server not configured' }, { status: 500 });
 
     const token = (ctx?.params?.token || '').trim();
     if (!token) return NextResponse.json({ error: 'Invalid link' }, { status: 404 });
 
     const tokenHash = hashCustomerToken(token);
 
-    const { data: requestRow, error } = await adminSupabase
+    const { data: requestRow, error } = await supabase
       .from('offert_customer_requests')
       .select('id, status, expires_at, revoked_at, offert_id')
       .eq('token_hash', tokenHash)
@@ -37,7 +38,7 @@ export async function GET(req: NextRequest, ctx: { params: { token: string } }) 
     if (requestRow.status !== 'pending') return NextResponse.json({ error: 'Already submitted' }, { status: 410 });
 
     // Return only non-PII offer identifiers + totals so customer feels safe they are on the right offer.
-    const { data: offer, error: offerErr } = await adminSupabase
+    const { data: offer, error: offerErr } = await supabase
       .from('offert_calculations')
       .select('offert_number_year, offert_number_seq, total_before_rot, rot_amount, total_after_rot')
       .eq('id', requestRow.offert_id)

@@ -1,14 +1,15 @@
 import { NextResponse } from 'next/server';
-import { adminSupabase } from '../../../lib/adminSupabase';
+import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
 import path from 'path';
 import { promises as fs } from 'fs';
 
 // Helper to load JSON either from storage bucket or fallback to bundled file
 async function loadPhoneList(): Promise<any> {
   // Try Supabase storage (bucket: public-data, object: PhoneList.json)
-  if (adminSupabase) {
+  const admin = getOptionalSupabaseAdmin();
+  if (admin) {
     try {
-      const { data, error } = await adminSupabase.storage.from('public-data').download('PhoneList.json');
+      const { data, error } = await admin.storage.from('public-data').download('PhoneList.json');
       if (!error && data) {
         const text = await data.text();
         return JSON.parse(text);

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { adminSupabase } from '@/lib/adminSupabase';
+import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
 import { getCurrentUser } from '../_util';
 import { normalizeRecipients, requireAdminUser, resolvePublicationRecipients } from './_lib';
 
@@ -9,7 +9,9 @@ export const dynamic = 'force-dynamic';
 export async function GET(req: NextRequest) {
   const current = await getCurrentUser();
   if (!current) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
-  if (!adminSupabase) return NextResponse.json({ ok: false, error: 'service role not configured' }, { status: 500 });
+
+  const supabase = getOptionalSupabaseAdmin();
+  if (!supabase) return NextResponse.json({ ok: false, error: 'service role not configured' }, { status: 500 });
 
   const { searchParams } = new URL(req.url);
   const fileId = (searchParams.get('fileId') || '').trim();
@@ -28,14 +30,14 @@ export async function GET(req: NextRequest) {
   `;
 
   if (current.role === 'admin') {
-    let query = adminSupabase.from('document_publications').select(baseSelect).is('archived_at', null).order('created_at', { ascending: false }).limit(30);
+    let query = supabase.from('document_publications').select(baseSelect).is('archived_at', null).order('created_at', { ascending: false }).limit(30);
     if (fileId) query = query.eq('file_id', fileId);
     const { data, error } = await query;
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
     return NextResponse.json({ ok: true, items: data || [] }, { status: 200, headers: new Headers({ 'Cache-Control': 'no-store' }) });
   }
 
-  const { data, error } = await adminSupabase!
+  const { data, error } = await supabase
     .from('document_publication_recipients')
     .select(`
       publication_id,
@@ -53,7 +55,9 @@ export async function POST(req: NextRequest) {
   try {
     const current = await requireAdminUser();
     if (!current) return NextResponse.json({ ok: false, error: 'forbidden' }, { status: 403 });
-    if (!adminSupabase) return NextResponse.json({ ok: false, error: 'service role not configured' }, { status: 500 });
+
+    const supabase = getOptionalSupabaseAdmin();
+    if (!supabase) return NextResponse.json({ ok: false, error: 'service role not configured' }, { status: 500 });
 
     const body = await req.json().catch(() => null);
     const fileId = String(body?.fileId || '').trim();
@@ -70,7 +74,7 @@ export async function POST(req: NextRequest) {
     const resolvedRecipients = await resolvePublicationRecipients(recipients);
     if (!resolvedRecipients.length) return NextResponse.json({ ok: false, error: 'missing recipients' }, { status: 400 });
 
-    const { data: file, error: fileError } = await adminSupabase
+    const { data: file, error: fileError } = await supabase
       .from('documents_files')
       .select('id, file_name')
       .eq('id', fileId)
@@ -78,7 +82,7 @@ export async function POST(req: NextRequest) {
     if (fileError) return NextResponse.json({ ok: false, error: fileError.message }, { status: 500 });
     if (!file) return NextResponse.json({ ok: false, error: 'file_not_found' }, { status: 404 });
 
-    const { data: publication, error: publicationError } = await adminSupabase
+    const { data: publication, error: publicationError } = await supabase
       .from('document_publications')
       .insert({
         file_id: fileId,
@@ -93,7 +97,7 @@ export async function POST(req: NextRequest) {
       .single();
     if (publicationError) return NextResponse.json({ ok: false, error: publicationError.message }, { status: 500 });
 
-    const { error: recipientsError } = await adminSupabase
+    const { error: recipientsError } = await supabase
       .from('document_publication_recipients')
       .insert(resolvedRecipients.map(item => ({
         publication_id: publication.id,
@@ -103,7 +107,7 @@ export async function POST(req: NextRequest) {
       })));
 
     if (recipientsError) {
-      await adminSupabase.from('document_publications').delete().eq('id', publication.id);
+      await supabase.from('document_publications').delete().eq('id', publication.id);
       return NextResponse.json({ ok: false, error: recipientsError.message }, { status: 500 });
     }
 

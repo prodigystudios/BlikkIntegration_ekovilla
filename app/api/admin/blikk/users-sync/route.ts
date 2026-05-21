@@ -1,15 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getUserProfile } from '../../../../../lib/getUserProfile';
-import { adminSupabase } from '../../../../../lib/adminSupabase';
+import { requireAdminUser } from '@/lib/auth/route';
+import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
 import { getBlikk } from '../../../../../lib/blikk';
 
 type BlikkUser = { id: number; email?: string | null; name?: string | null; fullName?: string | null; firstName?: string | null; lastName?: string | null };
-
-async function requireAdmin() {
-  const profile = await getUserProfile();
-  if (!profile || profile.role !== 'admin') return null;
-  return profile;
-}
 
 function normEmail(e?: string | null) {
   return (e || '').trim().toLowerCase();
@@ -22,18 +16,18 @@ function blikkUserSummary(u: any): BlikkUser {
 }
 
 export async function GET() {
-  const current = await requireAdmin();
-  if (!current) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
-  if (!adminSupabase) return NextResponse.json({ error: 'service role not configured' }, { status: 500 });
+  if (!(await requireAdminUser())) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+  const supabase = getOptionalSupabaseAdmin();
+  if (!supabase) return NextResponse.json({ error: 'service role not configured' }, { status: 500 });
 
   // 1) List auth users to get emails
-  const { data: authUsers, error: listErr } = await adminSupabase.auth.admin.listUsers();
+  const { data: authUsers, error: listErr } = await supabase.auth.admin.listUsers();
   if (listErr) return NextResponse.json({ error: listErr.message }, { status: 500 });
   const auth = authUsers.users.map((u) => ({ id: u.id, email: u.email || '' }));
   const ids = auth.map((u) => u.id);
 
   // 2) Fetch profiles to read full_name, role, blikk_id
-  const { data: profRows, error: profErr } = await adminSupabase
+  const { data: profRows, error: profErr } = await supabase
     .from('profiles')
     .select('id, role, full_name, blikk_id')
     .in('id', ids);
@@ -90,15 +84,15 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const current = await requireAdmin();
-  if (!current) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
-  if (!adminSupabase) return NextResponse.json({ error: 'service role not configured' }, { status: 500 });
+  if (!(await requireAdminUser())) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+  const supabase = getOptionalSupabaseAdmin();
+  if (!supabase) return NextResponse.json({ error: 'service role not configured' }, { status: 500 });
 
   const body = await req.json();
   const { userId, blikkId } = body as { userId: string; blikkId: number | null };
   if (!userId) return NextResponse.json({ error: 'missing userId' }, { status: 400 });
   // Allow clearing mapping by sending null
-  const { error } = await adminSupabase.from('profiles').update({ blikk_id: blikkId }).eq('id', userId);
+  const { error } = await supabase.from('profiles').update({ blikk_id: blikkId }).eq('id', userId);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true });
 }

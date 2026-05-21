@@ -1,15 +1,14 @@
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { adminSupabase } from '@/lib/adminSupabase';
 import { applyOffertOwnerScope, getOffertAccessContext } from '@/lib/offertAccess';
+import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 export async function GET(_req: Request, ctx: { params: { id: string } }) {
   try {
-    if (!adminSupabase) return NextResponse.json({ error: 'Admin supabase not configured' }, { status: 500 });
+    const supabase = getOptionalSupabaseAdmin();
+    if (!supabase) return NextResponse.json({ error: 'Admin supabase not configured' }, { status: 500 });
 
     const access = await getOffertAccessContext();
     if (!access.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -18,7 +17,7 @@ export async function GET(_req: Request, ctx: { params: { id: string } }) {
     if (!offertId) return NextResponse.json({ error: 'Missing offert id' }, { status: 400 });
 
     const offerQuery = applyOffertOwnerScope(
-      adminSupabase
+      supabase
         .from('offert_calculations')
         .select('id')
         .eq('id', offertId),
@@ -29,7 +28,7 @@ export async function GET(_req: Request, ctx: { params: { id: string } }) {
     if (offerErr) throw offerErr;
     if (!offer) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-    const { data: latestReq, error: reqErr } = await adminSupabase
+    const { data: latestReq, error: reqErr } = await supabase
       .from('offert_customer_requests')
       .select('id, submitted_at, created_at')
       .eq('offert_id', offertId)
@@ -41,7 +40,7 @@ export async function GET(_req: Request, ctx: { params: { id: string } }) {
     if (reqErr) throw reqErr;
     if (!latestReq) return NextResponse.json({ response: null });
 
-    const { data: response, error: respErr } = await adminSupabase
+    const { data: response, error: respErr } = await supabase
       .from('offert_customer_responses')
       .select('*')
       .eq('request_id', latestReq.id)

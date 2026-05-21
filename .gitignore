@@ -11,3 +11,6 @@ build_run.log
 build.log
 tsc_output.txt
 .agents
+PLANNING_ORDER_CONFIRMATIONS.md
+type-check-output.txt
+build_output_now.txt

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { adminSupabase } from '@/lib/adminSupabase';
+import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
 import { getCurrentUser } from '../../_util';
 
 export const runtime = 'nodejs';
@@ -8,9 +8,11 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
   const current = await getCurrentUser();
   if (!current) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
-  if (!adminSupabase) return NextResponse.json({ ok: false, error: 'service role not configured' }, { status: 500 });
 
-  const { data, error } = await adminSupabase
+  const supabase = getOptionalSupabaseAdmin();
+  if (!supabase) return NextResponse.json({ ok: false, error: 'service role not configured' }, { status: 500 });
+
+  const { data, error } = await supabase
     .from('document_publication_recipients')
     .select(`
       publication_id,
@@ -40,7 +42,7 @@ export async function GET() {
   const publicationIds = (data || []).map((row: any) => row.publication_id).filter(Boolean);
   let receiptMap = new Map<string, any>();
   if (publicationIds.length > 0) {
-    const { data: receipts, error: receiptsError } = await adminSupabase
+    const { data: receipts, error: receiptsError } = await supabase
       .from('document_publication_receipts')
       .select('publication_id, first_opened_at, last_opened_at, approved_at, approval_note')
       .eq('user_id', current.id)

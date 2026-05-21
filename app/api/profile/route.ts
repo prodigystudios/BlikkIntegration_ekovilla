@@ -1,7 +1,7 @@
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { cookies } from 'next/headers';
 import { NextRequest, NextResponse } from 'next/server';
-import { adminSupabase } from '../../../lib/adminSupabase';
+import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
 import {
   asRecord,
   attachSensitiveStatus,
@@ -16,6 +16,7 @@ export const dynamic = 'force-dynamic';
 
 export async function GET() {
   const supabase = createRouteHandlerClient({ cookies });
+  const admin = getOptionalSupabaseAdmin();
   const { data: authData, error: authError } = await supabase.auth.getUser();
 
   if (authError || !authData.user) {
@@ -30,8 +31,8 @@ export async function GET() {
   ] = await Promise.all([
     supabase.from('profiles').select(PROFILE_SELECT).eq('id', userId).maybeSingle(),
     supabase.from('employee_profile_details').select(PROFILE_DETAILS_SELECT).eq('user_id', userId).maybeSingle(),
-    adminSupabase
-      ? adminSupabase.from('employee_sensitive_details').select(SENSITIVE_PROFILE_SELECT).eq('user_id', userId).maybeSingle()
+    admin
+      ? admin.from('employee_sensitive_details').select(SENSITIVE_PROFILE_SELECT).eq('user_id', userId).maybeSingle()
       : Promise.resolve({ data: null, error: null }),
   ]);
 
@@ -60,6 +61,7 @@ export async function GET() {
 
 export async function PATCH(req: NextRequest) {
   const supabase = createRouteHandlerClient({ cookies });
+  const admin = getOptionalSupabaseAdmin();
   const { data: authData, error: authError } = await supabase.auth.getUser();
 
   if (authError || !authData.user) {
@@ -83,7 +85,7 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: 'failed updating profile', details: error.message }, { status: 500 });
   }
 
-  if (!adminSupabase) {
+  if (!admin) {
     return NextResponse.json({ ok: true });
   }
 
@@ -92,9 +94,9 @@ export async function PATCH(req: NextRequest) {
     { data: detailRow, error: detailError },
     { data: sensitiveRow, error: sensitiveError },
   ] = await Promise.all([
-    adminSupabase.from('profiles').select(PROFILE_SELECT).eq('id', authData.user.id).maybeSingle(),
-    adminSupabase.from('employee_profile_details').select(PROFILE_DETAILS_SELECT).eq('user_id', authData.user.id).maybeSingle(),
-    adminSupabase.from('employee_sensitive_details').select(SENSITIVE_PROFILE_SELECT).eq('user_id', authData.user.id).maybeSingle(),
+    admin.from('profiles').select(PROFILE_SELECT).eq('id', authData.user.id).maybeSingle(),
+    admin.from('employee_profile_details').select(PROFILE_DETAILS_SELECT).eq('user_id', authData.user.id).maybeSingle(),
+    admin.from('employee_sensitive_details').select(SENSITIVE_PROFILE_SELECT).eq('user_id', authData.user.id).maybeSingle(),
   ]);
 
   if (profileError || detailError || sensitiveError) {

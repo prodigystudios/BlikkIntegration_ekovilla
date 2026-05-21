@@ -1,13 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getUserProfile } from '../../../../lib/getUserProfile';
-import { adminSupabase } from '../../../../lib/adminSupabase';
+import { requireAdminUser } from '@/lib/auth/route';
+import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
 import path from 'path';
 import { promises as fs } from 'fs';
-
-async function ensureAdmin() {
-  const profile = await getUserProfile();
-  return profile && profile.role === 'admin' ? profile : null;
-}
 
 async function loadFallback() {
   try {
@@ -18,11 +13,11 @@ async function loadFallback() {
 }
 
 export async function GET() {
-  const ok = await ensureAdmin();
-  if (!ok) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
-  if (adminSupabase) {
+  if (!(await requireAdminUser())) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+  const supabase = getOptionalSupabaseAdmin();
+  if (supabase) {
     try {
-      const { data, error } = await adminSupabase.storage.from('public-data').download('PhoneList.json');
+      const { data, error } = await supabase.storage.from('public-data').download('PhoneList.json');
       if (!error && data) {
         const text = await data.text();
         return NextResponse.json(JSON.parse(text));
@@ -35,9 +30,9 @@ export async function GET() {
 }
 
 export async function PUT(req: NextRequest) {
-  const ok = await ensureAdmin();
-  if (!ok) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
-  if (!adminSupabase) return NextResponse.json({ error: 'service role missing' }, { status: 500 });
+  if (!(await requireAdminUser())) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+  const supabase = getOptionalSupabaseAdmin();
+  if (!supabase) return NextResponse.json({ error: 'service role missing' }, { status: 500 });
   let body: any;
   try {
     body = await req.json();
@@ -50,7 +45,7 @@ export async function PUT(req: NextRequest) {
   }
   try {
     const payload = JSON.stringify(body, null, 2);
-    const { error: upErr } = await adminSupabase.storage.from('public-data').upload('PhoneList.json', new Blob([payload], { type: 'application/json' }), { upsert: true, contentType: 'application/json' });
+    const { error: upErr } = await supabase.storage.from('public-data').upload('PhoneList.json', new Blob([payload], { type: 'application/json' }), { upsert: true, contentType: 'application/json' });
     if (upErr) return NextResponse.json({ error: 'upload failed', details: upErr.message }, { status: 500 });
     return NextResponse.json({ ok: true });
   } catch (e: any) {
