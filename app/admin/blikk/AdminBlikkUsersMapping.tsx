@@ -1,5 +1,14 @@
 "use client";
 import React from 'react';
+import Badge from '../../../components/ui/Badge';
+import Button from '../../../components/ui/Button';
+import EmptyState from '../../../components/ui/EmptyState';
+import ErrorState from '../../../components/ui/ErrorState';
+import Input from '../../../components/ui/Input';
+import LoadingState from '../../../components/ui/LoadingState';
+import PageShell from '../../../components/ui/PageShell';
+import Select from '../../../components/ui/Select';
+import { cn } from '../../../lib/shared/cn';
 
 type ProfileRow = {
   id: string;
@@ -66,69 +75,69 @@ export default function AdminBlikkUsersMapping() {
   const suggestionCount = rows.filter((row) => row.bestMatch != null).length;
 
   return (
-    <main style={{ padding:12, display:'grid', gap:20, maxWidth:1280, margin:'0 auto' }}>
-      <section style={{ border: '1px solid #dbe4ef', background: 'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)', borderRadius: 24, padding: 20, display: 'grid', gap: 16, boxShadow:'0 14px 36px rgba(15,23,42,0.04)' }}>
-      <div style={{ display:'flex', justifyContent:'space-between', gap:16, flexWrap:'wrap', alignItems:'flex-start' }}>
-        <div style={{ display:'grid', gap:6, maxWidth:760 }}>
-          <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
-            <span style={eyebrowStyle}>Blikk-koppling</span>
-            <span style={chipStyle}>{rows.length} profiler</span>
-            <span style={chipStyle}>{mappedCount} kopplade</span>
+    <PageShell className="max-w-[1280px] gap-5 px-3 py-3 sm:px-4 lg:px-5">
+      <section className="grid gap-4 rounded-[24px] border border-ui-border bg-[linear-gradient(180deg,#ffffff_0%,#f8fbff_100%)] p-5 shadow-[0_14px_36px_rgba(15,23,42,0.04)]">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="grid max-w-[760px] gap-1.5">
+            <div className="flex flex-wrap gap-2">
+              <Badge variant="accent" className="px-2.5 py-1 text-[11px] uppercase tracking-[0.35px]">Blikk-koppling</Badge>
+              <Badge>{rows.length} profiler</Badge>
+              <Badge>{mappedCount} kopplade</Badge>
+            </div>
+            <h1 className="m-0 text-[28px] text-slate-900">Synka profiler mot rätt Blikk-användare</h1>
+            <p className="m-0 text-sm text-slate-700">
+              Matcha interna profiler mot Blikk-användare så tidrapporter och uppgifter får rätt användar-ID.
+            </p>
           </div>
-          <h1 style={{ margin: 0, fontSize: 28, color:'#0f172a' }}>Synka profiler mot rätt Blikk-användare</h1>
-      <p style={{ margin: 0, color: '#374151', fontSize: 14 }}>
-        Matcha interna profiler mot Blikk-användare så tidrapporter och uppgifter får rätt användar-ID.
-      </p>
+          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Sök e-post, namn, roll eller Blikk-ID" className="min-w-[280px] sm:w-[320px]" />
         </div>
-        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Sök e-post, namn, roll eller Blikk-ID" style={{ ...fieldStyle, minWidth:280 }} />
-      </div>
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(160px, 1fr))', gap:8 }}>
-        <div style={miniStatStyle}><span style={miniLabelStyle}>Kopplade</span><strong style={miniValueStyle}>{mappedCount}</strong></div>
-        <div style={miniStatStyle}><span style={miniLabelStyle}>Förslag finns</span><strong style={miniValueStyle}>{suggestionCount}</strong></div>
-        <div style={miniStatStyle}><span style={miniLabelStyle}>Okopplade</span><strong style={miniValueStyle}>{rows.length - mappedCount}</strong></div>
-      </div>
+        <div className="grid gap-2 [grid-template-columns:repeat(auto-fit,minmax(160px,1fr))]">
+          <div className="grid gap-1 rounded-2xl border border-ui-border bg-white px-3 py-2.5"><span className="text-[11px] font-extrabold uppercase tracking-[0.3px] text-slate-500">Kopplade</span><strong className="text-xl font-extrabold text-slate-900">{mappedCount}</strong></div>
+          <div className="grid gap-1 rounded-2xl border border-ui-border bg-white px-3 py-2.5"><span className="text-[11px] font-extrabold uppercase tracking-[0.3px] text-slate-500">Förslag finns</span><strong className="text-xl font-extrabold text-slate-900">{suggestionCount}</strong></div>
+          <div className="grid gap-1 rounded-2xl border border-ui-border bg-white px-3 py-2.5"><span className="text-[11px] font-extrabold uppercase tracking-[0.3px] text-slate-500">Okopplade</span><strong className="text-xl font-extrabold text-slate-900">{rows.length - mappedCount}</strong></div>
+        </div>
       </section>
-      {loading && <div>Laddar…</div>}
-      {error && <div style={{ color: '#b91c1c', fontSize: 13 }}>{error}</div>}
-      {!loading && rows.length === 0 && <div style={{ fontSize: 14, color: '#374151' }}>Inga profiler att visa.</div>}
+      {loading && <LoadingState label="Laddar profiler" description="Hämtar profiler och Blikk-användare för matchning." />}
+      {error && <ErrorState title="Kunde inte läsa Blikk-kopplingar" message={error} />}
+      {!loading && rows.length === 0 && <EmptyState title="Inga profiler att visa" description="När profiler finns här kan de kopplas mot rätt Blikk-användare." />}
       {!loading && rows.length > 0 && (
-        <div style={cardListStyle}>
+        <div className="grid gap-3">
           {filteredRows.map((row) => {
             const selectedId = row.blikk_id ?? row.bestMatch?.id ?? null;
             const status = row.blikk_id != null ? 'Kopplad' : row.bestMatch ? 'Förslag finns' : 'Okopplad';
 
             return (
-              <article key={row.id} style={mappingCardStyle}>
-                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:12, flexWrap:'wrap' }}>
-                  <div style={{ display:'grid', gap:6, minWidth:0, flex:'1 1 260px' }}>
-                    <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
-                      <strong style={{ fontSize:16, color:'#0f172a' }}>{row.full_name || 'Namn saknas'}</strong>
-                      <span style={rolePillStyle}>{row.role}</span>
-                      <span style={statusPillStyle(status)}>{status}</span>
+              <article key={row.id} className="grid gap-4 rounded-[20px] border border-ui-border bg-white p-4 shadow-[0_10px_28px_rgba(15,23,42,0.03)]">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="grid min-w-0 flex-1 basis-[260px] gap-1.5">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <strong className="text-base text-slate-900">{row.full_name || 'Namn saknas'}</strong>
+                      <Badge className={cn('px-2 py-1 text-[11px] font-extrabold uppercase tracking-[0.35px]', roleBadgeClassName(row.role))}>{row.role}</Badge>
+                      <Badge className={cn('px-2 py-1 text-[11px] font-extrabold uppercase tracking-[0.3px]', statusBadgeClassName(status))}>{status}</Badge>
                     </div>
-                    <span style={{ fontSize:13, color:'#64748b', wordBreak:'break-all' }}>{row.email}</span>
+                    <span className="break-all text-[13px] text-slate-500">{row.email}</span>
                   </div>
-                  <div style={{ display:'grid', gap:6, justifyItems:'end' }}>
-                    <span style={metaLabelStyle}>Nuvarande Blikk-ID</span>
-                    <strong style={{ fontSize:18, color:'#0f172a' }}>{row.blikk_id ?? '—'}</strong>
+                  <div className="grid gap-1.5 justify-items-start sm:justify-items-end">
+                    <span className="text-[11px] font-extrabold uppercase tracking-[0.3px] text-slate-500">Nuvarande Blikk-ID</span>
+                    <strong className="text-lg text-slate-900">{row.blikk_id ?? '—'}</strong>
                   </div>
                 </div>
 
-                <div style={mappingGridStyle}>
-                  <div style={infoCardStyle}>
-                    <span style={metaLabelStyle}>Förslag</span>
+                <div className="grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(240px,1fr))]">
+                  <div className="grid gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
+                    <span className="text-[11px] font-extrabold uppercase tracking-[0.3px] text-slate-500">Förslag</span>
                     {row.bestMatch ? (
-                      <div style={{ display:'grid', gap:2 }}>
-                        <strong style={{ color:'#0f172a' }}>#{row.bestMatch.id} • {row.bestMatch.name || row.bestMatch.email || '—'}</strong>
-                        <span style={{ fontSize:12, color:'#64748b' }}>{row.bestMatch.email || 'Ingen e-post'}</span>
+                      <div className="grid gap-0.5">
+                        <strong className="text-slate-900">#{row.bestMatch.id} • {row.bestMatch.name || row.bestMatch.email || '—'}</strong>
+                        <span className="text-xs text-slate-500">{row.bestMatch.email || 'Ingen e-post'}</span>
                       </div>
                     ) : (
-                      <span style={{ color:'#64748b', fontSize:13 }}>Ingen tydlig matchning hittades.</span>
+                      <span className="text-[13px] text-slate-500">Ingen tydlig matchning hittades.</span>
                     )}
                   </div>
 
-                  <div style={infoCardStyle}>
-                    <span style={metaLabelStyle}>Välj Blikk-användare</span>
+                  <div className="grid gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
+                    <span className="text-[11px] font-extrabold uppercase tracking-[0.3px] text-slate-500">Välj Blikk-användare</span>
                     <BlikkUserSelect
                       users={blikkUsers}
                       value={selectedId}
@@ -137,34 +146,38 @@ export default function AdminBlikkUsersMapping() {
                   </div>
                 </div>
 
-                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', gap:12, flexWrap:'wrap' }}>
-                  <span style={{ fontSize:12, color:'#64748b' }}>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <span className="text-xs text-slate-500">
                     Spara när rätt Blikk-användare är vald för att låsa kopplingen på profilen.
                   </span>
-                  <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+                  <div className="flex flex-wrap gap-2">
                     {row.bestMatch && row.blikk_id == null && (
-                      <button
+                      <Button
                         onClick={() => setRows((list) => list.map((x) => (x.id === row.id ? { ...x, blikk_id: row.bestMatch!.id } : x)))}
-                        style={{ ...saveBtn, background:'#fff', color:'#2563eb', border:'1px solid #bfdbfe' }}
+                        variant="secondary"
+                        size="sm"
+                        className="border-blue-200 text-blue-700 hover:bg-blue-50"
                       >
                         Använd förslag
-                      </button>
+                      </Button>
                     )}
-                    <button
+                    <Button
                       onClick={() => saveMapping(row.id, selectedId)}
                       disabled={saving[row.id]}
-                      style={saveBtn}
+                      variant="primary"
+                      size="sm"
                     >
                       {saving[row.id] ? 'Sparar…' : 'Spara koppling'}
-                    </button>
+                    </Button>
                     {row.blikk_id != null && (
-                      <button
+                      <Button
                         onClick={() => saveMapping(row.id, null)}
                         disabled={saving[row.id]}
-                        style={{ ...saveBtn, background: '#fff', color: '#111827', border: '1px solid #d1d5db' }}
+                        variant="secondary"
+                        size="sm"
                       >
                         Rensa
-                      </button>
+                      </Button>
                     )}
                   </div>
                 </div>
@@ -173,112 +186,33 @@ export default function AdminBlikkUsersMapping() {
           })}
         </div>
       )}
-      {!loading && rows.length > 0 && filteredRows.length === 0 && <div style={{ fontSize:13, color:'#64748b' }}>Ingen profil matchar nuvarande sökning.</div>}
-    </main>
+      {!loading && rows.length > 0 && filteredRows.length === 0 && <EmptyState title="Ingen profil matchar sökningen" description="Justera söktermen för att visa profiler igen." />}
+    </PageShell>
   );
 }
 
 function BlikkUserSelect({ users, value, onChange }: { users: BlikkUserLite[]; value: number | null; onChange: (v: number | null) => void }) {
   return (
-    <select value={value == null ? '' : String(value)} onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)} style={{ ...fieldStyle, minWidth: 0, width:'100%' }}>
+    <Select value={value == null ? '' : String(value)} onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)} className="min-w-0">
       <option value="">— Välj —</option>
       {users.map((u) => (
         <option key={u.id} value={u.id}>
           #{u.id} • {u.name || u.email || 'okänd'}{u.email ? ` <${u.email}>` : ''}
         </option>
       ))}
-    </select>
+    </Select>
   );
 }
 
-const cardListStyle: React.CSSProperties = {
-  display:'grid',
-  gap:12
-};
+function roleBadgeClassName(role: string) {
+  if (role === 'admin') return 'border-red-200 bg-red-50 text-red-800';
+  if (role === 'sales') return 'border-emerald-200 bg-emerald-50 text-emerald-700';
+  if (role === 'konsult') return 'border-amber-200 bg-amber-50 text-amber-800';
+  return 'border-blue-200 bg-blue-50 text-blue-700';
+}
 
-const mappingCardStyle: React.CSSProperties = {
-  display:'grid',
-  gap:16,
-  padding:'16px 16px 14px',
-  border:'1px solid #dbe4ef',
-  borderRadius:20,
-  background:'#fff',
-  boxShadow:'0 10px 28px rgba(15,23,42,0.03)'
-};
-
-const mappingGridStyle: React.CSSProperties = {
-  display:'grid',
-  gap:12,
-  gridTemplateColumns:'repeat(auto-fit, minmax(240px, 1fr))'
-};
-
-const infoCardStyle: React.CSSProperties = {
-  display:'grid',
-  gap:8,
-  padding:'12px 12px 10px',
-  border:'1px solid #e2e8f0',
-  borderRadius:16,
-  background:'#f8fbff'
-};
-
-const fieldStyle: React.CSSProperties = {
-  padding: '8px 10px',
-  border: '1px solid #d1d5db',
-  borderRadius: 8,
-  fontSize: 14,
-  outline: 'none',
-  background: '#fff'
-};
-
-const saveBtn: React.CSSProperties = {
-  padding: '8px 12px',
-  borderRadius: 8,
-  fontSize: 13,
-  border: '1px solid #111827',
-  background: '#111827',
-  color: '#fff',
-  fontWeight: 500,
-  cursor: 'pointer'
-};
-
-const rolePillStyle: React.CSSProperties = {
-  display:'inline-flex',
-  alignItems:'center',
-  padding:'4px 8px',
-  borderRadius:999,
-  background:'#eff6ff',
-  border:'1px solid #bfdbfe',
-  color:'#334155',
-  fontSize:11,
-  fontWeight:800,
-  textTransform:'uppercase',
-  letterSpacing:0.35
-};
-
-const statusPillStyle = (status: string): React.CSSProperties => ({
-  display:'inline-flex',
-  alignItems:'center',
-  padding:'4px 8px',
-  borderRadius:999,
-  background: status === 'Kopplad' ? '#dcfce7' : status === 'Förslag finns' ? '#fef3c7' : '#f8fafc',
-  border:'1px solid ' + (status === 'Kopplad' ? '#bbf7d0' : status === 'Förslag finns' ? '#fde68a' : '#e2e8f0'),
-  color:'#475569',
-  fontSize:11,
-  fontWeight:800,
-  letterSpacing:0.3,
-  textTransform:'uppercase'
-});
-
-const metaLabelStyle: React.CSSProperties = {
-  fontSize:11,
-  fontWeight:800,
-  letterSpacing:0.3,
-  textTransform:'uppercase',
-  color:'#64748b'
-};
-
-const eyebrowStyle: React.CSSProperties = { display:'inline-flex', alignItems:'center', padding:'4px 10px', borderRadius:999, background:'#dbeafe', border:'1px solid #bfdbfe', color:'#2563eb', fontSize:11, fontWeight:800, letterSpacing:0.35, textTransform:'uppercase' };
-const chipStyle: React.CSSProperties = { display:'inline-flex', alignItems:'center', padding:'4px 8px', borderRadius:999, background:'#f8fafc', border:'1px solid #e2e8f0', color:'#475569', fontSize:12, fontWeight:700 };
-const miniStatStyle: React.CSSProperties = { display:'grid', gap:5, padding:'12px 12px 10px', borderRadius:16, border:'1px solid #dbe4ef', background:'#fff' };
-const miniLabelStyle: React.CSSProperties = { fontSize:11, fontWeight:800, letterSpacing:0.3, textTransform:'uppercase', color:'#64748b' };
-const miniValueStyle: React.CSSProperties = { fontSize:20, fontWeight:800, color:'#0f172a' };
+function statusBadgeClassName(status: string) {
+  if (status === 'Kopplad') return 'border-emerald-200 bg-emerald-50 text-emerald-700';
+  if (status === 'Förslag finns') return 'border-amber-200 bg-amber-50 text-amber-800';
+  return 'border-slate-200 bg-slate-50 text-slate-600';
+}

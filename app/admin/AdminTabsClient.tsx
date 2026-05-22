@@ -3,6 +3,9 @@ import React from 'react';
 import AdminUsers from './users/AdminUsers';
 import dynamic from 'next/dynamic';
 import AdminBlikkUsersMapping from './blikk/AdminBlikkUsersMapping';
+import Badge from '../../components/ui/Badge';
+import PageShell from '../../components/ui/PageShell';
+import { TabsList, TabsTrigger } from '../../components/ui/Tabs';
 
 const AdminContacts = dynamic(() => import('./contacts/AdminContacts'), { ssr: false });
 const AdminDepotUsage = dynamic(() => import('./depots/AdminDepotUsage'), { ssr: false });
@@ -18,170 +21,90 @@ const tabs: Array<{ id: AdminTab; label: string; summary: string }> = [
   { id: 'news', label: 'Nyheter', summary: 'Skapa och publicera dashboardnyheter' },
 ];
 
+function resolveAdminTab(fromQuery: string | null, fromStorage: string | null): AdminTab | null {
+  return [fromQuery, fromStorage].find((value): value is AdminTab => tabs.some((tabDef) => tabDef.id === value)) ?? null;
+}
+
 export default function AdminTabsClient() {
   const [tab, setTab] = React.useState<AdminTab>('users');
+  const [hasResolvedInitialTab, setHasResolvedInitialTab] = React.useState(false);
 
   React.useEffect(() => {
     if (typeof window === 'undefined') return;
     const params = new URLSearchParams(window.location.search);
     const fromQuery = params.get('tab');
     const fromStorage = window.localStorage.getItem('admin.activeTab');
-    const candidate = [fromQuery, fromStorage].find((value): value is AdminTab => tabs.some((tabDef) => tabDef.id === value));
+    const candidate = resolveAdminTab(fromQuery, fromStorage);
     if (candidate) setTab(candidate);
+    setHasResolvedInitialTab(true);
   }, []);
 
   React.useEffect(() => {
-    if (typeof window === 'undefined') return;
+    if (typeof window === 'undefined' || !hasResolvedInitialTab) return;
     window.localStorage.setItem('admin.activeTab', tab);
     const url = new URL(window.location.href);
     url.searchParams.set('tab', tab);
     window.history.replaceState({}, '', url.toString());
-  }, [tab]);
+  }, [hasResolvedInitialTab, tab]);
 
   const currentTab = tabs.find((item) => item.id === tab) || tabs[0];
 
   return (
-    <div style={pageStyle}>
-      <section style={heroStyle}>
-        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:16, flexWrap:'wrap' }}>
-          <div style={{ display:'grid', gap:8, maxWidth:760 }}>
-            <div style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' }}>
-              <span style={adminEyebrowStyle}>Admincenter</span>
-              <span style={adminChipStyle}>{tabs.length} arbetsytor</span>
-              <span style={adminChipStyle}>Aktiv: {currentTab.label}</span>
+    <PageShell className="max-w-[1460px] gap-5">
+      <section className="grid gap-4 rounded-[28px] border border-ui-border bg-[linear-gradient(180deg,#ffffff_0%,#f7fbff_100%)] p-5 shadow-[0_18px_46px_rgba(15,23,42,0.05)]">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="grid max-w-[760px] gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="accent" className="px-2.5 py-1 text-[11px] uppercase tracking-[0.35px]">
+                Admincenter
+              </Badge>
+              <Badge>{tabs.length} arbetsytor</Badge>
+              <Badge>Aktiv: {currentTab.label}</Badge>
             </div>
-            <div style={{ display:'grid', gap:6 }}>
-              <h1 style={{ margin:0, fontSize:34, lineHeight:1.04, color:'#0f172a' }}>Administration med bättre överblick</h1>
-              <p style={{ margin:0, fontSize:14, color:'#475569', lineHeight:1.55 }}>
+            <div className="grid gap-1.5">
+              <h1 className="m-0 text-[34px] leading-[1.04] text-slate-900">Administration med bättre överblick</h1>
+              <p className="m-0 text-sm leading-[1.55] text-slate-600">
                 Hantera användare, kontakter, depåer, Blikk-matchning och nyheter från en tydligare gemensam adminyta.
               </p>
             </div>
           </div>
-          <div style={{ display:'grid', gap:8, minWidth:220 }}>
-            <div style={adminQuickCardStyle}>
-              <span style={adminQuickLabelStyle}>Aktiv vy</span>
-              <strong style={adminQuickValueStyle}>{currentTab.label}</strong>
-              <span style={adminQuickMetaStyle}>{currentTab.summary}</span>
+
+          <div className="grid min-w-[220px] gap-2">
+            <div className="grid gap-1.5 rounded-[18px] border border-ui-border bg-white px-3.5 py-3">
+              <span className="text-[11px] font-extrabold uppercase tracking-[0.3px] text-slate-500">Aktiv vy</span>
+              <strong className="text-lg font-extrabold text-slate-900">{currentTab.label}</strong>
+              <span className="text-xs text-slate-500">{currentTab.summary}</span>
             </div>
           </div>
         </div>
 
-        <div style={tabRowStyle}>
-          {tabs.map((tabDef) => (
-            <button key={tabDef.id} onClick={()=>setTab(tabDef.id)} style={tabBtn(tab===tabDef.id)}>
-              <span style={{ fontWeight:700 }}>{tabDef.label}</span>
-              <span style={{ fontSize:12, opacity: tab===tabDef.id ? 0.92 : 0.74 }}>{tabDef.summary}</span>
-            </button>
-          ))}
-        </div>
+        <TabsList aria-label="Adminytor" className="gap-2.5">
+          {tabs.map((tabDef) => {
+            const active = tab === tabDef.id;
+
+            return (
+              <TabsTrigger
+                key={tabDef.id}
+                onClick={() => setTab(tabDef.id)}
+                active={active}
+                variant="card"
+                className="min-w-[168px]"
+              >
+                <span className="font-bold">{tabDef.label}</span>
+                <span className={active ? 'text-xs opacity-90' : 'text-xs opacity-75'}>{tabDef.summary}</span>
+              </TabsTrigger>
+            );
+          })}
+        </TabsList>
       </section>
-      <section style={contentPanelStyle}>
+
+      <section className="rounded-[30px] border border-slate-200 bg-[linear-gradient(180deg,#f8fbff_0%,#ffffff_100%)] shadow-[0_18px_44px_rgba(15,23,42,0.04)]">
         {tab==='users' && <AdminUsers />}
         {tab==='contacts' && <AdminContacts />}
         {tab==='depots' && <AdminDepotUsage />}
         {tab==='blikk' && <AdminBlikkUsersMapping />}
         {tab==='news' && <AdminNews />}
       </section>
-    </div>
+    </PageShell>
   );
 }
-
-const pageStyle: React.CSSProperties = {
-  display:'grid',
-  gap:20,
-  padding:'20px 20px 28px',
-  maxWidth: 1460,
-  margin:'0 auto'
-};
-
-const heroStyle: React.CSSProperties = {
-  border:'1px solid #dbe4ef',
-  borderRadius:28,
-  padding:'20px 20px 18px',
-  background:'linear-gradient(180deg, #ffffff 0%, #f7fbff 100%)',
-  boxShadow:'0 18px 46px rgba(15,23,42,0.05)',
-  display:'grid',
-  gap:16
-};
-
-const tabRowStyle: React.CSSProperties = {
-  display:'flex',
-  gap:10,
-  flexWrap:'wrap'
-};
-
-const contentPanelStyle: React.CSSProperties = {
-  border:'1px solid #e2e8f0',
-  borderRadius:30,
-  background:'linear-gradient(180deg, #f8fbff 0%, #ffffff 100%)',
-  boxShadow:'0 18px 44px rgba(15,23,42,0.04)'
-};
-
-const tabBtn = (active:boolean): React.CSSProperties => ({
-  display:'grid',
-  gap:4,
-  minWidth: 168,
-  padding:'12px 14px',
-  borderRadius:16,
-  cursor:'pointer',
-  fontSize:14,
-  textAlign:'left',
-  border:'1px solid '+(active?'#bfdbfe':'#dbe4ef'),
-  background: active? 'linear-gradient(180deg, #eff6ff 0%, #dbeafe 100%)':'#fff',
-  color: '#0f172a',
-  boxShadow: active ? '0 10px 24px rgba(37,99,235,0.12)' : 'none'
-});
-
-const adminEyebrowStyle: React.CSSProperties = {
-  display:'inline-flex',
-  alignItems:'center',
-  padding:'4px 10px',
-  borderRadius:999,
-  background:'#dbeafe',
-  border:'1px solid #bfdbfe',
-  color:'#2563eb',
-  fontSize:11,
-  fontWeight:800,
-  letterSpacing:0.35,
-  textTransform:'uppercase'
-};
-
-const adminChipStyle: React.CSSProperties = {
-  display:'inline-flex',
-  alignItems:'center',
-  padding:'4px 8px',
-  borderRadius:999,
-  background:'#f8fafc',
-  border:'1px solid #e2e8f0',
-  color:'#475569',
-  fontSize:12,
-  fontWeight:700
-};
-
-const adminQuickCardStyle: React.CSSProperties = {
-  display:'grid',
-  gap:5,
-  padding:'14px 14px 12px',
-  borderRadius:18,
-  border:'1px solid #dbe4ef',
-  background:'#fff'
-};
-
-const adminQuickLabelStyle: React.CSSProperties = {
-  fontSize:11,
-  fontWeight:800,
-  letterSpacing:0.3,
-  textTransform:'uppercase',
-  color:'#64748b'
-};
-
-const adminQuickValueStyle: React.CSSProperties = {
-  fontSize:18,
-  fontWeight:800,
-  color:'#0f172a'
-};
-
-const adminQuickMetaStyle: React.CSSProperties = {
-  fontSize:12,
-  color:'#64748b'
-};

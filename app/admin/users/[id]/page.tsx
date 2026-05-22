@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import { adminSupabase } from '../../../../lib/adminSupabase';
 import { getUserProfile } from '../../../../lib/getUserProfile';
+import PageShell from '../../../../components/ui/PageShell';
 import AdminUserProfileEditor from './AdminUserProfileEditor';
 import {
   asRecord,
@@ -22,7 +23,13 @@ export default async function AdminUserProfilePage({ params }: { params: { id: s
   }
 
   if (!adminSupabase) {
-    return <main style={pageStyle}><section style={cardStyle}>Service role saknas. Kan inte visa användarprofilen.</section></main>;
+    return (
+      <PageShell className="max-w-[1280px] gap-5">
+        <section className="rounded-[24px] border border-ui-border bg-white p-[22px] shadow-[0_12px_32px_rgba(15,23,42,0.04)]">
+          Service role saknas. Kan inte visa användarprofilen.
+        </section>
+      </PageShell>
+    );
   }
 
   const [
@@ -38,7 +45,13 @@ export default async function AdminUserProfilePage({ params }: { params: { id: s
   ]);
 
   if (profileError || detailError || sensitiveError) {
-    return <main style={pageStyle}><section style={cardStyle}>Kunde inte ladda användarprofilen.</section></main>;
+    return (
+      <PageShell className="max-w-[1280px] gap-5">
+        <section className="rounded-[24px] border border-ui-border bg-white p-[22px] shadow-[0_12px_32px_rgba(15,23,42,0.04)]">
+          Kunde inte ladda användarprofilen.
+        </section>
+      </PageShell>
+    );
   }
 
   const profile = attachSensitiveStatus(
@@ -58,19 +71,3 @@ export default async function AdminUserProfilePage({ params }: { params: { id: s
 
   return <AdminUserProfileEditor userId={params.id} authEmail={authEmail} profile={profile} sensitive={sensitive} />;
 }
-
-const pageStyle: React.CSSProperties = {
-  display: 'grid',
-  gap: 20,
-  padding: '24px 20px 36px',
-  maxWidth: 1280,
-  margin: '0 auto',
-};
-
-const cardStyle: React.CSSProperties = {
-  border: '1px solid #dbe4ef',
-  background: '#fff',
-  borderRadius: 24,
-  padding: 22,
-  boxShadow: '0 12px 32px rgba(15,23,42,0.04)',
-};

@@ -1,6 +1,13 @@
 "use client";
 import React, { useEffect, useMemo, useState } from 'react';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
+import Badge from '../../../components/ui/Badge';
+import EmptyState from '../../../components/ui/EmptyState';
+import ErrorState from '../../../components/ui/ErrorState';
+import Input from '../../../components/ui/Input';
+import LoadingState from '../../../components/ui/LoadingState';
+import PageShell from '../../../components/ui/PageShell';
+import Select from '../../../components/ui/Select';
 
 type UsageRow = {
   id: string;
@@ -120,90 +127,85 @@ export default function AdminDepotUsage() {
   const uniqueDepots = new Set(filtered.map((row) => row.depot_id)).size;
 
   return (
-    <main style={{ padding: 12, display:'grid', gap:20, maxWidth:1240, margin:'0 auto' }}>
-      <section style={{ border:'1px solid #dbe4ef', borderRadius:24, padding:20, background:'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)', boxShadow:'0 14px 36px rgba(15,23,42,0.04)', display:'grid', gap:16 }}>
-        <div style={{ display:'flex', justifyContent:'space-between', gap:16, alignItems:'flex-start', flexWrap:'wrap' }}>
-          <div style={{ display:'grid', gap:6, maxWidth:760 }}>
-            <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
-              <span style={eyebrowStyle}>Depå-uttag</span>
-              <span style={chipStyle}>{filtered.length} rader</span>
-              <span style={chipStyle}>{days} dagar</span>
+    <PageShell className="max-w-[1240px] gap-5 px-3 py-3 sm:px-4 lg:px-5">
+      <section className="grid gap-4 rounded-[24px] border border-ui-border bg-[linear-gradient(180deg,#ffffff_0%,#f8fbff_100%)] p-5 shadow-[0_14px_36px_rgba(15,23,42,0.04)]">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="grid max-w-[760px] gap-1.5">
+            <div className="flex flex-wrap gap-2">
+              <Badge variant="accent" className="px-2.5 py-1 text-[11px] uppercase tracking-[0.35px]">Depå-uttag</Badge>
+              <Badge>{filtered.length} rader</Badge>
+              <Badge>{days} dagar</Badge>
             </div>
-            <h1 style={{ margin:0, fontSize:28, color:'#0f172a' }}>Förbrukning och uttag i ett tydligare flöde</h1>
-            <p style={{ margin:0, fontSize:14, color:'#475569', lineHeight:1.55 }}>Följ senaste depåuttag, filtrera på projekt eller depå och få en snabb summering av förbrukningen.</p>
+            <h1 className="m-0 text-[28px] text-slate-900">Förbrukning och uttag i ett tydligare flöde</h1>
+            <p className="m-0 text-sm leading-[1.55] text-slate-600">Följ senaste depåuttag, filtrera på projekt eller depå och få en snabb summering av förbrukningen.</p>
           </div>
-          <div style={{ display:'flex', gap: 12, alignItems:'center', flexWrap:'wrap', width:'min(100%, 460px)' }}>
-        <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Sök ordernummer, projekt, depå eller nyckel" style={{ ...fieldStyle, minWidth:260 }} />
-        <label style={{ display:'flex', gap:8, alignItems:'center' }}>
-          Visa dagar:
-          <select value={days} onChange={e=>setDays(Number(e.target.value))} style={fieldStyle}>
-            <option value={7}>7</option>
-            <option value={14}>14</option>
-            <option value={30}>30</option>
-            <option value={90}>90</option>
-          </select>
-        </label>
+          <div className="flex w-full flex-wrap items-center gap-3 lg:w-[460px]">
+            <Input value={q} onChange={e=>setQ(e.target.value)} placeholder="Sök ordernummer, projekt, depå eller nyckel" className="min-w-[260px] flex-1" />
+            <label className="flex items-center gap-2 text-sm text-slate-700">
+              <span>Visa dagar:</span>
+              <Select value={days} onChange={e=>setDays(Number(e.target.value))} className="w-auto min-w-[92px]">
+                <option value={7}>7</option>
+                <option value={14}>14</option>
+                <option value={30}>30</option>
+                <option value={90}>90</option>
+              </Select>
+            </label>
           </div>
         </div>
 
-        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(160px, 1fr))', gap:8 }}>
-          <div style={miniStatStyle}><span style={miniLabelStyle}>Säckar</span><strong style={miniValueStyle}>{totalBags}</strong></div>
-          <div style={miniStatStyle}><span style={miniLabelStyle}>Projekt</span><strong style={miniValueStyle}>{uniqueProjects}</strong></div>
-          <div style={miniStatStyle}><span style={miniLabelStyle}>Depåer</span><strong style={miniValueStyle}>{uniqueDepots}</strong></div>
+        <div className="grid gap-2 [grid-template-columns:repeat(auto-fit,minmax(160px,1fr))]">
+          <div className="grid gap-1 rounded-2xl border border-ui-border bg-white px-3 py-2.5">
+            <span className="text-[11px] font-extrabold uppercase tracking-[0.3px] text-slate-500">Säckar</span>
+            <strong className="text-xl font-extrabold text-slate-900">{totalBags}</strong>
+          </div>
+          <div className="grid gap-1 rounded-2xl border border-ui-border bg-white px-3 py-2.5">
+            <span className="text-[11px] font-extrabold uppercase tracking-[0.3px] text-slate-500">Projekt</span>
+            <strong className="text-xl font-extrabold text-slate-900">{uniqueProjects}</strong>
+          </div>
+          <div className="grid gap-1 rounded-2xl border border-ui-border bg-white px-3 py-2.5">
+            <span className="text-[11px] font-extrabold uppercase tracking-[0.3px] text-slate-500">Depåer</span>
+            <strong className="text-xl font-extrabold text-slate-900">{uniqueDepots}</strong>
+          </div>
         </div>
       </section>
-      {error && <div style={{ color:'#b91c1c' }}>Fel: {error}</div>}
+      {error && <ErrorState title="Kunde inte läsa depåuttag" message={error} />}
       {loading ? (
-        <div>Laddar…</div>
+        <LoadingState label="Laddar depåuttag" description={`Hämtar poster för de senaste ${days} dagarna.`} />
       ) : (
-        <div style={{ display:'grid', gap: 10 }}>
+        <div className="grid gap-2.5">
           {filtered.map(r => (
-            <article key={r.id} style={usageCardStyle}>
-              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:12, flexWrap:'wrap' }}>
-                <div style={{ display:'grid', gap:4, minWidth:0, flex:'1 1 220px' }}>
-                  <div style={{ fontWeight:700, color:'#0f172a' }}>{depotName(r.depot_id)}</div>
-                  <div style={{ fontSize:12, color:'#6b7280' }}>{new Date(r.created_at).toLocaleString('sv-SE')}</div>
+            <article key={r.id} className="grid gap-3 rounded-[18px] border border-ui-border bg-white p-[14px] shadow-[0_8px_20px_rgba(15,23,42,0.03)]">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="grid min-w-0 flex-1 basis-[220px] gap-1">
+                  <div className="font-bold text-slate-900">{depotName(r.depot_id)}</div>
+                  <div className="text-xs text-slate-500">{new Date(r.created_at).toLocaleString('sv-SE')}</div>
                 </div>
-                <div style={bagsBadgeStyle}>{r.bags_used} säckar</div>
+                <Badge variant="accent" className="justify-center whitespace-nowrap px-2.5 py-2 text-[13px] font-extrabold text-blue-700">{r.bags_used} säckar</Badge>
               </div>
 
-              <div style={usageMetaGridStyle}>
-                <div style={usageMetaCardStyle}>
-                  <span style={usageMetaLabelStyle}>Order</span>
-                  <strong style={usageMetaValueStyle}>{r.order_number ? `#${r.order_number}` : projectLabel(r.project_id)}</strong>
-                  <span style={usageMetaSubtleStyle}>Projekt-ID: {r.project_id}</span>
+              <div className="grid gap-2.5 [grid-template-columns:repeat(auto-fit,minmax(180px,1fr))]">
+                <div className="min-w-0 grid gap-1 rounded-[14px] border border-slate-200 bg-slate-50 px-3 py-2.5">
+                  <span className="text-[11px] font-extrabold uppercase tracking-[0.3px] text-slate-500">Order</span>
+                  <strong className="min-w-0 break-all text-sm font-bold text-slate-900">{r.order_number ? `#${r.order_number}` : projectLabel(r.project_id)}</strong>
+                  <span className="break-words text-xs text-slate-500">Projekt-ID: {r.project_id}</span>
                 </div>
-                <div style={usageMetaCardStyle}>
-                  <span style={usageMetaLabelStyle}>Installationsdatum</span>
-                  <strong style={usageMetaValueStyle}>{r.installation_date || '—'}</strong>
+                <div className="min-w-0 grid gap-1 rounded-[14px] border border-slate-200 bg-slate-50 px-3 py-2.5">
+                  <span className="text-[11px] font-extrabold uppercase tracking-[0.3px] text-slate-500">Installationsdatum</span>
+                  <strong className="min-w-0 break-all text-sm font-bold text-slate-900">{r.installation_date || '—'}</strong>
                 </div>
-                <div style={usageMetaCardStyle}>
-                  <span style={usageMetaLabelStyle}>Källa</span>
-                  <strong style={usageMetaValueStyle}>{r.source_key || '—'}</strong>
+                <div className="min-w-0 grid gap-1 rounded-[14px] border border-slate-200 bg-slate-50 px-3 py-2.5">
+                  <span className="text-[11px] font-extrabold uppercase tracking-[0.3px] text-slate-500">Källa</span>
+                  <strong className="min-w-0 break-all text-sm font-bold text-slate-900">{r.source_key || '—'}</strong>
                 </div>
               </div>
             </article>
           ))}
-          {filtered.length === 0 && <div style={{ color:'#6b7280' }}>Inga uttag funna.</div>}
+          {filtered.length === 0 && <EmptyState title="Inga uttag funna" description="Prova fler dagar eller en bredare sökning för att se fler poster." />}
         </div>
       )}
-    </main>
+    </PageShell>
   );
 }
-
-const eyebrowStyle: React.CSSProperties = { display:'inline-flex', alignItems:'center', padding:'4px 10px', borderRadius:999, background:'#dbeafe', border:'1px solid #bfdbfe', color:'#2563eb', fontSize:11, fontWeight:800, letterSpacing:0.35, textTransform:'uppercase' };
-const chipStyle: React.CSSProperties = { display:'inline-flex', alignItems:'center', padding:'4px 8px', borderRadius:999, background:'#f8fafc', border:'1px solid #e2e8f0', color:'#475569', fontSize:12, fontWeight:700 };
-const fieldStyle: React.CSSProperties = { padding:'8px 10px', border:'1px solid #d1d5db', borderRadius:10, fontSize:14, outline:'none', background:'#fff' };
-const miniStatStyle: React.CSSProperties = { display:'grid', gap:5, padding:'12px 12px 10px', borderRadius:16, border:'1px solid #dbe4ef', background:'#fff' };
-const miniLabelStyle: React.CSSProperties = { fontSize:11, fontWeight:800, letterSpacing:0.3, textTransform:'uppercase', color:'#64748b' };
-const miniValueStyle: React.CSSProperties = { fontSize:20, fontWeight:800, color:'#0f172a' };
-const usageCardStyle: React.CSSProperties = { display:'grid', gap:12, padding:'14px 14px 12px', border:'1px solid #dbe4ef', borderRadius:18, background:'#fff', boxShadow:'0 8px 20px rgba(15,23,42,0.03)' };
-const bagsBadgeStyle: React.CSSProperties = { display:'inline-flex', alignItems:'center', justifyContent:'center', padding:'8px 10px', borderRadius:999, background:'#eff6ff', border:'1px solid #bfdbfe', color:'#1d4ed8', fontSize:13, fontWeight:800, whiteSpace:'nowrap' };
-const usageMetaGridStyle: React.CSSProperties = { display:'grid', gap:10, gridTemplateColumns:'repeat(auto-fit, minmax(180px, 1fr))' };
-const usageMetaCardStyle: React.CSSProperties = { display:'grid', gap:4, padding:'10px 12px', border:'1px solid #e2e8f0', borderRadius:14, background:'#f8fbff' };
-const usageMetaLabelStyle: React.CSSProperties = { fontSize:11, fontWeight:800, letterSpacing:0.3, textTransform:'uppercase', color:'#64748b' };
-const usageMetaValueStyle: React.CSSProperties = { fontSize:14, fontWeight:700, color:'#0f172a', wordBreak:'break-word' };
-const usageMetaSubtleStyle: React.CSSProperties = { fontSize:12, color:'#64748b', wordBreak:'break-word' };
 
 function asString(value: unknown): string | null {
   if (typeof value !== 'string') return null;

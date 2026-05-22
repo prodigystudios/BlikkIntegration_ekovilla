@@ -2,6 +2,12 @@
 
 import React from 'react';
 import Link from 'next/link';
+import Badge from '../../../../components/ui/Badge';
+import Button from '../../../../components/ui/Button';
+import Input from '../../../../components/ui/Input';
+import PageShell from '../../../../components/ui/PageShell';
+import Textarea from '../../../../components/ui/Textarea';
+import { cn } from '../../../../lib/shared/cn';
 import type { EmployeeProfile, EmployeeSensitiveDetails } from '../../../../lib/profileDetails';
 
 interface AdminUserProfileEditorProps {
@@ -135,402 +141,158 @@ export default function AdminUserProfileEditor({ userId, authEmail, profile, sen
   }
 
   return (
-    <main style={pageStyle}>
-      <section style={heroStyle}>
-        <div style={{ display: 'grid', gap: 12 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-              <span style={eyebrowStyle}>Adminprofil</span>
-              <span style={chipStyle}>Roll: {profile.role}</span>
-              {profile.tags.length > 0 && <span style={chipStyle}>Taggar: {profile.tags.join(', ')}</span>}
-              <span style={mutedChipStyle}>{authEmail}</span>
-            </div>
-            <Link href="/admin?tab=users" style={linkStyle}>Tillbaka till användare</Link>
+    <PageShell className="max-w-[1260px] gap-4 px-3 py-3 sm:px-4 lg:px-5">
+      <section className="grid gap-3 rounded-[22px] border border-ui-border bg-[linear-gradient(180deg,#ffffff_0%,#fbfdff_100%)] p-5 shadow-[0_10px_28px_rgba(15,23,42,0.04)]">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="accent" className="px-2.5 py-1 text-[11px] uppercase tracking-[0.4px]">Adminprofil</Badge>
+            <Badge>Roll: {profile.role}</Badge>
+            {profile.tags.length > 0 && <Badge>Taggar: {profile.tags.join(', ')}</Badge>}
+            <Badge className="bg-white">{authEmail}</Badge>
+          </div>
+          <Link
+            href="/admin?tab=users"
+            className="inline-flex min-h-10 items-center justify-center rounded-xl border border-slate-900 bg-slate-900 px-4 text-sm font-semibold text-white transition-colors hover:bg-slate-950"
+          >
+            Tillbaka till användare
+          </Link>
+        </div>
+
+        <div className="grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(260px,1fr))]">
+          <div className="grid max-w-[720px] gap-2">
+            <h1 className="m-0 text-[28px] leading-[1.08] tracking-[-0.5px] text-slate-900">{form.full_name || authEmail}</h1>
+            <p className="m-0 text-sm leading-[1.55] text-slate-600">
+              Hantera vardagsinfo, anställningsdata och känsliga uppgifter i en mer sammanhållen adminvy med tydligare prioritering mellan sektionerna.
+            </p>
           </div>
 
-          <div style={heroContentStyle}>
-            <div style={{ display: 'grid', gap: 8, maxWidth: 720 }}>
-              <h1 style={heroTitleStyle}>{form.full_name || authEmail}</h1>
-              <p style={heroTextStyle}>
-                Hantera vardagsinfo, anställningsdata och känsliga uppgifter i en mer sammanhållen adminvy med tydligare prioritering mellan sektionerna.
-              </p>
-            </div>
-
-            <div style={heroMetaGridStyle}>
-              <StatusTile
-                label="Kontaktdata"
-                value={form.phone || form.private_email ? 'Kompletterad' : 'Behöver ses över'}
-                tone={form.phone || form.private_email ? 'good' : 'neutral'}
-              />
-              <StatusTile
-                label="Anställning"
-                value={form.job_title || form.department || form.employment_type ? 'Registrerad' : 'Saknar uppgifter'}
-                tone={form.job_title || form.department || form.employment_type ? 'good' : 'neutral'}
-              />
-              <StatusTile
-                label="Känsliga fält"
-                value={form.personal_identity_number || form.bank_account_number ? 'Ifyllda' : 'Ej kompletta'}
-                tone={form.personal_identity_number || form.bank_account_number ? 'good' : 'neutral'}
-              />
-            </div>
+          <div className="grid content-start gap-2 [grid-template-columns:repeat(auto-fit,minmax(150px,1fr))]">
+            <StatusTile
+              label="Kontaktdata"
+              value={form.phone || form.private_email ? 'Kompletterad' : 'Behöver ses över'}
+              tone={form.phone || form.private_email ? 'good' : 'neutral'}
+            />
+            <StatusTile
+              label="Anställning"
+              value={form.job_title || form.department || form.employment_type ? 'Registrerad' : 'Saknar uppgifter'}
+              tone={form.job_title || form.department || form.employment_type ? 'good' : 'neutral'}
+            />
+            <StatusTile
+              label="Känsliga fält"
+              value={form.personal_identity_number || form.bank_account_number ? 'Ifyllda' : 'Ej kompletta'}
+              tone={form.personal_identity_number || form.bank_account_number ? 'good' : 'neutral'}
+            />
           </div>
         </div>
       </section>
 
-      <div style={{ display: 'grid', gap: 10 }}>
-        {error && <section style={errorMessageStyle}>{error}</section>}
-        {success && <section style={successMessageStyle}>{success}</section>}
+      <div className="grid gap-2.5">
+        {error && <section className="rounded-[14px] border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700">{error}</section>}
+        {success && <section className="rounded-[14px] border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-sm text-emerald-700">{success}</section>}
       </div>
 
-      <div style={layoutGridStyle}>
-        <section style={{ ...mainCardStyle, display: 'grid', gap: 18 }}>
-          <div style={sectionHeaderStyle}>
-            <div style={{ display: 'grid', gap: 4 }}>
-              <span style={sectionEyebrowStyle}>Daglig profil</span>
-              <h2 style={sectionTitleStyle}>Kontakt och vardagsinfo</h2>
+      <div className="grid items-start gap-4 [grid-template-columns:repeat(auto-fit,minmax(320px,1fr))]">
+        <section className="grid gap-[18px] rounded-[20px] border border-ui-border bg-white p-[18px] shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
+          <div className="grid gap-1.5">
+            <div className="grid gap-1">
+              <span className="text-[11px] font-extrabold uppercase tracking-[0.45px] text-slate-500">Daglig profil</span>
+              <h2 className="m-0 text-[19px] tracking-[-0.2px] text-slate-900">Kontakt och vardagsinfo</h2>
             </div>
-            <p style={sectionTextStyle}>Uppgifter som ofta används i vardagen och som även den anställde delvis kan uppdatera själv.</p>
+            <p className="m-0 text-[13px] leading-[1.5] text-slate-600">Uppgifter som ofta används i vardagen och som även den anställde delvis kan uppdatera själv.</p>
           </div>
-          <div style={formGridStyle}>
-            <Field label="Namn"><input value={form.full_name} onChange={(event) => updateField('full_name', event.target.value)} style={inputStyle} /></Field>
-            <Field label="Telefon"><input value={form.phone} onChange={(event) => updateField('phone', event.target.value)} style={inputStyle} /></Field>
-            <Field label="Privat e-post"><input value={form.private_email} onChange={(event) => updateField('private_email', event.target.value)} style={inputStyle} /></Field>
-            <Field label="Inloggningsmail"><input value={authEmail} readOnly style={readOnlyInputStyle} /></Field>
-            <Field label="Adress"><input value={form.address_line1} onChange={(event) => updateField('address_line1', event.target.value)} style={inputStyle} /></Field>
-            <Field label="Postnummer"><input value={form.postal_code} onChange={(event) => updateField('postal_code', event.target.value)} style={inputStyle} /></Field>
-            <Field label="Ort"><input value={form.city} onChange={(event) => updateField('city', event.target.value)} style={inputStyle} /></Field>
-            <Field label="Kontakt vid nödfall"><input value={form.emergency_contact_name} onChange={(event) => updateField('emergency_contact_name', event.target.value)} style={inputStyle} /></Field>
-            <Field label="Telefon vid nödfall"><input value={form.emergency_contact_phone} onChange={(event) => updateField('emergency_contact_phone', event.target.value)} style={inputStyle} /></Field>
-            <Field label="Klädstorlek"><input value={form.clothing_size} onChange={(event) => updateField('clothing_size', event.target.value)} style={inputStyle} /></Field>
+          <div className="grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(210px,1fr))]">
+            <Field label="Namn"><Input value={form.full_name} onChange={(event) => updateField('full_name', event.target.value)} /></Field>
+            <Field label="Telefon"><Input value={form.phone} onChange={(event) => updateField('phone', event.target.value)} /></Field>
+            <Field label="Privat e-post"><Input value={form.private_email} onChange={(event) => updateField('private_email', event.target.value)} /></Field>
+            <Field label="Inloggningsmail"><Input value={authEmail} readOnly className="bg-slate-50 text-slate-500" /></Field>
+            <Field label="Adress"><Input value={form.address_line1} onChange={(event) => updateField('address_line1', event.target.value)} /></Field>
+            <Field label="Postnummer"><Input value={form.postal_code} onChange={(event) => updateField('postal_code', event.target.value)} /></Field>
+            <Field label="Ort"><Input value={form.city} onChange={(event) => updateField('city', event.target.value)} /></Field>
+            <Field label="Kontakt vid nödfall"><Input value={form.emergency_contact_name} onChange={(event) => updateField('emergency_contact_name', event.target.value)} /></Field>
+            <Field label="Telefon vid nödfall"><Input value={form.emergency_contact_phone} onChange={(event) => updateField('emergency_contact_phone', event.target.value)} /></Field>
+            <Field label="Klädstorlek"><Input value={form.clothing_size} onChange={(event) => updateField('clothing_size', event.target.value)} /></Field>
           </div>
-          <div style={cardFooterStyle}>
-            <div style={{ minHeight: 18 }} />
-            <button type="button" onClick={() => saveSection('contact')} disabled={savingContact} style={primaryButtonStyle}>{savingContact ? 'Sparar…' : 'Spara kontaktdel'}</button>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="min-h-[18px]" />
+            <Button type="button" onClick={() => saveSection('contact')} disabled={savingContact} variant="primary">
+              {savingContact ? 'Sparar…' : 'Spara kontaktdel'}
+            </Button>
           </div>
         </section>
 
-        <div style={sideColumnStyle}>
-          <section style={{ ...sideCardStyle, display: 'grid', gap: 16 }}>
-            <div style={sectionHeaderStyle}>
-              <div style={{ display: 'grid', gap: 4 }}>
-                <span style={sectionEyebrowStyle}>Intern personaldata</span>
-                <h2 style={sectionTitleStyle}>Anställningsuppgifter</h2>
+        <div className="grid content-start gap-4">
+          <section className="grid gap-4 rounded-[20px] border border-ui-border bg-white p-4 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
+            <div className="grid gap-1.5">
+              <div className="grid gap-1">
+                <span className="text-[11px] font-extrabold uppercase tracking-[0.45px] text-slate-500">Intern personaldata</span>
+                <h2 className="m-0 text-[19px] tracking-[-0.2px] text-slate-900">Anställningsuppgifter</h2>
               </div>
-              <p style={sectionTextStyle}>HR-liknande data och interna anteckningar som admin ansvarar för.</p>
+              <p className="m-0 text-[13px] leading-[1.5] text-slate-600">HR-liknande data och interna anteckningar som admin ansvarar för.</p>
             </div>
-            <div style={compactFormGridStyle}>
-              <Field label="Titel"><input value={form.job_title} onChange={(event) => updateField('job_title', event.target.value)} style={inputStyle} /></Field>
-              <Field label="Avdelning"><input value={form.department} onChange={(event) => updateField('department', event.target.value)} style={inputStyle} /></Field>
-              <Field label="Ansvarig chef"><input value={form.manager_name} onChange={(event) => updateField('manager_name', event.target.value)} style={inputStyle} /></Field>
-              <Field label="Anställningsstart"><input value={form.employment_start_date} onChange={(event) => updateField('employment_start_date', event.target.value)} placeholder="YYYY-MM-DD" style={inputStyle} /></Field>
-              <Field label="Anställningsform"><input value={form.employment_type} onChange={(event) => updateField('employment_type', event.target.value)} style={inputStyle} /></Field>
+            <div className="grid gap-2.5 [grid-template-columns:repeat(auto-fit,minmax(180px,1fr))]">
+              <Field label="Titel"><Input value={form.job_title} onChange={(event) => updateField('job_title', event.target.value)} /></Field>
+              <Field label="Avdelning"><Input value={form.department} onChange={(event) => updateField('department', event.target.value)} /></Field>
+              <Field label="Ansvarig chef"><Input value={form.manager_name} onChange={(event) => updateField('manager_name', event.target.value)} /></Field>
+              <Field label="Anställningsstart"><Input value={form.employment_start_date} onChange={(event) => updateField('employment_start_date', event.target.value)} placeholder="YYYY-MM-DD" /></Field>
+              <Field label="Anställningsform"><Input value={form.employment_type} onChange={(event) => updateField('employment_type', event.target.value)} /></Field>
             </div>
-            <Field label="Certifikat och behörigheter"><textarea value={form.certifications} onChange={(event) => updateField('certifications', event.target.value)} style={textareaStyle} /></Field>
-            <Field label="Adminanteckningar"><textarea value={form.admin_notes} onChange={(event) => updateField('admin_notes', event.target.value)} style={textareaStyle} /></Field>
-            <div style={cardFooterStyle}>
-              <div style={{ minHeight: 18 }} />
-              <button type="button" onClick={() => saveSection('employment')} disabled={savingEmployment} style={primaryButtonStyle}>{savingEmployment ? 'Sparar…' : 'Spara anställningsdel'}</button>
+            <Field label="Certifikat och behörigheter"><Textarea value={form.certifications} onChange={(event) => updateField('certifications', event.target.value)} className="min-h-[104px] shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]" /></Field>
+            <Field label="Adminanteckningar"><Textarea value={form.admin_notes} onChange={(event) => updateField('admin_notes', event.target.value)} className="min-h-[104px] shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]" /></Field>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="min-h-[18px]" />
+              <Button type="button" onClick={() => saveSection('employment')} disabled={savingEmployment} variant="primary">
+                {savingEmployment ? 'Sparar…' : 'Spara anställningsdel'}
+              </Button>
             </div>
           </section>
 
-          <section style={{ ...sideCardStyle, display: 'grid', gap: 16 }}>
-            <div style={sectionHeaderStyle}>
-              <div style={{ display: 'grid', gap: 4 }}>
-                <span style={sectionEyebrowStyle}>Separat säker del</span>
-                <h2 style={sectionTitleStyle}>Känsliga uppgifter</h2>
+          <section className="grid gap-4 rounded-[20px] border border-ui-border bg-white p-4 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
+            <div className="grid gap-1.5">
+              <div className="grid gap-1">
+                <span className="text-[11px] font-extrabold uppercase tracking-[0.45px] text-slate-500">Separat säker del</span>
+                <h2 className="m-0 text-[19px] tracking-[-0.2px] text-slate-900">Känsliga uppgifter</h2>
               </div>
-              <p style={sectionTextStyle}>Full redigering för admin. De här fälten ligger i separat säker modell och visas maskerat för användaren själv.</p>
+              <p className="m-0 text-[13px] leading-[1.5] text-slate-600">Full redigering för admin. De här fälten ligger i separat säker modell och visas maskerat för användaren själv.</p>
             </div>
-            <div style={compactFormGridStyle}>
-              <Field label="Personnummer"><input value={form.personal_identity_number} onChange={(event) => updateField('personal_identity_number', event.target.value)} style={inputStyle} /></Field>
-              <Field label="Kontonamn"><input value={form.bank_account_name} onChange={(event) => updateField('bank_account_name', event.target.value)} style={inputStyle} /></Field>
-              <Field label="Clearingnummer"><input value={form.bank_clearing_number} onChange={(event) => updateField('bank_clearing_number', event.target.value)} style={inputStyle} /></Field>
-              <Field label="Kontonummer"><input value={form.bank_account_number} onChange={(event) => updateField('bank_account_number', event.target.value)} style={inputStyle} /></Field>
+            <div className="grid gap-2.5 [grid-template-columns:repeat(auto-fit,minmax(180px,1fr))]">
+              <Field label="Personnummer"><Input value={form.personal_identity_number} onChange={(event) => updateField('personal_identity_number', event.target.value)} /></Field>
+              <Field label="Kontonamn"><Input value={form.bank_account_name} onChange={(event) => updateField('bank_account_name', event.target.value)} /></Field>
+              <Field label="Clearingnummer"><Input value={form.bank_clearing_number} onChange={(event) => updateField('bank_clearing_number', event.target.value)} /></Field>
+              <Field label="Kontonummer"><Input value={form.bank_account_number} onChange={(event) => updateField('bank_account_number', event.target.value)} /></Field>
             </div>
-            <div style={cardFooterStyle}>
-              <div style={{ minHeight: 18 }} />
-              <button type="button" onClick={() => saveSection('sensitive')} disabled={savingSensitive} style={secondaryButtonStyle}>{savingSensitive ? 'Sparar…' : 'Spara känsliga uppgifter'}</button>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="min-h-[18px]" />
+              <Button
+                type="button"
+                onClick={() => saveSection('sensitive')}
+                disabled={savingSensitive}
+                variant="primary"
+                className="border-emerald-800 bg-emerald-800 text-white hover:bg-emerald-900"
+              >
+                {savingSensitive ? 'Sparar…' : 'Spara känsliga uppgifter'}
+              </Button>
             </div>
           </section>
         </div>
       </div>
-    </main>
+    </PageShell>
   );
 }
 
 function StatusTile({ label, value, tone }: { label: string; value: string; tone: 'good' | 'neutral' }) {
   return (
-    <div style={{ ...statusTileStyle, borderColor: tone === 'good' ? '#bbf7d0' : '#dbe4ef', background: tone === 'good' ? '#f0fdf4' : '#ffffff' }}>
-      <span style={statusTileLabelStyle}>{label}</span>
-      <strong style={statusTileValueStyle}>{value}</strong>
+    <div className={cn('grid min-h-[76px] gap-1 rounded-2xl border px-3 py-2.5', tone === 'good' ? 'border-emerald-200 bg-emerald-50' : 'border-ui-border bg-white')}>
+      <span className="text-[11px] font-extrabold uppercase tracking-[0.35px] text-slate-500">{label}</span>
+      <strong className="text-[15px] font-bold text-slate-900">{value}</strong>
     </div>
   );
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <label style={fieldWrapperStyle}>
-      <span style={fieldLabelStyle}>{label}</span>
+    <label className="grid gap-1.5">
+      <span className="text-[11px] font-bold uppercase tracking-[0.45px] text-slate-500">{label}</span>
       {children}
     </label>
   );
 }
-
-const pageStyle: React.CSSProperties = {
-  display: 'grid',
-  gap: 16,
-  padding: '18px 18px 30px',
-  maxWidth: 1260,
-  margin: '0 auto',
-};
-
-const heroStyle: React.CSSProperties = {
-  border: '1px solid #dde7f1',
-  borderRadius: 22,
-  padding: '18px 20px',
-  background: 'linear-gradient(180deg, #ffffff 0%, #fbfdff 100%)',
-  boxShadow: '0 10px 28px rgba(15,23,42,0.04)',
-};
-
-const heroContentStyle: React.CSSProperties = {
-  display: 'grid',
-  gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
-  gap: 14,
-};
-
-const heroTitleStyle: React.CSSProperties = {
-  margin: 0,
-  fontSize: 28,
-  lineHeight: 1.08,
-  letterSpacing: -0.5,
-  color: '#0f172a',
-};
-
-const heroTextStyle: React.CSSProperties = {
-  margin: 0,
-  color: '#526275',
-  fontSize: 14,
-  lineHeight: 1.55,
-};
-
-const heroMetaGridStyle: React.CSSProperties = {
-  display: 'grid',
-  gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
-  gap: 10,
-  alignContent: 'start',
-};
-
-const layoutGridStyle: React.CSSProperties = {
-  display: 'grid',
-  gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
-  gap: 16,
-  alignItems: 'start',
-};
-
-const mainCardStyle: React.CSSProperties = {
-  border: '1px solid #dbe4ef',
-  background: '#fff',
-  borderRadius: 20,
-  padding: 18,
-  boxShadow: '0 10px 24px rgba(15,23,42,0.04)',
-};
-
-const sideColumnStyle: React.CSSProperties = {
-  display: 'grid',
-  gap: 16,
-  alignContent: 'start',
-};
-
-const sideCardStyle: React.CSSProperties = {
-  ...mainCardStyle,
-  padding: 16,
-};
-
-const sectionTitleStyle: React.CSSProperties = {
-  margin: 0,
-  fontSize: 19,
-  color: '#0f172a',
-  letterSpacing: -0.2,
-};
-
-const sectionTextStyle: React.CSSProperties = {
-  margin: 0,
-  color: '#5f6f81',
-  fontSize: 13,
-  lineHeight: 1.5,
-};
-
-const eyebrowStyle: React.CSSProperties = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  padding: '4px 9px',
-  borderRadius: 999,
-  background: '#dbeafe',
-  border: '1px solid #bfdbfe',
-  color: '#2563eb',
-  fontSize: 11,
-  fontWeight: 800,
-  letterSpacing: 0.4,
-  textTransform: 'uppercase',
-};
-
-const chipStyle: React.CSSProperties = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  padding: '4px 8px',
-  borderRadius: 999,
-  background: '#f8fafc',
-  border: '1px solid #e2e8f0',
-  color: '#475569',
-  fontSize: 11,
-  fontWeight: 700,
-};
-
-const mutedChipStyle: React.CSSProperties = {
-  ...chipStyle,
-  background: '#ffffff',
-};
-
-const linkStyle: React.CSSProperties = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  padding: '10px 13px',
-  borderRadius: 10,
-  background: '#0f172a',
-  color: '#fff',
-  fontSize: 13,
-  fontWeight: 700,
-  textDecoration: 'none',
-};
-
-const messageStyle: React.CSSProperties = {
-  border: '1px solid',
-  borderRadius: 14,
-  padding: '11px 13px',
-  fontSize: 13,
-};
-
-const errorMessageStyle: React.CSSProperties = {
-  ...messageStyle,
-  borderColor: '#fecaca',
-  color: '#b91c1c',
-  background: '#fef2f2',
-};
-
-const successMessageStyle: React.CSSProperties = {
-  ...messageStyle,
-  borderColor: '#bbf7d0',
-  color: '#166534',
-  background: '#ecfdf5',
-};
-
-const formGridStyle: React.CSSProperties = {
-  display: 'grid',
-  gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))',
-  gap: 12,
-};
-
-const compactFormGridStyle: React.CSSProperties = {
-  display: 'grid',
-  gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-  gap: 10,
-};
-
-const fieldWrapperStyle: React.CSSProperties = {
-  display: 'grid',
-  gap: 5,
-};
-
-const fieldLabelStyle: React.CSSProperties = {
-  fontSize: 11,
-  fontWeight: 700,
-  textTransform: 'uppercase',
-  letterSpacing: 0.45,
-  color: '#64748b',
-};
-
-const sectionHeaderStyle: React.CSSProperties = {
-  display: 'grid',
-  gap: 6,
-};
-
-const sectionEyebrowStyle: React.CSSProperties = {
-  fontSize: 11,
-  fontWeight: 800,
-  letterSpacing: 0.45,
-  textTransform: 'uppercase',
-  color: '#64748b',
-};
-
-const inputStyle: React.CSSProperties = {
-  border: '1px solid #d7e0ea',
-  borderRadius: 10,
-  padding: '10px 12px',
-  fontSize: 14,
-  color: '#0f172a',
-  background: '#fff',
-  boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.7)',
-};
-
-const readOnlyInputStyle: React.CSSProperties = {
-  ...inputStyle,
-  background: '#f8fafc',
-  color: '#64748b',
-};
-
-const textareaStyle: React.CSSProperties = {
-  ...inputStyle,
-  minHeight: 104,
-  resize: 'vertical',
-};
-
-const primaryButtonStyle: React.CSSProperties = {
-  padding: '10px 15px',
-  borderRadius: 10,
-  border: '1px solid #0f172a',
-  background: '#0f172a',
-  color: '#fff',
-  fontSize: 13,
-  fontWeight: 700,
-  cursor: 'pointer',
-  boxShadow: '0 8px 18px rgba(15,23,42,0.12)',
-};
-
-const secondaryButtonStyle: React.CSSProperties = {
-  ...primaryButtonStyle,
-  background: '#14532d',
-  border: '1px solid #14532d',
-  boxShadow: '0 8px 18px rgba(20,83,45,0.12)',
-};
-
-const cardFooterStyle: React.CSSProperties = {
-  display: 'flex',
-  justifyContent: 'space-between',
-  alignItems: 'center',
-  gap: 12,
-  flexWrap: 'wrap',
-};
-
-const statusTileStyle: React.CSSProperties = {
-  display: 'grid',
-  gap: 5,
-  border: '1px solid',
-  borderRadius: 16,
-  padding: '11px 12px 10px',
-  minHeight: 76,
-};
-
-const statusTileLabelStyle: React.CSSProperties = {
-  fontSize: 11,
-  fontWeight: 800,
-  letterSpacing: 0.35,
-  textTransform: 'uppercase',
-  color: '#64748b',
-};
-
-const statusTileValueStyle: React.CSSProperties = {
-  fontSize: 15,
-  fontWeight: 700,
-  color: '#0f172a',
-};

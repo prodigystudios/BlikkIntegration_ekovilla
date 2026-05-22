@@ -1,6 +1,11 @@
 "use client";
 
 import React, { useState } from 'react';
+import Badge from '../../../components/ui/Badge';
+import Button from '../../../components/ui/Button';
+import Input from '../../../components/ui/Input';
+import PageShell from '../../../components/ui/PageShell';
+import Textarea from '../../../components/ui/Textarea';
 
 export default function AdminNews() {
   const [headline, setHeadline] = useState('');
@@ -43,133 +48,111 @@ export default function AdminNews() {
     }
   }
 
+  const headlineLength = headline.trim().length;
+  const bodyLength = body.trim().length;
+  const statusLabel = status === 'saved' ? 'Sparad' : status === 'saving' ? 'Sparar…' : status === 'error' ? 'Fel' : 'Redigeras';
+
   return (
-    <main style={{ padding: 12, display: 'grid', gap: 20, maxWidth: 1240, margin: '0 auto' }}>
-      <section style={{ border: '1px solid #dbe4ef', background: 'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)', borderRadius: 24, padding: 20, display: 'grid', gap: 16, boxShadow:'0 14px 36px rgba(15,23,42,0.04)' }}>
-        <div style={{ display:'flex', justifyContent:'space-between', gap:16, flexWrap:'wrap', alignItems:'flex-start' }}>
-          <div style={{ display:'grid', gap:6, maxWidth:700 }}>
-            <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
-              <span style={eyebrowStyle}>Nyheter</span>
-              <span style={chipStyle}>{headline.trim().length} tecken i rubrik</span>
-              <span style={chipStyle}>{body.trim().length} tecken i text</span>
+    <PageShell className="max-w-[1240px] gap-5 px-3 py-3 sm:px-4 lg:px-5">
+      <section className="grid gap-4 rounded-[24px] border border-ui-border bg-[linear-gradient(180deg,#ffffff_0%,#f8fbff_100%)] p-5 shadow-[0_14px_36px_rgba(15,23,42,0.04)]">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="grid max-w-[700px] gap-1.5">
+            <div className="flex flex-wrap gap-2">
+              <Badge variant="accent" className="px-2.5 py-1 text-[11px] uppercase tracking-[0.35px]">Nyheter</Badge>
+              <Badge>{headlineLength} tecken i rubrik</Badge>
+              <Badge>{bodyLength} tecken i text</Badge>
             </div>
-            <h1 style={{ margin: 0, fontSize: 30, color:'#0f172a' }}>Publicera dashboardnyheter med bättre kontroll</h1>
-            <p style={{ margin:0, fontSize:14, color:'#475569', lineHeight:1.55 }}>Skriv nyheten, förhandsgranska hur den läses och publicera när innehållet känns klart.</p>
+            <h1 className="m-0 text-[30px] text-slate-900">Publicera dashboardnyheter med bättre kontroll</h1>
+            <p className="m-0 text-sm leading-[1.55] text-slate-600">Skriv nyheten, förhandsgranska hur den läses och publicera när innehållet känns klart.</p>
           </div>
-          <div style={miniStatStyle}>
-            <span style={miniLabelStyle}>Status</span>
-            <strong style={miniValueStyle}>{status === 'saved' ? 'Sparad' : status === 'saving' ? 'Sparar…' : 'Redigeras'}</strong>
-          </div>
-        </div>
-      </section>
-
-      <section style={{ display:'grid', gap:20, gridTemplateColumns:'minmax(0, 1.1fr) minmax(320px, 0.9fr)', alignItems:'start' }}>
-      <section style={{ border: '1px solid #e5e7eb', background: '#fff', borderRadius: 20, padding: 20, display: 'grid', gap: 14, boxShadow:'0 10px 28px rgba(15,23,42,0.03)' }}>
-        <h2 style={{ margin: 0, fontSize: 18 }}>Skapa ny nyhet</h2>
-        <form onSubmit={submit} style={{ display: 'grid', gap: 12 }}>
-          <label style={labelStyle}>
-            Rubrik
-            <input
-              required
-              value={headline}
-              onChange={e => setHeadline(e.target.value)}
-              placeholder="t.ex. Ny uppdatering i planeringen"
-              style={fieldStyle}
-            />
-          </label>
-
-          <label style={labelStyle}>
-            Text
-            <textarea
-              required
-              value={body}
-              onChange={e => setBody(e.target.value)}
-              placeholder="Skriv en kort beskrivning…"
-              rows={6}
-              style={{ ...fieldStyle, resize: 'vertical', lineHeight: 1.35 }}
-            />
-          </label>
-
-          <label style={labelStyle}>
-            Bild-URL (valfritt)
-            <input
-              value={imageUrl}
-              onChange={e => setImageUrl(e.target.value)}
-              placeholder="https://…"
-              style={fieldStyle}
-            />
-          </label>
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <button
-              type="submit"
-              disabled={status === 'saving' || headline.trim().length === 0 || body.trim().length === 0}
-              style={{ ...buttonStyle, opacity: status === 'saving' ? 0.7 : 1 }}
-            >
-              {status === 'saving' ? 'Sparar…' : (status === 'saved' ? 'Sparat ✓' : 'Publicera nyhet')}
-            </button>
-            {error && <span style={{ color: '#b91c1c', fontSize: 13 }}>{error}</span>}
-          </div>
-        </form>
-
-        <div style={{ fontSize: 12, color: '#6b7280' }}>
-          Nyheten visas som en modal på dashboarden en gång per nyhet (per webbläsare) via localStorage.
-        </div>
-
-        <div style={{ display:'grid', gap:8, padding:'12px 14px', border:'1px solid #e2e8f0', borderRadius:16, background:'#f8fbff' }}>
-          <strong style={{ fontSize:13, color:'#0f172a' }}>Snabb check innan publicering</strong>
-          <span style={{ fontSize:12, color:'#64748b' }}>Håll rubriken kort, skriv ett tydligt syfte först och lägg bara till bild när den faktiskt tillför sammanhang.</span>
-        </div>
-      </section>
-
-      <section style={{ border: '1px solid #e5e7eb', background: '#fff', borderRadius: 20, padding: 20, display: 'grid', gap: 14, alignContent:'start', boxShadow:'0 10px 28px rgba(15,23,42,0.03)' }}>
-        <h2 style={{ margin:0, fontSize:18 }}>Förhandsvisning</h2>
-        <div style={{ border:'1px solid #dbe4ef', borderRadius:20, padding:16, background:'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)', display:'grid', gap:12 }}>
-          {imageUrl.trim() ? (
-            <div style={{ width:'100%', aspectRatio:'16 / 9', borderRadius:16, backgroundImage:`url(${imageUrl.trim()})`, backgroundSize:'cover', backgroundPosition:'center', border:'1px solid #dbe4ef' }} />
-          ) : (
-            <div style={{ width:'100%', aspectRatio:'16 / 9', borderRadius:16, border:'1px dashed #cbd5e1', display:'grid', placeItems:'center', color:'#94a3b8', fontSize:13 }}>Ingen bild vald</div>
-          )}
-          <div style={{ display:'grid', gap:8 }}>
-            <strong style={{ fontSize:22, lineHeight:1.15, color:'#0f172a' }}>{headline.trim() || 'Rubriken visas här'}</strong>
-            <p style={{ margin:0, fontSize:14, lineHeight:1.6, color:'#475569', whiteSpace:'pre-wrap' }}>{body.trim() || 'Brödtexten visas här när du börjar skriva nyheten.'}</p>
+          <div className="grid min-w-[160px] gap-1 rounded-2xl border border-ui-border bg-white px-3 py-2.5">
+            <span className="text-[11px] font-extrabold uppercase tracking-[0.3px] text-slate-500">Status</span>
+            <strong className="text-xl font-extrabold text-slate-900">{statusLabel}</strong>
           </div>
         </div>
       </section>
+
+      <section className="grid items-start gap-5 xl:[grid-template-columns:minmax(0,1.1fr)_minmax(320px,0.9fr)]">
+        <section className="grid gap-4 rounded-[20px] border border-slate-200 bg-white p-5 shadow-[0_10px_28px_rgba(15,23,42,0.03)]">
+          <h2 className="m-0 text-lg text-slate-900">Skapa ny nyhet</h2>
+          <form onSubmit={submit} className="grid gap-3">
+            <Field label="Rubrik">
+              <Input
+                required
+                value={headline}
+                onChange={e => setHeadline(e.target.value)}
+                placeholder="t.ex. Ny uppdatering i planeringen"
+              />
+            </Field>
+
+            <Field label="Text">
+              <Textarea
+                required
+                value={body}
+                onChange={e => setBody(e.target.value)}
+                placeholder="Skriv en kort beskrivning…"
+                rows={6}
+                className="min-h-[144px]"
+              />
+            </Field>
+
+            <Field label="Bild-URL (valfritt)">
+              <Input
+                value={imageUrl}
+                onChange={e => setImageUrl(e.target.value)}
+                placeholder="https://…"
+              />
+            </Field>
+
+            <div className="flex flex-wrap items-center gap-2.5">
+              <Button
+                type="submit"
+                disabled={status === 'saving' || headlineLength === 0 || bodyLength === 0}
+                variant="primary"
+              >
+                {status === 'saving' ? 'Sparar…' : (status === 'saved' ? 'Sparat ✓' : 'Publicera nyhet')}
+              </Button>
+              {error && <span className="text-sm text-red-700">{error}</span>}
+            </div>
+          </form>
+
+          <div className="text-xs text-slate-500">
+            Nyheten visas som en modal på dashboarden en gång per nyhet per webbläsare via localStorage.
+          </div>
+
+          <div className="grid gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3.5 py-3">
+            <strong className="text-[13px] text-slate-900">Snabb check innan publicering</strong>
+            <span className="text-xs text-slate-500">Håll rubriken kort, skriv ett tydligt syfte först och lägg bara till bild när den faktiskt tillför sammanhang.</span>
+          </div>
+        </section>
+
+        <section className="grid content-start gap-4 rounded-[20px] border border-slate-200 bg-white p-5 shadow-[0_10px_28px_rgba(15,23,42,0.03)]">
+          <h2 className="m-0 text-lg text-slate-900">Förhandsvisning</h2>
+          <div className="grid gap-3 rounded-[20px] border border-ui-border bg-[linear-gradient(180deg,#ffffff_0%,#f8fbff_100%)] p-4">
+            {imageUrl.trim() ? (
+              <div
+                className="aspect-video w-full rounded-2xl border border-ui-border bg-cover bg-center"
+                style={{ backgroundImage: `url(${imageUrl.trim()})` }}
+              />
+            ) : (
+              <div className="grid aspect-video w-full place-items-center rounded-2xl border border-dashed border-slate-300 text-[13px] text-slate-400">Ingen bild vald</div>
+            )}
+            <div className="grid gap-2">
+              <strong className="text-[22px] leading-[1.15] text-slate-900">{headline.trim() || 'Rubriken visas här'}</strong>
+              <p className="m-0 whitespace-pre-wrap text-sm leading-[1.6] text-slate-600">{body.trim() || 'Brödtexten visas här när du börjar skriva nyheten.'}</p>
+            </div>
+          </div>
+        </section>
       </section>
-    </main>
+    </PageShell>
   );
 }
 
-const labelStyle: React.CSSProperties = {
-  fontSize: 12,
-  fontWeight: 600,
-  color: '#374151',
-  display: 'grid',
-  gap: 6
-};
-
-const fieldStyle: React.CSSProperties = {
-  padding: '10px 12px',
-  border: '1px solid #d1d5db',
-  borderRadius: 10,
-  fontSize: 14,
-  outline: 'none'
-};
-
-const buttonStyle: React.CSSProperties = {
-  padding: '10px 14px',
-  borderRadius: 10,
-  fontSize: 14,
-  border: '1px solid #111827',
-  background: '#111827',
-  color: '#fff',
-  fontWeight: 600,
-  cursor: 'pointer'
-};
-
-const eyebrowStyle: React.CSSProperties = { display:'inline-flex', alignItems:'center', padding:'4px 10px', borderRadius:999, background:'#dbeafe', border:'1px solid #bfdbfe', color:'#2563eb', fontSize:11, fontWeight:800, letterSpacing:0.35, textTransform:'uppercase' };
-const chipStyle: React.CSSProperties = { display:'inline-flex', alignItems:'center', padding:'4px 8px', borderRadius:999, background:'#f8fafc', border:'1px solid #e2e8f0', color:'#475569', fontSize:12, fontWeight:700 };
-const miniStatStyle: React.CSSProperties = { display:'grid', gap:5, padding:'12px 12px 10px', borderRadius:16, border:'1px solid #dbe4ef', background:'#fff', minWidth:160 };
-const miniLabelStyle: React.CSSProperties = { fontSize:11, fontWeight:800, letterSpacing:0.3, textTransform:'uppercase', color:'#64748b' };
-const miniValueStyle: React.CSSProperties = { fontSize:20, fontWeight:800, color:'#0f172a' };
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="grid gap-1.5 text-xs font-semibold text-slate-700">
+      <span>{label}</span>
+      {children}
+    </label>
+  );
+}
