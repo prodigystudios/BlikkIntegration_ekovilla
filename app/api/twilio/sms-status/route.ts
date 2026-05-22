@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { adminSupabase } from '@/lib/adminSupabase';
+import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -23,7 +23,8 @@ function firstField(value: FormDataEntryValue | null): string | null {
 
 export async function POST(req: NextRequest) {
   try {
-    if (!adminSupabase) {
+    const supabase = getOptionalSupabaseAdmin();
+    if (!supabase) {
       return NextResponse.json({ error: 'Server not configured' }, { status: 500 });
     }
 
@@ -54,7 +55,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Missing Twilio payload fields' }, { status: 400 });
     }
 
-    const { error } = await adminSupabase
+    const { error } = await supabase
       .from('planning_project_meta')
       .update({
         sms_delivery_status: messageStatus,

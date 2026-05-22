@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { computeOffertKalkylator, OFFERT_KALKYLATOR_DEFAULT_STATE } from '@/lib/offertKalkylator';
-import { adminSupabase } from '@/lib/adminSupabase';
 import { applyOffertOwnerScope, getOffertAccessContext } from '@/lib/offertAccess';
+import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -15,7 +15,8 @@ export async function GET(req: NextRequest) {
 
     const requestedAll = req.nextUrl.searchParams.get('scope') === 'all';
     const includeAll = requestedAll && access.canViewAll;
-    const db = includeAll && adminSupabase ? adminSupabase : access.supabase;
+    const adminClient = getOptionalSupabaseAdmin();
+    const db = includeAll && adminClient ? adminClient : access.supabase;
 
     const scopedQuery = applyOffertOwnerScope(
       db
@@ -32,10 +33,10 @@ export async function GET(req: NextRequest) {
 
     const items = (data ?? []) as any[];
 
-    if (adminSupabase && items.length > 0) {
+    if (adminClient && items.length > 0) {
       const ownerIds = Array.from(new Set(items.map((item) => String(item.user_id || '').trim()).filter(Boolean)));
       if (ownerIds.length > 0) {
-        const { data: profiles, error: profileErr } = await adminSupabase
+        const { data: profiles, error: profileErr } = await adminClient
           .from('profiles')
           .select('id, full_name')
           .in('id', ownerIds);
@@ -58,9 +59,9 @@ export async function GET(req: NextRequest) {
     }
 
     // Optional: attach customer-response status per offer.
-    if (adminSupabase && items.length > 0) {
+    if (adminClient && items.length > 0) {
       const ids = items.map((x) => String(x.id)).filter(Boolean);
-      const { data: reqRows, error: reqErr } = await adminSupabase
+      const { data: reqRows, error: reqErr } = await adminClient
         .from('offert_customer_requests')
         .select('offert_id, submitted_at')
         .eq('status', 'submitted')

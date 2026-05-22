@@ -1,17 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { adminSupabase } from '@/lib/adminSupabase';
 import { generateCustomerToken, hashCustomerToken } from '@/lib/offertCustomerTokens';
 import { getPublicOrigin } from '@/lib/publicOrigin';
 import { applyOffertOwnerScope, getOffertAccessContext } from '@/lib/offertAccess';
+import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
   try {
-    if (!adminSupabase) return NextResponse.json({ error: 'Admin supabase not configured' }, { status: 500 });
+    const supabase = getOptionalSupabaseAdmin();
+    if (!supabase) return NextResponse.json({ error: 'Admin supabase not configured' }, { status: 500 });
 
     const access = await getOffertAccessContext();
     if (!access.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -20,7 +19,7 @@ export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
     if (!offertId) return NextResponse.json({ error: 'Missing offert id' }, { status: 400 });
 
     const offerQuery = applyOffertOwnerScope(
-      adminSupabase
+      supabase
         .from('offert_calculations')
         .select('id, user_id')
         .eq('id', offertId),
@@ -35,7 +34,7 @@ export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
 
     // Revoke any previous pending requests for this offer.
     const nowIso = new Date().toISOString();
-    await adminSupabase
+    await supabase
       .from('offert_customer_requests')
       .update({ status: 'revoked', revoked_at: nowIso })
       .eq('offert_id', offertId)
@@ -51,7 +50,7 @@ export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
     let sellerEmail = (access.user.email || '').trim();
     if (!sellerEmail) {
       try {
-        const { data } = await adminSupabase.auth.admin.getUserById(sellerUserId);
+        const { data } = await supabase.auth.admin.getUserById(sellerUserId);
         sellerEmail = (data?.user?.email || '').trim();
       } catch {
         // ignore
@@ -60,14 +59,14 @@ export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
 
     if (sellerUserId !== access.userId) {
       try {
-        const { data } = await adminSupabase.auth.admin.getUserById(sellerUserId);
+        const { data } = await supabase.auth.admin.getUserById(sellerUserId);
         sellerEmail = (data?.user?.email || sellerEmail || '').trim();
       } catch {
         // ignore
       }
     }
 
-    const { data: inserted, error: insErr } = await adminSupabase
+    const { data: inserted, error: insErr } = await supabase
       .from('offert_customer_requests')
       .insert({
         offert_id: offertId,

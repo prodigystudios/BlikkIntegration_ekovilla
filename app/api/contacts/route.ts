@@ -1,11 +1,14 @@
 import { NextResponse } from 'next/server';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { adminSupabase } from '../../../lib/adminSupabase';
+import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
 import { cookies } from 'next/headers';
+
+export const dynamic = 'force-dynamic';
 
 // Public (authenticated) contacts output: { contacts: [...], addresses: [...] }
 export async function GET() {
   const supabase = createRouteHandlerClient({ cookies });
+  const admin = getOptionalSupabaseAdmin();
 
   const [{ data: cats, error: catErr }, { data: people, error: peopleErr }, { data: addresses, error: addrErr }] = await Promise.all([
     supabase.from('contact_categories').select('id, name, sort').order('sort', { ascending: true }).order('name', { ascending: true }),
@@ -22,11 +25,11 @@ export async function GET() {
   let effectiveCats = cats;
   let effectivePeople = people;
   let effectiveAddresses = addresses;
-  if ((effectiveCats?.length || 0) === 0 && adminSupabase) {
+  if ((effectiveCats?.length || 0) === 0 && admin) {
     const [catsSR, peopleSR, addrSR] = await Promise.all([
-      adminSupabase.from('contact_categories').select('id, name, sort').order('sort', { ascending: true }).order('name', { ascending: true }),
-      adminSupabase.from('contacts').select('id, category_id, name, phone, location, role, sort').order('sort', { ascending: true }).order('name', { ascending: true }),
-      adminSupabase.from('addresses').select('id, name, address, sort').order('sort', { ascending: true }).order('name', { ascending: true })
+      admin.from('contact_categories').select('id, name, sort').order('sort', { ascending: true }).order('name', { ascending: true }),
+      admin.from('contacts').select('id, category_id, name, phone, location, role, sort').order('sort', { ascending: true }).order('name', { ascending: true }),
+      admin.from('addresses').select('id, name, address, sort').order('sort', { ascending: true }).order('name', { ascending: true })
     ]);
     if (!catsSR.error && catsSR.data) effectiveCats = catsSR.data;
     if (!peopleSR.error && peopleSR.data) effectivePeople = peopleSR.data;

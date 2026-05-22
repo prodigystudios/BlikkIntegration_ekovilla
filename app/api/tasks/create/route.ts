@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { createServerComponentClient } from '@supabase/auth-helpers-nextjs';
-import { adminSupabase } from '@/lib/adminSupabase';
+import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
 
 export async function POST(req: NextRequest) {
   try {
@@ -17,7 +17,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: 'Titel krävs' }, { status: 400 });
     }
 
-    if (!adminSupabase) {
+    const admin = getOptionalSupabaseAdmin();
+    if (!admin) {
       return NextResponse.json({ ok: false, error: 'Admin-klient saknas (env)' }, { status: 500 });
     }
 
@@ -42,7 +43,7 @@ export async function POST(req: NextRequest) {
     if (description) finalDescriptionParts.push(description);
     const finalDescription = finalDescriptionParts.join('\n\n');
 
-    const { data, error } = await adminSupabase
+    const { data, error } = await admin
       .from('tasks')
       .insert({
         title,

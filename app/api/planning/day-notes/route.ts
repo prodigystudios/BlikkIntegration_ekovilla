@@ -1,17 +1,6 @@
 import { NextResponse } from 'next/server';
+import { forbidIfReadonly } from '@/lib/auth/route';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-
-async function forbidIfReadonly() {
-  const supabase = createRouteHandlerClient({ cookies });
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-  const { data: prof } = await supabase.from('profiles').select('role').eq('id', user.id).maybeSingle();
-  const role = (prof as any)?.role as string | null | undefined;
-  if (role === 'konsult' || role === 'readonly') return NextResponse.json({ error: 'forbidden' }, { status: 403 });
-  return null;
-}
 
 type NoteRow = {
   id: string;

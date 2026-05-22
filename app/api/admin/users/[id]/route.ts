@@ -1,22 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getUserProfile } from '../../../../../lib/getUserProfile';
-import { adminSupabase } from '../../../../../lib/adminSupabase';
+import { requireAdminUser } from '@/lib/auth/route';
+import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
 import {
   buildAdminDetailUpdates,
   buildAdminProfileUpdates,
   buildSensitiveProfileUpdates,
 } from '../../../../../lib/profileDetails';
 
-async function requireAdmin() {
-  const profile = await getUserProfile();
-  if (!profile || profile.role !== 'admin') return null;
-  return profile;
-}
-
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
-  const current = await requireAdmin();
-  if (!current) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
-  if (!adminSupabase) return NextResponse.json({ error: 'service role not configured' }, { status: 500 });
+  if (!(await requireAdminUser())) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+  const supabase = getOptionalSupabaseAdmin();
+  if (!supabase) return NextResponse.json({ error: 'service role not configured' }, { status: 500 });
 
   const { id } = params;
   const body = await req.json();
@@ -30,21 +24,21 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   // Update profile name if provided
   let nameUpdated = false;
   if (full_name !== undefined) {
-    const { error: nameErr } = await adminSupabase.from('profiles').update({ full_name }).eq('id', id);
+    const { error: nameErr } = await supabase.from('profiles').update({ full_name }).eq('id', id);
     if (nameErr) return NextResponse.json({ error: 'failed updating name', details: nameErr.message }, { status: 500 });
     nameUpdated = true;
   }
   // Change role (direct update with service role; server already validated current user is admin)
   let roleUpdated = false;
   if (role && ['member','sales','admin','konsult'].includes(role)) {
-    const { error: roleErr } = await adminSupabase.from('profiles').update({ role }).eq('id', id);
+    const { error: roleErr } = await supabase.from('profiles').update({ role }).eq('id', id);
     if (roleErr) return NextResponse.json({ error: 'failed updating role', details: roleErr.message }, { status: 500 });
     roleUpdated = true;
   }
   // Update tags directly with service role (bypasses RLS); server already validated admin
   let tagsUpdated = false;
   if (Array.isArray(tags)) {
-    const { error: tagErr } = await adminSupabase.from('profiles').update({ tags }).eq('id', id);
+    const { error: tagErr } = await supabase.from('profiles').update({ tags }).eq('id', id);
     if (tagErr) return NextResponse.json({ error: 'failed updating tags', details: tagErr.message }, { status: 500 });
     tagsUpdated = true;
   }
@@ -53,7 +47,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   let phoneUpdated = false;
   if ('phone' in (body || {})) {
     const phoneValue = typeof phone === 'string' ? phone.trim() : '';
-    const { error: phoneErr } = await adminSupabase.from('profiles').update({ phone: phoneValue || null }).eq('id', id);
+    const { error: phoneErr } = await supabase.from('profiles').update({ phone: phoneValue || null }).eq('id', id);
     if (phoneErr) return NextResponse.json({ error: 'failed updating phone', details: phoneErr.message }, { status: 500 });
     phoneUpdated = true;
   }
@@ -64,14 +58,14 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
   let profileDetailsUpdated = false;
   if (Object.keys(remainingProfileUpdates).length) {
-    const { error: profileErr } = await adminSupabase.from('profiles').update(remainingProfileUpdates).eq('id', id);
+    const { error: profileErr } = await supabase.from('profiles').update(remainingProfileUpdates).eq('id', id);
     if (profileErr) return NextResponse.json({ error: 'failed updating profile fields', details: profileErr.message }, { status: 500 });
     profileDetailsUpdated = true;
   }
 
   let employeeDetailsUpdated = false;
   if (Object.keys(detailUpdates).length) {
-    const { error: detailErr } = await adminSupabase
+    const { error: detailErr } = await supabase
       .from('employee_profile_details')
       .upsert({ user_id: id, ...detailUpdates }, { onConflict: 'user_id' });
     if (detailErr) return NextResponse.json({ error: 'failed updating employee details', details: detailErr.message }, { status: 500 });
@@ -80,7 +74,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
   let sensitiveUpdated = false;
   if (Object.keys(sensitiveUpdates).length) {
-    const { error: sensitiveErr } = await adminSupabase
+    const { error: sensitiveErr } = await supabase
       .from('employee_sensitive_details')
       .upsert({ user_id: id, ...sensitiveUpdates }, { onConflict: 'user_id' });
     if (sensitiveErr) return NextResponse.json({ error: 'failed updating sensitive details', details: sensitiveErr.message }, { status: 500 });
@@ -95,11 +89,11 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
-  const current = await requireAdmin();
-  if (!current) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
-  if (!adminSupabase) return NextResponse.json({ error: 'service role not configured' }, { status: 500 });
+  if (!(await requireAdminUser())) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+  const supabase = getOptionalSupabaseAdmin();
+  if (!supabase) return NextResponse.json({ error: 'service role not configured' }, { status: 500 });
   const { id } = params;
   // Delete auth user (cascade should remove profile row)
-  await adminSupabase.auth.admin.deleteUser(id);
+  await supabase.auth.admin.deleteUser(id);
   return NextResponse.json({ ok: true });
 }

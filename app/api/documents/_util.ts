@@ -1,27 +1,8 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-
-export type CurrentUser = { id: string; role: 'member' | 'sales' | 'admin' | 'konsult'; name?: string | null };
+export type { CurrentUser } from '@/lib/auth/route';
+export { getCurrentUser } from '@/lib/auth/route';
 
 export function getDocsBucket() {
   return process.env.SUPABASE_DOCS_BUCKET || process.env.SUPABASE_BUCKET || 'pdfs';
-}
-
-export async function getCurrentUser(): Promise<CurrentUser | null> {
-  const supabase = createRouteHandlerClient({ cookies });
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return null;
-  const { data: prof } = await supabase
-    .from('profiles')
-    .select('role, full_name')
-    .eq('id', user.id)
-    .maybeSingle();
-  const role = (prof as any)?.role as CurrentUser['role'] | undefined;
-  return {
-    id: user.id,
-    role: role || 'member',
-    name: (prof as any)?.full_name ?? null,
-  };
 }
 
 export function sanitizeFolderName(name: string) {

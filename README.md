@@ -63,6 +63,10 @@ Supabase migrering:
 - Rate limit: ~4 requests/sec/token (a single automatic retry is included)
 - PDF route uses Node runtime (not Edge) and supports simple branding colors and company name
 
+## Internal feature notes
+
+- Planning order confirmations (email + SMS/Twilio): see `/Users/williamali/BlikkIntegration_ekovilla/PLANNING_ORDER_CONFIRMATIONS.md`
+
 ## API routes
 - `GET /api/projects/lookup?id=... | orderId=...` — fetch a Blikk project
 - `POST /api/pdf/generate` — generate a styled PDF from the form

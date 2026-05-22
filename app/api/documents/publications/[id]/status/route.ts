@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { adminSupabase } from '@/lib/adminSupabase';
+import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
 import { requireAdminUser } from '../../_lib';
 
 export const runtime = 'nodejs';
@@ -9,12 +9,14 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
   try {
     const current = await requireAdminUser();
     if (!current) return NextResponse.json({ ok: false, error: 'forbidden' }, { status: 403 });
-    if (!adminSupabase) return NextResponse.json({ ok: false, error: 'service role not configured' }, { status: 500 });
+
+    const supabase = getOptionalSupabaseAdmin();
+    if (!supabase) return NextResponse.json({ ok: false, error: 'service role not configured' }, { status: 500 });
 
     const publicationId = String(params.id || '').trim();
     if (!publicationId) return NextResponse.json({ ok: false, error: 'missing publication id' }, { status: 400 });
 
-    const { data: publication, error: publicationError } = await adminSupabase
+    const { data: publication, error: publicationError } = await supabase
       .from('document_publications')
       .select(`
         id,
@@ -35,7 +37,7 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
     if (publicationError) return NextResponse.json({ ok: false, error: publicationError.message }, { status: 500 });
     if (!publication) return NextResponse.json({ ok: false, error: 'publication_not_found' }, { status: 404 });
 
-    const { data: recipients, error: recipientsError } = await adminSupabase
+      const { data: recipients, error: recipientsError } = await supabase
       .from('document_publication_recipients')
       .select(`
         recipient_user_id,
@@ -52,7 +54,7 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
       .order('created_at', { ascending: true });
     if (recipientsError) return NextResponse.json({ ok: false, error: recipientsError.message }, { status: 500 });
 
-    const { data: receipts, error: receiptsError } = await adminSupabase
+      const { data: receipts, error: receiptsError } = await supabase
       .from('document_publication_receipts')
       .select('user_id, first_opened_at, last_opened_at, approved_at, approval_note')
       .eq('publication_id', publicationId);

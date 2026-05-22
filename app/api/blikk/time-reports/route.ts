@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getBlikk } from '@/lib/blikk';
 import { getUserProfile } from '@/lib/getUserProfile';
-import { adminSupabase } from '@/lib/adminSupabase';
+import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
 
 export async function GET(req: NextRequest) {
   try {
@@ -17,8 +17,9 @@ export async function GET(req: NextRequest) {
     if (!Number.isFinite(userId as any)) {
       const current = await getUserProfile();
       if (!current) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
-      if (!adminSupabase) return NextResponse.json({ ok: false, error: 'service role not configured' }, { status: 500 });
-      const { data: prof, error } = await adminSupabase.from('profiles').select('blikk_id').eq('id', current.id).maybeSingle();
+      const supabase = getOptionalSupabaseAdmin();
+      if (!supabase) return NextResponse.json({ ok: false, error: 'service role not configured' }, { status: 500 });
+      const { data: prof, error } = await supabase.from('profiles').select('blikk_id').eq('id', current.id).maybeSingle();
       if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
       if (!prof || prof.blikk_id == null) {
         return NextResponse.json({ ok: false, error: 'No Blikk user mapping (blikk_id) found for current user' }, { status: 400 });
@@ -75,8 +76,9 @@ export async function POST(req: NextRequest) {
     if (!Number.isFinite(userId)) {
       const current = await getUserProfile();
       if (!current) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
-      if (!adminSupabase) return NextResponse.json({ ok: false, error: 'service role not configured' }, { status: 500 });
-      const { data: prof, error } = await adminSupabase.from('profiles').select('blikk_id').eq('id', current.id).maybeSingle();
+      const supabase = getOptionalSupabaseAdmin();
+      if (!supabase) return NextResponse.json({ ok: false, error: 'service role not configured' }, { status: 500 });
+      const { data: prof, error } = await supabase.from('profiles').select('blikk_id').eq('id', current.id).maybeSingle();
       if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
       if (!prof || prof.blikk_id == null) {
         return NextResponse.json({ ok: false, error: 'No Blikk user mapping (blikk_id) found for current user' }, { status: 400 });

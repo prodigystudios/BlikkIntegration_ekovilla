@@ -1,5 +1,5 @@
-import { adminSupabase } from '@/lib/adminSupabase';
-import { getCurrentUser } from '../_util';
+import { requireAdminUser as requireSharedAdminUser } from '@/lib/auth/route';
+import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
 
 export type PublicationRecipientInput = {
   userIds: string[];
@@ -7,9 +7,9 @@ export type PublicationRecipientInput = {
 };
 
 export async function requireAdminUser() {
-  const current = await getCurrentUser();
-  if (!current || current.role !== 'admin') return null;
-  if (!adminSupabase) throw new Error('service_role_missing');
+  const current = await requireSharedAdminUser();
+  if (!current) return null;
+  if (!getOptionalSupabaseAdmin()) throw new Error('service_role_missing');
   return current;
 }
 
@@ -26,13 +26,14 @@ export function normalizeRecipients(input: any): PublicationRecipientInput {
 }
 
 export async function resolvePublicationRecipients(input: PublicationRecipientInput) {
-  if (!adminSupabase) throw new Error('service_role_missing');
+  const supabase = getOptionalSupabaseAdmin();
+  if (!supabase) throw new Error('service_role_missing');
 
   const directUsers = input.userIds.map(id => ({ id, source_type: 'user' as const, source_value: null as string | null }));
   const tagUsers: Array<{ id: string; source_type: 'tag'; source_value: string }> = [];
 
   for (const tag of input.tags) {
-    const { data, error } = await adminSupabase
+    const { data, error } = await supabase
       .from('profiles')
       .select('id')
       .contains('tags', [tag]);
@@ -59,13 +60,14 @@ export async function resolvePublicationRecipients(input: PublicationRecipientIn
 }
 
 export async function getRecipientMeta() {
-  if (!adminSupabase) throw new Error('service_role_missing');
+  const supabase = getOptionalSupabaseAdmin();
+  if (!supabase) throw new Error('service_role_missing');
   const [{ data: users, error: usersError }, { data: profiles, error: profilesError }] = await Promise.all([
-    adminSupabase
+    supabase
       .from('profiles')
       .select('id, full_name, role')
       .order('full_name', { ascending: true }),
-    adminSupabase
+    supabase
       .from('profiles')
       .select('tags'),
   ]);
