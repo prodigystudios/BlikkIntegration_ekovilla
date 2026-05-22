@@ -1,3 +1,22 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --ui-surface-page: #ffffff;
+  --ui-surface-card: #ffffff;
+  --ui-surface-muted: #f8fafc;
+  --ui-border-subtle: #dbe4ef;
+  --ui-accent: #2563eb;
+  --ui-accent-soft: #dbeafe;
+  --ui-text-strong: #0f172a;
+  --ui-text-muted: #475569;
+  --ui-text-soft: #64748b;
+  --ui-radius-shell: 2rem;
+  --ui-radius-card: 1.5rem;
+  --ui-shadow-soft: 0 14px 36px rgba(15, 23, 42, 0.08);
+}
+
 /* Global input sizing to prevent iOS zoom and ensure consistent widths */
 input, select, textarea { font-size: 16px; }
 @supports (-webkit-touch-callout: none) {
