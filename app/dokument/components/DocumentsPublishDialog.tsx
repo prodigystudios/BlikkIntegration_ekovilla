@@ -1,32 +1,9 @@
 "use client";
 
 import Button from '../../../components/ui/Button';
+import DialogShell from '../../../components/ui/DialogShell';
 import Input from '../../../components/ui/Input';
-
-type FileRow = {
-  id: string;
-  folder_id: string | null;
-  file_name: string;
-  content_type: string | null;
-  size_bytes: number | null;
-  created_at: string;
-};
-
-type PublishMeta = {
-  users: Array<{ id: string; name: string; role: string }>;
-  tags: string[];
-};
-
-type PublishUiState = {
-  file: FileRow;
-  title: string;
-  description: string;
-  versionLabel: string;
-  dueAt: string;
-  requiresApproval: boolean;
-  selectedUserIds: string[];
-  selectedTags: string[];
-};
+import type { PublishMeta, PublishUiState } from '../types';
 
 type DocumentsPublishDialogProps = {
   publishUi: PublishUiState | null;
@@ -74,29 +51,14 @@ export default function DocumentsPublishDialog({
   }
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/50 p-5"
-      onClick={onClose}
+    <DialogShell
+      eyebrow="Kvittensflöde"
+      title="Publicera dokument för kvittens"
+      description={publishUi.file.file_name}
+      onClose={onClose}
+      panelClassName="max-w-[860px]"
     >
-      <div
-        className="grid max-h-[90vh] w-full max-w-[860px] overflow-auto rounded-[22px] border border-ui-border bg-white shadow-[0_24px_60px_rgba(15,23,42,0.22)]"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="flex items-start justify-between gap-3 border-b border-slate-200 bg-[linear-gradient(180deg,#fbfdff,#f8fafc)] px-5 py-[18px]">
-          <div className="grid gap-1.5">
-            <span className="text-[11px] font-bold uppercase tracking-[0.3px] text-blue-600">Kvittensflöde</span>
-            <h3 className="m-0 text-[22px] font-bold text-slate-900">Publicera dokument för kvittens</h3>
-            <p className="m-0 text-ui-text-soft">{publishUi.file.file_name}</p>
-          </div>
-          <Button variant="secondary" onClick={onClose}>
-            Stäng
-          </Button>
-        </div>
-
-        <div className="grid gap-[18px] p-5">
-          <div className="grid gap-3.5">
+      <div className="grid gap-3.5">
             <label className="grid gap-1.5">
               <span className="text-[13px] font-bold text-slate-700">Titel</span>
               <Input
@@ -204,8 +166,6 @@ export default function DocumentsPublishDialog({
               </Button>
             </div>
           </div>
-        </div>
-      </div>
-    </div>
+    </DialogShell>
   );
 }

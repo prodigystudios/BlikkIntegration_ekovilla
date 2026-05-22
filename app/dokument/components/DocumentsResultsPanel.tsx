@@ -1,19 +1,7 @@
 "use client";
 
 import DocumentsFileCollection from './DocumentsFileCollection';
-
-type FileRow = {
-  id: string;
-  folder_id: string | null;
-  file_name: string;
-  content_type: string | null;
-  size_bytes: number | null;
-  created_at: string;
-};
-
-type SearchFileRow = FileRow & {
-  folder_name: string | null;
-};
+import type { FileRow, SearchFileRow } from '../types';
 
 type DocumentsResultsPanelProps = {
   fileSearchMode: 'folder' | 'all';

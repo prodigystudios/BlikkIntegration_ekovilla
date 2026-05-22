@@ -14,3 +14,5 @@ tsc_output.txt
 PLANNING_ORDER_CONFIRMATIONS.md
 type-check-output.txt
 build_output_now.txt
+typecheck_full_output.txt
+typecheck_output.txt
