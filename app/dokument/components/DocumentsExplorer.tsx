@@ -1,7 +1,10 @@
 "use client";
 
-import React, { useMemo, useState } from 'react';
+import { useMemo, useState, type MutableRefObject } from 'react';
+import { cn } from '@/lib/shared/cn';
 import Button from '../../../components/ui/Button';
+import Input from '../../../components/ui/Input';
+import SectionCard from '../../../components/ui/SectionCard';
 
 type FolderRow = {
   id: string;
@@ -30,7 +33,7 @@ type DocumentsExplorerProps = {
   effectiveCanEdit: boolean;
   busy: string | null;
   isCompactViewport: boolean;
-  createFolderNameRef: React.MutableRefObject<HTMLInputElement | null>;
+  createFolderNameRef: MutableRefObject<HTMLInputElement | null>;
   folderColorHex: (color: string | null | undefined) => string | null;
   onOpenFolder: (id: string) => void;
   onOpenCreateFolder: (parentId: string | null) => void;
@@ -105,11 +108,11 @@ export default function DocumentsExplorer({
     const list = folderLists[key] || [];
     const depth = parentId ? Math.min(breadcrumbs.findIndex((item) => item.id === parentId) + 1, 3) : 0;
     if (!list.length) {
-      return <div style={{ padding: 10, color: '#6b7280', fontSize: 13 }}>Inga mappar</div>;
+      return <div className="px-2.5 py-2.5 text-[13px] text-slate-500">Inga mappar</div>;
     }
 
     return (
-      <div style={{ padding: 10, display: 'grid', gap: 8 }}>
+      <div className="grid gap-2 p-2.5">
         {list.map((folder) => {
           const active = selectedId === folder.id || (!selectedId && folderId === folder.id);
           const showActions = effectiveCanEdit && (active || hoveredFolderId === folder.id || isCompactViewport);
@@ -118,57 +121,46 @@ export default function DocumentsExplorer({
           return (
             <div
               key={folder.id}
-              style={{
-                display: 'grid',
-                gridTemplateColumns: effectiveCanEdit ? 'minmax(0, 1fr) auto' : 'minmax(0, 1fr)',
-                gap: 8,
-                alignItems: 'stretch',
-              }}
+              className={cn(
+                'grid items-stretch gap-2',
+                effectiveCanEdit ? '[grid-template-columns:minmax(0,1fr)_auto]' : 'grid-cols-1',
+              )}
               onMouseEnter={() => setHoveredFolderId(folder.id)}
               onMouseLeave={() => setHoveredFolderId((prev) => (prev === folder.id ? null : prev))}
             >
               <button
                 type="button"
                 onClick={() => onOpenFolder(folder.id)}
-                style={{
-                  width: '100%',
-                  border: `1px solid ${active ? '#bfdbfe' : '#e2e8f0'}`,
-                  background: active ? 'linear-gradient(135deg,#eef4ff,#e0ecff)' : '#fff',
-                  borderRadius: 12,
-                  padding: '10px 12px',
-                  cursor: 'pointer',
-                  textAlign: 'left',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'flex-start',
-                  gap: 8,
-                  color: '#111827',
-                  fontWeight: active ? 800 : 600,
-                  position: 'relative',
-                  boxShadow: active ? '0 8px 18px rgba(59,130,246,0.10)' : '0 2px 6px rgba(15,23,42,0.02)',
-                }}
-              >
-                <span aria-hidden style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 4, borderTopLeftRadius: 12, borderBottomLeftRadius: 12, background: active ? '#3b82f6' : depth > 0 ? '#dbeafe' : '#e5e7eb' }} />
-                {depth > 0 ? <span aria-hidden style={{ width: depth * 10, height: 1, background: '#dbe4ef', flex: '0 0 auto' }} /> : null}
-                {colorDot ? (
-                  <span aria-hidden style={{ width: 10, height: 10, borderRadius: 999, background: colorDot, flex: '0 0 auto' }} />
-                ) : (
-                  <span aria-hidden style={{ width: 10, height: 10, borderRadius: 999, background: '#e5e7eb', flex: '0 0 auto' }} />
+                className={cn(
+                  'relative flex w-full items-center justify-start gap-2 rounded-xl border px-3 py-2.5 text-left text-slate-900 transition-colors',
+                  active
+                    ? 'border-blue-200 bg-[linear-gradient(135deg,#eef4ff,#e0ecff)] font-extrabold shadow-[0_8px_18px_rgba(59,130,246,0.10)] hover:border-blue-300 hover:bg-[linear-gradient(135deg,#eef4ff,#e0ecff)] active:bg-[linear-gradient(135deg,#e0ecff,#d7e7ff)]'
+                    : 'border-slate-200 bg-white font-semibold shadow-[0_2px_6px_rgba(15,23,42,0.02)] hover:border-slate-300 hover:bg-slate-50 active:bg-slate-100',
                 )}
-                <span aria-hidden style={{ fontSize: 14, opacity: active ? 1 : 0.72 }}>📁</span>
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13 }}>{folder.name}</span>
+              >
+                <span
+                  aria-hidden
+                  className={cn(
+                    'absolute inset-y-0 left-0 w-1 rounded-l-xl',
+                    active ? 'bg-blue-500' : depth > 0 ? 'bg-blue-100' : 'bg-slate-200',
+                  )}
+                />
+                {depth > 0 ? <span aria-hidden className="h-px shrink-0 bg-slate-200" style={{ width: depth * 10 }} /> : null}
+                {colorDot ? (
+                  <span aria-hidden className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: colorDot }} />
+                ) : (
+                  <span aria-hidden className="h-2.5 w-2.5 shrink-0 rounded-full bg-slate-200" />
+                )}
+                <span aria-hidden className={cn('text-sm', active ? 'opacity-100' : 'opacity-70')}>📁</span>
+                <span className="truncate text-[13px]">{folder.name}</span>
               </button>
 
               {effectiveCanEdit ? (
                 <div
-                  style={{
-                    display: 'flex',
-                    gap: 6,
-                    alignItems: 'center',
-                    justifySelf: 'end',
-                    opacity: showActions ? 1 : 0,
-                    pointerEvents: showActions ? 'auto' : 'none',
-                  }}
+                  className={cn(
+                    'flex items-center gap-1.5 justify-self-end transition-opacity',
+                    showActions ? 'opacity-100' : 'pointer-events-none opacity-0',
+                  )}
                   aria-hidden={!showActions}
                 >
                   <Button
@@ -203,38 +195,21 @@ export default function DocumentsExplorer({
   }
 
   return (
-    <aside
-      style={{
-        display: 'grid',
-        gap: 10,
-        position: isCompactViewport ? 'static' : 'sticky',
-        top: isCompactViewport ? undefined : 84,
-      }}
-    >
-      <div style={{ padding: '12px 14px', border: '1px solid #dbe4ef', borderRadius: 16, background: '#fff', boxShadow: '0 10px 24px rgba(15,23,42,0.04)', display: 'grid', gap: 4 }}>
-        <strong style={{ fontSize: 13, color: '#0f172a' }}>Mappnavigering</strong>
-        <span style={{ fontSize: 12, color: '#64748b' }}>Hoppa mellan nivåer och skapa nya mappar där du står.</span>
-      </div>
+    <aside className={cn('grid gap-2.5', !isCompactViewport && 'sticky top-[84px] self-start')}>
+      <SectionCard className="grid gap-1 px-3.5 py-3">
+        <strong className="text-[13px] text-slate-900">Mappnavigering</strong>
+        <span className="text-xs text-slate-500">Hoppa mellan nivåer och skapa nya mappar där du står.</span>
+      </SectionCard>
 
       {visibleExplorerColumns.map((col) => (
-        <div
-          key={col.key}
-          style={{
-            width: '100%',
-            border: '1px solid #dbe4ef',
-            borderRadius: 16,
-            overflow: 'hidden',
-            background: '#fff',
-            boxShadow: '0 10px 24px rgba(15,23,42,0.04)',
-          }}
-        >
-          <div style={{ padding: '11px 12px', borderBottom: '1px solid #e5e7eb', background: 'linear-gradient(180deg,#fbfdff,#f8fafc)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-              <div style={{ display: 'grid', gap: 2, minWidth: 0 }}>
-                <div style={{ flex: '1 1 auto', minWidth: 0, fontSize: 12, color: '#6b7280', fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        <SectionCard key={col.key} className="w-full overflow-hidden">
+          <div className="border-b border-slate-200 bg-[linear-gradient(180deg,#fbfdff,#f8fafc)] px-3 py-[11px]">
+            <div className="flex items-center justify-between gap-2">
+              <div className="grid min-w-0 gap-0.5">
+                <div className="min-w-0 truncate text-xs font-extrabold text-slate-500">
                   {col.title}
                 </div>
-                <span style={{ fontSize: 11, color: '#94a3b8' }}>{(folderLists[col.parentId || 'root'] || []).length} mappar</span>
+                <span className="text-[11px] text-slate-400">{(folderLists[col.parentId || 'root'] || []).length} mappar</span>
               </div>
 
               {effectiveCanEdit ? (
@@ -252,9 +227,9 @@ export default function DocumentsExplorer({
             </div>
 
             {effectiveCanEdit && createFolderUi && createFolderUi.parentId === col.parentId ? (
-              <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid #e5e7eb' }}>
-                <div style={{ display: 'grid', gap: 8 }}>
-                  <input
+              <div className="mt-2.5 border-t border-slate-200 pt-2.5">
+                <div className="grid gap-2">
+                  <Input
                     ref={createFolderNameRef}
                     value={createFolderUi.name}
                     onChange={(event) => onSetCreateFolderName(event.target.value)}
@@ -265,17 +240,11 @@ export default function DocumentsExplorer({
                         onSubmitCreateFolder(createFolderUi.parentId, createFolderUi.name, createFolderUi.color);
                       }
                     }}
-                    style={{
-                      padding: '10px 12px',
-                      borderRadius: 10,
-                      border: '1px solid #e5e7eb',
-                      background: '#fff',
-                      fontSize: 14,
-                    }}
+                    className="min-h-0 rounded-[10px] border-slate-200 px-3 py-2.5 text-sm"
                     disabled={!!busy}
                   />
 
-                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                  <div className="flex flex-wrap items-center gap-2">
                     {folderColors.map((color) => {
                       const hex = folderColorHex(color.key);
                       const selected = createFolderUi.color === color.key;
@@ -287,22 +256,18 @@ export default function DocumentsExplorer({
                           title={color.label}
                           aria-label={color.label}
                           disabled={!!busy}
-                          style={{
-                            width: 28,
-                            height: 28,
-                            borderRadius: 999,
-                            border: selected ? '2px solid #111827' : '1px solid #e5e7eb',
-                            background: hex || '#e5e7eb',
-                            cursor: 'pointer',
-                            padding: 0,
-                          }}
+                          className={cn(
+                            'h-7 w-7 rounded-full p-0 transition-colors',
+                            selected ? 'border-2 border-slate-900' : 'border border-slate-200',
+                          )}
+                          style={{ background: hex || '#e5e7eb' }}
                         />
                       );
                     })}
-                    <span style={{ color: '#6b7280', fontSize: 12 }}>(valfritt)</span>
+                    <span className="text-xs text-slate-500">(valfritt)</span>
                   </div>
 
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
+                  <div className="flex flex-wrap justify-end gap-2">
                     <Button variant="secondary" onClick={onCloseCreateFolder} disabled={!!busy}>
                       Avbryt
                     </Button>
@@ -319,10 +284,10 @@ export default function DocumentsExplorer({
             ) : null}
           </div>
 
-          <div style={{ maxHeight: isCompactViewport ? 'none' : 'calc(100dvh - 320px)', overflowY: 'auto' }}>
+          <div className={cn(!isCompactViewport && 'max-h-[calc(100dvh-320px)] overflow-y-auto')}>
             {renderFolderList(col.parentId, col.selectedId)}
           </div>
-        </div>
+        </SectionCard>
       ))}
     </aside>
   );

@@ -34,8 +34,9 @@ export default function DocumentsQuickAccessFolders({
 
   return (
     <div
-      className="grid gap-2.5 border-b border-slate-100 bg-white"
-      style={{ padding: isCompactViewport ? '12px' : '14px' }}
+      className={isCompactViewport
+        ? 'grid gap-2.5 border-b border-slate-100 bg-white p-3'
+        : 'grid gap-2.5 border-b border-slate-100 bg-white p-3.5'}
     >
       <div className="flex flex-wrap items-center justify-between gap-2.5">
         <div className="grid gap-0.5">

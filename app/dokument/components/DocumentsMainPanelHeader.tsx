@@ -29,8 +29,9 @@ export default function DocumentsMainPanelHeader({
 
   return (
     <div
-      className="grid gap-3 border-b border-slate-200 bg-[linear-gradient(180deg,#fbfdff,#f8fafc)]"
-      style={{ padding: isCompactViewport ? '14px 12px' : '14px 14px' }}
+      className={isCompactViewport
+        ? 'grid gap-3 border-b border-slate-200 bg-[linear-gradient(180deg,#fbfdff,#f8fafc)] px-3 py-3.5'
+        : 'grid gap-3 border-b border-slate-200 bg-[linear-gradient(180deg,#fbfdff,#f8fafc)] px-3.5 py-3.5'}
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="grid gap-1">

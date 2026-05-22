@@ -58,12 +58,12 @@ export default function DocumentsPreviewPanel({
               <img
                 src={preview.url}
                 alt={preview.fileName}
-                style={{ maxWidth: '100%', maxHeight: 520, objectFit: 'contain', borderRadius: 10 }}
+                className="max-h-[520px] max-w-full rounded-[10px] object-contain"
               />
             </div>
           ) : (
             <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-              <iframe title={preview.fileName} src={preview.url} style={{ width: '100%', height: 520, border: 'none', display: 'block' }} />
+              <iframe title={preview.fileName} src={preview.url} className="block h-[520px] w-full border-0" />
             </div>
           )}
 

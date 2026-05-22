@@ -511,28 +511,6 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
     }
   };
 
-  const buttonStyle: React.CSSProperties = {
-    padding: '10px 12px',
-    borderRadius: 10,
-    fontSize: 14,
-    border: '1px solid #111827',
-    background: '#111827',
-    color: '#fff',
-    fontWeight: 600,
-    cursor: 'pointer',
-    opacity: busy ? 0.85 : 1,
-  };
-  const buttonSecondary: React.CSSProperties = {
-    padding: '10px 12px',
-    borderRadius: 10,
-    fontSize: 14,
-    border: '1px solid #e5e7eb',
-    background: '#fff',
-    color: '#111827',
-    fontWeight: 600,
-    cursor: 'pointer',
-  };
-
   const currentFolderName = data?.folder?.name || null;
   const mainPanelStatusText = loading
     ? 'Uppdaterar…'
@@ -543,7 +521,7 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
         : `${data?.files.length ?? 0} filer`);
 
   return (
-    <section style={{ marginTop: 14, display: 'grid', gap: 14 }}>
+    <section className="mt-3.5 grid gap-3.5">
       <DocumentsHeader
         breadcrumbs={breadcrumbs}
         currentFolderName={currentFolderName}
@@ -564,21 +542,20 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
       />
 
       {showInitialLoading && (
-        <div style={{ marginTop: 14, color: '#6b7280' }}>Laddar…</div>
+        <div className="mt-3.5 text-sm text-slate-500">Laddar…</div>
       )}
       {!showInitialLoading && error && (
-        <div style={{ marginTop: 14, color: '#b91c1c', border: '1px solid #fecaca', background: '#fef2f2', padding: 12, borderRadius: 12 }}>
+        <div className="mt-3.5 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
           {error}
         </div>
       )}
 
       {data && (
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: isCompactViewport ? '1fr' : 'minmax(300px, 360px) minmax(0, 1fr)',
-          gap: 14,
-          alignItems: 'start',
-        }}>
+        <div
+          className={isCompactViewport
+            ? 'grid items-start gap-3.5'
+            : 'grid items-start gap-3.5 [grid-template-columns:minmax(300px,360px)_minmax(0,1fr)]'}
+        >
           {/* Left explorer */}
           {(!isCompactViewport || showExplorerOnMobile) && (
             <DocumentsExplorer
@@ -603,14 +580,7 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
           )}
 
           {/* Main documents pane */}
-          <div style={{
-            minWidth: 0,
-            border: '1px solid #dbe4ef',
-            borderRadius: 16,
-            overflow: 'hidden',
-            background: '#fff',
-            boxShadow: '0 12px 28px rgba(15,23,42,0.05)',
-          }}>
+          <div className="min-w-0 overflow-hidden rounded-2xl border border-ui-border bg-white shadow-[0_12px_28px_rgba(15,23,42,0.05)]">
             <DocumentsMainPanelHeader
               currentFolderName={currentFolderName}
               statusText={mainPanelStatusText}

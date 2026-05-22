@@ -1,48 +1,42 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { cookies } from 'next/headers';
-import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { getCurrentUser } from '../../_util';
+import { createFileDownloadUrl, DocumentsFilesRouteError } from '../_domain';
+import { downloadFileQuerySchema } from '../_lib';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
-  const current = await getCurrentUser();
-  if (!current) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
+  try {
+    const current = await getCurrentUser();
+    if (!current) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
 
-  const supabase = createRouteHandlerClient({ cookies });
-  const admin = getSupabaseAdmin();
-  const { searchParams } = new URL(req.url);
-  const id = (searchParams.get('id') || '').trim();
-  const download = (searchParams.get('download') || '').trim();
-  const redirect = (searchParams.get('redirect') || '').trim();
-  if (!id) return NextResponse.json({ ok: false, error: 'missing_id' }, { status: 400 });
+    const { searchParams } = new URL(req.url);
+    const parsed = downloadFileQuerySchema.safeParse({
+      id: searchParams.get('id'),
+      download: searchParams.get('download'),
+      redirect: searchParams.get('redirect'),
+    });
+    if (!parsed.success) {
+      return NextResponse.json({ ok: false, error: parsed.error.issues[0]?.message || 'invalid_query' }, { status: 400 });
+    }
 
-  const { data, error } = await supabase
-    .from('documents_files')
-    .select('storage_bucket, storage_path, file_name')
-    .eq('id', id)
-    .maybeSingle();
-  if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
-  if (!data) return NextResponse.json({ ok: false, error: 'not_found' }, { status: 404 });
+    const supabase = createRouteHandlerClient({ cookies });
+    const url = await createFileDownloadUrl(supabase, {
+      id: parsed.data.id,
+      download: parsed.data.download,
+    });
 
-  const bucket = String((data as any).storage_bucket);
-  const path = String((data as any).storage_path);
-  const fileName = String((data as any).file_name || 'file');
+    if (parsed.data.redirect) {
+      return NextResponse.redirect(url, { status: 302 });
+    }
 
-  const shouldDownload = download === '1' || download.toLowerCase() === 'true';
-  const { data: signed, error: sErr } = await admin.storage
-    .from(bucket)
-    .createSignedUrl(path, 60 * 30, shouldDownload ? { download: fileName } : undefined);
-  if (sErr || !signed?.signedUrl) {
-    return NextResponse.json({ ok: false, error: sErr?.message || 'failed_signed_url' }, { status: 500 });
+    return NextResponse.json({ ok: true, url }, { status: 200, headers: new Headers({ 'Cache-Control': 'no-store' }) });
+  } catch (error: any) {
+    const message = error instanceof DocumentsFilesRouteError ? error.message : error?.message || 'unexpected_error';
+    const status = error instanceof DocumentsFilesRouteError ? error.status : 500;
+    return NextResponse.json({ ok: false, error: message }, { status });
   }
-
-  const shouldRedirect = redirect === '1' || redirect.toLowerCase() === 'true';
-  if (shouldRedirect) {
-    return NextResponse.redirect(signed.signedUrl, { status: 302 });
-  }
-
-  return NextResponse.json({ ok: true, url: signed.signedUrl }, { status: 200, headers: new Headers({ 'Cache-Control': 'no-store' }) });
 }
