@@ -72,10 +72,10 @@ export default function ProfilePageClient() {
         const res = await fetch('/api/profile', { cache: 'no-store' });
         const data = await res.json();
         if (!res.ok) {
-          throw new Error(data?.error || 'Kunde inte ladda profilen.');
+          throw new Error(data?.error?.message || data?.legacyError || data?.error || 'Kunde inte ladda profilen.');
         }
         if (!active) return;
-        const payload = data as ProfileResponse;
+        const payload = (data?.data || data) as ProfileResponse;
         setProfile(payload.profile);
         setAuthEmail(payload.authEmail);
         setForm(toEditableState(payload.profile));
@@ -117,12 +117,13 @@ export default function ProfilePageClient() {
       });
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data?.error || 'Kunde inte spara profilen.');
+        throw new Error(data?.error?.message || data?.legacyError || data?.error || 'Kunde inte spara profilen.');
       }
-      if (data?.profile) {
-        setProfile(data.profile);
-        setForm(toEditableState(data.profile));
-        setSensitiveStatus(data.profile.sensitive_status);
+      const nextProfile = data?.data?.profile || data?.profile;
+      if (nextProfile) {
+        setProfile(nextProfile);
+        setForm(toEditableState(nextProfile));
+        setSensitiveStatus(nextProfile.sensitive_status);
       }
       setSuccess('Profilen sparades.');
     } catch (submitError: any) {
@@ -146,10 +147,11 @@ export default function ProfilePageClient() {
       });
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data?.error || 'Kunde inte spara de känsliga uppgifterna.');
+        throw new Error(data?.error?.message || data?.legacyError || data?.error || 'Kunde inte spara de känsliga uppgifterna.');
       }
-      if (data?.sensitiveStatus) {
-        setSensitiveStatus(data.sensitiveStatus);
+      const nextSensitiveStatus = data?.data?.sensitiveStatus || data?.sensitiveStatus;
+      if (nextSensitiveStatus) {
+        setSensitiveStatus(nextSensitiveStatus);
       }
       setSensitiveForm(emptySensitiveForm());
       setSensitiveSuccess('Löne- och identitetsuppgifterna sparades.');

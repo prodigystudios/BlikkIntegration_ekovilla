@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { createServerComponentClient } from '@supabase/auth-helpers-nextjs';
+import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { isWebPushConfigured, sendWebPush } from '@/lib/webPush';
 import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
 
@@ -26,11 +26,26 @@ type PushRow = {
 };
 
 async function getUserId() {
-  const supabase = createServerComponentClient({ cookies });
+  const supabase = createRouteHandlerClient({ cookies });
   const {
     data: { user },
   } = await supabase.auth.getUser();
   return user?.id || null;
+}
+
+function ok<T>(data: T, legacy?: Record<string, unknown>, status = 200) {
+  return NextResponse.json({ ok: true, data, ...(legacy ?? {}) }, { status });
+}
+
+function routeError(status: number, code: string, message: string, details?: unknown) {
+  return NextResponse.json(
+    {
+      ok: false,
+      error: { code, message, ...(details !== undefined ? { details } : {}) },
+      legacyError: message,
+    },
+    { status },
+  );
 }
 
 function buildPushTitle(item: DueNote) {
@@ -87,17 +102,17 @@ function isAuthorizedCron(req: NextRequest) {
 async function dispatchReminders(req: NextRequest) {
   const supabase = getOptionalSupabaseAdmin();
   if (!supabase) {
-    return NextResponse.json({ ok: false, error: 'Admin-klient saknas.' }, { status: 500 });
+    return routeError(500, 'service_role_missing', 'Admin-klient saknas.');
   }
   if (!isWebPushConfigured()) {
-    return NextResponse.json({ ok: false, error: 'Push är inte konfigurerat.' }, { status: 503 });
+    return routeError(503, 'push_not_configured', 'Push är inte konfigurerat.');
   }
 
   const isCronCall = isAuthorizedCron(req);
   const currentUserId = isCronCall ? null : await getUserId();
 
   if (!isCronCall && !currentUserId) {
-    return NextResponse.json({ ok: false, error: 'Ej inloggad.' }, { status: 401 });
+    return routeError(401, 'unauthorized', 'Ej inloggad.');
   }
 
   let query = supabase
@@ -116,7 +131,7 @@ async function dispatchReminders(req: NextRequest) {
 
   const { data: dueNotes, error: dueError } = await query;
   if (dueError) {
-    return NextResponse.json({ ok: false, error: dueError.message }, { status: 500 });
+    return routeError(500, 'load_due_notes_failed', dueError.message);
   }
 
   const results: Array<{ noteId: string; sent: number; failed: number; skipped: boolean }> = [];
@@ -188,7 +203,8 @@ async function dispatchReminders(req: NextRequest) {
     results.push({ noteId: note.id, sent: sentCount, failed: failedCount, skipped: false });
   }
 
-  return NextResponse.json({ ok: true, processed: results.length, results });
+  const payload = { processed: results.length, results };
+  return ok(payload, payload);
 }
 
 export async function POST(req: NextRequest) {
@@ -197,7 +213,7 @@ export async function POST(req: NextRequest) {
 
 export async function GET(req: NextRequest) {
   if (!isAuthorizedCron(req)) {
-    return NextResponse.json({ ok: false, error: 'Method not allowed.' }, { status: 405 });
+    return routeError(405, 'method_not_allowed', 'Method not allowed.');
   }
 
   return dispatchReminders(req);

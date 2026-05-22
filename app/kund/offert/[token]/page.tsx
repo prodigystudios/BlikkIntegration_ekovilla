@@ -241,7 +241,11 @@ export default function CustomerOffertTokenPage({ params }: { params: { token: s
         const res = await fetch(`/api/kund/offert/${encodeURIComponent(token)}`, { cache: 'no-store' });
         if (!res.ok) {
           const j = await res.json().catch(() => null);
-          const msg = j?.error || 'Länken är ogiltig eller redan använd.';
+          const msg =
+            j?.error?.message ||
+            j?.legacyError ||
+            (typeof j?.error === 'string' ? j.error : null) ||
+            'Länken är ogiltig eller redan använd.';
           if (cancelled) return;
           setLoadState({ kind: res.status === 410 ? 'submitted' : 'invalid', message: msg });
           return;
@@ -300,7 +304,12 @@ export default function CustomerOffertTokenPage({ params }: { params: { token: s
 
       if (!res.ok) {
         const j = await res.json().catch(() => null);
-        throw new Error(j?.error || 'Kunde inte skicka in. Försök igen.');
+        throw new Error(
+          j?.error?.message ||
+          j?.legacyError ||
+          (typeof j?.error === 'string' ? j.error : null) ||
+          'Kunde inte skicka in. Försök igen.',
+        );
       }
 
       setLoadState({ kind: 'submitted' });

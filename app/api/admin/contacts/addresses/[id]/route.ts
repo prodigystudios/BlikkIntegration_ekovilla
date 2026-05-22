@@ -1,29 +1,32 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { requireAdminUser } from '@/lib/auth/route';
-import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
+import { NextRequest } from 'next/server';
+import { ok, requireContactsAdminContext, routeError, routeIdParamsSchema, updateAddressSchema, validationError } from '../../_lib';
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
-  if (!(await requireAdminUser())) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
-  const supabase = getOptionalSupabaseAdmin();
-  if (!supabase) return NextResponse.json({ error: 'service role missing' }, { status: 500 });
-  const { id } = params;
+  const context = await requireContactsAdminContext();
+  if ('response' in context) return context.response;
+
+  const parsedParams = routeIdParamsSchema.safeParse(params);
+  if (!parsedParams.success) return validationError(parsedParams.error);
+
   const body = await req.json();
-  const upd: any = {};
-  if (body.name !== undefined) upd.name = body.name.trim();
-  if (body.address !== undefined) upd.address = body.address.trim();
-  if (typeof body.sort === 'number') upd.sort = body.sort;
-  if (Object.keys(upd).length === 0) return NextResponse.json({ error: 'no updates' }, { status: 400 });
-  const { data, error } = await supabase.from('addresses').update(upd).eq('id', id).select().single();
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ address: data });
+  const parsed = updateAddressSchema.safeParse(body);
+  if (!parsed.success) return validationError(parsed.error);
+
+  const { supabase } = context;
+  const { data, error } = await supabase.from('addresses').update(parsed.data).eq('id', parsedParams.data.id).select().single();
+  if (error) return routeError(500, 'update_failed', error.message);
+  return ok({ address: data });
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
-  if (!(await requireAdminUser())) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
-  const supabase = getOptionalSupabaseAdmin();
-  if (!supabase) return NextResponse.json({ error: 'service role missing' }, { status: 500 });
-  const { id } = params;
-  const { error } = await supabase.from('addresses').delete().eq('id', id);
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ ok: true });
+  const context = await requireContactsAdminContext();
+  if ('response' in context) return context.response;
+
+  const parsedParams = routeIdParamsSchema.safeParse(params);
+  if (!parsedParams.success) return validationError(parsedParams.error);
+
+  const { supabase } = context;
+  const { error } = await supabase.from('addresses').delete().eq('id', parsedParams.data.id);
+  if (error) return routeError(500, 'delete_failed', error.message);
+  return ok(null);
 }

@@ -1,38 +1,59 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { createServerComponentClient } from '@supabase/auth-helpers-nextjs';
+import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { z } from 'zod';
 import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
+
+const createTaskSchema = z.object({
+  title: z.string().trim().min(1, 'Titel krävs'),
+  description: z.string().optional().default(''),
+  dueDate: z.string().trim().min(1).optional(),
+  source: z.string().trim().min(1).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+  requesterName: z.string().optional().default(''),
+});
+
+function ok<T>(data: T, legacy?: Record<string, unknown>, status = 200) {
+  return NextResponse.json({ ok: true, data, ...(legacy ?? {}) }, { status });
+}
+
+function routeError(status: number, code: string, message: string, details?: unknown) {
+  return NextResponse.json(
+    {
+      ok: false,
+      error: { code, message, ...(details !== undefined ? { details } : {}) },
+      legacyError: message,
+    },
+    { status },
+  );
+}
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const title = String(body.title || '').trim();
-    const description = typeof body.description === 'string' ? body.description : '';
-    const dueDate = body.dueDate ? String(body.dueDate) : undefined;
-    const source = body.source ? String(body.source) : undefined;
-    const metadata = body.metadata && typeof body.metadata === 'object' ? body.metadata : undefined;
-    const requesterName = typeof body.requesterName === 'string' ? body.requesterName.trim() : '';
-
-    if (!title) {
-      return NextResponse.json({ ok: false, error: 'Titel krävs' }, { status: 400 });
+    const parsed = createTaskSchema.safeParse(body);
+    if (!parsed.success) {
+      return routeError(400, 'validation_error', 'Ogiltig förfrågan', parsed.error.flatten());
     }
+
+    const { title, description, dueDate, source, metadata, requesterName } = parsed.data;
 
     const admin = getOptionalSupabaseAdmin();
     if (!admin) {
-      return NextResponse.json({ ok: false, error: 'Admin-klient saknas (env)' }, { status: 500 });
+      return routeError(500, 'service_role_missing', 'Admin-klient saknas (env)');
     }
 
     // Who is creating the task? Use the current session user as created_by
-    const supabase = createServerComponentClient({ cookies });
+    const supabase = createRouteHandlerClient({ cookies });
     const { data: { user }, error: userErr } = await supabase.auth.getUser();
     if (userErr || !user) {
-      return NextResponse.json({ ok: false, error: 'Ej inloggad' }, { status: 401 });
+      return routeError(401, 'unauthorized', 'Ej inloggad');
     }
 
     // Resolve assignee: require env TASKS_DEFAULT_ASSIGNEE_UUID for Patrik Valls
     const assignee = (process.env.TASKS_DEFAULT_ASSIGNEE_UUID || '').trim();
     if (!assignee) {
-      return NextResponse.json({ ok: false, error: 'Saknar mottagarens UUID (TASKS_DEFAULT_ASSIGNEE_UUID)' }, { status: 500 });
+      return routeError(500, 'default_assignee_missing', 'Saknar mottagarens UUID (TASKS_DEFAULT_ASSIGNEE_UUID)');
     }
 
     const finalDescriptionParts: string[] = [];
@@ -62,9 +83,9 @@ export async function POST(req: NextRequest) {
       throw error || new Error('Misslyckades skapa uppgift');
     }
 
-    return NextResponse.json({ ok: true, createdId: data.id });
+    return ok({ createdId: data.id }, { createdId: data.id }, 201);
   } catch (e: any) {
     console.error('tasks/create failed', e);
-    return NextResponse.json({ ok: false, error: e?.message || 'Unknown error' }, { status: 500 });
+    return routeError(500, 'task_create_failed', e?.message || 'Unknown error');
   }
 }

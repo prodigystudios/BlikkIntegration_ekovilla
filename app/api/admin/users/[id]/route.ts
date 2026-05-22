@@ -1,65 +1,43 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { requireAdminUser } from '@/lib/auth/route';
-import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
+import { NextRequest } from 'next/server';
 import {
   buildAdminDetailUpdates,
   buildAdminProfileUpdates,
   buildSensitiveProfileUpdates,
 } from '../../../../../lib/profileDetails';
+import { ok, requireUsersAdminContext, routeError, routeIdParamsSchema, updateAdminUserSchema, validationError } from '../_lib';
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
-  if (!(await requireAdminUser())) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
-  const supabase = getOptionalSupabaseAdmin();
-  if (!supabase) return NextResponse.json({ error: 'service role not configured' }, { status: 500 });
+  const context = await requireUsersAdminContext();
+  if ('response' in context) return context.response;
 
-  const { id } = params;
-  const body = await req.json();
-  let { role, full_name, disabled, tags, phone } = body as { role?: string; full_name?: string; disabled?: boolean; tags?: string[]; phone?: string };
-  if (role === 'readonly') role = 'konsult';
+  const parsedParams = routeIdParamsSchema.safeParse(params);
+  if (!parsedParams.success) return validationError(parsedParams.error);
 
-  const profileUpdates = buildAdminProfileUpdates(body || {});
-  const detailUpdates = buildAdminDetailUpdates(body || {});
-  const sensitiveUpdates = buildSensitiveProfileUpdates(body || {});
-
-  // Update profile name if provided
-  let nameUpdated = false;
-  if (full_name !== undefined) {
-    const { error: nameErr } = await supabase.from('profiles').update({ full_name }).eq('id', id);
-    if (nameErr) return NextResponse.json({ error: 'failed updating name', details: nameErr.message }, { status: 500 });
-    nameUpdated = true;
-  }
-  // Change role (direct update with service role; server already validated current user is admin)
-  let roleUpdated = false;
-  if (role && ['member','sales','admin','konsult'].includes(role)) {
-    const { error: roleErr } = await supabase.from('profiles').update({ role }).eq('id', id);
-    if (roleErr) return NextResponse.json({ error: 'failed updating role', details: roleErr.message }, { status: 500 });
-    roleUpdated = true;
-  }
-  // Update tags directly with service role (bypasses RLS); server already validated admin
-  let tagsUpdated = false;
-  if (Array.isArray(tags)) {
-    const { error: tagErr } = await supabase.from('profiles').update({ tags }).eq('id', id);
-    if (tagErr) return NextResponse.json({ error: 'failed updating tags', details: tagErr.message }, { status: 500 });
-    tagsUpdated = true;
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return routeError(400, 'invalid_json', 'Invalid JSON');
   }
 
-  // Update phone (allow clearing by explicitly sending phone)
-  let phoneUpdated = false;
-  if ('phone' in (body || {})) {
-    const phoneValue = typeof phone === 'string' ? phone.trim() : '';
-    const { error: phoneErr } = await supabase.from('profiles').update({ phone: phoneValue || null }).eq('id', id);
-    if (phoneErr) return NextResponse.json({ error: 'failed updating phone', details: phoneErr.message }, { status: 500 });
-    phoneUpdated = true;
-  }
+  const parsed = updateAdminUserSchema.safeParse(body);
+  if (!parsed.success) return validationError(parsed.error);
 
-  const remainingProfileUpdates = { ...profileUpdates };
-  delete remainingProfileUpdates.full_name;
-  delete remainingProfileUpdates.phone;
+  const { supabase } = context;
+  const { id } = parsedParams.data;
+  const { role, disabled, tags } = parsed.data;
+
+  const profileUpdates = buildAdminProfileUpdates(parsed.data);
+  const detailUpdates = buildAdminDetailUpdates(parsed.data);
+  const sensitiveUpdates = buildSensitiveProfileUpdates(parsed.data);
+  const profileMutation: Record<string, unknown> = { ...profileUpdates };
+  if (role) profileMutation.role = role;
+  if (tags) profileMutation.tags = tags;
 
   let profileDetailsUpdated = false;
-  if (Object.keys(remainingProfileUpdates).length) {
-    const { error: profileErr } = await supabase.from('profiles').update(remainingProfileUpdates).eq('id', id);
-    if (profileErr) return NextResponse.json({ error: 'failed updating profile fields', details: profileErr.message }, { status: 500 });
+  if (Object.keys(profileMutation).length) {
+    const { error: profileErr } = await supabase.from('profiles').update(profileMutation).eq('id', id);
+    if (profileErr) return routeError(500, 'profile_update_failed', 'Failed updating profile fields', profileErr.message);
     profileDetailsUpdated = true;
   }
 
@@ -68,7 +46,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     const { error: detailErr } = await supabase
       .from('employee_profile_details')
       .upsert({ user_id: id, ...detailUpdates }, { onConflict: 'user_id' });
-    if (detailErr) return NextResponse.json({ error: 'failed updating employee details', details: detailErr.message }, { status: 500 });
+    if (detailErr) return routeError(500, 'employee_details_update_failed', 'Failed updating employee details', detailErr.message);
     employeeDetailsUpdated = true;
   }
 
@@ -77,23 +55,45 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     const { error: sensitiveErr } = await supabase
       .from('employee_sensitive_details')
       .upsert({ user_id: id, ...sensitiveUpdates }, { onConflict: 'user_id' });
-    if (sensitiveErr) return NextResponse.json({ error: 'failed updating sensitive details', details: sensitiveErr.message }, { status: 500 });
+    if (sensitiveErr) return routeError(500, 'sensitive_details_update_failed', 'Failed updating sensitive details', sensitiveErr.message);
     sensitiveUpdated = true;
   }
   // Disable/enable user (Supabase: update user) if requested
+  let disabledRequested = false;
   if (typeof disabled === 'boolean') {
     // Supabase JS v2 doesn't expose direct 'banned' flag; placeholder for future
+    disabledRequested = true;
   }
 
-  return NextResponse.json({ ok: true, nameUpdated, roleUpdated, tagsUpdated, phoneUpdated, profileDetailsUpdated, employeeDetailsUpdated, sensitiveUpdated });
+  return ok(
+    {
+      updated: {
+        profile: Object.keys(profileMutation).length > 0,
+        employeeDetails: employeeDetailsUpdated,
+        sensitiveDetails: sensitiveUpdated,
+        disabledRequested,
+      },
+    },
+    {
+      profileDetailsUpdated,
+      employeeDetailsUpdated,
+      sensitiveUpdated,
+      disabledRequested,
+    },
+  );
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
-  if (!(await requireAdminUser())) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
-  const supabase = getOptionalSupabaseAdmin();
-  if (!supabase) return NextResponse.json({ error: 'service role not configured' }, { status: 500 });
-  const { id } = params;
+  const context = await requireUsersAdminContext();
+  if ('response' in context) return context.response;
+
+  const parsedParams = routeIdParamsSchema.safeParse(params);
+  if (!parsedParams.success) return validationError(parsedParams.error);
+
+  const { supabase } = context;
+  const { id } = parsedParams.data;
   // Delete auth user (cascade should remove profile row)
-  await supabase.auth.admin.deleteUser(id);
-  return NextResponse.json({ ok: true });
+  const { error } = await supabase.auth.admin.deleteUser(id);
+  if (error) return routeError(500, 'delete_user_failed', error.message);
+  return ok(null);
 }

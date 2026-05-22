@@ -1,17 +1,15 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { requireAdminUser } from '@/lib/auth/route';
-import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
+import { NextRequest } from 'next/server';
+import { createAdminUserSchema, ok, requireUsersAdminContext, routeError, validationError } from './_lib';
 
 export async function GET() {
-  const currentUser = await requireAdminUser();
-  if (!currentUser) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+  const context = await requireUsersAdminContext();
+  if ('response' in context) return context.response;
 
-  const supabase = getOptionalSupabaseAdmin();
-  if (!supabase) return NextResponse.json({ error: 'service role not configured' }, { status: 500 });
+  const { supabase } = context;
 
   // List auth users and join profiles
   const { data: authUsers, error: listErr } = await supabase.auth.admin.listUsers();
-  if (listErr) return NextResponse.json({ error: listErr.message }, { status: 500 });
+  if (listErr) return routeError(500, 'list_users_failed', listErr.message);
 
   // Fetch profiles in one query
   const ids = authUsers.users.map(u => u.id);
@@ -43,35 +41,49 @@ export async function GET() {
     tags: (profiles as any)[u.id]?.tags || []
   }));
 
-  return NextResponse.json({ users });
+  return ok({ users }, { users });
 }
 
 export async function POST(req: NextRequest) {
-  const currentUser = await requireAdminUser();
-  if (!currentUser) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+  const context = await requireUsersAdminContext();
+  if ('response' in context) return context.response;
 
-  const supabase = getOptionalSupabaseAdmin();
-  if (!supabase) return NextResponse.json({ error: 'service role not configured' }, { status: 500 });
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return routeError(400, 'invalid_json', 'Invalid JSON');
+  }
 
-  const body = await req.json();
-  let { email, password, full_name, role } = body as { email: string; password: string; full_name?: string; role?: string };
-  if (role === 'readonly') role = 'konsult';
-  if (!email || !password) return NextResponse.json({ error: 'missing fields' }, { status: 400 });
+  const parsed = createAdminUserSchema.safeParse(body);
+  if (!parsed.success) return validationError(parsed.error);
+
+  const { supabase } = context;
+  const { email, password, full_name, role } = parsed.data;
 
   // Create auth user
   const { data: created, error: createErr } = await supabase.auth.admin.createUser({ email, password, email_confirm: true });
-  if (createErr || !created?.user) return NextResponse.json({ error: createErr?.message || 'create failed' }, { status: 500 });
+  if (createErr || !created?.user) return routeError(500, 'create_user_failed', createErr?.message || 'Create failed');
 
   const userId = created.user.id;
 
-  // Optionally set name/role (role via SECURE function if different from default)
+  // Apply profile changes after auth user creation. Roll back auth user if follow-up writes fail.
   if (full_name) {
-    await supabase.from('profiles').update({ full_name }).eq('id', userId);
+    const { error: nameErr } = await supabase.from('profiles').update({ full_name }).eq('id', userId);
+    if (nameErr) {
+      await supabase.auth.admin.deleteUser(userId);
+      return routeError(500, 'profile_update_failed', nameErr.message);
+    }
   }
-  if (role && ['member','sales','admin','konsult'].includes(role) && role !== 'member') {
+  if (role && role !== 'member') {
     // use function to ensure authorization semantics (runs SECURITY DEFINER)
-    await supabase.rpc('set_user_role', { target: userId, new_role: role });
+    const { error: roleErr } = await supabase.rpc('set_user_role', { target: userId, new_role: role });
+    if (roleErr) {
+      await supabase.auth.admin.deleteUser(userId);
+      return routeError(500, 'role_update_failed', roleErr.message);
+    }
   }
 
-  return NextResponse.json({ user: { id: userId, email, role: role || 'member', full_name: full_name || null, created_at: created.user.created_at } });
+  const user = { id: userId, email, role: role || 'member', full_name: full_name || null, created_at: created.user.created_at, phone: null, tags: [] };
+  return ok({ user }, { user }, 201);
 }

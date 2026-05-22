@@ -1,7 +1,4 @@
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { cookies } from 'next/headers';
 import { NextRequest, NextResponse } from 'next/server';
-import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
 import {
   asRecord,
   attachSensitiveStatus,
@@ -11,19 +8,17 @@ import {
   PROFILE_SELECT,
   SENSITIVE_PROFILE_SELECT,
 } from '../../../lib/profileDetails';
+import { getProfileRouteContext, ok, routeError, selfProfileUpdateSchema, validationError } from './_lib';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
-  const supabase = createRouteHandlerClient({ cookies });
-  const admin = getOptionalSupabaseAdmin();
-  const { data: authData, error: authError } = await supabase.auth.getUser();
+  const context = await getProfileRouteContext();
+  if ('response' in context) return context.response;
 
-  if (authError || !authData.user) {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-  }
+  const { supabase, admin, user } = context;
 
-  const userId = authData.user.id;
+  const userId = user.id;
   const [
     { data: profileRow, error: profileError },
     { data: detailRow, error: detailError },
@@ -37,15 +32,15 @@ export async function GET() {
   ]);
 
   if (profileError) {
-    return NextResponse.json({ error: 'failed loading profile', details: profileError.message }, { status: 500 });
+    return routeError(500, 'profile_load_failed', 'Failed loading profile', profileError.message);
   }
 
   if (detailError) {
-    return NextResponse.json({ error: 'failed loading profile details', details: detailError.message }, { status: 500 });
+    return routeError(500, 'profile_details_load_failed', 'Failed loading profile details', detailError.message);
   }
 
   if (sensitiveError) {
-    return NextResponse.json({ error: 'failed loading sensitive profile status', details: sensitiveError.message }, { status: 500 });
+    return routeError(500, 'sensitive_status_load_failed', 'Failed loading sensitive profile status', sensitiveError.message);
   }
 
   const profile = attachSensitiveStatus(mergeEmployeeProfile(
@@ -53,40 +48,38 @@ export async function GET() {
     asRecord(detailRow),
   ), asRecord(sensitiveRow));
   if (!profile) {
-    return NextResponse.json({ error: 'profile not found' }, { status: 404 });
+    return routeError(404, 'profile_not_found', 'Profile not found');
   }
 
-  return NextResponse.json({ profile, authEmail: authData.user.email || null });
+  const authEmail = user.email || null;
+  return ok({ profile, authEmail }, { profile, authEmail });
 }
 
 export async function PATCH(req: NextRequest) {
-  const supabase = createRouteHandlerClient({ cookies });
-  const admin = getOptionalSupabaseAdmin();
-  const { data: authData, error: authError } = await supabase.auth.getUser();
+  const context = await getProfileRouteContext();
+  if ('response' in context) return context.response;
 
-  if (authError || !authData.user) {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-  }
+  const { supabase, admin, user } = context;
 
-  let body: Record<string, unknown>;
+  let body: unknown;
   try {
     body = await req.json();
   } catch {
-    return NextResponse.json({ error: 'invalid json' }, { status: 400 });
+    return routeError(400, 'invalid_json', 'Invalid JSON');
   }
 
-  const updates = buildSelfProfileUpdates(body);
-  if (!Object.keys(updates).length) {
-    return NextResponse.json({ error: 'no supported fields provided' }, { status: 400 });
-  }
+  const parsed = selfProfileUpdateSchema.safeParse(body);
+  if (!parsed.success) return validationError(parsed.error);
 
-  const { error } = await supabase.from('profiles').update(updates).eq('id', authData.user.id);
+  const updates = buildSelfProfileUpdates(parsed.data);
+
+  const { error } = await supabase.from('profiles').update(updates).eq('id', user.id);
   if (error) {
-    return NextResponse.json({ error: 'failed updating profile', details: error.message }, { status: 500 });
+    return routeError(500, 'profile_update_failed', 'Failed updating profile', error.message);
   }
 
   if (!admin) {
-    return NextResponse.json({ ok: true });
+    return ok({ updated: true });
   }
 
   const [
@@ -94,24 +87,22 @@ export async function PATCH(req: NextRequest) {
     { data: detailRow, error: detailError },
     { data: sensitiveRow, error: sensitiveError },
   ] = await Promise.all([
-    admin.from('profiles').select(PROFILE_SELECT).eq('id', authData.user.id).maybeSingle(),
-    admin.from('employee_profile_details').select(PROFILE_DETAILS_SELECT).eq('user_id', authData.user.id).maybeSingle(),
-    admin.from('employee_sensitive_details').select(SENSITIVE_PROFILE_SELECT).eq('user_id', authData.user.id).maybeSingle(),
+    admin.from('profiles').select(PROFILE_SELECT).eq('id', user.id).maybeSingle(),
+    admin.from('employee_profile_details').select(PROFILE_DETAILS_SELECT).eq('user_id', user.id).maybeSingle(),
+    admin.from('employee_sensitive_details').select(SENSITIVE_PROFILE_SELECT).eq('user_id', user.id).maybeSingle(),
   ]);
 
   if (profileError || detailError || sensitiveError) {
-    return NextResponse.json({ ok: true });
+    return ok({ updated: true });
   }
 
-  return NextResponse.json({
-    ok: true,
-    profile: attachSensitiveStatus(
-      mergeEmployeeProfile(
-        asRecord(profileRow),
-        asRecord(detailRow),
-      ),
-      asRecord(sensitiveRow),
+  const profile = attachSensitiveStatus(
+    mergeEmployeeProfile(
+      asRecord(profileRow),
+      asRecord(detailRow),
     ),
-    authEmail: authData.user.email || null,
-  });
+    asRecord(sensitiveRow),
+  );
+
+  return ok({ profile, authEmail: user.email || null }, { profile, authEmail: user.email || null });
 }
