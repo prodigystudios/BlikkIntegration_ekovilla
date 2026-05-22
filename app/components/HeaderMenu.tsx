@@ -205,7 +205,7 @@ export default function HeaderMenu({ role, fullName }: { role: UserRole | null, 
           // Clicking backdrop closes; clicks inside panel shouldn't bubble
           if (e.target === e.currentTarget) setOpen(false);
         }}
-        style={{ display: open ? 'block' : 'none', pointerEvents: open ? 'auto' : 'none' }}
+        style={{ display: open ? 'flex' : 'none', pointerEvents: open ? 'auto' : 'none' }}
       >
         <div className={`drawer-backdrop${open ? ' drawer-backdrop--show' : ''}`} />
         <div
