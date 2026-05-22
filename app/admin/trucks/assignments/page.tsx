@@ -1,5 +1,13 @@
 "use client";
 import React, { useEffect, useMemo, useState } from 'react';
+import Badge from '../../../../components/ui/Badge';
+import Button from '../../../../components/ui/Button';
+import EmptyState from '../../../../components/ui/EmptyState';
+import ErrorState from '../../../../components/ui/ErrorState';
+import Input from '../../../../components/ui/Input';
+import PageShell from '../../../../components/ui/PageShell';
+import Select from '../../../../components/ui/Select';
+import SectionCard from '../../../../components/ui/SectionCard';
 import { useTruckAssignments } from '@/lib/TruckAssignmentsContext';
 
 type NewAssignment = {
@@ -78,84 +86,103 @@ export default function TruckAssignmentsAdminPage() {
   const list = assignments.filter(a => !filterTruck || a.truck_id === filterTruck);
 
   return (
-    <div style={{ padding: 16 }}>
-      <h1>Truck-tilldelningar</h1>
-      {error && <div style={{ color: '#b91c1c', marginBottom: 12 }}>Fel: {error}</div>}
+    <PageShell className="max-w-[1120px] gap-5 px-3 py-3 sm:px-4 lg:px-5">
+      <SectionCard className="grid gap-4 rounded-[24px] bg-[linear-gradient(180deg,#ffffff_0%,#f8fbff_100%)] p-5 shadow-[0_14px_36px_rgba(15,23,42,0.04)]">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="grid max-w-[720px] gap-1.5">
+            <div className="flex flex-wrap gap-2">
+              <Badge variant="accent" className="px-2.5 py-1 text-[11px] uppercase tracking-[0.35px]">Truck-tilldelningar</Badge>
+              <Badge>{assignments.length} totalt</Badge>
+              <Badge>{list.length} visade</Badge>
+            </div>
+            <h1 className="m-0 text-[30px] leading-[1.08] text-slate-900">Hantera trucktilldelningar i ett tydligare flöde</h1>
+            <p className="m-0 text-sm leading-[1.55] text-slate-600">Filtrera per truck, skapa nya tilldelningar och justera befintliga poster direkt i en mer sammanhållen adminyta.</p>
+          </div>
 
-      <div style={{ display: 'grid', gap: 12, marginBottom: 24 }}>
-        <label style={{ display: 'grid', gap: 6 }}>
-          <span>Filtrera truck</span>
-          <select value={filterTruck} onChange={e => setFilterTruck(e.target.value)}>
-            <option value="">Alla</option>
-            {trucks.map(t => <option key={t} value={t}>{t}</option>)}
-          </select>
-        </label>
-      </div>
-
-      <section style={{ marginBottom: 24 }}>
-        <h2>Ny tilldelning</h2>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-          <label style={{ display: 'grid', gap: 6 }}>
-            <span>Truck</span>
-            <input value={form.truck_id} onChange={e => setForm(f => ({ ...f, truck_id: e.target.value }))} placeholder="Ex: Truck-1" />
-          </label>
-          <label style={{ display: 'grid', gap: 6 }}>
-            <span>Startdag</span>
-            <input type="date" value={form.start_day} onChange={e => setForm(f => ({ ...f, start_day: e.target.value }))} />
-          </label>
-          <label style={{ display: 'grid', gap: 6 }}>
-            <span>Slutdag</span>
-            <input type="date" value={form.end_day} onChange={e => setForm(f => ({ ...f, end_day: e.target.value }))} />
-          </label>
-          <label style={{ display: 'grid', gap: 6 }}>
-            <span>Montör 1</span>
-            <input value={form.team_member1_name ?? ''} onChange={e => setForm(f => ({ ...f, team_member1_name: e.target.value }))} />
-          </label>
-          <label style={{ display: 'grid', gap: 6 }}>
-            <span>Montör 2</span>
-            <input value={form.team_member2_name ?? ''} onChange={e => setForm(f => ({ ...f, team_member2_name: e.target.value }))} />
-          </label>
+          <div className="grid min-w-[220px] gap-1 rounded-2xl border border-ui-border bg-white px-3 py-2.5">
+            <span className="text-[11px] font-extrabold uppercase tracking-[0.3px] text-slate-500">Filter</span>
+            <Select value={filterTruck} onChange={e => setFilterTruck(e.target.value)}>
+              <option value="">Alla trucks</option>
+              {trucks.map(t => <option key={t} value={t}>{t}</option>)}
+            </Select>
+          </div>
         </div>
-        <div style={{ marginTop: 12 }}>
-          <button type="button" className="btn" onClick={createAssignment} disabled={saving || !form.truck_id || !form.start_day || !form.end_day}>Spara</button>
-        </div>
-      </section>
+      </SectionCard>
 
-      <section>
-        <h2>Befintliga tilldelningar{filterTruck ? `: ${filterTruck}` : ''}</h2>
-        <div style={{ display: 'grid', gap: 8 }}>
-          {list.length === 0 && <div>Inga tilldelningar</div>}
+      {error && <ErrorState title="Kunde inte uppdatera trucktilldelning" message={error} />}
+
+      <SectionCard className="grid gap-4 p-5">
+        <div className="grid gap-1">
+          <h2 className="m-0 text-xl text-slate-900">Ny tilldelning</h2>
+          <p className="m-0 text-sm text-slate-500">Skapa en ny period för trucken och koppla montörer direkt.</p>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-2">
+          <Field label="Truck">
+            <Input value={form.truck_id} onChange={e => setForm(f => ({ ...f, truck_id: e.target.value }))} placeholder="Ex: Truck-1" />
+          </Field>
+          <Field label="Startdag">
+            <Input type="date" value={form.start_day} onChange={e => setForm(f => ({ ...f, start_day: e.target.value }))} />
+          </Field>
+          <Field label="Slutdag">
+            <Input type="date" value={form.end_day} onChange={e => setForm(f => ({ ...f, end_day: e.target.value }))} />
+          </Field>
+          <Field label="Montör 1">
+            <Input value={form.team_member1_name ?? ''} onChange={e => setForm(f => ({ ...f, team_member1_name: e.target.value }))} />
+          </Field>
+          <Field label="Montör 2">
+            <Input value={form.team_member2_name ?? ''} onChange={e => setForm(f => ({ ...f, team_member2_name: e.target.value }))} />
+          </Field>
+        </div>
+
+        <div>
+          <Button type="button" variant="primary" onClick={createAssignment} disabled={saving || !form.truck_id || !form.start_day || !form.end_day}>Spara</Button>
+        </div>
+      </SectionCard>
+
+      <SectionCard className="grid gap-4 p-5">
+        <div className="grid gap-1">
+          <h2 className="m-0 text-xl text-slate-900">Befintliga tilldelningar{filterTruck ? `: ${filterTruck}` : ''}</h2>
+          <p className="m-0 text-sm text-slate-500">Ändringar sparas när du lämnar ett fält. Radera posten om tilldelningen inte längre gäller.</p>
+        </div>
+
+        <div className="grid gap-2">
+          {list.length === 0 && <EmptyState title="Inga tilldelningar" description={filterTruck ? 'Det finns inga perioder för vald truck ännu.' : 'Skapa första tilldelningen för att börja planera.'} />}
           {list.map(a => (
-            <div key={a.id} style={{ border: '1px solid #e5e7eb', padding: 12, borderRadius: 8, display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                <label style={{ display: 'grid', gap: 4 }}>
-                  <span style={{ fontSize: 12, color: '#64748b' }}>Truck</span>
-                  <input defaultValue={a.truck_id} onBlur={e => updateAssignment(a.id, { truck_id: e.target.value })} />
-                </label>
-                <label style={{ display: 'grid', gap: 4 }}>
-                  <span style={{ fontSize: 12, color: '#64748b' }}>Startdag</span>
-                  <input type="date" defaultValue={a.start_day} onBlur={e => updateAssignment(a.id, { start_day: e.target.value })} />
-                </label>
-                <label style={{ display: 'grid', gap: 4 }}>
-                  <span style={{ fontSize: 12, color: '#64748b' }}>Slutdag</span>
-                  <input type="date" defaultValue={a.end_day} onBlur={e => updateAssignment(a.id, { end_day: e.target.value })} />
-                </label>
-                <label style={{ display: 'grid', gap: 4 }}>
-                  <span style={{ fontSize: 12, color: '#64748b' }}>Montör 1</span>
-                  <input defaultValue={a.team_member1_name ?? ''} onBlur={e => updateAssignment(a.id, { team_member1_name: e.target.value })} />
-                </label>
-                <label style={{ display: 'grid', gap: 4 }}>
-                  <span style={{ fontSize: 12, color: '#64748b' }}>Montör 2</span>
-                  <input defaultValue={a.team_member2_name ?? ''} onBlur={e => updateAssignment(a.id, { team_member2_name: e.target.value })} />
-                </label>
+            <div key={a.id} className="grid gap-3 rounded-xl border border-slate-200 bg-white p-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
+              <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                <Field label="Truck">
+                  <Input defaultValue={a.truck_id} onBlur={e => updateAssignment(a.id, { truck_id: e.target.value })} />
+                </Field>
+                <Field label="Startdag">
+                  <Input type="date" defaultValue={a.start_day} onBlur={e => updateAssignment(a.id, { start_day: e.target.value })} />
+                </Field>
+                <Field label="Slutdag">
+                  <Input type="date" defaultValue={a.end_day} onBlur={e => updateAssignment(a.id, { end_day: e.target.value })} />
+                </Field>
+                <Field label="Montör 1">
+                  <Input defaultValue={a.team_member1_name ?? ''} onBlur={e => updateAssignment(a.id, { team_member1_name: e.target.value })} />
+                </Field>
+                <Field label="Montör 2">
+                  <Input defaultValue={a.team_member2_name ?? ''} onBlur={e => updateAssignment(a.id, { team_member2_name: e.target.value })} />
+                </Field>
               </div>
               <div>
-                <button className="btn--plain" onClick={() => deleteAssignment(a.id)} disabled={saving}>Ta bort</button>
+                <Button variant="secondary" size="sm" className="text-red-700 hover:bg-red-50" onClick={() => deleteAssignment(a.id)} disabled={saving}>Ta bort</Button>
               </div>
             </div>
           ))}
         </div>
-      </section>
-    </div>
+      </SectionCard>
+    </PageShell>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="grid gap-1.5">
+      <span className="text-xs font-medium text-slate-600">{label}</span>
+      {children}
+    </label>
   );
 }

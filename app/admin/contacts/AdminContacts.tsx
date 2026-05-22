@@ -1,5 +1,13 @@
 "use client";
 import React, { useEffect, useState, useMemo } from 'react';
+import Badge from '../../../components/ui/Badge';
+import Button from '../../../components/ui/Button';
+import { DataTable, DataTableCell, DataTableHeaderCell } from '../../../components/ui/DataTable';
+import EmptyState from '../../../components/ui/EmptyState';
+import ErrorState from '../../../components/ui/ErrorState';
+import Input from '../../../components/ui/Input';
+import { TabsList, TabsTrigger } from '../../../components/ui/Tabs';
+import { cn } from '../../../lib/shared/cn';
 
 interface Category { id: string; name: string; sort: number; }
 interface Contact { id: string; category_id: string; name: string; phone?: string | null; location?: string | null; role?: string | null; sort: number; }
@@ -94,132 +102,144 @@ export default function AdminContacts() {
   }
 
   return (
-    <main style={{ padding: 12, display:'grid', gap:20, maxWidth:1400, margin:'0 auto' }}>
-      <section style={{ border:'1px solid #dbe4ef', borderRadius:24, padding:20, background:'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)', boxShadow:'0 14px 36px rgba(15,23,42,0.04)', display:'grid', gap:16 }}>
-        <div style={{ display:'flex', alignItems:'flex-start', gap:16, flexWrap:'wrap' }}>
-          <div style={{ display:'grid', gap:6, maxWidth:760 }}>
-            <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
-              <span style={eyebrowStyle}>Kontakter</span>
-              <span style={chipStyle}>{categories.length} kategorier</span>
-              <span style={chipStyle}>{contacts.length} personer</span>
-              <span style={chipStyle}>{addresses.length} adresser</span>
+    <main className="mx-auto box-border grid w-full max-w-[1400px] gap-5 p-3">
+      <section className="grid gap-4 rounded-[24px] border border-ui-border bg-[linear-gradient(180deg,#ffffff_0%,#f8fbff_100%)] p-5 shadow-[0_14px_36px_rgba(15,23,42,0.04)]">
+        <div className="flex flex-wrap items-start gap-4">
+          <div className="grid max-w-[760px] gap-1.5">
+            <div className="flex flex-wrap gap-2">
+              <Badge variant="accent" className="px-2.5 py-1 text-[11px] uppercase tracking-[0.35px]">Kontakter</Badge>
+              <Badge>{categories.length} kategorier</Badge>
+              <Badge>{contacts.length} personer</Badge>
+              <Badge>{addresses.length} adresser</Badge>
             </div>
-            <h1 style={{ margin:0, fontSize:30, color:'#0f172a' }}>Kontaktregister med tydligare arbetsyta</h1>
-            <p style={{ margin:0, fontSize:14, color:'#475569', lineHeight:1.55 }}>Hantera kategorier, personer och adresser i samma vy med bättre filtrering och snabbare redigering.</p>
+            <h1 className="m-0 text-[30px] text-slate-900">Kontaktregister med tydligare arbetsyta</h1>
+            <p className="m-0 text-sm leading-[1.55] text-slate-600">Hantera kategorier, personer och adresser i samma vy med bättre filtrering och snabbare redigering.</p>
           </div>
-          <div style={{ marginLeft:'auto', display:'flex', gap:12, flexWrap:'wrap' }}>
-          <button onClick={loadAll} disabled={loading} style={btnSecondary}>{loading? 'Laddar...' : 'Uppdatera'}</button>
+          <div className="ml-auto flex flex-wrap gap-3">
+            <Button onClick={loadAll} disabled={loading} variant="secondary">{loading ? 'Laddar...' : 'Uppdatera'}</Button>
           </div>
         </div>
 
-        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(160px, 1fr))', gap:8 }}>
-          <div style={miniStatStyle}><span style={miniLabelStyle}>Aktiv vy</span><strong style={miniValueStyle}>{view === 'contacts' ? 'Kontakter' : 'Adresser'}</strong></div>
-          <div style={miniStatStyle}><span style={miniLabelStyle}>Vald kategori</span><strong style={miniValueStyle}>{activeCat ? (categories.find(c=>c.id===activeCat)?.name || 'Vald') : 'Alla'}</strong></div>
-          <div style={miniStatStyle}><span style={miniLabelStyle}>Visar</span><strong style={miniValueStyle}>{view === 'contacts' ? filteredContacts.length : filteredAddresses.length}</strong></div>
+        <div className="grid gap-2 [grid-template-columns:repeat(auto-fit,minmax(160px,1fr))]">
+          <div className="grid gap-1 rounded-2xl border border-ui-border bg-white px-3 py-2.5">
+            <span className="text-[11px] font-extrabold uppercase tracking-[0.3px] text-slate-500">Aktiv vy</span>
+            <strong className="text-xl font-extrabold text-slate-900">{view === 'contacts' ? 'Kontakter' : 'Adresser'}</strong>
+          </div>
+          <div className="grid gap-1 rounded-2xl border border-ui-border bg-white px-3 py-2.5">
+            <span className="text-[11px] font-extrabold uppercase tracking-[0.3px] text-slate-500">Vald kategori</span>
+            <strong className="text-xl font-extrabold text-slate-900">{activeCat ? (categories.find(c=>c.id===activeCat)?.name || 'Vald') : 'Alla'}</strong>
+          </div>
+          <div className="grid gap-1 rounded-2xl border border-ui-border bg-white px-3 py-2.5">
+            <span className="text-[11px] font-extrabold uppercase tracking-[0.3px] text-slate-500">Visar</span>
+            <strong className="text-xl font-extrabold text-slate-900">{view === 'contacts' ? filteredContacts.length : filteredAddresses.length}</strong>
+          </div>
         </div>
       </section>
 
-      {error && <div style={{ color:'#b91c1c', fontSize:14 }}>{error}</div>}
-      <section style={{ display:'grid', gap:24 }}> 
-        <div style={{ display:'flex', gap:12, flexWrap:'wrap', justifyContent:'space-between', alignItems:'center' }}>
-          <div style={{ display:'flex', gap:12, flexWrap:'wrap' }}>
-          <button
-            onClick={()=>setView('contacts')}
-            style={{ ...viewTab, ...(view==='contacts'? viewTabActive : {}) }}
-            aria-pressed={view==='contacts'}
-          >Kontakter</button>
-          <button
-            onClick={()=>setView('addresses')}
-            style={{ ...viewTab, ...(view==='addresses'? viewTabActive : {}) }}
-            aria-pressed={view==='addresses'}
-          >Adresser</button>
-          </div>
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={view === 'contacts' ? 'Sök namn, telefon, plats eller roll' : 'Sök namn eller adress'} style={{ ...input, minWidth:280, width:'min(100%, 360px)' }} />
+      {error && <ErrorState title="Kunde inte läsa kontaktregistret" message={error} />}
+      <section className="grid gap-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <TabsList aria-label="Kontaktregister-vy" className="gap-3">
+            <TabsTrigger
+              onClick={()=>setView('contacts')}
+              active={view === 'contacts'}
+            >
+              Kontakter
+            </TabsTrigger>
+            <TabsTrigger
+              onClick={()=>setView('addresses')}
+              active={view === 'addresses'}
+            >
+              Adresser
+            </TabsTrigger>
+          </TabsList>
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={view === 'contacts' ? 'Sök namn, telefon, plats eller roll' : 'Sök namn eller adress'}
+            className="min-w-[280px] sm:w-[360px]"
+          />
         </div>
         {view==='contacts' && (
-          <div style={{ display:'grid', gap:24, gridTemplateColumns:'minmax(250px, 300px) minmax(0, 1fr)', alignItems:'start' }}>
-            <div style={{ display:'flex', flexDirection:'column', gap:12, border:'1px solid #dbe4ef', background:'#fff', borderRadius:20, padding:18, alignSelf:'start', boxShadow:'0 10px 28px rgba(15,23,42,0.03)' }}>
-              <h2 style={{ margin:0, fontSize:16 }}>Kategorier</h2>
-              <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
-                <div style={{ display:'flex', alignItems:'center', gap:6 }}>
-                  <button onClick={()=>setActiveCat(null)} style={{ ...catBtn, ...(!activeCat? catBtnActive : {}) }}>Alla kategorier</button>
+          <div className="grid items-start gap-6 xl:[grid-template-columns:minmax(250px,300px)_minmax(0,1fr)]">
+            <div className="min-w-0 flex flex-col gap-3 self-start rounded-[20px] border border-ui-border bg-white p-[18px] shadow-[0_10px_28px_rgba(15,23,42,0.03)]">
+              <h2 className="m-0 text-base text-slate-900">Kategorier</h2>
+              <div className="flex flex-col gap-1.5">
+                <div className="flex items-center gap-1.5">
+                  <Button onClick={()=>setActiveCat(null)} variant={!activeCat ? 'accent' : 'secondary'} size="sm" fullWidth className="justify-start">Alla kategorier</Button>
                 </div>
                 {categories.map(cat => (
-                  <div key={cat.id} style={{ display:'flex', alignItems:'center', gap:6 }}>
-                    <button onClick={()=>setActiveCat(cat.id)} style={{ ...catBtn, ...(activeCat===cat.id? catBtnActive : {}) }}>{cat.name}</button>
-                    <button onClick={()=>{ const name=prompt('Nytt namn', cat.name); if(name) updateCategory(cat.id,{ name }); }} style={iconBtn} aria-label="Byt namn">✏️</button>
-                    <button onClick={()=>deleteCategory(cat.id)} style={{ ...iconBtn, color:'#b91c1c' }} aria-label="Ta bort">🗑️</button>
+                  <div key={cat.id} className="flex items-center gap-1.5">
+                    <Button onClick={()=>setActiveCat(cat.id)} variant={activeCat===cat.id ? 'accent' : 'secondary'} size="sm" fullWidth className="justify-start">{cat.name}</Button>
+                    <Button onClick={()=>{ const name=prompt('Nytt namn', cat.name); if(name) updateCategory(cat.id,{ name }); }} variant="secondary" size="sm" className="min-h-8 px-2 text-xs" aria-label="Byt namn">✏️</Button>
+                    <Button onClick={()=>deleteCategory(cat.id)} variant="secondary" size="sm" className="min-h-8 px-2 text-xs text-red-700 hover:bg-red-50" aria-label="Ta bort">🗑️</Button>
                   </div>
                 ))}
               </div>
-              <form onSubmit={e=>{e.preventDefault(); const fd=new FormData(e.currentTarget); const name=String(fd.get('name')||'').trim(); if(name) { (e.currentTarget as HTMLFormElement).reset(); createCategory(name);} }} style={{ display:'flex', gap:6, marginTop:8 }}>
-                <input name="name" placeholder="Ny kategori" style={inputSmall} />
-                <button style={btnPrimary}>Lägg till</button>
+              <form onSubmit={e=>{e.preventDefault(); const fd=new FormData(e.currentTarget); const name=String(fd.get('name')||'').trim(); if(name) { (e.currentTarget as HTMLFormElement).reset(); createCategory(name);} }} className="mt-2 flex gap-2">
+                <Input name="name" placeholder="Ny kategori" className="min-h-9 px-2.5 py-2 text-[13px]" />
+                <Button type="submit" variant="primary" size="sm">Lägg till</Button>
               </form>
             </div>
-            <div style={{ display:'flex', flexDirection:'column', gap:16, border:'1px solid #dbe4ef', background:'#fff', borderRadius:20, padding:18, boxShadow:'0 10px 28px rgba(15,23,42,0.03)' }}>
-              <div style={{ display:'grid', gap:4 }}>
-                <h2 style={{ margin:0, fontSize:18 }}>Kontakter {activeCat && '• ' + (categories.find(c=>c.id===activeCat)?.name || '')}</h2>
-                <span style={{ fontSize:13, color:'#64748b' }}>Inline-redigering med snabb filtrering och tydligare tabellstruktur.</span>
+            <div className="min-w-0 flex flex-col gap-4 rounded-[20px] border border-ui-border bg-white p-[18px] shadow-[0_10px_28px_rgba(15,23,42,0.03)]">
+              <div className="grid gap-1">
+                <h2 className="m-0 text-lg text-slate-900">Kontakter {activeCat && '• ' + (categories.find(c=>c.id===activeCat)?.name || '')}</h2>
+                <span className="text-[13px] text-slate-500">Inline-redigering med snabb filtrering och tydligare tabellstruktur.</span>
               </div>
-              <div style={{ overflowX:'auto', border:'1px solid #e5e7eb', borderRadius:16 }}>
-                <table style={{ width:'100%', borderCollapse:'collapse', minWidth:700 }}>
-                  <thead>
-                    <tr style={{ background:'#f9fafb' }}>
-                      {['Namn','Telefon','Plats','Roll',' '].map(h=> <th key={h} style={th}>{h}</th>)}
+              <DataTable className="min-w-[700px]">
+                <thead>
+                  <tr className="bg-slate-50">
+                    {['Namn','Telefon','Plats','Roll',' '].map(h=> <DataTableHeaderCell key={h}>{h}</DataTableHeaderCell>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredContacts.map(c => (
+                    <tr key={c.id} className="bg-white"> 
+                      <DataTableCell><Editable value={c.name} onSave={v=> updateContact(c.id,{ name:v })} /></DataTableCell>
+                      <DataTableCell><Editable value={c.phone||''} placeholder="—" onSave={v=> updateContact(c.id,{ phone:v })} /></DataTableCell>
+                      <DataTableCell><Editable value={c.location||''} placeholder="—" onSave={v=> updateContact(c.id,{ location:v })} /></DataTableCell>
+                      <DataTableCell><Editable value={c.role||''} placeholder="—" onSave={v=> updateContact(c.id,{ role:v })} /></DataTableCell>
+                      <DataTableCell className="w-[50px] text-right"><Button onClick={()=>deleteContact(c.id)} variant="secondary" size="sm" className="min-h-8 px-2 text-xs text-red-700 hover:bg-red-50">🗑️</Button></DataTableCell>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {filteredContacts.map(c => (
-                      <tr key={c.id} style={tr}> 
-                        <td style={td}><Editable value={c.name} onSave={v=> updateContact(c.id,{ name:v })} /></td>
-                        <td style={td}><Editable value={c.phone||''} placeholder="—" onSave={v=> updateContact(c.id,{ phone:v })} /></td>
-                        <td style={td}><Editable value={c.location||''} placeholder="—" onSave={v=> updateContact(c.id,{ location:v })} /></td>
-                        <td style={td}><Editable value={c.role||''} placeholder="—" onSave={v=> updateContact(c.id,{ role:v })} /></td>
-                        <td style={tdLast}><button onClick={()=>deleteContact(c.id)} style={{ ...iconBtn, color:'#b91c1c' }}>🗑️</button></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              {filteredContacts.length === 0 && <div style={{ fontSize:13, color:'#64748b' }}>Inga kontakter matchar nuvarande filter.</div>}
+                  ))}
+                </tbody>
+              </DataTable>
+              {filteredContacts.length === 0 && <EmptyState title="Inga kontakter matchar" description="Byt kategori eller justera sökningen för att visa fler träffar." />}
               {activeCat && (
-                <form onSubmit={e=>{e.preventDefault(); const fd=new FormData(e.currentTarget); const name=String(fd.get('name')||'').trim(); if(!name) return; const phone=String(fd.get('phone')||'').trim(); const location=String(fd.get('location')||'').trim(); const role=String(fd.get('role')||'').trim(); createContact({ category_id: activeCat, name, phone, location, role }); (e.currentTarget as HTMLFormElement).reset(); }} style={{ display:'grid', gap:8, gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))', alignItems:'end' }}>
-                  <input name="name" placeholder="Namn" required style={input} />
-                  <input name="phone" placeholder="Telefon" style={input} />
-                  <input name="location" placeholder="Plats" style={input} />
-                  <input name="role" placeholder="Roll" style={input} />
-                  <button style={btnPrimary}>Lägg till</button>
+                <form onSubmit={e=>{e.preventDefault(); const fd=new FormData(e.currentTarget); const name=String(fd.get('name')||'').trim(); if(!name) return; const phone=String(fd.get('phone')||'').trim(); const location=String(fd.get('location')||'').trim(); const role=String(fd.get('role')||'').trim(); createContact({ category_id: activeCat, name, phone, location, role }); (e.currentTarget as HTMLFormElement).reset(); }} className="grid items-end gap-2 [grid-template-columns:repeat(auto-fit,minmax(140px,1fr))]">
+                  <Input name="name" placeholder="Namn" required />
+                  <Input name="phone" placeholder="Telefon" />
+                  <Input name="location" placeholder="Plats" />
+                  <Input name="role" placeholder="Roll" />
+                  <Button type="submit" variant="primary">Lägg till</Button>
                 </form>
               )}
             </div>
           </div>
         )}
         {view==='addresses' && (
-          <div style={{ display:'flex', flexDirection:'column', gap:16, border:'1px solid #dbe4ef', background:'#fff', borderRadius:20, padding:18, boxShadow:'0 10px 28px rgba(15,23,42,0.03)' }}>
-            <div style={{ display:'grid', gap:4 }}>
-              <h2 style={{ margin:0, fontSize:18 }}>Adresser</h2>
-              <span style={{ fontSize:13, color:'#64748b' }}>Håll platsregistret uppdaterat för snabbare återanvändning i andra flöden.</span>
+          <div className="min-w-0 flex flex-col gap-4 rounded-[20px] border border-ui-border bg-white p-[18px] shadow-[0_10px_28px_rgba(15,23,42,0.03)]">
+            <div className="grid gap-1">
+              <h2 className="m-0 text-lg text-slate-900">Adresser</h2>
+              <span className="text-[13px] text-slate-500">Håll platsregistret uppdaterat för snabbare återanvändning i andra flöden.</span>
             </div>
-            <div style={{ overflowX:'auto', border:'1px solid #e5e7eb', borderRadius:16 }}>
-              <table style={{ width:'100%', borderCollapse:'collapse', minWidth:600 }}>
-                <thead><tr style={{ background:'#f9fafb' }}>{['Namn','Adress',' '].map(h=> <th key={h} style={th}>{h}</th>)}</tr></thead>
-                <tbody>
-                  {filteredAddresses.map(a => (
-                    <tr key={a.id} style={tr}>
-                      <td style={td}><Editable value={a.name} onSave={v=> updateAddress(a.id,{ name:v })} /></td>
-                      <td style={td}><Editable value={a.address} onSave={v=> updateAddress(a.id,{ address:v })} /></td>
-                      <td style={tdLast}><button onClick={()=>deleteAddress(a.id)} style={{ ...iconBtn, color:'#b91c1c' }}>🗑️</button></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            {filteredAddresses.length === 0 && <div style={{ fontSize:13, color:'#64748b' }}>Inga adresser matchar nuvarande sökning.</div>}
-            <form onSubmit={e=>{e.preventDefault(); const fd=new FormData(e.currentTarget); const name=String(fd.get('name')||'').trim(); const address=String(fd.get('address')||'').trim(); if(!name||!address) return; createAddress({ name, address }); (e.currentTarget as HTMLFormElement).reset(); }} style={{ display:'grid', gap:8, gridTemplateColumns:'repeat(auto-fit,minmax(200px,1fr))', alignItems:'end' }}>
-              <input name="name" placeholder="Namn" required style={input} />
-              <input name="address" placeholder="Adress" required style={input} />
-              <button style={btnPrimary}>Lägg till</button>
+            <DataTable className="min-w-[600px]">
+              <thead><tr className="bg-slate-50">{['Namn','Adress',' '].map(h=> <DataTableHeaderCell key={h}>{h}</DataTableHeaderCell>)}</tr></thead>
+              <tbody>
+                {filteredAddresses.map(a => (
+                  <tr key={a.id} className="bg-white">
+                    <DataTableCell><Editable value={a.name} onSave={v=> updateAddress(a.id,{ name:v })} /></DataTableCell>
+                    <DataTableCell><Editable value={a.address} onSave={v=> updateAddress(a.id,{ address:v })} /></DataTableCell>
+                    <DataTableCell className="w-[50px] text-right"><Button onClick={()=>deleteAddress(a.id)} variant="secondary" size="sm" className="min-h-8 px-2 text-xs text-red-700 hover:bg-red-50">🗑️</Button></DataTableCell>
+                  </tr>
+                ))}
+              </tbody>
+            </DataTable>
+            {filteredAddresses.length === 0 && <EmptyState title="Inga adresser matchar" description="Justera sökningen eller lägg till en ny adress." />}
+            <form onSubmit={e=>{e.preventDefault(); const fd=new FormData(e.currentTarget); const name=String(fd.get('name')||'').trim(); const address=String(fd.get('address')||'').trim(); if(!name||!address) return; createAddress({ name, address }); (e.currentTarget as HTMLFormElement).reset(); }} className="grid items-end gap-2 [grid-template-columns:repeat(auto-fit,minmax(200px,1fr))]">
+              <Input name="name" placeholder="Namn" required />
+              <Input name="address" placeholder="Adress" required />
+              <Button type="submit" variant="primary">Lägg till</Button>
             </form>
           </div>
         )}
@@ -232,34 +252,13 @@ function Editable({ value, onSave, placeholder }: { value: string; onSave: (v:st
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
   useEffect(()=>{ setDraft(value); }, [value]);
-  if (!editing) return <div style={{ display:'flex', alignItems:'center', gap:6 }}><span style={{ color: value? '#111827':'#9ca3af' }}>{value || placeholder || '—'}</span><button onClick={()=>setEditing(true)} style={iconBtn} aria-label="Redigera">✏️</button></div>;
+  if (!editing) return <div className="flex items-center gap-1.5"><span className={cn('text-sm', value ? 'text-slate-900' : 'text-slate-400')}>{value || placeholder || '—'}</span><Button onClick={()=>setEditing(true)} variant="secondary" size="sm" className="min-h-8 px-2 text-xs" aria-label="Redigera">✏️</Button></div>;
   return (
-    <form onSubmit={e=>{e.preventDefault(); onSave(draft.trim()); setEditing(false);}} style={{ display:'flex', gap:6 }}>
-      <input autoFocus value={draft} onChange={e=>setDraft(e.target.value)} style={{ ...input, padding:'4px 6px', fontSize:13 }} />
-      <button style={{ ...miniBtn }}>{'Spara'}</button>
-      <button type="button" onClick={()=>{ setEditing(false); setDraft(value); }} style={{ ...miniBtn, background:'#fff', color:'#111827', border:'1px solid #d1d5db' }}>Avbryt</button>
+    <form onSubmit={e=>{e.preventDefault(); onSave(draft.trim()); setEditing(false);}} className="flex gap-1.5">
+      <Input autoFocus value={draft} onChange={e=>setDraft(e.target.value)} className="min-h-8 px-2 py-1.5 text-[13px]" />
+      <Button type="submit" variant="primary" size="sm">Spara</Button>
+      <Button type="button" onClick={()=>{ setEditing(false); setDraft(value); }} variant="secondary" size="sm">Avbryt</Button>
     </form>
   );
 }
 
-const input: React.CSSProperties = { padding:'8px 10px', border:'1px solid #d1d5db', borderRadius:8, fontSize:14, outline:'none' };
-const inputSmall: React.CSSProperties = { ...input, padding:'6px 8px', fontSize:13 };
-const btnPrimary: React.CSSProperties = { padding:'8px 12px', borderRadius:8, border:'1px solid #111827', background:'#111827', color:'#fff', fontSize:13, cursor:'pointer', fontWeight:500 };
-const btnSecondary: React.CSSProperties = { ...btnPrimary, background:'#fff', color:'#111827' };
-const iconBtn: React.CSSProperties = { padding:'2px 6px', fontSize:12, lineHeight:1, cursor:'pointer', background:'#f3f4f6', borderRadius:6, border:'1px solid #e5e7eb' };
-const miniBtn: React.CSSProperties = { padding:'4px 8px', background:'#111827', color:'#fff', borderRadius:6, fontSize:12, cursor:'pointer', border:'1px solid #111827' };
-const th: React.CSSProperties = { padding:'8px 10px', fontSize:11, textTransform:'uppercase', letterSpacing:0.5, textAlign:'left', color:'#374151' };
-const td: React.CSSProperties = { padding:'6px 10px', fontSize:14, borderTop:'1px solid #f1f5f9', verticalAlign:'middle' };
-const tdLast: React.CSSProperties = { ...td, width:50, textAlign:'right' };
-const tr: React.CSSProperties = { background:'#fff' };
-// Category button base + active (high contrast & explicit text color)
-const catBtn: React.CSSProperties = { padding:'6px 10px', background:'#ffffff', color:'#111827', border:'1px solid #d1d5db', borderRadius:8, fontSize:13, cursor:'pointer', flexGrow:1, textAlign:'left', fontWeight:500, boxShadow:'0 1px 0 rgba(0,0,0,0.02)' };
-const catBtnActive: React.CSSProperties = { background:'#2563eb', color:'#ffffff', border:'1px solid #2563eb', boxShadow:'0 0 0 1px #2563eb' };
-const viewTab: React.CSSProperties = { padding:'8px 14px', background:'#ffffff', color:'#111827', border:'1px solid #d1d5db', borderRadius:999, fontSize:13, cursor:'pointer', fontWeight:500, transition:'background .15s, color .15s, border-color .15s' };
-const viewTabActive: React.CSSProperties = { background:'#2563eb', color:'#ffffff', border:'1px solid #2563eb' };
-
-const eyebrowStyle: React.CSSProperties = { display:'inline-flex', alignItems:'center', padding:'4px 10px', borderRadius:999, background:'#dbeafe', border:'1px solid #bfdbfe', color:'#2563eb', fontSize:11, fontWeight:800, letterSpacing:0.35, textTransform:'uppercase' };
-const chipStyle: React.CSSProperties = { display:'inline-flex', alignItems:'center', padding:'4px 8px', borderRadius:999, background:'#f8fafc', border:'1px solid #e2e8f0', color:'#475569', fontSize:12, fontWeight:700 };
-const miniStatStyle: React.CSSProperties = { display:'grid', gap:5, padding:'12px 12px 10px', borderRadius:16, border:'1px solid #dbe4ef', background:'#fff' };
-const miniLabelStyle: React.CSSProperties = { fontSize:11, fontWeight:800, letterSpacing:0.3, textTransform:'uppercase', color:'#64748b' };
-const miniValueStyle: React.CSSProperties = { fontSize:20, fontWeight:800, color:'#0f172a' };

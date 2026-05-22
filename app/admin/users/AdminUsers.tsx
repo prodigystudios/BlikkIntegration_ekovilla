@@ -1,6 +1,14 @@
 "use client";
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
+import Badge from '../../../components/ui/Badge';
+import Button from '../../../components/ui/Button';
+import EmptyState from '../../../components/ui/EmptyState';
+import ErrorState from '../../../components/ui/ErrorState';
+import Input from '../../../components/ui/Input';
+import LoadingState from '../../../components/ui/LoadingState';
+import Select from '../../../components/ui/Select';
+import { cn } from '../../../lib/shared/cn';
 
 interface AdminUserRow {
   id: string;
@@ -15,7 +23,8 @@ interface AdminUserRow {
 export default function AdminUsers() {
   const [loading, setLoading] = useState(true);
   const [users, setUsers] = useState<AdminUserRow[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [createError, setCreateError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState<'all' | 'member' | 'sales' | 'admin' | 'konsult'>('all');
 
@@ -29,11 +38,11 @@ export default function AdminUsers() {
   useEffect(() => {
     (async () => {
       setLoading(true);
-      setError(null);
+      setLoadError(null);
       // We cannot list all auth.users from the client (needs service key). Instead call an API route.
       const res = await fetch('/api/admin/users');
       if (!res.ok) {
-        setError('Misslyckades att hämta användare');
+        setLoadError('Misslyckades att hämta användare');
         setLoading(false);
         return;
       }
@@ -47,14 +56,14 @@ export default function AdminUsers() {
     e.preventDefault();
     if (!email || !password) return;
     setCreating(true);
-    setError(null);
+    setCreateError(null);
     const res = await fetch('/api/admin/users', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password, full_name: name, role })
     });
     if (!res.ok) {
-      setError('Kunde inte skapa användare');
+      setCreateError('Kunde inte skapa användare');
       setCreating(false);
       return;
     }
@@ -79,101 +88,104 @@ export default function AdminUsers() {
   }, {});
 
   return (
-    <main style={pageStyle}>
-      <section style={heroStyle}>
-        <div style={{ display:'flex', justifyContent:'space-between', gap:16, flexWrap:'wrap', alignItems:'flex-start' }}>
-          <div style={{ display:'grid', gap:6, maxWidth:720 }}>
-            <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
-              <span style={eyebrowStyle}>Användare</span>
-              <span style={chipStyle}>{users.length} totalt</span>
-              <span style={chipStyle}>{roleCounts.admin || 0} admins</span>
+    <div className="grid gap-[18px] p-3">
+      <section className="grid gap-4 rounded-[24px] border border-ui-border bg-[linear-gradient(180deg,#ffffff_0%,#f8fbff_100%)] p-5 shadow-[0_14px_36px_rgba(15,23,42,0.04)]">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="grid max-w-[720px] gap-1.5">
+            <div className="flex flex-wrap gap-2">
+              <Badge variant="accent" className="px-2.5 py-1 text-[11px] uppercase tracking-[0.35px]">
+                Användare
+              </Badge>
+              <Badge>{users.length} totalt</Badge>
+              <Badge>{roleCounts.admin || 0} admins</Badge>
             </div>
-            <h1 style={{ margin:0, fontSize:28, lineHeight:1.08, letterSpacing:-0.4, color:'#0f172a' }}>Konton, roller och snabbare administration</h1>
-            <p style={{ margin:0, fontSize:14, color:'#526275', lineHeight:1.55 }}>Skapa användare, filtrera listan och gör snabba ändringar utan att tabeller och knappar bryter layouten.</p>
+            <h1 className="m-0 text-[28px] leading-[1.08] tracking-[-0.4px] text-slate-900">Konton, roller och snabbare administration</h1>
+            <p className="m-0 text-sm leading-[1.55] text-slate-600">Skapa användare, filtrera listan och gör snabba ändringar utan att tabeller och knappar bryter layouten.</p>
           </div>
-          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(140px, 1fr))', gap:8, minWidth:'min(100%, 360px)' }}>
-            <div style={miniStatStyle}><span style={miniLabelStyle}>Medlemmar</span><strong style={miniValueStyle}>{roleCounts.member || 0}</strong></div>
-            <div style={miniStatStyle}><span style={miniLabelStyle}>Sales</span><strong style={miniValueStyle}>{roleCounts.sales || 0}</strong></div>
-            <div style={miniStatStyle}><span style={miniLabelStyle}>Konsulter</span><strong style={miniValueStyle}>{roleCounts.konsult || 0}</strong></div>
+          <div className="grid min-w-full gap-2 [grid-template-columns:repeat(auto-fit,minmax(140px,1fr))] sm:min-w-[360px]">
+            <div className="grid gap-1 rounded-2xl border border-ui-border bg-white px-3 py-2.5">
+              <span className="text-[11px] font-extrabold uppercase tracking-[0.3px] text-slate-500">Medlemmar</span>
+              <strong className="text-xl font-extrabold text-slate-900">{roleCounts.member || 0}</strong>
+            </div>
+            <div className="grid gap-1 rounded-2xl border border-ui-border bg-white px-3 py-2.5">
+              <span className="text-[11px] font-extrabold uppercase tracking-[0.3px] text-slate-500">Sales</span>
+              <strong className="text-xl font-extrabold text-slate-900">{roleCounts.sales || 0}</strong>
+            </div>
+            <div className="grid gap-1 rounded-2xl border border-ui-border bg-white px-3 py-2.5">
+              <span className="text-[11px] font-extrabold uppercase tracking-[0.3px] text-slate-500">Konsulter</span>
+              <strong className="text-xl font-extrabold text-slate-900">{roleCounts.konsult || 0}</strong>
+            </div>
           </div>
         </div>
       </section>
 
-      <section style={contentGridStyle}>
-        <section style={createCardStyle}>
-        <div style={{ display:'grid', gap:4 }}>
-          <span style={sectionEyebrowStyle}>Ny användare</span>
-          <h2 style={{ margin: 0, fontSize: 20, color:'#0f172a' }}>Skapa konto</h2>
-          <span style={{ fontSize:13, color:'#64748b' }}>Lägg till konto och sätt rätt grundroll direkt.</span>
-        </div>
-        <form onSubmit={createUser} style={{ display: 'grid', gap: 12 }}>
-          <input required type="email" placeholder="E-post" value={email} onChange={e => setEmail(e.target.value)} style={fieldStyle} />
-          <input required type="password" placeholder="Lösenord" value={password} onChange={e => setPassword(e.target.value)} style={fieldStyle} />
-          <input type="text" placeholder="Namn (valfritt)" value={name} onChange={e => setName(e.target.value)} style={fieldStyle} />
-          <label style={{ fontSize: 12, fontWeight: 500, color: '#374151' }}>Roll
-            <select value={role} onChange={e => setRole(e.target.value as any)} style={{ ...fieldStyle, marginTop: 4 }}>
-              <option value="member">Member</option>
-              <option value="sales">Sales</option>
-              <option value="konsult">Konsult</option>
-              <option value="admin">Admin</option>
-            </select>
-          </label>
-          <button disabled={creating} type="submit" style={buttonStyle}>{creating ? 'Skapar…' : 'Skapa användare'}</button>
-          {error && <div style={{ color: '#b91c1c', fontSize: 13 }}>{error}</div>}
-        </form>
+      <section className="grid gap-4 xl:[grid-template-columns:minmax(300px,380px)_minmax(0,1fr)]">
+        <section className="grid content-start gap-[18px] rounded-[20px] border border-ui-border bg-white p-[18px] shadow-[0_10px_28px_rgba(15,23,42,0.03)]">
+          <div className="grid gap-1">
+            <span className="text-[11px] font-extrabold uppercase tracking-[0.35px] text-slate-500">Ny användare</span>
+            <h2 className="m-0 text-xl text-slate-900">Skapa konto</h2>
+            <span className="text-[13px] text-slate-500">Lägg till konto och sätt rätt grundroll direkt.</span>
+          </div>
+
+          <form onSubmit={createUser} className="grid gap-3">
+            <Input required type="email" placeholder="E-post" value={email} onChange={e => setEmail(e.target.value)} />
+            <Input required type="password" placeholder="Lösenord" value={password} onChange={e => setPassword(e.target.value)} />
+            <Input type="text" placeholder="Namn (valfritt)" value={name} onChange={e => setName(e.target.value)} />
+            <label className="grid gap-1 text-xs font-medium text-slate-700">
+              <span>Roll</span>
+              <Select
+                value={role}
+                onChange={e => setRole(e.target.value as any)}
+              >
+                <option value="member">Member</option>
+                <option value="sales">Sales</option>
+                <option value="konsult">Konsult</option>
+                <option value="admin">Admin</option>
+              </Select>
+            </label>
+            <Button disabled={creating} type="submit" variant="primary">
+              {creating ? 'Skapar…' : 'Skapa användare'}
+            </Button>
+            {createError && <div className="text-sm text-red-700">{createError}</div>}
+          </form>
         </section>
 
-      <section style={listCardStyle}>
-        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:12, flexWrap:'wrap' }}>
-          <div style={{ display:'grid', gap:4 }}>
-            <h2 style={{ margin: 0, fontSize: 20 }}>Alla användare</h2>
-            <span style={{ fontSize:13, color:'#64748b' }}>Sök, filtrera och uppdatera direkt i en mer läsbar listvy.</span>
+        <section className="grid gap-4 rounded-[20px] border border-ui-border bg-white p-[18px] shadow-[0_10px_28px_rgba(15,23,42,0.03)]">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="grid gap-1">
+              <h2 className="m-0 text-xl text-slate-900">Alla användare</h2>
+              <span className="text-[13px] text-slate-500">Sök, filtrera och uppdatera direkt i en mer läsbar listvy.</span>
+            </div>
+            <div className="grid w-full gap-2 [grid-template-columns:repeat(auto-fit,minmax(180px,1fr))] sm:[width:min(100%,560px)]">
+              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Sök e-post, namn, telefon eller tagg" />
+              <Select
+                value={roleFilter}
+                onChange={(e) => setRoleFilter(e.target.value as any)}
+              >
+                <option value="all">Alla roller</option>
+                <option value="member">Member</option>
+                <option value="sales">Sales</option>
+                <option value="konsult">Konsult</option>
+                <option value="admin">Admin</option>
+              </Select>
+            </div>
           </div>
-          <div style={{ display:'grid', gap:8, gridTemplateColumns:'repeat(auto-fit, minmax(180px, 1fr))', width:'min(100%, 560px)' }}>
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Sök e-post, namn, telefon eller tagg" style={{ ...fieldStyle, minWidth: 0 }} />
-            <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value as any)} style={{ ...fieldStyle, minWidth: 0 }}>
-              <option value="all">Alla roller</option>
-              <option value="member">Member</option>
-              <option value="sales">Sales</option>
-              <option value="konsult">Konsult</option>
-              <option value="admin">Admin</option>
-            </select>
-          </div>
-        </div>
-        {loading && <div style={{ fontSize:14, color:'#475569' }}>Laddar…</div>}
-        {!loading && users.length === 0 && <div style={{ fontSize: 14, color: '#374151' }}>Inga användare hittades.</div>}
-        {!loading && users.length > 0 && (
-          <div style={userListStyle}>
+          {loadError && <ErrorState title="Kunde inte läsa användare" message={loadError} />}
+          {loading && <LoadingState label="Laddar användare" description="Hämtar konton, roller och taggar för adminlistan." />}
+          {!loading && users.length === 0 && <EmptyState title="Inga användare hittades" description="Skapa första kontot eller uppdatera sidan igen senare." />}
+          {!loading && users.length > 0 && (
+          <div className="grid gap-3">
             {filteredUsers.map(u => (
               <UserCard key={u.id} user={u} onChanged={(nu)=>setUsers(list=>list.map(x=>x.id===nu.id?nu:x))} onDeleted={(id)=>setUsers(list=>list.filter(x=>x.id!==id))} />
             ))}
           </div>
         )}
-        {!loading && users.length > 0 && filteredUsers.length === 0 && <div style={{ fontSize:14, color:'#64748b' }}>Ingen användare matchar nuvarande sökning eller rollfilter.</div>}
+          {!loading && users.length > 0 && filteredUsers.length === 0 && <EmptyState title="Ingen användare matchar" description="Justera sökningen eller rollfiltret för att visa fler resultat." />}
+        </section>
       </section>
-      </section>
-    </main>
+    </div>
   );
 }
-
-const fieldStyle: React.CSSProperties = {
-  padding: '10px 12px',
-  border: '1px solid #d1d5db',
-  borderRadius: 8,
-  fontSize: 14,
-  outline: 'none'
-};
-
-const buttonStyle: React.CSSProperties = {
-  padding: '10px 14px',
-  borderRadius: 8,
-  fontSize: 14,
-  border: '1px solid #111827',
-  background: '#111827',
-  color: '#fff',
-  fontWeight: 500,
-  cursor: 'pointer'
-};
 
 function UserCard({ user, onChanged, onDeleted }: { user: AdminUserRow; onChanged: (u: AdminUserRow)=>void; onDeleted: (id: string)=>void }) {
   const [editingName, setEditingName] = React.useState(false);
@@ -208,84 +220,99 @@ function UserCard({ user, onChanged, onDeleted }: { user: AdminUserRow; onChange
   }
 
   return (
-    <article style={userCardStyle}>
-      <div style={{ display:'flex', justifyContent:'space-between', gap:12, flexWrap:'wrap', alignItems:'flex-start' }}>
-        <div style={{ display:'grid', gap:6, minWidth:0, flex: '1 1 280px' }}>
-          <div style={{ display:'flex', gap:8, flexWrap:'wrap', alignItems:'center' }}>
-            <span style={userNameStyle}>{user.full_name || 'Namn saknas'}</span>
-            <span style={rolePillStyle(roleDraft)}>{roleDraft}</span>
+    <article className="grid gap-3.5 rounded-[18px] border border-slate-200 bg-slate-50/60 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.6)]">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="grid min-w-0 flex-1 gap-1.5 basis-[280px]">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-base font-extrabold text-slate-900">{user.full_name || 'Namn saknas'}</span>
+            <Badge className={cn('px-2 py-1 text-[11px] font-extrabold uppercase tracking-[0.35px]', roleBadgeClassName(roleDraft))}>
+              {roleDraft}
+            </Badge>
           </div>
-          <span style={userEmailStyle}>{user.email}</span>
+          <span className="break-all text-[13px] text-slate-500">{user.email}</span>
         </div>
-        <div style={{ display:'flex', gap:8, flexWrap:'wrap', alignItems:'center' }}>
-          <span style={metaTextStyle}>Skapad {new Date(user.created_at).toLocaleDateString()}</span>
-          <Link href={`/admin/users/${user.id}`} style={profileLinkStyle}>Öppna profil</Link>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-semibold text-slate-500">Skapad {new Date(user.created_at).toLocaleDateString()}</span>
+          <Link
+            href={`/admin/users/${user.id}`}
+            className="inline-flex min-h-9 items-center justify-center rounded-xl border border-slate-300 bg-white px-3 text-[13px] font-semibold text-slate-900 transition-colors hover:bg-slate-100"
+          >
+            Öppna profil
+          </Link>
         </div>
       </div>
 
-      <div style={userFieldsGridStyle}>
+      <div className="grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(180px,1fr))]">
         <FieldBlock label="Namn">
         {editingName ? (
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            <input value={nameDraft} onChange={e=>setNameDraft(e.target.value)} style={{ ...fieldStyle, padding: '8px 10px', fontSize: 13, minWidth: 180, flex: '1 1 180px' }} />
-            <button onClick={saveChanges} disabled={saving} style={{ ...miniBtn }}>{saving ? '...' : 'Spara'}</button>
-            <button onClick={()=>{setEditingName(false); setNameDraft(user.full_name||'');}} style={{ ...ghostMiniBtn }}>Avbryt</button>
+          <div className="flex flex-wrap gap-2">
+            <Input
+              value={nameDraft}
+              onChange={e=>setNameDraft(e.target.value)}
+              className="min-h-9 min-w-[180px] flex-1 basis-[180px] px-2.5 py-2 text-[13px]"
+            />
+            <Button onClick={saveChanges} disabled={saving} size="sm" variant="primary">{saving ? '...' : 'Spara'}</Button>
+            <Button onClick={()=>{setEditingName(false); setNameDraft(user.full_name||'');}} size="sm" variant="secondary">Avbryt</Button>
           </div>
         ) : (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap:'wrap' }}>
-            <span style={{ fontSize: 14, color:'#0f172a' }}>{user.full_name || '—'}</span>
-            <button onClick={()=>setEditingName(true)} style={{ ...iconBtn }} aria-label="Redigera namn">✏️</button>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm text-slate-900">{user.full_name || '—'}</span>
+            <Button onClick={()=>setEditingName(true)} size="sm" variant="secondary" className="min-h-8 px-2 text-xs" aria-label="Redigera namn">✏️</Button>
           </div>
         )}
         </FieldBlock>
 
         <FieldBlock label="Telefon">
-        <input
+        <Input
           value={phoneDraft}
           onChange={e=>setPhoneDraft(e.target.value)}
           onBlur={saveChanges}
           placeholder="070-123 45 67"
-          style={{ ...fieldStyle, padding: '8px 10px', fontSize: 13, minWidth: 0 }}
+          className="min-h-9 min-w-0 px-2.5 py-2 text-[13px]"
         />
         </FieldBlock>
 
         <FieldBlock label="Roll">
-        <select value={roleDraft} onChange={e=>setRoleDraft(e.target.value)} onBlur={saveChanges} style={{ ...fieldStyle, padding: '4px 6px', fontSize: 13 }}>
+        <Select value={roleDraft} onChange={e=>setRoleDraft(e.target.value)} onBlur={saveChanges} className="min-h-9 px-2.5 py-2 text-[13px]">
           <option value="member">member</option>
           <option value="sales">sales</option>
           <option value="konsult">konsult</option>
           <option value="admin">admin</option>
-        </select>
+        </Select>
         </FieldBlock>
 
         <FieldBlock label="Taggar">
-        <input
+        <Input
           value={tagsDraft}
           onChange={e=>setTagsDraft(e.target.value)}
           onBlur={saveChanges}
           placeholder="t.ex. crew, trainee"
-          style={{ ...fieldStyle, padding: '8px 10px', fontSize: 13, minWidth: 0 }}
+          className="min-h-9 min-w-0 px-2.5 py-2 text-[13px]"
         />
         </FieldBlock>
       </div>
 
-      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', gap:12, flexWrap:'wrap' }}>
-        <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap gap-2">
           {(user.tags || []).length > 0 && user.tags!.map((tag) => (
-            <span key={tag} style={tagPillStyle}>{tag}</span>
+            <Badge key={tag} variant="info" className="px-2 py-1 text-[11px] font-bold">{tag}</Badge>
           ))}
-          {(!user.tags || user.tags.length === 0) && <span style={emptyMetaStyle}>Inga taggar ännu</span>}
+          {(!user.tags || user.tags.length === 0) && <span className="text-xs text-slate-400">Inga taggar ännu</span>}
         </div>
-        <div style={{ display:'flex', alignItems:'center', gap:8, position:'relative' }}>
-          <button onClick={()=>setConfirmDelete(true)} disabled={busyDelete} style={{ ...iconBtn, color:'#b91c1c' }} aria-label="Ta bort">🗑️</button>
+        <div className="relative flex items-center gap-2">
+          <Button onClick={()=>setConfirmDelete(true)} disabled={busyDelete} size="sm" variant="secondary" className="min-h-8 px-2 text-xs text-red-700 hover:bg-red-50" aria-label="Ta bort">🗑️</Button>
           {confirmDelete && (
-            <div role="dialog" aria-modal="true" aria-label="Bekräfta borttagning"
-              style={{ position:'absolute', top:'calc(100% + 8px)', right:0, background:'#fff', padding:12, border:'1px solid #e5e7eb', borderRadius:10, boxShadow:'0 8px 28px rgba(0,0,0,0.12)', minWidth:210, zIndex:10, display:'flex', flexDirection:'column', gap:8 }}>
-              <div style={{ fontSize:13, fontWeight:500 }}>Ta bort användare?</div>
-              <div style={{ fontSize:12, color:'#6b7280' }}>{user.email}</div>
-              <div style={{ display:'flex', gap:8, justifyContent:'flex-end' }}>
-                <button onClick={()=>setConfirmDelete(false)} disabled={busyDelete} style={{ ...ghostMiniBtn }}>Avbryt</button>
-                <button onClick={deleteUser} disabled={busyDelete} style={{ ...miniBtn, background:'#b91c1c', border:'1px solid #b91c1c' }}>{busyDelete ? 'Tar bort…' : 'Ta bort'}</button>
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label="Bekräfta borttagning"
+              className="absolute right-0 top-[calc(100%+8px)] z-10 flex min-w-[210px] flex-col gap-2 rounded-xl border border-slate-200 bg-white p-3 shadow-[0_8px_28px_rgba(0,0,0,0.12)]"
+            >
+              <div className="text-[13px] font-medium text-slate-900">Ta bort användare?</div>
+              <div className="text-xs text-slate-500">{user.email}</div>
+              <div className="flex justify-end gap-2">
+                <Button onClick={()=>setConfirmDelete(false)} disabled={busyDelete} size="sm" variant="secondary">Avbryt</Button>
+                <Button onClick={deleteUser} disabled={busyDelete} size="sm" className="border-red-700 bg-red-700 text-white hover:bg-red-800">{busyDelete ? 'Tar bort…' : 'Ta bort'}</Button>
               </div>
             </div>
           )}
@@ -297,227 +324,17 @@ function UserCard({ user, onChanged, onDeleted }: { user: AdminUserRow; onChange
 
 function FieldBlock({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <label style={{ display:'grid', gap:6 }}>
-      <span style={fieldBlockLabelStyle}>{label}</span>
+    <label className="grid gap-1.5">
+      <span className="text-[11px] font-extrabold uppercase tracking-[0.35px] text-slate-500">{label}</span>
       {children}
     </label>
   );
 }
 
-const pageStyle: React.CSSProperties = {
-  padding: 12,
-  display: 'grid',
-  gap: 18,
-};
+function roleBadgeClassName(role: string) {
+  if (role === 'admin') return 'border-red-200 bg-red-50 text-red-800';
+  if (role === 'sales') return 'border-emerald-200 bg-emerald-50 text-emerald-700';
+  if (role === 'konsult') return 'border-amber-200 bg-amber-50 text-amber-800';
+  return 'border-blue-200 bg-blue-50 text-blue-700';
+}
 
-const heroStyle: React.CSSProperties = {
-  border: '1px solid #dbe4ef',
-  background: 'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)',
-  borderRadius: 24,
-  padding: 20,
-  display: 'grid',
-  gap: 16,
-  boxShadow: '0 14px 36px rgba(15,23,42,0.04)'
-};
-
-const contentGridStyle: React.CSSProperties = {
-  display:'grid',
-  gap:16,
-  gridTemplateColumns:'minmax(300px, 380px) minmax(0, 1fr)'
-};
-
-const createCardStyle: React.CSSProperties = {
-  border: '1px solid #dbe4ef',
-  background: '#fff',
-  borderRadius: 20,
-  padding: 18,
-  display: 'grid',
-  gap: 18,
-  alignContent:'start',
-  boxShadow:'0 10px 28px rgba(15,23,42,0.03)'
-};
-
-const listCardStyle: React.CSSProperties = {
-  border: '1px solid #dbe4ef',
-  background: '#fff',
-  borderRadius: 20,
-  padding: 18,
-  display: 'grid',
-  gap: 16,
-  boxShadow:'0 10px 28px rgba(15,23,42,0.03)'
-};
-
-const userListStyle: React.CSSProperties = {
-  display:'grid',
-  gap:12,
-};
-
-const userCardStyle: React.CSSProperties = {
-  display:'grid',
-  gap:14,
-  padding:'16px 16px 14px',
-  border:'1px solid #e2e8f0',
-  borderRadius:18,
-  background:'#fcfdff'
-};
-
-const userFieldsGridStyle: React.CSSProperties = {
-  display:'grid',
-  gap:12,
-  gridTemplateColumns:'repeat(auto-fit, minmax(180px, 1fr))'
-};
-
-const userNameStyle: React.CSSProperties = {
-  fontSize:16,
-  fontWeight:800,
-  color:'#0f172a'
-};
-
-const userEmailStyle: React.CSSProperties = {
-  fontSize:13,
-  color:'#64748b',
-  wordBreak:'break-all'
-};
-
-const metaTextStyle: React.CSSProperties = {
-  fontSize:12,
-  color:'#64748b',
-  fontWeight:600
-};
-
-const rolePillStyle = (role: string): React.CSSProperties => ({
-  display:'inline-flex',
-  alignItems:'center',
-  padding:'4px 8px',
-  borderRadius:999,
-  background: role === 'admin' ? '#fee2e2' : role === 'sales' ? '#dcfce7' : role === 'konsult' ? '#fef3c7' : '#eff6ff',
-  border:'1px solid '+(role === 'admin' ? '#fecaca' : role === 'sales' ? '#bbf7d0' : role === 'konsult' ? '#fde68a' : '#bfdbfe'),
-  color:'#334155',
-  fontSize:11,
-  fontWeight:800,
-  textTransform:'uppercase',
-  letterSpacing:0.35
-});
-
-const fieldBlockLabelStyle: React.CSSProperties = {
-  fontSize:11,
-  fontWeight:800,
-  textTransform:'uppercase',
-  letterSpacing:0.35,
-  color:'#64748b'
-};
-
-const miniBtn: React.CSSProperties = {
-  padding: '7px 10px',
-  background: '#111827',
-  color: '#fff',
-  borderRadius: 8,
-  fontSize: 12,
-  cursor: 'pointer',
-  border: '1px solid #111827'
-};
-
-const ghostMiniBtn: React.CSSProperties = {
-  ...miniBtn,
-  background:'#fff',
-  color:'#111827',
-  border:'1px solid #d1d5db'
-};
-
-const iconBtn: React.CSSProperties = {
-  padding: '6px 8px',
-  fontSize: 12,
-  lineHeight: 1,
-  cursor: 'pointer',
-  background: '#f3f4f6',
-  borderRadius: 6,
-  border: '1px solid #e5e7eb'
-};
-
-const profileLinkStyle: React.CSSProperties = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  padding: '9px 11px',
-  borderRadius: 8,
-  border: '1px solid #cbd5e1',
-  background: '#f8fafc',
-  color: '#0f172a',
-  fontSize: 13,
-  fontWeight: 700,
-  textDecoration: 'none'
-};
-
-const tagPillStyle: React.CSSProperties = {
-  display:'inline-flex',
-  alignItems:'center',
-  padding:'4px 8px',
-  borderRadius:999,
-  background:'#eef2ff',
-  border:'1px solid #c7d2fe',
-  color:'#4338ca',
-  fontSize:11,
-  fontWeight:700
-};
-
-const emptyMetaStyle: React.CSSProperties = {
-  fontSize:12,
-  color:'#94a3b8'
-};
-
-const eyebrowStyle: React.CSSProperties = {
-  display:'inline-flex',
-  alignItems:'center',
-  padding:'4px 10px',
-  borderRadius:999,
-  background:'#dbeafe',
-  border:'1px solid #bfdbfe',
-  color:'#2563eb',
-  fontSize:11,
-  fontWeight:800,
-  letterSpacing:0.35,
-  textTransform:'uppercase'
-};
-
-const chipStyle: React.CSSProperties = {
-  display:'inline-flex',
-  alignItems:'center',
-  padding:'4px 8px',
-  borderRadius:999,
-  background:'#f8fafc',
-  border:'1px solid #e2e8f0',
-  color:'#475569',
-  fontSize:12,
-  fontWeight:700
-};
-
-const miniStatStyle: React.CSSProperties = {
-  display:'grid',
-  gap:5,
-  padding:'12px 12px 10px',
-  borderRadius:16,
-  border:'1px solid #dbe4ef',
-  background:'#fff'
-};
-
-const miniLabelStyle: React.CSSProperties = {
-  fontSize:11,
-  fontWeight:800,
-  letterSpacing:0.3,
-  textTransform:'uppercase',
-  color:'#64748b'
-};
-
-const miniValueStyle: React.CSSProperties = {
-  fontSize:20,
-  fontWeight:800,
-  color:'#0f172a'
-};
-
-const sectionEyebrowStyle: React.CSSProperties = {
-  fontSize:11,
-  fontWeight:800,
-  letterSpacing:0.35,
-  textTransform:'uppercase',
-  color:'#64748b'
-};
