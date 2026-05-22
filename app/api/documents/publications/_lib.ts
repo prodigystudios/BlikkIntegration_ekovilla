@@ -1,10 +1,50 @@
 import { requireAdminUser as requireSharedAdminUser } from '@/lib/auth/route';
 import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
+import { z } from 'zod';
 
 export type PublicationRecipientInput = {
   userIds: string[];
   tags: string[];
 };
+
+export type ResolvedPublicationRecipient = {
+  userId: string;
+  sourceType: 'user' | 'tag';
+  sourceValue: string | null;
+};
+
+const requiredTrimmedString = (message: string) => z.preprocess((value) => {
+  if (typeof value === 'string') return value.trim();
+  return value;
+}, z.string().min(1, message));
+
+const optionalTrimmedString = z.preprocess((value) => {
+  if (typeof value === 'string') {
+    const normalized = value.trim();
+    return normalized.length > 0 ? normalized : null;
+  }
+
+  return value == null ? null : value;
+}, z.union([z.string(), z.null()]));
+
+export const createPublicationInputSchema = z.object({
+  fileId: requiredTrimmedString('missing fileId'),
+  title: requiredTrimmedString('missing title'),
+  description: optionalTrimmedString,
+  versionLabel: optionalTrimmedString,
+  dueAt: optionalTrimmedString,
+  requiresApproval: z.boolean().optional().default(true),
+  userIds: z.array(z.string()).optional().default([]).transform(normalizeStringList),
+  tags: z.array(z.string()).optional().default([]).transform(normalizeStringList),
+});
+
+export type CreatePublicationInput = z.infer<typeof createPublicationInputSchema>;
+
+export const approvePublicationInputSchema = z.object({
+  approvalNote: optionalTrimmedString.optional().default(null),
+});
+
+export type ApprovePublicationInput = z.infer<typeof approvePublicationInputSchema>;
 
 export async function requireAdminUser() {
   const current = await requireSharedAdminUser();
@@ -25,7 +65,7 @@ export function normalizeRecipients(input: any): PublicationRecipientInput {
   };
 }
 
-export async function resolvePublicationRecipients(input: PublicationRecipientInput) {
+export async function resolvePublicationRecipients(input: PublicationRecipientInput): Promise<ResolvedPublicationRecipient[]> {
   const supabase = getOptionalSupabaseAdmin();
   if (!supabase) throw new Error('service_role_missing');
 
@@ -45,7 +85,7 @@ export async function resolvePublicationRecipients(input: PublicationRecipientIn
   }
 
   const all = [...directUsers, ...tagUsers];
-  const deduped = new Map<string, { userId: string; sourceType: 'user' | 'tag'; sourceValue: string | null }>();
+  const deduped = new Map<string, ResolvedPublicationRecipient>();
   for (const item of all) {
     if (!deduped.has(item.id)) {
       deduped.set(item.id, {

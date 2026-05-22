@@ -5,6 +5,7 @@ import { createServerComponentClient } from '@supabase/auth-helpers-nextjs';
 import { redirect } from 'next/navigation';
 import { getUserProfile } from '../../lib/getUserProfile';
 import DocumentsClient from './DocumentsClient';
+import PageShell from '../../components/ui/PageShell';
 
 export default async function DokumentPage() {
   const supabase = createServerComponentClient({ cookies });
@@ -15,12 +16,8 @@ export default async function DokumentPage() {
   const canEdit = profile?.role === 'admin';
 
   return (
-    <main style={{ padding: '16px 20px', width: '100%', boxSizing: 'border-box' }}>
-      <h1>Dokument</h1>
-      <p style={{ color: '#6b7280', marginTop: -6 }}>
-        Ordna dokument i mappar och undermappar.
-      </p>
+    <PageShell>
       <DocumentsClient canEdit={canEdit} />
-    </main>
+    </PageShell>
   );
 }
