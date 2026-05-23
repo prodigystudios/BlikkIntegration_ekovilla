@@ -1,20 +1,28 @@
 import { NextRequest } from 'next/server';
+import { z } from 'zod';
 import { getBlikk } from '@/lib/blikk';
+import { ok, routeError } from '../../_admin-resource';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
+const commentsQuerySchema = z.object({
+  projectId: z.coerce.number().int().positive(),
+  page: z.coerce.number().int().positive().default(1),
+});
+
 export async function GET(req: NextRequest) {
+  const parsedQuery = commentsQuerySchema.safeParse({
+    projectId: req.nextUrl.searchParams.get('projectId') || undefined,
+    page: req.nextUrl.searchParams.get('page') || '1',
+  });
+  if (!parsedQuery.success) {
+    return routeError(400, 'validation_error', 'Missing or invalid projectId', parsedQuery.error.flatten());
+  }
+
   try {
-    const { searchParams } = new URL(req.url);
-    const projectIdStr = searchParams.get('projectId');
-    if (!projectIdStr) return new Response(JSON.stringify({ error: 'Missing projectId' }), { status: 400 });
-    const projectId = Number(projectIdStr);
-    if (!Number.isFinite(projectId) || projectId <= 0) return new Response(JSON.stringify({ error: 'Invalid projectId' }), { status: 400 });
     const blikk = getBlikk();
-  const pageStr = searchParams.get('page');
-  const page = pageStr ? Math.max(1, Number(pageStr)) : 1;
-  const items = await blikk.listProjectComments(projectId, page);
+    const items = await blikk.listProjectComments(parsedQuery.data.projectId, parsedQuery.data.page);
     // Normalize basic shape for UI (author, text, created)
     const normalized = items.map((c: any) => {
       const user = c.user || c.createdBy || c.author || c.creator || c.owner || c.userId || null;
@@ -26,9 +34,9 @@ export async function GET(req: NextRequest) {
         userName,
       };
     }).filter((c: any) => c.text);
-    return new Response(JSON.stringify({ ok: true, comments: normalized }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    return ok({ comments: normalized }, { comments: normalized });
   } catch (e: any) {
     console.error('[blikk/project/comments] error', e);
-    return new Response(JSON.stringify({ error: e.message || 'Failed to fetch comments' }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+    return routeError(500, 'project_comments_fetch_failed', e?.message || 'Failed to fetch comments');
   }
 }

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getSupabaseAdmin } from '@/lib/supabase/server';
+import { getMaterialQualityAdminOrThrow, materialQualityIngestSchema, ok, parseJsonBody, routeError } from '../_lib';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -23,8 +23,13 @@ type IngestPayload = {
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json() as IngestPayload;
-    const supa = getSupabaseAdmin();
+    const parsedBody = await parseJsonBody(req, materialQualityIngestSchema);
+    if (!parsedBody.success) {
+      return routeError(400, 'validation_error', 'Invalid ingest payload', parsedBody.error.flatten());
+    }
+
+    const body = parsedBody.data as IngestPayload;
+    const supa = getMaterialQualityAdminOrThrow();
 
     const damm = body.dammighet === '' || body.dammighet === null || body.dammighet === undefined ? null : Number(body.dammighet);
     const klump = body.klumpighet === '' || body.klumpighet === null || body.klumpighet === undefined ? null : Number(body.klumpighet);
@@ -57,7 +62,7 @@ export async function POST(req: NextRequest) {
     pushFrom(body.etapperClosed, 'closed');
 
     if (rows.length === 0) {
-      return NextResponse.json({ stored: 0, reason: 'no-density-rows' });
+      return ok({ stored: 0, reason: 'no-density-rows' }, { stored: 0, reason: 'no-density-rows' });
     }
 
     let { error } = await supa.from('material_quality_samples').insert(rows);
@@ -69,13 +74,16 @@ export async function POST(req: NextRequest) {
         const fallback = rows.map(r => { const c = { ...r }; delete (c as any).fluffer_used; return c; });
         const retry = await supa.from('material_quality_samples').insert(fallback);
         if (retry.error) throw retry.error;
-        return NextResponse.json({ stored: fallback.length, warning: 'missing-fluffer-used-column' });
+        return ok(
+          { stored: fallback.length, warning: 'missing-fluffer-used-column' },
+          { stored: fallback.length, warning: 'missing-fluffer-used-column' },
+        );
       }
       throw error;
     }
-    return NextResponse.json({ stored: rows.length });
+    return ok({ stored: rows.length }, { stored: rows.length });
   } catch (e: any) {
     console.error('[material-quality/ingest] failed', e);
-    return NextResponse.json({ error: e?.message || 'Failed to ingest samples' }, { status: 500 });
+    return routeError(500, 'material_quality_ingest_failed', e?.message || 'Failed to ingest samples');
   }
 }

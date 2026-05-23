@@ -1,21 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getSupabaseAdmin } from '@/lib/supabase/server';
+import { downloadQuerySchema, getStorageAdminOrThrow, routeError, sanitizeStoragePath } from '../_lib';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
   try {
-    const supa = getSupabaseAdmin();
+    const parsedQuery = downloadQuerySchema.safeParse({
+      path: req.nextUrl.searchParams.get('path') || undefined,
+    });
+    if (!parsedQuery.success) {
+      return routeError(400, 'validation_error', 'Missing path', parsedQuery.error.flatten());
+    }
+
+    const supa = getStorageAdminOrThrow();
     const bucket = process.env.SUPABASE_BUCKET || 'pdfs';
-    const { searchParams } = new URL(req.url);
-    const path = (searchParams.get('path') || '').trim();
-    if (!path) return NextResponse.json({ error: 'Missing path' }, { status: 400 });
-    if (path.includes('..')) return NextResponse.json({ error: 'Invalid path' }, { status: 400 });
+    const path = sanitizeStoragePath(parsedQuery.data.path);
 
     const { data, error } = await supa.storage.from(bucket).download(path);
     if (error || !data) {
-      return NextResponse.json({ error: error?.message || 'File not found' }, { status: 404 });
+      return routeError(404, 'storage_file_not_found', error?.message || 'File not found');
     }
 
   const fileName = path.split('/').pop() || 'file';
@@ -30,6 +34,8 @@ export async function GET(req: NextRequest) {
       },
     });
   } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    const message = err?.message === 'Invalid path' ? 'Invalid path' : err.message;
+    const status = err?.message === 'Invalid path' ? 400 : 500;
+    return routeError(status, status === 400 ? 'validation_error' : 'storage_download_failed', message);
   }
 }

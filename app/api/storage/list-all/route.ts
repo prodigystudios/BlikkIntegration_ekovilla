@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { unstable_noStore as noStore } from 'next/cache';
-import { getSupabaseAdmin } from '@/lib/supabase/server';
+import { getStorageAdminOrThrow, listAllQuerySchema, routeError, sanitizePrefix, sanitizeStoragePath } from '../_lib';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -15,7 +15,7 @@ type TraceEntry = {
 };
 
 async function listViaDb(
-  supa: ReturnType<typeof getSupabaseAdmin>,
+  supa: ReturnType<typeof getStorageAdminOrThrow>,
   bucket: string,
   prefix = 'Egenkontroller',
   trace?: TraceEntry[]
@@ -55,7 +55,7 @@ async function listViaDb(
 }
 
 async function listRecursive(
-  supa: ReturnType<typeof getSupabaseAdmin>,
+  supa: ReturnType<typeof getStorageAdminOrThrow>,
   bucket: string,
   prefix = 'Egenkontroller',
   trace?: TraceEntry[]
@@ -112,26 +112,39 @@ export async function GET(req: NextRequest) {
   try {
   // Ensure this route is never cached by Vercel Data Cache
   noStore();
-    const supa = getSupabaseAdmin();
+    const parsedQuery = listAllQuerySchema.safeParse({
+      prefix: req.nextUrl.searchParams.get('prefix') || undefined,
+      debug: req.nextUrl.searchParams.get('debug') || undefined,
+      all: req.nextUrl.searchParams.get('all') || undefined,
+      check: req.nextUrl.searchParams.get('check') || undefined,
+      mode: req.nextUrl.searchParams.get('mode') || undefined,
+    });
+    if (!parsedQuery.success) {
+      return routeError(400, 'validation_error', 'Invalid query', parsedQuery.error.flatten());
+    }
+
+    const supa = getStorageAdminOrThrow();
     const bucket = process.env.SUPABASE_BUCKET || 'pdfs';
   const url = new URL(req.url);
   const hasPrefix = url.searchParams.has('prefix');
-  const rawPrefix = url.searchParams.get('prefix');
+  const rawPrefix = parsedQuery.data.prefix;
   let prefix = hasPrefix ? (rawPrefix ?? '') : 'Egenkontroller';
-  const debug = url.searchParams.get('debug') === '1';
-  const modeParam = url.searchParams.get('mode'); // 'db' | 'bfs'
+  const debug = parsedQuery.data.debug === '1';
+  const modeParam = parsedQuery.data.mode; // 'db' | 'bfs'
   const envMode = process.env.SUPABASE_LIST_MODE; // 'db' | 'bfs'
   const preferDb = modeParam ? modeParam === 'db' : envMode ? envMode !== 'bfs' : true;
-  if (url.searchParams.get('all') === '1') prefix = '';
-  const checkPath = url.searchParams.get('check');
+  prefix = sanitizePrefix(prefix);
+  if (parsedQuery.data.all === '1') prefix = '';
+  const checkPath = parsedQuery.data.check;
   const trace: TraceEntry[] = [];
   // Targeted existence check for diagnostics
   if (checkPath) {
-    const dir = checkPath.includes('/') ? checkPath.substring(0, checkPath.lastIndexOf('/')) : '';
-    const name = checkPath.split('/').pop() || checkPath;
+    const safeCheckPath = sanitizeStoragePath(checkPath);
+    const dir = safeCheckPath.includes('/') ? safeCheckPath.substring(0, safeCheckPath.lastIndexOf('/')) : '';
+    const name = safeCheckPath.split('/').pop() || safeCheckPath;
     const listPath = dir === '' ? undefined : dir;
     const { data, error } = await supa.storage.from(bucket).list(listPath as any, { limit: 1000, sortBy: { column: 'name', order: 'asc' } });
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    if (error) return routeError(500, 'storage_check_failed', error.message);
     const match = (data || []).find((e: any) => e?.name === name);
     return NextResponse.json({ exists: !!match, dir, name, bucket }, { status: 200, headers: new Headers({ 'Cache-Control': 'no-store' }) });
   }
@@ -166,6 +179,8 @@ export async function GET(req: NextRequest) {
   }
   return NextResponse.json({ files }, { status: 200, headers });
   } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    const message = err?.message === 'Invalid path' ? 'Invalid path' : err.message;
+    const status = err?.message === 'Invalid path' ? 400 : 500;
+    return routeError(status, status === 400 ? 'validation_error' : 'storage_list_all_failed', message);
   }
 }

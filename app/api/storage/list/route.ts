@@ -1,22 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getSupabaseAdmin } from '@/lib/supabase/server';
+import { getStorageAdminOrThrow, listQuerySchema, routeError, sanitizePrefix } from '../_lib';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
   try {
-    const supa = getSupabaseAdmin();
+    const parsedQuery = listQuerySchema.safeParse({
+      prefix: req.nextUrl.searchParams.get('prefix') || undefined,
+    });
+    if (!parsedQuery.success) {
+      return routeError(400, 'validation_error', 'Invalid query', parsedQuery.error.flatten());
+    }
+
+    const supa = getStorageAdminOrThrow();
     const bucket = process.env.SUPABASE_BUCKET || 'pdfs';
-    const { searchParams } = new URL(req.url);
-    const prefix = (searchParams.get('prefix') || '').replace(/[^\w/.-]+/g, '_');
+    const prefix = sanitizePrefix(parsedQuery.data.prefix);
 
     const { data, error } = await supa.storage.from(bucket).list(prefix || undefined, {
       limit: 100,
       offset: 0,
       sortBy: { column: 'created_at', order: 'desc' },
     });
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    if (error) return routeError(500, 'storage_list_failed', error.message);
 
     // Generate signed links for convenience
     const entries = await Promise.all((data || []).map(async (file) => {
@@ -32,6 +38,6 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ files: entries.filter(Boolean) }, { status: 200 });
   } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return routeError(500, 'storage_list_failed', err.message);
   }
 }

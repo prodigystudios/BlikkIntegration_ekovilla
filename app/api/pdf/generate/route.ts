@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { readFile } from 'fs/promises';
 import path from 'path';
+import { z } from 'zod';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -27,6 +28,33 @@ type TablePreparedRow = {
   lines: string[][];
   height: number;
 };
+
+const generatePdfBodySchema = z.object({
+  orderId: z.string().optional().default(''),
+  projectNumber: z.string().optional().default(''),
+  installerName: z.string().optional().default(''),
+  workAddress: z.object({
+    streetAddress: z.string().optional().default(''),
+    postalCode: z.string().optional().default(''),
+    city: z.string().optional().default(''),
+  }).optional(),
+  installationDate: z.string().optional().default(''),
+  clientName: z.string().optional().default(''),
+  materialUsed: z.string().optional().default(''),
+  checks: z.record(z.string(), z.any()).optional(),
+  etapperOpen: z.array(z.record(z.string(), z.any())).optional(),
+  etapperClosed: z.array(z.record(z.string(), z.any())).optional(),
+  beforeImageDataUrl: z.string().optional().nullable(),
+  afterImageDataUrl: z.string().optional().nullable(),
+  signature: z.string().optional().nullable(),
+  signatureDateCity: z.string().optional().default(''),
+  signatureTimestamp: z.string().optional().default(''),
+  signatureTimeZone: z.string().optional().default(''),
+  branding: z.object({
+    primaryColor: z.string().optional(),
+    accentColor: z.string().optional(),
+  }).optional(),
+}).passthrough();
 
 const BRAND = {
   name: 'Ekovilla AB',
@@ -83,7 +111,12 @@ function toFileNamePart(input: string) {
 
 export async function POST(req: NextRequest): Promise<Response> {
   try {
-    const body = await req.json();
+    const parsedBody = generatePdfBodySchema.safeParse(await req.json().catch(() => null));
+    if (!parsedBody.success) {
+      return new Response('Invalid request body', { status: 400 });
+    }
+
+    const body = parsedBody.data;
     const {
       orderId,
       projectNumber,
