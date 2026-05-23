@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { getBlikk } from '@/lib/blikk';
 
 // GET /api/blikk/internal-projects
@@ -11,11 +12,47 @@ import { getBlikk } from '@/lib/blikk';
 //   query (optional)
 //   mock=1 (optional test data)
 
+const querySchema = z.object({
+  page: z.coerce.number().int().positive().default(1),
+  limit: z.coerce.number().int().positive().max(200).default(50),
+  q: z.string().optional().default(''),
+  query: z.string().optional(),
+  mock: z.enum(['1']).optional(),
+});
+
+function ok<T>(data: T, legacy?: Record<string, unknown>, status = 200) {
+  return NextResponse.json({ ok: true, data, ...(legacy ?? {}) }, { status });
+}
+
+function routeError(status: number, code: string, message: string, details?: unknown) {
+  return NextResponse.json(
+    {
+      ok: false,
+      error: message,
+      errorDetails: { code, message, ...(details !== undefined ? { details } : {}) },
+      legacyError: message,
+      ...(details !== undefined ? { details } : {}),
+    },
+    { status },
+  );
+}
+
 export async function GET(req: NextRequest) {
-  const page = Math.max(1, Number(req.nextUrl.searchParams.get('page') || '1') || 1);
-  const limit = Math.min(200, Math.max(1, Number(req.nextUrl.searchParams.get('limit') || '50') || 50));
-  const q = req.nextUrl.searchParams.get('q') || req.nextUrl.searchParams.get('query') || '';
-  const mock = req.nextUrl.searchParams.get('mock') === '1';
+  const parsedQuery = querySchema.safeParse({
+    page: req.nextUrl.searchParams.get('page') || '1',
+    limit: req.nextUrl.searchParams.get('limit') || '50',
+    q: req.nextUrl.searchParams.get('q') || undefined,
+    query: req.nextUrl.searchParams.get('query') || undefined,
+    mock: req.nextUrl.searchParams.get('mock') || undefined,
+  });
+  if (!parsedQuery.success) {
+    return routeError(400, 'validation_error', 'Invalid query', parsedQuery.error.flatten());
+  }
+
+  const page = parsedQuery.data.page;
+  const limit = parsedQuery.data.limit;
+  const q = parsedQuery.data.q || parsedQuery.data.query || '';
+  const mock = parsedQuery.data.mock === '1';
 
   if (mock) {
     const items = Array.from({ length: Math.min(limit, 5) }).map((_, i) => ({
@@ -24,7 +61,8 @@ export async function GET(req: NextRequest) {
       code: `INT${100 + i}`,
       active: true,
     }));
-    return NextResponse.json({ usedUrl: 'mock', data: { items, page, limit, query: q || undefined } });
+    const payload = { usedUrl: 'mock', data: { items, page, limit, query: q || undefined } };
+    return ok(payload, payload);
   }
 
   try {
@@ -34,8 +72,9 @@ export async function GET(req: NextRequest) {
     if (q) qs.set('query', q);
     const usedUrl = `${base}?${qs.toString()}`;
     const raw: any = await (blikk as any).request(usedUrl.replace(/^https?:\/\/[^/]+/, ''));
-    return NextResponse.json({ usedUrl, data: raw });
+    const payload = { usedUrl, data: raw };
+    return ok(payload, payload);
   } catch (e: any) {
-    return NextResponse.json({ error: String(e?.message || e) }, { status: 200 });
+    return routeError(500, 'internal_projects_fetch_failed', String(e?.message || e));
   }
 }
