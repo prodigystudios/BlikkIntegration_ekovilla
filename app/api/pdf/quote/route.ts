@@ -1,12 +1,53 @@
 import { NextRequest } from 'next/server';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+import { z } from 'zod';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
+const quoteLineItemSchema = z.object({
+  description: z.string().default(''),
+  quantity: z.coerce.number().default(0),
+  unitPrice: z.coerce.number().default(0),
+});
+
+const quotePdfBodySchema = z.object({
+  type: z.enum(['private', 'business']).optional().default('private'),
+  customerName: z.string().optional().default(''),
+  companyName: z.string().optional().default(''),
+  email: z.string().optional().default(''),
+  phone: z.string().optional().default(''),
+  streetAddress: z.string().optional().default(''),
+  postalCode: z.string().optional().default(''),
+  city: z.string().optional().default(''),
+  material: z.string().optional().default(''),
+  quantity: z.coerce.number().optional().default(0),
+  unitPrice: z.coerce.number().optional().default(0),
+  lineItems: z.array(quoteLineItemSchema).optional().default([]),
+  vatPercent: z.coerce.number().optional().default(25),
+  validUntil: z.string().optional().default(''),
+  notes: z.string().optional().default(''),
+  totals: z.object({
+    subtotal: z.coerce.number().optional().default(0),
+    vat: z.coerce.number().optional().default(0),
+    total: z.coerce.number().optional().default(0),
+  }).optional().default({ subtotal: 0, vat: 0, total: 0 }),
+  branding: z.object({
+    companyName: z.string().optional(),
+    primaryColor: z.string().optional(),
+    accentColor: z.string().optional(),
+  }).optional().default({}),
+  items: z.array(z.any()).optional(),
+}).passthrough();
+
 export async function POST(req: NextRequest): Promise<Response> {
   try {
-    const body = await req.json();
+    const parsedBody = quotePdfBodySchema.safeParse(await req.json().catch(() => null));
+    if (!parsedBody.success) {
+      return new Response('Invalid request body', { status: 400 });
+    }
+
+    const body = parsedBody.data;
     const {
       type = 'private',
       customerName = '',

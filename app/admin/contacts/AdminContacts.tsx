@@ -35,10 +35,11 @@ export default function AdminContacts() {
       const catJson = await catRes.json();
       const peopleJson = await peopleRes.json();
       const addrJson = await addrRes.json();
-      setCategories(catJson.categories || []);
-      setContacts(peopleJson.contacts || []);
-      setAddresses(addrJson.addresses || []);
-      if (!activeCat && (catJson.categories||[]).length) setActiveCat(catJson.categories[0].id);
+      const nextCategories = catJson.data?.categories || [];
+      setCategories(nextCategories);
+      setContacts(peopleJson.data?.contacts || []);
+      setAddresses(addrJson.data?.addresses || []);
+      if (!activeCat && nextCategories.length) setActiveCat(nextCategories[0].id);
     } catch (e:any) {
       setError(e.message || 'Något gick fel');
     } finally {
@@ -63,11 +64,11 @@ export default function AdminContacts() {
 
   async function createCategory(name: string) {
     const res = await fetch('/api/admin/contacts/categories', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name }) });
-    if (res.ok) { const j = await res.json(); setCategories(c=>[...c, j.category]); if (!activeCat) setActiveCat(j.category.id); }
+    if (res.ok) { const j = await res.json(); const category = j.data?.category; if (!category) return; setCategories(c=>[...c, category]); if (!activeCat) setActiveCat(category.id); }
   }
   async function updateCategory(id: string, patch: any) {
     const res = await fetch(`/api/admin/contacts/categories/${id}`, { method: 'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(patch) });
-    if (res.ok) { const j = await res.json(); setCategories(list=>list.map(c=>c.id===id?j.category:c)); }
+    if (res.ok) { const j = await res.json(); const category = j.data?.category; if (!category) return; setCategories(list=>list.map(c=>c.id===id?category:c)); }
   }
   async function deleteCategory(id: string) {
     if (!confirm('Ta bort kategori och alla dess kontakter?')) return;
@@ -76,11 +77,11 @@ export default function AdminContacts() {
   }
   async function createContact(d: Partial<Contact>) {
     const res = await fetch('/api/admin/contacts/people', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(d) });
-    if (res.ok) { const j = await res.json(); setContacts(p=>[...p, j.contact]); }
+    if (res.ok) { const j = await res.json(); const contact = j.data?.contact; if (!contact) return; setContacts(p=>[...p, contact]); }
   }
   async function updateContact(id: string, patch: any) {
     const res = await fetch(`/api/admin/contacts/people/${id}`, { method: 'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(patch) });
-    if (res.ok) { const j = await res.json(); setContacts(list=>list.map(c=>c.id===id?j.contact:c)); }
+    if (res.ok) { const j = await res.json(); const contact = j.data?.contact; if (!contact) return; setContacts(list=>list.map(c=>c.id===id?contact:c)); }
   }
   async function deleteContact(id: string) {
     if (!confirm('Ta bort kontakt?')) return;
@@ -89,11 +90,11 @@ export default function AdminContacts() {
   }
   async function createAddress(payload: Partial<Address>) {
     const res = await fetch('/api/admin/contacts/addresses', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
-    if (res.ok) { const j = await res.json(); setAddresses(a=>[...a, j.address]); }
+    if (res.ok) { const j = await res.json(); const address = j.data?.address; if (!address) return; setAddresses(a=>[...a, address]); }
   }
   async function updateAddress(id: string, patch: any) {
     const res = await fetch(`/api/admin/contacts/addresses/${id}`, { method: 'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(patch) });
-    if (res.ok) { const j = await res.json(); setAddresses(list=>list.map(a=>a.id===id?j.address:a)); }
+    if (res.ok) { const j = await res.json(); const address = j.data?.address; if (!address) return; setAddresses(list=>list.map(a=>a.id===id?address:a)); }
   }
   async function deleteAddress(id: string) {
     if (!confirm('Ta bort adress?')) return;

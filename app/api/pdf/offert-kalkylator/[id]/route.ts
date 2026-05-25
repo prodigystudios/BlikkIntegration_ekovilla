@@ -2,9 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { promises as fs } from 'fs';
 import path from 'path';
+import { z } from 'zod';
 import { computeOffertKalkylator, OFFERT_KALKYLATOR_DEFAULT_STATE } from '@/lib/offertKalkylator';
 import { applyOffertOwnerScope, getOffertAccessContext } from '@/lib/offertAccess';
 import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
+import { routeError } from '../../../blikk/_admin-resource';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -88,13 +90,21 @@ function formatOffertNumber(year: any, seq: any) {
   return `${y}-${String(Math.trunc(s)).padStart(5, '0')}`;
 }
 
+const routeParamsSchema = z.object({
+  id: z.string().trim().min(1),
+});
+
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }): Promise<Response> {
   try {
-    const id = String(params?.id || '').trim();
-    if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
+    const parsedParams = routeParamsSchema.safeParse(params);
+    if (!parsedParams.success) {
+      return routeError(400, 'validation_error', 'Missing id', parsedParams.error.flatten());
+    }
+
+    const id = parsedParams.data.id;
 
     const access = await getOffertAccessContext();
-    if (!access.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!access.user) return routeError(401, 'unauthorized', 'Unauthorized');
 
     const includeAll = access.canViewAll;
     const adminClient = getOptionalSupabaseAdmin();
@@ -112,11 +122,11 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
     const { data: item, error } = await scopedQuery.single();
 
     if (error) throw error;
-    if (!item) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    if (!item) return routeError(404, 'not_found', 'Not found');
 
     const payload = item.payload;
     if (!payload || typeof payload !== 'object') {
-      return NextResponse.json({ error: 'Offert saknar payload' }, { status: 400 });
+      return routeError(400, 'missing_payload', 'Offert saknar payload');
     }
 
     const totals = computeOffertKalkylator({

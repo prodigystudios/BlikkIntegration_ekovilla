@@ -67,13 +67,16 @@ export default async function ContactsPage() {
 
   let contactsArr: PublicContact[] = [];
   let addressesArr: PublicAddress[] = [];
+  const normalizedData = (data && typeof data === 'object' && 'data' in data && data.data && typeof data.data === 'object')
+    ? data.data as ContactsPayload
+    : data;
 
   // New shape
-  if (Array.isArray(data.contacts)) {
-    contactsArr = data.contacts as PublicContact[];
+  if (Array.isArray(normalizedData.contacts)) {
+    contactsArr = normalizedData.contacts as PublicContact[];
   } else {
     // Legacy grouped shape: keys = category names + optional Adresser
-    for (const [key, value] of Object.entries(data)) {
+    for (const [key, value] of Object.entries(normalizedData)) {
       if (key === 'Adresser' && Array.isArray(value)) {
         addressesArr = value.map((a: any) => ({ id: a.id || a.name, name: a.name, address: a.address }));
       } else if (Array.isArray(value)) {
@@ -90,8 +93,8 @@ export default async function ContactsPage() {
     }
   }
 
-  if (Array.isArray(data.addresses)) {
-    addressesArr = (data.addresses as any[]).map(a => ({ id: a.id, name: a.name, address: a.address }));
+  if (Array.isArray(normalizedData.addresses)) {
+    addressesArr = (normalizedData.addresses as any[]).map(a => ({ id: a.id, name: a.name, address: a.address }));
   }
 
   // Group by category

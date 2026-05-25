@@ -1,24 +1,26 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { requireAdminUser } from '@/lib/auth/route';
-import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
+import { NextRequest } from 'next/server';
+import { createCategorySchema, ok, requireContactsAdminContext, routeError, validationError } from '../_lib';
 
 export async function GET() {
-  if (!(await requireAdminUser())) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
-  const supabase = getOptionalSupabaseAdmin();
-  if (!supabase) return NextResponse.json({ error: 'service role missing' }, { status: 500 });
+  const context = await requireContactsAdminContext();
+  if ('response' in context) return context.response;
+
+  const { supabase } = context;
   const { data, error } = await supabase.from('contact_categories').select('*').order('sort', { ascending: true }).order('name');
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ categories: data });
+  if (error) return routeError(500, 'query_failed', error.message);
+  return ok({ categories: data ?? [] });
 }
 
 export async function POST(req: NextRequest) {
-  if (!(await requireAdminUser())) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
-  const supabase = getOptionalSupabaseAdmin();
-  if (!supabase) return NextResponse.json({ error: 'service role missing' }, { status: 500 });
+  const context = await requireContactsAdminContext();
+  if ('response' in context) return context.response;
+
   const body = await req.json();
-  const name = (body.name || '').trim();
-  if (!name) return NextResponse.json({ error: 'missing name' }, { status: 400 });
-  const { data, error } = await supabase.from('contact_categories').insert({ name }).select().single();
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ category: data });
+  const parsed = createCategorySchema.safeParse(body);
+  if (!parsed.success) return validationError(parsed.error);
+
+  const { supabase } = context;
+  const { data, error } = await supabase.from('contact_categories').insert(parsed.data).select().single();
+  if (error) return routeError(500, 'insert_failed', error.message);
+  return ok({ category: data }, 201);
 }

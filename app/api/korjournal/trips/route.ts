@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import {
+  createTripSchema,
+  getKorjournalRouteContext,
+  normalizeOptionalKilometer,
+  normalizeOptionalText,
+  ok,
+  routeError,
+  tripsListQuerySchema,
+} from './_lib';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -13,13 +20,16 @@ export const runtime = 'nodejs';
 export async function GET(req: NextRequest) {
   try {
     const url = new URL(req.url);
-  const ym = url.searchParams.get('ym'); // optional YYYY-MM filter
-  const cookieStore = cookies();
-  const supa = createRouteHandlerClient({ cookies: () => cookieStore });
-  const { data: { user } } = await supa.auth.getUser();
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const parsedQuery = tripsListQuerySchema.safeParse({ ym: url.searchParams.get('ym') || undefined });
+    if (!parsedQuery.success) {
+      return routeError(400, 'validation_error', 'Invalid query', parsedQuery.error.flatten());
+    }
 
-  let q = supa.from('korjournal_trips').select('*').eq('user_id', user.id).order('date', { ascending: false });
+    const context = await getKorjournalRouteContext();
+    if (context.response) return context.response;
+
+    const ym = parsedQuery.data.ym;
+    let q = context.supabase.from('korjournal_trips').select('*').eq('user_id', context.user.id).order('date', { ascending: false });
     if (ym) {
       // filter by month [ym-01, nextMonth-01)
       const [yStr, mStr] = ym.split('-');
@@ -32,38 +42,47 @@ export async function GET(req: NextRequest) {
       q = q.gte('date', start).lt('date', end);
     }
     const { data, error } = await q;
-    if (error) throw error;
-    return NextResponse.json({ trips: data });
+    if (error) return routeError(500, 'trips_query_failed', error.message);
+    return ok({ trips: data ?? [] }, { trips: data ?? [] });
   } catch (e: any) {
-    return NextResponse.json({ error: e.message }, { status: 500 });
+    return routeError(500, 'trips_fetch_failed', e.message);
   }
 }
 
 export async function POST(req: NextRequest) {
   try {
-    const cookieStore = cookies();
-    const supa = createRouteHandlerClient({ cookies: () => cookieStore });
-    const { data: { user } } = await supa.auth.getUser();
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const context = await getKorjournalRouteContext();
+    if (context.response) return context.response;
 
-    const body = await req.json();
+    const parsedBody = createTripSchema.safeParse(await req.json());
+    if (!parsedBody.success) {
+      return routeError(400, 'validation_error', 'Invalid request body', parsedBody.error.flatten());
+    }
+
     const today = new Date();
     const pad = (n: number) => (n < 10 ? `0${n}` : `${n}`);
     const defaultDate = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+    const startKm = normalizeOptionalKilometer(parsedBody.data.startKm);
+    const endKm = normalizeOptionalKilometer(parsedBody.data.endKm);
+
+    if (Number.isNaN(startKm) || Number.isNaN(endKm)) {
+      return routeError(400, 'validation_error', 'Invalid kilometer value');
+    }
+
     const trip = {
-      date: body.date || defaultDate,
-      start_address: body.startAddress === undefined || body.startAddress === null ? '' : String(body.startAddress),
-      end_address: body.endAddress === undefined || body.endAddress === null ? '' : String(body.endAddress),
-      start_km: body.startKm === '' || body.startKm === null || body.startKm === undefined ? null : Number(body.startKm),
-      end_km: body.endKm === '' || body.endKm === null || body.endKm === undefined ? null : Number(body.endKm),
-      note: body.note ? String(body.note) : null,
-      user_id: user.id,
-      sales_person: body.salesPerson ? String(body.salesPerson) : null,
+      date: parsedBody.data.date?.trim() || defaultDate,
+      start_address: parsedBody.data.startAddress === undefined || parsedBody.data.startAddress === null ? '' : String(parsedBody.data.startAddress),
+      end_address: parsedBody.data.endAddress === undefined || parsedBody.data.endAddress === null ? '' : String(parsedBody.data.endAddress),
+      start_km: startKm,
+      end_km: endKm,
+      note: normalizeOptionalText(parsedBody.data.note),
+      user_id: context.user.id,
+      sales_person: normalizeOptionalText(parsedBody.data.salesPerson),
     };
-    const { data, error } = await supa.from('korjournal_trips').insert(trip).select('*').single();
-    if (error) throw error;
-    return NextResponse.json({ trip: data });
+    const { data, error } = await context.supabase.from('korjournal_trips').insert(trip).select('*').single();
+    if (error) return routeError(500, 'trip_create_failed', error.message);
+    return ok({ trip: data }, { trip: data }, 201);
   } catch (e: any) {
-    return NextResponse.json({ error: e.message }, { status: 500 });
+    return routeError(500, 'trip_create_failed', e.message);
   }
 }

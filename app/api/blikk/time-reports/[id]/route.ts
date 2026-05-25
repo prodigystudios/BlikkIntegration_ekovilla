@@ -1,16 +1,81 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { getBlikk } from '@/lib/blikk';
 import { getUserProfile } from '@/lib/getUserProfile';
 import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
 
+const routeParamsSchema = z.object({
+  id: z.coerce.number().int().positive('invalid id'),
+});
+
+function ok<T>(data: T, legacy?: Record<string, unknown>, status = 200) {
+  return NextResponse.json({ ok: true, data, ...(legacy ?? {}) }, { status });
+}
+
+function routeError(status: number, code: string, message: string, details?: unknown) {
+  return NextResponse.json(
+    {
+      ok: false,
+      error: message,
+      errorDetails: { code, message, ...(details !== undefined ? { details } : {}) },
+      legacyError: message,
+      ...(details !== undefined ? { details } : {}),
+    },
+    { status },
+  );
+}
+
+function parseRouteId(params: { id: string }) {
+  const parsed = routeParamsSchema.safeParse({ id: params?.id });
+  if (!parsed.success) {
+    return {
+      idNum: null,
+      response: routeError(400, 'validation_error', 'invalid id', parsed.error.flatten()),
+    };
+  }
+
+  return { idNum: parsed.data.id, response: null };
+}
+
+function isDebugRequest(req: NextRequest) {
+  return new URL(req.url).searchParams.get('debug') === '1';
+}
+
+async function resolveCurrentBlikkUserId() {
+  const current = await getUserProfile();
+  if (!current) {
+    return { blikkUserId: null, response: routeError(401, 'unauthorized', 'unauthorized') };
+  }
+
+  const supabase = getOptionalSupabaseAdmin();
+  if (!supabase) {
+    return { blikkUserId: null, response: routeError(500, 'service_role_missing', 'service role not configured') };
+  }
+
+  const { data: prof, error } = await supabase.from('profiles').select('blikk_id').eq('id', current.id).maybeSingle();
+  if (error) {
+    return { blikkUserId: null, response: routeError(500, 'profile_lookup_failed', error.message) };
+  }
+
+  if (!prof || prof.blikk_id == null) {
+    return {
+      blikkUserId: null,
+      response: routeError(400, 'blikk_mapping_missing', 'No Blikk user mapping (blikk_id) found for current user'),
+    };
+  }
+
+  return { blikkUserId: Number(prof.blikk_id), response: null };
+}
+
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   try {
     if (process.env.NODE_ENV === 'production') {
-      return NextResponse.json({ ok: false, error: 'Not found' }, { status: 404 });
+      return routeError(404, 'not_found', 'Not found');
     }
-    const idNum = Number(params.id);
-    if (!Number.isFinite(idNum)) return NextResponse.json({ ok: false, error: 'invalid id' }, { status: 400 });
-    const debug = new URL(req.url).searchParams.get('debug') === '1';
+    const parsedRoute = parseRouteId(params);
+    if (parsedRoute.response) return parsedRoute.response;
+    const idNum = parsedRoute.idNum;
+    const debug = isDebugRequest(req);
     const blikk = getBlikk();
     const data = await (blikk as any).getTimeReportById(idNum, { debug });
     const report = (data as any)?.report ?? data;
@@ -19,28 +84,23 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
       payload.used = (data as any).used;
       payload.attempts = (data as any).attempts;
     }
-    return NextResponse.json(payload);
+    return ok({ report, ...(debug ? { used: payload.used, attempts: payload.attempts } : {}) }, payload);
   } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e?.message || 'Failed to get time report' }, { status: 500 });
+    return routeError(500, 'time_report_get_failed', e?.message || 'Failed to get time report');
   }
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const idNum = Number(params.id);
-    if (!Number.isFinite(idNum)) return NextResponse.json({ ok: false, error: 'invalid id' }, { status: 400 });
+    const parsedRoute = parseRouteId(params);
+    if (parsedRoute.response) return parsedRoute.response;
+    const idNum = parsedRoute.idNum;
     const body = await req.json().catch(() => ({}));
-    const debug = new URL(req.url).searchParams.get('debug') === '1';
+    const debug = isDebugRequest(req);
 
-    // Resolve current user's Blikk id and verify ownership
-    const current = await getUserProfile();
-    if (!current) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
-    const supabase = getOptionalSupabaseAdmin();
-    if (!supabase) return NextResponse.json({ ok: false, error: 'service role not configured' }, { status: 500 });
-    const { data: prof, error } = await supabase.from('profiles').select('blikk_id').eq('id', current.id).maybeSingle();
-    if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
-    if (!prof || prof.blikk_id == null) return NextResponse.json({ ok: false, error: 'No Blikk user mapping (blikk_id) found for current user' }, { status: 400 });
-    const blikkUserId = Number(prof.blikk_id);
+    const resolvedUser = await resolveCurrentBlikkUserId();
+    if (resolvedUser.response) return resolvedUser.response;
+    const blikkUserId = resolvedUser.blikkUserId;
 
     const blikk = getBlikk();
     // Fetch existing report to verify ownership
@@ -48,7 +108,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     const existing: any = fetched?.report ?? fetched ?? null;
     const owner = existing?.userId ?? existing?.user_id ?? existing?.user?.id ?? null;
     if (owner != null && Number(owner) !== blikkUserId) {
-      return NextResponse.json({ ok: false, error: 'forbidden' }, { status: 403 });
+      return routeError(403, 'forbidden', 'forbidden');
     }
 
     // Derive robust defaults from existing report if client/env omitted some required fields
@@ -102,12 +162,12 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     const ctxCount = [updatePayload.projectId, updatePayload.internalProjectId, updatePayload.absenceProjectId]
       .filter(v => v != null && Number(v) > 0).length;
     if (ctxCount !== 1) {
-      return NextResponse.json({ ok: false, error: 'Exactly one of projectId, internalProjectId, absenceProjectId must be set' }, { status: 400 });
+      return routeError(400, 'validation_error', 'Exactly one of projectId, internalProjectId, absenceProjectId must be set');
     }
 
     // If after deriving we still don't have a valid timeArticleId, fail early with a clearer error
     if (!(updatePayload.timeArticleId != null && Number(updatePayload.timeArticleId) > 0)) {
-      return NextResponse.json({ ok: false, error: 'Missing timeArticleId: set BLIKK_TIME_ARTICLE_ID or include timeArticleId in payload' }, { status: 400 });
+      return routeError(400, 'validation_error', 'Missing timeArticleId: set BLIKK_TIME_ARTICLE_ID or include timeArticleId in payload');
     }
 
   const res = await (blikk as any).updateTimeReport(idNum, updatePayload as any);
@@ -120,27 +180,22 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         console.log('[PATCH time-report] usedPath:', res.usedPath);
       }
     }
-    return NextResponse.json(payload);
+    return ok({ updated: res.data, usedPath: res.usedPath, ...(debug ? { sentBody: res.sentBody } : {}) }, payload);
   } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e?.message || 'Failed to update time report' }, { status: 400 });
+    return routeError(400, 'time_report_update_failed', e?.message || 'Failed to update time report');
   }
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const idNum = Number(params.id);
-    if (!Number.isFinite(idNum)) return NextResponse.json({ ok: false, error: 'invalid id' }, { status: 400 });
-    const debug = new URL(req.url).searchParams.get('debug') === '1';
+    const parsedRoute = parseRouteId(params);
+    if (parsedRoute.response) return parsedRoute.response;
+    const idNum = parsedRoute.idNum;
+    const debug = isDebugRequest(req);
 
-    // Resolve current user's Blikk id and verify ownership
-    const current = await getUserProfile();
-    if (!current) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
-    const supabase = getOptionalSupabaseAdmin();
-    if (!supabase) return NextResponse.json({ ok: false, error: 'service role not configured' }, { status: 500 });
-    const { data: prof, error } = await supabase.from('profiles').select('blikk_id').eq('id', current.id).maybeSingle();
-    if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
-    if (!prof || prof.blikk_id == null) return NextResponse.json({ ok: false, error: 'No Blikk user mapping (blikk_id) found for current user' }, { status: 400 });
-    const blikkUserId = Number(prof.blikk_id);
+    const resolvedUser = await resolveCurrentBlikkUserId();
+    if (resolvedUser.response) return resolvedUser.response;
+    const blikkUserId = resolvedUser.blikkUserId;
 
     const blikk = getBlikk();
     // Fetch existing report to verify ownership
@@ -148,7 +203,7 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
     const existing: any = fetched?.report ?? fetched ?? null;
     const owner = existing?.userId ?? existing?.user_id ?? existing?.user?.id ?? null;
     if (owner != null && Number(owner) !== blikkUserId) {
-      return NextResponse.json({ ok: false, error: 'forbidden' }, { status: 403 });
+      return routeError(403, 'forbidden', 'forbidden');
     }
 
     const res = await (blikk as any).deleteTimeReport(idNum);
@@ -157,13 +212,13 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
       console.log('[DELETE time-report] usedPath:', res.usedPath);
     }
     // Consider 404 on canonical path as idempotent success; the client should not error.
-    return NextResponse.json({ ok: true, deleted: res.data, usedPath: res.usedPath });
+    return ok({ deleted: res.data, usedPath: res.usedPath }, { deleted: res.data, usedPath: res.usedPath });
   } catch (e: any) {
     // If the external API already deleted the record (404), treat as success.
     const msg = String(e?.message || '')
     if (/DELETE \/v1\/Core\/TimeReports\//.test(msg) && /-> 404/.test(msg)) {
-      return NextResponse.json({ ok: true, deleted: null, usedPath: '/v1/Core/TimeReports' });
+      return ok({ deleted: null, usedPath: '/v1/Core/TimeReports' }, { deleted: null, usedPath: '/v1/Core/TimeReports' });
     }
-    return NextResponse.json({ ok: false, error: e?.message || 'Failed to delete time report' }, { status: 400 });
+    return routeError(400, 'time_report_delete_failed', e?.message || 'Failed to delete time report');
   }
 }

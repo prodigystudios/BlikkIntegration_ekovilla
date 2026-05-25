@@ -8,6 +8,10 @@ import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
+const routeParamsSchema = z.object({
+  token: z.string().trim().min(1, 'Invalid link'),
+});
+
 const SubmitSchema = z.object({
   person1Name: z.string().trim().max(200).optional().default(''),
   person1Personnummer: z.string().trim().max(50).optional().default(''),
@@ -53,17 +57,38 @@ function env(name: string): string {
   return (process.env[name] || '').trim();
 }
 
+function ok<T>(data: T, legacy?: Record<string, unknown>, status = 200) {
+  return NextResponse.json({ ok: true, data, ...(legacy ?? {}) }, { status });
+}
+
+function routeError(status: number, code: string, message: string, details?: unknown) {
+  return NextResponse.json(
+    {
+      ok: false,
+      error: message,
+      errorDetails: { code, message, ...(details !== undefined ? { details } : {}) },
+      legacyError: message,
+      ...(details !== undefined ? { details } : {}),
+    },
+    { status },
+  );
+}
+
 export async function POST(req: NextRequest, ctx: { params: { token: string } }) {
   try {
     const supabase = getOptionalSupabaseAdmin();
-    if (!supabase) return NextResponse.json({ error: 'Server not configured' }, { status: 500 });
+    if (!supabase) return routeError(500, 'service_role_missing', 'Server not configured');
 
-    const token = (ctx?.params?.token || '').trim();
-    if (!token) return NextResponse.json({ error: 'Invalid link' }, { status: 404 });
+    const parsedParams = routeParamsSchema.safeParse({ token: ctx?.params?.token });
+    if (!parsedParams.success) {
+      return routeError(404, 'invalid_link', 'Invalid link', parsedParams.error.flatten());
+    }
+
+    const { token } = parsedParams.data;
 
     const parsed = SubmitSchema.safeParse(await req.json());
     if (!parsed.success) {
-      return NextResponse.json({ error: 'Invalid form data', details: parsed.error.flatten() }, { status: 400 });
+      return routeError(400, 'validation_error', 'Invalid form data', parsed.error.flatten());
     }
 
     const tokenHash = hashCustomerToken(token);
@@ -74,14 +99,14 @@ export async function POST(req: NextRequest, ctx: { params: { token: string } })
       .eq('token_hash', tokenHash)
       .maybeSingle();
 
-    if (reqErr) throw reqErr;
-    if (!requestRow) return NextResponse.json({ error: 'Invalid link' }, { status: 404 });
+    if (reqErr) return routeError(500, 'customer_request_query_failed', reqErr.message);
+    if (!requestRow) return routeError(404, 'invalid_link', 'Invalid link');
 
-    if (requestRow.revoked_at) return NextResponse.json({ error: 'Invalid link' }, { status: 410 });
+    if (requestRow.revoked_at) return routeError(410, 'request_revoked', 'Invalid link');
     if (requestRow.expires_at && new Date(requestRow.expires_at).getTime() < Date.now()) {
-      return NextResponse.json({ error: 'Link expired' }, { status: 410 });
+      return routeError(410, 'link_expired', 'Link expired');
     }
-    if (requestRow.status !== 'pending') return NextResponse.json({ error: 'Already submitted' }, { status: 410 });
+    if (requestRow.status !== 'pending') return routeError(410, 'already_submitted', 'Already submitted');
 
     const body = parsed.data;
 
@@ -105,7 +130,7 @@ export async function POST(req: NextRequest, ctx: { params: { token: string } })
         signature_data_url: body.signatureDataUrl,
       });
 
-    if (insErr) throw insErr;
+    if (insErr) return routeError(500, 'customer_response_insert_failed', insErr.message);
 
     const nowIso = new Date().toISOString();
     const { error: updErr } = await supabase
@@ -114,7 +139,7 @@ export async function POST(req: NextRequest, ctx: { params: { token: string } })
       .eq('id', requestRow.id)
       .eq('status', 'pending');
 
-    if (updErr) throw updErr;
+    if (updErr) return routeError(500, 'customer_request_update_failed', updErr.message);
 
     const { data: offer } = await supabase
       .from('offert_calculations')
@@ -162,8 +187,8 @@ export async function POST(req: NextRequest, ctx: { params: { token: string } })
       });
     }
 
-    return NextResponse.json({ ok: true });
+    return ok({ submitted: true }, { submitted: true });
   } catch (e: any) {
-    return NextResponse.json({ error: e?.message ?? 'Unknown error' }, { status: 500 });
+    return routeError(500, 'customer_offert_submit_failed', e?.message ?? 'Unknown error');
   }
 }

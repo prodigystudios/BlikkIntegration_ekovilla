@@ -37,8 +37,8 @@ export default function AdminBlikkUsersMapping() {
         const res = await fetch('/api/admin/blikk/users-sync');
         if (!res.ok) throw new Error('Kunde inte hämta Blikk-användare');
         const data = await res.json();
-        setRows(data.profiles || []);
-        setBlikkUsers(data.blikkUsers || []);
+        setRows(data.data?.profiles || data.profiles || []);
+        setBlikkUsers(data.data?.blikkUsers || data.blikkUsers || []);
       } catch (e: any) {
         setError(e?.message || 'Fel vid laddning');
       } finally {
@@ -56,7 +56,12 @@ export default function AdminBlikkUsersMapping() {
         body: JSON.stringify({ userId, blikkId })
       });
       if (!res.ok) {
-        try { const msg = await res.json(); setError(msg?.error || 'Misslyckades att spara'); } catch { setError('Misslyckades att spara'); }
+        try {
+          const msg = await res.json();
+          setError(msg?.error?.message || msg?.legacyError || msg?.error || 'Misslyckades att spara');
+        } catch {
+          setError('Misslyckades att spara');
+        }
         return;
       }
       setRows((list) => list.map((r) => (r.id === userId ? { ...r, blikk_id: blikkId } : r)));

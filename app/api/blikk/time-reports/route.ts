@@ -1,30 +1,110 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { getBlikk } from '@/lib/blikk';
 import { getUserProfile } from '@/lib/getUserProfile';
 import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
 
+const listQuerySchema = z.object({
+  page: z.coerce.number().int().positive().default(1),
+  pageSize: z.coerce.number().int().positive().default(25),
+  userId: z.coerce.number().int().positive().optional(),
+  projectId: z.coerce.number().int().positive().optional(),
+  dateFrom: z.string().trim().optional(),
+  dateTo: z.string().trim().optional(),
+  debug: z.enum(['1']).optional(),
+});
+
+const createTimeReportSchema = z.object({
+  userId: z.coerce.number().int().positive().optional(),
+  date: z.string().trim().min(1, 'date is required'),
+  minutes: z.coerce.number().finite().optional(),
+  hours: z.coerce.number().finite().optional(),
+  description: z.string().optional().default(''),
+  projectId: z.coerce.number().int().positive().optional(),
+  internalProjectId: z.coerce.number().int().positive().optional(),
+  absenceProjectId: z.coerce.number().int().positive().optional(),
+  activityId: z.coerce.number().int().positive().optional(),
+  timeCodeId: z.coerce.number().int().positive().optional(),
+  timecodeId: z.coerce.number().int().positive().optional(),
+  breakMinutes: z.coerce.number().finite().optional(),
+  start: z.string().optional(),
+  startTime: z.string().optional(),
+  end: z.string().optional(),
+  endTime: z.string().optional(),
+  travelReport: z.any().optional().nullable(),
+});
+
+function ok<T>(data: T, legacy?: Record<string, unknown>, status = 200) {
+  return NextResponse.json({ ok: true, data, ...(legacy ?? {}) }, { status, headers: { 'Cache-Control': 'no-store' } });
+}
+
+function routeError(status: number, code: string, message: string, details?: unknown) {
+  return NextResponse.json(
+    {
+      ok: false,
+      error: message,
+      errorDetails: { code, message, ...(details !== undefined ? { details } : {}) },
+      legacyError: message,
+      ...(details !== undefined ? { details } : {}),
+    },
+    { status, headers: { 'Cache-Control': 'no-store' } },
+  );
+}
+
+function isDebugRequest(req: NextRequest) {
+  return new URL(req.url).searchParams.get('debug') === '1';
+}
+
+async function resolveCurrentBlikkUserId() {
+  const current = await getUserProfile();
+  if (!current) {
+    return { blikkUserId: null, response: routeError(401, 'unauthorized', 'unauthorized') };
+  }
+
+  const supabase = getOptionalSupabaseAdmin();
+  if (!supabase) {
+    return { blikkUserId: null, response: routeError(500, 'service_role_missing', 'service role not configured') };
+  }
+
+  const { data: prof, error } = await supabase.from('profiles').select('blikk_id').eq('id', current.id).maybeSingle();
+  if (error) {
+    return { blikkUserId: null, response: routeError(500, 'profile_lookup_failed', error.message) };
+  }
+
+  if (!prof || prof.blikk_id == null) {
+    return {
+      blikkUserId: null,
+      response: routeError(400, 'blikk_mapping_missing', 'No Blikk user mapping (blikk_id) found for current user'),
+    };
+  }
+
+  return { blikkUserId: Number(prof.blikk_id), response: null };
+}
+
 export async function GET(req: NextRequest) {
   try {
-    const { searchParams } = new URL(req.url);
-    const page = Number(searchParams.get('page') || '1');
-    const pageSize = Number(searchParams.get('pageSize') || '25');
-    let userId = searchParams.get('userId') ? Number(searchParams.get('userId')) : undefined;
-    const projectId = searchParams.get('projectId') ? Number(searchParams.get('projectId')) : undefined;
-    const dateFrom = searchParams.get('dateFrom') || undefined;
-    const dateTo = searchParams.get('dateTo') || undefined;
-    const debug = searchParams.get('debug') === '1';
+    const searchParams = new URL(req.url).searchParams;
+    const parsedQuery = listQuerySchema.safeParse({
+      page: searchParams.get('page') || '1',
+      pageSize: searchParams.get('pageSize') || '25',
+      userId: searchParams.get('userId') || undefined,
+      projectId: searchParams.get('projectId') || undefined,
+      dateFrom: searchParams.get('dateFrom') || undefined,
+      dateTo: searchParams.get('dateTo') || undefined,
+      debug: searchParams.get('debug') || undefined,
+    });
+    if (!parsedQuery.success) {
+      return routeError(400, 'validation_error', 'Invalid query', parsedQuery.error.flatten());
+    }
+
+    const { page, pageSize, projectId, dateFrom, dateTo } = parsedQuery.data;
+    let userId = parsedQuery.data.userId;
+    const debug = parsedQuery.data.debug === '1';
     // If userId not provided, resolve current user's mapped blikk_id
     if (!Number.isFinite(userId as any)) {
-      const current = await getUserProfile();
-      if (!current) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
-      const supabase = getOptionalSupabaseAdmin();
-      if (!supabase) return NextResponse.json({ ok: false, error: 'service role not configured' }, { status: 500 });
-      const { data: prof, error } = await supabase.from('profiles').select('blikk_id').eq('id', current.id).maybeSingle();
-      if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
-      if (!prof || prof.blikk_id == null) {
-        return NextResponse.json({ ok: false, error: 'No Blikk user mapping (blikk_id) found for current user' }, { status: 400 });
-      }
-      userId = Number(prof.blikk_id);
+      const resolvedUser = await resolveCurrentBlikkUserId();
+      if (resolvedUser.response) return resolvedUser.response;
+      userId = resolvedUser.blikkUserId;
     }
     const blikk = getBlikk();
     const data = await (blikk as any).listTimeReports({ page, pageSize, userId, projectId, dateFrom, dateTo, debug });
@@ -49,63 +129,78 @@ export async function GET(req: NextRequest) {
         });
       } catch {}
     }
-  return NextResponse.json(payload, { headers: { 'Cache-Control': 'no-store' } });
+    return ok(
+      {
+        items,
+        ...(debug
+          ? {
+              raw: payload.raw,
+              attempts: payload.attempts,
+              used: payload.used,
+              method: payload.method,
+              ...(payload.sentBody ? { sentBody: payload.sentBody } : {}),
+            }
+          : {}),
+      },
+      payload,
+    );
   } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e?.message || 'Failed to list time reports' }, { status: 500 });
+    return routeError(500, 'time_report_list_failed', e?.message || 'Failed to list time reports');
   }
 }
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const debug = new URL(req.url).searchParams.get('debug') === '1';
-    let userId = body.userId != null ? Number(body.userId) : NaN;
-    const date = String(body.date || '').slice(0, 10);
-    const minutes = body.minutes != null ? Number(body.minutes) : undefined;
-    const hours = body.hours != null ? Number(body.hours) : undefined;
-    const description = typeof body.description === 'string' ? body.description : '';
-    const projectId = body.projectId != null ? Number(body.projectId) : undefined;
-    const internalProjectId = body.internalProjectId != null ? Number(body.internalProjectId) : undefined;
-    const absenceProjectId = body.absenceProjectId != null ? Number(body.absenceProjectId) : undefined;
-    const activityId = body.activityId != null ? Number(body.activityId) : undefined;
-    const timeCodeId = body.timeCodeId != null ? Number(body.timeCodeId) : (body.timecodeId != null ? Number(body.timecodeId) : undefined);
-    const breakMinutes = body.breakMinutes != null ? Number(body.breakMinutes) : undefined;
-    const travelReport = body.travelReport || null;
+    const parsedBody = createTimeReportSchema.safeParse(await req.json());
+    if (!parsedBody.success) {
+      return routeError(400, 'validation_error', 'Invalid request body', parsedBody.error.flatten());
+    }
+
+    const debug = isDebugRequest(req);
+    let userId = parsedBody.data.userId ?? NaN;
+    const date = parsedBody.data.date.slice(0, 10);
+    const minutes = parsedBody.data.minutes;
+    const hours = parsedBody.data.hours;
+    const description = parsedBody.data.description;
+    const projectId = parsedBody.data.projectId;
+    const internalProjectId = parsedBody.data.internalProjectId;
+    const absenceProjectId = parsedBody.data.absenceProjectId;
+    const activityId = parsedBody.data.activityId;
+    const timeCodeId = parsedBody.data.timeCodeId ?? parsedBody.data.timecodeId;
+    const breakMinutes = parsedBody.data.breakMinutes;
+    const travelReport = parsedBody.data.travelReport || null;
 
     // Resolve current user's Blikk ID if userId not provided
     if (!Number.isFinite(userId)) {
-      const current = await getUserProfile();
-      if (!current) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
-      const supabase = getOptionalSupabaseAdmin();
-      if (!supabase) return NextResponse.json({ ok: false, error: 'service role not configured' }, { status: 500 });
-      const { data: prof, error } = await supabase.from('profiles').select('blikk_id').eq('id', current.id).maybeSingle();
-      if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
-      if (!prof || prof.blikk_id == null) {
-        return NextResponse.json({ ok: false, error: 'No Blikk user mapping (blikk_id) found for current user' }, { status: 400 });
-      }
-      userId = Number(prof.blikk_id);
+      const resolvedUser = await resolveCurrentBlikkUserId();
+      if (resolvedUser.response) return resolvedUser.response;
+      userId = resolvedUser.blikkUserId;
     }
 
-    if (!Number.isFinite(userId) || userId <= 0) return NextResponse.json({ ok: false, error: 'userId is required' }, { status: 400 });
-    if (!date) return NextResponse.json({ ok: false, error: 'date is required' }, { status: 400 });
+    if (!Number.isFinite(userId) || userId <= 0) return routeError(400, 'validation_error', 'userId is required');
+    if (!date) return routeError(400, 'validation_error', 'date is required');
 
     // Require exactly one of projectId / internalProjectId / absenceProjectId
     const idCount = [projectId, internalProjectId, absenceProjectId].filter(v => Number.isFinite(v as any) && (v as number) > 0).length;
     if (idCount !== 1) {
-      return NextResponse.json({ ok: false, error: 'Exactly one of projectId, internalProjectId, absenceProjectId must be provided' }, { status: 400 });
+      return routeError(400, 'validation_error', 'Exactly one of projectId, internalProjectId, absenceProjectId must be provided');
     }
     // Optional stricter validation depending on tenant requirements
     const mustHaveTimeCode = process.env.BLIKK_REQUIRE_TIMECODE === '1';
     if (mustHaveTimeCode && !Number.isFinite(timeCodeId as any)) {
-      return NextResponse.json({ ok: false, error: 'timeCodeId is required' }, { status: 400 });
+      return routeError(400, 'validation_error', 'timeCodeId is required');
     }
 
     const blikk = getBlikk();
     // Force shared timeArticleId (default 3400, overridable via env)
     const forcedArticleId = process.env.BLIKK_TIME_ARTICLE_ID ? Number(process.env.BLIKK_TIME_ARTICLE_ID) : 3400;
     // Derive start/end timestamps (HH:mm) from body if provided separately; front-end currently passes them in payload
-    const startTime = typeof body.start === 'string' ? body.start : (typeof body.startTime === 'string' ? body.startTime : undefined);
-    const endTime = typeof body.end === 'string' ? body.end : (typeof body.endTime === 'string' ? body.endTime : undefined);
+    const startTime = typeof parsedBody.data.start === 'string'
+      ? parsedBody.data.start
+      : (typeof parsedBody.data.startTime === 'string' ? parsedBody.data.startTime : undefined);
+    const endTime = typeof parsedBody.data.end === 'string'
+      ? parsedBody.data.end
+      : (typeof parsedBody.data.endTime === 'string' ? parsedBody.data.endTime : undefined);
     const res = await blikk.createTimeReport({
       userId,
       date,
@@ -126,8 +221,11 @@ export async function POST(req: NextRequest) {
     // Only include sentBody when debug=1 to avoid leaking payloads in production
     const payload: any = { ok: true, report: res.data, usedPath: res.usedPath };
     if (debug) payload.sentBody = res.sentBody;
-    return NextResponse.json(payload);
+    return ok(
+      { report: res.data, usedPath: res.usedPath, ...(debug ? { sentBody: res.sentBody } : {}) },
+      payload,
+    );
   } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e?.message || 'Invalid request body' }, { status: 400 });
+    return routeError(400, 'time_report_create_failed', e?.message || 'Invalid request body');
   }
 }

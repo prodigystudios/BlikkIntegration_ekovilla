@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { z } from 'zod';
 import { computeOffertKalkylator, OFFERT_KALKYLATOR_DEFAULT_STATE } from '@/lib/offertKalkylator';
 import { applyOffertOwnerScope, getOffertAccessContext } from '@/lib/offertAccess';
 import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
@@ -8,12 +9,54 @@ import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
+const listQuerySchema = z.object({
+  scope: z.enum(['all']).optional(),
+});
+
+const createBodySchema = z.object({
+  name: z.string().trim().min(1, 'Missing name'),
+  address: z.string().trim().min(1, 'Missing address'),
+  city: z.string().trim().min(1, 'Missing city'),
+  phone: z.string().trim().optional().default(''),
+  quoteDate: z.string().trim().min(1, 'Missing quoteDate'),
+  salesperson: z.string().trim().min(1, 'Missing salesperson'),
+  salespersonPhone: z.string().trim().optional().default(''),
+  nextMeetingDate: z.string().trim().optional().default(''),
+  status: z.string().trim().optional().default(''),
+  internalNote: z.string().trim().optional().default(''),
+  payload: z.record(z.any()),
+});
+
+function ok<T>(data: T, legacy?: Record<string, unknown>, status = 200) {
+  return NextResponse.json({ ok: true, data, ...(legacy ?? {}) }, { status });
+}
+
+function routeError(status: number, code: string, message: string, details?: unknown) {
+  return NextResponse.json(
+    {
+      ok: false,
+      error: message,
+      errorDetails: { code, message, ...(details !== undefined ? { details } : {}) },
+      legacyError: message,
+      ...(details !== undefined ? { details } : {}),
+    },
+    { status },
+  );
+}
+
 export async function GET(req: NextRequest) {
   try {
     const access = await getOffertAccessContext();
-    if (!access.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!access.user) return routeError(401, 'unauthorized', 'Unauthorized');
 
-    const requestedAll = req.nextUrl.searchParams.get('scope') === 'all';
+    const parsedQuery = listQuerySchema.safeParse({
+      scope: req.nextUrl.searchParams.get('scope') || undefined,
+    });
+    if (!parsedQuery.success) {
+      return routeError(400, 'validation_error', 'Invalid query', parsedQuery.error.flatten());
+    }
+
+    const requestedAll = parsedQuery.data.scope === 'all';
     const includeAll = requestedAll && access.canViewAll;
     const adminClient = getOptionalSupabaseAdmin();
     const db = includeAll && adminClient ? adminClient : access.supabase;
@@ -29,7 +72,7 @@ export async function GET(req: NextRequest) {
 
     const { data, error } = await scopedQuery;
 
-    if (error) throw error;
+  if (error) return routeError(500, 'offert_list_query_failed', error.message);
 
     const items = (data ?? []) as any[];
 
@@ -87,14 +130,16 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    return NextResponse.json({
+    const payload = {
       items,
       canViewAll: access.canViewAll,
       currentUserId: access.userId,
       currentUserName: access.profileName,
-    });
+    };
+
+    return ok(payload, payload);
   } catch (e: any) {
-    return NextResponse.json({ error: e?.message ?? 'Unknown error' }, { status: 500 });
+    return routeError(500, 'offert_list_failed', e?.message ?? 'Unknown error');
   }
 }
 
@@ -102,31 +147,32 @@ export async function POST(req: NextRequest) {
   try {
     const supabase = createRouteHandlerClient({ cookies });
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!user) return routeError(401, 'unauthorized', 'Unauthorized');
 
-    const body = await req.json();
-    const name = typeof body?.name === 'string' ? body.name.trim() : '';
-    const address = typeof body?.address === 'string' ? body.address.trim() : '';
-    const city = typeof body?.city === 'string' ? body.city.trim() : '';
-    const phone = typeof body?.phone === 'string' ? body.phone.trim() : '';
-    const quoteDate = typeof body?.quoteDate === 'string' ? body.quoteDate.trim() : '';
-    const salesperson = typeof body?.salesperson === 'string' ? body.salesperson.trim() : '';
-    const salespersonPhone = typeof body?.salespersonPhone === 'string' ? body.salespersonPhone.trim() : '';
-    const nextMeetingDate = typeof body?.nextMeetingDate === 'string' ? body.nextMeetingDate.trim() : '';
-    const status = typeof body?.status === 'string' ? body.status.trim() : '';
-    const internalNote = typeof body?.internalNote === 'string' ? body.internalNote.trim() : '';
-    const payload = body?.payload ?? null;
+    const parsedBody = createBodySchema.safeParse(await req.json());
+    if (!parsedBody.success) {
+      const flattened = parsedBody.error.flatten();
+      const message = flattened.formErrors[0] || 'Invalid request body';
+      return routeError(400, 'validation_error', message, flattened);
+    }
 
-    if (!name) return NextResponse.json({ error: 'Missing name' }, { status: 400 });
-    if (!address) return NextResponse.json({ error: 'Missing address' }, { status: 400 });
-    if (!city) return NextResponse.json({ error: 'Missing city' }, { status: 400 });
-    if (!quoteDate) return NextResponse.json({ error: 'Missing quoteDate' }, { status: 400 });
-    if (!salesperson) return NextResponse.json({ error: 'Missing salesperson' }, { status: 400 });
-    if (!payload) return NextResponse.json({ error: 'Missing payload' }, { status: 400 });
+    const {
+      name,
+      address,
+      city,
+      phone,
+      quoteDate,
+      salesperson,
+      salespersonPhone,
+      nextMeetingDate,
+      status,
+      internalNote,
+      payload,
+    } = parsedBody.data;
 
     const computed = computeOffertKalkylator({
       ...OFFERT_KALKYLATOR_DEFAULT_STATE,
-      ...(typeof payload === 'object' ? payload : {}),
+      ...payload,
     } as any);
 
     const insertRow = {
@@ -154,9 +200,9 @@ export async function POST(req: NextRequest) {
       .select('id, offert_number_year, offert_number_seq, name, address, city, phone, quote_date, salesperson, salesperson_phone, status, next_meeting_date, internal_note, created_at, updated_at, subtotal, total_before_rot, rot_amount, total_after_rot')
       .single();
 
-    if (error) throw error;
-    return NextResponse.json({ item: data });
+    if (error) return routeError(500, 'offert_create_failed', error.message);
+    return ok({ item: data }, { item: data }, 201);
   } catch (e: any) {
-    return NextResponse.json({ error: e?.message ?? 'Unknown error' }, { status: 500 });
+    return routeError(500, 'offert_create_failed', e?.message ?? 'Unknown error');
   }
 }

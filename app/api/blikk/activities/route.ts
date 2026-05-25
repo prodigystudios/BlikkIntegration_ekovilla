@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getBlikk } from '@/lib/blikk';
 import { getActivitiesFromCache } from '@/lib/blikkCache';
+import { ok, parseAdminResourceQuery, routeError } from '../_admin-resource';
 
 /*
   GET /api/blikk/activities
@@ -18,13 +19,12 @@ import { getActivitiesFromCache } from '@/lib/blikkCache';
 */
 
 export async function GET(req: NextRequest) {
-  const q = req.nextUrl.searchParams.get('q') || req.nextUrl.searchParams.get('query') || '';
-  const page = Math.max(1, Number(req.nextUrl.searchParams.get('page') || '1') || 1);
-  const pageSize = Math.min(50, Math.max(1, Number(req.nextUrl.searchParams.get('pageSize') || req.nextUrl.searchParams.get('limit') || '50') || 50));
-  const includeRaw = req.nextUrl.searchParams.get('raw') === '1';
-  const mock = req.nextUrl.searchParams.get('mock') === '1';
-  const forceRefresh = req.nextUrl.searchParams.get('refresh') === '1';
-  const useCache = req.nextUrl.searchParams.get('nocache') !== '1';
+  const parsedQuery = parseAdminResourceQuery(req);
+  if (!parsedQuery.success) {
+    return routeError(400, 'validation_error', 'Invalid query', parsedQuery.error.flatten());
+  }
+
+  const { q, page, pageSize, includeRaw, mock, forceRefresh, useCache, debug } = parsedQuery.data;
 
   if (mock) {
     const items = Array.from({ length: Math.min(pageSize, 10) }).map((_, i) => ({
@@ -35,7 +35,7 @@ export async function GET(req: NextRequest) {
       billable: i % 2 === 0,
       ...(includeRaw ? { _raw: { mock: true } } : {}),
     }));
-    return NextResponse.json({ items, source: 'mock' });
+    return ok({ items, source: 'mock' }, { items, source: 'mock' });
   }
 
   // Serve from cache if possible
@@ -43,7 +43,7 @@ export async function GET(req: NextRequest) {
     try {
       const cached = await getActivitiesFromCache({ q, page, pageSize, forceRefresh });
       if (cached.length) {
-        return NextResponse.json({ items: cached, source: 'cache', cached: true });
+        return ok({ items: cached, source: 'cache', cached: true }, { items: cached, source: 'cache', cached: true });
       }
     } catch (e: any) {
       console.warn('activities cache fallback to direct Blikk', e?.message || e);
@@ -68,15 +68,17 @@ export async function GET(req: NextRequest) {
       ...(includeRaw ? { _raw: a } : {}),
     }));
 
-    const debug = req.nextUrl.searchParams.get('debug') === '1';
     if (debug && process.env.NODE_ENV !== 'production') {
       console.log('[blikk activities] usedUrl', usedUrl);
       console.log('[blikk activities] sample', mapped.slice(0,3));
     }
 
-    return NextResponse.json({ items: mapped, source: `blikk:${usedUrl}`, cached: false });
+    return ok(
+      { items: mapped, source: `blikk:${usedUrl}`, cached: false },
+      { items: mapped, source: `blikk:${usedUrl}`, cached: false },
+    );
   } catch (e: any) {
     console.error('GET /api/blikk/activities failed', e);
-    return NextResponse.json({ items: [], error: String(e?.message || e) }, { status: 200 });
+    return routeError(500, 'activities_fetch_failed', String(e?.message || e), { items: [] });
   }
 }

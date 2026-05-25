@@ -1,14 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getBlikk } from '@/lib/blikk';
+import { ok, parseAdminResourceQuery, routeError } from '../_admin-resource';
 
 // Consolidated articles listing endpoint (supports mock & raw, returns normalized items + meta sample)
 export async function GET(req: NextRequest) {
-  const sp = req.nextUrl.searchParams;
-  const q = sp.get('q') || sp.get('query') || '';
-  const page = Number(sp.get('page') || '1') || 1;
-  const pageSize = Number(sp.get('pageSize') || sp.get('limit') || '50') || 50;
-  const includeRaw = sp.get('raw') === '1';
-  const mock = sp.get('mock') === '1';
+  const parsedQuery = parseAdminResourceQuery(req);
+  if (!parsedQuery.success) {
+    return routeError(400, 'validation_error', 'Invalid query', parsedQuery.error.flatten());
+  }
+
+  const { q, page, pageSize, includeRaw, mock } = parsedQuery.data;
 
   if (mock) {
     const items = Array.from({ length: Math.min(pageSize, 10) }).map((_, i) => ({
@@ -19,7 +20,10 @@ export async function GET(req: NextRequest) {
       unit: 'st',
       ...(includeRaw ? { _raw: { mock: true } } : {}),
     }));
-    return NextResponse.json({ ok: true, items, source: 'mock', sample: items[0] || null });
+    return ok(
+      { items, source: 'mock', sample: items[0] || null },
+      { items, source: 'mock', sample: items[0] || null },
+    );
   }
 
   try {
@@ -36,8 +40,11 @@ export async function GET(req: NextRequest) {
       unit: a.unit ?? a.unitName ?? a.Unit ?? null,
       ...(includeRaw ? { _raw: a } : {}),
     })).filter(r => r.id != null);
-    return NextResponse.json({ ok: true, items: mapped, usedUrl: meta.usedUrl, attempts: meta.attempts, sample: mapped[0] || null });
+    return ok(
+      { items: mapped, usedUrl: meta.usedUrl, attempts: meta.attempts, sample: mapped[0] || null },
+      { items: mapped, usedUrl: meta.usedUrl, attempts: meta.attempts, sample: mapped[0] || null },
+    );
   } catch (e: any) {
-    return NextResponse.json({ ok: false, items: [], error: String(e?.message || e) });
+    return routeError(500, 'articles_fetch_failed', String(e?.message || e), { items: [] });
   }
 }

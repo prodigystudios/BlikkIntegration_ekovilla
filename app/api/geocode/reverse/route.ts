@@ -1,22 +1,50 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { z } from 'zod';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
+
+const reverseGeocodeQuerySchema = z.object({
+  lat: z.coerce.number().finite(),
+  lon: z.coerce.number().finite(),
+});
+
+function ok<T>(data: T, legacy?: Record<string, unknown>, status = 200) {
+  return NextResponse.json({ ok: true, data, ...(legacy ?? {}) }, { status });
+}
+
+function routeError(status: number, code: string, message: string, details?: unknown) {
+  return NextResponse.json(
+    {
+      ok: false,
+      error: message,
+      errorDetails: { code, message, ...(details !== undefined ? { details } : {}) },
+      legacyError: message,
+      ...(details !== undefined ? { details } : {}),
+    },
+    { status },
+  );
+}
 
 export async function GET(req: NextRequest) {
   try {
     const supabase = createRouteHandlerClient({ cookies });
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!user) return routeError(401, 'unauthorized', 'Unauthorized');
 
-    const { searchParams } = new URL(req.url);
-    const lat = Number(searchParams.get('lat'));
-    const lon = Number(searchParams.get('lon'));
-    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-      return NextResponse.json({ error: 'Missing or invalid lat/lon' }, { status: 400 });
+    const searchParams = new URL(req.url).searchParams;
+    const parsedQuery = reverseGeocodeQuerySchema.safeParse({
+      lat: searchParams.get('lat'),
+      lon: searchParams.get('lon'),
+    });
+    if (!parsedQuery.success) {
+      return routeError(400, 'validation_error', 'Missing or invalid lat/lon', parsedQuery.error.flatten());
     }
+
+    const { lat, lon } = parsedQuery.data;
+
     const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&addressdetails=1`;
     const res = await fetch(url, {
       headers: {
@@ -36,8 +64,9 @@ export async function GET(req: NextRequest) {
     const display = compact || data?.display_name || `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
 
     // Keep `address` for existing clients (e.g. körjournal), but also return structured fields.
-    return NextResponse.json({ address: display, street, city, lat, lon });
+    const payload = { address: display, street, city, lat, lon };
+    return ok(payload, payload);
   } catch (e: any) {
-    return NextResponse.json({ error: e.message }, { status: 500 });
+    return routeError(500, 'reverse_geocode_failed', e.message);
   }
 }

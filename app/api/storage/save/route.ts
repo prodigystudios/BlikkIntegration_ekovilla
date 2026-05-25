@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { revalidateTag } from 'next/cache';
-import { getSupabaseAdmin } from '@/lib/supabase/server';
+import { getStorageAdminOrThrow, routeError, saveBodySchema } from '../_lib';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
   try {
-    const supa = getSupabaseAdmin();
+    const supa = getStorageAdminOrThrow();
     // Diagnostics: capture env presence (not values) for debugging intermittent 'No API key' issues
     try {
       const dbg = {
@@ -25,17 +25,17 @@ export async function POST(req: NextRequest) {
     } catch {}
     const bucket = process.env.SUPABASE_BUCKET || 'pdfs';
 
-    const body = await req.json();
+    const parsedBody = saveBodySchema.safeParse(await req.json().catch(() => null));
+    if (!parsedBody.success) {
+      return routeError(400, 'validation_error', 'fileName and pdfBytesBase64 are required', parsedBody.error.flatten());
+    }
+
     const {
       fileName, // suggested name
       pdfBytesBase64, // base64 string (no data: prefix)
       metadata = {}, // optional
       // folder ignored now; we save under a single prefix to avoid listing inconsistencies
-    } = body || {};
-
-    if (!fileName || !pdfBytesBase64) {
-      return NextResponse.json({ error: 'fileName and pdfBytesBase64 are required' }, { status: 400 });
-    }
+    } = parsedBody.data;
 
     const bytes = Buffer.from(pdfBytesBase64, 'base64');
     const fixedFolder = 'Egenkontroller';
@@ -68,7 +68,7 @@ export async function POST(req: NextRequest) {
         }
         const isConflict = msg.includes('exists') || msg.includes('duplicate') || msg.includes('409');
         if (!isConflict) {
-          return NextResponse.json({ error: error.message }, { status: 500 });
+          return routeError(500, 'storage_upload_failed', error.message);
         }
         // else loop to try next suffix
       } catch {}
@@ -84,11 +84,11 @@ export async function POST(req: NextRequest) {
           metadata: metadata as any,
         });
         if (uErr) {
-          return NextResponse.json({ error: uErr.message || lastErr?.message || 'Kunde inte spara filen (namnkonflikt)' }, { status: 500 });
+          return routeError(500, 'storage_upload_conflict', uErr.message || lastErr?.message || 'Kunde inte spara filen (namnkonflikt)');
         }
         finalPath = uData?.path || uniquePath;
       } catch (e: any) {
-        return NextResponse.json({ error: e.message || lastErr?.message || 'Kunde inte spara filen (namnkonflikt)' }, { status: 500 });
+        return routeError(500, 'storage_upload_conflict', e.message || lastErr?.message || 'Kunde inte spara filen (namnkonflikt)');
       }
     }
 
@@ -104,6 +104,6 @@ export async function POST(req: NextRequest) {
   try { revalidateTag('archive-list'); } catch {}
   return NextResponse.json({ path: finalPath, url: signed?.signedUrl }, { status: 201 });
   } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return routeError(500, 'storage_save_failed', err.message);
   }
 }

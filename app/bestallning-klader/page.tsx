@@ -136,10 +136,11 @@ export default function BestallningKladerPage() {
       });
       const json = await res.json();
       if (!res.ok || !json.ok)
-        throw new Error(json.error || "Misslyckades att skapa uppgift");
+        throw new Error(json?.error?.message || json?.legacyError || json?.error || "Misslyckades att skapa uppgift");
+      const createdId = json?.data?.createdId || json?.createdId;
       setResult({
         ok: true,
-        message: `Uppgift skapad (ID: ${json.createdId}).`,
+        message: `Uppgift skapad (ID: ${createdId}).`,
       });
       setDescription("");
       setSections([

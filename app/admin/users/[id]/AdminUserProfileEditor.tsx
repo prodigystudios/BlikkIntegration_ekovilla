@@ -124,7 +124,7 @@ export default function AdminUserProfileEditor({ userId, authEmail, profile, sen
       });
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data?.error || 'Kunde inte spara ändringarna.');
+        throw new Error(data?.error?.message || data?.legacyError || data?.error || 'Kunde inte spara ändringarna.');
       }
       setSuccess(
         section === 'contact'

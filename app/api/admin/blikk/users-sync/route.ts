@@ -1,28 +1,16 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { requireAdminUser } from '@/lib/auth/route';
-import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
+import { NextRequest } from 'next/server';
 import { getBlikk } from '../../../../../lib/blikk';
-
-type BlikkUser = { id: number; email?: string | null; name?: string | null; fullName?: string | null; firstName?: string | null; lastName?: string | null };
-
-function normEmail(e?: string | null) {
-  return (e || '').trim().toLowerCase();
-}
-
-function blikkUserSummary(u: any): BlikkUser {
-  const name = u.name || u.fullName || [u.firstName, u.lastName].filter(Boolean).join(' ').trim();
-  const email = u.email || u.Email || null;
-  return { id: Number(u.id ?? u.userId ?? u.Id ?? u.UserId), email, name, fullName: u.fullName, firstName: u.firstName, lastName: u.lastName } as any;
-}
+import { blikkUserSummary, normEmail, ok, requireBlikkUsersSyncContext, routeError, updateBlikkMappingSchema, validationError } from './_lib';
 
 export async function GET() {
-  if (!(await requireAdminUser())) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
-  const supabase = getOptionalSupabaseAdmin();
-  if (!supabase) return NextResponse.json({ error: 'service role not configured' }, { status: 500 });
+  const context = await requireBlikkUsersSyncContext();
+  if ('response' in context) return context.response;
+
+  const { supabase } = context;
 
   // 1) List auth users to get emails
   const { data: authUsers, error: listErr } = await supabase.auth.admin.listUsers();
-  if (listErr) return NextResponse.json({ error: listErr.message }, { status: 500 });
+  if (listErr) return routeError(500, 'list_users_failed', listErr.message);
   const auth = authUsers.users.map((u) => ({ id: u.id, email: u.email || '' }));
   const ids = auth.map((u) => u.id);
 
@@ -31,7 +19,7 @@ export async function GET() {
     .from('profiles')
     .select('id, role, full_name, blikk_id')
     .in('id', ids);
-  if (profErr) return NextResponse.json({ error: profErr.message }, { status: 500 });
+  if (profErr) return routeError(500, 'profiles_query_failed', profErr.message);
   const profById = new Map(profRows?.map((r) => [r.id, r]) || []);
 
   // 3) Fetch Blikk users (page through a bit to be safe)
@@ -39,6 +27,7 @@ export async function GET() {
   const allBlikk: any[] = [];
   let page = 1;
   const pageSize = 100;
+  let blikkLoadFailed: string | null = null;
   for (let i = 0; i < 5; i++) {
     try {
       const res: any = await blikk.listUsers({ page, pageSize });
@@ -47,16 +36,21 @@ export async function GET() {
       allBlikk.push(...items);
       if (items.length < pageSize) break;
       page += 1;
-    } catch (e: any) {
-      // Stop paging on error but keep what we have
+    } catch (error) {
+      blikkLoadFailed = error instanceof Error ? error.message : 'Failed loading Blikk users';
+      // Stop paging on error but keep what we have.
       break;
     }
   }
-  const blikkUsers: BlikkUser[] = allBlikk
-    .map(blikkUserSummary)
-    .filter((u) => Number.isFinite(u.id)) as any;
+  if (blikkLoadFailed && allBlikk.length === 0) {
+    return routeError(502, 'blikk_users_load_failed', 'Failed loading Blikk users', blikkLoadFailed);
+  }
 
-  const byEmail = new Map<string, BlikkUser>();
+  const blikkUsers = allBlikk
+    .map(blikkUserSummary)
+    .filter((u) => Number.isFinite(u.id));
+
+  const byEmail = new Map<string, (typeof blikkUsers)[number]>();
   for (const u of blikkUsers) {
     const e = normEmail(u.email);
     if (e && !byEmail.has(e)) byEmail.set(e, u); // prefer first occurrence
@@ -77,22 +71,32 @@ export async function GET() {
     };
   });
 
-  return NextResponse.json({
+  const responseData = {
     profiles,
     blikkUsers: blikkUsers.map((u) => ({ id: u.id, email: u.email || null, name: u.name || null })),
-  });
+  };
+
+  return ok(responseData, responseData);
 }
 
 export async function POST(req: NextRequest) {
-  if (!(await requireAdminUser())) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
-  const supabase = getOptionalSupabaseAdmin();
-  if (!supabase) return NextResponse.json({ error: 'service role not configured' }, { status: 500 });
+  const context = await requireBlikkUsersSyncContext();
+  if ('response' in context) return context.response;
 
-  const body = await req.json();
-  const { userId, blikkId } = body as { userId: string; blikkId: number | null };
-  if (!userId) return NextResponse.json({ error: 'missing userId' }, { status: 400 });
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return routeError(400, 'invalid_json', 'Invalid JSON');
+  }
+
+  const parsed = updateBlikkMappingSchema.safeParse(body);
+  if (!parsed.success) return validationError(parsed.error);
+
+  const { supabase } = context;
+  const { userId, blikkId } = parsed.data;
   // Allow clearing mapping by sending null
   const { error } = await supabase.from('profiles').update({ blikk_id: blikkId }).eq('id', userId);
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ ok: true });
+  if (error) return routeError(500, 'mapping_update_failed', error.message);
+  return ok({ userId, blikkId }, { userId, blikkId });
 }

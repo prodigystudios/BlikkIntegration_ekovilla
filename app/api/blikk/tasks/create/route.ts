@@ -1,25 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getBlikk } from '@/lib/blikk';
+import { createTaskBodySchema, routeError } from '../_lib';
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const title = String(body.title || 'Beställning kläder');
-    const description = String(body.description || '');
-    const nameRaw = typeof body.comment === 'string' ? body.comment.trim() : '';
-    if (!nameRaw) {
-      return NextResponse.json({ ok: false, error: 'Namn på beställaren krävs' }, { status: 400 });
+    const parsedBody = createTaskBodySchema.safeParse(await req.json().catch(() => null));
+    if (!parsedBody.success) {
+      return routeError(400, 'validation_error', 'Namn på beställaren krävs', parsedBody.error.flatten());
     }
-  // Force default project in background (requested)
-  const defaultProjectId = Number(process.env.BLIKK_DEFAULT_PROJECT_ID ?? 230354);
-  const projectId = defaultProjectId;
-  // Ignore assignee for now (support request pending)
-  const assignedUserId = undefined;
-    const dueDate = body.dueDate ? String(body.dueDate) : undefined;
-  const preferredPath = body.preferredPath ? String(body.preferredPath) : undefined;
 
-  const blikk = getBlikk();
-  const task = await blikk.createTask({ title, description, projectId, assignedUserId, dueDate, preferredPath });
+    const title = String(parsedBody.data.title || 'Beställning kläder');
+    const description = String(parsedBody.data.description || '');
+    const nameRaw = parsedBody.data.comment.trim();
+    // Force default project in background (requested)
+    const defaultProjectId = Number(process.env.BLIKK_DEFAULT_PROJECT_ID ?? 230354);
+    const projectId = defaultProjectId;
+    // Ignore assignee for now (support request pending)
+    const assignedUserId = undefined;
+    const dueDate = parsedBody.data.dueDate ? String(parsedBody.data.dueDate) : undefined;
+    const preferredPath = parsedBody.data.preferredPath ? String(parsedBody.data.preferredPath) : undefined;
+
+    const blikk = getBlikk();
+    const task = await blikk.createTask({ title, description, projectId, assignedUserId, dueDate, preferredPath });
 
     let createdId: number | null = null;
     try {
@@ -44,6 +46,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, createdId });
   } catch (e: any) {
     console.error('Create task failed', e);
-    return NextResponse.json({ ok: false, error: e?.message || 'Unknown error' }, { status: 500 });
+    return routeError(500, 'task_create_failed', e?.message || 'Unknown error');
   }
 }

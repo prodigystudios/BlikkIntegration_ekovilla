@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
@@ -21,17 +22,35 @@ function firstField(value: FormDataEntryValue | null): string | null {
   return trimmed || null;
 }
 
+const twilioStatusSchema = z.object({
+  MessageSid: z.string().trim().min(1, 'Missing MessageSid'),
+  MessageStatus: z.string().trim().min(1, 'Missing MessageStatus'),
+  ErrorCode: z.string().trim().optional().nullable(),
+  ErrorMessage: z.string().trim().optional().nullable(),
+});
+
+function routeError(status: number, code: string, message: string, details?: unknown) {
+  return NextResponse.json(
+    {
+      ok: false,
+      error: { code, message, ...(details !== undefined ? { details } : {}) },
+      legacyError: message,
+    },
+    { status },
+  );
+}
+
 export async function POST(req: NextRequest) {
   try {
     const supabase = getOptionalSupabaseAdmin();
     if (!supabase) {
-      return NextResponse.json({ error: 'Server not configured' }, { status: 500 });
+      return routeError(500, 'service_role_missing', 'Server not configured');
     }
 
     const authToken = env('TWILIO_AUTH_TOKEN');
     const signature = req.headers.get('x-twilio-signature') || '';
     if (!authToken || !signature) {
-      return NextResponse.json({ error: 'Missing Twilio signature configuration' }, { status: 401 });
+      return routeError(401, 'signature_config_missing', 'Missing Twilio signature configuration');
     }
 
     const form = await req.formData();
@@ -43,17 +62,20 @@ export async function POST(req: NextRequest) {
     const twilioModule = await import('twilio');
     const isValid = twilioModule.validateRequest(authToken, signature, getRequestUrl(req), params);
     if (!isValid) {
-      return NextResponse.json({ error: 'Invalid Twilio signature' }, { status: 403 });
+      return routeError(403, 'invalid_twilio_signature', 'Invalid Twilio signature');
     }
 
-    const messageSid = firstField(form.get('MessageSid'));
-    const messageStatus = firstField(form.get('MessageStatus'));
-    const errorCode = firstField(form.get('ErrorCode'));
-    const errorMessage = firstField(form.get('ErrorMessage'));
-
-    if (!messageSid || !messageStatus) {
-      return NextResponse.json({ error: 'Missing Twilio payload fields' }, { status: 400 });
+    const parsed = twilioStatusSchema.safeParse({
+      MessageSid: firstField(form.get('MessageSid')),
+      MessageStatus: firstField(form.get('MessageStatus')),
+      ErrorCode: firstField(form.get('ErrorCode')),
+      ErrorMessage: firstField(form.get('ErrorMessage')),
+    });
+    if (!parsed.success) {
+      return routeError(400, 'validation_error', 'Missing Twilio payload fields', parsed.error.flatten());
     }
+
+    const { MessageSid: messageSid, MessageStatus: messageStatus, ErrorCode: errorCode, ErrorMessage: errorMessage } = parsed.data;
 
     const { error } = await supabase
       .from('planning_project_meta')
@@ -68,6 +90,6 @@ export async function POST(req: NextRequest) {
     return new NextResponse(null, { status: 204 });
   } catch (e: any) {
     console.error('[api/twilio/sms-status] error', e);
-    return NextResponse.json({ error: String(e?.message || e || 'Unknown error') }, { status: 500 });
+    return routeError(500, 'twilio_status_failed', String(e?.message || e || 'Unknown error'));
   }
 }

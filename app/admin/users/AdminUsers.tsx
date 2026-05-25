@@ -47,7 +47,7 @@ export default function AdminUsers() {
         return;
       }
       const data = await res.json();
-      setUsers(data.users || []);
+      setUsers(data.data?.users || data.users || []);
       setLoading(false);
     })();
   }, []);
@@ -68,7 +68,8 @@ export default function AdminUsers() {
       return;
     }
     const out = await res.json();
-    setUsers(u => [out.user, ...u]);
+    const nextUser = out.data?.user || out.user;
+    if (nextUser) setUsers(u => [nextUser, ...u]);
     setEmail(''); setPassword(''); setName(''); setRole('member');
     setCreating(false);
   }
