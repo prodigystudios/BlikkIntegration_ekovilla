@@ -1,4 +1,5 @@
 "use client";
+import Link from 'next/link';
 import React, { useMemo, useEffect, useState } from 'react';
 import { QuickLinksGrid, QuickLink, QuickLinksIconBar, QuickLinksSidebar, QuickLinksStrip } from './QuickLinks';
 import DashboardNotes from './DashboardNotes';
@@ -8,6 +9,8 @@ import DashboardTasks from './DashboardTasks';
 import DashboardDocumentApprovals from './DashboardDocumentApprovals';
 import TimeReportModal from './TimeReportModal';
 import { useToast } from '@/lib/Toast';
+import { cn } from '@/lib/shared/cn';
+import SectionCard from '../ui/SectionCard';
 import type { UserRole } from '../../lib/roles';
 import NewsModal, { type NewsItem } from './NewsModal';
 
@@ -256,18 +259,6 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
     };
   }, []);
 
-  const heroCardStyle: React.CSSProperties = {
-    border: '1px solid #dbe4ef',
-    background: 'linear-gradient(135deg, #f7fbf8 0%, #eff8f1 48%, #f8fbff 100%)',
-    borderRadius: 22,
-    padding: isDesktop ? 22 : isSmall ? (isXS ? 14 : 16) : 24,
-    display: 'grid',
-    gap: isDesktop ? 16 : isSmall ? 12 : 18,
-    boxShadow: '0 14px 34px rgba(15, 23, 42, 0.06)',
-    overflow: 'hidden',
-    position: 'relative'
-  };
-
   const surfaceCardStyle: React.CSSProperties = {
     border: '1px solid #e5e7eb',
     background: '#fff',
@@ -306,6 +297,9 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
     ...surfaceCardStyle,
     padding: 18,
     gap: 14,
+    border: '1px solid #dbe4ef',
+    background: 'linear-gradient(180deg,#fcfdff 0%,#f5f8fc 100%)',
+    boxShadow: '0 12px 28px rgba(15,23,42,0.06)',
   };
 
   const desktopDenseCardStyle: React.CSSProperties = {
@@ -314,47 +308,80 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
     gap: 16,
   };
 
+  const miniToggleBtnClass = 'inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-sm leading-none text-slate-700 shadow-[0_2px_4px_rgba(0,0,0,0.06)] transition-colors hover:bg-slate-50';
+
   const renderHeroSection = (showQuickLinks: boolean) => (
-    <section style={heroCardStyle}>
-      <div style={{ position:'absolute', right: isSmall ? -26 : -18, top: isSmall ? -42 : -54, width: isSmall ? 140 : 190, height: isSmall ? 140 : 190, borderRadius:'50%', background:'radial-gradient(circle, rgba(22,163,74,0.14) 0%, rgba(22,163,74,0) 70%)' }} />
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent:'space-between', gap: 12, flexWrap:'wrap', position:'relative' }}>
-        <div style={{ display:'grid', gap: isSmall ? 8 : 10, maxWidth: isDesktop ? '100%' : 680 }}>
-          <div style={{ display:'inline-flex', alignItems:'center', gap:8, width:'fit-content', padding:'6px 10px', borderRadius:999, background:'rgba(255,255,255,0.82)', border:'1px solid #d9e5dc', color:'#166534', fontSize:11, fontWeight:700, letterSpacing:0.3, textTransform:'uppercase' }}>
+    <section
+      className={cn(
+        'relative grid overflow-hidden rounded-[24px] border border-[#d6e4d8] bg-[linear-gradient(135deg,#f7fbf8_0%,#eef8f0_42%,#f7fbff_100%)] shadow-[0_24px_56px_rgba(15,23,42,0.10)]',
+        isDesktop ? 'gap-4 p-[22px]' : isSmall ? (isXS ? 'gap-3 p-[14px]' : 'gap-3 p-4') : 'gap-[18px] p-6'
+      )}
+    >
+      <div className="pointer-events-none absolute inset-[1px] rounded-[23px] border border-white/70" />
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-[88px] bg-[linear-gradient(180deg,rgba(255,255,255,0.72)_0%,rgba(255,255,255,0)_100%)]" />
+      <div
+        className={cn(
+          'absolute rounded-full bg-[radial-gradient(circle,rgba(34,197,94,0.16)_0%,rgba(34,197,94,0)_72%)] blur-[2px]',
+          isSmall ? '-right-[26px] -top-[42px] h-[140px] w-[140px]' : '-right-[18px] -top-[54px] h-[190px] w-[190px]'
+        )}
+      />
+      <div className="pointer-events-none absolute -left-[64px] bottom-[-92px] h-[220px] w-[220px] rounded-full bg-[radial-gradient(circle,rgba(59,130,246,0.10)_0%,rgba(59,130,246,0)_72%)]" />
+      <div className="relative flex flex-wrap items-start justify-between gap-3">
+        <div className={cn('grid', isSmall ? 'max-w-full gap-2' : 'max-w-[680px] gap-2.5', isDesktop ? 'max-w-full' : '')}>
+          <div className="inline-flex w-fit items-center gap-2 rounded-full border border-[#d9e5dc] bg-white/80 px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-[0.3px] text-green-700">
             {todayMeta.greeting}
-            <span style={{ width:4, height:4, borderRadius:'50%', background:'#22c55e' }} />
+            <span className="h-1 w-1 rounded-full bg-green-500" />
             {todayMeta.weekday}
           </div>
-          <div style={{ display:'grid', gap:6 }}>
-            <h1 style={{ margin: 0, fontSize: isSmall ? (isXS ? 26 : 30) : isDesktop ? 34 : 38, lineHeight: 1.02, letterSpacing: -1.1, color:'#0f172a' }}>Översikt</h1>
-            <p style={{ margin: 0, fontSize: isSmall ? 13 : 15, lineHeight: 1.45, color:'#475569', maxWidth: isDesktop ? 720 : isSmall ? 520 : 560 }}>
+          <div className="grid gap-1.5">
+            <h1
+              className={cn(
+                'm-0 leading-[1.02] tracking-[-1.1px] text-slate-900',
+                isSmall ? (isXS ? 'text-[26px]' : 'text-[30px]') : isDesktop ? 'text-[34px]' : 'text-[38px]'
+              )}
+            >
+              Översikt
+            </h1>
+            <p
+              className={cn(
+                'm-0 leading-[1.45] text-slate-600',
+                isSmall ? 'max-w-[520px] text-[13px]' : 'max-w-[560px] text-[15px]',
+                isDesktop ? 'max-w-[720px]' : ''
+              )}
+            >
               {isDesktop
                 ? 'Välkommen till din dashboard! Här har vi samlat allt du behöver för att snabbt komma igång med dagens arbete och hålla koll på det som är viktigt.'
                 : 'Börja med dagens viktigaste saker. Snabb åtkomst till tidrapport, dokument och dina vanligaste genvägar.'}
             </p>
           </div>
         </div>
-        <div style={{ display:'grid', gap:10, minWidth: isSmall ? '100%' : isDesktop ? 260 : 240 }}>
-          <button type="button" onClick={()=>{ setTimePrefill(null); setTimeModalOpen(true); }}
-            style={{ display:'inline-flex', alignItems:'center', justifyContent:'center', gap:8, fontSize:13, fontWeight:700, padding: isSmall ? '12px 16px' : '13px 18px', border:'1px solid #16a34a', background:'#16a34a', color:'#fff', borderRadius:14, boxShadow:'0 12px 20px rgba(22,163,74,0.18)', cursor:'pointer' }}
+        <div className={cn('grid gap-2.5', isSmall ? 'min-w-full' : isDesktop ? 'min-w-[260px]' : 'min-w-[240px]')}>
+          <button
+            type="button"
+            onClick={()=>{ setTimePrefill(null); setTimeModalOpen(true); }}
+            className={cn(
+              'inline-flex items-center justify-center gap-2 rounded-[16px] border border-green-600 bg-[linear-gradient(180deg,#22c55e_0%,#16a34a_100%)] font-bold text-white shadow-[0_16px_28px_rgba(22,163,74,0.24)] transition-[transform,box-shadow,background] hover:-translate-y-0.5 hover:bg-[linear-gradient(180deg,#20b455_0%,#15803d_100%)] hover:shadow-[0_20px_36px_rgba(22,163,74,0.26)]',
+              isSmall ? 'px-4 py-3 text-[13px]' : 'px-[18px] py-[13px] text-[13px]'
+            )}
           >
-            <span aria-hidden style={{ display:'inline-flex' }}>
+            <span aria-hidden className="inline-flex">
               <svg width="16" height="16" viewBox="0 0 24 24" strokeWidth={2} stroke="#fff" fill="none"><path d="M12 5v14M5 12h14" strokeLinecap="round" strokeLinejoin="round"/></svg>
             </span>
             Rapportera tid
           </button>
-          <div style={{ display:'grid', gridTemplateColumns: isSmall || isDesktop ? '1fr' : 'repeat(2, minmax(0, 1fr))', gap:10 }}>
-            <div style={{ border:'1px solid rgba(148,163,184,0.24)', background:'rgba(255,255,255,0.72)', borderRadius:16, padding: isSmall ? '10px 12px' : '12px 14px', display:'flex', alignItems:'center', justifyContent:'space-between', gap:12, flexWrap:'wrap' }}>
-              <div style={{ display:'grid', gap:2 }}>
-                <span style={{ fontSize:11, fontWeight:700, letterSpacing:0.3, textTransform:'uppercase', color:'#64748b' }}>Idag</span>
-                <strong style={{ fontSize: isSmall ? 15 : 16, color:'#0f172a' }}>{todayMeta.monthDay}</strong>
+          <div className={cn('grid gap-2.5', isSmall || isDesktop ? 'grid-cols-1' : 'grid-cols-2')}>
+            <div className={cn('flex flex-wrap items-center justify-between gap-3 rounded-[20px] border border-white/80 bg-white/88 shadow-[0_12px_28px_rgba(15,23,42,0.08)] backdrop-blur-[6px]', isSmall ? 'px-3 py-2.5' : 'px-[14px] py-3')}>
+              <div className="grid gap-0.5">
+                <span className="text-[11px] font-bold uppercase tracking-[0.3px] text-slate-500">Idag</span>
+                <strong className={cn('text-slate-900', isSmall ? 'text-[15px]' : 'text-base')}>{todayMeta.monthDay}</strong>
               </div>
-              <span style={{ fontSize:12, color:'#64748b' }}>Fokus på det viktigaste först.</span>
+              <span className="text-xs text-slate-500">Fokus på det viktigaste först.</span>
             </div>
             {!isSmall && !isDesktop && (
-              <div style={{ border:'1px solid rgba(148,163,184,0.24)', background:'rgba(255,255,255,0.72)', borderRadius:16, padding:'12px 14px', display:'grid', gap:4 }}>
-                <span style={{ fontSize:11, fontWeight:700, letterSpacing:0.3, textTransform:'uppercase', color:'#64748b' }}>Snabbt nu</span>
-                <strong style={{ fontSize: 16, color:'#0f172a' }}>Öppna dokument</strong>
-                <a href="/mina-dokument" style={{ fontSize:12, fontWeight:700, color:'#2563eb', textDecoration:'none' }}>Gå till mina dokument</a>
+              <div className="grid gap-1 rounded-[20px] border border-white/80 bg-white/88 px-[14px] py-3 shadow-[0_12px_28px_rgba(15,23,42,0.08)] backdrop-blur-[6px]">
+                <span className="text-[11px] font-bold uppercase tracking-[0.3px] text-slate-500">Snabbt nu</span>
+                <strong className="text-base text-slate-900">Öppna dokument</strong>
+                <Link href="/mina-dokument" className="text-xs font-bold text-blue-600 no-underline hover:text-blue-700">Gå till mina dokument</Link>
               </div>
             )}
           </div>
@@ -362,20 +389,20 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
       </div>
 
       {showQuickLinks && !mini && (
-        <div style={{ display:'grid', gap: isSmall ? 8 : 10 }}>
-          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:12, flexWrap:'wrap' }}>
-            <div style={{ display:'grid', gap:4 }}>
-              <h2 style={{ margin:0, fontSize:isSmall ? 16 : 19, color:'#0f172a' }}>Snabba genvägar</h2>
-              {!isSmall && <p style={{ margin:0, fontSize:13, color:'#64748b' }}>Det du använder mest ska ligga först och kräva så lite scroll som möjligt.</p>}
+        <div className={cn('grid', isSmall ? 'gap-2' : 'gap-2.5')}>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="grid gap-1">
+              <h2 className={cn('m-0 text-slate-900', isSmall ? 'text-base' : 'text-[19px]')}>Snabba genvägar</h2>
+              {!isSmall && <p className="m-0 text-[13px] text-slate-500">Det du använder mest ska ligga först och kräva så lite scroll som möjligt.</p>}
             </div>
-            <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+            <div className="flex items-center gap-2">
               {isSmall && (
-                <span style={{ display:'inline-flex', alignItems:'center', gap:6, color:'#64748b', fontSize:11 }}>
+                <span className="inline-flex items-center gap-1.5 text-[11px] text-slate-500">
                   Svep för fler
                   <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path fill="#94a3b8" d="M8 5l7 7-7 7"/></svg>
                 </span>
               )}
-              <button onClick={()=>setMini(true)} style={miniToggleBtn} aria-label="Minimera och visa endast ikoner" title="Minimera och visa endast ikoner">Minimera</button>
+              <button onClick={()=>setMini(true)} className={miniToggleBtnClass} aria-label="Minimera och visa endast ikoner" title="Minimera och visa endast ikoner">Minimera</button>
             </div>
           </div>
           {isSmall ? (
@@ -406,16 +433,16 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
         <>
           <aside style={desktopRailStyle}>
             <section style={desktopQuickLinksCardStyle}>
-              <div style={{ display:'grid', gap:4 }}>
-                <h2 style={{ margin:0, fontSize:18, color:'#0f172a' }}>Snabba genvägar</h2>
-                <p style={{ margin:0, fontSize:12.5, color:'#64748b', lineHeight:1.45 }}>Lägg det du öppnar ofta nära till hands i stället för mitt i arbetsflödet.</p>
+              <div className="grid gap-1">
+                <h2 className="m-0 text-lg text-slate-900">Snabba genvägar</h2>
+                <p className="m-0 text-[12.5px] leading-[1.45] text-slate-500">Lägg det du öppnar ofta nära till hands i stället för mitt i arbetsflödet.</p>
               </div>
               <QuickLinksSidebar links={desktopSidebarLinks} />
               {links.length > 6 && (
                 <button
                   type="button"
                   onClick={() => setShowAllDesktopLinks((prev) => !prev)}
-                  style={{ ...miniToggleBtn, width:'100%', justifyContent:'center', padding:'10px 12px', fontSize:12.5, fontWeight:700 }}
+                  className={cn(miniToggleBtnClass, 'w-full justify-center px-3 py-2.5 text-[12.5px] font-bold')}
                 >
                   {showAllDesktopLinks ? 'Visa färre' : `Visa fler (${links.length - 6})`}
                 </button>
@@ -426,9 +453,9 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
           <div className="dash-main-col" style={desktopMainStyle}>
             {renderHeroSection(false)}
 
-            <section style={{ ...surfaceCardStyle, minHeight: 0 }}>
+            <SectionCard className={cn(isSmall ? (isXS ? 'rounded-[18px] p-[14px]' : 'rounded-[18px] p-[18px]') : 'rounded-[20px] p-6', 'grid gap-[22px] shadow-[0_10px_26px_rgba(15,23,42,0.04)] min-h-0')}>
               <DashboardNotes compact desktopMode />
-            </section>
+            </SectionCard>
 
             {effectiveRole !== 'sales' && (
               <section style={surfaceCardStyle}>
@@ -457,9 +484,9 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
       ) : (
         <>
           {mini && (
-            <aside className="dash-sidebar" style={{ position:'sticky', top: 12, display:'flex', flexDirection:'column', gap:14, minWidth:72 }}>
-              <div style={{ display:'flex', justifyContent:'center' }}>
-                <button onClick={()=>setMini(false)} style={miniToggleBtn} aria-label="Expandera genvägar">»</button>
+            <aside className="dash-sidebar sticky top-3 flex min-w-[72px] flex-col gap-3.5">
+              <div className="flex justify-center">
+                <button onClick={()=>setMini(false)} className={miniToggleBtnClass} aria-label="Expandera genvägar">»</button>
               </div>
               <QuickLinksIconBar links={links} />
             </aside>
@@ -468,7 +495,7 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
             {renderHeroSection(true)}
 
             {effectiveRole !== 'sales' && (
-              <div style={{ order: isSmall ? -1 as React.CSSProperties['order'] : 0 }}>
+              <div className={cn(isSmall ? 'order-[-1]' : 'order-none')}>
                 <DashboardSchedule compact={isSmall || mini} onReportTime={(info: { projectId?: string; projectName?: string; orderNumber?: string; day?: string }) => {
                   const label = info.orderNumber ? `#${info.orderNumber}` : (info.projectName || info.projectId || '');
                   setTimePrefill({ project: label, projectId: info.projectId, date: info.day });
@@ -476,15 +503,15 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
                 }} />
               </div>
             )}
-            <section style={{ ...surfaceCardStyle, order: mini ? -1 : 0 }}>
+            <SectionCard className={cn(isSmall ? (isXS ? 'rounded-[18px] p-[14px]' : 'rounded-[18px] p-[18px]') : 'rounded-[20px] p-6', 'grid gap-[22px] shadow-[0_10px_26px_rgba(15,23,42,0.04)]', mini ? 'order-[-1]' : 'order-none')}>
               <DashboardDocumentApprovals compact={isSmall || mini} />
-            </section>
-            <section style={{ ...surfaceCardStyle, order: mini ? -1 : 0 }}>
+            </SectionCard>
+            <SectionCard className={cn(isSmall ? (isXS ? 'rounded-[18px] p-[14px]' : 'rounded-[18px] p-[18px]') : 'rounded-[20px] p-6', 'grid gap-[22px] shadow-[0_10px_26px_rgba(15,23,42,0.04)]', mini ? 'order-[-1]' : 'order-none')}>
               <DashboardTasks compact={isSmall || mini} />
-            </section>
-            <section style={{ ...surfaceCardStyle, order: mini ? -1 : 0 }}>
+            </SectionCard>
+            <SectionCard className={cn(isSmall ? (isXS ? 'rounded-[18px] p-[14px]' : 'rounded-[18px] p-[18px]') : 'rounded-[20px] p-6', 'grid gap-[22px] shadow-[0_10px_26px_rgba(15,23,42,0.04)]', mini ? 'order-[-1]' : 'order-none')}>
               <DashboardNotes compact={isSmall || mini} />
-            </section>
+            </SectionCard>
           </div>
         </>
       )}
@@ -528,14 +555,3 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
     </>
   );
 }
-const miniToggleBtn: React.CSSProperties = {
-  border:'1px solid #e5e7eb',
-  background:'#fff',
-  borderRadius:8,
-  padding:'6px 10px',
-  cursor:'pointer',
-  fontSize:14,
-  lineHeight:1,
-  boxShadow:'0 2px 4px rgba(0,0,0,0.06)',
-  color:'#374151',
-};

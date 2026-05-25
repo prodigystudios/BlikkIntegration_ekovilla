@@ -196,17 +196,19 @@ export function QuickLinksSidebar({ links }: { links: QuickLink[] }) {
         const content = (
           <div
             className={cn(
-              'grid items-center gap-3 rounded-[14px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#f8fbff_100%)] px-3 pb-3 pt-3 shadow-[0_8px_20px_rgba(15,23,42,0.04)] [grid-template-columns:40px_minmax(0,1fr)]',
-              link.disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
+              'grid items-center gap-3 rounded-[16px] border border-slate-300/80 bg-[linear-gradient(180deg,#ffffff_0%,#f9fbff_100%)] px-3.5 pb-3.5 pt-3.5 shadow-[0_10px_24px_rgba(15,23,42,0.08)] transition-[transform,border-color,box-shadow,background-color] [grid-template-columns:44px_minmax(0,1fr)]',
+              link.disabled
+                ? 'cursor-not-allowed opacity-60'
+                : 'cursor-pointer hover:-translate-y-0.5 hover:border-indigo-300 hover:bg-[linear-gradient(180deg,#ffffff_0%,#f4f7ff_100%)] hover:shadow-[0_16px_32px_rgba(99,102,241,0.14)]'
             )}
             aria-disabled={link.disabled || undefined}
           >
-            <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
+            <span className="inline-flex h-11 w-11 items-center justify-center rounded-[14px] border border-indigo-100 bg-[linear-gradient(180deg,#eef2ff_0%,#e6ecff_100%)] text-indigo-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]">
               {link.icon}
             </span>
             <span className="grid min-w-0 gap-[3px]">
-              <span className="text-[13.5px] font-bold leading-tight tracking-[-0.2px] text-slate-900">{link.title}</span>
-              <span className="text-[11.5px] leading-[1.35] text-slate-500">{link.desc}</span>
+              <span className="text-[13.5px] font-bold leading-tight tracking-[-0.24px] text-slate-900">{link.title}</span>
+              <span className="text-[11.5px] leading-[1.35] text-slate-600">{link.desc}</span>
               {link.disabled ? <DisabledBadge note={link.disabledNote} /> : null}
             </span>
           </div>
