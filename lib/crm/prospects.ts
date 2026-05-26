@@ -32,3 +32,21 @@ export async function listCrmProspects(supabase: SupabaseClient, search?: string
 export async function createCrmProspect(supabase: SupabaseClient, input: CreateCrmProspectInput) {
   return supabase.from('crm_prospects').insert(input).select(crmProspectSelect).single();
 }
+
+type UpdateCrmProspectInput = {
+  company_name: string;
+  organization_number: string | null;
+  contact_name: string | null;
+  phone: string | null;
+  email: string | null;
+  street_address?: string | null;
+  postal_code?: string | null;
+  city: string | null;
+  source: string | null;
+  notes: string | null;
+  status: 'new' | 'contacted' | 'qualified' | 'quoted' | 'won' | 'lost';
+};
+
+export async function updateCrmProspect(supabase: SupabaseClient, id: string, input: UpdateCrmProspectInput) {
+  return supabase.from('crm_prospects').update(input).eq('id', id).select(crmProspectSelect).single();
+}

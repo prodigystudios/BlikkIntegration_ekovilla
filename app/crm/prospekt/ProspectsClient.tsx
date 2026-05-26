@@ -48,9 +48,12 @@ type CreateProspectDraft = {
   contact_name: string;
   phone: string;
   email: string;
+  street_address: string;
+  postal_code: string;
   city: string;
   source: string;
   notes: string;
+  status: ProspectItem['status'];
 };
 
 const initialDraft: CreateProspectDraft = {
@@ -59,10 +62,45 @@ const initialDraft: CreateProspectDraft = {
   contact_name: '',
   phone: '',
   email: '',
+  street_address: '',
+  postal_code: '',
   city: '',
   source: '',
   notes: '',
+  status: 'new',
 };
+
+type ProspectCallItem = {
+  id: string;
+  outcome: 'no_answer' | 'follow_up' | 'positive' | 'negative';
+  summary: string;
+  next_step: string | null;
+  call_at: string;
+};
+
+const callOutcomeLabel: Record<ProspectCallItem['outcome'], string> = {
+  no_answer: 'Ej svar',
+  follow_up: 'Följ upp',
+  positive: 'Positivt',
+  negative: 'Negativt',
+};
+
+function getProspectInitials(value: string) {
+  return value
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() || '')
+    .join('');
+}
+
+function buildProspectMeta(item: ProspectItem) {
+  return [
+    item.contact_name ? `Kontakt: ${item.contact_name}` : null,
+    item.city ? `Ort: ${item.city}` : null,
+    item.source ? `Källa: ${item.source}` : null,
+  ].filter(Boolean) as string[];
+}
 
 function formatDateTime(value: string | null | undefined) {
   if (!value) return '–';
@@ -79,9 +117,16 @@ export default function ProspectsClient() {
   const [items, setItems] = useState<ProspectItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [createPanelOpen, setCreatePanelOpen] = useState(false);
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [detailEditing, setDetailEditing] = useState(false);
+  const [savingDetail, setSavingDetail] = useState(false);
+  const [relatedCalls, setRelatedCalls] = useState<ProspectCallItem[]>([]);
+  const [relatedCallsLoading, setRelatedCallsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [draft, setDraft] = useState<CreateProspectDraft>(initialDraft);
+  const [detailDraft, setDetailDraft] = useState<CreateProspectDraft>(initialDraft);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -123,6 +168,70 @@ export default function ProspectsClient() {
   }, [search]);
 
   const selected = useMemo(() => items.find((item) => item.id === selectedId) || null, [items, selectedId]);
+  const selectedMeta = selected ? buildProspectMeta(selected) : [];
+
+  useEffect(() => {
+    if (!selected) return;
+
+    setDetailDraft({
+      company_name: selected.company_name,
+      organization_number: selected.organization_number || '',
+      contact_name: selected.contact_name || '',
+      phone: selected.phone || '',
+      email: selected.email || '',
+      street_address: selected.street_address || '',
+      postal_code: selected.postal_code || '',
+      city: selected.city || '',
+      source: selected.source || '',
+      notes: selected.notes || '',
+      status: selected.status,
+    });
+  }, [selected]);
+
+  useEffect(() => {
+    if (!detailOpen || !selectedId) return;
+
+    let active = true;
+    const prospectId = selectedId;
+
+    async function loadCalls() {
+      setRelatedCallsLoading(true);
+      try {
+        const res = await fetch(`/api/crm/calls?prospect_id=${encodeURIComponent(prospectId)}`, { cache: 'no-store' });
+        const json = await res.json().catch(() => ({}));
+        if (!active) return;
+
+        if (!res.ok || !json.ok) {
+          setRelatedCalls([]);
+          return;
+        }
+
+        setRelatedCalls(Array.isArray(json?.data?.items) ? json.data.items : []);
+      } catch {
+        if (!active) return;
+        setRelatedCalls([]);
+      } finally {
+        if (active) setRelatedCallsLoading(false);
+      }
+    }
+
+    loadCalls();
+
+    return () => {
+      active = false;
+    };
+  }, [detailOpen, selectedId]);
+
+  useEffect(() => {
+    if (!(createPanelOpen || detailOpen)) return;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [createPanelOpen, detailOpen]);
 
   async function createProspect() {
     if (!draft.company_name.trim()) {
@@ -135,7 +244,10 @@ export default function ProspectsClient() {
       const res = await fetch('/api/crm/prospects', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(draft),
+        body: JSON.stringify({
+          ...draft,
+          status: undefined,
+        }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.ok) {
@@ -149,6 +261,7 @@ export default function ProspectsClient() {
         setSelectedId(item.id);
       }
       setDraft(initialDraft);
+      setCreatePanelOpen(false);
       toast.success('Prospekt skapat');
     } catch {
       toast.error('Fel vid skapande av prospekt');
@@ -157,35 +270,108 @@ export default function ProspectsClient() {
     }
   }
 
+  async function saveProspectDetail() {
+    if (!selected) return;
+    if (!detailDraft.company_name.trim()) {
+      toast.error('Företagsnamn krävs');
+      return;
+    }
+
+    setSavingDetail(true);
+    try {
+      const res = await fetch(`/api/crm/prospects/${selected.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(detailDraft),
+      });
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok || !json.ok) {
+        toast.error(json?.error || 'Kunde inte uppdatera prospekt');
+        return;
+      }
+
+      const item = json?.data?.item as ProspectItem | undefined;
+      if (item) {
+        setItems((current) => current.map((entry) => (entry.id === item.id ? item : entry)));
+      }
+
+      setDetailEditing(false);
+      toast.success('Prospekt uppdaterat');
+    } catch {
+      toast.error('Fel vid uppdatering av prospekt');
+    } finally {
+      setSavingDetail(false);
+    }
+  }
+
   return (
-    <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
-      <div className="grid gap-4">
-        <SectionCard className="grid gap-4 p-5 md:p-6">
-          <div className="grid gap-1">
-            <span className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700">CRM / Prospekt</span>
-            <h1 className="m-0 text-2xl font-bold tracking-[-0.03em] text-slate-900 md:text-3xl">Prospekt</h1>
-            <p className="m-0 max-w-3xl text-sm leading-6 text-slate-600 md:text-[15px]">
-              Första verkliga CRM-slicen. Här får ni en prospektlista, enkel registrering och en detailvy som senare kan bära samtal, uppgifter, offerter och kundsynk.
-            </p>
-          </div>
+    <div className="grid gap-4">
+        <SectionCard className="overflow-hidden border-slate-200 bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.16),_transparent_30%),radial-gradient(circle_at_top_right,_rgba(15,23,42,0.10),_transparent_28%),linear-gradient(180deg,#fcfffe_0%,#f3f8f6_100%)] p-5 shadow-[0_24px_70px_rgba(15,23,42,0.08)] md:p-6">
+          <div className="grid gap-5">
+            <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
+              <div className="grid gap-3">
+                <div className="inline-flex w-fit items-center rounded-full border border-emerald-200/80 bg-white/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-emerald-900 shadow-[0_8px_18px_rgba(255,255,255,0.35)]">
+                  CRM / Prospekt
+                </div>
+                <div className="grid gap-2">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <h1 className="m-0 text-[clamp(2rem,4vw,3.35rem)] font-bold tracking-[-0.06em] text-slate-950">Prospekt</h1>
+                    <div className="rounded-full border border-emerald-200 bg-emerald-50/90 px-3 py-1 text-xs font-semibold text-emerald-900">
+                      {items.length} aktiva
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setCreatePanelOpen(true)}
+                      className="inline-flex min-h-10 items-center justify-center rounded-2xl border border-emerald-600 bg-[linear-gradient(180deg,#14b87a_0%,#0f9f6c_100%)] px-4 py-2 text-sm font-semibold text-white shadow-[0_18px_28px_rgba(16,185,129,0.20)] transition hover:brightness-[0.97]"
+                    >
+                      Lägg till prospekt
+                    </button>
+                  </div>
+                  <p className="m-0 max-w-3xl text-sm leading-6 text-slate-600 md:text-[15px]">
+                    En säljyta för fokus, inte bara registrering. Det ska vara lätt att se vilket prospekt som är hett, vad som saknar uppföljning och var nästa steg ska tas.
+                  </p>
+                </div>
+              </div>
 
-          <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
-            <Input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Sök på företag, kontakt, e-post eller ort"
-              className="rounded-2xl"
-            />
-            <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-500">
-              {items.length} prospekt
+              <div className="grid gap-2 rounded-[28px] border border-slate-200/80 bg-[linear-gradient(180deg,rgba(15,23,42,0.94)_0%,rgba(30,41,59,0.92)_100%)] p-4 text-white shadow-[0_22px_44px_rgba(15,23,42,0.22)]">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-emerald-100/80">Snapshot</span>
+                <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-1 xl:grid-cols-3">
+                  <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3 backdrop-blur-sm">
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-300">Totalt</div>
+                    <div className="mt-1 text-xl font-bold tracking-[-0.04em] text-white">{items.length}</div>
+                  </div>
+                  <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3 backdrop-blur-sm">
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-300">Nya</div>
+                    <div className="mt-1 text-xl font-bold tracking-[-0.04em] text-white">{items.filter((item) => item.status === 'new').length}</div>
+                  </div>
+                  <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3 backdrop-blur-sm">
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-300">Valt</div>
+                    <div className="mt-1 truncate text-sm font-semibold text-white">{selected?.company_name || 'Inget valt'}</div>
+                  </div>
+                </div>
+              </div>
             </div>
-          </div>
 
-          {error ? (
-            <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
-          ) : null}
+            <div className="grid gap-3 rounded-[28px] border border-white/70 bg-white/75 p-4 shadow-[0_16px_36px_rgba(15,23,42,0.06)] backdrop-blur lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+              <Input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Sök på företag, kontakt, e-post eller ort"
+                className="rounded-2xl border-slate-200 bg-white shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]"
+              />
+              <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                <span className="rounded-full border border-slate-200 bg-white px-3 py-2 font-semibold text-slate-600">Prospektlista</span>
+                <span className="rounded-full border border-slate-200 bg-white px-3 py-2 font-semibold text-slate-600">Senaste aktivitet först</span>
+                <span className="rounded-full border border-slate-200 bg-white px-3 py-2 font-semibold text-slate-600">Detaljvy i overlay</span>
+              </div>
+            </div>
 
-          <div className="grid gap-3">
+            {error ? (
+              <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
+            ) : null}
+
+            <div className="grid gap-3">
             {loading ? (
               <div className="grid gap-3">
                 {Array.from({ length: 3 }).map((_, index) => (
@@ -200,138 +386,326 @@ export default function ProspectsClient() {
               <div className="grid gap-2 rounded-[24px] border border-dashed border-slate-300 bg-slate-50 px-5 py-8 text-center">
                 <strong className="text-base font-bold text-slate-900">Inga prospekt än</strong>
                 <p className="m-0 text-sm leading-6 text-slate-600">
-                  Börja med att lägga in första prospektet i formuläret till höger. När import och ringlistor byggs vidare kommer samma kärnobjekt användas här.
+                  Börja med att lägga in första prospektet via knappen ovan. När import och ringlistor byggs vidare kommer samma kärnobjekt användas här.
                 </p>
               </div>
             ) : (
               items.map((item) => {
                 const active = selectedId === item.id;
+                const meta = buildProspectMeta(item);
                 return (
                   <button
                     key={item.id}
                     type="button"
-                    onClick={() => setSelectedId(item.id)}
+                    onClick={() => {
+                      setSelectedId(item.id);
+                      setDetailOpen(true);
+                    }}
                     className={cn(
-                      'grid min-w-0 gap-2 rounded-[24px] border px-4 py-4 text-left transition-[border-color,box-shadow,transform]',
+                      'grid min-w-0 gap-3 rounded-[24px] border px-3.5 py-3 text-left transition-[border-color,box-shadow,transform] md:grid-cols-[auto_minmax(0,1fr)_auto] md:items-center',
                       active
-                        ? 'border-emerald-300 bg-emerald-50/70 shadow-[0_14px_28px_rgba(16,185,129,0.10)]'
-                        : 'border-slate-200 bg-white hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_10px_24px_rgba(15,23,42,0.06)]'
+                        ? 'border-emerald-300 bg-[linear-gradient(135deg,rgba(237,252,245,0.98)_0%,rgba(255,255,255,0.98)_55%,rgba(240,253,250,0.95)_100%)] shadow-[0_22px_40px_rgba(16,185,129,0.14)] ring-1 ring-emerald-100'
+                        : 'border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98)_0%,rgba(248,250,252,0.95)_100%)] hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_18px_32px_rgba(15,23,42,0.08)]'
                     )}
                   >
-                    <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
-                      <div className="grid min-w-0 gap-1">
-                        <strong className="break-words text-base font-bold tracking-[-0.02em] text-slate-900">{item.company_name}</strong>
-                        <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-slate-500">
-                          {item.contact_name ? <span className="break-words">Kontakt: {item.contact_name}</span> : null}
-                          {item.city ? <span className="break-words">Ort: {item.city}</span> : null}
+                    <div className={cn(
+                      'flex h-10 w-10 items-center justify-center rounded-xl border text-xs font-bold tracking-[0.08em] shadow-[inset_0_1px_0_rgba(255,255,255,0.7)] md:h-11 md:w-11 md:text-sm',
+                      active ? 'border-emerald-200 bg-white text-emerald-800' : 'border-slate-200 bg-white text-slate-600'
+                    )}>
+                      {getProspectInitials(item.company_name) || 'P'}
+                    </div>
+
+                    <div className="grid min-w-0 gap-2">
+                      <div className="flex min-w-0 flex-wrap items-start justify-between gap-2 md:flex-nowrap">
+                        <div className="grid min-w-0 gap-1">
+                          <strong className="break-words text-base font-bold tracking-[-0.03em] text-slate-950 md:text-[17px]">{item.company_name}</strong>
+                          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-slate-500 md:text-xs">
+                            {meta.length > 0 ? meta.map((label) => <span key={label} className="break-words">{label}</span>) : <span>Ingen metadata än</span>}
+                          </div>
                         </div>
+                        <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-semibold md:px-2.5 md:py-1 md:text-[11px]', statusClass[item.status])}>
+                          {statusLabel[item.status]}
+                        </span>
                       </div>
-                      <span className={cn('rounded-full border px-2 py-1 text-[11px] font-semibold', statusClass[item.status])}>
-                        {statusLabel[item.status]}
-                      </span>
+
+                      <div className="flex min-w-0 flex-wrap gap-1.5 text-[11px] text-slate-600 md:text-xs">
+                        {item.phone ? <span className="break-words rounded-full border border-slate-200/90 bg-white/90 px-2 py-1 shadow-[0_4px_10px_rgba(15,23,42,0.03)]">{item.phone}</span> : null}
+                        {item.email ? <span className="break-words rounded-full border border-slate-200/90 bg-white/90 px-2 py-1 shadow-[0_4px_10px_rgba(15,23,42,0.03)]">{item.email}</span> : null}
+                        {item.organization_number ? <span className="break-words rounded-full border border-slate-200/90 bg-white/90 px-2 py-1 shadow-[0_4px_10px_rgba(15,23,42,0.03)]">Org.nr: {item.organization_number}</span> : null}
+                      </div>
                     </div>
-                    <div className="flex min-w-0 flex-wrap gap-2 text-xs text-slate-600">
-                      {item.phone ? <span className="break-words rounded-full border border-slate-200 bg-slate-50 px-2 py-1">{item.phone}</span> : null}
-                      {item.email ? <span className="break-words rounded-full border border-slate-200 bg-slate-50 px-2 py-1">{item.email}</span> : null}
-                      {item.organization_number ? <span className="break-words rounded-full border border-slate-200 bg-slate-50 px-2 py-1">Org.nr: {item.organization_number}</span> : null}
+
+                    <div className="flex items-end justify-between gap-2 md:grid md:justify-items-end">
+                      <span className="text-[11px] font-medium text-slate-400 md:text-xs">Uppdaterad {formatDateTime(item.updated_at)}</span>
                     </div>
-                    <span className="text-xs text-slate-400">Uppdaterad {formatDateTime(item.updated_at)}</span>
                   </button>
                 );
               })
             )}
+            </div>
           </div>
         </SectionCard>
-      </div>
-
-      <div className="grid gap-4">
-        <SectionCard className="grid gap-4 p-5 md:p-6">
-          <div className="grid gap-1">
-            <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Skapa prospekt</span>
-            <strong className="text-lg font-bold text-slate-900">Lägg in första datan</strong>
-            <p className="m-0 text-sm leading-6 text-slate-600">
-              Första versionen skapar prospekt som tilldelas den inloggade användaren. Admin-tilldelning, import och Fortnox-kunddata kommer senare.
-            </p>
-          </div>
-          <div className="grid gap-3">
-            <Input value={draft.company_name} onChange={(event) => setDraft((current) => ({ ...current, company_name: event.target.value }))} placeholder="Företagsnamn" />
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Input value={draft.contact_name} onChange={(event) => setDraft((current) => ({ ...current, contact_name: event.target.value }))} placeholder="Kontaktperson" />
-              <Input value={draft.organization_number} onChange={(event) => setDraft((current) => ({ ...current, organization_number: event.target.value }))} placeholder="Org.nr" />
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Input value={draft.phone} onChange={(event) => setDraft((current) => ({ ...current, phone: event.target.value }))} placeholder="Telefon" />
-              <Input value={draft.email} onChange={(event) => setDraft((current) => ({ ...current, email: event.target.value }))} placeholder="E-post" type="email" />
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Input value={draft.city} onChange={(event) => setDraft((current) => ({ ...current, city: event.target.value }))} placeholder="Ort" />
-              <Input value={draft.source} onChange={(event) => setDraft((current) => ({ ...current, source: event.target.value }))} placeholder="Källa, t.ex. Excel eller manuell" />
-            </div>
-            <Textarea value={draft.notes} onChange={(event) => setDraft((current) => ({ ...current, notes: event.target.value }))} placeholder="Anteckning eller sammanhang" className="min-h-[132px]" />
-            <button
-              type="button"
-              onClick={createProspect}
-              disabled={creating}
-              className="inline-flex min-h-11 items-center justify-center rounded-xl border border-emerald-600 bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-[0_12px_24px_rgba(16,185,129,0.16)] transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {creating ? 'Sparar…' : 'Skapa prospekt'}
-            </button>
-          </div>
-        </SectionCard>
-
-        <SectionCard className="grid gap-4 p-5 md:p-6">
-          <div className="grid gap-1">
-            <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Detaljvy</span>
-            <strong className="text-lg font-bold text-slate-900">Valt prospekt</strong>
-          </div>
-
-          {selected ? (
-            <div className="grid gap-4">
-              <div className="grid gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                <div className="flex flex-wrap items-start justify-between gap-2">
-                  <div className="grid gap-1">
-                    <strong className="break-words text-lg font-bold tracking-[-0.02em] text-slate-900">{selected.company_name}</strong>
-                    <span className="text-sm text-slate-500">Skapad {formatDateTime(selected.created_at)}</span>
-                  </div>
-                  <span className={cn('rounded-full border px-2.5 py-1 text-xs font-semibold', statusClass[selected.status])}>
-                    {statusLabel[selected.status]}
-                  </span>
-                </div>
-                <div className="grid gap-2 text-sm text-slate-600">
-                  <div className="grid gap-1 sm:grid-cols-2">
-                    <span className="break-words"><strong className="text-slate-900">Kontakt:</strong> {selected.contact_name || '–'}</span>
-                    <span className="break-words"><strong className="text-slate-900">Org.nr:</strong> {selected.organization_number || '–'}</span>
-                  </div>
-                  <div className="grid gap-1 sm:grid-cols-2">
-                    <span className="break-words"><strong className="text-slate-900">Telefon:</strong> {selected.phone || '–'}</span>
-                    <span className="break-words"><strong className="text-slate-900">E-post:</strong> {selected.email || '–'}</span>
-                  </div>
-                  <div className="grid gap-1 sm:grid-cols-2">
-                    <span className="break-words"><strong className="text-slate-900">Ort:</strong> {selected.city || '–'}</span>
-                    <span className="break-words"><strong className="text-slate-900">Källa:</strong> {selected.source || '–'}</span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-4">
-                <strong className="text-sm font-semibold text-slate-900">Anteckningar</strong>
-                <p className="m-0 whitespace-pre-wrap break-words text-sm leading-6 text-slate-600">
-                  {selected.notes || 'Inga anteckningar än.'}
+      {createPanelOpen ? (
+        <div className="fixed inset-0 z-[2800] flex items-end justify-center bg-slate-950/45 p-3 [backdrop-filter:blur(4px)] sm:items-center sm:p-4" onClick={() => setCreatePanelOpen(false)}>
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Skapa prospekt"
+            onClick={(event) => event.stopPropagation()}
+            className="grid w-full max-w-[760px] gap-4 rounded-[28px] border border-white/70 bg-[linear-gradient(180deg,#ffffff_0%,#f5faf8_100%)] p-4 shadow-[0_30px_80px_rgba(15,23,42,0.28)] sm:max-h-[88vh] sm:overflow-y-auto sm:p-5"
+          >
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="grid gap-1">
+                <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Skapa prospekt</span>
+                <strong className="text-[1.6rem] font-bold tracking-[-0.05em] text-slate-950">Lägg in första datan</strong>
+                <p className="m-0 max-w-2xl text-sm leading-6 text-slate-600">
+                  Registrera ett nytt prospekt utan att låsa hela arbetsytan. Stäng rutan när du är klar och fortsätt direkt i listan.
                 </p>
               </div>
+              <button
+                type="button"
+                onClick={() => setCreatePanelOpen(false)}
+                className="inline-flex min-h-10 items-center justify-center rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 shadow-[0_10px_18px_rgba(15,23,42,0.04)] hover:border-slate-300 hover:text-slate-900"
+              >
+                Stäng
+              </button>
+            </div>
 
-              <div className="grid gap-2 rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-sm text-slate-600">
-                <strong className="text-slate-900">Nästa naturliga steg</strong>
-                <span>Samtal, uppgifter och offerter ska senare kopplas direkt till det här prospektet.</span>
+            <div className="grid gap-3 rounded-[28px] border border-white/80 bg-white/92 p-4 shadow-[0_20px_44px_rgba(15,23,42,0.06)]">
+              <Input value={draft.company_name} onChange={(event) => setDraft((current) => ({ ...current, company_name: event.target.value }))} placeholder="Företagsnamn" />
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Input value={draft.contact_name} onChange={(event) => setDraft((current) => ({ ...current, contact_name: event.target.value }))} placeholder="Kontaktperson" />
+                <Input value={draft.organization_number} onChange={(event) => setDraft((current) => ({ ...current, organization_number: event.target.value }))} placeholder="Org.nr" />
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Input value={draft.phone} onChange={(event) => setDraft((current) => ({ ...current, phone: event.target.value }))} placeholder="Telefon" />
+                <Input value={draft.email} onChange={(event) => setDraft((current) => ({ ...current, email: event.target.value }))} placeholder="E-post" type="email" />
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Input value={draft.city} onChange={(event) => setDraft((current) => ({ ...current, city: event.target.value }))} placeholder="Ort" />
+                <Input value={draft.source} onChange={(event) => setDraft((current) => ({ ...current, source: event.target.value }))} placeholder="Källa, t.ex. Excel eller manuell" />
+              </div>
+              <Textarea value={draft.notes} onChange={(event) => setDraft((current) => ({ ...current, notes: event.target.value }))} placeholder="Anteckning eller sammanhang" className="min-h-[132px]" />
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCreatePanelOpen(false)}
+                  className="inline-flex min-h-11 items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-600 shadow-[0_10px_18px_rgba(15,23,42,0.04)] hover:border-slate-300 hover:text-slate-900"
+                >
+                  Avbryt
+                </button>
+                <button
+                  type="button"
+                  onClick={createProspect}
+                  disabled={creating}
+                  className="inline-flex min-h-12 items-center justify-center rounded-2xl border border-emerald-600 bg-[linear-gradient(180deg,#14b87a_0%,#0f9f6c_100%)] px-4 py-3 text-sm font-semibold text-white shadow-[0_20px_34px_rgba(16,185,129,0.22)] transition hover:brightness-[0.97] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {creating ? 'Sparar…' : 'Skapa prospekt'}
+                </button>
               </div>
             </div>
-          ) : (
-            <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-sm leading-6 text-slate-600">
-              Välj ett prospekt i listan för att se detaljer här.
+          </div>
+        </div>
+      ) : null}
+
+      {detailOpen && selected ? (
+        <div className="fixed inset-0 z-[2800] flex items-end justify-center bg-slate-950/45 p-3 [backdrop-filter:blur(4px)] sm:items-center sm:p-4" onClick={() => setDetailOpen(false)}>
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Prospekt ${selected.company_name}`}
+            onClick={(event) => event.stopPropagation()}
+            className="grid w-full max-w-[860px] gap-4 rounded-[28px] border border-white/70 bg-[linear-gradient(180deg,#ffffff_0%,#f8fafc_100%)] p-4 shadow-[0_30px_80px_rgba(15,23,42,0.28)] sm:max-h-[88vh] sm:overflow-y-auto sm:p-5"
+          >
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="grid gap-1">
+                <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Detaljvy</span>
+                <strong className="text-[1.6rem] font-bold tracking-[-0.05em] text-slate-950">{selected.company_name}</strong>
+                <p className="m-0 text-sm text-slate-500">Skapad {formatDateTime(selected.created_at)}</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className={cn('rounded-full border px-2.5 py-1 text-xs font-semibold', statusClass[selected.status])}>
+                  {statusLabel[selected.status]}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setDetailEditing((current) => !current)}
+                  className="inline-flex min-h-10 items-center justify-center rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 shadow-[0_10px_18px_rgba(15,23,42,0.04)] hover:border-slate-300 hover:text-slate-900"
+                >
+                  {detailEditing ? 'Avsluta redigering' : 'Redigera'}
+                </button>
+                <a
+                  href={`/crm/samtal?prospect_id=${selected.id}`}
+                  className="inline-flex min-h-10 items-center justify-center rounded-2xl border border-sky-600 bg-[linear-gradient(180deg,#0ea5e9_0%,#0284c7_100%)] px-3 py-2 text-sm font-semibold text-white shadow-[0_16px_26px_rgba(2,132,199,0.18)] transition hover:brightness-[0.97]"
+                >
+                  Logga samtal
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setDetailOpen(false)}
+                  className="inline-flex min-h-10 items-center justify-center rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 shadow-[0_10px_18px_rgba(15,23,42,0.04)] hover:border-slate-300 hover:text-slate-900"
+                >
+                  Stäng
+                </button>
+              </div>
             </div>
-          )}
-        </SectionCard>
-      </div>
+
+            <div className="grid gap-4 rounded-[28px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#f9fbfc_100%)] p-4 shadow-[0_18px_36px_rgba(15,23,42,0.06)]">
+              <div className="flex flex-wrap items-start gap-3">
+                <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[linear-gradient(180deg,#ecfdf5_0%,#d9fbe8_100%)] text-base font-bold tracking-[0.08em] text-emerald-800 shadow-[inset_0_1px_0_rgba(255,255,255,0.75)]">
+                  {getProspectInitials(selected.company_name) || 'P'}
+                </div>
+                <div className="grid min-w-0 flex-1 gap-1">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="grid min-w-0 gap-1">
+                      <strong className="break-words text-xl font-bold tracking-[-0.03em] text-slate-950">{selected.company_name}</strong>
+                      <span className="text-sm text-slate-500">Uppdaterad {formatDateTime(selected.updated_at)}</span>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2 text-xs text-slate-500">
+                    {selectedMeta.length > 0 ? selectedMeta.map((label) => <span key={label} className="rounded-full border border-slate-200 bg-white px-2.5 py-1 shadow-[0_6px_14px_rgba(15,23,42,0.04)]">{label}</span>) : null}
+                  </div>
+                </div>
+              </div>
+
+              {detailEditing ? (
+                <div className="grid gap-3">
+                  <Input value={detailDraft.company_name} onChange={(event) => setDetailDraft((current) => ({ ...current, company_name: event.target.value }))} placeholder="Företagsnamn" />
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <Input value={detailDraft.contact_name} onChange={(event) => setDetailDraft((current) => ({ ...current, contact_name: event.target.value }))} placeholder="Kontaktperson" />
+                    <Input value={detailDraft.organization_number} onChange={(event) => setDetailDraft((current) => ({ ...current, organization_number: event.target.value }))} placeholder="Org.nr" />
+                    <Input value={detailDraft.phone} onChange={(event) => setDetailDraft((current) => ({ ...current, phone: event.target.value }))} placeholder="Telefon" />
+                    <Input value={detailDraft.email} onChange={(event) => setDetailDraft((current) => ({ ...current, email: event.target.value }))} placeholder="E-post" type="email" />
+                    <Input value={detailDraft.city} onChange={(event) => setDetailDraft((current) => ({ ...current, city: event.target.value }))} placeholder="Ort" />
+                    <Input value={detailDraft.source} onChange={(event) => setDetailDraft((current) => ({ ...current, source: event.target.value }))} placeholder="Källa" />
+                    <Input value={detailDraft.street_address} onChange={(event) => setDetailDraft((current) => ({ ...current, street_address: event.target.value }))} placeholder="Adress" />
+                    <Input value={detailDraft.postal_code} onChange={(event) => setDetailDraft((current) => ({ ...current, postal_code: event.target.value }))} placeholder="Postnummer" />
+                  </div>
+                  <label className="grid gap-1 text-sm text-slate-600">
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Status</span>
+                    <select
+                      value={detailDraft.status}
+                      onChange={(event) => setDetailDraft((current) => ({ ...current, status: event.target.value as ProspectItem['status'] }))}
+                      className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/20"
+                    >
+                      {Object.entries(statusLabel).map(([value, label]) => (
+                        <option key={value} value={value}>{label}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <Textarea value={detailDraft.notes} onChange={(event) => setDetailDraft((current) => ({ ...current, notes: event.target.value }))} placeholder="Anteckningar" className="min-h-[132px]" />
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!selected) return;
+                        setDetailEditing(false);
+                        setDetailDraft({
+                          company_name: selected.company_name,
+                          organization_number: selected.organization_number || '',
+                          contact_name: selected.contact_name || '',
+                          phone: selected.phone || '',
+                          email: selected.email || '',
+                          street_address: selected.street_address || '',
+                          postal_code: selected.postal_code || '',
+                          city: selected.city || '',
+                          source: selected.source || '',
+                          notes: selected.notes || '',
+                          status: selected.status,
+                        });
+                      }}
+                      className="inline-flex min-h-11 items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-600 shadow-[0_10px_18px_rgba(15,23,42,0.04)] hover:border-slate-300 hover:text-slate-900"
+                    >
+                      Avbryt
+                    </button>
+                    <button
+                      type="button"
+                      onClick={saveProspectDetail}
+                      disabled={savingDetail}
+                      className="inline-flex min-h-11 items-center justify-center rounded-2xl border border-emerald-600 bg-[linear-gradient(180deg,#14b87a_0%,#0f9f6c_100%)] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_20px_34px_rgba(16,185,129,0.22)] transition hover:brightness-[0.97] disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {savingDetail ? 'Sparar…' : 'Spara ändringar'}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-2xl border border-slate-200/80 bg-white px-4 py-3 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Kontakt</div>
+                  <div className="mt-1 break-words text-sm font-semibold text-slate-900">{selected.contact_name || '–'}</div>
+                </div>
+                <div className="rounded-2xl border border-slate-200/80 bg-white px-4 py-3 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Org.nr</div>
+                  <div className="mt-1 break-words text-sm font-semibold text-slate-900">{selected.organization_number || '–'}</div>
+                </div>
+                <div className="rounded-2xl border border-slate-200/80 bg-white px-4 py-3 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Telefon</div>
+                  <div className="mt-1 break-words text-sm font-semibold text-slate-900">{selected.phone || '–'}</div>
+                </div>
+                <div className="rounded-2xl border border-slate-200/80 bg-white px-4 py-3 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">E-post</div>
+                  <div className="mt-1 break-words text-sm font-semibold text-slate-900">{selected.email || '–'}</div>
+                </div>
+                <div className="rounded-2xl border border-slate-200/80 bg-white px-4 py-3 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Ort</div>
+                  <div className="mt-1 break-words text-sm font-semibold text-slate-900">{selected.city || '–'}</div>
+                </div>
+                <div className="rounded-2xl border border-slate-200/80 bg-white px-4 py-3 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Källa</div>
+                  <div className="mt-1 break-words text-sm font-semibold text-slate-900">{selected.source || '–'}</div>
+                </div>
+              </div>
+              )}
+            </div>
+
+            <div className="grid gap-2 rounded-[24px] border border-slate-200 bg-white px-4 py-4 shadow-[0_14px_26px_rgba(15,23,42,0.04)]">
+              <strong className="text-sm font-semibold text-slate-900">Anteckningar</strong>
+              <p className="m-0 whitespace-pre-wrap break-words text-sm leading-6 text-slate-600">
+                {detailEditing ? (detailDraft.notes || 'Inga anteckningar än.') : (selected.notes || 'Inga anteckningar än.')}
+              </p>
+            </div>
+
+            <div className="grid gap-3 rounded-[24px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#f7fbff_100%)] px-4 py-4 shadow-[0_14px_26px_rgba(15,23,42,0.04)]">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <strong className="text-sm font-semibold text-slate-900">Samtal på prospektet</strong>
+                <a
+                  href={`/crm/samtal?prospect_id=${selected.id}`}
+                  className="inline-flex min-h-9 items-center justify-center rounded-2xl border border-sky-600 bg-[linear-gradient(180deg,#0ea5e9_0%,#0284c7_100%)] px-3 py-2 text-xs font-semibold text-white shadow-[0_14px_24px_rgba(2,132,199,0.18)] transition hover:brightness-[0.97]"
+                >
+                  Logga nytt samtal
+                </a>
+              </div>
+              {relatedCallsLoading ? (
+                <div className="grid gap-2">
+                  {Array.from({ length: 2 }).map((_, index) => (
+                    <div key={index} className="grid gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                      <div className="h-3 w-32 rounded-full bg-slate-200" />
+                      <div className="h-3 w-48 rounded-full bg-slate-200" />
+                    </div>
+                  ))}
+                </div>
+              ) : relatedCalls.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-sm text-slate-600">
+                  Inga samtal loggade ännu för det här prospektet.
+                </div>
+              ) : (
+                <div className="grid gap-2">
+                  {relatedCalls.map((call) => (
+                    <div key={call.id} className="grid gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-4">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-700">{callOutcomeLabel[call.outcome]}</span>
+                        <span className="text-xs text-slate-500">{formatDateTime(call.call_at)}</span>
+                      </div>
+                      <p className="m-0 whitespace-pre-wrap break-words text-sm leading-6 text-slate-600">{call.summary}</p>
+                      {call.next_step ? <span className="text-xs text-slate-500">Nästa steg: {call.next_step}</span> : null}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

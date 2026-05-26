@@ -13,7 +13,9 @@ export default function CrmSubnav({ role }: { role: UserRole | null }) {
   return (
     <nav aria-label="CRM navigation" className="hscroll flex gap-2 overflow-x-auto pb-1">
       {items.map((item) => {
-        const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+        const active = item.href === '/crm'
+          ? pathname === '/crm'
+          : pathname === item.href || pathname.startsWith(`${item.href}/`);
         return (
           <Link
             key={item.href}
