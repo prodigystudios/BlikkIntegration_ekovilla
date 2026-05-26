@@ -218,39 +218,39 @@ export default function TimeReportsPage() {
   const totalHours = useMemo(() => items.reduce((sum, r) => sum + (typeof r.hours === 'number' ? r.hours : 0), 0), [items]);
 
   return (
-    <div style={{ padding: 16, display:'grid', gap:16 }}>
+    <div className="grid gap-4 px-4 py-4 pb-[calc(env(safe-area-inset-bottom,0px)+24px)]">
       {/* Sticky header with week navigation for better mobile UX */}
-      <div style={{ position:'sticky', top:0, zIndex: 5, background:'#fff', paddingBottom:8, borderBottom:'1px solid #e5e7eb' }}>
-        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', flexWrap:'wrap', gap:12, paddingTop:8 }}>
-          <h1 style={{ margin:0, fontSize:20 }}>Veckans rapporter</h1>
-          <div style={{ display:'flex', gap:6, flexWrap:'wrap', alignItems:'center' }}>
+      <div className="sticky top-0 z-[5] grid gap-1 border-b border-slate-200 bg-white/95 pb-2 pt-2 backdrop-blur">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h1 className="m-0 text-xl font-bold text-slate-900">Veckans rapporter</h1>
+          <div className="flex flex-wrap items-center gap-1.5">
             <button type="button" className='btn--primary btn--sm' onClick={goPrevWeek}>← Föregående</button>
             <button type="button" className='btn--success btn--sm' onClick={goTodayWeek}>Denna vecka</button>
             <button type="button" className='btn--primary btn--sm' onClick={goNextWeek}>Nästa →</button>
           </div>
         </div>
-        <div style={{ fontSize:12, color:'#64748b', marginTop:6 }}>Vecka: <strong>{formatDayLabel(dateFrom)} → {formatDayLabel(dateTo)}</strong></div>
-        <div style={{ fontSize:12, color:'#334155', marginTop:4 }}>Totalt rapporterat: <strong>{totalHours.toFixed(2)} h</strong></div>
+        <div className="text-xs text-slate-500">Vecka: <strong className="font-semibold text-slate-700">{formatDayLabel(dateFrom)} → {formatDayLabel(dateTo)}</strong></div>
+        <div className="text-xs text-slate-700">Totalt rapporterat: <strong className="font-semibold text-slate-900">{totalHours.toFixed(2)} h</strong></div>
       </div>
       {loading && (
-        <div style={{ display:'grid', gap:14 }}>
+        <div className="grid gap-3.5">
           {weekDays.map(d => (
-            <div key={d} style={{ border:'1px solid #e5e7eb', borderRadius:12, background:'#fff', padding:12, display:'grid', gap:10 }}>
-              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:8 }}>
+            <div key={d} className="grid gap-2.5 rounded-2xl border border-slate-200 bg-white p-3 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
+              <div className="flex items-center justify-between gap-2">
                 <div style={{ width: 120, height: 14, borderRadius: 6, background:'#e5e7eb' }} />
                 <div style={{ width: 140, height: 12, borderRadius: 999, background:'#e2e8f0' }} />
               </div>
-              <div style={{ display:'grid', gap:8 }}>
+              <div className="grid gap-2">
                 {[0,1].map(i => (
-                  <div key={i} style={{ border:'1px solid #e2e8f0', borderRadius:10, padding:'8px 10px', background:'#f8fafc', display:'grid', gap:6 }}>
-                    <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:8 }}>
+                  <div key={i} className="grid gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+                    <div className="flex items-center justify-between gap-2">
                       <div style={{ display:'flex', flexDirection:'column', gap:4, minWidth:0 }}>
                         <div style={{ width: 100, height: 10, borderRadius: 6, background:'#e5e7eb' }} />
                         <div style={{ width: 180, height: 10, borderRadius: 6, background:'#e5e7eb' }} />
                       </div>
                       <div style={{ width: 48, height: 10, borderRadius: 6, background:'#e5e7eb' }} />
                     </div>
-                    <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
+                    <div className="flex flex-wrap gap-1.5">
                       <div style={{ width: 140, height: 18, borderRadius: 999, background:'#e0e7ff' }} />
                       <div style={{ width: 120, height: 18, borderRadius: 999, background:'#e0f2fe' }} />
                       <div style={{ width: 150, height: 18, borderRadius: 999, background:'#fce7f3' }} />
@@ -262,48 +262,48 @@ export default function TimeReportsPage() {
           ))}
         </div>
       )}
-      {error && <div style={{ fontSize:12, color:'#b91c1c', background:'#fef2f2', border:'1px solid #fecaca', padding:'6px 8px', borderRadius:8 }}>Fel: {error}</div>}
+      {error && <div className="rounded-lg border border-red-200 bg-red-50 px-2 py-1.5 text-xs text-red-700">Fel: {error}</div>}
       {!loading && !error && grouped.length === 0 && (
-        <div style={{ fontSize:12, color:'#64748b' }}>Inga rapporter i vald period.</div>
+        <div className="text-xs text-slate-500">Inga rapporter i vald period.</div>
       )}
-      <div style={{ display:'grid', gap:14 }}>
+      <div className="grid gap-3.5">
         {grouped.map(g => {
           const dayHours = g.arr.reduce((sum, r) => sum + (typeof r.hours === 'number' ? r.hours : 0), 0);
           return (
-            <div key={g.day} style={{ border:'1px solid #e5e7eb', borderRadius:12, background:'#fff', padding:12, display:'grid', gap:10 }}>
-              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:8 }}>
-                <div style={{ fontSize:13, fontWeight:600, color:'#0f172a' }}>{formatDayLabel(g.day)}</div>
-                <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-                  <div style={{ fontSize:12, color: dayHours > 0 ? '#166534' : '#64748b', background: dayHours > 0 ? '#dcfce7' : '#f1f5f9', border:'1px solid ' + (dayHours > 0 ? '#86efac' : '#e2e8f0'), padding:'4px 8px', borderRadius: 999 }}>{dayHours > 0 ? `Summa: ${dayHours.toFixed(2)} h` : 'Inget rapporterat'}</div>
+            <div key={g.day} className="grid gap-2.5 rounded-2xl border border-slate-200 bg-white p-3 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div className="text-[13px] font-semibold text-slate-900">{formatDayLabel(g.day)}</div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className={dayHours > 0 ? 'rounded-full border border-green-300 bg-green-100 px-2 py-1 text-xs text-green-800' : 'rounded-full border border-slate-200 bg-slate-100 px-2 py-1 text-xs text-slate-500'}>{dayHours > 0 ? `Summa: ${dayHours.toFixed(2)} h` : 'Inget rapporterat'}</div>
                   <button
                     type="button"
                     aria-label={`Ny rapport för ${formatDayLabel(g.day)}`}
                     onClick={() => { setModalInitialDate(g.day); setTimeModalOpen(true); }}
-                    style={{ fontSize:12, padding:'6px 8px', border:'1px solid #16a34a', background:'#fff', color:'#16a34a', borderRadius:8, minHeight:32 }}
+                    className="inline-flex min-h-8 items-center justify-center rounded-lg border border-green-600 bg-white px-2 py-1.5 text-xs font-semibold text-green-700"
                   >
                     ➕
                   </button>
                 </div>
               </div>
-              <div style={{ display:'grid', gap:8 }}>
+              <div className="grid gap-2">
                 {g.arr.sort((a,b)=> (a.clockStart||'').localeCompare(b.clockStart||'')).map(r => {
                   const start = r.clockStart || r.startTime || r.startTime || null;
                   const end = r.clockEnd || r.endTime || r.endTime || null;
                   const h = typeof r.hours === 'number' ? r.hours.toFixed(2) : (r.minutes ? (Number(r.minutes)/60).toFixed(2) : '');
                   return (
-                    <div key={String(r.id)+String(r.clockStart)} style={{ display:'flex', flexDirection:'column', gap:4, border:'1px solid #e2e8f0', borderRadius:10, padding:'8px 10px', background:'#f8fafc' }}>
-                      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:8 }}>
-                        <div style={{ display:'flex', flexDirection:'column', gap:2, minWidth:0 }}>
-                          <span style={{ fontSize:12, fontWeight:600, color:'#0f172a', whiteSpace:'nowrap' }}>{start || '—'} → {end || '—'}</span>
-                          {r.description && <span style={{ fontSize:11, color:'#475569', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{r.description}</span>}
+                    <div key={String(r.id)+String(r.clockStart)} className="grid min-w-0 gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+                      <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="grid min-w-0 gap-1">
+                          <span className="break-words text-xs font-semibold text-slate-900">{start || '—'} → {end || '—'}</span>
+                          {r.description && <span className="whitespace-pre-wrap break-words text-[11px] leading-[1.45] text-slate-600">{r.description}</span>}
                         </div>
-                        <div style={{ display:'flex', alignItems:'center', gap:6 }}>
-                          <div style={{ fontSize:12, color:'#0f172a', fontWeight:600 }}>{h} h</div>
+                        <div className="flex flex-wrap items-center gap-1.5 sm:flex-nowrap">
+                          <div className="text-xs font-semibold text-slate-900">{h} h</div>
                           <button
                             type="button"
                             aria-label="Redigera"
                             onClick={() => { setEditItem(r); setEditModalOpen(true); }}
-                            style={{ fontSize:11, padding:'8px 10px', border:'1px solid #94a3b8', background:'#fff', color:'#0f172a', borderRadius:8, cursor:'pointer', minHeight:36 }}
+                            className="inline-flex min-h-9 items-center justify-center rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-[11px] font-semibold text-slate-900"
                             disabled={deletingIds.includes(String(r.id))}
                           >✎</button>
                           <button
@@ -337,68 +337,68 @@ export default function TimeReportsPage() {
                                 setDeletingIds(ids => ids.filter(x => x !== idStr));
                               }
                             }}
-                            style={{ fontSize:11, padding:'8px 10px', border:'1px solid #dc2626', background:'#fff', color:'#dc2626', borderRadius:8, cursor:'pointer', minHeight:36 }}
+                            className="inline-flex min-h-9 items-center justify-center rounded-lg border border-red-300 bg-white px-2.5 py-2 text-[11px] font-semibold text-red-700"
                             disabled={deletingIds.includes(String(r.id))}
                           >
                             {deletingIds.includes(String(r.id)) ? <span className="spinner dark spin" style={{ width:16, height:16 }} aria-hidden /> : '🗑'}
                           </button>
                         </div>
                       </div>
-                      <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
+                      <div className="flex min-w-0 flex-wrap gap-1.5">
                         {(() => {
                           // Show target context: Absence -> Internal -> Project
                           if (r.absenceProjectId || r.absenceProjectName) {
                             return (
-                              <span style={{ fontSize:10.5, background:'#ffe4e6', color:'#9f1239', border:'1px solid #fecdd3', padding:'2px 6px', borderRadius:999 }}>
+                              <span className="break-words rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-[10.5px] text-rose-800">
                                 Frånvaro{r.absenceProjectName ? ` – ${r.absenceProjectName}` : (r.absenceProjectId ? `: ${r.absenceProjectId}` : '')}
                               </span>
                             );
                           }
                           if (r.internalProjectId || r.internalProjectName) {
                             return (
-                              <span style={{ fontSize:10.5, background:'#f1f5f9', color:'#0f172a', border:'1px solid #e2e8f0', padding:'2px 6px', borderRadius:999 }}>
+                              <span className="break-words rounded-full border border-slate-200 bg-slate-100 px-2 py-0.5 text-[10.5px] text-slate-800">
                                 Intern{r.internalProjectName ? ` – ${r.internalProjectName}` : (r.internalProjectId ? `: ${r.internalProjectId}` : '')}
                               </span>
                             );
                           }
                           // Priority for normal projects: projectNumber -> orderNumber -> projectName -> projectId
                           if (r.projectNumber) {
-                            return <span style={{ fontSize:10.5, background:'#eef2ff', color:'#3730a3', border:'1px solid #c7d2fe', padding:'2px 6px', borderRadius:999 }}>#{r.projectNumber}{r.projectName ? ` – ${r.projectName}` : ''}</span>;
+                            return <span className="break-words rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[10.5px] text-indigo-800">#{r.projectNumber}{r.projectName ? ` – ${r.projectName}` : ''}</span>;
                           }
                           if (r.orderNumber) {
-                            return <span style={{ fontSize:10.5, background:'#eef2ff', color:'#3730a3', border:'1px solid #c7d2fe', padding:'2px 6px', borderRadius:999 }}>Order: #{r.orderNumber}{r.projectName ? ` – ${r.projectName}` : ''}</span>;
+                            return <span className="break-words rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[10.5px] text-indigo-800">Order: #{r.orderNumber}{r.projectName ? ` – ${r.projectName}` : ''}</span>;
                           }
                           if (r.projectName) {
-                            return <span style={{ fontSize:10.5, background:'#eef2ff', color:'#3730a3', border:'1px solid #c7d2fe', padding:'2px 6px', borderRadius:999 }}>Projekt – {r.projectName}</span>;
+                            return <span className="break-words rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[10.5px] text-indigo-800">Projekt – {r.projectName}</span>;
                           }
                           if (r.projectId) {
-                            return <span style={{ fontSize:10.5, background:'#eef2ff', color:'#3730a3', border:'1px solid #c7d2fe', padding:'2px 6px', borderRadius:999 }}>Projekt: {r.projectId}</span>;
+                            return <span className="break-words rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[10.5px] text-indigo-800">Projekt: {r.projectId}</span>;
                           }
                           return null;
                         })()}
                         {(r.timeCodeName || (r.timeCodeId && String(r.timeCodeId) !== '0')) && (
-                          <span style={{ fontSize:10.5, background:'#ecfeff', color:'#0369a1', border:'1px solid #bae6fd', padding:'2px 6px', borderRadius:999 }}>
+                          <span className="break-words rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[10.5px] text-sky-800">
                             Tidkod: {r.timeCodeName ? r.timeCodeName : r.timeCodeId}
                           </span>
                         )}
                         {(r.activityName || (r.activityId && String(r.activityId) !== '0')) ? (
-                          <span style={{ fontSize:10.5, background:'#fce7f3', color:'#be185d', border:'1px solid #fbcfe8', padding:'2px 6px', borderRadius:999 }}>
+                          <span className="break-words rounded-full border border-pink-200 bg-pink-50 px-2 py-0.5 text-[10.5px] text-pink-700">
                             Aktivitet: {r.activityName ? r.activityName : r.activityId}
                           </span>
                         ) : null}
                         {Number(r.breakMinutes) > 0 ? (
-                          <span style={{ fontSize:10.5, background:'#fef9c3', color:'#92400e', border:'1px solid #fde68a', padding:'2px 6px', borderRadius:999 }}>Rast: {r.breakMinutes}m</span>
+                          <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10.5px] text-amber-800">Rast: {r.breakMinutes}m</span>
                         ) : null}
                       </div>
                     </div>
                   );
                 })}
                 {g.arr.length === 0 && (
-                  <div style={{ marginTop: 6 }}>
+                  <div className="mt-1.5">
                     <button
                       type="button"
                       onClick={() => { setModalInitialDate(g.day); setTimeModalOpen(true); }}
-                      style={{ display:'inline-flex', alignItems:'center', gap:8, fontSize: 12, fontWeight: 600, padding: '8px 12px', border: '1px solid #16a34a', background: '#16a34a', color: '#fff', borderRadius: 10 }}
+                      className="inline-flex items-center gap-2 rounded-[10px] border border-green-600 bg-green-600 px-3 py-2 text-xs font-semibold text-white shadow-[0_10px_18px_rgba(22,163,74,0.16)]"
                     >
                       Rapportera tid
                     </button>
@@ -415,7 +415,8 @@ export default function TimeReportsPage() {
           type="button"
           onClick={() => { setModalInitialDate(formatLocal(new Date())); setTimeModalOpen(true); }}
           aria-label="Ny tidrapport"
-          style={{ position:'fixed', right:16, bottom:'max(16px, env(safe-area-inset-bottom))', zIndex:10, display:'inline-flex', alignItems:'center', justifyContent:'center', width:56, height:56, borderRadius:999, border:'1px solid #16a34a', background:'#16a34a', color:'#fff', boxShadow:'0 8px 16px rgba(16,185,129,0.35)', fontSize:24 }}
+          className="fixed right-4 z-10 inline-flex h-14 w-14 items-center justify-center rounded-full border border-green-600 bg-green-600 text-2xl text-white shadow-[0_8px_16px_rgba(16,185,129,0.35)]"
+          style={{ bottom:'max(16px, env(safe-area-inset-bottom))' }}
         >+
         </button>
       )}
