@@ -22,6 +22,9 @@ interface NoteItem {
   reminderSentAt: string | null;
   location: string | null;
   linkUrl: string | null;
+  relatedType: string | null;
+  relatedId: string | null;
+  metadata: Record<string, unknown> | null;
   syncing?: boolean;
   error?: string;
 }
@@ -67,6 +70,7 @@ export function DashboardNotes({ compact, desktopMode }: { compact?: boolean; de
   const [pushDebugMode, setPushDebugMode] = useState(false);
   const [pushPanelOpen, setPushPanelOpen] = useState(false);
   const [composerOpen, setComposerOpen] = useState(false);
+  const [crmProspectNames, setCrmProspectNames] = useState<Record<string, string>>({});
   const supabase = createClientComponentClient();
   const mounted = useRef(false);
   const [userId, setUserId] = useState<string | null>(null);
@@ -126,7 +130,7 @@ export function DashboardNotes({ compact, desktopMode }: { compact?: boolean; de
         setUserId(user.id);
         const { data, error: selErr } = await supabase
           .from('dashboard_work_items')
-          .select('id,kind,title,body,status,created_at,starts_at,ends_at,due_at,remind_at,reminder_sent_at,location,link_url')
+          .select('id,kind,title,body,status,created_at,starts_at,ends_at,due_at,remind_at,reminder_sent_at,location,link_url,related_type,related_id,metadata')
           .order('created_at', { ascending: true });
         if (selErr) throw selErr;
         const rows = (data || []).map(mapWorkItemRow);
@@ -232,6 +236,41 @@ export function DashboardNotes({ compact, desktopMode }: { compact?: boolean; de
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(items)); } catch {}
   }, [items]);
 
+  useEffect(() => {
+    const ids = Array.from(
+      new Set(
+        items
+          .filter((item) => item.relatedType === 'crm_prospect' && item.relatedId)
+          .map((item) => item.relatedId as string),
+      ),
+    ).filter((id) => !crmProspectNames[id]);
+
+    if (ids.length === 0) return;
+
+    let active = true;
+
+    (async () => {
+      const { data, error: prospectsError } = await supabase
+        .from('crm_prospects')
+        .select('id,company_name')
+        .in('id', ids);
+
+      if (!active || prospectsError || !data) return;
+
+      setCrmProspectNames((current) => {
+        const next = { ...current };
+        for (const prospect of data as Array<{ id: string; company_name: string | null }>) {
+          next[prospect.id] = prospect.company_name || 'Okänt prospekt';
+        }
+        return next;
+      });
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [crmProspectNames, items, supabase]);
+
   const addItem = useCallback(async () => {
     const title = draftTitle.trim();
     const body = draftBody.trim() || null;
@@ -270,6 +309,9 @@ export function DashboardNotes({ compact, desktopMode }: { compact?: boolean; de
       reminderSentAt: null,
       location: composerKind === 'meeting' ? meetingLocationDraft.trim() || null : null,
       linkUrl: composerKind === 'meeting' ? meetingLinkDraft.trim() || null : null,
+      relatedType: null,
+      relatedId: null,
+      metadata: null,
       syncing: true,
     };
     setItems(list => [...list, optimistic]);
@@ -296,7 +338,7 @@ export function DashboardNotes({ compact, desktopMode }: { compact?: boolean; de
         location: composerKind === 'meeting' ? meetingLocationDraft.trim() || null : null,
         link_url: composerKind === 'meeting' ? meetingLinkDraft.trim() || null : null,
       })
-      .select('id,kind,title,body,status,created_at,starts_at,ends_at,due_at,remind_at,reminder_sent_at,location,link_url')
+      .select('id,kind,title,body,status,created_at,starts_at,ends_at,due_at,remind_at,reminder_sent_at,location,link_url,related_type,related_id,metadata')
       .single();
     if (insErr || !data) {
       setItems(list => list.map(i => i.id === tempId ? { ...i, syncing: false, error: 'Ej sparad' } : i));
@@ -811,6 +853,7 @@ export function DashboardNotes({ compact, desktopMode }: { compact?: boolean; de
               title="Idag"
               subtitle="Poster med mötestid eller påminnelse under dagen."
               items={visibleToday}
+              crmProspectNames={crmProspectNames}
               compact={compact}
               desktopMode={desktopMode}
               onToggle={toggle}
@@ -826,6 +869,7 @@ export function DashboardNotes({ compact, desktopMode }: { compact?: boolean; de
                   title="Kommande möten"
                   subtitle={urgentMeetingCount > 0 ? `${urgentMeetingCount} möten kräver uppmärksamhet just nu.` : 'Möten du planerat framåt eller behöver hålla koll på.'}
                   items={visibleMeetings}
+                  crmProspectNames={crmProspectNames}
                   compact={compact}
                   desktopMode={desktopMode}
                   onToggle={toggle}
@@ -840,6 +884,7 @@ export function DashboardNotes({ compact, desktopMode }: { compact?: boolean; de
                   title="Öppna anteckningar"
                   subtitle={urgentNoteCount > 0 ? `${urgentNoteCount} anteckningar har en påminnelse som närmar sig eller är sen.` : 'Snabba saker att komma ihåg eller följa upp.'}
                   items={visibleNotes}
+                  crmProspectNames={crmProspectNames}
                   compact={compact}
                   desktopMode={desktopMode}
                   onToggle={toggle}
@@ -854,6 +899,7 @@ export function DashboardNotes({ compact, desktopMode }: { compact?: boolean; de
                   title={filter === 'done' ? 'Klart' : 'Avslutade poster'}
                   subtitle="Sådant som redan är klart eller stängt."
                   items={visibleDone}
+                  crmProspectNames={crmProspectNames}
                   compact={compact}
                   desktopMode={desktopMode}
                   onToggle={toggle}
@@ -876,7 +922,7 @@ export function DashboardNotes({ compact, desktopMode }: { compact?: boolean; de
   );
 }
 
-function WorkItemSection({ title, subtitle, items, onToggle, onRemove, onEdit, onSaveReminder, onSaveDetails, compact, desktopMode }: { title: string; subtitle: string; items: NoteItem[]; onToggle:(id: string)=>void; onRemove:(id: string)=>void; onEdit:(id: string, title: string)=>void; onSaveReminder:(id: string, value: string | null)=>void; onSaveDetails:(id: string, updates: WorkItemUpdate)=>void; compact?: boolean; desktopMode?: boolean }) {
+function WorkItemSection({ title, subtitle, items, crmProspectNames, onToggle, onRemove, onEdit, onSaveReminder, onSaveDetails, compact, desktopMode }: { title: string; subtitle: string; items: NoteItem[]; crmProspectNames: Record<string, string>; onToggle:(id: string)=>void; onRemove:(id: string)=>void; onEdit:(id: string, title: string)=>void; onSaveReminder:(id: string, value: string | null)=>void; onSaveDetails:(id: string, updates: WorkItemUpdate)=>void; compact?: boolean; desktopMode?: boolean }) {
   return (
     <section className="grid gap-2">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -888,14 +934,14 @@ function WorkItemSection({ title, subtitle, items, onToggle, onRemove, onEdit, o
       </div>
       <ul className={cn('m-0 flex list-none flex-col p-0', compact ? 'gap-1' : 'gap-1.5')}>
         {items.map(item => (
-          <NoteRow key={item.id} item={item} onToggle={()=>onToggle(item.id)} onRemove={()=>onRemove(item.id)} onEdit={(t)=>onEdit(item.id,t)} onSaveReminder={(value)=>onSaveReminder(item.id, value)} onSaveDetails={(updates)=>onSaveDetails(item.id, updates)} compact={compact} desktopMode={desktopMode} />
+          <NoteRow key={item.id} item={item} crmProspectName={item.relatedId ? crmProspectNames[item.relatedId] || null : null} onToggle={()=>onToggle(item.id)} onRemove={()=>onRemove(item.id)} onEdit={(t)=>onEdit(item.id,t)} onSaveReminder={(value)=>onSaveReminder(item.id, value)} onSaveDetails={(updates)=>onSaveDetails(item.id, updates)} compact={compact} desktopMode={desktopMode} />
         ))}
       </ul>
     </section>
   );
 }
 
-function NoteRow({ item, onToggle, onRemove, onEdit, onSaveReminder, onSaveDetails, compact, desktopMode }: { item: NoteItem; onToggle: ()=>void; onRemove: ()=>void; onEdit:(t:string)=>void; onSaveReminder:(value:string | null)=>void; onSaveDetails:(updates: WorkItemUpdate)=>void; compact?: boolean; desktopMode?: boolean }) {
+function NoteRow({ item, crmProspectName, onToggle, onRemove, onEdit, onSaveReminder, onSaveDetails, compact, desktopMode }: { item: NoteItem; crmProspectName: string | null; onToggle: ()=>void; onRemove: ()=>void; onEdit:(t:string)=>void; onSaveReminder:(value:string | null)=>void; onSaveDetails:(updates: WorkItemUpdate)=>void; compact?: boolean; desktopMode?: boolean }) {
   const [editing, setEditing] = useState(false);
   const [reminderOpen, setReminderOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -921,6 +967,8 @@ function NoteRow({ item, onToggle, onRemove, onEdit, onSaveReminder, onSaveDetai
   const expectedDispatch = item.remindAt ? getExpectedDispatchTime(item.remindAt) : null;
   const isDone = item.status !== 'active';
   const priority = getPriorityInfo(item);
+  const crmMeta = getCrmMeta(item);
+  const isCrmItem = crmMeta.isCrm;
   const isMobileCard = !!compact && !desktopMode;
   const mobileDetailSummary = [
     item.kind === 'meeting' && item.startsAt ? `Start ${formatClockLabel(item.startsAt)}` : null,
@@ -958,9 +1006,18 @@ function NoteRow({ item, onToggle, onRemove, onEdit, onSaveReminder, onSaveDetai
             </form>
           )}
           {item.body && <div className={cn('whitespace-pre-wrap leading-[1.5] text-slate-600', compact ? 'text-xs' : 'text-[13px]')}>{item.body}</div>}
+          {isCrmItem && (
+            <div className="flex flex-wrap items-center gap-2">
+              <span style={statusPillMuted}>CRM</span>
+              {crmProspectName && <span style={subtleMetaText}>Prospekt {crmProspectName}</span>}
+              {crmMeta.source && <span style={subtleMetaText}>Källa {crmMeta.source}</span>}
+              {crmMeta.priority && <span style={getPriorityPillStyle(crmMeta.priorityTone)}>{crmMeta.priority}</span>}
+              {item.dueAt && item.kind !== 'meeting' && <span style={subtleMetaText}>Deadline {formatReminderShort(item.dueAt)}</span>}
+            </div>
+          )}
           <div className={cn('grid', isMobileCard ? 'gap-1.5' : 'gap-2')}>
             <div className="flex flex-wrap items-center gap-2">
-              <span style={item.kind === 'meeting' ? subtleReminderPill : statusPillMuted}>{item.kind === 'meeting' ? 'Möte' : 'Anteckning'}</span>
+              <span style={item.kind === 'meeting' ? subtleReminderPill : statusPillMuted}>{item.kind === 'meeting' ? 'Möte' : isCrmItem ? 'CRM-uppgift' : 'Anteckning'}</span>
               <span style={isDone ? statusPillDone : statusPillOpen}>{isDone ? 'Klar' : 'Öppen'}</span>
               {priority && <span style={getPriorityPillStyle(priority.tone)}>{priority.label}</span>}
             </div>
@@ -1164,7 +1221,24 @@ function mapWorkItemRow(row: any): NoteItem {
     reminderSentAt: row.reminder_sent_at || null,
     location: row.location || null,
     linkUrl: row.link_url || null,
+    relatedType: row.related_type || null,
+    relatedId: row.related_id || null,
+    metadata: row.metadata && typeof row.metadata === 'object' ? row.metadata : null,
   };
+}
+
+function getCrmMeta(item: NoteItem) {
+  const metadata = item.metadata && typeof item.metadata === 'object' ? item.metadata : null;
+  const rawPriority = metadata && typeof metadata.priority === 'string' ? metadata.priority : null;
+  const rawSource = metadata && typeof metadata.source === 'string' ? metadata.source : null;
+  const isCrm = item.relatedType === 'crm_prospect' || (metadata && metadata.crm === true);
+
+  return {
+    isCrm,
+    source: rawSource,
+    priority: rawPriority === 'high' ? 'Hög prioritet' : rawPriority === 'low' ? 'Låg prioritet' : rawPriority === 'normal' ? 'Normal prioritet' : null,
+    priorityTone: rawPriority === 'high' ? 'danger' : rawPriority === 'low' ? 'info' : 'info',
+  } as const;
 }
 
 function sortWorkItems(a: NoteItem, b: NoteItem) {
