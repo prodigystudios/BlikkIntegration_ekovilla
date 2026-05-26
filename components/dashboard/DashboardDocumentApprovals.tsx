@@ -2,6 +2,8 @@
 
 import Link from 'next/link';
 import React, { useEffect, useMemo, useState } from 'react';
+import { cn } from '@/lib/shared/cn';
+import Badge from '../ui/Badge';
 
 type DashboardDocumentItem = {
   publicationId: string;
@@ -60,54 +62,57 @@ export default function DashboardDocumentApprovals({ compact, hideWhenEmpty, onV
   }
 
   return (
-    <div style={{ display: 'grid', gap: compact ? 10 : 14 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-        <div style={{ display:'grid', gap:4 }}>
-          <div style={{ display:'inline-flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
-            <h2 style={{ margin: 0, fontSize: compact ? 16 : 20 }}>Dokument att kvittera</h2>
-            <span style={{ display:'inline-flex', alignItems:'center', gap:6, padding:'4px 8px', borderRadius:999, background: pendingCount > 0 ? '#dbeafe' : '#f1f5f9', color: pendingCount > 0 ? '#1d4ed8' : '#64748b', fontSize:11, fontWeight:700 }}>
+    <div className={cn('grid', compact ? 'gap-2.5' : 'gap-3.5')}>
+      <div className="flex items-center justify-between gap-3">
+        <div className="grid gap-1">
+          <div className="inline-flex flex-wrap items-center gap-2">
+            <h2 className={cn('m-0 font-bold text-slate-900', compact ? 'text-base' : 'text-xl')}>Dokument att kvittera</h2>
+            <Badge variant={pendingCount > 0 ? 'accent' : 'neutral'} className="gap-1.5 px-2 py-1 text-[11px]">
               {pendingCount > 0 ? `${pendingCount} väntar` : 'Allt klart'}
-            </span>
+            </Badge>
           </div>
-          {(!compact || pendingCount > 0) && <p style={{ margin:0, fontSize: compact ? 12 : 13, color:'#64748b' }}>Dokument som kräver läsning eller godkännande ska fångas direkt.</p>}
+          {(!compact || pendingCount > 0) && <p className={cn('m-0 text-slate-500', compact ? 'text-xs' : 'text-[13px]')}>Dokument som kräver läsning eller godkännande ska fångas direkt.</p>}
         </div>
-        <Link href="/mina-dokument" style={{ color: '#2563eb', fontSize: 13, fontWeight: 700, textDecoration: 'none' }}>
+        <Link href="/mina-dokument" className="text-[13px] font-bold text-blue-600 no-underline hover:text-blue-700">
           Öppna alla
         </Link>
       </div>
 
-      {loading && <p style={{ margin: 0, fontSize: 12, color: '#6b7280' }}>Laddar…</p>}
-      {error && <p style={{ margin: 0, fontSize: 12, color: '#b91c1c' }}>{error}</p>}
+      {loading && <p className="m-0 text-xs text-slate-500">Laddar…</p>}
+      {error && <p className="m-0 text-xs text-red-700">{error}</p>}
       {!loading && !error && pendingCount === 0 && (
-        <div style={{ display:'inline-flex', alignItems:'center', gap:8, width:'fit-content', padding: compact ? '8px 10px' : '10px 12px', borderRadius:999, background:'#f0fdf4', border:'1px solid #bbf7d0', color:'#166534', fontSize: compact ? 12 : 13, fontWeight:600 }}>
-          <span style={{ width:8, height:8, borderRadius:'50%', background:'#22c55e' }} />
+        <div className={cn('inline-flex w-fit items-center gap-2 rounded-full border border-green-200 bg-green-50 text-green-800 font-semibold', compact ? 'px-2.5 py-2 text-xs' : 'px-3 py-2.5 text-[13px]')}>
+          <span className="h-2 w-2 rounded-full bg-green-500" />
           Inga dokument väntar på kvittens.
         </div>
       )}
       {!loading && !error && pendingCount > 0 && (
         <>
-          <div style={{ ...highlightTone, borderRadius: 16, padding: compact ? '10px 12px' : '12px 14px', display:'grid', gap:4 }}>
-            <p style={{ margin: 0, color: '#0f172a', fontSize: compact ? 13 : 14, fontWeight:700 }}>
+          <div
+            className={cn('grid gap-1 rounded-2xl', compact ? 'px-3 py-2.5' : 'px-3.5 py-3')}
+            style={highlightTone}
+          >
+            <p className={cn('m-0 font-bold text-slate-900', compact ? 'text-[13px]' : 'text-sm')}>
               {pendingCount} dokument väntar på att du läser eller godkänner dem.
             </p>
-            <p style={{ margin: 0, color: '#64748b', fontSize: compact ? 11.5 : 12.5 }}>
+            <p className={cn('m-0 text-slate-500', compact ? 'text-[11.5px]' : 'text-[12.5px]')}>
               Börja med det som har deadline eller kräver aktiv kvittens.
             </p>
           </div>
-          <div style={{ display: 'grid', gap: 8 }}>
+          <div className="grid gap-2">
             {pendingItems.map(item => (
-              <div key={item.publicationId} style={{ border: '1px solid #dbe4ef', background: '#f8fbff', borderRadius: 14, padding: compact ? '10px 12px' : '12px 14px', display: 'grid', gap: 8, boxShadow:'0 6px 16px rgba(15,23,42,0.04)' }}>
-                <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', gap:8 }}>
-                  <strong style={{ fontSize: compact ? 13.5 : 15, color:'#0f172a' }}>{item.title}</strong>
-                  <span style={{ flex:'0 0 auto', display:'inline-flex', alignItems:'center', gap:4, padding:'4px 7px', borderRadius:999, background: item.requiresApproval ? '#dbeafe' : '#ecfeff', color: item.requiresApproval ? '#1d4ed8' : '#0f766e', fontSize:10.5, fontWeight:700 }}>
+              <div key={item.publicationId} className={cn('grid gap-2 rounded-[14px] border border-[#dbe4ef] bg-[#f8fbff] shadow-[0_6px_16px_rgba(15,23,42,0.04)]', compact ? 'px-3 py-2.5' : 'px-3.5 py-3')}>
+                <div className="flex items-start justify-between gap-2">
+                  <strong className={cn('text-slate-900', compact ? 'text-[13.5px]' : 'text-[15px]')}>{item.title}</strong>
+                  <Badge className={cn('shrink-0 gap-1 px-[7px] py-1 text-[10.5px]', item.requiresApproval ? 'border-blue-200 bg-blue-100 text-blue-700' : 'border-cyan-100 bg-cyan-50 text-cyan-700')}>
                     {item.requiresApproval ? 'Godkänn' : 'Läs'}
-                  </span>
+                  </Badge>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-                  <span style={{ fontSize: compact ? 11 : 12, color: '#6b7280' }}>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <span className={cn('text-slate-500', compact ? 'text-[11px]' : 'text-xs')}>
                     {item.dueAt ? `Senast ${new Date(item.dueAt).toLocaleDateString('sv-SE')}` : 'Ingen deadline'}
                   </span>
-                  <Link href="/mina-dokument" style={{ color: '#111827', fontSize: compact ? 12 : 13, fontWeight: 700, textDecoration: 'none', padding:'6px 10px', border:'1px solid #cbd5e1', borderRadius:10, background:'#fff' }}>
+                  <Link href="/mina-dokument" className={cn('rounded-[10px] border border-slate-300 bg-white px-2.5 py-1.5 font-bold text-slate-900 no-underline hover:bg-slate-50', compact ? 'text-xs' : 'text-[13px]')}>
                     Hantera
                   </Link>
                 </div>

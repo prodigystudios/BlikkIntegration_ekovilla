@@ -2,6 +2,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useProjectComments, formatRelativeTime } from '../../lib/useProjectComments';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
+import { cn } from '@/lib/shared/cn';
+import Input from '../ui/Input';
+import Textarea from '../ui/Textarea';
 
 function startOfISOWeek(d: Date) {
   const day = d.getDay(); // 0..6, 1=Mon
@@ -57,6 +60,7 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
   const [detailError, setDetailError] = useState<string | null>(null);
   const [detailData, setDetailData] = useState<any | null>(null);
   const [detailBase, setDetailBase] = useState<any | null>(null);
+  const [commentsExpanded, setCommentsExpanded] = useState(false);
   const [reportDraft, setReportDraft] = useState<{ day: string; amount: string }>({ day: '', amount: '' });
   const [commentDraft, setCommentDraft] = useState<string>('');
   const [reportError, setReportError] = useState<string | null>(null);
@@ -104,6 +108,7 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
     setDetailError(null);
     setDetailData(null);
     setReportError(null);
+    setCommentsExpanded(false);
     // Default report draft: clamp to job range if possible
     try {
   const s = (it.job_day as string) || (it.start_day as string) || null;
@@ -158,7 +163,13 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
       setDetailLoading(false);
     }
   }, []);
-  const closeDetail = useCallback(() => { setDetailOpen(false); setDetailData(null); setDetailBase(null); setDetailError(null); }, []);
+  const closeDetail = useCallback(() => {
+    setDetailOpen(false);
+    setDetailData(null);
+    setDetailBase(null);
+    setDetailError(null);
+    setCommentsExpanded(false);
+  }, []);
 
   const range = useMemo(() => {
     const today = new Date();
@@ -453,6 +464,7 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
       // Reset inputs and refresh comments panel
       setReportDraft(d => ({ ...d, amount: '' }));
       setCommentDraft('');
+      if (hasComment) setCommentsExpanded(true);
       try { refreshComments(true); } catch {}
     } catch (e: any) {
       console.warn('[dashboard schedule] addPartialReport failed', e);
@@ -495,89 +507,77 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
   const visibleJobCount = grouped.reduce((sum, group) => sum + group.arr.length, 0);
   const scheduleCardStyle: React.CSSProperties = {
     border: compact ? '1px solid #dbe4ef' : '1px solid #d5e1ee',
-    background: 'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)',
-    borderRadius: compact ? 18 : 20,
+    background: 'linear-gradient(180deg, #ffffff 0%, #f7fbff 100%)',
+    borderRadius: compact ? 18 : 22,
     padding: compact ? 12 : 18,
     display: 'grid',
     gap: compact ? 10 : 14,
-    boxShadow: '0 10px 28px rgba(15,23,42,0.05)'
+    boxShadow: '0 14px 32px rgba(15,23,42,0.08), inset 0 1px 0 rgba(255,255,255,0.82)'
   };
+  const weekNavButtonClass = cn(
+    'w-fit rounded-[12px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#f8fafc_100%)] font-semibold text-slate-900 shadow-[0_8px_18px_rgba(15,23,42,0.08)] transition-[transform,background-color,border-color,box-shadow] hover:-translate-y-0.5 hover:border-sky-200 hover:bg-[linear-gradient(180deg,#ffffff_0%,#eff6ff_100%)] hover:text-slate-900 hover:shadow-[0_12px_24px_rgba(14,165,233,0.16)] active:translate-y-0',
+    compact ? 'min-w-[100px] px-2.5 py-[5px] text-[11px]' : 'min-w-[112px] px-3 py-1.5 text-xs'
+  );
+  const metaPillClass = cn(
+    'inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-[#dbe4ef] bg-[linear-gradient(180deg,#ffffff_0%,#f8fbff_100%)] font-semibold text-slate-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.78)]',
+    compact ? 'px-[9px] py-[5px] text-[10.5px]' : 'px-[9px] py-[5px] text-[11.5px]'
+  );
 
   return (
     <section
       style={scheduleCardStyle}
     >
-      <div style={{ display:'grid', gap: compact ? 8 : 10 }}>
-        <div style={{ display:'flex', alignItems:'flex-start', gap:compact ? 8 : 12, justifyContent:'space-between', flexWrap:'wrap' }}>
-          <div style={{ display:'grid', gap:4 }}>
-            <div style={{ display:'inline-flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
-              <h2 style={{ margin:0, fontSize: compact ? 15 : 18, color:'#0f172a' }}>Arbetsschema</h2>
-              <span style={{ display:'inline-flex', alignItems:'center', gap:6, padding:'4px 8px', borderRadius:999, background:'#eef6ff', border:'1px solid #dbeafe', color:'#1d4ed8', fontSize: compact ? 10.5 : 11, fontWeight:700 }}>
+      <div className={cn('grid', compact ? 'gap-2' : 'gap-2.5')}>
+        <div className={cn('flex flex-wrap items-start justify-between', compact ? 'gap-2' : 'gap-3')}>
+          <div className="grid gap-1">
+            <div className="inline-flex flex-wrap items-center gap-2">
+              <h2 className={cn('m-0 text-slate-900', compact ? 'text-[15px]' : 'text-lg')}>Arbetsschema</h2>
+              <span className={cn('inline-flex items-center gap-1.5 rounded-full border border-blue-100 bg-[#eef6ff] font-bold text-blue-700', compact ? 'px-2 py-1 text-[10.5px]' : 'px-2 py-1 text-[11px]')}>
                 Vecka {range.weekNumber}
               </span>
             </div>
-            <span style={{ fontSize: compact ? 11 : 12, color:'#64748b' }}>{range.label} • {range.startISO} – {range.endISO}</span>
-          </div>
-          <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
-            <span style={{ display:'inline-flex', alignItems:'center', gap:6, padding:'5px 9px', borderRadius:999, background:'#ffffff', border:'1px solid #dbe4ef', color:'#334155', fontSize: compact ? 10.5 : 11.5, fontWeight:600 }}>
-              {visibleJobCount} {visibleJobCount === 1 ? 'jobb' : 'jobb'}
-            </span>
-            <span style={{ display:'inline-flex', alignItems:'center', gap:6, padding:'5px 9px', borderRadius:999, background:'#ffffff', border:'1px solid #dbe4ef', color:'#334155', fontSize: compact ? 10.5 : 11.5, fontWeight:600 }}>
-              {selectedDayLabel}
-            </span>
+            <span className={cn('text-slate-500', compact ? 'text-[11px]' : 'text-xs')}>{range.label} • {range.startISO} – {range.endISO}</span>
+            <div className={cn('flex items-center gap-2', compact ? 'max-w-full flex-nowrap overflow-x-auto pb-0.5 pr-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden' : 'flex-wrap')}>
+              <span className={metaPillClass}>
+                {visibleJobCount} {visibleJobCount === 1 ? 'jobb' : 'jobb'}
+              </span>
+              <span className={metaPillClass}>
+                {selectedDayLabel}
+              </span>
+            </div>
           </div>
         </div>
 
-        <div style={{ display:'grid', gridTemplateColumns:'minmax(0,1fr) auto minmax(0,1fr)', alignItems:'center', gap:6, padding: compact ? 6 : 8, borderRadius:14, background:'#f8fafc', border:'1px solid #e2e8f0', width:'100%', boxSizing:'border-box' }}>
+        <div className={cn('grid w-full box-border items-center gap-1.5 rounded-[16px] border border-slate-200 bg-[linear-gradient(180deg,#fdfefe_0%,#f4f8fc_100%)] shadow-[inset_0_1px_0_rgba(255,255,255,0.85)] [grid-template-columns:minmax(0,1fr)_auto_minmax(0,1fr)]', compact ? 'p-1.5' : 'p-2.5')}>
           <button
             type="button"
             onClick={()=>setWeekOffset(prev => prev - 1)}
-            style={{
-              fontSize: compact ? 11 : 12,
-              padding: compact ? '5px 10px' : '6px 12px',
-              border:'1px solid transparent',
-              borderRadius:10,
-              background:'#ffffff',
-              color:'#111827',
-              fontWeight: 600,
-              boxShadow:'0 2px 8px rgba(15,23,42,0.08)',
-              justifySelf:'start',
-              width:'fit-content'
-            }}
+            className={cn(weekNavButtonClass, 'justify-self-start')}
           >
-            ← Föregående
+            <span aria-hidden="true" className="text-[12px] leading-none">←</span>
+            <span className="leading-none">Föregående</span>
           </button>
-          <div style={{ display:'inline-flex', alignItems:'center', justifyContent:'center', minWidth: compact ? 116 : 132, padding: compact ? '5px 10px' : '6px 12px', borderRadius:10, color:'#0f172a', fontSize: compact ? 11 : 12, fontWeight:700 }}>
+          <div className={cn('inline-flex items-center justify-center rounded-[10px] font-bold text-slate-900', compact ? 'min-w-[116px] px-2.5 py-[5px] text-[11px]' : 'min-w-[132px] px-3 py-1.5 text-xs')}>
             Vecka {range.weekNumber}
           </div>
           <button
             type="button"
             onClick={()=>setWeekOffset(prev => prev + 1)}
-            style={{
-              fontSize: compact ? 11 : 12,
-              padding: compact ? '5px 10px' : '6px 12px',
-              border:'1px solid transparent',
-              borderRadius:10,
-              background:'#ffffff',
-              color:'#111827',
-              fontWeight: 600,
-              boxShadow:'0 2px 8px rgba(15,23,42,0.08)',
-              justifySelf:'end',
-              width:'fit-content'
-            }}
+            className={cn(weekNavButtonClass, 'justify-self-end')}
           >
-            Nästa →
+            <span className="leading-none">Nästa</span>
+            <span aria-hidden="true" className="text-[12px] leading-none">→</span>
           </button>
         </div>
       </div>
 
       {/* Mon–Fri selector */}
-      <div style={{ display:'grid', gap:8, padding: compact ? '10px 10px 8px' : '12px', borderRadius:16, background:'#ffffff', border:'1px solid #e2e8f0' }}>
-        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:12, flexWrap:'wrap' }}>
-          <span style={{ fontSize:12, color:'#64748b', fontWeight:600 }}>Visa dag</span>
-          <span style={{ fontSize: compact ? 10.5 : 11.5, color:'#64748b' }}>{selectedDayLabel}</span>
+      <div className={cn('grid gap-2 rounded-[20px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#fbfdff_100%)] shadow-[0_10px_22px_rgba(15,23,42,0.05)]', compact ? 'px-2.5 pb-2 pt-2.5' : 'p-3.5')}>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <span className="text-xs font-semibold text-slate-500">Visa dag</span>
+          <span className={cn('text-slate-500', compact ? 'text-[10.5px]' : 'text-[11.5px]')}>{selectedDayLabel}</span>
         </div>
-        <div style={{ display:'grid', gridTemplateColumns:'repeat(6, minmax(0, 1fr))', gap:6, alignItems:'stretch', width:'100%' }}>
+        <div className="grid w-full grid-cols-6 items-stretch gap-1.5">
         {['Mån','Tis','Ons','Tor','Fre'].map((label, idx) => {
           const active = dayIdx===idx;
           return (
@@ -586,18 +586,13 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
               type="button"
               onClick={() => setDayIdx(idx)}
               aria-pressed={active}
-              style={{
-                fontSize: compact ? 11 : 12,
-                padding: compact ? '5px 10px' : '6px 12px',
-                border:'1px solid ' + (active ? '#0284c7' : '#e2e8f0'),
-                borderRadius:999,
-                background: active ? 'linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%)' : '#f8fafc',
-                color: active ? '#ffffff' : '#334155',
-                fontWeight: active ? 700 : 500,
-                boxShadow: active ? '0 8px 18px rgba(2,132,199,0.24)' : '0 1px 1px rgba(0,0,0,0.02)',
-                width:'100%',
-                justifyContent:'center'
-              }}
+              className={cn(
+                'w-full justify-center rounded-full border transition-[background,color,border-color,box-shadow]',
+                compact ? 'px-2.5 py-[5px] text-[11px]' : 'px-3 py-1.5 text-xs',
+                active
+                  ? 'border-sky-600 bg-[linear-gradient(135deg,#0ea5e9_0%,#0284c7_100%)] font-bold text-white shadow-[0_8px_18px_rgba(2,132,199,0.24)]'
+                  : 'border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#f8fafc_100%)] font-medium text-slate-700 shadow-[0_4px_10px_rgba(15,23,42,0.05)] hover:border-sky-200 hover:bg-[linear-gradient(180deg,#ffffff_0%,#eff6ff_100%)] hover:text-slate-900 hover:shadow-[0_10px_18px_rgba(14,165,233,0.12)]'
+              )}
               title={range.days[idx]}
             >{label}</button>
           );
@@ -609,27 +604,22 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
               type="button"
               onClick={() => setDayIdx(null)}
               aria-pressed={active}
-              style={{
-                fontSize: compact ? 11 : 12,
-                padding: compact ? '5px 10px' : '6px 12px',
-                border:'1px solid ' + (active ? '#0284c7' : '#e2e8f0'),
-                borderRadius:999,
-                background: active ? 'linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%)' : '#f8fafc',
-                color: active ? '#ffffff' : '#334155',
-                fontWeight: active ? 700 : 500,
-                boxShadow: active ? '0 8px 18px rgba(2,132,199,0.24)' : '0 1px 1px rgba(0,0,0,0.02)',
-                width:'100%',
-                justifyContent:'center'
-              }}
+              className={cn(
+                'w-full justify-center rounded-full border transition-[background,color,border-color,box-shadow]',
+                compact ? 'px-2.5 py-[5px] text-[11px]' : 'px-3 py-1.5 text-xs',
+                active
+                  ? 'border-sky-600 bg-[linear-gradient(135deg,#0ea5e9_0%,#0284c7_100%)] font-bold text-white shadow-[0_8px_18px_rgba(2,132,199,0.24)]'
+                  : 'border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#f8fafc_100%)] font-medium text-slate-700 shadow-[0_4px_10px_rgba(15,23,42,0.05)] hover:border-sky-200 hover:bg-[linear-gradient(180deg,#ffffff_0%,#eff6ff_100%)] hover:text-slate-900 hover:shadow-[0_10px_18px_rgba(14,165,233,0.12)]'
+              )}
             >Alla</button>
           );
         })()}
         </div>
       </div>
 
-      {loading && <div style={{ fontSize:12, color:'#64748b', padding:'2px 2px 0 2px' }}>Laddar…</div>}
+      {loading && <div className="px-0.5 pt-0 text-xs text-slate-500">Laddar…</div>}
       {!loading && grouped.length === 0 && (
-        <div style={{ display:'inline-flex', alignItems:'center', gap:8, width:'fit-content', padding: compact ? '9px 11px' : '10px 12px', borderRadius:999, background:'#f8fafc', border:'1px solid #e2e8f0', fontSize:12, color:'#64748b' }}>
+        <div className={cn('inline-flex w-fit items-center gap-2 rounded-full border border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#f8fafc_100%)] text-slate-500 shadow-[0_6px_14px_rgba(15,23,42,0.04)]', compact ? 'px-[11px] py-[9px] text-xs' : 'px-3 py-2.5 text-xs')}>
           Inga jobb planerade för vald period.
         </div>
       )}
@@ -691,27 +681,20 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(it); } }}
                       role="button"
                       tabIndex={0}
-                      style={{
-                        border:'1px solid #dbe4ef',
-                        borderLeft: `3px solid ${theme.accent}`,
-                        borderRadius:14,
-                        padding: compact ? 10 : 12,
-                        cursor:'pointer',
-                        background:'linear-gradient(180deg, #ffffff 0%, #fcfdff 100%)',
-                        boxShadow:'0 8px 18px rgba(15,23,42,0.05)',
-                        position:'relative',
-                        display:'grid',
-                        gap: compact ? 8 : 10
-                      }}
+                      className={cn(
+                        'relative grid cursor-pointer rounded-[14px] border border-[#dbe4ef] bg-[linear-gradient(180deg,#ffffff_0%,#fcfdff_100%)] shadow-[0_8px_18px_rgba(15,23,42,0.05)]',
+                        compact ? 'gap-2 p-2.5' : 'gap-2.5 p-3'
+                      )}
+                      style={{ borderLeft: `3px solid ${theme.accent}` }}
                     >
-                      <div style={{ display:'grid', gridTemplateColumns:'minmax(0,1fr) auto', gap:10, alignItems:'start' }}>
-                        <div style={{ display:'grid', gap:6, minWidth:0 }}>
-                          <div style={{ display:'flex', alignItems:'center', gap:8, minWidth:0 }}>
-                            <div style={{ width:10, height:10, borderRadius:999, background: theme.accent, opacity:0.9, boxShadow:`0 0 0 4px ${theme.accent}14` }} />
-                            <span style={{ fontWeight:800, letterSpacing:-0.1, fontSize: compact ? 12.5 : 13.5, lineHeight:1.3, color:'#0f172a', flex:1, minWidth:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{title}</span>
+                      <div className="grid items-start gap-2.5 [grid-template-columns:minmax(0,1fr)_auto]">
+                        <div className="grid min-w-0 gap-1.5">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <div className="h-2.5 w-2.5 rounded-full opacity-90" style={{ background: theme.accent, boxShadow:`0 0 0 4px ${theme.accent}14` }} />
+                            <span className={cn('min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-extrabold leading-[1.3] tracking-[-0.1px] text-slate-900', compact ? 'text-[12.5px]' : 'text-[13.5px]')}>{title}</span>
                           </div>
                           {it.truck && (
-                            <div style={{ display:'inline-flex', alignItems:'center', gap:6, width:'fit-content', fontSize: compact ? 10.5 : 11, color:'#64748b', background:'#f8fafc', border:'1px solid #e2e8f0', padding:'4px 8px', borderRadius:999 }}>
+                            <div className={cn('inline-flex w-fit items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-slate-500', compact ? 'text-[10.5px]' : 'text-[11px]')}>
                               <svg width={14} height={14} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                                 <path fill="currentColor" d="M3 4h11v8h-1.5a2.5 2.5 0 0 0-2.45 2H8A3 3 0 0 0 5 17H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zm13 5h2.586A2 2 0 0 1 20 9.586L21.414 11A2 2 0 0 1 22 12.414V16a1 1 0 0 1-1 1h-1a3 3 0 0 0-3-3h-1V9zM7 18a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm10 0a2 2 0 1 0 0-4 2 2 0 0 0 0 4z" />
                               </svg>
@@ -719,33 +702,33 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                             </div>
                           )}
                         </div>
-                        <div style={{ display:'grid', justifyItems:'end', gap:8 }}>
+                        <div className="grid justify-items-end gap-2">
                           {onReportTime && (
                             <button
                               type="button"
                               onClick={(e) => { e.stopPropagation(); onReportTime({ projectId: String(it.project_id || ''), projectName: it.project_name, orderNumber: it.order_number ? String(it.order_number) : undefined, day: (it.job_day || it.start_day) ? String(it.job_day || it.start_day) : undefined }); }}
-                              style={{ fontSize: compact ? 10.5 : 11, padding: compact ? '6px 10px' : '7px 11px', border:'1px solid #16a34a', background:'#16a34a', color:'#fff', borderRadius:10, display:'inline-flex', alignItems:'center', gap:5, boxShadow:'0 8px 16px rgba(22,163,74,0.16)' }}
+                              className={cn('inline-flex items-center gap-[5px] rounded-[10px] border border-green-600 bg-green-600 text-white shadow-[0_8px_16px_rgba(22,163,74,0.16)]', compact ? 'px-2.5 py-1.5 text-[10.5px]' : 'px-[11px] py-[7px] text-[11px]')}
                               aria-label="Rapportera tid för detta jobb"
                             >
                               <svg width={12} height={12} viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" fill="none"><path d="M12 5v14M5 12h14" strokeLinecap="round" strokeLinejoin="round"/></svg>
                               Tid
                             </button>
                           )}
-                          <div style={{ display:'inline-flex', alignItems:'center', gap:8 }}>
-                            <svg width={16} height={16} viewBox="0 0 24 24" aria-hidden="true" focusable="false" style={{ color:'#94a3b8' }}>
+                          <div className="inline-flex items-center gap-2">
+                            <svg width={16} height={16} viewBox="0 0 24 24" aria-hidden="true" focusable="false" className="text-slate-400">
                               <path fill="currentColor" d="M9 18l6-6-6-6" />
                             </svg>
                             {positionLabel && (
-                              <span title="Placering i dag/lastbil" style={{ background:'#0f172a', color:'#fff', fontSize: 10, fontWeight:700, padding:'4px 7px', borderRadius:999, border:'1px solid #334155', minWidth:34, textAlign:'center' }}>
+                              <span title="Placering i dag/lastbil" className="min-w-[34px] rounded-full border border-slate-700 bg-slate-900 px-[7px] py-1 text-center text-[10px] font-bold text-white">
                                 {positionLabel}
                               </span>
                             )}
                           </div>
                         </div>
                       </div>
-                      <div style={{ display:'flex', gap:6, flexWrap:'wrap', marginTop: compact ? 6 : 8 }}>
+                      <div className={cn('flex flex-wrap gap-1.5', compact ? 'mt-1.5' : 'mt-2')}>
                         {bagLabel && (
-                          <span style={{ display:'inline-flex', alignItems:'center', gap:6, fontSize: compact ? 10.5 : 11, color: theme.badgeFg, background: '#ffffff', border:`1px solid ${theme.accent}26`, padding:'5px 9px', borderRadius:999, boxShadow:'inset 0 0 0 1px rgba(255,255,255,0.5)' }}>
+                          <span className={cn('inline-flex items-center gap-1.5 rounded-full bg-white px-[9px] py-[5px] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.5)]', compact ? 'text-[10.5px]' : 'text-[11px]')} style={{ color: theme.badgeFg, border:`1px solid ${theme.accent}26` }}>
                             <svg width={14} height={14} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                               <path fill="currentColor" d="M7 6h10l1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L7 6zm1-2a4 4 0 0 1 8 0v2H8V4zm2 0a2 2 0 1 1 4 0v2h-4V4z" />
                             </svg>
@@ -753,7 +736,7 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                           </span>
                         )}
                           {reported > 0 && (
-                            <span style={{ display:'inline-flex', alignItems:'center', gap:6, fontSize: compact ? 10.5 : 11, color:'#0f172a', background:'#f8fdff', border:'1px solid #bae6fd', padding:'5px 9px', borderRadius:999 }} title={`Rapporterat: ${reported} säckar`}>
+                            <span className={cn('inline-flex items-center gap-1.5 rounded-full border border-sky-200 bg-[#f8fdff] px-[9px] py-[5px] text-slate-900', compact ? 'text-[10.5px]' : 'text-[11px]')} title={`Rapporterat: ${reported} säckar`}>
                               <svg width={14} height={14} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                                 <path fill="currentColor" d="M9 16.2l-3.5-3.5L4 14.2 9 19l12-12-1.5-1.5z" />
                               </svg>
@@ -761,7 +744,7 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                             </span>
                           )}
                         {crewNames.length > 0 && (
-                          <span style={{ display:'inline-flex', alignItems:'center', gap:6, fontSize: compact ? 10.5 : 11, color:'#334155', background:'#fafafa', border:'1px solid #e5e7eb', padding:'5px 9px', borderRadius:999 }} title={`Team: ${crewNames.join(', ')}`}>
+                          <span className={cn('inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-[#fafafa] px-[9px] py-[5px] text-slate-700', compact ? 'text-[10.5px]' : 'text-[11px]')} title={`Team: ${crewNames.join(', ')}`}>
                             <svg width={14} height={14} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                               <path fill="currentColor" d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5s-3 1.34-3 3 1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h10v-2.5C11 14.17 6.33 13 4 13zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h8v-2.5c0-2.33-4.67-3.5-7-3.5z"/>
                             </svg>
@@ -862,196 +845,275 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
           };
         })();
         const isDesktopModal = !compact;
+        const modalActionClass = cn(
+          'inline-flex w-full items-center justify-center box-border font-bold leading-[1.2]',
+          isDesktopModal ? 'rounded-lg px-2 py-[5px] text-[9px]' : 'min-h-[42px] rounded-xl px-3 py-2.5 text-xs'
+        );
+        const infoCardClass = cn(
+          'grid border border-slate-200 bg-white',
+          isDesktopModal ? 'gap-1.5 rounded-[10px] px-[9px] py-2' : 'gap-1.5 rounded-[14px] px-3 pb-2.5 pt-3'
+        );
+        const modalSectionClass = cn(
+          'grid border border-slate-200 bg-white',
+          isDesktopModal ? 'gap-1.5 rounded-xl px-3 py-2.5' : 'gap-2 rounded-2xl p-[14px]'
+        );
+        const modalFieldLabelClass = 'grid min-w-0 gap-[5px] text-xs';
         return (
-          <div style={{ position: 'fixed', inset:0, zIndex: 260, background: 'rgba(15,23,42,0.56)', backdropFilter:'blur(4px)', display:'flex', alignItems: compact ? 'flex-start' : 'center', justifyContent:'center', padding: compact ? 'calc(env(safe-area-inset-top, 0px) + 72px) 12px 20px' : 24 }} onClick={closeDetail}>
-            <div role="dialog" aria-modal="true" aria-busy={detailLoading ? true : undefined} onClick={e => e.stopPropagation()} style={{ width: compact ? 'min(760px, 94vw)' : 'min(660px, 88vw)', maxHeight: compact ? 'calc(100vh - env(safe-area-inset-top, 0px) - 104px)' : '78vh', overflowY: 'auto', background:'#fff', border:'1px solid #dbe4ef', borderRadius: isDesktopModal ? 16 : 20, boxShadow:'0 24px 60px rgba(15,23,42,0.28)', display:'grid', gap: isDesktopModal ? 10 : 14, padding: isDesktopModal ? 12 : 16 }}>
-              <div style={{ display:'grid', gap: isDesktopModal ? 10 : 12, padding: isDesktopModal ? '10px 12px' : '14px', borderRadius: isDesktopModal ? 14 : 18, border:`1px solid ${detailTheme.accent}22`, background:'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)' }}>
-                <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', gap:10, flexWrap:'wrap' }}>
-                  <div style={{ display:'grid', gap:8, minWidth:0 }}>
-                    <div style={{ display:'inline-flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
-                      <span style={{ display:'inline-flex', alignItems:'center', gap:6, padding: isDesktopModal ? '3px 7px' : '4px 8px', borderRadius:999, background:`${detailTheme.badgeBg}`, color:detailTheme.badgeFg, fontSize: isDesktopModal ? 10 : 11, fontWeight:700 }}>
+          <div
+            className={cn(
+              'fixed inset-0 z-[260] flex justify-center overscroll-none bg-[rgba(15,23,42,0.56)] [backdrop-filter:blur(4px)]',
+              compact
+                ? 'items-start px-3 pb-[calc(env(safe-area-inset-bottom,0px)+20px)] pt-[calc(env(safe-area-inset-top,0px)+72px)]'
+                : 'items-center p-6'
+            )}
+            onClick={closeDetail}
+          >
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-busy={detailLoading ? true : undefined}
+              onClick={e => e.stopPropagation()}
+              className={cn(
+                'grid min-w-0 overflow-x-hidden overflow-y-auto overscroll-contain border border-[#dbe4ef] bg-white shadow-[0_24px_60px_rgba(15,23,42,0.28)]',
+                isDesktopModal ? 'w-[min(660px,88vw)] max-h-[78vh] gap-2.5 rounded-2xl p-3' : 'w-[min(760px,94vw)] max-h-[calc(100vh-env(safe-area-inset-top,0px)-env(safe-area-inset-bottom,0px)-104px)] gap-3.5 rounded-[20px] px-4 pb-[calc(env(safe-area-inset-bottom,0px)+24px)] pt-4'
+              )}
+            >
+              <div
+                className={cn(
+                  'grid bg-[linear-gradient(180deg,#ffffff_0%,#f8fbff_100%)]',
+                  isDesktopModal ? 'gap-2.5 rounded-[14px] px-3 py-2.5' : 'gap-3.5 rounded-[18px] px-[14px] py-[14px]'
+                )}
+                style={{ border: `1px solid ${detailTheme.accent}22` }}
+              >
+                <div className={cn(isDesktopModal ? 'flex flex-wrap items-start justify-between gap-2.5' : 'grid gap-3.5')}>
+                  <div className="grid min-w-0 gap-2">
+                    <div className="inline-flex flex-wrap items-center gap-2">
+                      <span className={cn('inline-flex items-center gap-1.5 rounded-full font-bold', isDesktopModal ? 'px-[7px] py-[3px] text-[10px]' : 'px-2 py-1 text-[11px]')} style={{ background: detailTheme.badgeBg, color: detailTheme.badgeFg }}>
                         {detailBase?.job_type || 'Planering'}
                       </span>
-                      {segId && reportedTotal > 0 && <span style={{ display:'inline-flex', alignItems:'center', gap:6, padding: isDesktopModal ? '3px 7px' : '4px 8px', borderRadius:999, background:'#ecfeff', color:'#0f766e', fontSize: isDesktopModal ? 10 : 11, fontWeight:700 }}>Rapporterat {reportedTotal} säckar</span>}
+                      {segId && reportedTotal > 0 && <span className={cn('inline-flex items-center gap-1.5 rounded-full bg-cyan-50 font-bold text-cyan-700', isDesktopModal ? 'px-[7px] py-[3px] text-[10px]' : 'px-2 py-1 text-[11px]')}>Rapporterat {reportedTotal} säckar</span>}
                     </div>
-                    <strong style={{ fontSize: isDesktopModal ? 16 : 20, lineHeight:1.15, color:'#0f172a' }}>{headerTitle}</strong>
-                    {detailBase?.customer && <span style={{ fontSize: isDesktopModal ? 12 : 14, color:'#475569', fontWeight:600 }}>{detailBase.customer}</span>}
-                    <div style={{ display:'flex', gap:8, flexWrap:'wrap', alignItems:'center' }}>
-                      {detailBase?.truck && <span style={{ fontSize:10.5, color:'#475569', background:'#f8fafc', border:'1px solid #e2e8f0', padding: isDesktopModal ? '3px 7px' : '4px 8px', borderRadius: 999 }}>Lastbil: {detailBase.truck}</span>}
-                      {typeof detailBase?.bag_count === 'number' && <span style={{ fontSize:10.5, color:'#475569', background:'#f8fafc', border:'1px solid #e2e8f0', padding: isDesktopModal ? '3px 7px' : '4px 8px', borderRadius: 999 }}>Plan: {detailBase.bag_count} säckar</span>}
+                    <strong className={cn('break-words leading-[1.15] text-slate-900', isDesktopModal ? 'text-base' : 'text-xl')}>{headerTitle}</strong>
+                    {detailBase?.customer && <span className={cn('break-words font-semibold text-slate-600', isDesktopModal ? 'text-xs' : 'text-sm')}>{detailBase.customer}</span>}
+                    <div className="flex flex-wrap items-center gap-2">
+                      {detailBase?.truck && <span className={cn('rounded-full border border-slate-200 bg-slate-50 text-slate-600', isDesktopModal ? 'px-[7px] py-[3px] text-[10.5px]' : 'px-2 py-1 text-[10.5px]')}>Lastbil: {detailBase.truck}</span>}
+                      {typeof detailBase?.bag_count === 'number' && <span className={cn('rounded-full border border-slate-200 bg-slate-50 text-slate-600', isDesktopModal ? 'px-[7px] py-[3px] text-[10.5px]' : 'px-2 py-1 text-[10.5px]')}>Plan: {detailBase.bag_count} säckar</span>}
                     </div>
                   </div>
-                  <div style={{ display:'grid', gap: isDesktopModal ? 5 : 8, width: compact ? '100%' : 'min(100%, 104px)', gridTemplateColumns: '1fr', alignItems:'stretch' }}>
-                    {detailBase?.order_number && (
-                      <a
-                        href={`/egenkontroll?orderId=${encodeURIComponent(String(detailBase.order_number))}`}
-                        className="btn--plain btn--sm"
-                        style={{ display:'inline-flex', alignItems:'center', justifyContent:'center', width:'100%', boxSizing:'border-box', background:'#f0fdf4', border:'1px solid #86efac', color:'#166534', borderRadius: isDesktopModal ? 8 : 12, padding: isDesktopModal ? '5px 8px' : '10px 12px', fontSize: isDesktopModal ? 9 : 12, fontWeight:700, textDecoration:'none', minHeight: isDesktopModal ? 0 : 42, lineHeight:1.2 }}
-                      >Starta egenkontroll</a>
-                    )}
-                    {onReportTime && (
-                      <button
-                        onClick={() => onReportTime({ projectId: String(detailBase?.project_id || ''), projectName: detailBase?.project_name, orderNumber: detailBase?.order_number ? String(detailBase.order_number) : undefined, day: (detailBase?.job_day || detailBase?.start_day) ? String(detailBase?.job_day || detailBase?.start_day) : undefined })}
-                        className="btn--plain btn--sm"
-                        style={{ display:'inline-flex', alignItems:'center', justifyContent:'center', width:'100%', boxSizing:'border-box', background:'#16a34a', border:'1px solid #16a34a', color:'#fff', borderRadius: isDesktopModal ? 8 : 12, padding: isDesktopModal ? '5px 8px' : '10px 12px', fontSize: isDesktopModal ? 9 : 12, fontWeight:700, boxShadow: isDesktopModal ? '0 6px 12px rgba(22,163,74,0.12)' : '0 10px 18px rgba(22,163,74,0.16)', minHeight: isDesktopModal ? 0 : 42, lineHeight:1.2, order: compact ? -1 : undefined }}
-                      >Rapportera tid</button>
-                    )}
-                    <button onClick={closeDetail} className="btn--plain btn--sm" style={{ display:'inline-flex', alignItems:'center', justifyContent:'center', width:'100%', boxSizing:'border-box', background:'#fff5f5', border:'1px solid #fecaca', color:'#b91c1c', borderRadius: isDesktopModal ? 8 : 12, padding: isDesktopModal ? '5px 8px' : '10px 12px', fontSize: isDesktopModal ? 9 : 12, fontWeight:700, minHeight: isDesktopModal ? 0 : 42, lineHeight:1.2 }}>Stäng</button>
-                  </div>
+                  {isDesktopModal ? (
+                    <div className="grid w-[min(100%,104px)] grid-cols-1 items-stretch gap-[5px]">
+                      {detailBase?.order_number && (
+                        <a
+                          href={`/egenkontroll?orderId=${encodeURIComponent(String(detailBase.order_number))}`}
+                          className={cn(modalActionClass, 'border border-green-300 bg-green-50 text-green-700 no-underline')}
+                        >Starta egenkontroll</a>
+                      )}
+                      {onReportTime && (
+                        <button
+                          type="button"
+                          onClick={() => onReportTime({ projectId: String(detailBase?.project_id || ''), projectName: detailBase?.project_name, orderNumber: detailBase?.order_number ? String(detailBase.order_number) : undefined, day: (detailBase?.job_day || detailBase?.start_day) ? String(detailBase?.job_day || detailBase?.start_day) : undefined })}
+                          className={cn(modalActionClass, 'border border-green-600 bg-green-600 text-white shadow-[0_6px_12px_rgba(22,163,74,0.12)]')}
+                        >Rapportera tid</button>
+                      )}
+                      <button type="button" onClick={closeDetail} className={cn(modalActionClass, 'border border-red-200 bg-red-50 text-red-700')}>Stäng</button>
+                    </div>
+                  ) : (
+                    <div className="grid gap-2.5 rounded-[16px] border border-slate-200 bg-white/80 p-2.5 shadow-[0_10px_20px_rgba(15,23,42,0.05)]">
+                      <div className="grid gap-2">
+                        {onReportTime && (
+                          <button
+                            type="button"
+                            onClick={() => onReportTime({ projectId: String(detailBase?.project_id || ''), projectName: detailBase?.project_name, orderNumber: detailBase?.order_number ? String(detailBase.order_number) : undefined, day: (detailBase?.job_day || detailBase?.start_day) ? String(detailBase?.job_day || detailBase?.start_day) : undefined })}
+                            className={cn(modalActionClass, 'min-h-[46px] border border-green-600 bg-green-600 text-white shadow-[0_10px_18px_rgba(22,163,74,0.16)]')}
+                          >Rapportera tid</button>
+                        )}
+                        {detailBase?.order_number && (
+                          <a
+                            href={`/egenkontroll?orderId=${encodeURIComponent(String(detailBase.order_number))}`}
+                            className={cn(modalActionClass, 'min-h-[44px] border border-green-300 bg-green-50 text-green-700 no-underline shadow-[0_8px_16px_rgba(34,197,94,0.08)]')}
+                          >Starta egenkontroll</a>
+                        )}
+                        <button
+                          type="button"
+                          onClick={closeDetail}
+                          className={cn(modalActionClass, 'min-h-[44px] border border-red-200 bg-red-50 text-red-700')}
+                        >Stäng</button>
+                      </div>
+                      <span className="block w-full break-words text-center text-[11px] leading-[1.45] text-slate-500">Snabbaste vägen för installatören ligger överst. Övriga åtgärder finns direkt under.</span>
+                    </div>
+                  )}
                 </div>
                 {(mapsHref || detailBase?.customer || phoneList.length > 0 || sellerInfo.name || sellerInfo.email || sellerInfo.phone) && (
-                  <div style={{ display:'grid', gridTemplateColumns: compact ? '1fr' : 'repeat(3, minmax(0, 1fr))', gap: isDesktopModal ? 8 : 10 }}>
+                  <div className={cn('grid', compact ? 'grid-cols-1' : 'grid-cols-3', isDesktopModal ? 'gap-2' : 'gap-2.5')}>
                   {(detailBase?.customer || phoneList.length > 0) && (
-                  <div style={{ display:'grid', gap:6, padding: isDesktopModal ? '8px 9px' : '12px 12px 10px', borderRadius: isDesktopModal ? 10 : 14, background:'#ffffff', border:'1px solid #e2e8f0' }}>
-                    <span style={{ fontSize:11, color:'#334155', fontWeight:700 }}>Kontakt</span>
-                    {detailBase?.customer && <span style={{ fontSize: isDesktopModal ? 12 : 14, color:'#334155', lineHeight:1.35 }}>{detailBase.customer}</span>}
+                  <div className={infoCardClass}>
+                    <span className="text-[11px] font-bold text-slate-700">Kontakt</span>
+                    {detailBase?.customer && <span className={cn('leading-[1.35] text-slate-700', isDesktopModal ? 'text-xs' : 'text-sm')}>{detailBase.customer}</span>}
                     {phoneList.length > 0 ? (
-                      <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
+                      <div className="flex flex-wrap items-center gap-2">
                         {phoneList.map(p => (
-                          <a key={p.display} href={`tel:${p.tel}`} style={{ fontSize: isDesktopModal ? 9 : 12, color:'#0369a1', textDecoration:'none', border:'1px solid #cbd5e1', background:'#f0f9ff', padding: isDesktopModal ? '3px 7px' : '4px 10px', borderRadius:999 }}>Ring {p.display}</a>
+                          <a key={p.display} href={`tel:${p.tel}`} className={cn('rounded-full border border-slate-300 bg-sky-50 text-sky-700 no-underline', isDesktopModal ? 'px-[7px] py-[3px] text-[9px]' : 'px-2.5 py-1 text-xs')}>Ring {p.display}</a>
                         ))}
                       </div>
                     ) : (
-                      <span style={{ fontSize:12, color:'#64748b' }}>Inget telefonnummer hittades i beskrivningen.</span>
+                      <span className="text-xs text-slate-500">Inget telefonnummer hittades i beskrivningen.</span>
                     )}
                   </div>
                   )}
                   {(sellerInfo.name || sellerInfo.email || sellerInfo.phone) && (
-                  <div style={{ display:'grid', gap:6, padding: isDesktopModal ? '8px 9px' : '12px 12px 10px', borderRadius: isDesktopModal ? 10 : 14, background:'#ffffff', border:'1px solid #e2e8f0' }}>
-                    <span style={{ fontSize:11, color:'#334155', fontWeight:700 }}>Ansvarig säljare</span>
-                    {sellerInfo.name && <span style={{ fontSize: isDesktopModal ? 12 : 14, color:'#334155', lineHeight:1.35 }}>{sellerInfo.name}</span>}
-                    {(sellerInfo.role || sellerInfo.location) && <span style={{ fontSize: isDesktopModal ? 10 : 12, color:'#64748b' }}>{[sellerInfo.role, sellerInfo.location].filter(Boolean).join(' • ')}</span>}
-                    <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
+                  <div className={infoCardClass}>
+                    <span className="text-[11px] font-bold text-slate-700">Ansvarig säljare</span>
+                    {sellerInfo.name && <span className={cn('leading-[1.35] text-slate-700', isDesktopModal ? 'text-xs' : 'text-sm')}>{sellerInfo.name}</span>}
+                    {(sellerInfo.role || sellerInfo.location) && <span className={cn('text-slate-500', isDesktopModal ? 'text-[10px]' : 'text-xs')}>{[sellerInfo.role, sellerInfo.location].filter(Boolean).join(' • ')}</span>}
+                    <div className="flex flex-wrap items-center gap-2">
                       {sellerInfo.tel && sellerInfo.phone && (
-                        <a href={`tel:${sellerInfo.tel}`} style={{ fontSize: isDesktopModal ? 9 : 12, color:'#0369a1', textDecoration:'none', border:'1px solid #cbd5e1', background:'#f0f9ff', padding: isDesktopModal ? '3px 7px' : '4px 10px', borderRadius:999 }}>Ring {sellerInfo.phone}</a>
+                        <a href={`tel:${sellerInfo.tel}`} className={cn('rounded-full border border-slate-300 bg-sky-50 text-sky-700 no-underline', isDesktopModal ? 'px-[7px] py-[3px] text-[9px]' : 'px-2.5 py-1 text-xs')}>Ring {sellerInfo.phone}</a>
                       )}
                       {sellerInfo.email && (
-                        <a href={`mailto:${sellerInfo.email}`} style={{ fontSize: isDesktopModal ? 9 : 12, color:'#0369a1', textDecoration:'none', border:'1px solid #cbd5e1', background:'#f8fafc', padding: isDesktopModal ? '3px 7px' : '4px 10px', borderRadius:999 }}>Maila</a>
+                        <a href={`mailto:${sellerInfo.email}`} className={cn('rounded-full border border-slate-300 bg-slate-50 text-sky-700 no-underline', isDesktopModal ? 'px-[7px] py-[3px] text-[9px]' : 'px-2.5 py-1 text-xs')}>Maila</a>
                       )}
                     </div>
                   </div>
                   )}
                   {mapsHref && (
-                  <div style={{ display:'grid', gap:6, padding: isDesktopModal ? '8px 9px' : '12px 12px 10px', borderRadius: isDesktopModal ? 10 : 14, background:'#ffffff', border:'1px solid #e2e8f0' }}>
-                    <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:10, flexWrap:'wrap' }}>
-                      <span style={{ fontSize:11, color:'#334155', fontWeight:700 }}>Adress</span>
-                      <a href={mapsHref} target="_blank" rel="noopener noreferrer" className="btn--plain btn--xs" style={{ fontSize: isDesktopModal ? 9 : 11, border:'1px solid #cbd5e1', borderRadius:999, padding: isDesktopModal ? '3px 7px' : '4px 10px', color:'#0369a1', background:'#e0f2fe', textDecoration:'none' }}>Öppna i Kartor</a>
+                  <div className={infoCardClass}>
+                    <div className="flex flex-wrap items-center justify-between gap-2.5">
+                      <span className="text-[11px] font-bold text-slate-700">Adress</span>
+                      <a href={mapsHref} target="_blank" rel="noopener noreferrer" className={cn('rounded-full border border-slate-300 bg-sky-100 text-sky-700 no-underline', isDesktopModal ? 'px-[7px] py-[3px] text-[9px]' : 'px-2.5 py-1 text-[11px]')}>Öppna i Kartor</a>
                     </div>
-                    <span style={{ fontSize: isDesktopModal ? 12 : 14, color:'#334155', lineHeight:1.35 }}>{address}</span>
+                    <span className={cn('break-words leading-[1.35] text-slate-700', isDesktopModal ? 'text-xs' : 'text-sm')}>{address}</span>
                   </div>
                   )}
                   </div>
                 )}
               </div>
               {detailLoading && (
-                <div role="status" aria-live="polite" style={{ display:'grid', gap:10, padding:'8px 0' }}>
-                  <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+                <div role="status" aria-live="polite" className="grid gap-2.5 py-2">
+                  <div className="flex items-center gap-2.5">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                       <circle cx="12" cy="12" r="9" stroke="#cbd5e1" strokeWidth="3" opacity="0.35" />
                       <path d="M21 12a9 9 0 0 0-9-9" stroke="#0ea5e9" strokeWidth="3" strokeLinecap="round">
                         <animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="0.8s" repeatCount="indefinite" />
                       </path>
                     </svg>
-                    <span style={{ fontSize:12, color:'#475569' }}>Hämtar detaljer…</span>
+                    <span className="text-xs text-slate-600">Hämtar detaljer…</span>
                   </div>
-                  <div style={{ display:'grid', gap:6 }}>
-                    <div style={{ height:12, background:'#e5e7eb', borderRadius:6 }} />
-                    <div style={{ height:12, width:'85%', background:'#e5e7eb', borderRadius:6 }} />
-                    <div style={{ height:12, width:'70%', background:'#e5e7eb', borderRadius:6 }} />
-                    <div style={{ height:80, background:'#f8fafc', border:'1px solid #e2e8f0', borderRadius:8 }} />
+                  <div className="grid gap-1.5">
+                    <div className="h-3 rounded-md bg-slate-200" />
+                    <div className="h-3 w-[85%] rounded-md bg-slate-200" />
+                    <div className="h-3 w-[70%] rounded-md bg-slate-200" />
+                    <div className="h-20 rounded-lg border border-slate-200 bg-slate-50" />
                   </div>
                 </div>
               )}
-              {detailError && <div style={{ fontSize:12, color:'#b91c1c', background:'#fef2f2', border:'1px solid #fecaca', padding:'6px 8px', borderRadius:8 }}>Fel: {detailError}</div>}
-              <div style={{ display:'grid', gap:12 }}>
+              {detailError && <div className="rounded-lg border border-red-200 bg-red-50 px-2 py-1.5 text-xs text-red-700">Fel: {detailError}</div>}
+              <div className="grid gap-3">
                 {description && (
-                  <div style={{ display:'grid', gap: isDesktopModal ? 6 : 8, padding: isDesktopModal ? '10px 12px' : '14px', borderRadius: isDesktopModal ? 12 : 16, border:'1px solid #e2e8f0', background:'#ffffff' }}>
-                    <span style={{ fontSize: isDesktopModal ? 11 : 13, color:'#334155', fontWeight:700 }}>Beskrivning</span>
-                    <p style={{ fontSize: isDesktopModal ? 11 : 14, lineHeight:1.45, color:'#475569', whiteSpace:'pre-wrap', margin:0 }}>{description}</p>
+                  <div className={modalSectionClass}>
+                    <span className={cn('font-bold text-slate-700', isDesktopModal ? 'text-[11px]' : 'text-[13px]')}>Beskrivning</span>
+                    <p className={cn('m-0 whitespace-pre-wrap break-words leading-[1.45] text-slate-600', isDesktopModal ? 'text-[11px]' : 'text-sm')}>{description}</p>
                   </div>
                 )}
                 {/* Project comments */}
                 {detailBase?.project_id && (
-                  <div style={{ display:'grid', gap: isDesktopModal ? 6 : 8, padding: isDesktopModal ? '10px 12px' : '14px', borderRadius: isDesktopModal ? 12 : 16, border:'1px solid #e2e8f0', background:'#ffffff' }}>
-                    <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-                      <strong style={{ fontSize: isDesktopModal ? 12 : 14, color:'#0f172a' }}>Kommentarer</strong>
-                      <div style={{ height:1, background:'#e5e7eb', flex:1 }} />
+                  <div className={cn(modalSectionClass, 'min-w-0')}>
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
+                      <strong className={cn('text-slate-900', isDesktopModal ? 'text-xs' : 'text-sm')}>Kommentarer</strong>
+                      <span className={cn('rounded-full border border-slate-200 bg-slate-100 font-semibold text-slate-600', isDesktopModal ? 'px-1.5 py-[2px] text-[9px]' : 'px-2 py-[3px] text-[11px]')}>
+                        {commentsLoading && comments.length === 0 ? 'Laddar…' : comments.length > 0 ? `${comments.length} st` : 'Inga'}
+                      </span>
+                      <div className="h-px flex-1 bg-slate-200" />
+                      <button
+                        type="button"
+                        onClick={() => setCommentsExpanded(v => !v)}
+                        disabled={!commentsLoading && !commentsError && comments.length === 0}
+                        className={cn(
+                          'rounded-full border font-semibold transition',
+                          !commentsLoading && !commentsError && comments.length === 0
+                            ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400'
+                            : 'border-slate-300 bg-white text-slate-700 hover:border-slate-400 hover:bg-slate-100',
+                          isDesktopModal ? 'px-[7px] py-[3px] text-[9px]' : 'px-2.5 py-[5px] text-[11px]'
+                        )}
+                      >{commentsExpanded ? 'Dölj' : 'Visa'}</button>
                       <button
                         type="button"
                         onClick={() => refreshComments(true)}
-                        className="btn--plain btn--xs"
-                        style={{ fontSize: isDesktopModal ? 9 : 11, padding: isDesktopModal ? '3px 7px' : '5px 10px', border:'1px solid #cbd5e1', background:'#f1f5f9', color:'#0f172a', borderRadius:999 }}
+                        className={cn('rounded-full border border-slate-300 bg-slate-100 text-slate-900', isDesktopModal ? 'px-[7px] py-[3px] text-[9px]' : 'px-2.5 py-[5px] text-[11px]')}
                       >Uppdatera</button>
                     </div>
-                    {commentsLoading && comments.length === 0 && <div style={{ fontSize:12, color:'#64748b' }}>Hämtar kommentarer…</div>}
-                    {commentsError && <div style={{ fontSize:12, color:'#b91c1c' }}>Fel: {commentsError}</div>}
-                    {!commentsLoading && !commentsError && comments.length === 0 && <div style={{ fontSize:12, color:'#64748b' }}>Inga kommentarer.</div>}
-                    {!commentsLoading && !commentsError && comments.length > 0 && (
-                      <div style={{ display:'grid', gap:6 }}>
+                    {!commentsExpanded && !commentsLoading && !commentsError && comments.length > 0 && (
+                      <div className="text-xs text-slate-500">{comments.length === 1 ? '1 kommentar finns för projektet.' : `${comments.length} kommentarer finns för projektet.`}</div>
+                    )}
+                    {commentsExpanded && commentsLoading && comments.length === 0 && <div className="text-xs text-slate-500">Hämtar kommentarer…</div>}
+                    {commentsExpanded && commentsError && <div className="text-xs text-red-700">Fel: {commentsError}</div>}
+                    {!commentsExpanded && commentsError && <div className="text-xs text-red-700">Kommentarerna kunde inte hämtas.</div>}
+                    {commentsExpanded && !commentsLoading && !commentsError && comments.length === 0 && <div className="text-xs text-slate-500">Inga kommentarer.</div>}
+                    {commentsExpanded && !commentsLoading && !commentsError && comments.length > 0 && (
+                      <div className="grid min-w-0 gap-1.5">
                         {comments.slice(0,10).map(c => (
-                          <div key={c.id} style={{ display:'grid', gap:4, border:'1px solid #e2e8f0', background:'#fbfdff', borderRadius: isDesktopModal ? 10 : 12, padding: isDesktopModal ? '7px 9px' : '10px 12px' }}>
-                            <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
-                              {c.userName && <span style={{ fontSize:11, color:'#475569', fontWeight:700 }}>{c.userName}</span>}
-                              {c.createdAt && <span style={{ fontSize:10, color:'#64748b' }}>{formatRelativeTime(c.createdAt)}</span>}
+                          <div key={c.id} className={cn('grid min-w-0 gap-1 rounded-[12px] border border-slate-200 bg-[#fbfdff]', isDesktopModal ? 'px-[9px] py-[7px]' : 'px-3 py-2.5')}>
+                            <div className="flex min-w-0 flex-wrap items-center gap-2">
+                              {c.userName && <span className="text-[11px] font-bold text-slate-600">{c.userName}</span>}
+                              {c.createdAt && <span className="text-[10px] text-slate-500">{formatRelativeTime(c.createdAt)}</span>}
                             </div>
-                            <div style={{ fontSize: isDesktopModal ? 11 : 13, lineHeight:1.4, color:'#334155', whiteSpace:'pre-wrap' }}>{c.text}</div>
+                            <div className={cn('min-w-0 whitespace-pre-wrap break-all leading-[1.4] text-slate-700', isDesktopModal ? 'text-[11px]' : 'text-[13px]')}>{c.text}</div>
                           </div>
                         ))}
-                        {comments.length > 10 && <div style={{ fontSize:11, color:'#64748b' }}>Visar 10 av {comments.length} kommentarer.</div>}
+                        {comments.length > 10 && <div className="text-[11px] text-slate-500">Visar 10 av {comments.length} kommentarer.</div>}
                       </div>
                     )}
                   </div>
                 )}
                 {/* Rapportering UI for installers */}
-                <div style={{ display:'grid', gap: isDesktopModal ? 8 : 10, background:'linear-gradient(180deg, #f8fafc 0%, #ffffff 100%)', border:'1px solid #dbe4ef', borderRadius: isDesktopModal ? 12 : 16, padding: isDesktopModal ? 10 : 14 }}>
-                  <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-                    <strong style={{ fontSize: isDesktopModal ? 12 : 14, color:'#0f172a' }}>Rapportering</strong>
-                    <div style={{ height:1, background:'#e5e7eb', flex:1 }} />
-                    {segId && <span style={{ fontSize:11, color:'#64748b', fontWeight:600 }}>Totalt: {reportedTotal} säckar</span>}
+                <div className={cn('grid border border-[#dbe4ef] bg-[linear-gradient(180deg,#f8fafc_0%,#ffffff_100%)]', isDesktopModal ? 'gap-2 rounded-xl p-2.5' : 'gap-2.5 rounded-2xl p-[14px]')}>
+                  <div className="flex items-center gap-2">
+                    <strong className={cn('text-slate-900', isDesktopModal ? 'text-xs' : 'text-sm')}>Rapportering</strong>
+                    <div className="h-px flex-1 bg-slate-200" />
+                    {segId && <span className="text-[11px] font-semibold text-slate-500">Totalt: {reportedTotal} säckar</span>}
                   </div>
-                  {!detailBase?.project_id && <div style={{ fontSize:12, color:'#64748b' }}>Denna post saknar projekt-id och kan inte rapporteras här.</div>}
+                  {!detailBase?.project_id && <div className="text-xs text-slate-500">Denna post saknar projekt-id och kan inte rapporteras här.</div>}
                   {detailBase?.project_id && (
                     <>
-                      {!segId && <div style={{ fontSize:12, color:'#64748b' }}>Denna post saknar segment-id (kan inte rapportera säckar), men du kan skicka en kommentar.</div>}
-                      <div style={{ display:'grid', gap:10 }}>
-                        <div style={{ display:'grid', gridTemplateColumns: compact ? '1fr' : 'repeat(2, minmax(0, 1fr))', gap: isDesktopModal ? 8 : 10 }}>
-                        <label style={{ display:'grid', gap:5, fontSize:12, minWidth:0 }}>
+                      {!segId && <div className="text-xs text-slate-500">Denna post saknar segment-id (kan inte rapportera säckar), men du kan skicka en kommentar.</div>}
+                      <div className="grid gap-2.5">
+                        <div className={cn('grid', compact ? 'grid-cols-1' : 'grid-cols-2', isDesktopModal ? 'gap-2' : 'gap-2.5')}>
+                        <label className={modalFieldLabelClass}>
                           <span>Dag</span>
-                          <input type="date" value={reportDraft.day} onChange={e => setReportDraft(d => ({ ...d, day: e.target.value }))} style={{ width:'100%', boxSizing:'border-box', minWidth:0, padding: isDesktopModal ? '7px 9px' : '10px 12px', border:'1px solid #cbd5e1', borderRadius: isDesktopModal ? 10 : 12, background:'#fff', fontSize: isDesktopModal ? 11 : undefined }} />
+                          <Input type="date" value={reportDraft.day} onChange={e => setReportDraft(d => ({ ...d, day: e.target.value }))} className={cn(isDesktopModal ? 'min-h-0 rounded-[10px] px-[9px] py-[7px] text-[11px]' : 'rounded-xl px-3 py-2.5 text-sm')} />
                         </label>
                         {segId && (
-                          <label style={{ display:'grid', gap:5, fontSize:12, minWidth:0 }}>
+                          <label className={modalFieldLabelClass}>
                             <span>Antal säckar</span>
-                            <input type="number" min={1} value={reportDraft.amount} onChange={e => setReportDraft(d => ({ ...d, amount: e.target.value }))} placeholder="t.ex. 8" style={{ width:'100%', boxSizing:'border-box', minWidth:0, padding: isDesktopModal ? '7px 9px' : '10px 12px', border:'1px solid #cbd5e1', borderRadius: isDesktopModal ? 10 : 12, background:'#fff', fontSize: isDesktopModal ? 11 : undefined }} />
+                            <Input type="number" min={1} value={reportDraft.amount} onChange={e => setReportDraft(d => ({ ...d, amount: e.target.value }))} placeholder="t.ex. 8" className={cn(isDesktopModal ? 'min-h-0 rounded-[10px] px-[9px] py-[7px] text-[11px]' : 'rounded-xl px-3 py-2.5 text-sm')} />
                           </label>
                         )}
                         </div>
-                        <div style={{ display:'grid', gridTemplateColumns: compact ? '1fr' : 'minmax(0,1fr) auto', gap:10, alignItems:'end' }}>
-                        <label style={{ display:'grid', gap:5, fontSize:12, minWidth:0 }}>
+                        <div className={cn('grid items-end', compact ? 'grid-cols-1' : '[grid-template-columns:minmax(0,1fr)_auto]', 'gap-2.5')}>
+                        <label className={modalFieldLabelClass}>
                           <span>Kommentar</span>
-                          <textarea value={commentDraft} onChange={e => setCommentDraft(e.target.value)} placeholder="t.ex. 25 kvm klart / kunde inte utföra p.g.a. ..." rows={isDesktopModal ? 2 : 3} style={{ width:'100%', boxSizing:'border-box', minWidth:0, padding: isDesktopModal ? '7px 9px' : '10px 12px', border:'1px solid #cbd5e1', borderRadius: isDesktopModal ? 10 : 12, resize:'vertical', background:'#fff', fontSize: isDesktopModal ? 11 : undefined }} />
+                          <Textarea value={commentDraft} onChange={e => setCommentDraft(e.target.value)} placeholder="t.ex. 25 kvm klart / kunde inte utföra p.g.a. ..." rows={isDesktopModal ? 2 : 3} className={cn('min-h-0', isDesktopModal ? 'rounded-[10px] px-[9px] py-[7px] text-[11px]' : 'rounded-xl px-3 py-2.5 text-sm')} />
                         </label>
-                        <button type="button" onClick={addPartialReport} disabled={reportSending} className="btn--plain btn--sm" style={{ alignSelf:'stretch', minHeight: compact ? 42 : 36, padding: isDesktopModal ? '8px 14px' : '10px 16px', border:'1px solid #16a34a', background: reportSending ? '#86efac' : '#16a34a', color:'#fff', borderRadius: isDesktopModal ? 10 : 12, fontWeight:700, boxShadow: isDesktopModal ? '0 6px 12px rgba(22,163,74,0.12)' : '0 10px 18px rgba(22,163,74,0.16)', width: compact ? '100%' : undefined, fontSize: isDesktopModal ? 11 : undefined }}>
+                        <button type="button" onClick={addPartialReport} disabled={reportSending} className={cn('self-stretch border border-green-600 font-bold text-white', reportSending ? 'bg-green-300' : 'bg-green-600', compact ? 'w-full min-h-[42px]' : '', isDesktopModal ? 'rounded-[10px] px-[14px] py-2 text-[11px] shadow-[0_6px_12px_rgba(22,163,74,0.12)]' : 'rounded-xl px-4 py-2.5 text-sm shadow-[0_10px_18px_rgba(22,163,74,0.16)]')}>
                           {reportSending ? 'Skickar…' : 'Skicka'}
                         </button>
                         </div>
                       </div>
-                      {reportError && <div style={{ fontSize:12, color:'#b91c1c', background:'#fef2f2', border:'1px solid #fecaca', padding:'6px 8px', borderRadius:8 }}>{reportError}</div>}
+                      {reportError && <div className="rounded-lg border border-red-200 bg-red-50 px-2 py-1.5 text-xs text-red-700">{reportError}</div>}
                       {segId && segReports.length > 0 ? (
-                        <div style={{ display:'grid', gap:6 }}>
+                        <div className="grid gap-1.5">
                           {segReports.map(r => (
-                            <div key={r.id} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:8, flexWrap:'wrap', border:'1px solid #e5e7eb', background:'#fff', borderRadius:12, padding:'10px 12px' }}>
-                              <div style={{ display:'flex', gap:10, alignItems:'center' }}>
-                                <span style={{ fontSize:12, color:'#0f172a' }}>{r.report_day}</span>
-                                <span style={{ fontSize:12, color:'#334155', background:'#f1f5f9', border:'1px solid #e2e8f0', borderRadius:999, padding:'4px 10px' }}>{r.amount} säckar</span>
-                                {r.created_by_name && <span style={{ fontSize:11, color:'#64748b' }}>av {r.created_by_name}</span>}
+                            <div key={r.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5">
+                              <div className="flex flex-wrap items-center gap-2.5">
+                                <span className="text-xs text-slate-900">{r.report_day}</span>
+                                <span className="rounded-full border border-slate-200 bg-slate-100 px-2.5 py-1 text-xs text-slate-700">{r.amount} säckar</span>
+                                {r.created_by_name && <span className="text-[11px] text-slate-500">av {r.created_by_name}</span>}
                               </div>
-                              <button type="button" className="btn--plain btn--xs" onClick={() => deletePartialReport(r.id)} style={{ fontSize:11, padding:'6px 10px', border:'1px solid #fecaca', background:'#fee2e2', color:'#b91c1c', borderRadius:10 }}>Ta bort</button>
+                              <button type="button" onClick={() => deletePartialReport(r.id)} className="rounded-[10px] border border-red-200 bg-red-100 px-2.5 py-1.5 text-[11px] text-red-700">Ta bort</button>
                             </div>
                           ))}
                         </div>
                       ) : segId ? (
-                        <div style={{ fontSize:12, color:'#64748b' }}>Inga delrapporter ännu.</div>
+                        <div className="text-xs text-slate-500">Inga delrapporter ännu.</div>
                       ) : null}
                     </>
                   )}

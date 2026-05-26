@@ -1,102 +1,107 @@
 "use client";
 import Link from 'next/link';
-import React from 'react';
+import type { ReactNode } from 'react';
+import Badge from '../ui/Badge';
+import { cn } from '@/lib/shared/cn';
 
 export type QuickLink = {
   href: string;
   title: string;
   desc: string;
-  icon: React.ReactNode;
+  icon: ReactNode;
   disabled?: boolean;
   disabledNote?: string; // optional small badge text e.g. 'Kommer snart'
 };
 
-const baseTile: React.CSSProperties = {
-  position: 'relative',
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 8,
-  padding: '18px 18px 20px',
-  border: '1px solid #e5e7eb',
-  borderRadius: 16,
-  background: 'linear-gradient(145deg,#ffffff,#f8fafc)',
-  textDecoration: 'none',
-  color: '#111827',
-  boxShadow: '0 10px 24px rgba(15,23,42,0.05)',
-  transition: 'border-color .15s, box-shadow .15s, transform .15s',
-  outline: 'none',
-};
+function DisabledBadge({ note }: { note?: string }) {
+  return (
+    <Badge
+      className="border-slate-200 bg-slate-100 px-1.5 py-0.5 text-[9px] font-semibold text-slate-600"
+      variant="neutral"
+    >
+      {note || 'Kommer snart'}
+    </Badge>
+  );
+}
+
+function QuickLinkInner({
+  link,
+  className,
+  iconClassName,
+  titleClassName,
+  descClassName,
+  showDescription,
+}: {
+  link: QuickLink;
+  className: string;
+  iconClassName: string;
+  titleClassName: string;
+  descClassName?: string;
+  showDescription?: boolean;
+}) {
+  return (
+    <div className={className} aria-disabled={link.disabled || undefined}>
+      <span className={iconClassName}>{link.icon}</span>
+      <div className={titleClassName}>{link.title}</div>
+      {showDescription ? <div className={descClassName}>{link.desc}</div> : null}
+      {link.disabled ? <DisabledBadge note={link.disabledNote} /> : null}
+    </div>
+  );
+}
 
 export function QuickLinksGrid({ links, compact, extraCompact }: { links: QuickLink[]; compact?: boolean; extraCompact?: boolean }) {
   return (
     <div
-      style={{
-        display: 'grid',
-        gap: 12,
-        gridTemplateColumns: extraCompact
-          ? 'repeat(auto-fill,minmax(110px,1fr))'
+      className={cn(
+        'grid items-start gap-3',
+        extraCompact
+          ? '[grid-template-columns:repeat(auto-fill,minmax(110px,1fr))]'
           : compact
-            ? 'repeat(auto-fill,minmax(130px,1fr))'
-            : 'repeat(auto-fill,minmax(160px,1fr))',
-        alignItems: 'start'
-      }}
+            ? '[grid-template-columns:repeat(auto-fill,minmax(130px,1fr))]'
+            : '[grid-template-columns:repeat(auto-fill,minmax(160px,1fr))]'
+      )}
     >
       {links.map(link => {
         const isDesktopy = !compact && !extraCompact;
         const content = (
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'flex-start',
-              gap: 6,
-              padding: extraCompact ? 10 : compact ? 12 : 10,
-              background: isDesktopy ? 'transparent' : 'transparent',
-              border: 'none',
-              outline: 'none',
-              cursor: link.disabled ? 'not-allowed' : 'pointer',
-              opacity: link.disabled ? 0.6 : 1,
-              textDecoration: 'none',
-            }}
-            aria-disabled={link.disabled || undefined}
-          >
-            <span style={{ display:'inline-flex', width: extraCompact ? 32 : compact ? 36 : 36, height: extraCompact ? 32 : compact ? 36 : 36, alignItems:'center', justifyContent:'center', color: isDesktopy ? '#2563eb' : '#4f46e5', background: isDesktopy ? '#eff6ff' : '#eef2ff', borderRadius: 12 }}>
-              {link.icon}
-            </span>
-            <div style={{ fontSize: extraCompact ? 12 : compact ? 13 : 14, fontWeight: 700, letterSpacing: -0.2, textAlign: 'center', color:'#111827', lineHeight: 1.25 }}>
-              {link.title}
-            </div>
-            {isDesktopy && (
-              <div style={{ fontSize: 12, lineHeight: 1.4, textAlign: 'center', color:'#64748b' }}>{link.desc}</div>
+          <QuickLinkInner
+            link={link}
+            className={cn(
+              'flex flex-col items-center justify-start gap-1.5 border-none text-center outline-none',
+              extraCompact ? 'p-2.5' : compact ? 'p-3' : 'p-2.5',
+              link.disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
             )}
-            {link.disabled && (
-              <span style={{ fontSize:9, fontWeight:600, background:'#f1f5f9', color:'#475569', padding:'2px 5px', borderRadius:999, border:'1px solid #e2e8f0' }}>{link.disabledNote || 'Kommer snart'}</span>
+            iconClassName={cn(
+              'inline-flex items-center justify-center rounded-xl',
+              extraCompact ? 'h-8 w-8' : 'h-9 w-9',
+              isDesktopy ? 'bg-blue-50 text-blue-600' : 'bg-indigo-50 text-indigo-600'
             )}
-          </div>
+            titleClassName={cn(
+              'text-center font-bold leading-tight tracking-[-0.2px] text-slate-900',
+              extraCompact ? 'text-xs' : compact ? 'text-[13px]' : 'text-sm'
+            )}
+            descClassName="text-center text-xs leading-5 text-slate-500"
+            showDescription={isDesktopy}
+          />
         );
 
         // For desktop-sized tiles, wrap with a bordered card to bring back visual affordance
         if (isDesktopy) {
-          const tile: React.CSSProperties = {
-            ...baseTile,
-            padding: '16px 16px 18px',
-            borderRadius: 16,
-            cursor: link.disabled ? 'not-allowed' : 'pointer',
-            opacity: link.disabled ? 0.7 : 1,
-          };
           const wrapper = (
             <div
-              style={tile}
-              onMouseEnter={e=>{ if(link.disabled) return; e.currentTarget.style.borderColor = '#6366f1'; e.currentTarget.style.boxShadow='0 8px 18px rgba(99,102,241,0.18)'; }}
-              onMouseLeave={e=>{ e.currentTarget.style.borderColor = '#e5e7eb'; e.currentTarget.style.boxShadow='0 4px 10px rgba(0,0,0,0.03)'; }}
+              className={cn(
+                'relative flex flex-col gap-2 rounded-2xl border border-slate-200 bg-[linear-gradient(145deg,#ffffff,#f8fafc)] px-4 pb-[18px] pt-4 text-slate-900 shadow-[0_10px_24px_rgba(15,23,42,0.05)] outline-none transition-[border-color,box-shadow,transform]',
+                link.disabled
+                  ? 'cursor-not-allowed opacity-70'
+                  : 'cursor-pointer hover:border-indigo-500 hover:shadow-[0_8px_18px_rgba(99,102,241,0.18)]'
+              )}
             >
               {content}
             </div>
           );
           if (link.disabled) return <div key={link.href}>{wrapper}</div>;
           return (
-            <Link key={link.href} href={link.href} style={{ textDecoration:'none' }}>
+            <Link key={link.href} href={link.href} className="no-underline">
               {wrapper}
             </Link>
           );
@@ -105,7 +110,7 @@ export function QuickLinksGrid({ links, compact, extraCompact }: { links: QuickL
         // Compact/extra-compact: keep minimal, no outer card
         if (link.disabled) return <div key={link.href}>{content}</div>;
         return (
-          <Link key={link.href} href={link.href} style={{ textDecoration:'none' }}>
+          <Link key={link.href} href={link.href} className="no-underline">
             {content}
           </Link>
         );
@@ -121,53 +126,30 @@ export function QuickLinksStrip({ links, compact, extraCompact }: { links: Quick
     <div
       role="navigation"
       aria-label="Snabba genvägar"
-      style={{
-        display: 'flex',
-        gap: 10,
-        overflowX: 'auto',
-        WebkitOverflowScrolling: 'touch',
-        paddingBottom: 4,
-        scrollSnapType: 'x proximity',
-        scrollbarWidth: 'thin',
-      }}
+      className="flex gap-2.5 overflow-x-auto pb-1 [scroll-snap-type:x_proximity] [scrollbar-width:thin] [-webkit-overflow-scrolling:touch]"
     >
       {links.map(link => {
         const inner = (
-          <div
-            style={{
-              minWidth: tileMin,
-              flex: '0 0 auto',
-              scrollSnapAlign: 'start',
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              gap: 5,
-              padding: extraCompact ? '10px 8px' : '12px 10px',
-              background: 'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)',
-              border: '1px solid #e2e8f0',
-              borderRadius: 16,
-              outline: 'none',
-              cursor: link.disabled ? 'not-allowed' : 'pointer',
-              opacity: link.disabled ? 0.55 : 1,
-              textDecoration: 'none',
-              boxShadow: '0 8px 18px rgba(15,23,42,0.04)',
-            }}
-            aria-disabled={link.disabled || undefined}
-          >
-            <span style={{ display:'inline-flex', width: extraCompact ? 28 : 32, height: extraCompact ? 28 : 32, alignItems:'center', justifyContent:'center', color:'#4f46e5', background:'#eef2ff', borderRadius:12 }}>
-              {link.icon}
-            </span>
-            <div style={{ fontSize: extraCompact ? 11.5 : 12.5, fontWeight: 700, letterSpacing: -0.2, textAlign: 'center', color:'#111827', maxWidth: tileMin, lineHeight: 1.2 }}>
-              {link.title}
-            </div>
-            {link.disabled && (
-              <span style={{ fontSize:9, fontWeight:600, background:'#f1f5f9', color:'#475569', padding:'2px 5px', borderRadius:999, border:'1px solid #e2e8f0' }}>{link.disabledNote || 'Kommer snart'}</span>
+          <QuickLinkInner
+            link={link}
+            className={cn(
+              'flex shrink-0 snap-start flex-col items-center gap-1.5 rounded-2xl border border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#f8fbff_100%)] px-[10px] py-3 shadow-[0_8px_18px_rgba(15,23,42,0.04)] outline-none',
+              extraCompact ? 'px-2 py-2.5' : 'px-[10px] py-3',
+              link.disabled ? 'cursor-not-allowed opacity-55' : 'cursor-pointer'
             )}
-          </div>
+            iconClassName={cn(
+              'inline-flex items-center justify-center rounded-xl bg-indigo-50 text-indigo-600',
+              extraCompact ? 'h-7 w-7' : 'h-8 w-8'
+            )}
+            titleClassName={cn(
+              'text-center font-bold leading-tight tracking-[-0.2px] text-slate-900',
+              extraCompact ? 'text-[11.5px]' : 'text-[12.5px]'
+            )}
+          />
         );
         if (link.disabled) return <div key={link.href}>{inner}</div>;
         return (
-          <Link key={link.href} href={link.href} style={{ textDecoration:'none' }}>
+          <Link key={link.href} href={link.href} className="no-underline" style={{ minWidth: tileMin }}>
             {inner}
           </Link>
         );
@@ -179,41 +161,29 @@ export function QuickLinksStrip({ links, compact, extraCompact }: { links: Quick
 // Icon-only vertical bar (used when dashboard quick links minimized)
 export function QuickLinksIconBar({ links, activeHref }: { links: QuickLink[]; activeHref?: string }) {
   return (
-    <nav aria-label="Snabba genvägar" style={{ display:'flex', flexDirection:'column', gap:8 }}>
+    <nav aria-label="Snabba genvägar" className="flex flex-col gap-2">
       {links.map(l => {
         const disabled = !!l.disabled;
-        const base: React.CSSProperties = {
-          width:56,
-          height:56,
-          border:'1px solid #e5e7eb',
-          borderRadius:14,
-          background: activeHref === l.href ? 'linear-gradient(135deg,#eef2ff,#e0e7ff)' : '#fff',
-          color:'#4f46e5',
-          display:'flex',
-          alignItems:'center',
-          justifyContent:'center',
-          position:'relative',
-          cursor: disabled ? 'not-allowed' : 'pointer',
-          opacity: disabled ? .55 : 1,
-          textDecoration:'none',
-          transition:'border-color .15s, box-shadow .15s, background .15s'
-        };
         const inner = (
           <div
-            style={base}
-            onMouseEnter={e=>{ if(disabled) return; e.currentTarget.style.borderColor = '#6366f1'; e.currentTarget.style.boxShadow='0 4px 10px rgba(99,102,241,0.25)'; }}
-            onMouseLeave={e=>{ e.currentTarget.style.borderColor = '#e5e7eb'; e.currentTarget.style.boxShadow='none'; }}
+            className={cn(
+              'relative flex h-14 w-14 items-center justify-center rounded-[14px] border border-slate-200 text-indigo-600 no-underline transition-[border-color,box-shadow,background]',
+              activeHref === l.href ? 'bg-[linear-gradient(135deg,#eef2ff,#e0e7ff)]' : 'bg-white',
+              disabled
+                ? 'cursor-not-allowed opacity-55'
+                : 'cursor-pointer hover:border-indigo-500 hover:shadow-[0_4px_10px_rgba(99,102,241,0.25)]'
+            )}
             aria-disabled={disabled || undefined}
             title={l.title + (disabled && l.disabledNote ? ` – ${l.disabledNote}` : '')}
           >
-            <span style={{ display:'inline-flex', width:30, height:30, alignItems:'center', justifyContent:'center' }}>{l.icon}</span>
+            <span className="inline-flex h-[30px] w-[30px] items-center justify-center">{l.icon}</span>
             {disabled && (
-              <span style={{ position:'absolute', bottom:4, right:4, fontSize:9, fontWeight:600, background:'#f1f5f9', padding:'2px 4px', borderRadius:6, border:'1px solid #e2e8f0', color:'#475569' }}>✕</span>
+              <span className="absolute bottom-1 right-1 rounded-md border border-slate-200 bg-slate-100 px-1 py-0.5 text-[9px] font-semibold text-slate-600">✕</span>
             )}
           </div>
         );
         if (disabled) return <div key={l.href}>{inner}</div>;
-        return <Link key={l.href} href={l.href} style={{ textDecoration:'none' }}>{inner}</Link>;
+        return <Link key={l.href} href={l.href} className="no-underline">{inner}</Link>;
       })}
     </nav>
   );
@@ -221,48 +191,31 @@ export function QuickLinksIconBar({ links, activeHref }: { links: QuickLink[]; a
 
 export function QuickLinksSidebar({ links }: { links: QuickLink[] }) {
   return (
-    <nav aria-label="Snabba genvägar" style={{ display:'grid', gap:8 }}>
+    <nav aria-label="Snabba genvägar" className="grid gap-2">
       {links.map(link => {
         const content = (
           <div
-            style={{
-              display:'grid',
-              gridTemplateColumns:'40px minmax(0, 1fr)',
-              gap:12,
-              alignItems:'center',
-              padding:'12px 12px 12px 10px',
-              border:'1px solid #e5e7eb',
-              borderRadius:14,
-              background:'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)',
-              color:'#0f172a',
-              cursor: link.disabled ? 'not-allowed' : 'pointer',
-              opacity: link.disabled ? 0.6 : 1,
-              boxShadow:'0 8px 20px rgba(15,23,42,0.04)',
-              textDecoration:'none',
-            }}
+            className={cn(
+              'grid items-center gap-3 rounded-[16px] border border-slate-300/80 bg-[linear-gradient(180deg,#ffffff_0%,#f9fbff_100%)] px-3.5 pb-3.5 pt-3.5 shadow-[0_10px_24px_rgba(15,23,42,0.08)] transition-[transform,border-color,box-shadow,background-color] [grid-template-columns:44px_minmax(0,1fr)]',
+              link.disabled
+                ? 'cursor-not-allowed opacity-60'
+                : 'cursor-pointer hover:-translate-y-0.5 hover:border-indigo-300 hover:bg-[linear-gradient(180deg,#ffffff_0%,#f4f7ff_100%)] hover:shadow-[0_16px_32px_rgba(99,102,241,0.14)]'
+            )}
             aria-disabled={link.disabled || undefined}
           >
-            <span style={{ display:'inline-flex', width:40, height:40, alignItems:'center', justifyContent:'center', borderRadius:12, background:'#eef2ff', color:'#4f46e5' }}>
+            <span className="inline-flex h-11 w-11 items-center justify-center rounded-[14px] border border-indigo-100 bg-[linear-gradient(180deg,#eef2ff_0%,#e6ecff_100%)] text-indigo-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]">
               {link.icon}
             </span>
-            <span style={{ display:'grid', gap:3, minWidth:0 }}>
-              <span style={{ fontSize:13.5, fontWeight:700, letterSpacing:-0.2, lineHeight:1.2 }}>{link.title}</span>
-              <span style={{ fontSize:11.5, color:'#64748b', lineHeight:1.35 }}>{link.desc}</span>
-              {link.disabled && (
-                <span style={{ display:'inline-flex', width:'fit-content', marginTop:2, fontSize:9, fontWeight:700, background:'#f1f5f9', color:'#475569', padding:'2px 6px', borderRadius:999, border:'1px solid #e2e8f0' }}>
-                  {link.disabledNote || 'Kommer snart'}
-                </span>
-              )}
+            <span className="grid min-w-0 gap-[3px]">
+              <span className="text-[13.5px] font-bold leading-tight tracking-[-0.24px] text-slate-900">{link.title}</span>
+              <span className="text-[11.5px] leading-[1.35] text-slate-600">{link.desc}</span>
+              {link.disabled ? <DisabledBadge note={link.disabledNote} /> : null}
             </span>
           </div>
         );
 
         if (link.disabled) return <div key={link.href}>{content}</div>;
-        return (
-          <Link key={link.href} href={link.href} style={{ textDecoration:'none' }}>
-            {content}
-          </Link>
-        );
+        return <Link key={link.href} href={link.href} className="no-underline">{content}</Link>;
       })}
     </nav>
   );

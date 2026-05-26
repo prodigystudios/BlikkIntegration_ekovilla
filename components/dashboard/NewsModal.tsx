@@ -1,6 +1,7 @@
 "use client";
 
 import React from 'react';
+import Button from '../ui/Button';
 
 export type NewsItem = {
   id: string;
@@ -21,39 +22,42 @@ export default function NewsModal({ open, item, onClose }: { open: boolean; item
       aria-modal="true"
       aria-label="Nyheter"
       onClick={onClose}
-      style={{ position: 'fixed', inset: 0, zIndex: 2600, background: 'rgba(15,23,42,0.55)', backdropFilter: 'blur(2px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+      className="fixed inset-0 z-[2600] flex items-center justify-center bg-slate-900/55 p-4 [backdrop-filter:blur(2px)]"
     >
       <div
         onClick={e => e.stopPropagation()}
-        style={{ width: 'min(720px, 94vw)', background: '#fff', border: '1px solid #e5e7eb', borderRadius: 14, overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.35)' }}
+        className="w-full max-w-[720px] overflow-hidden rounded-[14px] border border-slate-200 bg-white shadow-[0_20px_60px_rgba(0,0,0,0.35)]"
+        style={{ width: 'min(720px, 94vw)' }}
       >
         {img && (
-          <div style={{ width: '100%', maxHeight: 260, overflow: 'hidden', background: '#f8fafc' }}>
+          <div className="w-full overflow-hidden bg-slate-50" style={{ maxHeight: 260 }}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={img}
               alt=""
-              style={{ width: '100%', height: '100%', maxHeight: 260, objectFit: 'cover', display: 'block' }}
+              className="block h-full w-full object-cover"
+              style={{ maxHeight: 260 }}
             />
           </div>
         )}
 
-        <div style={{ padding: 16, display: 'grid', gap: 10 }}>
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 18, fontWeight: 800, color: '#111827', lineHeight: 1.2 }}>{item.headline}</div>
+        <div className="grid gap-2.5 p-4">
+          <div className="flex items-start gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="text-lg font-extrabold leading-[1.2] text-slate-900">{item.headline}</div>
             </div>
-            <button
+            <Button
               type="button"
               onClick={onClose}
-              className="btn btn--plain"
-              style={{ padding: '6px 10px', borderRadius: 10 }}
+              variant="secondary"
+              size="sm"
+              className="rounded-[10px] px-2.5"
             >
               Stäng
-            </button>
+            </Button>
           </div>
 
-          <div style={{ fontSize: 14, color: '#374151', lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>
+          <div className="whitespace-pre-wrap text-sm leading-[1.5] text-slate-700">
             {item.body}
           </div>
         </div>

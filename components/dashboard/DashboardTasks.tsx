@@ -1,6 +1,10 @@
 "use client";
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
+import { cn } from '@/lib/shared/cn';
+import Button from '../ui/Button';
+import Badge from '../ui/Badge';
+import SectionCard from '../ui/SectionCard';
 
 type Task = {
   id: string;
@@ -108,40 +112,54 @@ export default function DashboardTasks({ compact, hideWhenEmpty, onVisibilityCha
     return null;
   }
 
+  const liveTextClass =
+    live === 'on'
+      ? 'text-emerald-700'
+      : live === 'connecting'
+        ? 'text-amber-600'
+        : 'text-slate-500';
+
+  const liveDotClass =
+    live === 'on'
+      ? 'bg-emerald-500'
+      : live === 'connecting'
+        ? 'bg-amber-500'
+        : 'bg-slate-400';
+
   return (
-    <div style={{ display:'flex', flexDirection:'column', gap: compact?12:16 }}>
-      <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', gap:12, flexWrap:'wrap' }}>
-        <div style={{ display:'grid', gap:4 }}>
-          <h2 style={{ margin:0, fontSize: compact?16:20, display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
+    <div className={cn('flex flex-col', compact ? 'gap-3' : 'gap-4')}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="grid gap-1">
+          <h2 className={cn('m-0 flex flex-wrap items-center gap-2 font-bold text-slate-900', compact ? 'text-base' : 'text-xl')}>
             Uppgifter
-            <span style={{ display:'inline-flex', alignItems:'center', gap:4, fontSize:11, fontWeight:500, color: live==='on'? '#059669': live==='connecting'? '#d97706':'#6b7280' }}>
-              <span style={{ width:8, height:8, borderRadius:'50%', background: live==='on'? '#10b981': live==='connecting'? '#f59e0b':'#9ca3af' }} />
+            <span className={cn('inline-flex items-center gap-1 text-[11px] font-medium', liveTextClass)}>
+              <span className={cn('h-2 w-2 rounded-full', liveDotClass)} />
               {live==='on' ? 'Live' : live==='connecting' ? 'Ansluter…' : 'Offline'}
             </span>
           </h2>
-          {(!compact || grouped.open.length > 0) && <p style={{ margin:0, fontSize: compact?12:13, color:'#64748b' }}>Visa det som fortfarande kräver åtgärd först, och dölj resten tills det behövs.</p>}
+          {(!compact || grouped.open.length > 0) && <p className={cn('m-0 text-slate-500', compact ? 'text-xs' : 'text-[13px]')}>Visa det som fortfarande kräver åtgärd först, och dölj resten tills det behövs.</p>}
         </div>
-        <div style={{ display:'inline-flex', alignItems:'center', gap:8, padding:'6px 10px', borderRadius:999, background:'#f8fafc', border:'1px solid #e2e8f0', color:'#334155', fontSize:11.5, fontWeight:700 }}>
+        <Badge className="gap-2 px-2.5 py-1 text-[11.5px] text-slate-700">
           {grouped.open.length} öppna
-        </div>
+        </Badge>
       </div>
-      {loading && <p style={{ margin:0, fontSize:12, color:'#6b7280' }}>Laddar…</p>}
-      {error && <p style={{ margin:0, fontSize:12, color:'#b91c1c' }}>{error}</p>}
+      {loading && <p className="m-0 text-xs text-slate-500">Laddar…</p>}
+      {error && <p className="m-0 text-xs text-red-700">{error}</p>}
       {!loading && grouped.open.length === 0 && grouped.done.length === 0 && (
-        <p style={{ margin:0, fontSize: compact?12:14, color:'#6b7280' }}>Inga uppgifter ännu.</p>
+        <p className={cn('m-0 text-slate-500', compact ? 'text-xs' : 'text-sm')}>Inga uppgifter ännu.</p>
       )}
       {!loading && grouped.open.length === 0 && grouped.done.length > 0 && (
-        <div style={{ display:'inline-flex', alignItems:'center', gap:8, width:'fit-content', padding: compact ? '8px 10px' : '10px 12px', borderRadius:999, background:'#f8fafc', border:'1px solid #e2e8f0', color:'#475569', fontSize: compact ? 12 : 13, fontWeight:600 }}>
+        <div className={cn('inline-flex w-fit items-center gap-2 rounded-full border border-slate-200 bg-slate-50 text-slate-600 font-semibold', compact ? 'px-2.5 py-2 text-xs' : 'px-3 py-2.5 text-[13px]')}>
           Inga öppna uppgifter just nu.
         </div>
       )}
       {grouped.open.length > 0 && (
-        <div style={{ display:'grid', gap:8 }}>
+        <div className="grid gap-2">
           {visibleOpen.map(t => (
             <TaskRow key={t.id} t={t} onToggle={() => markDone(t.id, true)} compact={compact} />
           ))}
           {compact && grouped.open.length > visibleOpen.length && (
-            <div style={{ fontSize:12, color:'#64748b', padding:'2px 2px 0 2px' }}>
+            <div className="px-0.5 pt-0.5 text-xs text-slate-500">
               +{grouped.open.length - visibleOpen.length} fler öppna uppgifter visas i full vy.
             </div>
           )}
@@ -149,8 +167,8 @@ export default function DashboardTasks({ compact, hideWhenEmpty, onVisibilityCha
       )}
       {grouped.done.length > 0 && (
         <details>
-          <summary style={{ cursor:'pointer', color:'#374151', fontSize: compact?12:13 }}>Klara ({grouped.done.length})</summary>
-          <div style={{ display:'grid', gap:8, marginTop:8 }}>
+          <summary className={cn('cursor-pointer text-slate-700', compact ? 'text-xs' : 'text-[13px]')}>Klara ({grouped.done.length})</summary>
+          <div className="mt-2 grid gap-2">
             {grouped.done.map(t => (
               <TaskRow key={t.id} t={t} onToggle={() => markDone(t.id, false)} compact={compact} />
             ))}
@@ -165,25 +183,22 @@ function TaskRow({ t, onToggle, compact }: { t: Task; onToggle: ()=>void; compac
   const due = t.due_date ? new Date(t.due_date+'T00:00:00') : null;
   const dueStr = due ? due.toLocaleDateString('sv-SE') : null;
   return (
-    <div style={{ border:'1px solid #e5e7eb', background:'#f8fafc', borderRadius:10, padding: compact? '8px 10px':'10px 12px', display:'grid', gap:6 }}>
-      <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-        <strong style={{ fontSize: compact?13.5:15 }}>{t.title}</strong>
-        {t.source && <span style={{ marginLeft: 'auto', fontSize:11, color:'#6b7280' }}>{t.source}</span>}
+    <SectionCard className={cn('grid gap-1.5 bg-slate-50 shadow-none', compact ? 'rounded-[10px] px-2.5 py-2' : 'rounded-[10px] px-3 py-2.5')}>
+      <div className="flex items-center gap-2">
+        <strong className={cn('text-slate-900', compact ? 'text-[13.5px]' : 'text-[15px]')}>{t.title}</strong>
+        {t.source && <span className="ml-auto text-[11px] text-slate-500">{t.source}</span>}
       </div>
-      {t.description && <p style={{ margin:0, whiteSpace:'pre-wrap', fontSize: compact?12.5:14, color:'#111827' }}>{t.description}</p>}
-      <div style={{ display:'flex', alignItems:'center', gap:10 }}>
-        {dueStr && <span style={{ fontSize: compact?11:12, color:'#374151' }}>Senast: {dueStr}</span>}
-        <div style={{ marginLeft:'auto' }}>
+      {t.description && <p className={cn('m-0 whitespace-pre-wrap text-slate-900', compact ? 'text-[12.5px]' : 'text-sm')}>{t.description}</p>}
+      <div className="flex items-center gap-2.5">
+        {dueStr && <span className={cn('text-slate-700', compact ? 'text-[11px]' : 'text-xs')}>Senast: {dueStr}</span>}
+        <div className="ml-auto">
           {t.status === 'done' ? (
-            <button onClick={onToggle} style={btnGhost(compact)} title="Markera som öppen">Återöppna</button>
+            <Button onClick={onToggle} variant="secondary" size={compact ? 'sm' : 'md'} title="Markera som öppen" className={cn(compact ? 'min-h-8 rounded-lg px-2.5' : 'rounded-lg')}>Återöppna</Button>
           ) : (
-            <button onClick={onToggle} style={btnPrimary(compact)} title="Markera som klar">Markera klar</button>
+            <Button onClick={onToggle} size={compact ? 'sm' : 'md'} title="Markera som klar" className={cn('border-slate-900 bg-slate-900 text-white hover:bg-slate-950', compact ? 'min-h-8 rounded-lg px-2.5' : 'rounded-lg')}>Markera klar</Button>
           )}
         </div>
       </div>
-    </div>
+    </SectionCard>
   );
 }
-
-const btnPrimary = (compact?: boolean): React.CSSProperties => ({ padding: compact? '6px 10px':'8px 12px', background:'#111827', color:'#fff', borderRadius:8, border:'1px solid #111827', cursor:'pointer', fontSize: compact?12:13 });
-const btnGhost = (compact?: boolean): React.CSSProperties => ({ padding: compact? '5px 9px':'7px 11px', background:'#fff', color:'#111827', borderRadius:8, border:'1px solid #d1d5db', cursor:'pointer', fontSize: compact?12:13 });

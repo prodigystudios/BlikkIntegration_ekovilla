@@ -1,6 +1,10 @@
 "use client";
 import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
+import { cn } from '@/lib/shared/cn';
+import Button from '../ui/Button';
+import Input from '../ui/Input';
+import Textarea from '../ui/Textarea';
 
 export interface TimeReportModalProps {
   open: boolean;
@@ -586,117 +590,230 @@ export default function TimeReportModal({ open, onClose, onSubmit, initialProjec
     setSelectedProjectId(p.project_id);
   }, []);
 
+  const modalFieldLabelClass = cn('grid gap-1 text-slate-700', isSmall ? 'text-[13px]' : 'text-xs');
+  const modalInputClass = cn(isSmall ? 'min-h-11 px-3.5 py-3 text-base' : 'min-h-9 rounded-[10px] px-2.5 py-2 text-sm');
+  const modalSelectClass = cn(
+    'w-full rounded-xl border border-ui-border bg-white text-ui-text-strong transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ui-accent/20',
+    isSmall ? 'min-h-11 px-3.5 py-3 text-base' : 'min-h-9 rounded-[10px] px-2.5 py-2 text-sm',
+  );
+  const modalHelperTextClass = cn(isSmall ? 'text-[11px]' : 'text-[10px]');
+  const modalSectionClass = cn(
+    'grid border border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#fbfdff_100%)] shadow-[0_10px_24px_rgba(15,23,42,0.05)]',
+    isSmall ? 'gap-3 rounded-[18px] p-3.5' : 'gap-3.5 rounded-[20px] p-4'
+  );
+  const modalSectionTitleClass = cn('font-bold text-slate-900', isSmall ? 'text-[13px]' : 'text-[13.5px]');
+  const modalSectionHintClass = cn('leading-[1.45] text-slate-500', isSmall ? 'text-[11px]' : 'text-[11.5px]');
+  const modalSummaryPillClass = cn(
+    'inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white text-slate-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.75)]',
+    isSmall ? 'px-2.5 py-1 text-[11px] font-semibold' : 'px-2.5 py-1 text-[11px] font-semibold'
+  );
+  const reportTypeMeta = reportType === 'project'
+    ? {
+        hint: 'Koppla tiden till ett aktivt projekt eller ordernummer.',
+        pill: 'Projektläge',
+        activeClass: 'bg-green-600 text-white shadow-[0_4px_10px_rgba(22,163,74,0.18)]',
+      }
+    : reportType === 'internal'
+      ? {
+          hint: 'Används för internt arbete som inte ska bokas på kundprojekt.',
+          pill: 'Internt arbete',
+          activeClass: 'bg-blue-600 text-white shadow-[0_4px_10px_rgba(37,99,235,0.18)]',
+        }
+      : {
+          hint: 'Välj frånvarotyp för sjukdom, ledighet eller annan frånvaro.',
+          pill: 'Frånvaro',
+          activeClass: 'bg-amber-500 text-slate-950 shadow-[0_4px_10px_rgba(245,158,11,0.22)]',
+        };
+
   if (!open) return null;
 
   return (
-    <div role="dialog" aria-modal="true" aria-label="Rapportera arbetstid"
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Rapportera arbetstid"
       onClick={onClose}
-      style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.35)', zIndex: 1000, display: 'flex', alignItems: isXS ? 'stretch' : 'center', justifyContent: 'center', padding: isXS ? 0 : 16, touchAction: 'manipulation' }}
+      className={cn(
+        'fixed inset-0 z-[1000] flex justify-center bg-slate-900/35',
+        isXS ? 'items-stretch p-0' : 'items-center p-4'
+      )}
+      style={{ touchAction: 'manipulation' }}
     >
-  <div onClick={e => e.stopPropagation()} style={{ width: isXS ? '100%' : 'min(100%, 700px)', maxHeight: isXS ? '100dvh' : '85vh', height: isXS ? '100dvh' : 'auto', display:'flex', flexDirection:'column', background: '#fff', border: '1px solid #e5e7eb', borderRadius: isXS ? 0 : 14, boxShadow: isXS ? 'none' : '0 20px 40px rgba(0,0,0,0.15)', position:'relative' }}>
-        <div style={{ position:'sticky', top:0, zIndex:5, background:'#fff', display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingLeft: isSmall ? 12 : 14, paddingRight: isSmall ? 12 : 14, paddingTop: isXS ? 'max(10px, env(safe-area-inset-top))' : (isSmall ? 10 : 12), paddingBottom: isSmall ? 10 : 12, borderBottom: '1px solid #e5e7eb' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ width: 16, height: 16, borderRadius: 999, background: '#22c55e', border: '2px solid #bbf7d0' }} />
-            <div style={{ fontSize: 16, fontWeight: 700, color: '#0f172a' }}>Rapportera tid</div>
+      <div
+        onClick={e => e.stopPropagation()}
+        className={cn(
+          'relative flex flex-col border border-slate-200 bg-white',
+          isXS ? 'h-[100dvh] w-full rounded-none shadow-none' : 'w-full max-w-[700px] rounded-[14px] shadow-[0_20px_40px_rgba(0,0,0,0.15)]'
+        )}
+        style={{ maxHeight: isXS ? '100dvh' : '85vh', height: isXS ? '100dvh' : 'auto' }}
+      >
+        <div
+          className={cn(
+            'sticky top-0 z-[5] flex items-center justify-between border-b border-slate-200 bg-white',
+            isSmall ? 'px-3 py-2.5' : 'px-3.5 py-3'
+          )}
+          style={{ paddingTop: isXS ? 'max(10px, env(safe-area-inset-top))' : undefined }}
+        >
+          <div className="flex items-center gap-2">
+            <span className="h-4 w-4 rounded-full border-2 border-green-200 bg-green-500" />
+            <div className="text-base font-bold text-slate-900">Rapportera tid</div>
           </div>
-          {/* Travel report toggle */}
-          <button onClick={submitted === 'saving' ? undefined : onClose} className="btn--plain" aria-label="Stäng" style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: isSmall ? '10px 14px' : '8px 12px', minHeight: 44, background: '#fff', opacity: submitted === 'saving' ? 0.6 : 1 }} disabled={submitted === 'saving'}>Stäng</button>
+          <Button
+            onClick={submitted === 'saving' ? undefined : onClose}
+            aria-label="Stäng"
+            variant="secondary"
+            size={isSmall ? 'md' : 'sm'}
+            disabled={submitted === 'saving'}
+            className={cn(isSmall ? 'min-h-11 px-3.5' : 'rounded-[10px] px-3')}
+          >
+            Stäng
+          </Button>
         </div>
-  <div style={{ flex:1, overflowY:'auto', WebkitOverflowScrolling:'touch', overscrollBehavior:'contain', padding: isSmall ? 12 : 14, display: 'grid', gap: isSmall ? 10 : 12, position: 'relative', paddingBottom: 12 }}>
+        <div className={cn('relative flex-1 overflow-y-auto [overscroll-behavior:contain] [webkit-overflow-scrolling:touch]', isSmall ? 'grid gap-3 p-3 pb-3' : 'grid gap-3.5 p-3.5 pb-3')}>
           {/* Submission overlay */}
           {submitted === 'saving' && (
-            <div aria-hidden style={{ position: 'absolute', inset: 0, background: 'rgba(255,255,255,0.6)', zIndex: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
-                <span className="spinner dark spin" aria-hidden style={{ width: 40, height: 40 }} />
-                <div style={{ fontSize: 13, color: '#0f172a' }}>Sparar…</div>
+            <div aria-hidden className="absolute inset-0 z-30 flex items-center justify-center bg-white/60 p-4">
+              <div className="flex flex-col items-center gap-2.5">
+                <span className="spinner dark spin h-10 w-10" aria-hidden />
+                <div className="text-[13px] text-slate-900">Sparar…</div>
               </div>
             </div>
           )}
-            {/* Report type selector */}
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4 }}>
-              <span style={{ fontSize: isSmall ? 13 : 12, color: '#334155' }}>Typ:</span>
-              <div role="tablist" aria-label="Rapporttyp" style={{ display:'inline-flex', border:'1px solid #cbd5e1', borderRadius: 10, overflow:'hidden' }}>
-                {([
-                  { key:'project', label:'Projekt' },
-                  { key:'internal', label:'Intern' },
-                  { key:'absence', label:'Frånvaro' },
-                ] as const).map(opt => (
-                  <button key={opt.key} type="button" role="tab" aria-selected={reportType===opt.key}
-                    onClick={()=>setReportType(opt.key)}
-                    style={{ padding: isSmall ? '8px 10px' : '6px 10px', fontSize: isSmall ? 13 : 12, background: reportType===opt.key ? '#16a34a' : '#fff', color: reportType===opt.key ? '#fff' : '#0f172a', borderRight:'1px solid #cbd5e1' }}
-                  >{opt.label}</button>
-                ))}
+          <section className={modalSectionClass}>
+            <div className="flex flex-wrap items-start justify-between gap-2.5">
+              <div className="grid gap-1">
+                <strong className={modalSectionTitleClass}>1. Grunduppgifter</strong>
+                <span className={modalSectionHintClass}>Välj rapporttyp och fyll i tid först. Resten av formuläret anpassar sig efter valet.</span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className={modalSummaryPillClass}>Typ: {reportType === 'project' ? 'Projekt' : reportType === 'internal' ? 'Intern' : 'Frånvaro'}</span>
+                <span className={modalSummaryPillClass}>Beräknat: {totalHours.toFixed(2)} h</span>
               </div>
             </div>
+            <div className="grid gap-2">
+              <div className="flex items-center gap-2">
+                <span className={cn('text-slate-700', isSmall ? 'text-[13px]' : 'text-xs')}>Typ:</span>
+                <div role="tablist" aria-label="Rapporttyp" className="inline-flex overflow-hidden rounded-[12px] border border-slate-300 bg-white shadow-[inset_0_1px_0_rgba(255,255,255,0.75)]">
+                  {([
+                    { key:'project', label:'Projekt' },
+                    { key:'internal', label:'Intern' },
+                    { key:'absence', label:'Frånvaro' },
+                  ] as const).map(opt => (
+                    <button
+                      key={opt.key}
+                      type="button"
+                      role="tab"
+                      aria-selected={reportType===opt.key}
+                      onClick={()=>setReportType(opt.key)}
+                      className={cn(
+                        'rounded-none border-r border-slate-300 font-medium first:rounded-l-[11px] last:rounded-r-[11px] last:border-r-0 transition-[background-color,color,box-shadow]',
+                        isSmall ? 'px-3 py-2 text-[13px]' : 'px-3 py-2 text-xs',
+                        reportType===opt.key
+                          ? opt.key === 'project'
+                            ? 'bg-green-600 text-white shadow-[0_4px_10px_rgba(22,163,74,0.18)]'
+                            : opt.key === 'internal'
+                              ? 'bg-blue-600 text-white shadow-[0_4px_10px_rgba(37,99,235,0.18)]'
+                              : 'bg-amber-500 text-slate-950 shadow-[0_4px_10px_rgba(245,158,11,0.22)]'
+                          : 'bg-white text-slate-900 hover:bg-slate-50'
+                      )}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className={cn(modalSummaryPillClass, reportTypeMeta.activeClass)}>{reportTypeMeta.pill}</span>
+                <span className={modalSectionHintClass}>{reportTypeMeta.hint}</span>
+              </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: isSmall ? '1fr' : 'repeat(2, minmax(160px, 1fr))', gap: isXS ? 8 : 10 }}>
-            <label style={{ display: 'grid', gap: 4, fontSize: isSmall ? 13 : 12 }}>
-              <span>Datum</span>
-              <input type="date" value={date} onChange={e => setDate(e.target.value)} style={{ padding: isSmall ? '12px 14px' : '8px 10px', fontSize: isSmall ? 16 : 14, minHeight: isSmall ? 44 : 36, border: '1px solid #cbd5e1', borderRadius: 10 }} />
-            </label>
-            <div style={{ display: 'grid', gridTemplateColumns: isXS ? '1fr' : '1fr 1fr', gap: isXS ? 8 : 10 }}>
-              <label style={{ display: 'grid', gap: 4, fontSize: isSmall ? 13 : 12 }}>
-                <span>Start</span>
-                  <input ref={startRef} type="time" value={start} onChange={e => setStart(e.target.value)} placeholder="07:00" style={{ padding: isSmall ? '12px 14px' : '8px 10px', fontSize: isSmall ? 16 : 14, minHeight: isSmall ? 44 : 36, border: `1px solid ${validationError ? '#fecaca' : '#cbd5e1'}`, borderRadius: 10 }} />
-              </label>
-              <label style={{ display: 'grid', gap: 4, fontSize: isSmall ? 13 : 12 }}>
-                <span>Slut</span>
-                  <input type="time" value={end} onChange={e => setEnd(e.target.value)} placeholder="16:00" style={{ padding: isSmall ? '12px 14px' : '8px 10px', fontSize: isSmall ? 16 : 14, minHeight: isSmall ? 44 : 36, border: `1px solid ${validationError ? '#fecaca' : '#cbd5e1'}`, borderRadius: 10 }} />
-              </label>
-            </div>
+              <div className={cn('grid items-start', isSmall ? 'grid-cols-1 gap-2.5' : 'grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,0.72fr)] gap-2.5')}>
+                <label className={modalFieldLabelClass}>
+                  <span>Datum</span>
+                  <Input type="date" value={date} onChange={e => setDate(e.target.value)} className={modalInputClass} />
+                </label>
+                <div className={cn('grid', isXS ? 'grid-cols-1 gap-2' : 'grid-cols-2 gap-2.5')}>
+                  <label className={modalFieldLabelClass}>
+                    <span>Start</span>
+                    <Input
+                      ref={startRef}
+                      type="time"
+                      value={start}
+                      onChange={e => setStart(e.target.value)}
+                      placeholder="07:00"
+                      className={cn(modalInputClass, validationError ? 'border-red-200 focus-visible:ring-red-200/40' : '')}
+                    />
+                  </label>
+                  <label className={modalFieldLabelClass}>
+                    <span>Slut</span>
+                    <Input
+                      type="time"
+                      value={end}
+                      onChange={e => setEnd(e.target.value)}
+                      placeholder="16:00"
+                      className={cn(modalInputClass, validationError ? 'border-red-200 focus-visible:ring-red-200/40' : '')}
+                    />
+                  </label>
+                </div>
+                <label className={modalFieldLabelClass}>
+                  <span>Rast (minuter)</span>
+                  <Input inputMode="numeric" pattern="[0-9]*" value={breakMin} onChange={e => setBreakMin(e.target.value)} placeholder="0" className={modalInputClass} />
+                </label>
+              </div>
               {validationError && (
-                <div role="alert" style={{ gridColumn: '1 / -1', fontSize: isSmall ? 12 : 11, color: '#b91c1c' }}>{validationError}</div>
+                <div role="alert" className={cn('text-red-700', isSmall ? 'text-xs' : 'text-[11px]')}>{validationError}</div>
               )}
-            <label style={{ display: 'grid', gap: 4, fontSize: isSmall ? 13 : 12 }}>
-              <span>Rast (minuter)</span>
-              <input inputMode="numeric" pattern="[0-9]*" value={breakMin} onChange={e => setBreakMin(e.target.value)} placeholder="0" style={{ padding: isSmall ? '12px 14px' : '8px 10px', fontSize: isSmall ? 16 : 14, minHeight: isSmall ? 44 : 36, border: '1px solid #cbd5e1', borderRadius: 10 }} />
-            </label>
-            <div style={{ display: 'grid', gap: 6 }}>
+            </div>
+          </section>
+
+          <section className={modalSectionClass}>
+            <div className="grid gap-1">
+              <strong className={modalSectionTitleClass}>2. Koppla rapporten</strong>
+              <span className={modalSectionHintClass}>Välj projekt eller intern/frånvarotyp och säkra därefter tidkod samt aktivitet.</span>
+            </div>
+            <div className={cn('grid items-start', isSmall ? 'grid-cols-1 gap-2.5' : 'grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3')}>
+              <div className="grid gap-1.5">
               {reportType === 'project' && (
-                <label style={{ display: 'grid', gap: 4, fontSize: isSmall ? 13 : 12 }}>
+                <label className={modalFieldLabelClass}>
                   <span>Projekt / Ordernummer</span>
-                  <input value={project} onChange={e => setProject(e.target.value)} placeholder="#1234 eller projektnamn" style={{ padding: isSmall ? '12px 14px' : '8px 10px', fontSize: isSmall ? 16 : 14, minHeight: isSmall ? 44 : 36, border: '1px solid #cbd5e1', borderRadius: 10 }} />
+                  <Input value={project} onChange={e => setProject(e.target.value)} placeholder="#1234 eller projektnamn" className={modalInputClass} />
                 </label>
               )}
               {reportType === 'internal' && (
-                <label style={{ display: 'grid', gap: 4, fontSize: isSmall ? 13 : 12 }}>
+                <label className={modalFieldLabelClass}>
                   <span>Internprojekt</span>
-                  <select value={selectedInternalId} onChange={(e)=>setSelectedInternalId(e.target.value)} disabled={iLoading || internalProjects.length===0}
-                    style={{ padding: isSmall ? '12px 14px' : '8px 10px', fontSize: isSmall ? 16 : 14, minHeight: isSmall ? 44 : 36, border:'1px solid #cbd5e1', borderRadius:10, background:'#fff' }}
-                  >
+                  <select value={selectedInternalId} onChange={(e)=>setSelectedInternalId(e.target.value)} disabled={iLoading || internalProjects.length===0} className={modalSelectClass}>
                     <option value="">Välj internprojekt</option>
                     {internalProjects.map(p => (
                       <option key={p.id} value={p.id}>{p.name || p.id}{p.active===false ? ' (inaktiv)' : ''}{p.commentRequired ? ' — kommentar krävs' : ''}</option>
                     ))}
                   </select>
-                  <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-                    {iLoading && <span style={{ fontSize: isSmall ? 11 : 10, color:'#64748b' }}>Laddar internprojekt…</span>}
-                    {iError && <span style={{ fontSize: isSmall ? 11 : 10, color:'#b91c1c' }}>{iError}</span>}
+                  <div className="flex items-center gap-2">
+                    {iLoading && <span className={cn(modalHelperTextClass, 'text-slate-500')}>Laddar internprojekt…</span>}
+                    {iError && <span className={cn(modalHelperTextClass, 'text-red-700')}>{iError}</span>}
                   </div>
                 </label>
               )}
               {reportType === 'absence' && (
-                <label style={{ display: 'grid', gap: 4, fontSize: isSmall ? 13 : 12 }}>
+                <label className={modalFieldLabelClass}>
                   <span>Frånvaroprojekt</span>
-                  <select value={selectedAbsenceId} onChange={(e)=>setSelectedAbsenceId(e.target.value)} disabled={aLoading || absenceProjects.length===0}
-                    style={{ padding: isSmall ? '12px 14px' : '8px 10px', fontSize: isSmall ? 16 : 14, minHeight: isSmall ? 44 : 36, border:'1px solid #cbd5e1', borderRadius:10, background:'#fff' }}
-                  >
+                  <select value={selectedAbsenceId} onChange={(e)=>setSelectedAbsenceId(e.target.value)} disabled={aLoading || absenceProjects.length===0} className={modalSelectClass}>
                     <option value="">Välj frånvaroprojekt</option>
                     {absenceProjects.map(p => (
                       <option key={p.id} value={p.id}>{p.name || p.id}{p.active===false ? ' (inaktiv)' : ''}{p.commentRequired ? ' — kommentar krävs' : ''}</option>
                     ))}
                   </select>
-                  <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-                    {aLoading && <span style={{ fontSize: isSmall ? 11 : 10, color:'#64748b' }}>Laddar frånvaroprojekt…</span>}
-                    {aError && <span style={{ fontSize: isSmall ? 11 : 10, color:'#b91c1c' }}>{aError}</span>}
+                  <div className="flex items-center gap-2">
+                    {aLoading && <span className={cn(modalHelperTextClass, 'text-slate-500')}>Laddar frånvaroprojekt…</span>}
+                    {aError && <span className={cn(modalHelperTextClass, 'text-red-700')}>{aError}</span>}
                   </div>
                 </label>
               )}
-              <label style={{ display: 'grid', gap: 4, fontSize: isSmall ? 13 : 12 }}>
+              </div>
+              <div className="grid gap-1.5">
+              <label className={modalFieldLabelClass}>
                 <span>Tidkod</span>
-                <select value={selectedTimecode} onChange={(e) => setSelectedTimecode(e.target.value)} disabled={tcLoading || timecodes.length === 0}
-                  style={{ padding: isSmall ? '12px 14px' : '8px 10px', fontSize: isSmall ? 16 : 14, minHeight: isSmall ? 44 : 36, border: '1px solid #cbd5e1', borderRadius: 10, background: '#fff' }}
-                >
+                <select value={selectedTimecode} onChange={(e) => setSelectedTimecode(e.target.value)} disabled={tcLoading || timecodes.length === 0} className={modalSelectClass}>
                   <option value="">Välj tidkod</option>
                   {timecodes.map(tc => {
                     const label = [tc.code, tc.name].filter(Boolean).join(' — ');
@@ -704,16 +821,14 @@ export default function TimeReportModal({ open, onClose, onSubmit, initialProjec
                     return <option key={tc.id} value={tc.id}>{label}{extra}</option>;
                   })}
                 </select>
-                <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-                  {tcLoading && <span style={{ fontSize: isSmall ? 11 : 10, color:'#64748b' }}>Laddar tidkoder…</span>}
-                  {tcError && <span role="status" aria-live="polite" style={{ fontSize: isSmall ? 11 : 10, color:'#b91c1c' }}>{tcError}</span>}
+                <div className="flex items-center gap-2">
+                  {tcLoading && <span className={cn(modalHelperTextClass, 'text-slate-500')}>Laddar tidkoder…</span>}
+                  {tcError && <span role="status" aria-live="polite" className={cn(modalHelperTextClass, 'text-red-700')}>{tcError}</span>}
                 </div>
               </label>
-              <label style={{ display: 'grid', gap: 4, fontSize: isSmall ? 13 : 12 }}>
+              <label className={modalFieldLabelClass}>
                 <span>Aktivitet</span>
-                <select value={selectedActivity} onChange={(e) => setSelectedActivity(e.target.value)} disabled={actLoading || activities.length === 0}
-                  style={{ padding: isSmall ? '12px 14px' : '8px 10px', fontSize: isSmall ? 16 : 14, minHeight: isSmall ? 44 : 36, border: '1px solid #cbd5e1', borderRadius: 10, background: '#fff' }}
-                >
+                <select value={selectedActivity} onChange={(e) => setSelectedActivity(e.target.value)} disabled={actLoading || activities.length === 0} className={modalSelectClass}>
                   <option value="">Välj aktivitet</option>
                   {activities.map(a => {
                     const label = [a.code, a.name].filter(Boolean).join(' — ');
@@ -724,145 +839,175 @@ export default function TimeReportModal({ open, onClose, onSubmit, initialProjec
                     return <option key={a.id} value={a.id}>{label}{suffix}</option>;
                   })}
                 </select>
-                <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-                  {actLoading && <span style={{ fontSize: isSmall ? 11 : 10, color:'#64748b' }}>Laddar aktiviteter…</span>}
-                  {actError && <span role="status" aria-live="polite" style={{ fontSize: isSmall ? 11 : 10, color:'#b91c1c' }}>{actError}</span>}
+                <div className="flex items-center gap-2">
+                  {actLoading && <span className={cn(modalHelperTextClass, 'text-slate-500')}>Laddar aktiviteter…</span>}
+                  {actError && <span role="status" aria-live="polite" className={cn(modalHelperTextClass, 'text-red-700')}>{actError}</span>}
                 </div>
               </label>
-              {reportType === 'project' && (
-                <div style={{ display: 'grid', gap: 6 }}>
-                  <div style={{ fontSize: isSmall ? 12 : 11, fontWeight: 600, color: '#0f172a', display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span>Dagens projekt</span>
-                    {jobsLoading && <span style={{ fontSize: isSmall ? 11 : 10, color: '#64748b' }}>Laddar…</span>}
-                    {!jobsLoading && distinctProjects.length === 0 && !jobsError && <span style={{ fontSize: isSmall ? 11 : 10, color: '#64748b', fontWeight: 400 }}>Inga hittades</span>}
-                    {jobsError && <span style={{ fontSize: isSmall ? 11 : 10, color: '#b91c1c', fontWeight: 500 }}>{jobsError}</span>}
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8, overflowX: 'auto', paddingBottom: 4, WebkitOverflowScrolling: 'touch' }}>
-                    {distinctProjects.map(p => {
-                      const labelParts = [p.order_number ? `#${p.order_number}` : (p.project_name || p.project_id)];
-                      if (p.customer) labelParts.push(p.customer);
-                      const label = labelParts.join(' • ');
-                      const active = project && (project.includes(p.order_number || '') || project.includes(p.project_name || '') || project === p.project_id);
-                      return (
-                        <button key={p.project_id} type="button" onClick={() => chooseProject(p)}
-                          style={{
-                            flex: '0 0 auto',
-                            maxWidth: 240,
-                            textAlign: 'left',
-                            fontSize: isSmall ? 13 : 12,
-                            lineHeight: 1.2,
-                            padding: isSmall ? '10px 12px' : '8px 10px',
-                            border: '1px solid ' + (active ? '#16a34a' : '#cbd5e1'),
-                            background: active ? '#16a34a' : '#f8fafc',
-                            color: active ? '#fff' : '#0f172a',
-                            borderRadius: 12,
-                            boxShadow: active ? '0 2px 4px rgba(16,185,129,0.4)' : 'none',
-                            minWidth: 160,
-                            minHeight: 44,
-                          }}
-                          aria-label={`Välj projekt ${label}`}
-                        >
-                          <span style={{ display: 'block', fontWeight: active ? 600 : 500, whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>{label}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
             </div>
-            <label style={{ gridColumn: '1 / -1', display: 'grid', gap: 4, fontSize: isSmall ? 13 : 12 }}>
-              <span>Beskrivning {requireComment ? <em style={{ color:'#b91c1c', fontStyle:'normal' }}>(krävs)</em> : null}</span>
-              <textarea value={desc} onChange={e => setDesc(e.target.value)} rows={3} placeholder="Vad gjordes?" style={{ padding: isSmall ? '12px 14px' : '8px 10px', fontSize: isSmall ? 16 : 14, minHeight: isSmall ? 88 : 64, border: '1px solid #cbd5e1', borderRadius: 10, resize: 'vertical' }} />
+            </div>
+            {reportType === 'project' && (
+              <div className="grid gap-1.5 rounded-[16px] border border-dashed border-slate-200 bg-slate-50/70 p-3">
+                <div className={cn('flex items-center gap-1.5 font-semibold text-slate-900', isSmall ? 'text-xs' : 'text-[11px]')}>
+                  <span>Dagens projekt</span>
+                  {jobsLoading && <span className={cn(modalHelperTextClass, 'font-normal text-slate-500')}>Laddar…</span>}
+                  {!jobsLoading && distinctProjects.length === 0 && !jobsError && <span className={cn(modalHelperTextClass, 'font-normal text-slate-500')}>Inga hittades</span>}
+                  {jobsError && <span className={cn(modalHelperTextClass, 'font-medium text-red-700')}>{jobsError}</span>}
+                </div>
+                <div className={cn('flex overflow-x-auto pb-1 [webkit-overflow-scrolling:touch]', isSmall ? 'gap-2' : 'gap-2.5')}>
+                  {distinctProjects.map(p => {
+                    const labelParts = [p.order_number ? `#${p.order_number}` : (p.project_name || p.project_id)];
+                    if (p.customer) labelParts.push(p.customer);
+                    const label = labelParts.join(' • ');
+                    const active = project && (project.includes(p.order_number || '') || project.includes(p.project_name || '') || project === p.project_id);
+                    return (
+                      <button
+                        key={p.project_id}
+                        type="button"
+                        onClick={() => chooseProject(p)}
+                        className={cn(
+                          'min-h-11 min-w-[220px] max-w-[320px] flex-none rounded-[14px] border text-left leading-tight transition-[transform,border-color,box-shadow,background-color]',
+                          isSmall ? 'px-3 py-2.5 text-[13px]' : 'px-3 py-2.5 text-xs',
+                          active
+                            ? 'border-green-600 bg-green-600 text-white shadow-[0_10px_18px_rgba(16,185,129,0.24)]'
+                            : 'border-slate-300 bg-white text-slate-900 shadow-[0_6px_14px_rgba(15,23,42,0.05)] hover:-translate-y-0.5 hover:border-green-200 hover:shadow-[0_10px_18px_rgba(16,185,129,0.10)]'
+                        )}
+                        aria-label={`Välj projekt ${label}`}
+                      >
+                        <span className={cn('block truncate', active ? 'font-semibold' : 'font-medium')}>{label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </section>
+
+          <section className={modalSectionClass}>
+            <div className="grid gap-1">
+              <strong className={modalSectionTitleClass}>3. Beskriv arbetet</strong>
+              <span className={modalSectionHintClass}>Skriv kort vad som gjordes. Kommentaren blir obligatorisk när vald typ eller projekt kräver det.</span>
+            </div>
+            <label className={modalFieldLabelClass}>
+              <span>Beskrivning {requireComment ? <em className="not-italic text-red-700">(krävs)</em> : null}</span>
+              <Textarea value={desc} onChange={e => setDesc(e.target.value)} rows={3} placeholder="Vad gjordes?" className={cn('min-h-0', isSmall ? 'min-h-[88px] px-3.5 py-3 text-base' : 'min-h-16 rounded-[10px] px-2.5 py-2 text-sm')} />
               {requireComment && !desc.trim() && (
-                <span role="alert" style={{ fontSize: isSmall ? 12 : 11, color:'#b91c1c' }}>Kommentar krävs för vald typ/projekt.</span>
+                <span role="alert" className={cn(isSmall ? 'text-xs' : 'text-[11px]', 'text-red-700')}>Kommentar krävs för vald typ/projekt.</span>
               )}
             </label>
-          </div>
+          </section>
           {/* Travel section placed at bottom, expands downward above the footer */}
-          <div style={{ padding: isSmall ? 12 : 14, paddingTop: 0 }}>
-            <button type="button" onClick={() => setShowTravel(v => !v)} aria-expanded={showTravel}
-              style={{ display:'flex', alignItems:'center', justifyContent:'space-between', width:'100%', padding: isSmall ? '12px 14px' : '10px 12px', border:'1px solid #cbd5e1', background:'#fff', color:'#0f172a', borderRadius:10, cursor:'pointer' }}
+          <div className={modalSectionClass}>
+            <div className="grid gap-1">
+              <strong className={modalSectionTitleClass}>4. Reserapport</strong>
+              <span className={modalSectionHintClass}>Valfritt. Fyll bara i om resan ska rapporteras tillsammans med tiden.</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowTravel(v => !v)}
+              aria-expanded={showTravel}
+              className={cn(
+                'flex w-full items-center justify-between rounded-[12px] border border-slate-300 bg-white text-slate-900 shadow-[0_6px_14px_rgba(15,23,42,0.04)] transition-[border-color,box-shadow,background-color] hover:border-green-200 hover:bg-green-50/40 hover:shadow-[0_10px_18px_rgba(16,185,129,0.08)]',
+                isSmall ? 'px-3.5 py-3' : 'px-3 py-2.5'
+              )}
             >
-              <span style={{ display:'flex', alignItems:'center', gap:8 }}>
-                <span style={{ width:16, height:16, borderRadius:999, background:'#22c55e', border:'2px solid #bbf7d0' }} />
-                <strong style={{ fontSize: isSmall ? 14 : 13 }}>Reserapport (valfritt)</strong>
+              <span className="flex items-center gap-2">
+                <span className="h-4 w-4 rounded-full border-2 border-green-200 bg-green-500" />
+                <strong className={cn(isSmall ? 'text-sm' : 'text-[13px]')}>Reserapport (valfritt)</strong>
               </span>
-              <span aria-hidden style={{ fontSize: isSmall ? 18 : 16 }}>{showTravel ? '▾' : '▸'}</span>
+              <span aria-hidden className={cn(isSmall ? 'text-lg' : 'text-base')}>{showTravel ? '▾' : '▸'}</span>
             </button>
             {showTravel && (
-              <div style={{ display:'grid', gap: isSmall ? 12 : 10, border:'1px dashed #e5e7eb', borderRadius:12, padding: isSmall ? 12 : 10, marginTop: isSmall ? 10 : 8 }}>
-                <label style={{ display:'grid', gap:4, fontSize: isSmall ? 13 : 12 }}>
+              <div className={cn('grid rounded-[16px] border border-dashed border-slate-200 bg-slate-50/70', isSmall ? 'gap-3 p-3' : 'gap-2.5 p-3')}>
+                <label className={modalFieldLabelClass}>
                   <span>Plats / Sträcka</span>
-                  <input value={travelPlace} onChange={(e)=>setTravelPlace(e.target.value)} placeholder="Piteå–Luleå–Piteå" style={{ width:'100%', padding: isSmall ? '12px 14px' : '8px 10px', border:'1px solid #cbd5e1', borderRadius:10 }} />
+                  <Input value={travelPlace} onChange={(e)=>setTravelPlace(e.target.value)} placeholder="Piteå–Luleå–Piteå" className={modalInputClass} />
                 </label>
-                <div style={{ display:'grid', gridTemplateColumns: isXS ? '1fr' : '1fr 1fr', gap: isXS ? 8 : 10 }}>
-                  <label style={{ display:'grid', gap:4, fontSize: isSmall ? 13 : 12 }}>
+                <div className={cn('grid', isXS ? 'grid-cols-1 gap-2' : 'grid-cols-2 gap-2.5')}>
+                  <label className={modalFieldLabelClass}>
                     <span>Km (faktiskt)</span>
-                    <input type="number" min={0} value={travelDistance} onChange={(e)=>setTravelDistance(e.target.value)} placeholder="100" style={{ width:'100%', padding: isSmall ? '12px 14px' : '8px 10px', border:'1px solid #cbd5e1', borderRadius:10 }} />
+                    <Input type="number" min={0} value={travelDistance} onChange={(e)=>setTravelDistance(e.target.value)} placeholder="100" className={modalInputClass} />
                   </label>
-                  <label style={{ display:'grid', gap:4, fontSize: isSmall ? 13 : 12 }}>
+                  <label className={modalFieldLabelClass}>
                     <span>Km (debiterbart)</span>
-                    <input type="number" min={0} value={travelInvoiceableDistance} onChange={(e)=>setTravelInvoiceableDistance(e.target.value)} placeholder="120" style={{ width:'100%', padding: isSmall ? '12px 14px' : '8px 10px', border:'1px solid #cbd5e1', borderRadius:10 }} />
+                    <Input type="number" min={0} value={travelInvoiceableDistance} onChange={(e)=>setTravelInvoiceableDistance(e.target.value)} placeholder="120" className={modalInputClass} />
                   </label>
                 </div>
-                <label style={{ display:'inline-flex', gap:8, alignItems:'center', fontSize: isSmall ? 13 : 12 }}>
-                  <input type="checkbox" checked={travelToSalary} onChange={(e)=>setTravelToSalary(e.target.checked)} />
+                <label className={cn('inline-flex items-center gap-2 text-slate-700', isSmall ? 'text-[13px]' : 'text-xs')}>
+                  <input type="checkbox" checked={travelToSalary} onChange={(e)=>setTravelToSalary(e.target.checked)} className="h-4 w-4 rounded border-slate-300 text-green-600 focus:ring-green-200" />
                   <span>Till lön</span>
                 </label>
-                <div style={{ display:'grid', gap:8 }}>
-                  <span style={{ fontSize: isSmall ? 12 : 11, color:'#64748b' }}>Företagsbil (valfritt)</span>
-                  <div style={{ display:'grid', gridTemplateColumns: isXS ? '1fr' : 'repeat(2, 1fr)', gap: isXS ? 8 : 10 }}>
-                    <label style={{ display:'grid', gap:4, fontSize: isSmall ? 13 : 12 }}>
+                <div className="grid gap-2">
+                  <span className={cn(isSmall ? 'text-xs' : 'text-[11px]', 'text-slate-500')}>Företagsbil (valfritt)</span>
+                  <div className={cn('grid', isXS ? 'grid-cols-1 gap-2' : 'grid-cols-2 gap-2.5')}>
+                    <label className={modalFieldLabelClass}>
                       <span>Bil-ID</span>
-                      <input value={companyCarId} onChange={(e)=>setCompanyCarId(e.target.value)} placeholder="1" style={{ width:'100%', padding: isSmall ? '12px 14px' : '8px 10px', border:'1px solid #cbd5e1', borderRadius:10 }} />
+                      <Input value={companyCarId} onChange={(e)=>setCompanyCarId(e.target.value)} placeholder="1" className={modalInputClass} />
                     </label>
-                    <label style={{ display:'grid', gap:4, fontSize: isSmall ? 13 : 12 }}>
+                    <label className={modalFieldLabelClass}>
                       <span>Mätarstart</span>
-                      <input type="number" min={0} value={tripStart} onChange={(e)=>setTripStart(e.target.value)} placeholder="15000" style={{ width:'100%', padding: isSmall ? '12px 14px' : '8px 10px', border:'1px solid #cbd5e1', borderRadius:10 }} />
+                      <Input type="number" min={0} value={tripStart} onChange={(e)=>setTripStart(e.target.value)} placeholder="15000" className={modalInputClass} />
                     </label>
-                    <label style={{ display:'grid', gap:4, fontSize: isSmall ? 13 : 12 }}>
+                    <label className={modalFieldLabelClass}>
                       <span>Mätarslut</span>
-                      <input type="number" min={0} value={tripEnd} onChange={(e)=>setTripEnd(e.target.value)} placeholder="15100" style={{ width:'100%', padding: isSmall ? '12px 14px' : '8px 10px', border:'1px solid #cbd5e1', borderRadius:10 }} />
+                      <Input type="number" min={0} value={tripEnd} onChange={(e)=>setTripEnd(e.target.value)} placeholder="15100" className={modalInputClass} />
                     </label>
                   </div>
-                  <label style={{ display:'grid', gap:4, fontSize: isSmall ? 13 : 12 }}>
+                  <label className={modalFieldLabelClass}>
                     <span>Adress start</span>
-                    <input value={addressStart} onChange={(e)=>setAddressStart(e.target.value)} placeholder="Generalgatan 1" style={{ width:'100%', padding: isSmall ? '12px 14px' : '8px 10px', border:'1px solid #cbd5e1', borderRadius:10 }} />
+                    <Input value={addressStart} onChange={(e)=>setAddressStart(e.target.value)} placeholder="Generalgatan 1" className={modalInputClass} />
                   </label>
-                  <label style={{ display:'grid', gap:4, fontSize: isSmall ? 13 : 12 }}>
+                  <label className={modalFieldLabelClass}>
                     <span>Adress mål</span>
-                    <input value={addressGoal} onChange={(e)=>setAddressGoal(e.target.value)} placeholder="Generalgatan 2" style={{ width:'100%', padding: isSmall ? '12px 14px' : '8px 10px', border:'1px solid #cbd5e1', borderRadius:10 }} />
+                    <Input value={addressGoal} onChange={(e)=>setAddressGoal(e.target.value)} placeholder="Generalgatan 2" className={modalInputClass} />
                   </label>
-                  <label style={{ display:'grid', gap:4, fontSize: isSmall ? 13 : 12 }}>
+                  <label className={modalFieldLabelClass}>
                     <span>Adress slut</span>
-                    <input value={addressEnd} onChange={(e)=>setAddressEnd(e.target.value)} placeholder="Generalgatan 1" style={{ width:'100%', padding: isSmall ? '12px 14px' : '8px 10px', border:'1px solid #cbd5e1', borderRadius:10 }} />
+                    <Input value={addressEnd} onChange={(e)=>setAddressEnd(e.target.value)} placeholder="Generalgatan 1" className={modalInputClass} />
                   </label>
                 </div>
               </div>
             )}
           </div>
           {isXS ? (
-            <div style={{ position:'relative', background: '#fff', display: 'grid', gap: 8, borderTop: '1px dashed #e5e7eb', paddingTop: 8, paddingLeft: 12, paddingRight: 12, paddingBottom: 'max(10px, env(safe-area-inset-bottom))' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, fontSize: 13, color: '#334155' }}>
+            <div className="relative grid gap-2 border-t border-dashed border-slate-200 bg-white px-3 pt-2" style={{ paddingBottom: 'max(10px, env(safe-area-inset-bottom))' }}>
+              <div className="flex items-center justify-between gap-2.5 text-[13px] text-slate-700">
                 <span>Beräknad tid:</span>
-                <strong style={{ fontSize: 16 }}>{totalHours.toFixed(2)} h</strong>
+                <strong className="text-base text-slate-900">{totalHours.toFixed(2)} h</strong>
               </div>
-              <button type="button" onClick={handleSubmit} disabled={!canSubmit} className="btn--plain btn--xs" style={{ width: '100%', fontSize: 16, padding: '14px 16px', border: '1px solid #16a34a', background: canSubmit ? '#16a34a' : '#a7f3d0', color: '#fff', borderRadius: 12, boxShadow: canSubmit ? '0 4px 8px rgba(16,185,129,0.35)' : 'none', opacity: submitted === 'saving' ? 0.7 : 1, minHeight: 48 }}>
-                {submitted === 'saving' ? <span style={{ display:'inline-flex', alignItems:'center', gap:8 }}><span className="spinner spin" aria-hidden style={{ width:16, height:16, borderTopColor:'#fff' }} /> Sparar…</span> : 'Spara'}
-              </button>
-              <button type="button" onClick={onClose} className="btn--plain btn--xs" style={{ fontSize: 14, padding: '10px 12px', border: '1px solid #e5e7eb', background: '#fff', borderRadius: 10, color: '#0f172a', minHeight: 44 }}>Avbryt</button>
+              <Button
+                type="button"
+                onClick={handleSubmit}
+                disabled={!canSubmit}
+                fullWidth
+                size="lg"
+                className={cn('min-h-12 rounded-xl border-green-600 text-base text-white', canSubmit ? 'bg-green-600 shadow-[0_4px_8px_rgba(16,185,129,0.35)] hover:bg-green-700' : 'bg-green-200')}
+              >
+                {submitted === 'saving' ? <span className="inline-flex items-center gap-2"><span className="spinner spin h-4 w-4" aria-hidden style={{ borderTopColor:'#fff' }} /> Sparar…</span> : 'Spara'}
+              </Button>
+              <Button type="button" onClick={onClose} variant="secondary" size="lg" className="min-h-11 rounded-[10px] text-sm">Avbryt</Button>
             </div>
           ) : (
-            <div style={{ position:'relative', background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, borderTop: '1px dashed #e5e7eb', paddingTop: 8, paddingBottom: 'max(15px, env(safe-area-inset-bottom))', marginBottom: 0 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: isSmall ? 13 : 12, color: '#334155' }}>
+            <div className="relative flex items-center justify-between gap-2.5 border-t border-dashed border-slate-200 bg-white pt-2" style={{ paddingBottom: 'max(15px, env(safe-area-inset-bottom))' }}>
+              <div className={cn('flex items-center gap-2.5 text-slate-700', isSmall ? 'text-[13px]' : 'text-xs')}>
                 <span>Beräknad tid:</span>
-                <strong style={{ fontSize: isSmall ? 16 : 14 }}>{totalHours.toFixed(2)} h</strong>
+                <strong className={cn('text-slate-900', isSmall ? 'text-base' : 'text-sm')}>{totalHours.toFixed(2)} h</strong>
               </div>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button type="button" onClick={onClose} className="btn--plain btn--xs" style={{ fontSize: isSmall ? 14 : 12, padding: isSmall ? '10px 14px' : '8px 12px', border: '1px solid #e5e7eb', background: '#fff', borderRadius: 8, minHeight: 40 }}>Avbryt</button>
-                <button type="button" onClick={handleSubmit} disabled={!canSubmit} className="btn--plain btn--xs" style={{ fontSize: isSmall ? 14 : 12, padding: isSmall ? '10px 14px' : '8px 12px', border: '1px solid #16a34a', background: canSubmit ? '#16a34a' : '#a7f3d0', color: '#fff', borderRadius: 8, boxShadow: canSubmit ? '0 2px 4px rgba(16,185,129,0.4)' : 'none', opacity: submitted === 'saving' ? 0.7 : 1, minHeight: 40 }}>
-                  {submitted === 'saving' ? <span style={{ display:'inline-flex', alignItems:'center', gap:8 }}><span className="spinner spin" aria-hidden style={{ width:16, height:16, borderTopColor:'#fff' }} /> Sparar…</span> : 'Spara'}
-                </button>
+              <div className="flex gap-2">
+                <Button type="button" onClick={onClose} variant="secondary" size={isSmall ? 'md' : 'sm'} className={cn(isSmall ? 'min-h-10 px-3.5 text-sm' : 'rounded-lg px-3')}>Avbryt</Button>
+                <Button
+                  type="button"
+                  onClick={handleSubmit}
+                  disabled={!canSubmit}
+                  size={isSmall ? 'md' : 'sm'}
+                  className={cn(
+                    'border-green-600 text-white',
+                    isSmall ? 'min-h-10 px-3.5 text-sm' : 'rounded-lg px-3',
+                    canSubmit ? 'bg-green-600 shadow-[0_2px_4px_rgba(16,185,129,0.4)] hover:bg-green-700' : 'bg-green-200'
+                  )}
+                >
+                  {submitted === 'saving' ? <span className="inline-flex items-center gap-2"><span className="spinner spin h-4 w-4" aria-hidden style={{ borderTopColor:'#fff' }} /> Sparar…</span> : 'Spara'}
+                </Button>
               </div>
             </div>
           )}

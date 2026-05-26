@@ -46,9 +46,9 @@ input[type="reset"] {
   gap: 0.5rem;
   padding: 10px 14px;
   border-radius: 8px;
-  border: 1px solid #e5e7eb; /* gray-200 */
-  background-color: #111827; /* gray-900 */
-  color: #ffffff;
+  border: 1px solid transparent;
+  background-color: transparent;
+  color: inherit;
   text-align: center;
   text-decoration: none;
   cursor: pointer;
@@ -81,21 +81,6 @@ input[type="reset"] {
   -webkit-tap-highlight-color: transparent;
   user-select: none;
   transition: background-color .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease;
-}
-
-button:hover,
-input[type="button"]:hover,
-input[type="submit"]:hover,
-input[type="reset"]:hover {
-  background-color: #0f172a; /* slate-950 */
-  border-color: #d1d5db; /* gray-300 */
-}
-
-button:active,
-input[type="button"]:active,
-input[type="submit"]:active,
-input[type="reset"]:active {
-  background-color: #0b1220;
 }
 
 button:disabled,
