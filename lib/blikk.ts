@@ -1171,14 +1171,16 @@ export class BlikkClient {
     // Standardize date with time suffix if docs expect 'YYYY-MM-DD 00:00:00'
     const dateWithTime = /\d{4}-\d{2}-\d{2}$/.test(date) ? `${date} 00:00:00` : date;
 
+    const descriptionText = input.description || '';
+
     const body: Record<string, any> = {
       userId: input.userId,
       date: dateWithTime,
       minutes,
-      description: input.description || '',
+      description: descriptionText,
       // Doc-aligned keys
-      comment: input.description || '',
-      internalComment: '',
+      comment: descriptionText,
+      internalComment: descriptionText,
       breakMinutes: input.breakMinutes ?? null,
     };
     // Provide hours variant to maximize acceptance
@@ -1526,7 +1528,8 @@ export class BlikkClient {
   if (input.minutes != null && Number.isFinite(input.minutes)) body.minutes = input.minutes;
   else if (input.hours != null && Number.isFinite(input.hours)) body.hours = input.hours;
     if (input.description != null) body.description = input.description;
-  if (input.description != null) body.comment = input.description; // alias for acceptance
+    if (input.description != null) body.comment = input.description; // alias for acceptance
+    if (input.description != null) body.internalComment = input.description;
     if (input.startTime && input.endTime) Object.assign(body, buildTimeAliases(input.date ? String(input.date).slice(0,10) : undefined, input.startTime, input.endTime));
     if (input.activityId != null) { body.activityId = input.activityId; body.activity = { id: input.activityId }; }
     if (input.timeCodeId != null) { body.timeCodeId = input.timeCodeId; body.timeCode = { id: input.timeCodeId }; }
