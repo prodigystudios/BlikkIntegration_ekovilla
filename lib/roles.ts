@@ -8,6 +8,7 @@ export interface RoleAwareLink {
 
 export const NAV_LINKS: RoleAwareLink[] = [
   { href: '/', label: 'Startsida' },
+  { href: '/crm', label: 'CRM', roles: ['sales','admin'] },
   // /egenkontroll creation accessed via quick links only
   { href: '/archive', label: 'Sparade egenkontroller' },
   { href: '/kontakt-lista', label: 'Kontakt & Adresser' },

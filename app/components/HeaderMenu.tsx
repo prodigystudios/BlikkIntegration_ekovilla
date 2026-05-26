@@ -121,6 +121,16 @@ function IconOffert(props: React.SVGProps<SVGSVGElement>) {
     </svg>
   );
 }
+function IconCrm(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#111827" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden {...props}>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M7 9h10" />
+      <path d="M7 13h10" />
+      <path d="M7 17h6" />
+    </svg>
+  );
+}
 
 export default function HeaderMenu({ role, fullName }: { role: UserRole | null, fullName?: string | null }) {
   const [open, setOpen] = useState(false);
@@ -299,6 +309,14 @@ export default function HeaderMenu({ role, fullName }: { role: UserRole | null, 
                 <IconOffert />
                 <span>Kalkylator Försäljning Privat</span>
               </Link>
+              {(role === 'sales' || role === 'admin') && (
+                <Link href="/crm" prefetch={false} onClick={() => setOpen(false)}
+                  aria-current={pathname === '/crm' || pathname?.startsWith('/crm/') ? 'page' : undefined}
+                  className={`menu-link${pathname === '/crm' || pathname?.startsWith('/crm/') ? ' is-active' : ''}`}>
+                  <IconCrm />
+                  <span>CRM</span>
+                </Link>
+              )}
               {/* <Link href="/offert" prefetch={true} onClick={() => setOpen(false)}
                 aria-current={pathname === '/offert' ? 'page' : undefined}
                 className={`menu-link${pathname === '/offert' ? ' is-active' : ''}`}>

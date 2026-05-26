@@ -1,68 +1,93 @@
 # Wave 6 Pause Status And Time Report Bug
 
-Date: 2026-05-25
+Date: 2026-05-26
 
-## Current status
+## Current pause status
 
-Wave 6 frontend sanitation was paused after finishing the remaining modal cleanup in `components/dashboard/DashboardSchedule.tsx`.
+Wave 6 is now paused intentionally.
 
-Completed in Wave 6 so far:
+The dashboard sanitation/polish pass was taken through the remaining high-friction user-facing surfaces, preview-tested, and split into a clean merge branch for `main`. Work is paused here so the next feature can start from a stable checkpoint instead of continuing to expand the Wave 6 scope.
 
-- `components/dashboard/QuickLinks.tsx` refactored from large inline-style blocks to class-based styling.
-- `components/dashboard/ClientDashboard.tsx` hero and quick-links shell refactored.
-- `components/dashboard/DashboardSchedule.tsx` completed through:
-  - schedule header and navigation
-  - day/job cards
-  - detail modal shell and summary cards
-  - lower modal section for description, comments, reporting UI, and partial reports
+## Completed before pause
 
-Validation before pause:
+Dashboard surfaces completed in this pass:
 
-- `npm run type-check` passed after the last `DashboardSchedule` slice.
-- Local file errors for `DashboardSchedule.tsx` were clean.
+- `components/dashboard/QuickLinks.tsx`
+  - refactored away from the older inline-heavy structure
+  - desktop/sidebar quick-link affordance restored
+- `components/dashboard/ClientDashboard.tsx`
+  - hero shell and surrounding dashboard composition cleaned up
+  - installer-first mobile ordering preserved intentionally
+- `components/dashboard/DashboardNotes.tsx`
+  - workspace/Arbetsyta section cleaned up and visually tightened
+- `components/dashboard/DashboardTasks.tsx`
+  - brought forward as part of the dashboard sanitation set
+- `components/dashboard/DashboardDocumentApprovals.tsx`
+  - included in the sanitized dashboard surface set
+- `components/dashboard/NewsModal.tsx`
+  - included in the sanitized dashboard surface set
+- `components/dashboard/DashboardSchedule.tsx`
+  - schedule card polish completed
+  - schedule navigation/buttons normalized
+  - schedule metadata layout improved
+  - detail modal substantially cleaned up for mobile
+  - comments section made collapsible with count/toggle
+  - long comment/url overflow fixed
+  - modal bottom spacing and scroll containment improved on mobile
+- `components/dashboard/TimeReportModal.tsx`
+  - reporting flow reorganized into clearer sections
+  - report type tabs (`Projekt`, `Intern`, `Frånvaro`) improved
+  - mobile readability and action flow improved
 
-## Why work paused
+Time reporting follow-up completed after the main dashboard pass:
 
-During verification after the latest frontend cleanup, a backend regression surfaced in time reporting.
+- `app/tidrapport/page.tsx`
+  - sanitized to the same mobile-safe standard as the dashboard
+  - long text wrapping fixed so report cards do not stretch the page on mobile
+- `lib/blikk.ts`
+  - time-report payloads now mirror the entered comment into both `comment` and `internalComment`
+  - applies to both create and update flows
+
+Shared/base change completed during the pass:
+
+- `app/globals.css`
+  - raw global `button` styling was neutralized so feature-level buttons no longer inherit the old dark button behavior by accident
+
+## Earlier regression found and resolved during Wave 6
+
+During the cleanup pass, a backend regression surfaced in time reporting.
 
 Observed symptom:
 
 - Tidrapportering stopped loading time codes.
 - UI showed `Invalid query` when loading `/api/blikk/timecodes`.
 
-## Root cause
+Root cause:
 
-The regression came from the shared admin-resource query parser introduced during the API cleanup.
+- `app/api/blikk/_admin-resource.ts` restricted `pageSize` and `limit` too aggressively.
+- `components/dashboard/TimeReportModal.tsx` requests larger batch sizes for time codes and activities.
 
-Affected file:
-
-- `app/api/blikk/_admin-resource.ts`
-
-Problem:
-
-- Shared validation restricted `pageSize` and `limit` to `max(50)`.
-- `components/dashboard/TimeReportModal.tsx` requests:
-  - `/api/blikk/timecodes?page=1&pageSize=200`
-  - `/api/blikk/activities?page=1&pageSize=200`
-- These requests started failing validation before the route-specific fetch logic ran, producing `Invalid query`.
-
-Why this matters:
-
-- The bug is not limited to timecodes.
-- Activities in the same modal were vulnerable to the same regression because they use the same shared parser and the same batch size.
-
-## Fix applied
-
-Updated shared validation in `app/api/blikk/_admin-resource.ts`:
+Fix applied:
 
 - `pageSize.max(50)` -> `pageSize.max(200)`
 - `limit.max(50)` -> `limit.max(200)`
 
-This restores compatibility with the existing frontend requests without adding per-route workarounds.
+## Validation status at pause
 
-## Next recommended step after pause
+- `npm run type-check` passed after the latest dashboard and time-reporting changes.
+- The dashboard flow was tested in preview before pausing.
+- A clean merge branch was prepared for the dashboard package so the work can move toward `main` without dragging unrelated branch history.
 
-1. Verify `GET /api/blikk/timecodes?page=1&pageSize=200` returns `200` again.
-2. Verify `GET /api/blikk/activities?page=1&pageSize=200` returns `200` again.
-3. Sanity-check tidrapport-modal in the browser so both tidkoder and aktiviteter populate.
-4. Resume Wave 6 with the next dashboard surface after the time reporting regression is confirmed fixed.
+## Reason for pausing now
+
+The current Wave 6 slice has reached a good stopping point:
+
+- the remaining dashboard/mobile polish issues that were actively blocking usage were addressed
+- the main time-reporting UX regressions found during the pass were addressed
+- the branch state is now clean enough to stop safely
+
+Further Wave 6 work is paused so focus can move to the next feature instead of continuing to grow the refactor scope.
+
+## Recommended resume point later
+
+When Wave 6 resumes, continue from the next unsanitized or still inline-heavy frontend surface outside the now-stabilized dashboard/time-reporting slice.
