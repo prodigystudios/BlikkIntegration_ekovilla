@@ -103,6 +103,18 @@ const quoteStatusLabel: Record<ProspectQuoteItem['status'], string> = {
   lost: 'Förlorad',
 };
 
+type ProspectFilter = 'pipeline' | 'new' | 'contacted' | 'qualified' | 'quoted' | 'won' | 'lost';
+
+const prospectFilterMeta: Record<ProspectFilter, { label: string; hint: string }> = {
+  pipeline: { label: 'Pipen', hint: 'Aktivt säljarbete' },
+  new: { label: 'Nya', hint: 'Första kontakt' },
+  contacted: { label: 'Kontaktade', hint: 'Dialog igång' },
+  qualified: { label: 'Kvalificerade', hint: 'Bra signal' },
+  quoted: { label: 'Offert', hint: 'Väntar beslut' },
+  won: { label: 'Vunna', hint: 'Stängda' },
+  lost: { label: 'Förlorade', hint: 'Tappade' },
+};
+
 function getProspectInitials(value: string) {
   return value
     .split(/\s+/)
@@ -143,6 +155,10 @@ function formatCurrency(value: number | string, currencyCode: string) {
   return new Intl.NumberFormat('sv-SE', { style: 'currency', currency: currencyCode || 'SEK', maximumFractionDigits: 0 }).format(numeric);
 }
 
+function isPipelineProspect(item: ProspectItem) {
+  return item.status === 'new' || item.status === 'contacted' || item.status === 'qualified' || item.status === 'quoted';
+}
+
 export default function ProspectsClient() {
   const toast = useToast();
   const [items, setItems] = useState<ProspectItem[]>([]);
@@ -158,6 +174,7 @@ export default function ProspectsClient() {
   const [relatedQuotesLoading, setRelatedQuotesLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState<ProspectFilter>('pipeline');
   const [draft, setDraft] = useState<CreateProspectDraft>(initialDraft);
   const [detailDraft, setDetailDraft] = useState<CreateProspectDraft>(initialDraft);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -202,6 +219,19 @@ export default function ProspectsClient() {
 
   const selected = useMemo(() => items.find((item) => item.id === selectedId) || null, [items, selectedId]);
   const selectedMeta = selected ? buildProspectMeta(selected) : [];
+  const visibleItems = useMemo(() => {
+    if (filter === 'pipeline') return items.filter(isPipelineProspect);
+    return items.filter((item) => item.status === filter);
+  }, [filter, items]);
+  const filterCounts = useMemo<Record<ProspectFilter, number>>(() => ({
+    pipeline: items.filter(isPipelineProspect).length,
+    new: items.filter((item) => item.status === 'new').length,
+    contacted: items.filter((item) => item.status === 'contacted').length,
+    qualified: items.filter((item) => item.status === 'qualified').length,
+    quoted: items.filter((item) => item.status === 'quoted').length,
+    won: items.filter((item) => item.status === 'won').length,
+    lost: items.filter((item) => item.status === 'lost').length,
+  }), [items]);
 
   useEffect(() => {
     if (!selected) return;
@@ -411,9 +441,48 @@ export default function ProspectsClient() {
                 className="rounded-2xl border-slate-200 bg-white shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]"
               />
               <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                <span className="rounded-full border border-slate-200 bg-white px-3 py-2 font-semibold text-slate-600">Prospektlista</span>
+                <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-2 font-semibold text-emerald-700">{visibleItems.length} i vy</span>
                 <span className="rounded-full border border-slate-200 bg-white px-3 py-2 font-semibold text-slate-600">Senaste aktivitet först</span>
-                <span className="rounded-full border border-slate-200 bg-white px-3 py-2 font-semibold text-slate-600">Detaljvy i overlay</span>
+                <span className="rounded-full border border-slate-200 bg-white px-3 py-2 font-semibold text-slate-600">Öppna detalj för nästa steg</span>
+              </div>
+            </div>
+
+            <div className="grid gap-3 rounded-[28px] border border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(248,250,252,0.92))] p-4 shadow-[0_16px_30px_rgba(15,23,42,0.05)]">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="grid gap-1">
+                  <strong className="text-sm font-semibold text-slate-950">Säljfilter</strong>
+                  <p className="m-0 text-sm leading-6 text-slate-600">Växla snabbt mellan nya leads, pågående dialoger och stängda utfall utan att lämna listan.</p>
+                </div>
+                <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                  {prospectFilterMeta[filter].label} / {prospectFilterMeta[filter].hint}
+                </span>
+              </div>
+
+              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                {(Object.keys(prospectFilterMeta) as ProspectFilter[]).map((value) => {
+                  const active = filter === value;
+                  return (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => setFilter(value)}
+                      className={cn(
+                        'grid min-h-[78px] gap-1 rounded-[22px] border px-3 py-3 text-left transition-[border-color,box-shadow,transform,background-color]',
+                        active
+                          ? 'border-emerald-300 bg-[linear-gradient(180deg,rgba(236,253,245,0.95),rgba(255,255,255,0.98))] shadow-[0_16px_30px_rgba(16,185,129,0.12)]'
+                          : 'border-slate-200 bg-white hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_12px_22px_rgba(15,23,42,0.06)]'
+                      )}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-sm font-semibold text-slate-900">{prospectFilterMeta[value].label}</span>
+                        <span className={cn('rounded-full px-2.5 py-1 text-[11px] font-semibold', active ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600')}>
+                          {filterCounts[value]}
+                        </span>
+                      </div>
+                      <span className="text-xs text-slate-500">{prospectFilterMeta[value].hint}</span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
@@ -432,15 +501,15 @@ export default function ProspectsClient() {
                   </div>
                 ))}
               </div>
-            ) : items.length === 0 ? (
+            ) : visibleItems.length === 0 ? (
               <div className="grid gap-2 rounded-[24px] border border-dashed border-slate-300 bg-slate-50 px-5 py-8 text-center">
-                <strong className="text-base font-bold text-slate-900">Inga prospekt än</strong>
+                <strong className="text-base font-bold text-slate-900">Inga prospekt i den här vyn</strong>
                 <p className="m-0 text-sm leading-6 text-slate-600">
-                  Börja med att lägga in första prospektet via knappen ovan. När import och ringlistor byggs vidare kommer samma kärnobjekt användas här.
+                  Det finns inga poster som matchar {prospectFilterMeta[filter].label.toLowerCase()} just nu. Testa ett annat filter eller lägg in ett nytt prospekt.
                 </p>
               </div>
             ) : (
-              items.map((item) => {
+              visibleItems.map((item) => {
                 const active = selectedId === item.id;
                 const meta = buildProspectMeta(item);
                 return (
@@ -452,41 +521,42 @@ export default function ProspectsClient() {
                       setDetailOpen(true);
                     }}
                     className={cn(
-                      'grid min-w-0 gap-3 rounded-[24px] border px-3.5 py-3 text-left transition-[border-color,box-shadow,transform] md:grid-cols-[auto_minmax(0,1fr)_auto] md:items-center',
+                      'grid min-w-0 gap-3 rounded-[22px] border px-3.5 py-3 text-left transition-[border-color,box-shadow,transform,background-color] xl:grid-cols-[minmax(0,1.25fr)_minmax(0,0.95fr)_auto_auto] xl:items-center',
                       active
                         ? 'border-emerald-300 bg-[linear-gradient(135deg,rgba(237,252,245,0.98)_0%,rgba(255,255,255,0.98)_55%,rgba(240,253,250,0.95)_100%)] shadow-[0_22px_40px_rgba(16,185,129,0.14)] ring-1 ring-emerald-100'
                         : 'border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98)_0%,rgba(248,250,252,0.95)_100%)] hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_18px_32px_rgba(15,23,42,0.08)]'
                     )}
                   >
-                    <div className={cn(
-                      'flex h-10 w-10 items-center justify-center rounded-xl border text-xs font-bold tracking-[0.08em] shadow-[inset_0_1px_0_rgba(255,255,255,0.7)] md:h-11 md:w-11 md:text-sm',
-                      active ? 'border-emerald-200 bg-white text-emerald-800' : 'border-slate-200 bg-white text-slate-600'
-                    )}>
-                      {getProspectInitials(item.company_name) || 'P'}
-                    </div>
+                    <div className="grid min-w-0 gap-2 xl:grid-cols-[auto_minmax(0,1fr)] xl:items-center">
+                      <div className={cn(
+                        'flex h-10 w-10 items-center justify-center rounded-xl border text-xs font-bold tracking-[0.08em] shadow-[inset_0_1px_0_rgba(255,255,255,0.7)] md:h-11 md:w-11 md:text-sm',
+                        active ? 'border-emerald-200 bg-white text-emerald-800' : 'border-slate-200 bg-white text-slate-600'
+                      )}>
+                        {getProspectInitials(item.company_name) || 'P'}
+                      </div>
 
-                    <div className="grid min-w-0 gap-2">
-                      <div className="flex min-w-0 flex-wrap items-start justify-between gap-2 md:flex-nowrap">
-                        <div className="grid min-w-0 gap-1">
-                          <strong className="break-words text-base font-bold tracking-[-0.03em] text-slate-950 md:text-[17px]">{item.company_name}</strong>
-                          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-slate-500 md:text-xs">
-                            {meta.length > 0 ? meta.map((label) => <span key={label} className="break-words">{label}</span>) : <span>Ingen metadata än</span>}
-                          </div>
+                      <div className="grid min-w-0 gap-1.5">
+                        <div className="flex min-w-0 flex-wrap items-center gap-2">
+                          <strong className="break-words text-[15px] font-bold tracking-[-0.03em] text-slate-950 md:text-base">{item.company_name}</strong>
+                          <span className={cn('w-fit rounded-full border px-2 py-0.5 text-[10px] font-semibold md:px-2.5 md:py-1 md:text-[11px]', statusClass[item.status])}>
+                            {statusLabel[item.status]}
+                          </span>
                         </div>
-                        <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-semibold md:px-2.5 md:py-1 md:text-[11px]', statusClass[item.status])}>
-                          {statusLabel[item.status]}
-                        </span>
-                      </div>
-
-                      <div className="flex min-w-0 flex-wrap gap-1.5 text-[11px] text-slate-600 md:text-xs">
-                        {item.phone ? <span className="break-words rounded-full border border-slate-200/90 bg-white/90 px-2 py-1 shadow-[0_4px_10px_rgba(15,23,42,0.03)]">{item.phone}</span> : null}
-                        {item.email ? <span className="break-words rounded-full border border-slate-200/90 bg-white/90 px-2 py-1 shadow-[0_4px_10px_rgba(15,23,42,0.03)]">{item.email}</span> : null}
-                        {item.organization_number ? <span className="break-words rounded-full border border-slate-200/90 bg-white/90 px-2 py-1 shadow-[0_4px_10px_rgba(15,23,42,0.03)]">Org.nr: {item.organization_number}</span> : null}
+                        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-slate-500 md:text-xs">
+                          {meta.length > 0 ? meta.map((label) => <span key={label} className="break-words">{label}</span>) : <span>Ingen metadata än</span>}
+                        </div>
                       </div>
                     </div>
 
-                    <div className="flex items-end justify-between gap-2 md:grid md:justify-items-end">
-                      <span className="text-[11px] font-medium text-slate-400 md:text-xs">Uppdaterad {formatDateTime(item.updated_at)}</span>
+                    <div className="flex min-w-0 flex-wrap gap-1.5 text-[11px] text-slate-600 md:text-xs xl:justify-start">
+                      {item.phone ? <span className="break-words rounded-full border border-slate-200/90 bg-white/90 px-2 py-1 shadow-[0_4px_10px_rgba(15,23,42,0.03)]">{item.phone}</span> : null}
+                      {item.email ? <span className="break-words rounded-full border border-slate-200/90 bg-white/90 px-2 py-1 shadow-[0_4px_10px_rgba(15,23,42,0.03)]">{item.email}</span> : null}
+                      {item.organization_number ? <span className="break-words rounded-full border border-slate-200/90 bg-white/90 px-2 py-1 shadow-[0_4px_10px_rgba(15,23,42,0.03)]">Org.nr: {item.organization_number}</span> : null}
+                    </div>
+
+                    <div className="grid gap-1 text-[11px] text-slate-500 xl:justify-items-end">
+                      <span className="font-medium text-slate-400 md:text-xs">Uppdaterad {formatDateTime(item.updated_at)}</span>
+                      <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Öppna detalj</span>
                     </div>
                   </button>
                 );

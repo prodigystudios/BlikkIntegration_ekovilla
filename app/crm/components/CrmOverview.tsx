@@ -130,8 +130,17 @@ const quoteStatusLabel: Record<QuoteItem['status'], string> = {
   lost: 'Förlorad',
 };
 
-const overviewPanelClass = 'grid gap-3 border-slate-300 bg-[linear-gradient(180deg,rgba(248,250,252,0.98),rgba(241,245,249,0.98))] p-5 md:p-6';
-const overviewItemCardClass = 'rounded-[22px] border border-slate-300 bg-white p-4 no-underline shadow-[0_10px_24px_rgba(15,23,42,0.06)] transition-[transform,border-color,box-shadow,background-color] hover:-translate-y-0.5 hover:border-slate-400 hover:bg-white hover:shadow-[0_16px_32px_rgba(15,23,42,0.10)]';
+const prospectStatusLabel: Record<ProspectItem['status'], string> = {
+  new: 'Ny',
+  contacted: 'Kontaktad',
+  qualified: 'Kvalificerad',
+  quoted: 'Offert',
+  won: 'Vunnen',
+  lost: 'Förlorad',
+};
+
+const overviewPanelClass = 'grid gap-2.5 border-emerald-300/80 bg-[linear-gradient(180deg,rgba(244,251,245,0.98),rgba(229,244,232,0.98))] p-3 shadow-[0_18px_38px_rgba(15,23,42,0.06)] md:p-3.5';
+const overviewItemCardClass = 'rounded-[16px] border border-emerald-200/70 bg-[linear-gradient(180deg,#ffffff_0%,#fbfefb_100%)] p-2.5 no-underline shadow-[0_14px_28px_rgba(15,23,42,0.08)] ring-1 ring-white/90 transition-[transform,border-color,box-shadow,background-color] hover:-translate-y-0.5 hover:border-emerald-300 hover:bg-white hover:shadow-[0_20px_34px_rgba(15,23,42,0.12)]';
 
 function getProspectFromCall(item: CallItem) {
   if (Array.isArray(item.prospect)) return item.prospect[0] || null;
@@ -158,6 +167,10 @@ function getGoalUser(value: GoalItem['user']) {
 
 function hasActiveGoalTarget(goal: GoalItem) {
   return goal.calls_target > 0 || goal.quotes_target > 0 || Number(goal.quote_value_target) > 0;
+}
+
+function isPipelineProspect(prospect: ProspectItem) {
+  return prospect.status === 'new' || prospect.status === 'contacted' || prospect.status === 'qualified' || prospect.status === 'quoted';
 }
 
 function formatDateTime(value: string | null | undefined) {
@@ -320,6 +333,7 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
       const numeric = typeof quote.amount === 'number' ? quote.amount : Number(String(quote.amount));
       return total + (Number.isFinite(numeric) ? numeric : 0);
     }, 0);
+    const pipelineProspects = state.prospects.filter(isPipelineProspect);
     const newProspects = state.prospects.filter((prospect) => prospect.status === 'new');
     const qualifiedProspects = state.prospects.filter((prospect) => prospect.status === 'qualified' || prospect.status === 'quoted');
     const wonProspects = state.prospects.filter((prospect) => prospect.status === 'won');
@@ -329,6 +343,7 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
 
     return {
       prospectsTotal: state.prospects.length,
+      pipelineProspects: pipelineProspects.length,
       newProspects: newProspects.length,
       qualifiedProspects: qualifiedProspects.length,
       wonProspects: wonProspects.length,
@@ -349,10 +364,10 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
     };
   }, [state.calls, state.goals, state.prospects, state.quotes, state.tasks]);
 
-  const recentProspects = useMemo(() => [...state.prospects].sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, 5), [state.prospects]);
-  const recentCalls = useMemo(() => [...state.calls].sort((a, b) => b.call_at.localeCompare(a.call_at)).slice(0, 5), [state.calls]);
-  const recentQuotes = useMemo(() => [...state.quotes].sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, 5), [state.quotes]);
-  const nextTasks = useMemo(() => [...state.tasks].filter((task) => task.status === 'open').sort(sortTasks).slice(0, 5), [state.tasks]);
+  const recentProspects = useMemo(() => [...state.prospects].sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, 3), [state.prospects]);
+  const recentCalls = useMemo(() => [...state.calls].sort((a, b) => b.call_at.localeCompare(a.call_at)).slice(0, 3), [state.calls]);
+  const recentQuotes = useMemo(() => [...state.quotes].sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, 3), [state.quotes]);
+  const nextTasks = useMemo(() => [...state.tasks].filter((task) => task.status === 'open').sort(sortTasks).slice(0, 3), [state.tasks]);
   const prospectNames = useMemo(() => Object.fromEntries(state.prospects.map((prospect) => [prospect.id, prospect.company_name])), [state.prospects]);
   const nextActions = buildOverviewActions({ overdueTasks: summary.overdueTasks, followUpCalls: summary.followUpCalls, newProspects: summary.newProspects, standaloneCalls: summary.standaloneCalls, quoteFollowUps: summary.quoteFollowUps });
   const teamLeaderboard = useMemo(() => {
@@ -409,36 +424,69 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
         return left.userName.localeCompare(right.userName, 'sv');
       });
   }, [state.calls, state.goals, state.quotes]);
-
   return (
-    <div className="grid gap-4">
-      <SectionCard className="grid gap-4 overflow-hidden border-slate-200 bg-[radial-gradient(circle_at_top_left,_rgba(15,118,110,0.16),_transparent_34%),linear-gradient(135deg,_#f8fafc,_#ecfeff)] p-5 md:p-6">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-          <div className="grid gap-2">
-            <span className="text-xs font-semibold uppercase tracking-[0.16em] text-teal-700">CRM / Översikt</span>
-            <div className="grid gap-1">
-              <h1 className="m-0 text-2xl font-bold tracking-[-0.03em] text-slate-900 md:text-3xl">Dagens läge och nästa steg</h1>
-              <p className="m-0 max-w-3xl text-sm leading-6 text-slate-600 md:text-[15px]">
-                Översikten drar nu direkt från Prospekt, Samtal och Uppgifter. Tanken här är inte rapportering för rapporteringens skull,
-                utan en snabb arbetsyta för vad som behöver hända nu.
-              </p>
+    <div className="grid gap-3">
+      <SectionCard className="grid gap-2.5 overflow-hidden border-emerald-300/80 bg-[radial-gradient(circle_at_top_left,_rgba(22,163,74,0.24),_transparent_34%),radial-gradient(circle_at_top_right,_rgba(101,163,13,0.18),_transparent_28%),linear-gradient(135deg,_#f6fbf4,_#e4f4e8_52%,_#f3faf4)] p-3 md:p-3.5 xl:p-4">
+        <div className="grid gap-2.5 xl:grid-cols-[minmax(0,1.08fr)_minmax(300px,0.76fr)] xl:items-start 2xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.78fr)]">
+          <div className="grid gap-2.5">
+            <div className="grid gap-2 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
+              <div className="grid gap-1.5">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-teal-700">CRM / Översikt</span>
+                <div className="grid gap-1">
+                  <h1 className="m-0 max-w-[11ch] text-[clamp(1.55rem,2.25vw,2.45rem)] font-bold tracking-[-0.045em] text-slate-950">Dagens läge och nästa steg</h1>
+                  <p className="m-0 max-w-4xl text-[12px] leading-5 text-slate-600 md:text-[13px] md:leading-5">
+                    Översikten ska styra blicken till rätt arbete först. Därför lyfter den nu fram pipen, uppföljningar, mål och de delar som kräver ett beslut eller nästa steg.
+                  </p>
+                </div>
+            </div>
+              <div className="flex flex-wrap gap-1.5 xl:justify-end">
+                <Link href="/crm/samtal" className="inline-flex min-h-9 items-center rounded-full border border-slate-900 bg-slate-900 px-2.5 py-1.5 text-[12px] font-semibold text-white no-underline transition hover:bg-slate-950">
+                  Logga samtal
+                </Link>
+                <Link href="/crm/uppgifter" className="inline-flex min-h-9 items-center rounded-full border border-slate-200 bg-white px-2.5 py-1.5 text-[12px] font-semibold text-slate-700 no-underline transition hover:border-slate-300 hover:bg-slate-50">
+                  Öppna uppgifter
+                </Link>
+                <Link href="/crm/prospekt" className="inline-flex min-h-9 items-center rounded-full border border-white/70 bg-white/75 px-2.5 py-1.5 text-[12px] font-semibold text-slate-700 no-underline transition hover:border-slate-300 hover:bg-white">
+                  Gå till pipen
+                </Link>
+              </div>
+            </div>
+
+            <div className="grid gap-2 sm:grid-cols-2 2xl:grid-cols-4">
+              <OverviewMetricCard label="Prospekt i pipen" value={summary.pipelineProspects} helper={`${summary.newProspects} nya · ${summary.qualifiedProspects} varma`} tone="teal" />
+              <OverviewMetricCard label="Samtal senaste 7 dagar" value={summary.callsLast7Days} helper={summary.callsTarget > 0 ? `${summary.callsLast7Days}/${summary.callsTarget} mot veckomål` : `${summary.followUpCalls} kräver nästa steg`} tone="sky" />
+              <OverviewMetricCard label="Öppna uppgifter" value={summary.openTasks} helper={summary.overdueTasks > 0 ? `${summary.overdueTasks} sena just nu` : `${summary.todayTasks} förfaller idag`} tone="amber" />
+              <OverviewMetricCard label="Offerter senaste 7 dagar" value={summary.quotesLast7Days} helper={summary.quotesTarget > 0 ? `${summary.quotesLast7Days}/${summary.quotesTarget} mot veckomål` : `${summary.quoteFollowUps} väntar uppföljning`} tone="emerald" />
             </div>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <Link href="/crm/samtal" className="rounded-full border border-slate-900 bg-slate-900 px-4 py-2 text-sm font-semibold text-white no-underline transition hover:bg-slate-950">
-              Logga samtal
-            </Link>
-            <Link href="/crm/uppgifter" className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 no-underline transition hover:border-slate-300 hover:bg-slate-50">
-              Öppna uppgifter
-            </Link>
-          </div>
-        </div>
 
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          <OverviewMetricCard label="Prospekt i pipen" value={summary.prospectsTotal} helper={`${summary.newProspects} nya · ${summary.qualifiedProspects} varma`} tone="teal" />
-          <OverviewMetricCard label="Samtal senaste 7 dagar" value={summary.callsLast7Days} helper={summary.callsTarget > 0 ? `${summary.callsLast7Days}/${summary.callsTarget} mot veckomål` : `${summary.followUpCalls} kräver nästa steg`} tone="sky" />
-          <OverviewMetricCard label="Öppna uppgifter" value={summary.openTasks} helper={summary.overdueTasks > 0 ? `${summary.overdueTasks} sena just nu` : `${summary.todayTasks} förfaller idag`} tone="amber" />
-          <OverviewMetricCard label="Offerter senaste 7 dagar" value={summary.quotesLast7Days} helper={summary.quotesTarget > 0 ? `${summary.quotesLast7Days}/${summary.quotesTarget} mot veckomål` : `${summary.quoteFollowUps} väntar uppföljning`} tone="emerald" />
+          <div className="grid gap-2 rounded-[22px] border border-slate-200/60 bg-[linear-gradient(180deg,rgba(15,23,42,0.95),rgba(30,41,59,0.96))] p-2.5 text-white shadow-[0_24px_44px_rgba(15,23,42,0.22)] xl:self-stretch">
+            <div className="grid gap-1">
+              <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-teal-100/75">Operativ puls</span>
+              <strong className="text-[15px] font-bold tracking-[-0.03em] text-white">Läs detta först</strong>
+              <p className="m-0 text-[12px] leading-5 text-slate-300">
+                Snabb sammanfattning av det som faktiskt påverkar dagen: rörelse i pipen, uppföljningar och hur långt teamet ligger från veckomålen.
+              </p>
+            </div>
+
+            <div className="grid gap-2 sm:grid-cols-3 xl:grid-cols-1">
+              <DashboardPulseCard title="Pipeline" value={`${summary.pipelineProspects}`} helper={summary.newProspects > 0 ? `${summary.newProspects} nya att ta först` : 'Ingen ny lead i kö just nu'} />
+              <DashboardPulseCard title="Följ upp" value={`${summary.followUpCalls + summary.quoteFollowUps}`} helper={summary.followUpCalls > 0 ? `${summary.followUpCalls} samtal behöver nästa steg` : 'Samtal är under kontroll'} />
+              <DashboardPulseCard title="Måltryck" value={summary.quoteValueTarget > 0 ? `${Math.round((summary.quoteValueLast7Days / summary.quoteValueTarget) * 100)}%` : '–'} helper={summary.quoteValueTarget > 0 ? `${formatCurrency(summary.quoteValueLast7Days, 'SEK')} av ${formatCurrency(summary.quoteValueTarget, 'SEK')}` : 'Inget veckomål satt än'} />
+            </div>
+
+            <div className="grid gap-2 rounded-[18px] border border-white/10 bg-white/5 p-2.5 text-sm text-slate-200">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-[13px] font-semibold text-white">Dagens fokus</span>
+                <span className="rounded-full border border-white/10 bg-white/10 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-teal-100">Live</span>
+              </div>
+              <div className="grid gap-2">
+                <DashboardSignalRow label="Sena uppgifter" value={summary.overdueTasks} tone="rose" />
+                <DashboardSignalRow label="Varma prospekt" value={summary.qualifiedProspects} tone="sky" />
+                <DashboardSignalRow label="Vunna prospekt" value={summary.wonProspects} tone="emerald" />
+              </div>
+            </div>
+          </div>
         </div>
       </SectionCard>
 
@@ -449,99 +497,62 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
         </SectionCard>
       ) : null}
 
-      <div className="grid gap-4 xl:grid-cols-[1.25fr_0.95fr]">
-        <SectionCard className={overviewPanelClass}>
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="grid gap-1">
-              <span className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Att agera på</span>
-              <strong className="text-lg font-bold tracking-[-0.02em] text-slate-900">Nästa fokus</strong>
-            </div>
-            <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">{nextActions.length} prioriterade spår</span>
-          </div>
-
-          {loading ? <OverviewLoadingRows /> : null}
-          {!loading && nextActions.length === 0 ? <div className="rounded-[24px] border border-emerald-200 bg-emerald-50/80 p-4 text-sm text-emerald-900">Läget är lugnt just nu. Det finns inget som sticker ut som blockerande i CRM-flödet.</div> : null}
-          {!loading && nextActions.length > 0 ? (
-            <div className="grid gap-3">
-              {nextActions.map((action) => (
-                <Link key={action.title} href={action.href} className="rounded-[24px] border border-slate-300 bg-white p-4 no-underline shadow-[0_10px_24px_rgba(15,23,42,0.06)] transition-[transform,border-color,box-shadow,background-color] hover:-translate-y-0.5 hover:border-teal-300 hover:bg-white hover:shadow-[0_18px_34px_rgba(15,118,110,0.12)]">
-                  <div className="grid gap-1">
-                    <strong className="text-[15px] font-semibold text-slate-900">{action.title}</strong>
-                    <p className="m-0 text-sm leading-6 text-slate-600">{action.description}</p>
-                    <span className="text-sm font-semibold text-teal-700">Öppna</span>
-                  </div>
-                </Link>
-              ))}
-            </div>
-          ) : null}
-        </SectionCard>
-
-        <SectionCard className={overviewPanelClass}>
-          <div className="grid gap-1">
-            <span className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Statusbild</span>
-            <strong className="text-lg font-bold tracking-[-0.02em] text-slate-900">Fördelning och mål</strong>
-          </div>
-          {loading ? <OverviewLoadingRows /> : null}
-          {!loading ? (
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-1">
-              <StatusStrip label="Samtal mot mål" value={summary.callsLast7Days} goal={summary.callsTarget} tone="sky" />
-              <StatusStrip label="Offerter mot mål" value={summary.quotesLast7Days} goal={summary.quotesTarget} tone="emerald" />
-              <StatusStrip label="Offertvärde mot mål" value={summary.quoteValueLast7Days} goal={summary.quoteValueTarget} tone="teal" currency />
-              <StatusStrip label="Nya prospekt" value={summary.newProspects} tone="slate" />
-              <StatusStrip label="Varma prospekt" value={summary.qualifiedProspects} tone="sky" />
-              <StatusStrip label="Offerter att följa upp" value={summary.quoteFollowUps} tone="amber" />
-              <StatusStrip label="Följ upp-samtal" value={summary.followUpCalls} tone="amber" />
-              <StatusStrip label="Sena uppgifter" value={summary.overdueTasks} tone="rose" />
-            </div>
-          ) : null}
-        </SectionCard>
-      </div>
-
-      <SectionCard className={overviewPanelClass}>
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="grid gap-1">
-            <span className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Teamöversikt</span>
-            <strong className="text-lg font-bold tracking-[-0.02em] text-slate-900">Topplista mot veckomål</strong>
-          </div>
-          <Link href="/crm/installningar" className="text-sm font-semibold text-teal-700 no-underline">Justera mål</Link>
-        </div>
-
-        {loading ? <OverviewLoadingRows /> : null}
-        {!loading && teamLeaderboard.length === 0 ? (
-          <div className="rounded-[24px] border border-dashed border-slate-300 bg-slate-50 px-5 py-8 text-sm text-slate-600">
-            Inga veckomål är satta ännu. Lägg in mål i Inställningar för att låsa upp teamöversikt och topplista.
-          </div>
-        ) : null}
-        {!loading && teamLeaderboard.length > 0 ? (
-          <div className="grid gap-3 xl:grid-cols-2">
-            {teamLeaderboard.map((entry, index) => (
-              <div key={entry.id} className="grid gap-3 rounded-[24px] border border-slate-300 bg-white p-4 shadow-[0_10px_24px_rgba(15,23,42,0.06)]">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="grid gap-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-600">#{index + 1}</span>
-                      <strong className="text-[15px] font-semibold text-slate-900">{entry.userName}</strong>
-                    </div>
-                    <p className="m-0 text-sm text-slate-600">{entry.role === 'admin' ? 'Admin' : 'Sälj'} med aktivt veckomål</p>
-                  </div>
-                  <span className="rounded-full border border-teal-200 bg-teal-50 px-2.5 py-1 text-[11px] font-semibold text-teal-700">
-                    {Math.round(entry.progressScore * 100)}%
-                  </span>
+      <div className="grid items-start gap-2.5 2xl:grid-cols-[minmax(0,1.16fr)_minmax(300px,0.62fr)]">
+        <div className="grid gap-2.5">
+          <div className="grid items-start gap-2.5 xl:grid-cols-[minmax(0,1.18fr)_minmax(0,0.92fr)]">
+            <SectionCard className={`${overviewPanelClass} self-start`}>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="grid gap-1">
+                  <span className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Att agera på</span>
+                  <strong className="text-lg font-bold tracking-[-0.02em] text-slate-900">Nästa fokus</strong>
                 </div>
-
-                <div className="grid gap-2 text-sm text-slate-600">
-                  <TeamProgressRow label="Samtal" value={entry.callsDone} target={entry.callsTarget} tone="sky" />
-                  <TeamProgressRow label="Offerter" value={entry.quotesDone} target={entry.quotesTarget} tone="emerald" />
-                  <TeamProgressRow label="Offertvärde" value={entry.quoteValueDone} target={entry.quoteValueTarget} tone="teal" currency />
-                </div>
+                <span className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs font-semibold text-slate-700 shadow-[0_8px_18px_rgba(15,23,42,0.04)]">{nextActions.length} prioriterade spår</span>
               </div>
-            ))}
-          </div>
-        ) : null}
-      </SectionCard>
 
-      <div className="grid gap-4 xl:grid-cols-4">
-        <SectionCard className={overviewPanelClass}>
+              {loading ? <OverviewLoadingRows /> : null}
+              {!loading && nextActions.length === 0 ? <div className="rounded-[20px] border border-emerald-300 bg-emerald-50 p-4 text-sm font-medium text-emerald-950">Läget är lugnt just nu. Det finns inget som sticker ut som blockerande i CRM-flödet.</div> : null}
+              {!loading && nextActions.length > 0 ? (
+                <div className="grid gap-2.5">
+                  {nextActions.map((action) => (
+                    <Link key={action.title} href={action.href} className="rounded-[18px] border border-slate-300 bg-white p-3 no-underline shadow-[0_12px_24px_rgba(15,23,42,0.07)] ring-1 ring-white/80 transition-[transform,border-color,box-shadow,background-color] hover:-translate-y-0.5 hover:border-teal-400 hover:bg-white hover:shadow-[0_18px_32px_rgba(15,118,110,0.14)]">
+                      <div className="grid gap-1">
+                        <strong className="text-[14px] font-semibold text-slate-950">{action.title}</strong>
+                        <p className="m-0 text-sm leading-5 text-slate-700">{action.description}</p>
+                        <span className="text-[13px] font-semibold text-teal-800">Öppna</span>
+                      </div>
+                    </Link>
+                  ))}
+                </div>
+              ) : null}
+            </SectionCard>
+
+            <SectionCard className={`${overviewPanelClass} self-start`}>
+              <div className="grid gap-1">
+                <span className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Statusbild</span>
+                <strong className="text-lg font-bold tracking-[-0.02em] text-slate-950">Fördelning och mål</strong>
+              </div>
+              {loading ? <OverviewLoadingRows /> : null}
+              {!loading ? (
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-1">
+                  <StatusStrip label="Samtal mot mål" value={summary.callsLast7Days} goal={summary.callsTarget} tone="sky" />
+                  <StatusStrip label="Offerter mot mål" value={summary.quotesLast7Days} goal={summary.quotesTarget} tone="emerald" />
+                  <StatusStrip label="Offertvärde mot mål" value={summary.quoteValueLast7Days} goal={summary.quoteValueTarget} tone="teal" currency />
+                  <StatusStrip label="Nya prospekt" value={summary.newProspects} tone="slate" />
+                  <StatusStrip label="Varma prospekt" value={summary.qualifiedProspects} tone="sky" />
+                  <StatusStrip label="Offerter att följa upp" value={summary.quoteFollowUps} tone="amber" />
+                  <StatusStrip label="Följ upp-samtal" value={summary.followUpCalls} tone="amber" />
+                  <StatusStrip label="Sena uppgifter" value={summary.overdueTasks} tone="rose" />
+                </div>
+              ) : null}
+            </SectionCard>
+          </div>
+
+          <div className="2xl:hidden">
+            <LeaderboardPanel loading={loading} teamLeaderboard={teamLeaderboard} />
+          </div>
+
+          <div className="mt-1 grid gap-x-2.5 gap-y-4 border-t border-slate-200/80 pt-3 xl:grid-cols-2 xl:gap-y-5 xl:pt-3.5">
+            <SectionCard className={`${overviewPanelClass} h-full`}>
           <SectionHeader title="Senaste prospekt" href="/crm/prospekt" />
           {loading ? <OverviewLoadingRows /> : null}
           {!loading && recentProspects.length === 0 ? <EmptyState text="Inga prospekt ännu." /> : null}
@@ -550,20 +561,20 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
               {recentProspects.map((prospect) => (
                 <Link key={prospect.id} href="/crm/prospekt" className={overviewItemCardClass}>
                   <div className="flex items-start justify-between gap-3">
-                    <div className="grid gap-1">
-                      <strong className="text-[15px] font-semibold text-slate-900">{prospect.company_name}</strong>
-                      <p className="m-0 text-sm text-slate-600">{[prospect.contact_name, prospect.city, prospect.source].filter(Boolean).join(' • ') || 'Ingen extra info ännu'}</p>
+                    <div className="grid min-w-0 gap-0.5">
+                      <strong className="truncate text-[15px] font-semibold text-slate-950">{prospect.company_name}</strong>
+                      <p className="m-0 truncate text-sm text-slate-700">{[prospect.contact_name, prospect.city, prospect.source].filter(Boolean).join(' • ') || 'Ingen extra info ännu'}</p>
                     </div>
-                    <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-600">{prospect.status}</span>
+                    <span className="rounded-full border border-slate-300 bg-slate-100 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-700">{prospectStatusLabel[prospect.status]}</span>
                   </div>
-                  <span className="mt-3 block text-xs text-slate-400">Uppdaterad {formatDateTime(prospect.updated_at)}</span>
+                  <span className="mt-2 block text-xs font-medium text-slate-500">Uppdaterad {formatDateTime(prospect.updated_at)}</span>
                 </Link>
               ))}
             </div>
           ) : null}
-        </SectionCard>
+            </SectionCard>
 
-        <SectionCard className={overviewPanelClass}>
+            <SectionCard className={`${overviewPanelClass} h-full`}>
           <SectionHeader title="Senaste samtal" href="/crm/samtal" />
           {loading ? <OverviewLoadingRows /> : null}
           {!loading && recentCalls.length === 0 ? <EmptyState text="Inga samtal loggade ännu." /> : null}
@@ -572,23 +583,23 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
               {recentCalls.map((call) => (
                 <Link key={call.id} href="/crm/samtal" className={overviewItemCardClass}>
                   <div className="flex items-start justify-between gap-3">
-                    <div className="grid gap-1">
-                      <strong className="text-[15px] font-semibold text-slate-900">{getCallCompanyName(call)}</strong>
-                      <p className="m-0 text-sm text-slate-600">{call.summary}</p>
+                    <div className="grid min-w-0 gap-0.5">
+                      <strong className="truncate text-[15px] font-semibold text-slate-950">{getCallCompanyName(call)}</strong>
+                      <span className="text-xs font-medium text-slate-500">{formatDateTime(call.call_at)}</span>
                     </div>
-                    <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-600">{outcomeLabel[call.outcome]}</span>
+                    <span className="rounded-full border border-slate-300 bg-slate-100 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-700">{outcomeLabel[call.outcome]}</span>
                   </div>
-                  <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-400">
-                    <span>{formatDateTime(call.call_at)}</span>
-                    {call.next_step ? <span>Nästa steg: {call.next_step}</span> : null}
+                  <div className="mt-2 grid gap-1">
+                    <p className="m-0 truncate text-sm text-slate-700">{call.summary}</p>
+                    {call.next_step ? <p className="m-0 truncate text-xs font-medium text-slate-500">Nästa steg: {call.next_step}</p> : null}
                   </div>
                 </Link>
               ))}
             </div>
           ) : null}
-        </SectionCard>
+            </SectionCard>
 
-        <SectionCard className={overviewPanelClass}>
+            <SectionCard className={`${overviewPanelClass} h-full`}>
           <SectionHeader title="Öppna uppgifter" href="/crm/uppgifter" />
           {loading ? <OverviewLoadingRows /> : null}
           {!loading && nextTasks.length === 0 ? <EmptyState text="Inga öppna uppgifter just nu." /> : null}
@@ -597,23 +608,23 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
               {nextTasks.map((task) => (
                 <Link key={task.id} href="/crm/uppgifter" className={overviewItemCardClass}>
                   <div className="flex items-start justify-between gap-3">
-                    <div className="grid gap-1">
-                      <strong className="text-[15px] font-semibold text-slate-900">{task.title}</strong>
-                      <p className="m-0 text-sm text-slate-600">{task.prospect_id ? prospectNames[task.prospect_id] || 'Kopplat prospekt' : task.source || 'Allmän CRM-uppgift'}</p>
+                    <div className="grid min-w-0 gap-0.5">
+                      <strong className="truncate text-[15px] font-semibold text-slate-950">{task.title}</strong>
+                      <p className="m-0 truncate text-sm text-slate-700">{task.prospect_id ? prospectNames[task.prospect_id] || 'Kopplat prospekt' : task.source || 'Allmän CRM-uppgift'}</p>
                     </div>
                     <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${taskPriorityClass[task.priority]}`}>{taskPriorityLabel[task.priority]}</span>
                   </div>
-                  <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-400">
+                  <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-medium text-slate-500">
                     <span>{formatDate(task.due_date)}</span>
-                    {task.remind_at ? <span>Påminnelse {formatDateTime(task.remind_at)}</span> : null}
+                    {task.remind_at ? <span className="truncate">Påminnelse {formatDateTime(task.remind_at)}</span> : null}
                   </div>
                 </Link>
               ))}
             </div>
           ) : null}
-        </SectionCard>
+            </SectionCard>
 
-        <SectionCard className={overviewPanelClass}>
+            <SectionCard className={`${overviewPanelClass} h-full`}>
           <SectionHeader title="Senaste offerter" href="/crm/offerter" />
           {loading ? <OverviewLoadingRows /> : null}
           {!loading && recentQuotes.length === 0 ? <EmptyState text="Inga offerter registrerade ännu." /> : null}
@@ -622,28 +633,34 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
               {recentQuotes.map((quote) => (
                 <Link key={quote.id} href="/crm/offerter" className={overviewItemCardClass}>
                   <div className="flex items-start justify-between gap-3">
-                    <div className="grid gap-1">
-                      <strong className="text-[15px] font-semibold text-slate-900">{quote.project_name}</strong>
-                      <p className="m-0 text-sm text-slate-600">{getQuoteCustomerName(quote)}</p>
+                    <div className="grid min-w-0 gap-0.5">
+                      <strong className="truncate text-[15px] font-semibold text-slate-950">{quote.project_name}</strong>
+                      <p className="m-0 truncate text-sm text-slate-700">{getQuoteCustomerName(quote)}</p>
                     </div>
-                    <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-800">{quoteStatusLabel[quote.status]}</span>
+                    <span className="rounded-full border border-amber-300 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-900">{quoteStatusLabel[quote.status]}</span>
                   </div>
-                  <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-400">
+                  <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-medium text-slate-500">
                     <span>{formatCurrency(quote.amount, quote.currency_code)}</span>
                     <span>{formatDate(quote.quote_date)}</span>
-                    {quote.follow_up_date ? <span>Följ upp {formatDate(quote.follow_up_date)}</span> : null}
+                    {quote.follow_up_date ? <span className="truncate">Följ upp {formatDate(quote.follow_up_date)}</span> : null}
                   </div>
                 </Link>
               ))}
             </div>
           ) : null}
-        </SectionCard>
+            </SectionCard>
+          </div>
+        </div>
+
+        <div className="hidden 2xl:block">
+          <LeaderboardPanel loading={loading} teamLeaderboard={teamLeaderboard} />
+        </div>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+      <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
         {items.map((item) => (
           <Link key={item.href} href={item.href} className="no-underline">
-            <SectionCard className="grid h-full gap-2 rounded-[24px] border-slate-200 p-5 transition-[border-color,box-shadow,transform] hover:-translate-y-0.5 hover:border-teal-300 hover:shadow-[0_16px_34px_rgba(15,118,110,0.12)]">
+            <SectionCard className="grid h-full gap-2 rounded-[22px] border-slate-200 p-4 transition-[border-color,box-shadow,transform] hover:-translate-y-0.5 hover:border-teal-300 hover:shadow-[0_16px_34px_rgba(15,118,110,0.12)]">
               <span className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">CRM-sektion</span>
               <strong className="text-lg font-bold tracking-[-0.02em] text-slate-900">{item.label}</strong>
               <p className="m-0 text-sm leading-6 text-slate-600">{item.description}</p>
@@ -665,19 +682,113 @@ function OverviewMetricCard({ label, value, helper, tone }: { label: string; val
   }[tone];
 
   return (
-    <div className={`grid gap-1 rounded-[24px] border p-4 ${toneClass}`}>
-      <span className="text-xs font-semibold uppercase tracking-[0.14em] opacity-70">{label}</span>
-      <strong className="text-3xl font-bold tracking-[-0.04em]">{value}</strong>
-      <span className="text-sm leading-6 opacity-80">{helper}</span>
+    <div className={`grid gap-1 rounded-[16px] border p-2.5 shadow-[0_14px_26px_rgba(15,23,42,0.05)] ${toneClass}`}>
+      <span className="text-[11px] font-semibold uppercase tracking-[0.18em] opacity-70">{label}</span>
+      <strong className="text-[clamp(1.3rem,1.9vw,1.8rem)] font-bold tracking-[-0.035em]">{value}</strong>
+      <span className="text-[12px] leading-5 opacity-80">{helper}</span>
     </div>
+  );
+}
+
+function DashboardPulseCard({ title, value, helper }: { title: string; value: string; helper: string }) {
+  return (
+    <div className="grid gap-1 rounded-[16px] border border-white/10 bg-white/5 px-2.5 py-2 backdrop-blur-sm">
+      <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-300">{title}</span>
+      <strong className="text-[15px] font-bold tracking-[-0.03em] text-white">{value}</strong>
+      <span className="text-xs leading-5 text-slate-300">{helper}</span>
+    </div>
+  );
+}
+
+function DashboardSignalRow({ label, value, tone }: { label: string; value: number; tone: 'rose' | 'sky' | 'emerald' }) {
+  const toneClass = {
+    rose: 'bg-rose-400',
+    sky: 'bg-sky-400',
+    emerald: 'bg-emerald-400',
+  }[tone];
+
+  return (
+    <div className="grid gap-1.5">
+      <div className="flex items-center justify-between gap-3 text-sm text-slate-200">
+        <span>{label}</span>
+        <strong className="text-white">{value}</strong>
+      </div>
+      <div className="h-1.5 rounded-full bg-white/10">
+        <div className={`h-1.5 rounded-full ${toneClass}`} style={{ width: `${Math.max(value === 0 ? 12 : Math.min(100, value * 16), 12)}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function LeaderboardPanel({
+  loading,
+  teamLeaderboard,
+}: {
+  loading: boolean;
+  teamLeaderboard: Array<{
+    id: string;
+    userName: string;
+    role: string;
+    callsDone: number;
+    callsTarget: number;
+    quotesDone: number;
+    quotesTarget: number;
+    quoteValueDone: number;
+    quoteValueTarget: number;
+    progressScore: number;
+  }>;
+}) {
+  return (
+    <SectionCard className={overviewPanelClass}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="grid gap-1">
+          <span className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Teamöversikt</span>
+          <strong className="text-lg font-bold tracking-[-0.02em] text-slate-900">Topplista mot veckomål</strong>
+        </div>
+        <Link href="/crm/installningar" className="text-sm font-semibold text-teal-700 no-underline">Justera mål</Link>
+      </div>
+
+      {loading ? <OverviewLoadingRows /> : null}
+      {!loading && teamLeaderboard.length === 0 ? (
+        <div className="rounded-[20px] border border-dashed border-slate-300 bg-slate-50 px-5 py-8 text-sm font-medium text-slate-700">
+          Inga veckomål är satta ännu. Lägg in mål i Inställningar för att låsa upp teamöversikt och topplista.
+        </div>
+      ) : null}
+      {!loading && teamLeaderboard.length > 0 ? (
+        <div className="grid gap-2.5 2xl:max-h-[960px] 2xl:overflow-y-auto 2xl:pr-1">
+          {teamLeaderboard.map((entry, index) => (
+            <div key={entry.id} className="grid gap-2 rounded-[18px] border border-slate-300 bg-white p-2.5 shadow-[0_12px_22px_rgba(15,23,42,0.07)] ring-1 ring-white/80">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="grid gap-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded-full border border-slate-300 bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-700">#{index + 1}</span>
+                    <strong className="text-sm font-semibold text-slate-950">{entry.userName}</strong>
+                  </div>
+                  <p className="m-0 text-[12px] text-slate-600">{entry.role === 'admin' ? 'Admin' : 'Sälj'} med aktivt veckomål</p>
+                </div>
+                <span className="rounded-full border border-teal-300 bg-teal-50 px-2 py-0.5 text-[10px] font-semibold text-teal-800">
+                  {Math.round(entry.progressScore * 100)}%
+                </span>
+              </div>
+
+              <div className="grid gap-1.5 text-sm text-slate-600">
+                <TeamProgressRow label="Samtal" value={entry.callsDone} target={entry.callsTarget} tone="sky" />
+                <TeamProgressRow label="Offerter" value={entry.quotesDone} target={entry.quotesTarget} tone="emerald" />
+                <TeamProgressRow label="Offertvärde" value={entry.quoteValueDone} target={entry.quoteValueTarget} tone="teal" currency />
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </SectionCard>
   );
 }
 
 function SectionHeader({ title, href }: { title: string; href: string }) {
   return (
-    <div className="flex items-center justify-between gap-3">
-      <strong className="text-lg font-bold tracking-[-0.02em] text-slate-900">{title}</strong>
-      <Link href={href} className="text-sm font-semibold text-teal-700 no-underline">Visa alla</Link>
+    <div className="flex min-h-11 items-start justify-between gap-3">
+      <strong className="text-lg font-bold leading-tight tracking-[-0.02em] text-slate-950">{title}</strong>
+      <Link href={href} className="text-sm font-semibold text-teal-800 no-underline hover:text-teal-900">Visa alla</Link>
     </div>
   );
 }
@@ -693,8 +804,8 @@ function StatusStrip({ label, value, tone, goal, currency = false }: { label: st
   }[tone];
 
   const width = goal && goal > 0
-    ? Math.max(Math.min(100, (value / goal) * 100), 8)
-    : Math.max(value === 0 ? 8 : Math.min(100, value * 16), 8);
+    ? value <= 0 ? 0 : Math.min(100, (value / goal) * 100)
+    : value <= 0 ? 0 : Math.min(100, value * 16);
   const displayValue = currency ? formatCurrency(value, 'SEK') : value;
   const displayGoal = goal != null && goal > 0
     ? currency ? formatCurrency(goal, 'SEK') : String(goal)
@@ -702,11 +813,11 @@ function StatusStrip({ label, value, tone, goal, currency = false }: { label: st
 
   return (
     <div className="grid gap-1.5">
-      <div className="flex items-center justify-between gap-3 text-sm text-slate-600">
+      <div className="flex items-center justify-between gap-3 text-sm text-slate-700">
         <span>{label}</span>
-        <strong className="text-slate-900">{displayGoal ? `${displayValue} / ${displayGoal}` : displayValue}</strong>
+        <strong className="text-slate-950">{displayGoal ? `${displayValue} / ${displayGoal}` : displayValue}</strong>
       </div>
-      <div className="h-2 rounded-full bg-slate-100">
+      <div className="h-2 rounded-full bg-slate-200/90">
         <div className={`h-2 rounded-full ${toneClass}`} style={{ width: `${width}%` }} />
       </div>
     </div>
@@ -724,7 +835,7 @@ function OverviewLoadingRows() {
 }
 
 function EmptyState({ text }: { text: string }) {
-  return <p className="m-0 rounded-[22px] border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm leading-6 text-slate-500">{text}</p>;
+  return <p className="m-0 rounded-[18px] border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-sm font-medium leading-6 text-slate-700">{text}</p>;
 }
 
 function TeamProgressRow({ label, value, target, tone, currency = false }: { label: string; value: number; target: number; tone: 'sky' | 'emerald' | 'teal'; currency?: boolean }) {
@@ -734,18 +845,20 @@ function TeamProgressRow({ label, value, target, tone, currency = false }: { lab
     teal: 'bg-teal-500',
   }[tone];
 
-  const width = target > 0 ? Math.max(Math.min(100, (value / target) * 100), 8) : 8;
+  const width = target > 0
+    ? value <= 0 ? 0 : Math.min(100, (value / target) * 100)
+    : 0;
   const displayValue = currency ? formatCurrency(value, 'SEK') : value;
   const displayTarget = currency ? formatCurrency(target, 'SEK') : target;
 
   return (
-    <div className="grid gap-1.5">
-      <div className="flex items-center justify-between gap-3 text-sm text-slate-600">
+    <div className="grid gap-1">
+      <div className="flex items-center justify-between gap-2 text-[12px] text-slate-700">
         <span>{label}</span>
-        <strong className="text-slate-900">{displayValue} / {displayTarget}</strong>
+        <strong className="text-slate-950">{displayValue} / {displayTarget}</strong>
       </div>
-      <div className="h-2 rounded-full bg-slate-100">
-        <div className={`h-2 rounded-full ${toneClass}`} style={{ width: `${width}%` }} />
+      <div className="h-1.5 rounded-full bg-slate-200/90">
+        <div className={`h-1.5 rounded-full ${toneClass}`} style={{ width: `${width}%` }} />
       </div>
     </div>
   );
