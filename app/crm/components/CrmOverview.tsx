@@ -32,6 +32,7 @@ type CallItem = {
   contact_name: string | null;
   city: string | null;
   source: string | null;
+  user_id: string;
   outcome: 'no_answer' | 'follow_up' | 'positive' | 'negative';
   summary: string;
   next_step: string | null;
@@ -72,6 +73,7 @@ type QuoteItem = {
   status: 'draft' | 'sent' | 'follow_up' | 'won' | 'lost';
   quote_date: string;
   follow_up_date: string | null;
+  assigned_to: string;
   updated_at: string;
   prospect: QuoteProspect | QuoteProspect[] | null;
 };
@@ -81,6 +83,24 @@ type LoadState = {
   calls: CallItem[];
   tasks: TaskItem[];
   quotes: QuoteItem[];
+  goals: GoalItem[];
+};
+
+type GoalUser = {
+  id: string;
+  full_name: string | null;
+  role: 'sales' | 'admin' | 'member' | 'konsult';
+};
+
+type GoalItem = {
+  id: string;
+  user_id: string;
+  period_type: 'week';
+  period_start: string;
+  calls_target: number;
+  quotes_target: number;
+  quote_value_target: number | string;
+  user: GoalUser | GoalUser[] | null;
 };
 
 const outcomeLabel: Record<CallItem['outcome'], string> = {
@@ -129,6 +149,15 @@ function getProspectFromQuote(item: QuoteItem) {
 
 function getQuoteCustomerName(item: QuoteItem) {
   return getProspectFromQuote(item)?.company_name || item.customer_name || 'Okänd kund';
+}
+
+function getGoalUser(value: GoalItem['user']) {
+  if (Array.isArray(value)) return value[0] || null;
+  return value || null;
+}
+
+function hasActiveGoalTarget(goal: GoalItem) {
+  return goal.calls_target > 0 || goal.quotes_target > 0 || Number(goal.quote_value_target) > 0;
 }
 
 function formatDateTime(value: string | null | undefined) {
@@ -217,7 +246,7 @@ function buildOverviewActions(args: { overdueTasks: number; followUpCalls: numbe
 
 export default function CrmOverview({ role }: { role: UserRole | null }) {
   const items = getVisibleCrmNavItems(role).filter((item) => item.href !== '/crm');
-  const [state, setState] = useState<LoadState>({ prospects: [], calls: [], tasks: [], quotes: [] });
+  const [state, setState] = useState<LoadState>({ prospects: [], calls: [], tasks: [], quotes: [], goals: [] });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -229,24 +258,27 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
       setError(null);
 
       try {
-        const [prospectsRes, callsRes, tasksRes, quotesRes] = await Promise.all([
+        const [prospectsRes, callsRes, tasksRes, quotesRes, goalsRes] = await Promise.all([
           fetch('/api/crm/prospects', { cache: 'no-store' }),
           fetch('/api/crm/calls', { cache: 'no-store' }),
           fetch('/api/crm/tasks', { cache: 'no-store' }),
           fetch('/api/crm/quotes', { cache: 'no-store' }),
+          fetch('/api/crm/goals?period_type=week', { cache: 'no-store' }),
         ]);
 
-        const [prospectsJson, callsJson, tasksJson, quotesJson] = await Promise.all([
+        const [prospectsJson, callsJson, tasksJson, quotesJson, goalsJson] = await Promise.all([
           prospectsRes.json().catch(() => ({})),
           callsRes.json().catch(() => ({})),
           tasksRes.json().catch(() => ({})),
           quotesRes.json().catch(() => ({})),
+          goalsRes.json().catch(() => ({})),
         ]);
 
         if (!prospectsRes.ok) throw new Error(prospectsJson?.error || 'Kunde inte läsa prospekt.');
         if (!callsRes.ok) throw new Error(callsJson?.error || 'Kunde inte läsa samtal.');
         if (!tasksRes.ok) throw new Error(tasksJson?.error || 'Kunde inte läsa uppgifter.');
         if (!quotesRes.ok) throw new Error(quotesJson?.error || 'Kunde inte läsa offerter.');
+        if (!goalsRes.ok) throw new Error(goalsJson?.error || 'Kunde inte läsa mål.');
 
         if (!active) return;
 
@@ -255,10 +287,12 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
           calls: Array.isArray(callsJson?.data?.items) ? callsJson.data.items : [],
           tasks: Array.isArray(tasksJson?.data?.items) ? tasksJson.data.items : [],
           quotes: Array.isArray(quotesJson?.data?.items) ? quotesJson.data.items : [],
+          goals: Array.isArray(goalsJson?.data?.items) ? goalsJson.data.items : [],
         });
       } catch (loadError: any) {
         if (!active) return;
         setError(loadError?.message || 'Kunde inte ladda CRM-översikten.');
+        setState({ prospects: [], calls: [], tasks: [], quotes: [], goals: [] });
       } finally {
         if (active) setLoading(false);
       }
@@ -281,9 +315,17 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
     const activeQuotes = state.quotes.filter((quote) => quote.status === 'draft' || quote.status === 'sent' || quote.status === 'follow_up');
     const quoteFollowUps = state.quotes.filter((quote) => quote.status === 'follow_up');
     const wonQuotes = state.quotes.filter((quote) => quote.status === 'won');
+    const recentQuotes = state.quotes.filter((quote) => isWithinLastDays(quote.quote_date, 7));
+    const quoteValueLast7Days = recentQuotes.reduce((total, quote) => {
+      const numeric = typeof quote.amount === 'number' ? quote.amount : Number(String(quote.amount));
+      return total + (Number.isFinite(numeric) ? numeric : 0);
+    }, 0);
     const newProspects = state.prospects.filter((prospect) => prospect.status === 'new');
     const qualifiedProspects = state.prospects.filter((prospect) => prospect.status === 'qualified' || prospect.status === 'quoted');
     const wonProspects = state.prospects.filter((prospect) => prospect.status === 'won');
+    const callsTarget = state.goals.reduce((total, goal) => total + goal.calls_target, 0);
+    const quotesTarget = state.goals.reduce((total, goal) => total + goal.quotes_target, 0);
+    const quoteValueTarget = state.goals.reduce((total, goal) => total + Number(goal.quote_value_target || 0), 0);
 
     return {
       prospectsTotal: state.prospects.length,
@@ -296,11 +338,16 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
       activeQuotes: activeQuotes.length,
       quoteFollowUps: quoteFollowUps.length,
       wonQuotes: wonQuotes.length,
+      quotesLast7Days: recentQuotes.length,
+      quoteValueLast7Days,
       openTasks: openTasks.length,
       overdueTasks: overdueTasks.length,
       todayTasks: todayTasks.length,
+      callsTarget,
+      quotesTarget,
+      quoteValueTarget,
     };
-  }, [state.calls, state.prospects, state.quotes, state.tasks]);
+  }, [state.calls, state.goals, state.prospects, state.quotes, state.tasks]);
 
   const recentProspects = useMemo(() => [...state.prospects].sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, 5), [state.prospects]);
   const recentCalls = useMemo(() => [...state.calls].sort((a, b) => b.call_at.localeCompare(a.call_at)).slice(0, 5), [state.calls]);
@@ -308,6 +355,60 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
   const nextTasks = useMemo(() => [...state.tasks].filter((task) => task.status === 'open').sort(sortTasks).slice(0, 5), [state.tasks]);
   const prospectNames = useMemo(() => Object.fromEntries(state.prospects.map((prospect) => [prospect.id, prospect.company_name])), [state.prospects]);
   const nextActions = buildOverviewActions({ overdueTasks: summary.overdueTasks, followUpCalls: summary.followUpCalls, newProspects: summary.newProspects, standaloneCalls: summary.standaloneCalls, quoteFollowUps: summary.quoteFollowUps });
+  const teamLeaderboard = useMemo(() => {
+    const callsByUser = new Map<string, number>();
+    const quotesByUser = new Map<string, number>();
+    const quoteValueByUser = new Map<string, number>();
+
+    for (const call of state.calls) {
+      callsByUser.set(call.user_id, (callsByUser.get(call.user_id) || 0) + 1);
+    }
+
+    for (const quote of state.quotes) {
+      quotesByUser.set(quote.assigned_to, (quotesByUser.get(quote.assigned_to) || 0) + 1);
+      const numericAmount = typeof quote.amount === 'number' ? quote.amount : Number(String(quote.amount));
+      quoteValueByUser.set(
+        quote.assigned_to,
+        (quoteValueByUser.get(quote.assigned_to) || 0) + (Number.isFinite(numericAmount) ? numericAmount : 0),
+      );
+    }
+
+    return state.goals
+      .filter(hasActiveGoalTarget)
+      .map((goal) => {
+        const user = getGoalUser(goal.user);
+        const callsDone = callsByUser.get(goal.user_id) || 0;
+        const quotesDone = quotesByUser.get(goal.user_id) || 0;
+        const quoteValueDone = quoteValueByUser.get(goal.user_id) || 0;
+        const progressValues = [
+          goal.calls_target > 0 ? callsDone / goal.calls_target : null,
+          goal.quotes_target > 0 ? quotesDone / goal.quotes_target : null,
+          Number(goal.quote_value_target) > 0 ? quoteValueDone / Number(goal.quote_value_target) : null,
+        ].filter((value): value is number => value != null);
+        const progressScore = progressValues.length > 0
+          ? progressValues.reduce((total, value) => total + value, 0) / progressValues.length
+          : 0;
+
+        return {
+          id: goal.id,
+          userId: goal.user_id,
+          userName: user?.full_name || 'Okänd användare',
+          role: user?.role || 'sales',
+          callsDone,
+          callsTarget: goal.calls_target,
+          quotesDone,
+          quotesTarget: goal.quotes_target,
+          quoteValueDone,
+          quoteValueTarget: Number(goal.quote_value_target) || 0,
+          progressScore,
+        };
+      })
+      .sort((left, right) => {
+        if (right.progressScore !== left.progressScore) return right.progressScore - left.progressScore;
+        if (right.callsDone !== left.callsDone) return right.callsDone - left.callsDone;
+        return left.userName.localeCompare(right.userName, 'sv');
+      });
+  }, [state.calls, state.goals, state.quotes]);
 
   return (
     <div className="grid gap-4">
@@ -335,9 +436,9 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
 
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <OverviewMetricCard label="Prospekt i pipen" value={summary.prospectsTotal} helper={`${summary.newProspects} nya · ${summary.qualifiedProspects} varma`} tone="teal" />
-          <OverviewMetricCard label="Samtal senaste 7 dagar" value={summary.callsLast7Days} helper={`${summary.followUpCalls} kräver nästa steg`} tone="sky" />
+          <OverviewMetricCard label="Samtal senaste 7 dagar" value={summary.callsLast7Days} helper={summary.callsTarget > 0 ? `${summary.callsLast7Days}/${summary.callsTarget} mot veckomål` : `${summary.followUpCalls} kräver nästa steg`} tone="sky" />
           <OverviewMetricCard label="Öppna uppgifter" value={summary.openTasks} helper={summary.overdueTasks > 0 ? `${summary.overdueTasks} sena just nu` : `${summary.todayTasks} förfaller idag`} tone="amber" />
-          <OverviewMetricCard label="Aktiva offerter" value={summary.activeQuotes} helper={summary.quoteFollowUps > 0 ? `${summary.quoteFollowUps} väntar uppföljning` : `${summary.wonQuotes} vunna offerter`} tone="emerald" />
+          <OverviewMetricCard label="Offerter senaste 7 dagar" value={summary.quotesLast7Days} helper={summary.quotesTarget > 0 ? `${summary.quotesLast7Days}/${summary.quotesTarget} mot veckomål` : `${summary.quoteFollowUps} väntar uppföljning`} tone="emerald" />
         </div>
       </SectionCard>
 
@@ -378,11 +479,14 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
         <SectionCard className={overviewPanelClass}>
           <div className="grid gap-1">
             <span className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Statusbild</span>
-            <strong className="text-lg font-bold tracking-[-0.02em] text-slate-900">Fördelning just nu</strong>
+            <strong className="text-lg font-bold tracking-[-0.02em] text-slate-900">Fördelning och mål</strong>
           </div>
           {loading ? <OverviewLoadingRows /> : null}
           {!loading ? (
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-1">
+              <StatusStrip label="Samtal mot mål" value={summary.callsLast7Days} goal={summary.callsTarget} tone="sky" />
+              <StatusStrip label="Offerter mot mål" value={summary.quotesLast7Days} goal={summary.quotesTarget} tone="emerald" />
+              <StatusStrip label="Offertvärde mot mål" value={summary.quoteValueLast7Days} goal={summary.quoteValueTarget} tone="teal" currency />
               <StatusStrip label="Nya prospekt" value={summary.newProspects} tone="slate" />
               <StatusStrip label="Varma prospekt" value={summary.qualifiedProspects} tone="sky" />
               <StatusStrip label="Offerter att följa upp" value={summary.quoteFollowUps} tone="amber" />
@@ -392,6 +496,49 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
           ) : null}
         </SectionCard>
       </div>
+
+      <SectionCard className={overviewPanelClass}>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="grid gap-1">
+            <span className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Teamöversikt</span>
+            <strong className="text-lg font-bold tracking-[-0.02em] text-slate-900">Topplista mot veckomål</strong>
+          </div>
+          <Link href="/crm/installningar" className="text-sm font-semibold text-teal-700 no-underline">Justera mål</Link>
+        </div>
+
+        {loading ? <OverviewLoadingRows /> : null}
+        {!loading && teamLeaderboard.length === 0 ? (
+          <div className="rounded-[24px] border border-dashed border-slate-300 bg-slate-50 px-5 py-8 text-sm text-slate-600">
+            Inga veckomål är satta ännu. Lägg in mål i Inställningar för att låsa upp teamöversikt och topplista.
+          </div>
+        ) : null}
+        {!loading && teamLeaderboard.length > 0 ? (
+          <div className="grid gap-3 xl:grid-cols-2">
+            {teamLeaderboard.map((entry, index) => (
+              <div key={entry.id} className="grid gap-3 rounded-[24px] border border-slate-300 bg-white p-4 shadow-[0_10px_24px_rgba(15,23,42,0.06)]">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="grid gap-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-600">#{index + 1}</span>
+                      <strong className="text-[15px] font-semibold text-slate-900">{entry.userName}</strong>
+                    </div>
+                    <p className="m-0 text-sm text-slate-600">{entry.role === 'admin' ? 'Admin' : 'Sälj'} med aktivt veckomål</p>
+                  </div>
+                  <span className="rounded-full border border-teal-200 bg-teal-50 px-2.5 py-1 text-[11px] font-semibold text-teal-700">
+                    {Math.round(entry.progressScore * 100)}%
+                  </span>
+                </div>
+
+                <div className="grid gap-2 text-sm text-slate-600">
+                  <TeamProgressRow label="Samtal" value={entry.callsDone} target={entry.callsTarget} tone="sky" />
+                  <TeamProgressRow label="Offerter" value={entry.quotesDone} target={entry.quotesTarget} tone="emerald" />
+                  <TeamProgressRow label="Offertvärde" value={entry.quoteValueDone} target={entry.quoteValueTarget} tone="teal" currency />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </SectionCard>
 
       <div className="grid gap-4 xl:grid-cols-4">
         <SectionCard className={overviewPanelClass}>
@@ -535,21 +682,29 @@ function SectionHeader({ title, href }: { title: string; href: string }) {
   );
 }
 
-function StatusStrip({ label, value, tone }: { label: string; value: number; tone: 'slate' | 'sky' | 'amber' | 'rose' }) {
+function StatusStrip({ label, value, tone, goal, currency = false }: { label: string; value: number; tone: 'slate' | 'sky' | 'amber' | 'rose' | 'emerald' | 'teal'; goal?: number; currency?: boolean }) {
   const toneClass = {
     slate: 'bg-slate-900',
     sky: 'bg-sky-500',
     amber: 'bg-amber-500',
     rose: 'bg-rose-500',
+    emerald: 'bg-emerald-500',
+    teal: 'bg-teal-500',
   }[tone];
 
-  const width = Math.max(value === 0 ? 8 : Math.min(100, value * 16), 8);
+  const width = goal && goal > 0
+    ? Math.max(Math.min(100, (value / goal) * 100), 8)
+    : Math.max(value === 0 ? 8 : Math.min(100, value * 16), 8);
+  const displayValue = currency ? formatCurrency(value, 'SEK') : value;
+  const displayGoal = goal != null && goal > 0
+    ? currency ? formatCurrency(goal, 'SEK') : String(goal)
+    : null;
 
   return (
     <div className="grid gap-1.5">
       <div className="flex items-center justify-between gap-3 text-sm text-slate-600">
         <span>{label}</span>
-        <strong className="text-slate-900">{value}</strong>
+        <strong className="text-slate-900">{displayGoal ? `${displayValue} / ${displayGoal}` : displayValue}</strong>
       </div>
       <div className="h-2 rounded-full bg-slate-100">
         <div className={`h-2 rounded-full ${toneClass}`} style={{ width: `${width}%` }} />
@@ -570,4 +725,28 @@ function OverviewLoadingRows() {
 
 function EmptyState({ text }: { text: string }) {
   return <p className="m-0 rounded-[22px] border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm leading-6 text-slate-500">{text}</p>;
+}
+
+function TeamProgressRow({ label, value, target, tone, currency = false }: { label: string; value: number; target: number; tone: 'sky' | 'emerald' | 'teal'; currency?: boolean }) {
+  const toneClass = {
+    sky: 'bg-sky-500',
+    emerald: 'bg-emerald-500',
+    teal: 'bg-teal-500',
+  }[tone];
+
+  const width = target > 0 ? Math.max(Math.min(100, (value / target) * 100), 8) : 8;
+  const displayValue = currency ? formatCurrency(value, 'SEK') : value;
+  const displayTarget = currency ? formatCurrency(target, 'SEK') : target;
+
+  return (
+    <div className="grid gap-1.5">
+      <div className="flex items-center justify-between gap-3 text-sm text-slate-600">
+        <span>{label}</span>
+        <strong className="text-slate-900">{displayValue} / {displayTarget}</strong>
+      </div>
+      <div className="h-2 rounded-full bg-slate-100">
+        <div className={`h-2 rounded-full ${toneClass}`} style={{ width: `${width}%` }} />
+      </div>
+    </div>
+  );
 }

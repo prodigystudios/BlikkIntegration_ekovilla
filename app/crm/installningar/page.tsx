@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
 import { getUserProfile } from '@/lib/getUserProfile';
+import { getCurrentWeekStartDate, mapCrmGoalRows } from '@/lib/crm/goals';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import CrmSettingsView from './CrmSettingsView';
 
@@ -10,12 +11,18 @@ export default async function CrmSettingsPage() {
   if (profile?.role !== 'admin') redirect('/crm');
 
   const supabase = getSupabaseAdmin();
+  const currentWeekStart = getCurrentWeekStartDate();
 
-  const [teamRes, unassignedProspectsRes, openTasksRes, quoteFollowUpsRes] = await Promise.all([
+  const [teamRes, goalsRes, unassignedProspectsRes, openTasksRes, quoteFollowUpsRes] = await Promise.all([
     supabase
       .from('profiles')
       .select('id, full_name, phone, role')
       .in('role', ['sales', 'admin', 'konsult']),
+    supabase
+      .from('crm_goals')
+      .select('id, user_id, period_type, period_start, calls_target, quotes_target, quote_value_target, created_by, updated_by, created_at, updated_at, user:profiles!crm_goals_user_id_fkey(id, full_name, role)')
+      .eq('period_type', 'week')
+      .eq('period_start', currentWeekStart),
     supabase
       .from('crm_prospects')
       .select('id', { count: 'exact', head: true })
@@ -41,6 +48,11 @@ export default async function CrmSettingsPage() {
       if (roleDiff !== 0) return roleDiff;
       return (left.full_name || '').localeCompare(right.full_name || '', 'sv');
     });
+
+  const goalTeam = crmTeam.filter((member): member is { id: string; full_name: string | null; phone: string | null; role: 'sales' | 'admin' } => (
+    member.role === 'sales' || member.role === 'admin'
+  ));
+  const currentGoals = mapCrmGoalRows(goalsRes.data as any[] | null | undefined);
 
   const adminCount = crmTeam.filter((member) => member.role === 'admin').length;
 
@@ -104,6 +116,9 @@ export default async function CrmSettingsPage() {
   return (
     <CrmSettingsView
       team={crmTeam}
+      goalTeam={goalTeam}
+      goals={currentGoals}
+      goalPeriodStart={currentWeekStart}
       stats={stats}
       integrations={integrations}
     />

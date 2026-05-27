@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import CrmGoalsPanel from './CrmGoalsPanel';
 import SectionCard from '../../../components/ui/SectionCard';
 
 type CrmTeamMember = {
@@ -21,6 +22,13 @@ type IntegrationItem = {
   description: string;
   href?: string;
   hrefLabel?: string;
+};
+
+type GoalItem = {
+  user_id: string;
+  calls_target: number;
+  quotes_target: number;
+  quote_value_target: number | string;
 };
 
 const statToneClass: Record<SettingsStat['tone'], string> = {
@@ -49,10 +57,16 @@ const integrationClass: Record<IntegrationItem['status'], string> = {
 
 export default function CrmSettingsView({
   team,
+  goalTeam,
+  goals,
+  goalPeriodStart,
   stats,
   integrations,
 }: {
   team: CrmTeamMember[];
+  goalTeam: Array<{ id: string; full_name: string | null; role: 'sales' | 'admin' }>;
+  goals: GoalItem[];
+  goalPeriodStart: string;
   stats: SettingsStat[];
   integrations: IntegrationItem[];
 }) {
@@ -145,6 +159,8 @@ export default function CrmSettingsView({
           </div>
         </SectionCard>
       </div>
+
+      <CrmGoalsPanel team={goalTeam} initialGoals={goals} periodStart={goalPeriodStart} />
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.9fr)]">
         <SectionCard className="grid gap-4 border-slate-200 bg-white/90 p-5 md:p-6">
