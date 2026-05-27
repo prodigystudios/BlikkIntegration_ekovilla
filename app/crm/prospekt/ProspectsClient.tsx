@@ -78,11 +78,29 @@ type ProspectCallItem = {
   call_at: string;
 };
 
+type ProspectQuoteItem = {
+  id: string;
+  project_name: string;
+  amount: number | string;
+  currency_code: string;
+  status: 'draft' | 'sent' | 'follow_up' | 'won' | 'lost';
+  quote_date: string;
+  follow_up_date: string | null;
+};
+
 const callOutcomeLabel: Record<ProspectCallItem['outcome'], string> = {
   no_answer: 'Ej svar',
   follow_up: 'Följ upp',
   positive: 'Positivt',
   negative: 'Negativt',
+};
+
+const quoteStatusLabel: Record<ProspectQuoteItem['status'], string> = {
+  draft: 'Utkast',
+  sent: 'Skickad',
+  follow_up: 'Följ upp',
+  won: 'Vunnen',
+  lost: 'Förlorad',
 };
 
 function getProspectInitials(value: string) {
@@ -112,6 +130,19 @@ function formatDateTime(value: string | null | undefined) {
   }).format(date);
 }
 
+function formatDate(value: string | null | undefined) {
+  if (!value) return '–';
+  const date = new Date(`${value}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return '–';
+  return new Intl.DateTimeFormat('sv-SE', { dateStyle: 'medium' }).format(date);
+}
+
+function formatCurrency(value: number | string, currencyCode: string) {
+  const numeric = typeof value === 'number' ? value : Number(String(value));
+  if (!Number.isFinite(numeric)) return '–';
+  return new Intl.NumberFormat('sv-SE', { style: 'currency', currency: currencyCode || 'SEK', maximumFractionDigits: 0 }).format(numeric);
+}
+
 export default function ProspectsClient() {
   const toast = useToast();
   const [items, setItems] = useState<ProspectItem[]>([]);
@@ -123,6 +154,8 @@ export default function ProspectsClient() {
   const [savingDetail, setSavingDetail] = useState(false);
   const [relatedCalls, setRelatedCalls] = useState<ProspectCallItem[]>([]);
   const [relatedCallsLoading, setRelatedCallsLoading] = useState(false);
+  const [relatedQuotes, setRelatedQuotes] = useState<ProspectQuoteItem[]>([]);
+  const [relatedQuotesLoading, setRelatedQuotesLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [draft, setDraft] = useState<CreateProspectDraft>(initialDraft);
@@ -194,28 +227,45 @@ export default function ProspectsClient() {
     let active = true;
     const prospectId = selectedId;
 
-    async function loadCalls() {
+    async function loadRelatedActivity() {
       setRelatedCallsLoading(true);
+      setRelatedQuotesLoading(true);
       try {
-        const res = await fetch(`/api/crm/calls?prospect_id=${encodeURIComponent(prospectId)}`, { cache: 'no-store' });
-        const json = await res.json().catch(() => ({}));
+        const [callsRes, quotesRes] = await Promise.all([
+          fetch(`/api/crm/calls?prospect_id=${encodeURIComponent(prospectId)}`, { cache: 'no-store' }),
+          fetch(`/api/crm/quotes?prospect_id=${encodeURIComponent(prospectId)}`, { cache: 'no-store' }),
+        ]);
+        const [callsJson, quotesJson] = await Promise.all([
+          callsRes.json().catch(() => ({})),
+          quotesRes.json().catch(() => ({})),
+        ]);
+
         if (!active) return;
 
-        if (!res.ok || !json.ok) {
+        if (!callsRes.ok || !callsJson.ok) {
           setRelatedCalls([]);
-          return;
+        } else {
+          setRelatedCalls(Array.isArray(callsJson?.data?.items) ? callsJson.data.items : []);
         }
 
-        setRelatedCalls(Array.isArray(json?.data?.items) ? json.data.items : []);
+        if (!quotesRes.ok || !quotesJson.ok) {
+          setRelatedQuotes([]);
+        } else {
+          setRelatedQuotes(Array.isArray(quotesJson?.data?.items) ? quotesJson.data.items : []);
+        }
       } catch {
         if (!active) return;
         setRelatedCalls([]);
+        setRelatedQuotes([]);
       } finally {
-        if (active) setRelatedCallsLoading(false);
+        if (active) {
+          setRelatedCallsLoading(false);
+          setRelatedQuotesLoading(false);
+        }
       }
     }
 
-    loadCalls();
+    loadRelatedActivity();
 
     return () => {
       active = false;
@@ -663,6 +713,50 @@ export default function ProspectsClient() {
               <p className="m-0 whitespace-pre-wrap break-words text-sm leading-6 text-slate-600">
                 {detailEditing ? (detailDraft.notes || 'Inga anteckningar än.') : (selected.notes || 'Inga anteckningar än.')}
               </p>
+            </div>
+
+            <div className="grid gap-3 rounded-[24px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#fffaf2_100%)] px-4 py-4 shadow-[0_14px_26px_rgba(15,23,42,0.04)]">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <strong className="text-sm font-semibold text-slate-900">Offerter på prospektet</strong>
+                <a
+                  href="/crm/offerter"
+                  className="inline-flex min-h-9 items-center justify-center rounded-2xl border border-amber-500 bg-[linear-gradient(180deg,#f59e0b_0%,#d97706_100%)] px-3 py-2 text-xs font-semibold text-white shadow-[0_14px_24px_rgba(217,119,6,0.18)] transition hover:brightness-[0.97]"
+                >
+                  Öppna offerter
+                </a>
+              </div>
+              {relatedQuotesLoading ? (
+                <div className="grid gap-2">
+                  {Array.from({ length: 2 }).map((_, index) => (
+                    <div key={index} className="grid gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                      <div className="h-3 w-32 rounded-full bg-slate-200" />
+                      <div className="h-3 w-48 rounded-full bg-slate-200" />
+                    </div>
+                  ))}
+                </div>
+              ) : relatedQuotes.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-sm text-slate-600">
+                  Inga offerter registrerade ännu för det här prospektet.
+                </div>
+              ) : (
+                <div className="grid gap-2">
+                  {relatedQuotes.map((quote) => (
+                    <div key={quote.id} className="grid gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-4">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <strong className="text-sm font-semibold text-slate-900">{quote.project_name}</strong>
+                        <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-800">
+                          {quoteStatusLabel[quote.status]}
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap gap-2 text-xs text-slate-500">
+                        <span>{formatCurrency(quote.amount, quote.currency_code)}</span>
+                        <span>Offertdatum: {formatDate(quote.quote_date)}</span>
+                        {quote.follow_up_date ? <span>Följ upp: {formatDate(quote.follow_up_date)}</span> : null}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="grid gap-3 rounded-[24px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#f7fbff_100%)] px-4 py-4 shadow-[0_14px_26px_rgba(15,23,42,0.04)]">

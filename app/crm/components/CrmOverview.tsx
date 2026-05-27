@@ -54,10 +54,33 @@ type TaskItem = {
   updated_at: string;
 };
 
+type QuoteProspect = {
+  id: string;
+  company_name: string;
+  contact_name: string | null;
+  city: string | null;
+  status: ProspectItem['status'];
+};
+
+type QuoteItem = {
+  id: string;
+  prospect_id: string | null;
+  customer_name: string | null;
+  project_name: string;
+  amount: number | string;
+  currency_code: string;
+  status: 'draft' | 'sent' | 'follow_up' | 'won' | 'lost';
+  quote_date: string;
+  follow_up_date: string | null;
+  updated_at: string;
+  prospect: QuoteProspect | QuoteProspect[] | null;
+};
+
 type LoadState = {
   prospects: ProspectItem[];
   calls: CallItem[];
   tasks: TaskItem[];
+  quotes: QuoteItem[];
 };
 
 const outcomeLabel: Record<CallItem['outcome'], string> = {
@@ -79,6 +102,14 @@ const taskPriorityLabel: Record<TaskItem['priority'], string> = {
   high: 'Hög',
 };
 
+const quoteStatusLabel: Record<QuoteItem['status'], string> = {
+  draft: 'Utkast',
+  sent: 'Skickad',
+  follow_up: 'Följ upp',
+  won: 'Vunnen',
+  lost: 'Förlorad',
+};
+
 const overviewPanelClass = 'grid gap-3 border-slate-300 bg-[linear-gradient(180deg,rgba(248,250,252,0.98),rgba(241,245,249,0.98))] p-5 md:p-6';
 const overviewItemCardClass = 'rounded-[22px] border border-slate-300 bg-white p-4 no-underline shadow-[0_10px_24px_rgba(15,23,42,0.06)] transition-[transform,border-color,box-shadow,background-color] hover:-translate-y-0.5 hover:border-slate-400 hover:bg-white hover:shadow-[0_16px_32px_rgba(15,23,42,0.10)]';
 
@@ -89,6 +120,15 @@ function getProspectFromCall(item: CallItem) {
 
 function getCallCompanyName(item: CallItem) {
   return getProspectFromCall(item)?.company_name || item.company_name || 'Fristående samtal';
+}
+
+function getProspectFromQuote(item: QuoteItem) {
+  if (Array.isArray(item.prospect)) return item.prospect[0] || null;
+  return item.prospect || null;
+}
+
+function getQuoteCustomerName(item: QuoteItem) {
+  return getProspectFromQuote(item)?.company_name || item.customer_name || 'Okänd kund';
 }
 
 function formatDateTime(value: string | null | undefined) {
@@ -103,6 +143,12 @@ function formatDate(value: string | null | undefined) {
   const date = new Date(`${value}T12:00:00`);
   if (Number.isNaN(date.getTime())) return 'Ingen deadline';
   return new Intl.DateTimeFormat('sv-SE', { dateStyle: 'medium' }).format(date);
+}
+
+function formatCurrency(value: number | string, currencyCode: string) {
+  const numeric = typeof value === 'number' ? value : Number(String(value));
+  if (!Number.isFinite(numeric)) return '–';
+  return new Intl.NumberFormat('sv-SE', { style: 'currency', currency: currencyCode || 'SEK', maximumFractionDigits: 0 }).format(numeric);
 }
 
 function startOfToday() {
@@ -147,7 +193,7 @@ function sortTasks(taskA: TaskItem, taskB: TaskItem) {
   return taskB.updated_at.localeCompare(taskA.updated_at);
 }
 
-function buildOverviewActions(args: { overdueTasks: number; followUpCalls: number; newProspects: number; standaloneCalls: number }) {
+function buildOverviewActions(args: { overdueTasks: number; followUpCalls: number; newProspects: number; standaloneCalls: number; quoteFollowUps: number }) {
   const actions: Array<{ title: string; description: string; href: string }> = [];
 
   if (args.overdueTasks > 0) {
@@ -155,6 +201,9 @@ function buildOverviewActions(args: { overdueTasks: number; followUpCalls: numbe
   }
   if (args.followUpCalls > 0) {
     actions.push({ title: `${args.followUpCalls} samtal behöver nästa steg`, description: 'Logga uppföljning eller konvertera till prospekt om signalen är varm.', href: '/crm/samtal' });
+  }
+  if (args.quoteFollowUps > 0) {
+    actions.push({ title: `${args.quoteFollowUps} offerter väntar uppföljning`, description: 'Stäm av skickade offerter innan de tappar fart i pipen.', href: '/crm/offerter' });
   }
   if (args.newProspects > 0) {
     actions.push({ title: `${args.newProspects} nya prospekt väntar`, description: 'Bra läge att ta första kontakt och flytta dem ur ny-läget.', href: '/crm/prospekt' });
@@ -168,7 +217,7 @@ function buildOverviewActions(args: { overdueTasks: number; followUpCalls: numbe
 
 export default function CrmOverview({ role }: { role: UserRole | null }) {
   const items = getVisibleCrmNavItems(role).filter((item) => item.href !== '/crm');
-  const [state, setState] = useState<LoadState>({ prospects: [], calls: [], tasks: [] });
+  const [state, setState] = useState<LoadState>({ prospects: [], calls: [], tasks: [], quotes: [] });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -180,21 +229,24 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
       setError(null);
 
       try {
-        const [prospectsRes, callsRes, tasksRes] = await Promise.all([
+        const [prospectsRes, callsRes, tasksRes, quotesRes] = await Promise.all([
           fetch('/api/crm/prospects', { cache: 'no-store' }),
           fetch('/api/crm/calls', { cache: 'no-store' }),
           fetch('/api/crm/tasks', { cache: 'no-store' }),
+          fetch('/api/crm/quotes', { cache: 'no-store' }),
         ]);
 
-        const [prospectsJson, callsJson, tasksJson] = await Promise.all([
+        const [prospectsJson, callsJson, tasksJson, quotesJson] = await Promise.all([
           prospectsRes.json().catch(() => ({})),
           callsRes.json().catch(() => ({})),
           tasksRes.json().catch(() => ({})),
+          quotesRes.json().catch(() => ({})),
         ]);
 
         if (!prospectsRes.ok) throw new Error(prospectsJson?.error || 'Kunde inte läsa prospekt.');
         if (!callsRes.ok) throw new Error(callsJson?.error || 'Kunde inte läsa samtal.');
         if (!tasksRes.ok) throw new Error(tasksJson?.error || 'Kunde inte läsa uppgifter.');
+        if (!quotesRes.ok) throw new Error(quotesJson?.error || 'Kunde inte läsa offerter.');
 
         if (!active) return;
 
@@ -202,6 +254,7 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
           prospects: Array.isArray(prospectsJson?.data?.items) ? prospectsJson.data.items : [],
           calls: Array.isArray(callsJson?.data?.items) ? callsJson.data.items : [],
           tasks: Array.isArray(tasksJson?.data?.items) ? tasksJson.data.items : [],
+          quotes: Array.isArray(quotesJson?.data?.items) ? quotesJson.data.items : [],
         });
       } catch (loadError: any) {
         if (!active) return;
@@ -225,6 +278,9 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
     const recentCalls = state.calls.filter((call) => isWithinLastDays(call.call_at, 7));
     const followUpCalls = state.calls.filter((call) => call.outcome === 'follow_up');
     const standaloneCalls = state.calls.filter((call) => !getProspectFromCall(call));
+    const activeQuotes = state.quotes.filter((quote) => quote.status === 'draft' || quote.status === 'sent' || quote.status === 'follow_up');
+    const quoteFollowUps = state.quotes.filter((quote) => quote.status === 'follow_up');
+    const wonQuotes = state.quotes.filter((quote) => quote.status === 'won');
     const newProspects = state.prospects.filter((prospect) => prospect.status === 'new');
     const qualifiedProspects = state.prospects.filter((prospect) => prospect.status === 'qualified' || prospect.status === 'quoted');
     const wonProspects = state.prospects.filter((prospect) => prospect.status === 'won');
@@ -237,17 +293,21 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
       callsLast7Days: recentCalls.length,
       followUpCalls: followUpCalls.length,
       standaloneCalls: standaloneCalls.length,
+      activeQuotes: activeQuotes.length,
+      quoteFollowUps: quoteFollowUps.length,
+      wonQuotes: wonQuotes.length,
       openTasks: openTasks.length,
       overdueTasks: overdueTasks.length,
       todayTasks: todayTasks.length,
     };
-  }, [state.calls, state.prospects, state.tasks]);
+  }, [state.calls, state.prospects, state.quotes, state.tasks]);
 
   const recentProspects = useMemo(() => [...state.prospects].sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, 5), [state.prospects]);
   const recentCalls = useMemo(() => [...state.calls].sort((a, b) => b.call_at.localeCompare(a.call_at)).slice(0, 5), [state.calls]);
+  const recentQuotes = useMemo(() => [...state.quotes].sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, 5), [state.quotes]);
   const nextTasks = useMemo(() => [...state.tasks].filter((task) => task.status === 'open').sort(sortTasks).slice(0, 5), [state.tasks]);
   const prospectNames = useMemo(() => Object.fromEntries(state.prospects.map((prospect) => [prospect.id, prospect.company_name])), [state.prospects]);
-  const nextActions = buildOverviewActions({ overdueTasks: summary.overdueTasks, followUpCalls: summary.followUpCalls, newProspects: summary.newProspects, standaloneCalls: summary.standaloneCalls });
+  const nextActions = buildOverviewActions({ overdueTasks: summary.overdueTasks, followUpCalls: summary.followUpCalls, newProspects: summary.newProspects, standaloneCalls: summary.standaloneCalls, quoteFollowUps: summary.quoteFollowUps });
 
   return (
     <div className="grid gap-4">
@@ -277,7 +337,7 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
           <OverviewMetricCard label="Prospekt i pipen" value={summary.prospectsTotal} helper={`${summary.newProspects} nya · ${summary.qualifiedProspects} varma`} tone="teal" />
           <OverviewMetricCard label="Samtal senaste 7 dagar" value={summary.callsLast7Days} helper={`${summary.followUpCalls} kräver nästa steg`} tone="sky" />
           <OverviewMetricCard label="Öppna uppgifter" value={summary.openTasks} helper={summary.overdueTasks > 0 ? `${summary.overdueTasks} sena just nu` : `${summary.todayTasks} förfaller idag`} tone="amber" />
-          <OverviewMetricCard label="Vunna prospekt" value={summary.wonProspects} helper={summary.standaloneCalls > 0 ? `${summary.standaloneCalls} fristående samtal att bedöma` : 'Inga fristående samtal just nu'} tone="emerald" />
+          <OverviewMetricCard label="Aktiva offerter" value={summary.activeQuotes} helper={summary.quoteFollowUps > 0 ? `${summary.quoteFollowUps} väntar uppföljning` : `${summary.wonQuotes} vunna offerter`} tone="emerald" />
         </div>
       </SectionCard>
 
@@ -325,6 +385,7 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-1">
               <StatusStrip label="Nya prospekt" value={summary.newProspects} tone="slate" />
               <StatusStrip label="Varma prospekt" value={summary.qualifiedProspects} tone="sky" />
+              <StatusStrip label="Offerter att följa upp" value={summary.quoteFollowUps} tone="amber" />
               <StatusStrip label="Följ upp-samtal" value={summary.followUpCalls} tone="amber" />
               <StatusStrip label="Sena uppgifter" value={summary.overdueTasks} tone="rose" />
             </div>
@@ -332,7 +393,7 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
         </SectionCard>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-3">
+      <div className="grid gap-4 xl:grid-cols-4">
         <SectionCard className={overviewPanelClass}>
           <SectionHeader title="Senaste prospekt" href="/crm/prospekt" />
           {loading ? <OverviewLoadingRows /> : null}
@@ -398,6 +459,32 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
                   <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-400">
                     <span>{formatDate(task.due_date)}</span>
                     {task.remind_at ? <span>Påminnelse {formatDateTime(task.remind_at)}</span> : null}
+                  </div>
+                </Link>
+              ))}
+            </div>
+          ) : null}
+        </SectionCard>
+
+        <SectionCard className={overviewPanelClass}>
+          <SectionHeader title="Senaste offerter" href="/crm/offerter" />
+          {loading ? <OverviewLoadingRows /> : null}
+          {!loading && recentQuotes.length === 0 ? <EmptyState text="Inga offerter registrerade ännu." /> : null}
+          {!loading && recentQuotes.length > 0 ? (
+            <div className="grid gap-2.5">
+              {recentQuotes.map((quote) => (
+                <Link key={quote.id} href="/crm/offerter" className={overviewItemCardClass}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="grid gap-1">
+                      <strong className="text-[15px] font-semibold text-slate-900">{quote.project_name}</strong>
+                      <p className="m-0 text-sm text-slate-600">{getQuoteCustomerName(quote)}</p>
+                    </div>
+                    <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-800">{quoteStatusLabel[quote.status]}</span>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-400">
+                    <span>{formatCurrency(quote.amount, quote.currency_code)}</span>
+                    <span>{formatDate(quote.quote_date)}</span>
+                    {quote.follow_up_date ? <span>Följ upp {formatDate(quote.follow_up_date)}</span> : null}
                   </div>
                 </Link>
               ))}
