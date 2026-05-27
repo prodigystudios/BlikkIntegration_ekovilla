@@ -139,8 +139,8 @@ const prospectStatusLabel: Record<ProspectItem['status'], string> = {
   lost: 'Förlorad',
 };
 
-const overviewPanelClass = 'grid gap-2.5 border-emerald-300/80 bg-[linear-gradient(180deg,rgba(244,251,245,0.98),rgba(229,244,232,0.98))] p-3 shadow-[0_18px_38px_rgba(15,23,42,0.06)] md:p-3.5';
-const overviewItemCardClass = 'rounded-[16px] border border-emerald-200/70 bg-[linear-gradient(180deg,#ffffff_0%,#fbfefb_100%)] p-2.5 no-underline shadow-[0_14px_28px_rgba(15,23,42,0.08)] ring-1 ring-white/90 transition-[transform,border-color,box-shadow,background-color] hover:-translate-y-0.5 hover:border-emerald-300 hover:bg-white hover:shadow-[0_20px_34px_rgba(15,23,42,0.12)]';
+const overviewPanelClass = 'grid gap-2.5 border-emerald-200/65 bg-[linear-gradient(180deg,rgba(250,253,250,0.98),rgba(244,249,245,0.98))] p-3 shadow-[0_18px_38px_rgba(15,23,42,0.06)] md:p-3.5';
+const overviewItemCardClass = 'rounded-[16px] border border-slate-200/90 bg-[linear-gradient(180deg,#ffffff_0%,#fdfefe_100%)] p-2.5 no-underline shadow-[0_14px_28px_rgba(15,23,42,0.08)] ring-1 ring-white/95 transition-[transform,border-color,box-shadow,background-color] hover:-translate-y-0.5 hover:border-emerald-200 hover:bg-white hover:shadow-[0_20px_34px_rgba(15,23,42,0.12)]';
 
 function getProspectFromCall(item: CallItem) {
   if (Array.isArray(item.prospect)) return item.prospect[0] || null;
