@@ -23,7 +23,7 @@ export async function listCrmProspects(supabase: SupabaseClient, search?: string
   let query = supabase.from('crm_prospects').select(crmProspectSelect).order('updated_at', { ascending: false });
 
   if (search) {
-    query = query.or(`company_name.ilike.%${search}%,contact_name.ilike.%${search}%,email.ilike.%${search}%,city.ilike.%${search}%`);
+    query = query.or(`company_name.ilike.%${search}%,contact_name.ilike.%${search}%,email.ilike.%${search}%,city.ilike.%${search}%,phone.ilike.%${search}%,organization_number.ilike.%${search}%`);
   }
 
   return query;
