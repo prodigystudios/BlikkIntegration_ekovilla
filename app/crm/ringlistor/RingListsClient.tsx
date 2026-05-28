@@ -49,6 +49,12 @@ type ImportResult = {
 type AssignmentFilter = 'all' | 'unassigned' | 'assigned';
 type StatusFilter = 'all' | ProspectItem['status'];
 
+const assignmentFilterMeta: Record<AssignmentFilter, { label: string; hint: string; tone: string }> = {
+  unassigned: { label: 'Ej tilldelade', hint: 'Riktig ringko', tone: 'border-sky-200 bg-sky-50 text-sky-800' },
+  all: { label: 'Alla', hint: 'Hela leadbasen', tone: 'border-slate-300 bg-white text-slate-700' },
+  assigned: { label: 'Tilldelade', hint: 'Redan agda leads', tone: 'border-emerald-200 bg-emerald-50 text-emerald-800' },
+};
+
 const statusLabel: Record<ProspectItem['status'], string> = {
   new: 'Ny',
   contacted: 'Kontaktad',
@@ -107,6 +113,10 @@ function mapImportKey(header: string) {
 
 function toImportValue(value: unknown) {
   return String(value ?? '').trim();
+}
+
+function compareProspects(a: ProspectItem, b: ProspectItem) {
+  return b.updated_at.localeCompare(a.updated_at);
 }
 
 export default function RingListsClient({ adminName }: { adminName: string | null }) {
@@ -189,7 +199,7 @@ export default function RingListsClient({ adminName }: { adminName: string | nul
       if (assignmentFilter === 'assigned' && !prospect.assigned_to) return false;
       if (statusFilter !== 'all' && prospect.status !== statusFilter) return false;
       return true;
-    });
+    }).sort(compareProspects);
   }, [assignmentFilter, prospects, statusFilter]);
 
   const stats = useMemo(() => ({
@@ -198,6 +208,12 @@ export default function RingListsClient({ adminName }: { adminName: string | nul
     new: prospects.filter((item) => item.status === 'new').length,
     qualified: prospects.filter((item) => item.status === 'qualified' || item.status === 'quoted').length,
   }), [prospects]);
+
+  const assignmentCounts = useMemo(() => ({
+    unassigned: prospects.filter((item) => !item.assigned_to && (statusFilter === 'all' || item.status === statusFilter)).length,
+    all: prospects.filter((item) => statusFilter === 'all' || item.status === statusFilter).length,
+    assigned: prospects.filter((item) => Boolean(item.assigned_to) && (statusFilter === 'all' || item.status === statusFilter)).length,
+  }), [prospects, statusFilter]);
 
   useEffect(() => {
     setSelectedIds((current) => current.filter((id) => visibleProspects.some((item) => item.id === id)));
@@ -378,181 +394,132 @@ export default function RingListsClient({ adminName }: { adminName: string | nul
 
   return (
     <div className="grid gap-4">
-      <SectionCard className="overflow-hidden border-slate-200 bg-[radial-gradient(circle_at_top_left,_rgba(14,165,233,0.12),_transparent_30%),radial-gradient(circle_at_top_right,_rgba(16,185,129,0.10),_transparent_28%),linear-gradient(180deg,#fbfeff_0%,#f8fafc_100%)] p-5 shadow-[0_24px_70px_rgba(15,23,42,0.08)] md:p-6">
-        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px] xl:items-start">
-          <div className="grid gap-4">
-            <div className="inline-flex w-fit items-center rounded-full border border-sky-200/80 bg-white/85 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-sky-900 shadow-[0_8px_18px_rgba(255,255,255,0.35)]">
-              CRM / Ringlistor
-            </div>
-            <div className="grid gap-2">
-              <div className="flex flex-wrap items-center gap-3">
-                <h1 className="m-0 text-[clamp(2rem,4vw,3.2rem)] font-bold tracking-[-0.06em] text-slate-950">Ringlistor</h1>
-                <div className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-900">Oklaimad lead-kö</div>
+      <SectionCard className="overflow-hidden border-emerald-300/80 bg-[radial-gradient(circle_at_top_left,_rgba(22,163,74,0.22),_transparent_30%),radial-gradient(circle_at_top_right,_rgba(101,163,13,0.16),_transparent_24%),linear-gradient(135deg,#f6fbf4_0%,#e5f4e8_56%,#f5fbf6_100%)] p-4 shadow-[0_22px_56px_rgba(15,23,42,0.08)] md:p-5">
+        <div className="grid gap-4">
+          <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
+            <div className="grid gap-2.5">
+              <div className="inline-flex w-fit items-center rounded-full border border-emerald-200/80 bg-white/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-emerald-900 shadow-[0_8px_18px_rgba(255,255,255,0.35)]">
+                CRM / Ringlistor
               </div>
-              <p className="m-0 max-w-3xl text-sm leading-6 text-slate-600 md:text-[15px]">
-                Här styr du vilka potentiella kunder som ännu inte tagits upp av någon säljare. Ytan är nu förvald mot ej tilldelade nya leads, så ringlistan beter sig mer som en verklig kö än en bred prospektlista.
+              <div className="flex flex-wrap items-center gap-3">
+                <h1 className="m-0 text-[clamp(1.55rem,2.4vw,2.15rem)] font-bold tracking-[-0.045em] text-slate-950">Ringlistor</h1>
+                <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-semibold text-emerald-900">Oklaimad lead-kö</div>
+              </div>
+              <p className="m-0 max-w-3xl text-sm text-slate-600">
+                Här ska arbetskön ligga först: vilka leads som saknar ägare, vilka som är nya och vad som behöver fördelas nu.
               </p>
+            </div>
+
+            <div className="flex flex-wrap gap-2 xl:justify-end">
+              <div className="rounded-full border border-white/70 bg-white/85 px-3 py-2 text-sm font-semibold text-slate-700 shadow-[0_10px_18px_rgba(15,23,42,0.04)]">
+                {adminName || 'Admin'}
+              </div>
+              <label className="inline-flex min-h-10 cursor-pointer items-center justify-center rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50">
+                Välj fil
+                <input type="file" accept=".xlsx,.xls,.csv" onChange={handleImportFile} className="sr-only" />
+              </label>
+              <button
+                type="button"
+                onClick={importPreparedRows}
+                disabled={importing || importRows.length === 0}
+                className="inline-flex min-h-10 items-center justify-center rounded-full border border-emerald-700 bg-emerald-700 px-3 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {importing ? 'Importerar…' : importRows.length > 0 ? `Importera ${importRows.length}` : 'Importera'}
+              </button>
             </div>
           </div>
 
-          <div className="grid gap-3 rounded-[28px] border border-slate-200/80 bg-[linear-gradient(180deg,rgba(15,23,42,0.94)_0%,rgba(30,41,59,0.92)_100%)] p-4 text-white shadow-[0_22px_44px_rgba(15,23,42,0.22)]">
-            <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-sky-100/80">Snapshot</span>
-            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-2">
-              <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3 backdrop-blur-sm">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-300">Totalt</div>
-                <div className="mt-1 text-xl font-bold tracking-[-0.04em] text-white">{stats.total}</div>
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3 backdrop-blur-sm">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-300">Ej tilldelade</div>
-                <div className="mt-1 text-xl font-bold tracking-[-0.04em] text-white">{stats.unassigned}</div>
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3 backdrop-blur-sm">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-300">Nya</div>
-                <div className="mt-1 text-xl font-bold tracking-[-0.04em] text-white">{stats.new}</div>
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3 backdrop-blur-sm">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-300">Varma</div>
-                <div className="mt-1 text-xl font-bold tracking-[-0.04em] text-white">{stats.qualified}</div>
-              </div>
+          <div className="grid gap-3 md:grid-cols-4">
+            <div className="rounded-[18px] border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(252,253,252,0.98))] p-3 shadow-[0_16px_30px_rgba(15,23,42,0.08)] ring-1 ring-white/80">
+              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">I kö just nu</div>
+              <div className="mt-1 text-[clamp(1.35rem,2vw,1.8rem)] font-bold tracking-[-0.04em] text-slate-950">{visibleProspects.length}</div>
+              <div className="mt-1 text-[13px] text-slate-500">Poster i nuvarande vy</div>
             </div>
-            <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3 text-sm text-slate-200">
-              <strong className="block text-white">{adminName || 'Admin'}</strong>
-              Fokus här är leads som ännu inte har en ägare. Excel-import och listnamn blir nästa logiska utbyggnad.
+            <div className="rounded-[18px] border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(252,253,252,0.98))] p-3 shadow-[0_16px_30px_rgba(15,23,42,0.08)] ring-1 ring-white/80">
+              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Ej tilldelade</div>
+              <div className="mt-1 text-[clamp(1.35rem,2vw,1.8rem)] font-bold tracking-[-0.04em] text-slate-950">{stats.unassigned}</div>
+              <div className="mt-1 text-[13px] text-slate-500">Leads utan ägare</div>
+            </div>
+            <div className="rounded-[18px] border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(252,253,252,0.98))] p-3 shadow-[0_16px_30px_rgba(15,23,42,0.08)] ring-1 ring-white/80">
+              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Nya</div>
+              <div className="mt-1 text-[clamp(1.35rem,2vw,1.8rem)] font-bold tracking-[-0.04em] text-slate-950">{stats.new}</div>
+              <div className="mt-1 text-[13px] text-slate-500">Första kontakt kvar</div>
+            </div>
+            <div className="rounded-[18px] border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(252,253,252,0.98))] p-3 shadow-[0_16px_30px_rgba(15,23,42,0.08)] ring-1 ring-white/80">
+              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Varma</div>
+              <div className="mt-1 text-[clamp(1.35rem,2vw,1.8rem)] font-bold tracking-[-0.04em] text-slate-950">{stats.qualified}</div>
+              <div className="mt-1 text-[13px] text-slate-500">Kvalificerade eller offert</div>
+            </div>
+          </div>
+
+          <div className="grid gap-3 rounded-[24px] border border-white/70 bg-white/75 p-3 shadow-[0_16px_36px_rgba(15,23,42,0.06)] backdrop-blur xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
+            <Input
+              value={search}
+              onChange={(event: ChangeEvent<HTMLInputElement>) => setSearch(event.target.value)}
+              placeholder="Sök på företag, kontakt, telefon, e-post eller ort"
+              className="max-w-xl"
+            />
+
+            <div className="grid gap-2 rounded-[20px] border border-slate-200/85 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(250,252,250,0.96))] p-2 shadow-[0_14px_30px_rgba(15,23,42,0.05)]">
+              <div className="flex items-center justify-between gap-3 px-2 pt-1">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Sales cockpit</div>
+                <div className="text-xs text-slate-500">{visibleProspects.length} i vy</div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {(Object.keys(assignmentFilterMeta) as AssignmentFilter[]).map((value) => {
+                  const active = assignmentFilter === value;
+                  return (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => setAssignmentFilter(value)}
+                      className={cn(
+                        'grid min-w-[120px] gap-0.5 rounded-[20px] border px-3 py-2 text-left transition',
+                        active
+                          ? 'border-emerald-900 bg-emerald-900 text-white shadow-[0_14px_24px_rgba(15,23,42,0.16)]'
+                          : cn(assignmentFilterMeta[value].tone, 'hover:-translate-y-0.5 hover:shadow-[0_10px_20px_rgba(15,23,42,0.08)]'),
+                      )}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-sm font-semibold">{assignmentFilterMeta[value].label}</span>
+                        <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-bold', active ? 'bg-white/16 text-white' : 'bg-white/80 text-current')}>
+                          {assignmentCounts[value]}
+                        </span>
+                      </div>
+                      <span className={cn('text-[11px]', active ? 'text-white/80' : 'text-current/70')}>{assignmentFilterMeta[value].hint}</span>
+                    </button>
+                  );
+                })}
+
+                <label className="grid min-w-[140px] gap-0.5 rounded-[20px] border border-slate-200 bg-white px-3 py-2 text-left text-slate-700 shadow-[0_10px_20px_rgba(15,23,42,0.04)]">
+                  <span className="text-sm font-semibold">Status</span>
+                  <select
+                    value={statusFilter}
+                    onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
+                    className="min-h-0 border-0 bg-transparent p-0 text-[11px] text-slate-500 outline-none"
+                  >
+                    <option value="all">Alla statusar</option>
+                    {Object.entries(statusLabel).map(([value, label]) => (
+                      <option key={value} value={value}>{label}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
             </div>
           </div>
         </div>
       </SectionCard>
 
-      <SectionCard className="grid gap-4 border-slate-200 bg-[linear-gradient(180deg,rgba(248,250,252,0.98),rgba(241,245,249,0.98))] p-5 md:p-6">
-        <div className="grid gap-4 rounded-[24px] border border-slate-200 bg-white/85 p-4 shadow-[0_14px_30px_rgba(15,23,42,0.05)] xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
-          <div className="grid gap-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <strong className="text-sm font-semibold text-slate-900">Excel-import</strong>
-              <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-600">.xlsx och .csv</span>
-              {importFileName ? <span className="rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-[11px] font-semibold text-sky-700">{importFileName}</span> : null}
-            </div>
-            <p className="m-0 text-sm leading-6 text-slate-600">
-              Ladda upp en lista med rubriker som företagsnamn, orgnr, kontakt, telefon, e-post och ort. Importen deduplicerar explicit mot befintliga prospekt innan den skapar eller uppdaterar poster.
-            </p>
-            {importRows.length > 0 ? (
-              <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 font-semibold text-slate-600">{importRows.length} rader klara</span>
-                <span>Förhandsvisar de första {Math.min(importRows.length, 5)} raderna nedan.</span>
-              </div>
-            ) : null}
+      <SectionCard className="grid gap-4 border-emerald-200/65 bg-[linear-gradient(180deg,rgba(250,253,250,0.98),rgba(244,249,245,0.98))] p-4 shadow-[0_18px_38px_rgba(15,23,42,0.06)] md:p-5">
+        <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
+          <div className="grid gap-1">
+            <strong className="text-sm font-semibold text-slate-900">Tilldelning</strong>
+            <p className="m-0 text-sm text-slate-500">Fördela markerade leads utan att lämna kön.</p>
           </div>
-
-          <div className="flex flex-wrap items-center gap-2 xl:justify-end">
-            <label className="inline-flex min-h-11 cursor-pointer items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50">
-              Välj fil
-              <input type="file" accept=".xlsx,.xls,.csv" onChange={handleImportFile} className="sr-only" />
-            </label>
-            <button
-              type="button"
-              onClick={importPreparedRows}
-              disabled={importing || importRows.length === 0}
-              className="inline-flex min-h-11 items-center justify-center rounded-2xl border border-emerald-600 bg-[linear-gradient(180deg,#10b981_0%,#059669_100%)] px-4 py-2 text-sm font-semibold text-white shadow-[0_16px_26px_rgba(5,150,105,0.18)] transition hover:brightness-[0.97] disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {importing ? 'Importerar…' : `Importera ${importRows.length || ''}`.trim()}
-            </button>
+          <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 xl:justify-end">
+            <span className="rounded-full border border-slate-200 bg-white px-3 py-2 font-semibold text-slate-600">Default: ej tilldelade nya leads</span>
+            {importFileName ? <span className="rounded-full border border-sky-200 bg-sky-50 px-3 py-2 font-semibold text-sky-700">Fil: {importFileName}</span> : null}
           </div>
-        </div>
-
-        {importRows.length > 0 ? (
-          <div className="grid gap-2 rounded-[24px] border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(248,250,252,0.95))] p-4 shadow-[0_14px_30px_rgba(15,23,42,0.05)]">
-            {importRows.slice(0, 5).map((row, index) => (
-              <div key={`${row.company_name}-${index}`} className="grid gap-1 rounded-2xl border border-slate-200 bg-white px-4 py-3 md:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_auto] md:items-center">
-                <div className="grid gap-1">
-                  <strong className="text-sm font-semibold text-slate-900">{row.company_name}</strong>
-                  <div className="flex flex-wrap gap-x-2 gap-y-1 text-xs text-slate-500">
-                    {row.contact_name ? <span>Kontakt: {row.contact_name}</span> : null}
-                    {row.organization_number ? <span>Org.nr: {row.organization_number}</span> : null}
-                    {row.city ? <span>Ort: {row.city}</span> : null}
-                  </div>
-                </div>
-                <div className="flex flex-wrap gap-x-2 gap-y-1 text-xs text-slate-500">
-                  {row.phone ? <span>{row.phone}</span> : null}
-                  {row.email ? <span>{row.email}</span> : null}
-                  {row.source ? <span>Källa: {row.source}</span> : null}
-                </div>
-                <div className="text-xs font-semibold text-slate-400">Rad {index + 1}</div>
-              </div>
-            ))}
-          </div>
-        ) : null}
-
-        {importResults.length > 0 ? (
-          <div className="grid gap-2 rounded-[24px] border border-slate-200 bg-white/90 p-4 shadow-[0_14px_30px_rgba(15,23,42,0.05)]">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <strong className="text-sm font-semibold text-slate-900">Importresultat per rad</strong>
-              <span className="text-xs text-slate-500">{importResults.length} rader med utfall</span>
-            </div>
-            <div className="grid gap-2">
-              {importResults.slice(0, 12).map((result) => (
-                <div key={`${result.row_number}-${result.company_name}-${result.action}`} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm">
-                  <div className="grid gap-0.5">
-                    <strong className="text-slate-900">Rad {result.row_number}: {result.company_name}</strong>
-                    <span className="text-xs text-slate-500">
-                      {result.action === 'updated' && result.matched_on === 'orgnummer' ? 'Matchad på orgnummer' : null}
-                      {result.action === 'updated' && result.matched_on === 'foretag_epost' ? 'Matchad på företag + e-post' : null}
-                      {result.action === 'updated' && result.matched_on === 'foretag_kontakt' ? 'Matchad på företag + kontakt' : null}
-                      {result.action === 'updated' && result.matched_on === 'foretag' ? 'Matchad på företagsnamn' : null}
-                      {result.action === 'skipped_empty' ? 'Föll bort eftersom företagsnamn saknades' : null}
-                    </span>
-                  </div>
-                  <span className={cn(
-                    'rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em]',
-                    result.action === 'created' ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : null,
-                    result.action === 'updated' ? 'border-sky-200 bg-sky-50 text-sky-800' : null,
-                    result.action === 'skipped_empty' ? 'border-slate-200 bg-slate-100 text-slate-700' : null,
-                  )}>
-                    {result.action === 'created' ? 'Skapad' : result.action === 'updated' ? 'Uppdaterad' : 'Tom rad'}
-                  </span>
-                </div>
-              ))}
-            </div>
-            {importResults.length > 12 ? <div className="text-xs text-slate-500">Visar de första 12 raderna med utfall.</div> : null}
-          </div>
-        ) : null}
-
-        <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto_auto] xl:items-center">
-          <Input
-            value={search}
-            onChange={(event: ChangeEvent<HTMLInputElement>) => setSearch(event.target.value)}
-            placeholder="Sök på företag, kontakt, telefon, e-post eller ort"
-            className="max-w-xl"
-          />
-
-          <div className="flex flex-wrap gap-2">
-            {([
-              ['unassigned', 'Ej tilldelade'],
-              ['all', 'Alla'],
-              ['assigned', 'Tilldelade'],
-            ] as const).map(([value, label]) => (
-              <button
-                key={value}
-                type="button"
-                onClick={() => setAssignmentFilter(value)}
-                className={cn(
-                  'rounded-full border px-3 py-1.5 text-sm font-semibold transition',
-                  assignmentFilter === value ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50',
-                )}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-
-          <select
-            value={statusFilter}
-            onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
-            className="min-h-11 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-slate-300"
-          >
-            <option value="all">Alla statusar</option>
-            {Object.entries(statusLabel).map(([value, label]) => (
-              <option key={value} value={value}>{label}</option>
-            ))}
-          </select>
         </div>
 
         <div className="grid gap-3 rounded-[24px] border border-slate-200 bg-white/80 p-4 shadow-[0_14px_30px_rgba(15,23,42,0.05)] xl:grid-cols-[auto_minmax(200px,280px)_auto_1fr] xl:items-center">
@@ -576,14 +543,14 @@ export default function RingListsClient({ adminName }: { adminName: string | nul
             type="button"
             onClick={assignSelected}
             disabled={assigning || selectedIds.length === 0}
-            className="inline-flex min-h-11 items-center justify-center rounded-2xl border border-slate-900 bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-950 disabled:cursor-not-allowed disabled:opacity-60"
+            className="inline-flex min-h-11 items-center justify-center rounded-full border border-slate-900 bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-950 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {assigning ? 'Tilldelar…' : `Tilldela markerade (${selectedIds.length})`}
           </button>
 
           <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 xl:justify-end">
-            <span className="rounded-full border border-slate-200 bg-white px-3 py-2 font-semibold text-slate-600">Default: ej tilldelade nya leads</span>
-            <span className="rounded-full border border-slate-200 bg-white px-3 py-2 font-semibold text-slate-600">Excel-import nästa slice</span>
+            <span className="rounded-full border border-slate-200 bg-white px-3 py-2 font-semibold text-slate-600">{stats.total} leads totalt</span>
+            <span className="rounded-full border border-slate-200 bg-white px-3 py-2 font-semibold text-slate-600">{stats.unassigned} utan ägare</span>
           </div>
         </div>
 
@@ -611,12 +578,14 @@ export default function RingListsClient({ adminName }: { adminName: string | nul
                 <div
                   key={prospect.id}
                   className={cn(
-                    'grid gap-3 rounded-[24px] border px-3.5 py-3 shadow-[0_16px_30px_rgba(15,23,42,0.06)] md:grid-cols-[auto_auto_minmax(0,1fr)_auto] md:items-center',
+                    'relative grid gap-2.5 overflow-hidden rounded-[22px] border px-3 py-2.5 shadow-[0_12px_24px_rgba(15,23,42,0.05)] transition-[border-color,box-shadow,transform,background-color] md:grid-cols-[auto_auto_minmax(0,1fr)_auto] md:items-center',
                     selected
-                      ? 'border-sky-300 bg-[linear-gradient(135deg,rgba(240,249,255,0.98)_0%,rgba(255,255,255,0.98)_55%,rgba(236,254,255,0.95)_100%)] ring-1 ring-sky-100'
-                      : 'border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98)_0%,rgba(248,250,252,0.95)_100%)]'
+                      ? 'border-emerald-300 bg-[linear-gradient(135deg,rgba(237,252,245,0.98)_0%,rgba(255,255,255,0.98)_55%,rgba(240,253,250,0.95)_100%)] shadow-[0_18px_32px_rgba(16,185,129,0.12)] ring-1 ring-emerald-100'
+                      : 'border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98)_0%,rgba(248,250,252,0.95)_100%)] hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_16px_28px_rgba(15,23,42,0.08)]'
                   )}
                 >
+                  <span className={cn('absolute inset-y-0 left-0 w-1.5 rounded-l-[22px]', prospect.status === 'won' ? 'bg-emerald-400' : prospect.status === 'quoted' ? 'bg-violet-400' : prospect.status === 'contacted' ? 'bg-sky-400' : prospect.status === 'qualified' ? 'bg-amber-400' : prospect.status === 'lost' ? 'bg-rose-300' : 'bg-slate-300')} />
+
                   <label className="flex items-center justify-center">
                     <input
                       type="checkbox"
@@ -628,16 +597,16 @@ export default function RingListsClient({ adminName }: { adminName: string | nul
                   </label>
 
                   <div className={cn(
-                    'flex h-10 w-10 items-center justify-center rounded-xl border text-xs font-bold tracking-[0.08em] shadow-[inset_0_1px_0_rgba(255,255,255,0.7)] md:h-11 md:w-11 md:text-sm',
-                    selected ? 'border-sky-200 bg-white text-sky-800' : 'border-slate-200 bg-white text-slate-700',
+                    'flex h-9 w-9 items-center justify-center rounded-xl border text-[11px] font-bold tracking-[0.08em] shadow-[inset_0_1px_0_rgba(255,255,255,0.7)] md:h-10 md:w-10 md:text-xs',
+                    selected ? 'border-emerald-200 bg-white text-emerald-800' : 'border-slate-200 bg-white text-slate-700',
                   )}>
                     {getInitials(prospect.company_name) || 'P'}
                   </div>
 
-                  <div className="grid min-w-0 gap-2">
-                    <div className="flex min-w-0 flex-wrap items-start justify-between gap-2 md:flex-nowrap">
+                  <div className="grid min-w-0 gap-1.5 pl-1">
+                    <div className="flex min-w-0 flex-wrap items-start justify-between gap-2 md:flex-nowrap md:items-center">
                       <div className="grid min-w-0 gap-1">
-                        <strong className="break-words text-base font-bold tracking-[-0.03em] text-slate-950 md:text-[17px]">{prospect.company_name}</strong>
+                        <strong className="break-words text-[15px] font-bold tracking-[-0.03em] text-slate-950 md:text-base">{prospect.company_name}</strong>
                         <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-slate-500 md:text-xs">
                           {prospect.contact_name ? <span>Kontakt: {prospect.contact_name}</span> : null}
                           {prospect.phone ? <span>{prospect.phone}</span> : null}
@@ -651,22 +620,22 @@ export default function RingListsClient({ adminName }: { adminName: string | nul
                       </span>
                     </div>
 
-                    <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                    <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500 md:text-xs">
                       <span className={cn(
-                        'rounded-full border px-2.5 py-1 font-semibold',
-                        assignedUser ? 'border-sky-200 bg-sky-50 text-sky-700' : 'border-slate-200 bg-slate-100 text-slate-600',
+                        'rounded-full border px-2.5 py-1 font-semibold shadow-[0_4px_10px_rgba(15,23,42,0.03)]',
+                        assignedUser ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-slate-100 text-slate-600',
                       )}>
                         {assignedUser ? `Tilldelad: ${assignedUser.full_name}` : 'Ej tilldelad'}
                       </span>
-                      <span>Senast uppdaterad {formatDateTime(prospect.updated_at)}</span>
+                      <span className="rounded-full border border-slate-200/90 bg-white/90 px-2.5 py-1 shadow-[0_4px_10px_rgba(15,23,42,0.03)]">Uppdaterad {formatDateTime(prospect.updated_at)}</span>
                     </div>
                   </div>
 
-                  <div className="flex flex-wrap items-center justify-start gap-2 md:justify-end">
-                    <Link href={`/crm/samtal?prospect_id=${prospect.id}`} className="inline-flex min-h-10 items-center justify-center rounded-2xl border border-sky-600 bg-[linear-gradient(180deg,#0ea5e9_0%,#0284c7_100%)] px-3 py-2 text-sm font-semibold text-white shadow-[0_16px_26px_rgba(2,132,199,0.18)] transition hover:brightness-[0.97]">
+                  <div className="flex flex-wrap items-center justify-start gap-1.5 md:justify-end">
+                    <Link href={`/crm/samtal?prospect_id=${prospect.id}`} className="inline-flex min-h-9 items-center justify-center rounded-full border border-slate-900 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-950 md:text-sm">
                       Logga samtal
                     </Link>
-                    <Link href="/crm/prospekt" className="inline-flex min-h-10 items-center justify-center rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50">
+                    <Link href="/crm/prospekt" className="inline-flex min-h-9 items-center justify-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 md:text-sm">
                       Öppna prospekt
                     </Link>
                   </div>
@@ -675,6 +644,102 @@ export default function RingListsClient({ adminName }: { adminName: string | nul
             })
           )}
         </div>
+      </SectionCard>
+
+      <SectionCard className="grid gap-4 border-emerald-200/60 bg-[linear-gradient(180deg,rgba(248,252,249,0.98),rgba(244,249,245,0.98))] p-4 shadow-[0_16px_34px_rgba(15,23,42,0.05)] md:p-5">
+        <div className="grid gap-4 rounded-[24px] border border-white/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.94),rgba(249,252,249,0.96))] p-4 shadow-[0_14px_30px_rgba(15,23,42,0.05)] xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
+          <div className="grid gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-800">CRM-fyllnad</span>
+              <strong className="text-sm font-semibold text-slate-900">Excel-import</strong>
+              <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-600">.xlsx och .csv</span>
+            </div>
+            <p className="m-0 text-sm leading-6 text-slate-600">
+              Fyll på kön med nya listor, deduplicera mot befintliga prospekt och håll importen som ett sekundärt flöde under den dagliga ringningen.
+            </p>
+            {importRows.length > 0 ? (
+              <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 font-semibold text-emerald-700">{importRows.length} rader klara</span>
+                <span>Förhandsvisar de första {Math.min(importRows.length, 5)} raderna nedan.</span>
+              </div>
+            ) : null}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 xl:justify-end">
+            <label className="inline-flex min-h-11 cursor-pointer items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50">
+              Välj fil
+              <input type="file" accept=".xlsx,.xls,.csv" onChange={handleImportFile} className="sr-only" />
+            </label>
+            <button
+              type="button"
+              onClick={importPreparedRows}
+              disabled={importing || importRows.length === 0}
+              className="inline-flex min-h-11 items-center justify-center rounded-2xl border border-emerald-600 bg-[linear-gradient(180deg,#10b981_0%,#059669_100%)] px-4 py-2 text-sm font-semibold text-white shadow-[0_16px_26px_rgba(5,150,105,0.18)] transition hover:brightness-[0.97] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {importing ? 'Importerar…' : `Importera ${importRows.length || ''}`.trim()}
+            </button>
+          </div>
+        </div>
+
+        {importRows.length > 0 ? (
+          <div className="grid gap-2 rounded-[24px] border border-slate-200/90 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(247,251,248,0.96))] p-4 shadow-[0_14px_30px_rgba(15,23,42,0.05)]">
+            {importRows.slice(0, 5).map((row, index) => (
+              <div key={`${row.company_name}-${index}`} className="grid gap-2 rounded-[20px] border border-slate-200/90 bg-white/92 px-3.5 py-3 shadow-[0_8px_18px_rgba(15,23,42,0.04)] md:grid-cols-[minmax(0,1.15fr)_minmax(0,0.95fr)_auto] md:items-center">
+                <div className="grid gap-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <strong className="text-sm font-semibold text-slate-900">{row.company_name}</strong>
+                    <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-semibold text-slate-500">Rad {index + 1}</span>
+                  </div>
+                  <div className="flex flex-wrap gap-x-2 gap-y-1 text-xs text-slate-500">
+                    {row.contact_name ? <span>Kontakt: {row.contact_name}</span> : null}
+                    {row.organization_number ? <span>Org.nr: {row.organization_number}</span> : null}
+                    {row.city ? <span>Ort: {row.city}</span> : null}
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-1.5 text-[11px] text-slate-500 md:text-xs">
+                  {row.phone ? <span className="rounded-full border border-slate-200/90 bg-white/90 px-2 py-1">{row.phone}</span> : null}
+                  {row.email ? <span className="rounded-full border border-slate-200/90 bg-white/90 px-2 py-1">{row.email}</span> : null}
+                  {row.source ? <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-emerald-700">Källa: {row.source}</span> : null}
+                </div>
+                <div className="text-xs font-semibold text-slate-400 md:text-right">Klar för import</div>
+              </div>
+            ))}
+          </div>
+        ) : null}
+
+        {importResults.length > 0 ? (
+          <div className="grid gap-2 rounded-[24px] border border-slate-200/90 bg-white/92 p-4 shadow-[0_14px_30px_rgba(15,23,42,0.05)]">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <strong className="text-sm font-semibold text-slate-900">Importresultat per rad</strong>
+              <span className="text-xs text-slate-500">{importResults.length} rader med utfall</span>
+            </div>
+            <div className="grid gap-2">
+              {importResults.slice(0, 12).map((result) => (
+                <div key={`${result.row_number}-${result.company_name}-${result.action}`} className="flex flex-wrap items-center justify-between gap-3 rounded-[20px] border border-slate-200/90 bg-[linear-gradient(180deg,rgba(255,255,255,0.95),rgba(248,250,249,0.95))] px-3.5 py-3 text-sm shadow-[0_8px_18px_rgba(15,23,42,0.04)]">
+                  <div className="grid gap-0.5">
+                    <strong className="text-slate-900">Rad {result.row_number}: {result.company_name}</strong>
+                    <span className="text-xs text-slate-500">
+                      {result.action === 'updated' && result.matched_on === 'orgnummer' ? 'Matchad på orgnummer' : null}
+                      {result.action === 'updated' && result.matched_on === 'foretag_epost' ? 'Matchad på företag + e-post' : null}
+                      {result.action === 'updated' && result.matched_on === 'foretag_kontakt' ? 'Matchad på företag + kontakt' : null}
+                      {result.action === 'updated' && result.matched_on === 'foretag' ? 'Matchad på företagsnamn' : null}
+                      {result.action === 'skipped_empty' ? 'Föll bort eftersom företagsnamn saknades' : null}
+                    </span>
+                  </div>
+                  <span className={cn(
+                    'rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em]',
+                    result.action === 'created' ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : null,
+                    result.action === 'updated' ? 'border-sky-200 bg-sky-50 text-sky-800' : null,
+                    result.action === 'skipped_empty' ? 'border-slate-200 bg-slate-100 text-slate-700' : null,
+                  )}>
+                    {result.action === 'created' ? 'Skapad' : result.action === 'updated' ? 'Uppdaterad' : 'Tom rad'}
+                  </span>
+                </div>
+              ))}
+            </div>
+            {importResults.length > 12 ? <div className="text-xs text-slate-500">Visar de första 12 raderna med utfall.</div> : null}
+          </div>
+        ) : null}
       </SectionCard>
     </div>
   );

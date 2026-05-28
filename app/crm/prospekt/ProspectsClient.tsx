@@ -115,6 +115,18 @@ const prospectFilterMeta: Record<ProspectFilter, { label: string; hint: string }
   lost: { label: 'Förlorade', hint: 'Tappade' },
 };
 
+const prospectFilterTone: Record<ProspectFilter, string> = {
+  pipeline: 'border-slate-300 bg-white text-slate-700',
+  new: 'border-slate-200 bg-slate-50 text-slate-700',
+  contacted: 'border-sky-200 bg-sky-50 text-sky-800',
+  qualified: 'border-violet-200 bg-violet-50 text-violet-800',
+  quoted: 'border-amber-200 bg-amber-50 text-amber-900',
+  won: 'border-emerald-200 bg-emerald-50 text-emerald-900',
+  lost: 'border-rose-200 bg-rose-50 text-rose-800',
+};
+
+const prospectsSectionClass = 'grid gap-3 border-emerald-200/65 bg-[linear-gradient(180deg,rgba(250,253,250,0.98),rgba(244,249,245,0.98))] p-4 shadow-[0_18px_38px_rgba(15,23,42,0.06)] md:p-5';
+
 function getProspectInitials(value: string) {
   return value
     .split(/\s+/)
@@ -157,6 +169,10 @@ function formatCurrency(value: number | string, currencyCode: string) {
 
 function isPipelineProspect(item: ProspectItem) {
   return item.status === 'new' || item.status === 'contacted' || item.status === 'qualified' || item.status === 'quoted';
+}
+
+function compareProspects(a: ProspectItem, b: ProspectItem) {
+  return b.updated_at.localeCompare(a.updated_at);
 }
 
 export default function ProspectsClient() {
@@ -220,8 +236,8 @@ export default function ProspectsClient() {
   const selected = useMemo(() => items.find((item) => item.id === selectedId) || null, [items, selectedId]);
   const selectedMeta = selected ? buildProspectMeta(selected) : [];
   const visibleItems = useMemo(() => {
-    if (filter === 'pipeline') return items.filter(isPipelineProspect);
-    return items.filter((item) => item.status === filter);
+    if (filter === 'pipeline') return items.filter(isPipelineProspect).sort(compareProspects);
+    return items.filter((item) => item.status === filter).sort(compareProspects);
   }, [filter, items]);
   const filterCounts = useMemo<Record<ProspectFilter, number>>(() => ({
     pipeline: items.filter(isPipelineProspect).length,
@@ -232,6 +248,12 @@ export default function ProspectsClient() {
     won: items.filter((item) => item.status === 'won').length,
     lost: items.filter((item) => item.status === 'lost').length,
   }), [items]);
+  const stats = useMemo(() => ({
+    pipeline: items.filter(isPipelineProspect).length,
+    new: items.filter((item) => item.status === 'new').length,
+    qualified: items.filter((item) => item.status === 'qualified').length,
+    selected: selected?.company_name || 'Inget valt',
+  }), [items, selected]);
 
   useEffect(() => {
     if (!selected) return;
@@ -387,78 +409,71 @@ export default function ProspectsClient() {
 
   return (
     <div className="grid gap-4">
-        <SectionCard className="overflow-hidden border-slate-200 bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.16),_transparent_30%),radial-gradient(circle_at_top_right,_rgba(15,23,42,0.10),_transparent_28%),linear-gradient(180deg,#fcfffe_0%,#f3f8f6_100%)] p-5 shadow-[0_24px_70px_rgba(15,23,42,0.08)] md:p-6">
+        <SectionCard className="overflow-hidden border-emerald-300/80 bg-[radial-gradient(circle_at_top_left,_rgba(22,163,74,0.22),_transparent_30%),radial-gradient(circle_at_top_right,_rgba(101,163,13,0.16),_transparent_24%),linear-gradient(135deg,#f6fbf4_0%,#e5f4e8_56%,#f5fbf6_100%)] p-4 shadow-[0_24px_70px_rgba(15,23,42,0.08)] md:p-5 xl:p-6">
           <div className="grid gap-5">
             <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
               <div className="grid gap-3">
                 <div className="inline-flex w-fit items-center rounded-full border border-emerald-200/80 bg-white/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-emerald-900 shadow-[0_8px_18px_rgba(255,255,255,0.35)]">
                   CRM / Prospekt
                 </div>
-                <div className="grid gap-2">
+                <div className="grid gap-1.5">
                   <div className="flex flex-wrap items-center gap-3">
-                    <h1 className="m-0 text-[clamp(2rem,4vw,3.35rem)] font-bold tracking-[-0.06em] text-slate-950">Prospekt</h1>
-                    <div className="rounded-full border border-emerald-200 bg-emerald-50/90 px-3 py-1 text-xs font-semibold text-emerald-900">
-                      {items.length} aktiva
+                    <h1 className="m-0 text-[clamp(1.75rem,3vw,2.8rem)] font-bold tracking-[-0.05em] text-slate-950">Prospekt</h1>
+                    <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-900">
+                      {stats.pipeline} i pipen
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setCreatePanelOpen(true)}
-                      className="inline-flex min-h-10 items-center justify-center rounded-2xl border border-emerald-600 bg-[linear-gradient(180deg,#14b87a_0%,#0f9f6c_100%)] px-4 py-2 text-sm font-semibold text-white shadow-[0_18px_28px_rgba(16,185,129,0.20)] transition hover:brightness-[0.97]"
-                    >
-                      Lägg till prospekt
-                    </button>
                   </div>
-                  <p className="m-0 max-w-3xl text-sm leading-6 text-slate-600 md:text-[15px]">
-                    En säljyta för fokus, inte bara registrering. Det ska vara lätt att se vilket prospekt som är hett, vad som saknar uppföljning och var nästa steg ska tas.
-                  </p>
+                  <p className="m-0 text-sm text-slate-600">Håll fokus på nästa kontakt, kvalificering och vilka prospekt som faktiskt rör sig framåt.</p>
                 </div>
               </div>
 
-              <div className="grid gap-2 rounded-[28px] border border-slate-200/80 bg-[linear-gradient(180deg,rgba(15,23,42,0.94)_0%,rgba(30,41,59,0.92)_100%)] p-4 text-white shadow-[0_22px_44px_rgba(15,23,42,0.22)]">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-emerald-100/80">Snapshot</span>
-                <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-1 xl:grid-cols-3">
-                  <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3 backdrop-blur-sm">
-                    <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-300">Totalt</div>
-                    <div className="mt-1 text-xl font-bold tracking-[-0.04em] text-white">{items.length}</div>
-                  </div>
-                  <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3 backdrop-blur-sm">
-                    <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-300">Nya</div>
-                    <div className="mt-1 text-xl font-bold tracking-[-0.04em] text-white">{items.filter((item) => item.status === 'new').length}</div>
-                  </div>
-                  <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3 backdrop-blur-sm">
-                    <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-300">Valt</div>
-                    <div className="mt-1 truncate text-sm font-semibold text-white">{selected?.company_name || 'Inget valt'}</div>
-                  </div>
-                </div>
+              <div className="flex flex-wrap gap-2 lg:justify-end">
+                <button
+                  type="button"
+                  onClick={() => setCreatePanelOpen(true)}
+                  className="inline-flex items-center rounded-full border border-emerald-800 bg-emerald-800 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-900"
+                >
+                  Lägg till prospekt
+                </button>
               </div>
             </div>
 
-            <div className="grid gap-3 rounded-[28px] border border-white/70 bg-white/75 p-4 shadow-[0_16px_36px_rgba(15,23,42,0.06)] backdrop-blur lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+            <div className="grid gap-3 md:grid-cols-4">
+              <div className="rounded-[18px] border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(252,253,252,0.98))] p-3 shadow-[0_16px_30px_rgba(15,23,42,0.08)] ring-1 ring-white/80">
+                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">I pipen</div>
+                <div className="mt-1 text-[clamp(1.35rem,2vw,1.8rem)] font-bold tracking-[-0.04em] text-slate-950">{stats.pipeline}</div>
+                <div className="mt-1 text-[13px] text-slate-500">Nya, kontaktade, kvalificerade och offert</div>
+              </div>
+              <div className="rounded-[18px] border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(252,253,252,0.98))] p-3 shadow-[0_16px_30px_rgba(15,23,42,0.08)] ring-1 ring-white/80">
+                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Nya</div>
+                <div className="mt-1 text-[clamp(1.35rem,2vw,1.8rem)] font-bold tracking-[-0.04em] text-slate-950">{stats.new}</div>
+                <div className="mt-1 text-[13px] text-slate-500">Behöver första kontakt</div>
+              </div>
+              <div className="rounded-[18px] border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(252,253,252,0.98))] p-3 shadow-[0_16px_30px_rgba(15,23,42,0.08)] ring-1 ring-white/80">
+                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Kvalificerade</div>
+                <div className="mt-1 text-[clamp(1.35rem,2vw,1.8rem)] font-bold tracking-[-0.04em] text-slate-950">{stats.qualified}</div>
+                <div className="mt-1 text-[13px] text-slate-500">Har tydligare köp- eller offertsignal</div>
+              </div>
+              <div className="rounded-[18px] border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(252,253,252,0.98))] p-3 shadow-[0_16px_30px_rgba(15,23,42,0.08)] ring-1 ring-white/80">
+                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Valt prospekt</div>
+                <div className="mt-1 truncate text-[clamp(1rem,1.5vw,1.2rem)] font-bold tracking-[-0.04em] text-slate-950">{stats.selected}</div>
+                <div className="mt-1 text-[13px] text-slate-500">Öppna detalj för nästa steg</div>
+              </div>
+            </div>
+
+            <div className="grid gap-3 rounded-[24px] border border-white/70 bg-white/75 p-3 shadow-[0_16px_36px_rgba(15,23,42,0.06)] backdrop-blur xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
               <Input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
                 placeholder="Sök på företag, kontakt, e-post eller ort"
-                className="rounded-2xl border-slate-200 bg-white shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]"
+                className="max-w-xl"
               />
-              <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-2 font-semibold text-emerald-700">{visibleItems.length} i vy</span>
-                <span className="rounded-full border border-slate-200 bg-white px-3 py-2 font-semibold text-slate-600">Senaste aktivitet först</span>
-                <span className="rounded-full border border-slate-200 bg-white px-3 py-2 font-semibold text-slate-600">Öppna detalj för nästa steg</span>
-              </div>
-            </div>
-
-            <div className="grid gap-3 rounded-[28px] border border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(248,250,252,0.92))] p-4 shadow-[0_16px_30px_rgba(15,23,42,0.05)]">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="grid gap-1">
-                  <strong className="text-sm font-semibold text-slate-950">Säljfilter</strong>
-                  <p className="m-0 text-sm leading-6 text-slate-600">Växla snabbt mellan nya leads, pågående dialoger och stängda utfall utan att lämna listan.</p>
+              <div className="grid gap-2 rounded-[20px] border border-slate-200/85 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(250,252,250,0.96))] p-2 shadow-[0_14px_30px_rgba(15,23,42,0.05)]">
+                <div className="flex items-center justify-between gap-3 px-2 pt-1">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Sales cockpit</div>
+                  <div className="text-xs text-slate-500">{visibleItems.length} i vy</div>
                 </div>
-                <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
-                  {prospectFilterMeta[filter].label} / {prospectFilterMeta[filter].hint}
-                </span>
-              </div>
-
-              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                <div className="flex flex-wrap gap-2">
                 {(Object.keys(prospectFilterMeta) as ProspectFilter[]).map((value) => {
                   const active = filter === value;
                   return (
@@ -467,22 +482,23 @@ export default function ProspectsClient() {
                       type="button"
                       onClick={() => setFilter(value)}
                       className={cn(
-                        'grid min-h-[78px] gap-1 rounded-[22px] border px-3 py-3 text-left transition-[border-color,box-shadow,transform,background-color]',
+                        'grid min-w-[120px] gap-0.5 rounded-[20px] border px-3 py-2 text-left transition',
                         active
-                          ? 'border-emerald-300 bg-[linear-gradient(180deg,rgba(236,253,245,0.95),rgba(255,255,255,0.98))] shadow-[0_16px_30px_rgba(16,185,129,0.12)]'
-                          : 'border-slate-200 bg-white hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_12px_22px_rgba(15,23,42,0.06)]'
+                          ? 'border-emerald-900 bg-emerald-900 text-white shadow-[0_14px_24px_rgba(15,23,42,0.16)]'
+                          : cn(prospectFilterTone[value], 'hover:-translate-y-0.5 hover:shadow-[0_10px_20px_rgba(15,23,42,0.08)]')
                       )}
                     >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-sm font-semibold text-slate-900">{prospectFilterMeta[value].label}</span>
-                        <span className={cn('rounded-full px-2.5 py-1 text-[11px] font-semibold', active ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600')}>
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-sm font-semibold">{prospectFilterMeta[value].label}</span>
+                        <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-bold', active ? 'bg-white/16 text-white' : 'bg-white/80 text-current')}>
                           {filterCounts[value]}
                         </span>
                       </div>
-                      <span className="text-xs text-slate-500">{prospectFilterMeta[value].hint}</span>
+                      <span className={cn('text-[11px]', active ? 'text-white/80' : 'text-current/70')}>{prospectFilterMeta[value].hint}</span>
                     </button>
                   );
                 })}
+                </div>
               </div>
             </div>
 
@@ -521,13 +537,15 @@ export default function ProspectsClient() {
                       setDetailOpen(true);
                     }}
                     className={cn(
-                      'grid min-w-0 gap-3 rounded-[22px] border px-3.5 py-3 text-left transition-[border-color,box-shadow,transform,background-color] xl:grid-cols-[minmax(0,1.25fr)_minmax(0,0.95fr)_auto_auto] xl:items-center',
+                      'relative grid min-w-0 gap-3 overflow-hidden rounded-[22px] border px-3.5 py-3 text-left transition-[border-color,box-shadow,transform,background-color] md:grid-cols-[minmax(0,1.18fr)_minmax(0,0.98fr)_auto] md:items-center',
                       active
                         ? 'border-emerald-300 bg-[linear-gradient(135deg,rgba(237,252,245,0.98)_0%,rgba(255,255,255,0.98)_55%,rgba(240,253,250,0.95)_100%)] shadow-[0_22px_40px_rgba(16,185,129,0.14)] ring-1 ring-emerald-100'
                         : 'border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98)_0%,rgba(248,250,252,0.95)_100%)] hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_18px_32px_rgba(15,23,42,0.08)]'
                     )}
                   >
-                    <div className="grid min-w-0 gap-2 xl:grid-cols-[auto_minmax(0,1fr)] xl:items-center">
+                    <span className={cn('absolute inset-y-0 left-0 w-1.5 rounded-l-[24px]', item.status === 'won' ? 'bg-emerald-400' : item.status === 'quoted' ? 'bg-amber-400' : item.status === 'contacted' ? 'bg-sky-400' : item.status === 'qualified' ? 'bg-violet-400' : item.status === 'lost' ? 'bg-rose-300' : 'bg-slate-300')} />
+
+                    <div className="grid min-w-0 gap-2 pl-2 md:grid-cols-[auto_minmax(0,1fr)] md:items-center">
                       <div className={cn(
                         'flex h-10 w-10 items-center justify-center rounded-xl border text-xs font-bold tracking-[0.08em] shadow-[inset_0_1px_0_rgba(255,255,255,0.7)] md:h-11 md:w-11 md:text-sm',
                         active ? 'border-emerald-200 bg-white text-emerald-800' : 'border-slate-200 bg-white text-slate-600'
@@ -548,13 +566,13 @@ export default function ProspectsClient() {
                       </div>
                     </div>
 
-                    <div className="flex min-w-0 flex-wrap gap-1.5 text-[11px] text-slate-600 md:text-xs xl:justify-start">
+                    <div className="flex min-w-0 flex-wrap gap-1.5 pl-2 text-[11px] text-slate-600 md:text-xs md:pl-0 md:justify-start">
                       {item.phone ? <span className="break-words rounded-full border border-slate-200/90 bg-white/90 px-2 py-1 shadow-[0_4px_10px_rgba(15,23,42,0.03)]">{item.phone}</span> : null}
                       {item.email ? <span className="break-words rounded-full border border-slate-200/90 bg-white/90 px-2 py-1 shadow-[0_4px_10px_rgba(15,23,42,0.03)]">{item.email}</span> : null}
                       {item.organization_number ? <span className="break-words rounded-full border border-slate-200/90 bg-white/90 px-2 py-1 shadow-[0_4px_10px_rgba(15,23,42,0.03)]">Org.nr: {item.organization_number}</span> : null}
                     </div>
 
-                    <div className="grid gap-1 text-[11px] text-slate-500 xl:justify-items-end">
+                    <div className="grid gap-1 pl-2 text-[11px] text-slate-500 md:justify-items-end md:pl-0">
                       <span className="font-medium text-slate-400 md:text-xs">Uppdaterad {formatDateTime(item.updated_at)}</span>
                       <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Öppna detalj</span>
                     </div>
@@ -635,13 +653,13 @@ export default function ProspectsClient() {
             aria-modal="true"
             aria-label={`Prospekt ${selected.company_name}`}
             onClick={(event) => event.stopPropagation()}
-            className="grid w-full max-w-[860px] gap-4 rounded-[28px] border border-white/70 bg-[linear-gradient(180deg,#ffffff_0%,#f8fafc_100%)] p-4 shadow-[0_30px_80px_rgba(15,23,42,0.28)] sm:max-h-[88vh] sm:overflow-y-auto sm:p-5"
+            className="grid w-full max-w-[860px] gap-4 rounded-[28px] border border-white/70 bg-[linear-gradient(180deg,#ffffff_0%,#f6faf8_100%)] p-4 shadow-[0_30px_80px_rgba(15,23,42,0.28)] sm:max-h-[88vh] sm:overflow-y-auto sm:p-5"
           >
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="grid gap-1">
                 <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Detaljvy</span>
-                <strong className="text-[1.6rem] font-bold tracking-[-0.05em] text-slate-950">{selected.company_name}</strong>
-                <p className="m-0 text-sm text-slate-500">Skapad {formatDateTime(selected.created_at)}</p>
+                <strong className="text-[1.45rem] font-bold tracking-[-0.05em] text-slate-950">{selected.company_name}</strong>
+                <p className="m-0 text-sm text-slate-500">Skapad {formatDateTime(selected.created_at)} och uppdaterad {formatDateTime(selected.updated_at)}</p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <span className={cn('rounded-full border px-2.5 py-1 text-xs font-semibold', statusClass[selected.status])}>
@@ -650,46 +668,46 @@ export default function ProspectsClient() {
                 <button
                   type="button"
                   onClick={() => setDetailEditing((current) => !current)}
-                  className="inline-flex min-h-10 items-center justify-center rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 shadow-[0_10px_18px_rgba(15,23,42,0.04)] hover:border-slate-300 hover:text-slate-900"
+                  className="inline-flex min-h-10 items-center justify-center rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 shadow-[0_10px_18px_rgba(15,23,42,0.04)] hover:border-slate-300 hover:text-slate-900"
                 >
                   {detailEditing ? 'Avsluta redigering' : 'Redigera'}
                 </button>
                 <a
                   href={`/crm/samtal?prospect_id=${selected.id}`}
-                  className="inline-flex min-h-10 items-center justify-center rounded-2xl border border-sky-600 bg-[linear-gradient(180deg,#0ea5e9_0%,#0284c7_100%)] px-3 py-2 text-sm font-semibold text-white shadow-[0_16px_26px_rgba(2,132,199,0.18)] transition hover:brightness-[0.97]"
+                  className="inline-flex min-h-10 items-center justify-center rounded-full border border-slate-900 bg-slate-900 px-3 py-2 text-sm font-semibold text-white transition hover:bg-slate-950"
                 >
                   Logga samtal
                 </a>
                 <button
                   type="button"
                   onClick={() => setDetailOpen(false)}
-                  className="inline-flex min-h-10 items-center justify-center rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 shadow-[0_10px_18px_rgba(15,23,42,0.04)] hover:border-slate-300 hover:text-slate-900"
+                  className="inline-flex min-h-10 items-center justify-center rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 shadow-[0_10px_18px_rgba(15,23,42,0.04)] hover:border-slate-300 hover:text-slate-900"
                 >
                   Stäng
                 </button>
               </div>
             </div>
 
-            <div className="grid gap-4 rounded-[28px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#f9fbfc_100%)] p-4 shadow-[0_18px_36px_rgba(15,23,42,0.06)]">
+            <div className="grid gap-4 rounded-[24px] border border-emerald-200/65 bg-[linear-gradient(180deg,rgba(250,253,250,0.98),rgba(244,249,245,0.98))] p-4 shadow-[0_18px_36px_rgba(15,23,42,0.06)]">
               <div className="flex flex-wrap items-start gap-3">
-                <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[linear-gradient(180deg,#ecfdf5_0%,#d9fbe8_100%)] text-base font-bold tracking-[0.08em] text-emerald-800 shadow-[inset_0_1px_0_rgba(255,255,255,0.75)]">
+                <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-emerald-200/70 bg-[linear-gradient(180deg,#ecfdf5_0%,#d9fbe8_100%)] text-base font-bold tracking-[0.08em] text-emerald-800 shadow-[inset_0_1px_0_rgba(255,255,255,0.75)]">
                   {getProspectInitials(selected.company_name) || 'P'}
                 </div>
                 <div className="grid min-w-0 flex-1 gap-1">
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div className="grid min-w-0 gap-1">
                       <strong className="break-words text-xl font-bold tracking-[-0.03em] text-slate-950">{selected.company_name}</strong>
-                      <span className="text-sm text-slate-500">Uppdaterad {formatDateTime(selected.updated_at)}</span>
+                      <span className="text-sm text-slate-500">{selected.contact_name || 'Ingen kontaktperson än'}</span>
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-2 text-xs text-slate-500">
-                    {selectedMeta.length > 0 ? selectedMeta.map((label) => <span key={label} className="rounded-full border border-slate-200 bg-white px-2.5 py-1 shadow-[0_6px_14px_rgba(15,23,42,0.04)]">{label}</span>) : null}
+                    {selectedMeta.length > 0 ? selectedMeta.map((label) => <span key={label} className="rounded-full border border-slate-200/90 bg-white px-2.5 py-1 shadow-[0_6px_14px_rgba(15,23,42,0.04)]">{label}</span>) : null}
                   </div>
                 </div>
               </div>
 
               {detailEditing ? (
-                <div className="grid gap-3">
+                <div className="grid gap-3 rounded-[20px] border border-white/80 bg-white/90 p-3 shadow-[0_12px_24px_rgba(15,23,42,0.04)]">
                   <Input value={detailDraft.company_name} onChange={(event) => setDetailDraft((current) => ({ ...current, company_name: event.target.value }))} placeholder="Företagsnamn" />
                   <div className="grid gap-3 sm:grid-cols-2">
                     <Input value={detailDraft.contact_name} onChange={(event) => setDetailDraft((current) => ({ ...current, contact_name: event.target.value }))} placeholder="Kontaktperson" />
@@ -734,7 +752,7 @@ export default function ProspectsClient() {
                           status: selected.status,
                         });
                       }}
-                      className="inline-flex min-h-11 items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-600 shadow-[0_10px_18px_rgba(15,23,42,0.04)] hover:border-slate-300 hover:text-slate-900"
+                      className="inline-flex min-h-11 items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-600 shadow-[0_10px_18px_rgba(15,23,42,0.04)] hover:border-slate-300 hover:text-slate-900"
                     >
                       Avbryt
                     </button>
@@ -742,7 +760,7 @@ export default function ProspectsClient() {
                       type="button"
                       onClick={saveProspectDetail}
                       disabled={savingDetail}
-                      className="inline-flex min-h-11 items-center justify-center rounded-2xl border border-emerald-600 bg-[linear-gradient(180deg,#14b87a_0%,#0f9f6c_100%)] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_20px_34px_rgba(16,185,129,0.22)] transition hover:brightness-[0.97] disabled:cursor-not-allowed disabled:opacity-60"
+                      className="inline-flex min-h-11 items-center justify-center rounded-full border border-emerald-600 bg-[linear-gradient(180deg,#14b87a_0%,#0f9f6c_100%)] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_20px_34px_rgba(16,185,129,0.22)] transition hover:brightness-[0.97] disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       {savingDetail ? 'Sparar…' : 'Spara ändringar'}
                     </button>
@@ -750,27 +768,27 @@ export default function ProspectsClient() {
                 </div>
               ) : (
               <div className="grid gap-3 sm:grid-cols-2">
-                <div className="rounded-2xl border border-slate-200/80 bg-white px-4 py-3 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
+                <div className="rounded-[20px] border border-slate-200/80 bg-white px-4 py-3 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
                   <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Kontakt</div>
                   <div className="mt-1 break-words text-sm font-semibold text-slate-900">{selected.contact_name || '–'}</div>
                 </div>
-                <div className="rounded-2xl border border-slate-200/80 bg-white px-4 py-3 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
+                <div className="rounded-[20px] border border-slate-200/80 bg-white px-4 py-3 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
                   <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Org.nr</div>
                   <div className="mt-1 break-words text-sm font-semibold text-slate-900">{selected.organization_number || '–'}</div>
                 </div>
-                <div className="rounded-2xl border border-slate-200/80 bg-white px-4 py-3 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
+                <div className="rounded-[20px] border border-slate-200/80 bg-white px-4 py-3 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
                   <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Telefon</div>
                   <div className="mt-1 break-words text-sm font-semibold text-slate-900">{selected.phone || '–'}</div>
                 </div>
-                <div className="rounded-2xl border border-slate-200/80 bg-white px-4 py-3 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
+                <div className="rounded-[20px] border border-slate-200/80 bg-white px-4 py-3 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
                   <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">E-post</div>
                   <div className="mt-1 break-words text-sm font-semibold text-slate-900">{selected.email || '–'}</div>
                 </div>
-                <div className="rounded-2xl border border-slate-200/80 bg-white px-4 py-3 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
+                <div className="rounded-[20px] border border-slate-200/80 bg-white px-4 py-3 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
                   <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Ort</div>
                   <div className="mt-1 break-words text-sm font-semibold text-slate-900">{selected.city || '–'}</div>
                 </div>
-                <div className="rounded-2xl border border-slate-200/80 bg-white px-4 py-3 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
+                <div className="rounded-[20px] border border-slate-200/80 bg-white px-4 py-3 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
                   <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Källa</div>
                   <div className="mt-1 break-words text-sm font-semibold text-slate-900">{selected.source || '–'}</div>
                 </div>
@@ -778,19 +796,25 @@ export default function ProspectsClient() {
               )}
             </div>
 
-            <div className="grid gap-2 rounded-[24px] border border-slate-200 bg-white px-4 py-4 shadow-[0_14px_26px_rgba(15,23,42,0.04)]">
-              <strong className="text-sm font-semibold text-slate-900">Anteckningar</strong>
+            <div className="grid gap-2 rounded-[20px] border border-slate-200/85 bg-white px-4 py-4 shadow-[0_14px_26px_rgba(15,23,42,0.04)]">
+              <div className="grid gap-0.5">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Internt</span>
+                <strong className="text-sm font-semibold text-slate-900">Anteckningar</strong>
+              </div>
               <p className="m-0 whitespace-pre-wrap break-words text-sm leading-6 text-slate-600">
                 {detailEditing ? (detailDraft.notes || 'Inga anteckningar än.') : (selected.notes || 'Inga anteckningar än.')}
               </p>
             </div>
 
-            <div className="grid gap-3 rounded-[24px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#fffaf2_100%)] px-4 py-4 shadow-[0_14px_26px_rgba(15,23,42,0.04)]">
+            <div className="grid gap-3 rounded-[20px] border border-amber-200/70 bg-[linear-gradient(180deg,#ffffff_0%,#fffaf2_100%)] px-4 py-4 shadow-[0_14px_26px_rgba(15,23,42,0.04)]">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <strong className="text-sm font-semibold text-slate-900">Offerter på prospektet</strong>
+                <div className="grid gap-0.5">
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-amber-700/70">CRM / Offerter</span>
+                  <strong className="text-sm font-semibold text-slate-900">Offerter på prospektet</strong>
+                </div>
                 <a
                   href="/crm/offerter"
-                  className="inline-flex min-h-9 items-center justify-center rounded-2xl border border-amber-500 bg-[linear-gradient(180deg,#f59e0b_0%,#d97706_100%)] px-3 py-2 text-xs font-semibold text-white shadow-[0_14px_24px_rgba(217,119,6,0.18)] transition hover:brightness-[0.97]"
+                  className="inline-flex min-h-9 items-center justify-center rounded-full border border-amber-500 bg-[linear-gradient(180deg,#f59e0b_0%,#d97706_100%)] px-3 py-2 text-xs font-semibold text-white shadow-[0_14px_24px_rgba(217,119,6,0.18)] transition hover:brightness-[0.97]"
                 >
                   Öppna offerter
                 </a>
@@ -798,20 +822,20 @@ export default function ProspectsClient() {
               {relatedQuotesLoading ? (
                 <div className="grid gap-2">
                   {Array.from({ length: 2 }).map((_, index) => (
-                    <div key={index} className="grid gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                    <div key={index} className="grid gap-2 rounded-[18px] border border-slate-200 bg-slate-50 px-4 py-4">
                       <div className="h-3 w-32 rounded-full bg-slate-200" />
                       <div className="h-3 w-48 rounded-full bg-slate-200" />
                     </div>
                   ))}
                 </div>
               ) : relatedQuotes.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-sm text-slate-600">
+                <div className="rounded-[18px] border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-sm text-slate-600">
                   Inga offerter registrerade ännu för det här prospektet.
                 </div>
               ) : (
                 <div className="grid gap-2">
                   {relatedQuotes.map((quote) => (
-                    <div key={quote.id} className="grid gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-4">
+                    <div key={quote.id} className="grid gap-2 rounded-[18px] border border-slate-200 bg-white px-4 py-4 shadow-[0_8px_18px_rgba(15,23,42,0.04)]">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <strong className="text-sm font-semibold text-slate-900">{quote.project_name}</strong>
                         <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-800">
@@ -829,12 +853,15 @@ export default function ProspectsClient() {
               )}
             </div>
 
-            <div className="grid gap-3 rounded-[24px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#f7fbff_100%)] px-4 py-4 shadow-[0_14px_26px_rgba(15,23,42,0.04)]">
+            <div className="grid gap-3 rounded-[20px] border border-emerald-200/70 bg-[linear-gradient(180deg,#ffffff_0%,#f4fbf6_100%)] px-4 py-4 shadow-[0_14px_26px_rgba(15,23,42,0.04)]">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <strong className="text-sm font-semibold text-slate-900">Samtal på prospektet</strong>
+                <div className="grid gap-0.5">
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-700/70">CRM / Samtal</span>
+                  <strong className="text-sm font-semibold text-slate-900">Samtal på prospektet</strong>
+                </div>
                 <a
                   href={`/crm/samtal?prospect_id=${selected.id}`}
-                  className="inline-flex min-h-9 items-center justify-center rounded-2xl border border-sky-600 bg-[linear-gradient(180deg,#0ea5e9_0%,#0284c7_100%)] px-3 py-2 text-xs font-semibold text-white shadow-[0_14px_24px_rgba(2,132,199,0.18)] transition hover:brightness-[0.97]"
+                  className="inline-flex min-h-9 items-center justify-center rounded-full border border-slate-900 bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-950"
                 >
                   Logga nytt samtal
                 </a>
@@ -842,20 +869,20 @@ export default function ProspectsClient() {
               {relatedCallsLoading ? (
                 <div className="grid gap-2">
                   {Array.from({ length: 2 }).map((_, index) => (
-                    <div key={index} className="grid gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                    <div key={index} className="grid gap-2 rounded-[18px] border border-slate-200 bg-slate-50 px-4 py-4">
                       <div className="h-3 w-32 rounded-full bg-slate-200" />
                       <div className="h-3 w-48 rounded-full bg-slate-200" />
                     </div>
                   ))}
                 </div>
               ) : relatedCalls.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-sm text-slate-600">
+                <div className="rounded-[18px] border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-sm text-slate-600">
                   Inga samtal loggade ännu för det här prospektet.
                 </div>
               ) : (
                 <div className="grid gap-2">
                   {relatedCalls.map((call) => (
-                    <div key={call.id} className="grid gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-4">
+                    <div key={call.id} className="grid gap-2 rounded-[18px] border border-slate-200 bg-white px-4 py-4 shadow-[0_8px_18px_rgba(15,23,42,0.04)]">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-700">{callOutcomeLabel[call.outcome]}</span>
                         <span className="text-xs text-slate-500">{formatDateTime(call.call_at)}</span>

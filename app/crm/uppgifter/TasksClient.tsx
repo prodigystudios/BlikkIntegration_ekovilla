@@ -197,6 +197,13 @@ export default function TasksClient() {
     };
   }, [tasks]);
 
+  const filterCounts = useMemo(() => ({
+    all: tasks.length,
+    open: tasks.filter((task) => task.status === 'open').length,
+    overdue: tasks.filter((task) => isOverdue(task)).length,
+    done: tasks.filter((task) => task.status === 'done').length,
+  }), [tasks]);
+
   function openCreateModal() {
     setEditingTaskId(null);
     setDraft(initialDraft);
@@ -305,60 +312,73 @@ export default function TasksClient() {
 
   return (
     <div className="grid gap-4">
-      <SectionCard className="overflow-hidden border-slate-200 bg-[radial-gradient(circle_at_top_left,_rgba(14,165,233,0.12),_transparent_28%),radial-gradient(circle_at_top_right,_rgba(245,158,11,0.10),_transparent_24%),linear-gradient(180deg,#fbfeff_0%,#f7fafc_100%)] p-5 shadow-[0_24px_70px_rgba(15,23,42,0.08)] md:p-6">
+      <SectionCard className="overflow-hidden border-emerald-300/80 bg-[radial-gradient(circle_at_top_left,_rgba(22,163,74,0.22),_transparent_30%),radial-gradient(circle_at_top_right,_rgba(101,163,13,0.16),_transparent_24%),linear-gradient(135deg,#f6fbf4_0%,#e5f4e8_56%,#f5fbf6_100%)] p-4 shadow-[0_24px_70px_rgba(15,23,42,0.08)] md:p-5 xl:p-6">
         <div className="grid gap-5">
           <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
             <div className="grid gap-3">
-              <div className="inline-flex w-fit items-center rounded-full border border-sky-200/80 bg-white/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-sky-900 shadow-[0_8px_18px_rgba(255,255,255,0.35)]">
+              <div className="inline-flex w-fit items-center rounded-full border border-emerald-200/80 bg-white/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-emerald-900 shadow-[0_8px_18px_rgba(255,255,255,0.35)]">
                 CRM / Uppgifter
               </div>
-              <div className="grid gap-2">
+              <div className="grid gap-1.5">
                 <div className="flex flex-wrap items-center gap-3">
-                  <h1 className="m-0 text-[clamp(2rem,4vw,3.2rem)] font-bold tracking-[-0.06em] text-slate-950">Uppgifter</h1>
-                  <div className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-900">
+                  <h1 className="m-0 text-[clamp(1.75rem,3vw,2.8rem)] font-bold tracking-[-0.05em] text-slate-950">Uppgifter</h1>
+                  <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-900">
                     {stats.open} öppna
                   </div>
-                  <button
-                    type="button"
-                    onClick={openCreateModal}
-                    className="inline-flex min-h-10 items-center justify-center rounded-2xl border border-sky-600 bg-[linear-gradient(180deg,#0ea5e9_0%,#0284c7_100%)] px-4 py-2 text-sm font-semibold text-white shadow-[0_16px_26px_rgba(2,132,199,0.22)] transition hover:brightness-[0.97]"
-                  >
-                    Ny uppgift
-                  </button>
                 </div>
-                <p className="m-0 max-w-3xl text-sm leading-6 text-slate-600 md:text-[15px]">
-                  Första versionen fokuserar på enkel uppföljning: vad som är öppet, vad som är förfallet och vad som redan är avklarat. Allt ska gå att avpricka eller justera direkt.
+                <p className="m-0 max-w-3xl text-sm text-slate-600">
+                  Håll koll på nästa steg, det som är förfallet och vad som kan stängas direkt utan att lämna CRM-flödet.
                 </p>
               </div>
             </div>
 
-            <div className="grid gap-2 rounded-[28px] border border-slate-200/80 bg-[linear-gradient(180deg,rgba(15,23,42,0.94)_0%,rgba(30,41,59,0.92)_100%)] p-4 text-white shadow-[0_22px_44px_rgba(15,23,42,0.22)]">
-              <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-sky-100/80">Snapshot</span>
-              <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-1 xl:grid-cols-3">
-                <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3 backdrop-blur-sm">
-                  <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-300">Öppna</div>
-                  <div className="mt-1 text-xl font-bold tracking-[-0.04em] text-white">{stats.open}</div>
-                </div>
-                <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3 backdrop-blur-sm">
-                  <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-300">Förfallna</div>
-                  <div className="mt-1 text-xl font-bold tracking-[-0.04em] text-white">{stats.overdue}</div>
-                </div>
-                <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3 backdrop-blur-sm">
-                  <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-300">Klara</div>
-                  <div className="mt-1 text-xl font-bold tracking-[-0.04em] text-white">{stats.done}</div>
-                </div>
-              </div>
+            <div className="flex flex-wrap gap-2 lg:justify-end">
+              <button
+                type="button"
+                onClick={openCreateModal}
+                className="inline-flex items-center rounded-full border border-emerald-800 bg-emerald-800 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-900"
+              >
+                Ny uppgift
+              </button>
             </div>
           </div>
 
-          <div className="grid gap-3 rounded-[28px] border border-white/70 bg-white/75 p-4 shadow-[0_16px_36px_rgba(15,23,42,0.06)] backdrop-blur lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+          <div className="grid gap-3 md:grid-cols-4">
+            <div className="rounded-[18px] border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(252,253,252,0.98))] p-3 shadow-[0_16px_30px_rgba(15,23,42,0.08)] ring-1 ring-white/80">
+              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Öppna</div>
+              <div className="mt-1 text-[clamp(1.35rem,2vw,1.8rem)] font-bold tracking-[-0.04em] text-slate-950">{stats.open}</div>
+              <div className="mt-1 text-[13px] text-slate-500">Aktiva uppgifter att jobba med</div>
+            </div>
+            <div className="rounded-[18px] border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(252,253,252,0.98))] p-3 shadow-[0_16px_30px_rgba(15,23,42,0.08)] ring-1 ring-white/80">
+              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Förfallna</div>
+              <div className="mt-1 text-[clamp(1.35rem,2vw,1.8rem)] font-bold tracking-[-0.04em] text-slate-950">{stats.overdue}</div>
+              <div className="mt-1 text-[13px] text-slate-500">Behöver åtgärdas först</div>
+            </div>
+            <div className="rounded-[18px] border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(252,253,252,0.98))] p-3 shadow-[0_16px_30px_rgba(15,23,42,0.08)] ring-1 ring-white/80">
+              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Klara</div>
+              <div className="mt-1 text-[clamp(1.35rem,2vw,1.8rem)] font-bold tracking-[-0.04em] text-slate-950">{stats.done}</div>
+              <div className="mt-1 text-[13px] text-slate-500">Färdiga uppföljningar</div>
+            </div>
+            <div className="rounded-[18px] border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(252,253,252,0.98))] p-3 shadow-[0_16px_30px_rgba(15,23,42,0.08)] ring-1 ring-white/80">
+              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">I vy</div>
+              <div className="mt-1 text-[clamp(1.35rem,2vw,1.8rem)] font-bold tracking-[-0.04em] text-slate-950">{visibleTasks.length}</div>
+              <div className="mt-1 text-[13px] text-slate-500">Matchar sök och filter</div>
+            </div>
+          </div>
+
+          <div className="grid gap-3 rounded-[24px] border border-white/70 bg-white/75 p-3 shadow-[0_16px_36px_rgba(15,23,42,0.06)] backdrop-blur xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
             <Input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder="Sök på titel, prospekt eller källa"
-              className="rounded-2xl border-slate-200 bg-white shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]"
+              className="max-w-xl"
             />
-            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+            <div className="grid gap-2 rounded-[20px] border border-slate-200/85 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(250,252,250,0.96))] p-2 shadow-[0_14px_30px_rgba(15,23,42,0.05)]">
+              <div className="flex items-center justify-between gap-3 px-2 pt-1">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Sales cockpit</div>
+                <div className="text-xs text-slate-500">{visibleTasks.length} i vy</div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
               {([
                 ['all', 'Alla'],
                 ['open', 'Öppna'],
@@ -372,14 +392,23 @@ export default function TasksClient() {
                     type="button"
                     onClick={() => setFilter(value)}
                     className={cn(
-                      'rounded-full border px-3 py-2 font-semibold transition',
-                      active ? 'border-sky-200 bg-sky-50 text-sky-700' : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+                      'grid min-w-[120px] gap-0.5 rounded-[20px] border px-3 py-2 text-left transition',
+                      active ? 'border-emerald-900 bg-emerald-900 text-white shadow-[0_14px_24px_rgba(15,23,42,0.16)]' : 'border-slate-200 bg-white text-slate-700 hover:-translate-y-0.5 hover:shadow-[0_10px_20px_rgba(15,23,42,0.08)]'
                     )}
                   >
-                    {label}
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-sm font-semibold">{label}</span>
+                      <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-bold', active ? 'bg-white/16 text-white' : 'bg-white/80 text-current')}>
+                        {filterCounts[value]}
+                      </span>
+                    </div>
+                    <span className={cn('text-[11px]', active ? 'text-white/80' : 'text-current/70')}>
+                      {value === 'all' ? 'Hela arbetslistan' : value === 'open' ? 'Aktiva uppgifter' : value === 'overdue' ? 'Borde gjorts redan' : 'Redan avslutade'}
+                    </span>
                   </button>
                 );
               })}
+              </div>
             </div>
           </div>
 
@@ -406,12 +435,13 @@ export default function TasksClient() {
 
                 return (
                   <div key={task.id} className={cn(
-                    'grid gap-3 rounded-[24px] border px-4 py-4 shadow-[0_12px_26px_rgba(15,23,42,0.05)] md:grid-cols-[minmax(0,1fr)_auto]',
-                    overdue ? 'border-amber-200 bg-[linear-gradient(180deg,#fffdf7_0%,#fffaf0_100%)]' : 'border-slate-200 bg-white'
+                    'relative grid gap-2.5 rounded-[22px] border px-3.5 py-3 shadow-[0_12px_24px_rgba(15,23,42,0.05)] transition-[border-color,box-shadow,transform,background-color] md:grid-cols-[minmax(0,1fr)_auto] md:items-center',
+                    overdue ? 'border-amber-200 bg-[linear-gradient(180deg,#fffdf7_0%,#fffaf0_100%)] shadow-[0_16px_28px_rgba(245,158,11,0.08)]' : 'border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(248,250,249,0.96))] hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_16px_28px_rgba(15,23,42,0.08)]'
                   )}>
+                    <span className={cn('absolute inset-y-0 left-0 w-1.5 rounded-l-[22px]', task.status === 'done' ? 'bg-emerald-400' : overdue ? 'bg-amber-400' : task.priority === 'high' ? 'bg-rose-300' : task.priority === 'normal' ? 'bg-sky-400' : 'bg-slate-300')} />
                     <div className="grid gap-2 min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
-                        <strong className="break-words text-base font-bold tracking-[-0.03em] text-slate-950">{task.title}</strong>
+                        <strong className="break-words text-[15px] font-bold tracking-[-0.03em] text-slate-950 md:text-base">{task.title}</strong>
                         <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-semibold md:px-2.5 md:py-1 md:text-[11px]', priorityMeta[task.priority].className)}>
                           {priorityMeta[task.priority].label}
                         </span>
@@ -431,16 +461,16 @@ export default function TasksClient() {
                       </div>
                     </div>
 
-                    <div className="flex flex-wrap items-center justify-end gap-2 md:w-[220px] md:content-start">
+                    <div className="flex flex-wrap items-center justify-end gap-1.5 md:w-[220px] md:content-start">
                       <button
                         type="button"
                         onClick={() => toggleTaskStatus(task)}
                         disabled={updating}
                         className={cn(
-                          'inline-flex min-h-10 w-full items-center justify-center rounded-2xl border px-3 py-2 text-sm font-semibold transition',
+                          'inline-flex min-h-9 w-full items-center justify-center rounded-full border px-3 py-1.5 text-sm font-semibold transition',
                           task.status === 'done'
-                            ? 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
-                            : 'border-emerald-600 bg-[linear-gradient(180deg,#14b87a_0%,#0f9f6c_100%)] text-white shadow-[0_16px_26px_rgba(16,185,129,0.18)] hover:brightness-[0.97]',
+                            ? 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50'
+                            : 'border-emerald-800 bg-emerald-800 text-white hover:bg-emerald-900',
                           updating ? 'cursor-wait opacity-70' : ''
                         )}
                       >
@@ -449,7 +479,7 @@ export default function TasksClient() {
                       <button
                         type="button"
                         onClick={() => openEditModal(task)}
-                        className="inline-flex min-h-10 w-full items-center justify-center rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 shadow-[0_10px_18px_rgba(15,23,42,0.04)] hover:border-slate-300 hover:text-slate-900"
+                        className="inline-flex min-h-9 w-full items-center justify-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-600 shadow-[0_8px_16px_rgba(15,23,42,0.04)] transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900"
                       >
                         Redigera
                       </button>
@@ -469,12 +499,12 @@ export default function TasksClient() {
             aria-modal="true"
             aria-label={editingTaskId ? 'Redigera uppgift' : 'Ny uppgift'}
             onClick={(event) => event.stopPropagation()}
-            className="grid w-full max-w-[760px] gap-4 rounded-[28px] border border-white/70 bg-[linear-gradient(180deg,#ffffff_0%,#f5f9fc_100%)] p-4 shadow-[0_30px_80px_rgba(15,23,42,0.28)] sm:max-h-[88vh] sm:overflow-y-auto sm:p-5"
+            className="grid w-full max-w-[760px] gap-4 rounded-[28px] border border-white/70 bg-[linear-gradient(180deg,#ffffff_0%,#f6faf8_100%)] p-4 shadow-[0_30px_80px_rgba(15,23,42,0.28)] sm:max-h-[88vh] sm:overflow-y-auto sm:p-5"
           >
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="grid gap-1">
-                <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">{editingTaskId ? 'Redigera uppgift' : 'Ny uppgift'}</span>
-                <strong className="text-[1.6rem] font-bold tracking-[-0.05em] text-slate-950">{draft.title || 'Planera nästa steg'}</strong>
+                <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">CRM / Uppgifter</span>
+                <strong className="text-[1.5rem] font-bold tracking-[-0.05em] text-slate-950">{draft.title || 'Planera nästa steg'}</strong>
                 <p className="m-0 max-w-2xl text-sm leading-6 text-slate-600">
                   Fånga uppföljningar utan att lämna CRM-flödet. Första versionen fokuserar på tydliga deadlines och snabb avprickning.
                 </p>
@@ -486,13 +516,13 @@ export default function TasksClient() {
                   setEditingTaskId(null);
                   setDraft(initialDraft);
                 }}
-                className="inline-flex min-h-10 items-center justify-center rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 shadow-[0_10px_18px_rgba(15,23,42,0.04)] hover:border-slate-300 hover:text-slate-900"
+                className="inline-flex min-h-10 items-center justify-center rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 shadow-[0_10px_18px_rgba(15,23,42,0.04)] hover:border-slate-300 hover:text-slate-900"
               >
                 Stäng
               </button>
             </div>
 
-            <div className="grid gap-3 rounded-[28px] border border-white/80 bg-white/92 p-4 shadow-[0_20px_44px_rgba(15,23,42,0.06)]">
+            <div className="grid gap-4 rounded-[28px] border border-white/80 bg-white/92 p-4 shadow-[0_20px_44px_rgba(15,23,42,0.06)]">
               <Input value={draft.title} onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))} placeholder="Titel på uppgiften" />
 
               <div className="grid gap-3 sm:grid-cols-2">
@@ -523,7 +553,7 @@ export default function TasksClient() {
                 </label>
               </div>
 
-              <div className="grid gap-3 sm:grid-cols-3">
+              <div className="grid gap-3 rounded-[24px] border border-slate-200/85 bg-[linear-gradient(180deg,rgba(250,253,250,0.85),rgba(244,249,245,0.9))] p-3 shadow-[0_12px_24px_rgba(15,23,42,0.04)] sm:grid-cols-3">
                 <label className="grid gap-1 text-sm text-slate-600">
                   <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Prioritet</span>
                   <select
@@ -544,7 +574,10 @@ export default function TasksClient() {
                   <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Påminnelse</span>
                   <Input value={draft.remind_at} onChange={(event) => setDraft((current) => ({ ...current, remind_at: event.target.value }))} type="datetime-local" />
                 </label>
-                <Input value={draft.source} onChange={(event) => setDraft((current) => ({ ...current, source: event.target.value }))} placeholder="Källa, t.ex. samtal eller manuell" />
+                <label className="grid gap-1 text-sm text-slate-600 sm:col-span-3">
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Källa</span>
+                  <Input value={draft.source} onChange={(event) => setDraft((current) => ({ ...current, source: event.target.value }))} placeholder="Källa, t.ex. samtal eller manuell" />
+                </label>
               </div>
 
               <Textarea
@@ -562,7 +595,7 @@ export default function TasksClient() {
                     setEditingTaskId(null);
                     setDraft(initialDraft);
                   }}
-                  className="inline-flex min-h-11 items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-600 shadow-[0_10px_18px_rgba(15,23,42,0.04)] hover:border-slate-300 hover:text-slate-900"
+                  className="inline-flex min-h-11 items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
                 >
                   Avbryt
                 </button>
@@ -570,7 +603,7 @@ export default function TasksClient() {
                   type="button"
                   onClick={saveTask}
                   disabled={submitting}
-                  className="inline-flex min-h-12 items-center justify-center rounded-2xl border border-sky-600 bg-[linear-gradient(180deg,#0ea5e9_0%,#0284c7_100%)] px-4 py-3 text-sm font-semibold text-white shadow-[0_20px_34px_rgba(2,132,199,0.22)] transition hover:brightness-[0.97] disabled:cursor-not-allowed disabled:opacity-60"
+                  className="inline-flex min-h-11 items-center justify-center rounded-full border border-slate-900 bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-950 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {submitting ? 'Sparar…' : editingTaskId ? 'Spara ändringar' : 'Skapa uppgift'}
                 </button>

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import Input from '../../../components/ui/Input';
 import SectionCard from '../../../components/ui/SectionCard';
 import Textarea from '../../../components/ui/Textarea';
+import { cn } from '@/lib/shared/cn';
 
 type ProspectItem = {
   id: string;
@@ -364,59 +365,62 @@ export default function CoachClient({ userName }: { userName: string | null }) {
 
   return (
     <div className="grid gap-4">
-      <SectionCard className="overflow-hidden border-slate-200 bg-[radial-gradient(circle_at_top_left,_rgba(14,165,233,0.12),_transparent_30%),radial-gradient(circle_at_top_right,_rgba(16,185,129,0.10),_transparent_28%),linear-gradient(180deg,#fbfeff_0%,#f8fafc_100%)] p-5 shadow-[0_24px_70px_rgba(15,23,42,0.08)] md:p-6">
-        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px] xl:items-start">
-          <div className="grid gap-4">
-            <div className="inline-flex w-fit items-center rounded-full border border-sky-200/80 bg-white/85 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-sky-900 shadow-[0_8px_18px_rgba(255,255,255,0.35)]">
+      <SectionCard className="overflow-hidden border-emerald-300/80 bg-[radial-gradient(circle_at_top_left,_rgba(22,163,74,0.22),_transparent_30%),radial-gradient(circle_at_top_right,_rgba(101,163,13,0.16),_transparent_24%),linear-gradient(135deg,#f6fbf4_0%,#e5f4e8_56%,#f5fbf6_100%)] p-4 shadow-[0_24px_70px_rgba(15,23,42,0.08)] md:p-5 xl:p-6">
+        <div className="grid gap-5">
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
+            <div className="grid gap-4">
+            <div className="inline-flex w-fit items-center rounded-full border border-emerald-200/80 bg-white/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-emerald-900 shadow-[0_8px_18px_rgba(255,255,255,0.35)]">
               CRM / Coach
             </div>
-            <div className="grid gap-2">
+            <div className="grid gap-1.5">
               <div className="flex flex-wrap items-center gap-3">
-                <h1 className="m-0 text-[clamp(2rem,4vw,3.2rem)] font-bold tracking-[-0.06em] text-slate-950">Säljcoach</h1>
-                <div className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-900">Coach-beta</div>
+                <h1 className="m-0 text-[clamp(1.75rem,3vw,2.8rem)] font-bold tracking-[-0.05em] text-slate-950">Säljcoach</h1>
+                <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-900">Coachbeta</div>
               </div>
-              <p className="m-0 max-w-3xl text-sm leading-6 text-slate-600 md:text-[15px]">
-                Be om hjälp inför nästa samtal, mitt i en invändning eller precis före avslut. Flödet är redan byggt för fri fråga, snabbval och valbar CRM-kontext, så en riktig modell kan kopplas på senare utan att produkten behöver göras om.
+              <p className="m-0 max-w-3xl text-sm text-slate-600">
+                Be om hjälp inför nästa samtal, mitt i en invändning eller precis före avslut. Coachytan ska kännas som en del av samma CRM-arbetsflöde, inte som ett separat verktyg.
               </p>
             </div>
             <div className="flex flex-wrap gap-2 text-xs text-slate-600">
               <span className="rounded-full border border-white/80 bg-white/80 px-3 py-1.5 font-semibold shadow-[0_10px_24px_rgba(15,23,42,0.04)]">Fri fråga eller snabbstart</span>
               <span className="rounded-full border border-white/80 bg-white/80 px-3 py-1.5 font-semibold shadow-[0_10px_24px_rgba(15,23,42,0.04)]">Prospekt, samtal eller offert som stöd</span>
-              <span className="rounded-full border border-white/80 bg-white/80 px-3 py-1.5 font-semibold shadow-[0_10px_24px_rgba(15,23,42,0.04)]">Svarsformat redo för riktig AI-runtime</span>
+              <span className="rounded-full border border-white/80 bg-white/80 px-3 py-1.5 font-semibold shadow-[0_10px_24px_rgba(15,23,42,0.04)]">Svarsformat redo för riktig AI-koppling</span>
             </div>
           </div>
 
-          <div className="grid gap-3 rounded-[28px] border border-slate-200/80 bg-[linear-gradient(180deg,rgba(15,23,42,0.94)_0%,rgba(30,41,59,0.92)_100%)] p-4 text-white shadow-[0_22px_44px_rgba(15,23,42,0.22)]">
-            <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-sky-100/80">I detta pass</span>
-            <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3 text-sm text-slate-200">
-              <strong className="block text-white">{userName || 'Säljare'}</strong>
-              Fokus ligger på hur du ska agera i nästa steg, inte på att visa ännu en pipelineöversikt.
+          <div className="flex flex-wrap gap-2 lg:justify-end">
+            <div className="rounded-full border border-white/70 bg-white/85 px-3 py-2 text-sm font-semibold text-slate-700 shadow-[0_10px_18px_rgba(15,23,42,0.04)]">
+              {userName || 'Säljare'}
             </div>
-            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-2">
-              <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3 backdrop-blur-sm">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-300">Läge</div>
-                <div className="mt-1 text-sm font-semibold text-white">{activeModeLabel}</div>
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3 backdrop-blur-sm">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-300">Kontext</div>
-                <div className="mt-1 text-sm font-semibold text-white">{selectedContext?.label || 'Ingen vald'}</div>
-              </div>
+          </div>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-4">
+            <div className="rounded-[18px] border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(252,253,252,0.98))] p-3 shadow-[0_16px_30px_rgba(15,23,42,0.08)] ring-1 ring-white/80">
+              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Läge</div>
+              <div className="mt-1 text-[clamp(1rem,1.5vw,1.2rem)] font-bold tracking-[-0.03em] text-slate-950">{activeModeLabel}</div>
+              <div className="mt-1 text-[13px] text-slate-500">Nuvarande coachspår</div>
             </div>
-            <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3 text-sm text-slate-200">
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-300">Coachsvar i tråden</span>
-                <strong className="text-base text-white">{thread.length}</strong>
-              </div>
-              <p className="mt-2 m-0 text-xs leading-5 text-slate-300">
-                {selectedContextSummary || 'Välj kontext först när svaret behöver bli mer situationsbundet än generellt.'}
-              </p>
+            <div className="rounded-[18px] border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(252,253,252,0.98))] p-3 shadow-[0_16px_30px_rgba(15,23,42,0.08)] ring-1 ring-white/80">
+              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Kontext</div>
+              <div className="mt-1 text-[clamp(1rem,1.5vw,1.2rem)] font-bold tracking-[-0.03em] text-slate-950">{selectedContext?.label || 'Ingen vald'}</div>
+              <div className="mt-1 text-[13px] text-slate-500">Situationsdata till coachen</div>
+            </div>
+            <div className="rounded-[18px] border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(252,253,252,0.98))] p-3 shadow-[0_16px_30px_rgba(15,23,42,0.08)] ring-1 ring-white/80">
+              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Svar i tråd</div>
+              <div className="mt-1 text-[clamp(1.35rem,2vw,1.8rem)] font-bold tracking-[-0.04em] text-slate-950">{thread.length}</div>
+              <div className="mt-1 text-[13px] text-slate-500">Coachade steg sparade i vyn</div>
+            </div>
+            <div className="rounded-[18px] border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(252,253,252,0.98))] p-3 shadow-[0_16px_30px_rgba(15,23,42,0.08)] ring-1 ring-white/80">
+              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Sammanhang</div>
+              <div className="mt-1 text-[13px] font-semibold leading-5 text-slate-950">{selectedContextSummary || 'Välj kontext först när svaret behöver bli mer situationsbundet än generellt.'}</div>
             </div>
           </div>
         </div>
       </SectionCard>
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.15fr)_380px]">
-        <SectionCard className="grid gap-4 border-slate-200 bg-white/90 p-5 md:p-6">
+        <SectionCard className="grid gap-4 border-emerald-200/65 bg-[linear-gradient(180deg,rgba(250,253,250,0.98),rgba(244,249,245,0.98))] p-4 shadow-[0_18px_38px_rgba(15,23,42,0.06)] md:p-5">
           <div className="grid gap-1">
             <strong className="text-base font-bold text-slate-950">Fråga coachen</strong>
             <p className="m-0 text-sm leading-6 text-slate-600">Skriv som du faktiskt tänker inför ett säljsamtal. Börja från ett snabbval om du vill få fart direkt.</p>
@@ -430,9 +434,12 @@ export default function CoachClient({ userName }: { userName: string | null }) {
                   key={action.id}
                   type="button"
                   onClick={() => chooseQuickAction(action)}
-                  className={active
-                    ? 'grid gap-1 rounded-[22px] border border-slate-900 bg-slate-900 px-4 py-4 text-left text-white shadow-[0_14px_28px_rgba(15,23,42,0.18)]'
-                    : 'grid gap-1 rounded-[22px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#f8fafc_100%)] px-4 py-4 text-left text-slate-900 shadow-[0_12px_24px_rgba(15,23,42,0.05)] transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_18px_32px_rgba(15,23,42,0.08)]'}
+                  className={cn(
+                    'grid gap-1 rounded-[22px] border px-4 py-4 text-left shadow-[0_12px_24px_rgba(15,23,42,0.05)] transition',
+                    active
+                      ? 'border-emerald-900 bg-emerald-900 text-white shadow-[0_14px_28px_rgba(15,23,42,0.18)]'
+                      : 'border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#f8fafc_100%)] text-slate-900 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_18px_32px_rgba(15,23,42,0.08)]',
+                  )}
                 >
                   <strong className="text-sm font-semibold">{action.label}</strong>
                   <span className={active ? 'text-xs text-slate-200' : 'text-xs text-slate-500'}>{action.helper}</span>
@@ -441,7 +448,7 @@ export default function CoachClient({ userName }: { userName: string | null }) {
             })}
           </div>
 
-          <div className="grid gap-3 rounded-[24px] border border-slate-200 bg-[linear-gradient(180deg,rgba(248,250,252,0.98),rgba(241,245,249,0.98))] p-4 shadow-[0_14px_28px_rgba(15,23,42,0.05)]">
+          <div className="grid gap-3 rounded-[24px] border border-white/80 bg-white/92 p-4 shadow-[0_14px_28px_rgba(15,23,42,0.05)]">
             <div className="flex flex-wrap items-center gap-2 text-xs">
               <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-700">Läge: {activeModeLabel}</span>
               {selectedContext ? (
@@ -465,7 +472,7 @@ export default function CoachClient({ userName }: { userName: string | null }) {
                 type="button"
                 onClick={submitPrompt}
                 disabled={submitting || loading}
-                className="inline-flex min-h-11 items-center justify-center rounded-2xl border border-sky-600 bg-[linear-gradient(180deg,#0ea5e9_0%,#0284c7_100%)] px-4 py-2 text-sm font-semibold text-white shadow-[0_16px_26px_rgba(2,132,199,0.22)] transition hover:brightness-[0.97] disabled:cursor-not-allowed disabled:opacity-60"
+                className="inline-flex min-h-11 items-center justify-center rounded-full border border-slate-900 bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-950 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {submitting ? 'Coachar…' : 'Få coachsvar'}
               </button>
@@ -505,19 +512,19 @@ export default function CoachClient({ userName }: { userName: string | null }) {
                   <div className="grid gap-2 rounded-[20px] border border-slate-200 bg-slate-50 px-4 py-3">
                     <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
                       <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 font-semibold text-slate-600">Din fråga</span>
-                      {item.quickActionLabel ? <span className="rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 font-semibold text-sky-700">{item.quickActionLabel}</span> : null}
+                      {item.quickActionLabel ? <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 font-semibold text-emerald-700">{item.quickActionLabel}</span> : null}
                       {item.contextLabel ? <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 font-semibold text-emerald-700">Kontext: {item.contextLabel}</span> : null}
                     </div>
                     <p className="m-0 text-sm leading-6 text-slate-700">{item.prompt}</p>
                   </div>
 
-                  <div className="grid gap-3 rounded-[22px] border border-sky-100 bg-[linear-gradient(180deg,rgba(240,249,255,0.85),rgba(255,255,255,0.98))] px-4 py-4">
+                  <div className="grid gap-3 rounded-[22px] border border-emerald-100 bg-[linear-gradient(180deg,rgba(240,253,244,0.8),rgba(255,255,255,0.98))] px-4 py-4">
                     <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                      <span className="rounded-full border border-sky-200 bg-white px-2.5 py-1 font-semibold text-sky-700">Coach svar</span>
+                      <span className="rounded-full border border-emerald-200 bg-white px-2.5 py-1 font-semibold text-emerald-700">Coach svar</span>
                       <span className={item.reply.mode === 'ai'
                         ? 'rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 font-semibold text-emerald-700'
                         : 'rounded-full border border-slate-200 bg-white px-2.5 py-1 font-semibold text-slate-600'}>
-                        {item.reply.mode === 'ai' ? 'AI-runtime' : 'Mockad fallback'}
+                        {item.reply.mode === 'ai' ? 'AI-koppling' : 'Mockat standardsvar'}
                       </span>
                     </div>
                     <div className="grid gap-1">
@@ -552,7 +559,7 @@ export default function CoachClient({ userName }: { userName: string | null }) {
           </div>
         </SectionCard>
 
-        <SectionCard className="grid gap-4 border-slate-200 bg-white/90 p-5 md:p-6">
+        <SectionCard className="grid gap-4 border-emerald-200/65 bg-[linear-gradient(180deg,rgba(250,253,250,0.98),rgba(244,249,245,0.98))] p-4 shadow-[0_18px_38px_rgba(15,23,42,0.06)] md:p-5">
           <div className="grid gap-1">
             <strong className="text-base font-bold text-slate-950">CRM-kontext</strong>
             <p className="m-0 text-sm leading-6 text-slate-600">Lägg till kontext bara när svaret behöver bottna i ett faktiskt prospekt, ett samtal eller ett offertläge.</p>
@@ -570,7 +577,7 @@ export default function CoachClient({ userName }: { userName: string | null }) {
                 type="button"
                 onClick={() => setContextType(value)}
                 className={contextType === value
-                  ? 'rounded-full border border-slate-900 bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white'
+                  ? 'rounded-full border border-emerald-900 bg-emerald-900 px-3 py-1.5 text-sm font-semibold text-white'
                   : 'rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50'}
               >
                 {label}
@@ -579,12 +586,12 @@ export default function CoachClient({ userName }: { userName: string | null }) {
           </div>
 
           {contextType !== 'none' ? (
-            <div className="grid gap-3 rounded-[24px] border border-slate-200 bg-[linear-gradient(180deg,rgba(248,250,252,0.98),rgba(241,245,249,0.98))] p-4 shadow-[0_14px_28px_rgba(15,23,42,0.05)]">
+            <div className="grid gap-3 rounded-[24px] border border-white/80 bg-white/92 p-4 shadow-[0_14px_28px_rgba(15,23,42,0.05)]">
               <Input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
                 placeholder="Sök i vald kontext"
-                className="border-slate-200 bg-white"
+                className="max-w-xl"
               />
 
               <select
@@ -620,12 +627,12 @@ export default function CoachClient({ userName }: { userName: string | null }) {
             </div>
           )}
 
-          <div className="grid gap-3 rounded-[24px] border border-slate-200 bg-[linear-gradient(180deg,rgba(248,250,252,0.98),rgba(241,245,249,0.98))] p-4 shadow-[0_14px_28px_rgba(15,23,42,0.05)]">
+          <div className="grid gap-3 rounded-[24px] border border-white/80 bg-white/92 p-4 shadow-[0_14px_28px_rgba(15,23,42,0.05)]">
             <strong className="text-sm font-semibold text-slate-950">Vad som redan är framtidssäkrat</strong>
             <ul className="m-0 grid gap-2 pl-5 text-sm leading-6 text-slate-600">
               <li>Frågan skickas redan genom en dedikerad coach-route.</li>
               <li>Kontext väljs som tydlig referens i stället för att hårdkodas i UI:t.</li>
-              <li>Svaret kommer i ett kontrakt som senare kan fyllas av riktig AI-runtime.</li>
+              <li>Svaret kommer i ett kontrakt som senare kan fyllas av riktig AI-koppling.</li>
             </ul>
           </div>
         </SectionCard>
