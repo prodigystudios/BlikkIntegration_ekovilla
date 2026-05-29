@@ -101,3 +101,17 @@ export async function requireCrmUser() {
 
   return { currentUser, response: null };
 }
+
+export async function requireCrmAdmin() {
+  const currentUser = await getCurrentUser();
+
+  if (!currentUser) {
+    return { currentUser: null, response: routeError(401, 'unauthorized', 'Unauthorized') };
+  }
+
+  if (currentUser.role !== 'admin') {
+    return { currentUser: null, response: routeError(403, 'forbidden', 'Forbidden') };
+  }
+
+  return { currentUser, response: null };
+}

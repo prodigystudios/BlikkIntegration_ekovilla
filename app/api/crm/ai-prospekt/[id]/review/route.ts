@@ -6,11 +6,11 @@ import {
   mapCrmAiProspectSuggestionRow,
   reviewCrmAiProspectSuggestion,
 } from '@/lib/crm/aiProspects';
-import { ok, requireCrmUser, reviewCrmAiProspectSuggestionSchema, routeError, validationError } from '../../_lib';
+import { ok, requireCrmAdmin, reviewCrmAiProspectSuggestionSchema, routeError, validationError } from '../../_lib';
 
 export async function POST(req: Request, { params }: { params: { id: string } }) {
   try {
-    const crmUser = await requireCrmUser();
+    const crmUser = await requireCrmAdmin();
     if (crmUser.response || !crmUser.currentUser) return crmUser.response;
 
     const parsedBody = reviewCrmAiProspectSuggestionSchema.safeParse(await req.json().catch(() => null));
