@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import SectionCard from '../../../components/ui/SectionCard';
 import Input from '../../../components/ui/Input';
 import Textarea from '../../../components/ui/Textarea';
@@ -101,14 +102,12 @@ const initialDraft: QuoteDraft = {
 };
 
 const quoteFilterMeta: Record<QuoteFilter, { label: string; hint: string; tone: string }> = {
-  all: { label: 'Alla', hint: 'Hela pipen', tone: 'border-slate-300 bg-white text-slate-700' },
-  active: { label: 'Aktiva', hint: 'Pågående affärer', tone: 'border-sky-200 bg-sky-50 text-sky-800' },
-  follow_up: { label: 'Följ upp', hint: 'Nästa steg nu', tone: 'border-amber-200 bg-amber-50 text-amber-900' },
-  won: { label: 'Vunna', hint: 'Stängda affärer', tone: 'border-emerald-200 bg-emerald-50 text-emerald-900' },
-  lost: { label: 'Förlorade', hint: 'Tappade affärer', tone: 'border-rose-200 bg-rose-50 text-rose-800' },
+  all: { label: 'Alla', hint: 'Hela offertregistret', tone: 'border-slate-300 bg-white text-slate-700' },
+  active: { label: 'Aktiva', hint: 'Utkast, skickade och uppföljning', tone: 'border-sky-200 bg-sky-50 text-sky-800' },
+  follow_up: { label: 'Följ upp', hint: 'Behöver nästa offertsteg', tone: 'border-amber-200 bg-amber-50 text-amber-900' },
+  won: { label: 'Vunna', hint: 'Offerter som landat rätt', tone: 'border-emerald-200 bg-emerald-50 text-emerald-900' },
+  lost: { label: 'Förlorade', hint: 'Offerter som inte gick vidare', tone: 'border-rose-200 bg-rose-50 text-rose-800' },
 };
-
-const allQuotesSectionOrder: QuoteItem['status'][] = ['follow_up', 'sent', 'draft', 'won', 'lost'];
 
 const quotesSectionClass = 'grid gap-3 border-emerald-200/65 bg-[linear-gradient(180deg,rgba(250,253,250,0.98),rgba(244,249,245,0.98))] p-4 shadow-[0_18px_38px_rgba(15,23,42,0.06)] md:p-5';
 
@@ -165,6 +164,7 @@ function compareQuotesForBoard(a: QuoteItem, b: QuoteItem) {
 
 export default function QuotesClient() {
   const toast = useToast();
+  const searchParams = useSearchParams();
   const [prospects, setProspects] = useState<ProspectItem[]>([]);
   const [quotes, setQuotes] = useState<QuoteItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -178,6 +178,10 @@ export default function QuotesClient() {
   const [draggedQuoteId, setDraggedQuoteId] = useState<string | null>(null);
   const [dragTargetStatus, setDragTargetStatus] = useState<QuoteItem['status'] | null>(null);
   const [movingQuoteId, setMovingQuoteId] = useState<string | null>(null);
+  const [hasAppliedPreset, setHasAppliedPreset] = useState(false);
+
+  const presetProspectId = searchParams.get('prospect_id') || '';
+  const shouldOpenCreateForPreset = searchParams.get('new') === '1';
 
   const prospectsById = useMemo(() => new Map(prospects.map((item) => [item.id, item])), [prospects]);
 
@@ -191,6 +195,7 @@ export default function QuotesClient() {
       try {
         const query = new URLSearchParams();
         if (search.trim()) query.set('q', search.trim());
+        if (presetProspectId) query.set('prospect_id', presetProspectId);
 
         const [prospectsRes, quotesRes] = await Promise.all([
           fetch('/api/crm/prospects', { cache: 'no-store' }),
@@ -235,7 +240,11 @@ export default function QuotesClient() {
     return () => {
       active = false;
     };
-  }, [search]);
+  }, [presetProspectId, search]);
+
+  useEffect(() => {
+	setHasAppliedPreset(false);
+  }, [presetProspectId, shouldOpenCreateForPreset]);
 
   useEffect(() => {
     if (!modalOpen) return;
@@ -254,17 +263,10 @@ export default function QuotesClient() {
     return quotes.filter((item) => item.status === 'lost');
   }, [filter, quotes]);
 
-  const groupedAllQuotes = useMemo(() => {
-    return allQuotesSectionOrder.map((status) => ({
-      status,
-      items: quotes.filter((item) => item.status === status).sort(compareQuotesForBoard),
-      totalAmount: quotes
-        .filter((item) => item.status === status)
-        .reduce((sum, item) => sum + getNumericAmount(item.amount), 0),
-    }));
-  }, [quotes]);
+  const sortedVisibleQuotes = useMemo(() => [...visibleQuotes].sort(compareQuotesForBoard), [visibleQuotes]);
 
   const stats = useMemo(() => ({
+    total: quotes.length,
     active: quotes.filter((item) => item.status === 'draft' || item.status === 'sent' || item.status === 'follow_up').length,
     followUp: quotes.filter((item) => item.status === 'follow_up').length,
     won: quotes.filter((item) => item.status === 'won').length,
@@ -278,6 +280,19 @@ export default function QuotesClient() {
     won: quotes.filter((item) => item.status === 'won').length,
     lost: quotes.filter((item) => item.status === 'lost').length,
   }), [quotes]);
+
+  useEffect(() => {
+  if (!shouldOpenCreateForPreset || hasAppliedPreset || loading) return;
+  const presetProspect = presetProspectId ? prospectsById.get(presetProspectId) || null : null;
+  setEditingQuoteId(null);
+  setDraft({
+    ...initialDraft,
+    prospect_id: presetProspectId,
+    customer_name: presetProspect?.company_name || '',
+  });
+  setModalOpen(true);
+  setHasAppliedPreset(true);
+  }, [hasAppliedPreset, loading, presetProspectId, prospectsById, shouldOpenCreateForPreset]);
 
   function renderQuoteCard(item: QuoteItem, options?: { compact?: boolean; hideStatusBadge?: boolean }) {
     const prospect = getProspectFromQuote(item);
@@ -392,8 +407,13 @@ export default function QuotesClient() {
   }
 
   function openCreateModal() {
+    const presetProspect = presetProspectId ? prospectsById.get(presetProspectId) || null : null;
     setEditingQuoteId(null);
-    setDraft(initialDraft);
+    setDraft({
+	  ...initialDraft,
+	  prospect_id: presetProspectId,
+	  customer_name: presetProspect?.company_name || '',
+	});
     setModalOpen(true);
   }
 
@@ -565,9 +585,15 @@ export default function QuotesClient() {
                 <div className="flex flex-wrap items-center gap-3">
                   <h1 className="m-0 text-[clamp(1.75rem,3vw,2.8rem)] font-bold tracking-[-0.05em] text-slate-950">Offerter</h1>
                   <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-900">
-                    {stats.active} aktiva
+                      {stats.total} i registret
                   </div>
+                  {presetProspectId ? (
+					<div className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 shadow-[0_8px_18px_rgba(15,23,42,0.04)]">
+					  Filtrerad på valt prospekt
+					</div>
+				) : null}
                 </div>
+                  <p className="m-0 text-sm text-slate-600">Offertytan är ett register över alla offerter. Själva affärsresan bärs av prospektet, medan du här skummar offertläge, belopp och uppföljning.</p>
               </div>
             </div>
 
@@ -580,24 +606,24 @@ export default function QuotesClient() {
 
           <div className="grid gap-3 md:grid-cols-4">
             <div className="rounded-[18px] border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(252,253,252,0.98))] p-3 shadow-[0_16px_30px_rgba(15,23,42,0.08)] ring-1 ring-white/80">
-              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Aktiva</div>
-              <div className="mt-1 text-[clamp(1.35rem,2vw,1.8rem)] font-bold tracking-[-0.04em] text-slate-950">{stats.active}</div>
-              <div className="mt-1 text-[13px] text-slate-500">Utkast, skickade och uppföljning</div>
+                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Alla offerter</div>
+                <div className="mt-1 text-[clamp(1.35rem,2vw,1.8rem)] font-bold tracking-[-0.04em] text-slate-950">{stats.total}</div>
+                <div className="mt-1 text-[13px] text-slate-500">Hela offertregistret oavsett utfall</div>
             </div>
             <div className="rounded-[18px] border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(252,253,252,0.98))] p-3 shadow-[0_16px_30px_rgba(15,23,42,0.08)] ring-1 ring-white/80">
-              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Följ upp</div>
-              <div className="mt-1 text-[clamp(1.35rem,2vw,1.8rem)] font-bold tracking-[-0.04em] text-slate-950">{stats.followUp}</div>
-              <div className="mt-1 text-[13px] text-slate-500">Behöver nästa kontakt</div>
+                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Aktiva</div>
+                <div className="mt-1 text-[clamp(1.35rem,2vw,1.8rem)] font-bold tracking-[-0.04em] text-slate-950">{stats.active}</div>
+                <div className="mt-1 text-[13px] text-slate-500">Utkast, skickade och uppföljning</div>
             </div>
             <div className="rounded-[18px] border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(252,253,252,0.98))] p-3 shadow-[0_16px_30px_rgba(15,23,42,0.08)] ring-1 ring-white/80">
-              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Vunna</div>
-              <div className="mt-1 text-[clamp(1.35rem,2vw,1.8rem)] font-bold tracking-[-0.04em] text-slate-950">{stats.won}</div>
-              <div className="mt-1 text-[13px] text-slate-500">Redo för nästa affärssteg</div>
+                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Följ upp</div>
+                <div className="mt-1 text-[clamp(1.35rem,2vw,1.8rem)] font-bold tracking-[-0.04em] text-slate-950">{stats.followUp}</div>
+                <div className="mt-1 text-[13px] text-slate-500">Behöver nästa offertsteg</div>
             </div>
             <div className="rounded-[18px] border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(252,253,252,0.98))] p-3 shadow-[0_16px_30px_rgba(15,23,42,0.08)] ring-1 ring-white/80">
-              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Sena uppföljningar</div>
-              <div className="mt-1 text-[clamp(1.35rem,2vw,1.8rem)] font-bold tracking-[-0.04em] text-slate-950">{stats.overdue}</div>
-              <div className="mt-1 text-[13px] text-slate-500">Offerter som borde få ett nytt steg nu</div>
+                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Vunna</div>
+                <div className="mt-1 text-[clamp(1.35rem,2vw,1.8rem)] font-bold tracking-[-0.04em] text-slate-950">{stats.won}</div>
+                <div className="mt-1 text-[13px] text-slate-500">Offerter som landat i affär</div>
             </div>
           </div>
         </div>
@@ -608,7 +634,7 @@ export default function QuotesClient() {
           <Input
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            placeholder="Sök på offert, kund, prospekt eller anteckning"
+            placeholder="Sök på offert, prospekt, kund eller anteckning"
             className="max-w-xl"
           />
           <div className="grid gap-2 rounded-[20px] border border-slate-200/85 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(250,252,250,0.96))] p-2 shadow-[0_14px_30px_rgba(15,23,42,0.05)]">
@@ -648,54 +674,9 @@ export default function QuotesClient() {
         {loading ? <div className="text-sm text-slate-500">Laddar offerter…</div> : null}
         {!loading && visibleQuotes.length === 0 ? <div className="rounded-[24px] border border-dashed border-slate-200 bg-white/70 px-4 py-8 text-center text-sm text-slate-500">Inga offerter matchar just nu.</div> : null}
 
-        {!loading && visibleQuotes.length > 0 && filter !== 'all' ? (
+        {!loading && visibleQuotes.length > 0 ? (
           <div className="grid gap-3 2xl:grid-cols-2">
-            {visibleQuotes.map((item) => renderQuoteCard(item))}
-          </div>
-        ) : null}
-        {!loading && filter === 'all' && groupedAllQuotes.length > 0 ? (
-          <div className="grid items-start gap-3 xl:grid-cols-3 2xl:grid-cols-5">
-            {groupedAllQuotes.map((section) => {
-              const meta = quoteStatusMeta[section.status];
-
-              return (
-                <div
-                  key={section.status}
-                  onDragOver={(event) => {
-                    if (!draggedQuoteId) return;
-                    event.preventDefault();
-                    event.dataTransfer.dropEffect = 'move';
-                    if (dragTargetStatus !== section.status) setDragTargetStatus(section.status);
-                  }}
-                  onDrop={(event) => {
-                    event.preventDefault();
-                    const quoteId = draggedQuoteId || event.dataTransfer.getData('text/plain');
-                    if (!quoteId) return;
-                    void moveQuoteToStatus(quoteId, section.status);
-                  }}
-                  className={cn(
-                    'grid gap-3 rounded-[20px] border border-slate-200/85 bg-[linear-gradient(180deg,rgba(255,255,255,0.9),rgba(249,250,249,0.96))] p-3 shadow-[0_12px_30px_rgba(15,23,42,0.05)] transition-[border-color,box-shadow,background-color]',
-                    dragTargetStatus === section.status ? 'border-emerald-300 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(244,250,246,0.98))] shadow-[0_16px_34px_rgba(15,23,42,0.08)]' : null,
-                  )}
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/90 pb-2">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <strong className="text-[15px] font-bold tracking-[-0.02em] text-slate-950">{meta.label}</strong>
-                      <span className={cn('rounded-full border px-2.5 py-1 text-[11px] font-bold shadow-[0_10px_18px_rgba(15,23,42,0.08)] ring-1 ring-white/70', meta.className)}>
-                        {section.items.length}
-                      </span>
-                    </div>
-                    <span className="rounded-full border border-slate-300/95 bg-white px-2.5 py-1 text-[11px] font-bold tracking-[0.04em] text-slate-700 shadow-[0_10px_18px_rgba(15,23,42,0.08)] ring-1 ring-white/80">
-                      {formatCurrency(section.totalAmount, 'SEK')}
-                    </span>
-                  </div>
-
-                  <div className="grid gap-3">
-                    {section.items.length > 0 ? section.items.map((item) => renderQuoteCard(item, { compact: true, hideStatusBadge: true })) : <div className="rounded-[16px] border border-dashed border-slate-200 bg-white/70 px-3 py-6 text-center text-sm text-slate-500">Dra hit offert</div>}
-                  </div>
-                </div>
-              );
-            })}
+            {sortedVisibleQuotes.map((item) => renderQuoteCard(item))}
           </div>
         ) : null}
       </SectionCard>
@@ -708,7 +689,7 @@ export default function QuotesClient() {
                 <div className="grid gap-1">
                   <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">CRM / Offerter</span>
                   <h2 className="m-0 text-2xl font-bold tracking-[-0.04em] text-slate-950">{editingQuoteId ? 'Redigera offert' : 'Ny offert'}</h2>
-                  <p className="m-0 text-sm leading-6 text-slate-500">Registrera offertläge och lägg en uppföljning direkt om du vill hålla den i pipeline.</p>
+                  <p className="m-0 text-sm leading-6 text-slate-500">Registrera eller uppdatera en offert kopplad till ett prospekt. Själva pipelineförflyttningen sker i prospektflödet.</p>
                 </div>
                 <button type="button" onClick={() => setModalOpen(false)} className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50">
                   Stäng
@@ -799,7 +780,7 @@ export default function QuotesClient() {
 
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <span className="text-sm text-slate-500">
-                  När offertstatus går till skickad eller följ upp synkas prospektet automatiskt till offert-läget.
+                  När offertstatus går till skickad eller följ upp synkas prospektet automatiskt till offertläget.
                 </span>
                 <div className="flex flex-wrap gap-2">
                   <button type="button" onClick={() => setModalOpen(false)} className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50">

@@ -245,7 +245,7 @@ function buildOverviewActions(args: { overdueTasks: number; followUpCalls: numbe
     actions.push({ title: `${args.followUpCalls} samtal behöver nästa steg`, description: 'Logga uppföljning eller konvertera till prospekt om signalen är varm.', href: '/crm/samtal' });
   }
   if (args.quoteFollowUps > 0) {
-    actions.push({ title: `${args.quoteFollowUps} offerter väntar uppföljning`, description: 'Stäm av skickade offerter innan de tappar fart i pipen.', href: '/crm/offerter' });
+    actions.push({ title: `${args.quoteFollowUps} offertlägen väntar uppföljning`, description: 'Stäm av prospekt där offerten behöver nästa steg innan affären tappar fart.', href: '/crm/offerter' });
   }
   if (args.newProspects > 0) {
     actions.push({ title: `${args.newProspects} nya prospekt väntar`, description: 'Bra läge att ta första kontakt och flytta dem ur ny-läget.', href: '/crm/prospekt' });
@@ -335,6 +335,7 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
     }, 0);
     const pipelineProspects = state.prospects.filter(isPipelineProspect);
     const newProspects = state.prospects.filter((prospect) => prospect.status === 'new');
+    const quotedProspects = state.prospects.filter((prospect) => prospect.status === 'quoted');
     const qualifiedProspects = state.prospects.filter((prospect) => prospect.status === 'qualified' || prospect.status === 'quoted');
     const wonProspects = state.prospects.filter((prospect) => prospect.status === 'won');
     const callsTarget = state.goals.reduce((total, goal) => total + goal.calls_target, 0);
@@ -345,6 +346,7 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
       prospectsTotal: state.prospects.length,
       pipelineProspects: pipelineProspects.length,
       newProspects: newProspects.length,
+      quotedProspects: quotedProspects.length,
       qualifiedProspects: qualifiedProspects.length,
       wonProspects: wonProspects.length,
       callsLast7Days: recentCalls.length,
@@ -447,16 +449,22 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
                   Öppna uppgifter
                 </Link>
                 <Link href="/crm/prospekt" className="inline-flex min-h-9 items-center rounded-full border border-white/70 bg-white/75 px-2.5 py-1.5 text-[12px] font-semibold text-slate-700 no-underline transition hover:border-slate-300 hover:bg-white">
-                  Gå till pipen
+                  Gå till prospektboarden
                 </Link>
               </div>
             </div>
 
             <div className="grid gap-2 sm:grid-cols-2 2xl:grid-cols-4">
-              <OverviewMetricCard label="Prospekt i pipen" value={summary.pipelineProspects} helper={`${summary.newProspects} nya · ${summary.qualifiedProspects} varma`} tone="teal" />
-              <OverviewMetricCard label="Samtal senaste 7 dagar" value={summary.callsLast7Days} helper={summary.callsTarget > 0 ? `${summary.callsLast7Days}/${summary.callsTarget} mot veckomål` : `${summary.followUpCalls} kräver nästa steg`} tone="sky" />
-              <OverviewMetricCard label="Öppna uppgifter" value={summary.openTasks} helper={summary.overdueTasks > 0 ? `${summary.overdueTasks} sena just nu` : `${summary.todayTasks} förfaller idag`} tone="amber" />
-              <OverviewMetricCard label="Offerter senaste 7 dagar" value={summary.quotesLast7Days} helper={summary.quotesTarget > 0 ? `${summary.quotesLast7Days}/${summary.quotesTarget} mot veckomål` : `${summary.quoteFollowUps} väntar uppföljning`} tone="emerald" />
+              {loading ? (
+                <OverviewMetricGridSkeleton />
+              ) : (
+                <>
+                  <OverviewMetricCard label="Öppna prospekt" value={summary.pipelineProspects} helper={`${summary.newProspects} nya · ${summary.qualifiedProspects} varma`} tone="teal" />
+                  <OverviewMetricCard label="Samtal senaste 7 dagar" value={summary.callsLast7Days} helper={summary.callsTarget > 0 ? `${summary.callsLast7Days}/${summary.callsTarget} mot veckomål` : `${summary.followUpCalls} kräver nästa steg`} tone="sky" />
+                  <OverviewMetricCard label="Öppna uppgifter" value={summary.openTasks} helper={summary.overdueTasks > 0 ? `${summary.overdueTasks} sena just nu` : `${summary.todayTasks} förfaller idag`} tone="amber" />
+                  <OverviewMetricCard label="Prospekt i offertläge" value={summary.quotedProspects} helper={summary.quoteFollowUps > 0 ? `${summary.quoteFollowUps} offerter väntar uppföljning` : 'Inga offertlägen blockerar just nu'} tone="emerald" />
+                </>
+              )}
             </div>
           </div>
 
@@ -470,9 +478,15 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
             </div>
 
             <div className="grid gap-2 sm:grid-cols-3 xl:grid-cols-1">
-              <DashboardPulseCard title="Pipeline" value={`${summary.pipelineProspects}`} helper={summary.newProspects > 0 ? `${summary.newProspects} nya att ta först` : 'Ingen ny lead i kö just nu'} />
-              <DashboardPulseCard title="Följ upp" value={`${summary.followUpCalls + summary.quoteFollowUps}`} helper={summary.followUpCalls > 0 ? `${summary.followUpCalls} samtal behöver nästa steg` : 'Samtal är under kontroll'} />
-              <DashboardPulseCard title="Måltryck" value={summary.quoteValueTarget > 0 ? `${Math.round((summary.quoteValueLast7Days / summary.quoteValueTarget) * 100)}%` : '–'} helper={summary.quoteValueTarget > 0 ? `${formatCurrency(summary.quoteValueLast7Days, 'SEK')} av ${formatCurrency(summary.quoteValueTarget, 'SEK')}` : 'Inget veckomål satt än'} />
+              {loading ? (
+                <OverviewPulseGridSkeleton />
+              ) : (
+                <>
+                  <DashboardPulseCard title="Pipeline" value={`${summary.pipelineProspects}`} helper={summary.newProspects > 0 ? `${summary.newProspects} nya att ta först` : 'Ingen ny lead i kö just nu'} />
+                  <DashboardPulseCard title="Offertsteg" value={`${summary.quotedProspects}`} helper={summary.quoteFollowUps > 0 ? `${summary.quoteFollowUps} offerter behöver nästa steg` : 'Offertläget är under kontroll'} />
+                  <DashboardPulseCard title="Måltryck" value={summary.quoteValueTarget > 0 ? `${Math.round((summary.quoteValueLast7Days / summary.quoteValueTarget) * 100)}%` : '–'} helper={summary.quoteValueTarget > 0 ? `${formatCurrency(summary.quoteValueLast7Days, 'SEK')} av ${formatCurrency(summary.quoteValueTarget, 'SEK')}` : 'Inget veckomål satt än'} />
+                </>
+              )}
             </div>
 
             <div className="grid gap-2 rounded-[18px] border border-white/10 bg-white/5 p-2.5 text-sm text-slate-200">
@@ -480,11 +494,15 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
                 <span className="text-[13px] font-semibold text-white">Dagens fokus</span>
                 <span className="rounded-full border border-white/10 bg-white/10 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-teal-100">Live</span>
               </div>
-              <div className="grid gap-2">
-                <DashboardSignalRow label="Sena uppgifter" value={summary.overdueTasks} tone="rose" />
-                <DashboardSignalRow label="Varma prospekt" value={summary.qualifiedProspects} tone="sky" />
-                <DashboardSignalRow label="Vunna prospekt" value={summary.wonProspects} tone="emerald" />
-              </div>
+              {loading ? (
+                <OverviewSignalSkeleton />
+              ) : (
+                <div className="grid gap-2">
+                  <DashboardSignalRow label="Sena uppgifter" value={summary.overdueTasks} tone="rose" />
+                  <DashboardSignalRow label="Varma prospekt" value={summary.qualifiedProspects} tone="sky" />
+                  <DashboardSignalRow label="Vunna prospekt" value={summary.wonProspects} tone="emerald" />
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -506,7 +524,11 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
                   <span className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Att agera på</span>
                   <strong className="text-lg font-bold tracking-[-0.02em] text-slate-900">Nästa fokus</strong>
                 </div>
-                <span className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs font-semibold text-slate-700 shadow-[0_8px_18px_rgba(15,23,42,0.04)]">{nextActions.length} prioriterade spår</span>
+                {loading ? (
+                  <div className="h-8 w-32 animate-pulse rounded-full border border-slate-200 bg-slate-100" />
+                ) : (
+                  <span className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs font-semibold text-slate-700 shadow-[0_8px_18px_rgba(15,23,42,0.04)]">{nextActions.length} prioriterade spår</span>
+                )}
               </div>
 
               {loading ? <OverviewLoadingRows /> : null}
@@ -534,10 +556,13 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
               {loading ? <OverviewLoadingRows /> : null}
               {!loading ? (
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-1">
+                  <StatusStrip label="Öppna prospekt" value={summary.pipelineProspects} tone="teal" />
+                  <StatusStrip label="Nya prospekt" value={summary.newProspects} tone="slate" />
+                  <StatusStrip label="Prospekt i offertläge" value={summary.quotedProspects} tone="amber" />
+                  <StatusStrip label="Vunna prospekt" value={summary.wonProspects} tone="emerald" />
                   <StatusStrip label="Samtal mot mål" value={summary.callsLast7Days} goal={summary.callsTarget} tone="sky" />
                   <StatusStrip label="Offerter mot mål" value={summary.quotesLast7Days} goal={summary.quotesTarget} tone="emerald" />
                   <StatusStrip label="Offertvärde mot mål" value={summary.quoteValueLast7Days} goal={summary.quoteValueTarget} tone="teal" currency />
-                  <StatusStrip label="Nya prospekt" value={summary.newProspects} tone="slate" />
                   <StatusStrip label="Varma prospekt" value={summary.qualifiedProspects} tone="sky" />
                   <StatusStrip label="Offerter att följa upp" value={summary.quoteFollowUps} tone="amber" />
                   <StatusStrip label="Följ upp-samtal" value={summary.followUpCalls} tone="amber" />
@@ -625,9 +650,9 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
             </SectionCard>
 
             <SectionCard className={`${overviewPanelClass} h-full`}>
-          <SectionHeader title="Senaste offerter" href="/crm/offerter" />
+          <SectionHeader title="Senaste offertsteg" href="/crm/offerter" />
           {loading ? <OverviewLoadingRows /> : null}
-          {!loading && recentQuotes.length === 0 ? <EmptyState text="Inga offerter registrerade ännu." /> : null}
+          {!loading && recentQuotes.length === 0 ? <EmptyState text="Inga offertsteg registrerade ännu." /> : null}
           {!loading && recentQuotes.length > 0 ? (
             <div className="grid gap-2.5">
               {recentQuotes.map((quote) => (
@@ -690,6 +715,20 @@ function OverviewMetricCard({ label, value, helper, tone }: { label: string; val
   );
 }
 
+function OverviewMetricGridSkeleton() {
+  return (
+    <>
+      {Array.from({ length: 4 }).map((_, index) => (
+        <div key={index} className="grid gap-2 rounded-[16px] border border-white/70 bg-white/80 p-2.5 shadow-[0_14px_26px_rgba(15,23,42,0.05)]">
+          <div className="h-3 w-24 animate-pulse rounded-full bg-slate-200" />
+          <div className="h-8 w-14 animate-pulse rounded-full bg-slate-200" />
+          <div className="h-3 w-28 animate-pulse rounded-full bg-slate-200" />
+        </div>
+      ))}
+    </>
+  );
+}
+
 function DashboardPulseCard({ title, value, helper }: { title: string; value: string; helper: string }) {
   return (
     <div className="grid gap-1 rounded-[16px] border border-white/10 bg-white/5 px-2.5 py-2 backdrop-blur-sm">
@@ -697,6 +736,20 @@ function DashboardPulseCard({ title, value, helper }: { title: string; value: st
       <strong className="text-[15px] font-bold tracking-[-0.03em] text-white">{value}</strong>
       <span className="text-xs leading-5 text-slate-300">{helper}</span>
     </div>
+  );
+}
+
+function OverviewPulseGridSkeleton() {
+  return (
+    <>
+      {Array.from({ length: 3 }).map((_, index) => (
+        <div key={index} className="grid gap-2 rounded-[16px] border border-white/10 bg-white/5 px-2.5 py-2 backdrop-blur-sm">
+          <div className="h-3 w-20 animate-pulse rounded-full bg-white/15" />
+          <div className="h-5 w-12 animate-pulse rounded-full bg-white/15" />
+          <div className="h-3 w-24 animate-pulse rounded-full bg-white/15" />
+        </div>
+      ))}
+    </>
   );
 }
 
@@ -716,6 +769,22 @@ function DashboardSignalRow({ label, value, tone }: { label: string; value: numb
       <div className="h-1.5 rounded-full bg-white/10">
         <div className={`h-1.5 rounded-full ${toneClass}`} style={{ width: `${Math.max(value === 0 ? 12 : Math.min(100, value * 16), 12)}%` }} />
       </div>
+    </div>
+  );
+}
+
+function OverviewSignalSkeleton() {
+  return (
+    <div className="grid gap-2">
+      {Array.from({ length: 3 }).map((_, index) => (
+        <div key={index} className="grid gap-1.5">
+          <div className="flex items-center justify-between gap-3">
+            <div className="h-3 w-24 animate-pulse rounded-full bg-white/15" />
+            <div className="h-3 w-8 animate-pulse rounded-full bg-white/15" />
+          </div>
+          <div className="h-1.5 animate-pulse rounded-full bg-white/10" />
+        </div>
+      ))}
     </div>
   );
 }

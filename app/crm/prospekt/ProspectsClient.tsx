@@ -106,13 +106,13 @@ const quoteStatusLabel: Record<ProspectQuoteItem['status'], string> = {
 type ProspectFilter = 'pipeline' | 'new' | 'contacted' | 'qualified' | 'quoted' | 'won' | 'lost';
 
 const prospectFilterMeta: Record<ProspectFilter, { label: string; hint: string }> = {
-  pipeline: { label: 'Pipen', hint: 'Aktivt säljarbete' },
+  pipeline: { label: 'Pipelinen', hint: 'Hela resan från ny till vunnen eller förlorad' },
   new: { label: 'Nya', hint: 'Första kontakt' },
-  contacted: { label: 'Kontaktade', hint: 'Dialog igång' },
-  qualified: { label: 'Kvalificerade', hint: 'Bra signal' },
-  quoted: { label: 'Offert', hint: 'Väntar beslut' },
-  won: { label: 'Vunna', hint: 'Stängda' },
-  lost: { label: 'Förlorade', hint: 'Tappade' },
+  contacted: { label: 'Kontaktade', hint: 'Första dialog tagen' },
+  qualified: { label: 'Kvalificerade', hint: 'Köpintresse bekräftat' },
+  quoted: { label: 'Offertläge', hint: 'Offert ute eller på väg' },
+  won: { label: 'Vunna', hint: 'Redo för order' },
+  lost: { label: 'Förlorade', hint: 'Stängda utan affär' },
 };
 
 const prospectFilterTone: Record<ProspectFilter, string> = {
@@ -126,6 +126,15 @@ const prospectFilterTone: Record<ProspectFilter, string> = {
 };
 
 const prospectsSectionClass = 'grid gap-3 border-emerald-200/65 bg-[linear-gradient(180deg,rgba(250,253,250,0.98),rgba(244,249,245,0.98))] p-4 shadow-[0_18px_38px_rgba(15,23,42,0.06)] md:p-5';
+const prospectBoardOrder: ProspectItem['status'][] = ['new', 'contacted', 'qualified', 'quoted', 'won', 'lost'];
+const prospectBoardMeta: Record<ProspectItem['status'], { hint: string; empty: string }> = {
+  new: { hint: 'Första kontakt och kvalning', empty: 'Dra hit nytt prospekt' },
+  contacted: { hint: 'Dialog igång med kunden', empty: 'Dra hit när första kontakt är tagen' },
+  qualified: { hint: 'Bra signal och nästa steg definierat', empty: 'Dra hit när prospektet är kvalificerat' },
+  quoted: { hint: 'Offert ute eller på väg ut', empty: 'Dra hit när offerten blir del av affären' },
+  won: { hint: 'Klart att lämna vidare mot order', empty: 'Dra hit när affären är vunnen' },
+  lost: { hint: 'Stängda utan affär men sparade för historik', empty: 'Dra hit om affären inte gick vidare' },
+};
 
 function getProspectInitials(value: string) {
   return value
@@ -194,6 +203,9 @@ export default function ProspectsClient() {
   const [draft, setDraft] = useState<CreateProspectDraft>(initialDraft);
   const [detailDraft, setDetailDraft] = useState<CreateProspectDraft>(initialDraft);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [draggedProspectId, setDraggedProspectId] = useState<string | null>(null);
+  const [dragTargetStatus, setDragTargetStatus] = useState<ProspectItem['status'] | null>(null);
+  const [movingProspectId, setMovingProspectId] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -239,6 +251,13 @@ export default function ProspectsClient() {
     if (filter === 'pipeline') return items.filter(isPipelineProspect).sort(compareProspects);
     return items.filter((item) => item.status === filter).sort(compareProspects);
   }, [filter, items]);
+  const visibleBoardStatuses = useMemo(() => (filter === 'pipeline' ? prospectBoardOrder : [filter]), [filter]);
+  const groupedVisibleProspects = useMemo(() => {
+    return visibleBoardStatuses.map((status) => ({
+      status,
+      items: items.filter((item) => item.status === status).sort(compareProspects),
+    }));
+  }, [items, visibleBoardStatuses]);
   const filterCounts = useMemo<Record<ProspectFilter, number>>(() => ({
     pipeline: items.filter(isPipelineProspect).length,
     new: items.filter((item) => item.status === 'new').length,
@@ -249,11 +268,23 @@ export default function ProspectsClient() {
     lost: items.filter((item) => item.status === 'lost').length,
   }), [items]);
   const stats = useMemo(() => ({
-    pipeline: items.filter(isPipelineProspect).length,
+    open: items.filter(isPipelineProspect).length,
     new: items.filter((item) => item.status === 'new').length,
-    qualified: items.filter((item) => item.status === 'qualified').length,
-    selected: selected?.company_name || 'Inget valt',
+    quoted: items.filter((item) => item.status === 'quoted').length,
+    won: items.filter((item) => item.status === 'won').length,
   }), [items, selected]);
+  const quoteSummary = useMemo(() => {
+  const latest = [...relatedQuotes].sort((left, right) => right.quote_date.localeCompare(left.quote_date))[0] || null;
+  const nextFollowUp = [...relatedQuotes]
+    .filter((quote) => Boolean(quote.follow_up_date) && quote.status !== 'won' && quote.status !== 'lost')
+    .sort((left, right) => (left.follow_up_date || '').localeCompare(right.follow_up_date || ''))[0] || null;
+
+  return {
+    total: relatedQuotes.length,
+    latest,
+    nextFollowUp,
+  };
+  }, [relatedQuotes]);
 
   useEffect(() => {
     if (!selected) return;
@@ -407,6 +438,146 @@ export default function ProspectsClient() {
     }
   }
 
+  async function moveProspectToStatus(prospectId: string, nextStatus: ProspectItem['status']) {
+    const currentItem = items.find((item) => item.id === prospectId);
+    if (!currentItem || currentItem.status === nextStatus) return;
+
+    setMovingProspectId(prospectId);
+    const optimisticItem = { ...currentItem, status: nextStatus, updated_at: new Date().toISOString() };
+    setItems((current) => current.map((item) => (item.id === prospectId ? optimisticItem : item)));
+
+    if (selectedId === prospectId) {
+      setDetailDraft((current) => ({ ...current, status: nextStatus }));
+    }
+
+    try {
+      const res = await fetch(`/api/crm/prospects/${prospectId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          company_name: currentItem.company_name,
+          organization_number: currentItem.organization_number,
+          contact_name: currentItem.contact_name,
+          phone: currentItem.phone,
+          email: currentItem.email,
+          street_address: currentItem.street_address,
+          postal_code: currentItem.postal_code,
+          city: currentItem.city,
+          source: currentItem.source,
+          notes: currentItem.notes,
+          status: nextStatus,
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok || !json.ok) {
+        setItems((current) => current.map((item) => (item.id === prospectId ? currentItem : item)));
+        if (selectedId === prospectId) {
+          setDetailDraft((current) => ({ ...current, status: currentItem.status }));
+        }
+        toast.error(json?.error || 'Kunde inte flytta prospektet mellan statusar');
+        return;
+      }
+
+      const updatedItem = json?.data?.item as ProspectItem | undefined;
+      if (updatedItem) {
+        setItems((current) => current.map((item) => (item.id === updatedItem.id ? updatedItem : item)));
+        if (selectedId === updatedItem.id) {
+          setDetailDraft({
+            company_name: updatedItem.company_name,
+            organization_number: updatedItem.organization_number || '',
+            contact_name: updatedItem.contact_name || '',
+            phone: updatedItem.phone || '',
+            email: updatedItem.email || '',
+            street_address: updatedItem.street_address || '',
+            postal_code: updatedItem.postal_code || '',
+            city: updatedItem.city || '',
+            source: updatedItem.source || '',
+            notes: updatedItem.notes || '',
+            status: updatedItem.status,
+          });
+        }
+      }
+    } catch {
+      setItems((current) => current.map((item) => (item.id === prospectId ? currentItem : item)));
+      if (selectedId === prospectId) {
+        setDetailDraft((current) => ({ ...current, status: currentItem.status }));
+      }
+      toast.error('Kunde inte flytta prospektet mellan statusar');
+    } finally {
+      setMovingProspectId(null);
+      setDraggedProspectId(null);
+      setDragTargetStatus(null);
+    }
+  }
+
+  function renderProspectBoardCard(item: ProspectItem) {
+    const meta = buildProspectMeta(item);
+    const active = selectedId === item.id;
+
+    return (
+      <button
+        key={item.id}
+        type="button"
+        onClick={() => {
+          setSelectedId(item.id);
+          setDetailOpen(true);
+        }}
+        draggable
+        onDragStart={(event) => {
+          event.dataTransfer.effectAllowed = 'move';
+          event.dataTransfer.setData('text/plain', item.id);
+          setDraggedProspectId(item.id);
+        }}
+        onDragEnd={() => {
+          setDraggedProspectId(null);
+          setDragTargetStatus(null);
+        }}
+        className={cn(
+          'relative grid min-h-[170px] grid-rows-[minmax(0,1fr)_auto_auto] items-start justify-start gap-2 overflow-hidden rounded-[18px] border p-3 text-left shadow-[0_10px_22px_rgba(15,23,42,0.05)] transition hover:-translate-y-0.5 hover:shadow-[0_16px_28px_rgba(15,23,42,0.08)] cursor-grab active:cursor-grabbing bg-[linear-gradient(180deg,#ffffff_0%,#fcfefd_100%)]',
+          movingProspectId === item.id || draggedProspectId === item.id ? 'opacity-60' : null,
+          active ? 'ring-1 ring-emerald-200 shadow-[0_18px_34px_rgba(16,185,129,0.14)]' : null,
+          item.status === 'won'
+            ? 'border-emerald-200/80'
+            : item.status === 'quoted'
+              ? 'border-amber-200/80'
+              : item.status === 'contacted'
+                ? 'border-sky-200/80'
+                : item.status === 'qualified'
+                  ? 'border-violet-200/80'
+                  : item.status === 'lost'
+                    ? 'border-rose-200/80'
+                    : 'border-slate-200/90'
+        )}
+      >
+        <span className={cn('absolute inset-y-0 left-0 w-1 rounded-l-[18px]', item.status === 'won' ? 'bg-emerald-400' : item.status === 'quoted' ? 'bg-amber-400' : item.status === 'contacted' ? 'bg-sky-400' : item.status === 'qualified' ? 'bg-violet-400' : item.status === 'lost' ? 'bg-rose-300' : 'bg-slate-300')} />
+
+        <div className="grid min-h-[56px] w-full content-start gap-1 pl-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-xs font-bold tracking-[0.08em] text-slate-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]">
+              {getProspectInitials(item.company_name) || 'P'}
+            </span>
+            <strong className="line-clamp-2 text-[15px] font-bold tracking-[-0.03em] text-slate-950">{item.company_name}</strong>
+          </div>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-slate-500">
+            {meta.length > 0 ? meta.map((label) => <span key={label}>{label}</span>) : <span>Ingen metadata än</span>}
+          </div>
+        </div>
+
+        <div className="flex min-h-[20px] w-full flex-wrap items-center gap-x-2 gap-y-1 pl-2 text-xs text-slate-600">
+          {item.phone ? <span className="rounded-full border border-slate-200/90 bg-white/90 px-2 py-1 shadow-[0_4px_10px_rgba(15,23,42,0.03)]">{item.phone}</span> : null}
+          {item.email ? <span className="rounded-full border border-slate-200/90 bg-white/90 px-2 py-1 shadow-[0_4px_10px_rgba(15,23,42,0.03)]">{item.email}</span> : null}
+          {item.organization_number ? <span className="rounded-full border border-slate-200/90 bg-white/90 px-2 py-1 shadow-[0_4px_10px_rgba(15,23,42,0.03)]">Org.nr: {item.organization_number}</span> : null}
+        </div>
+
+        <div className="mt-auto grid gap-1 pl-2 text-[11px] text-slate-500">
+          <span className="font-medium text-slate-400">Uppdaterad {formatDateTime(item.updated_at)}</span>
+          <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Öppna detalj</span>
+        </div>
+      </button>
+    );
+  }
+
   return (
     <div className="grid gap-4">
         <SectionCard className="overflow-hidden border-emerald-300/80 bg-[radial-gradient(circle_at_top_left,_rgba(22,163,74,0.22),_transparent_30%),radial-gradient(circle_at_top_right,_rgba(101,163,13,0.16),_transparent_24%),linear-gradient(135deg,#f6fbf4_0%,#e5f4e8_56%,#f5fbf6_100%)] p-4 shadow-[0_24px_70px_rgba(15,23,42,0.08)] md:p-5 xl:p-6">
@@ -420,10 +591,10 @@ export default function ProspectsClient() {
                   <div className="flex flex-wrap items-center gap-3">
                     <h1 className="m-0 text-[clamp(1.75rem,3vw,2.8rem)] font-bold tracking-[-0.05em] text-slate-950">Prospekt</h1>
                     <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-900">
-                      {stats.pipeline} i pipen
+                      {stats.open} öppna affärer
                     </div>
                   </div>
-                  <p className="m-0 text-sm text-slate-600">Håll fokus på nästa kontakt, kvalificering och vilka prospekt som faktiskt rör sig framåt.</p>
+                  <p className="m-0 text-sm text-slate-600">Följ affären från första kontakt till offert, vinst eller förlust. Offerten är ett steg i prospektets resa, inte en egen pipeline.</p>
                 </div>
               </div>
 
@@ -440,9 +611,9 @@ export default function ProspectsClient() {
 
             <div className="grid gap-3 md:grid-cols-4">
               <div className="rounded-[18px] border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(252,253,252,0.98))] p-3 shadow-[0_16px_30px_rgba(15,23,42,0.08)] ring-1 ring-white/80">
-                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">I pipen</div>
-                <div className="mt-1 text-[clamp(1.35rem,2vw,1.8rem)] font-bold tracking-[-0.04em] text-slate-950">{stats.pipeline}</div>
-                <div className="mt-1 text-[13px] text-slate-500">Nya, kontaktade, kvalificerade och offert</div>
+                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Öppna affärer</div>
+                <div className="mt-1 text-[clamp(1.35rem,2vw,1.8rem)] font-bold tracking-[-0.04em] text-slate-950">{stats.open}</div>
+                <div className="mt-1 text-[13px] text-slate-500">Alla prospekt som fortfarande kan gå vidare</div>
               </div>
               <div className="rounded-[18px] border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(252,253,252,0.98))] p-3 shadow-[0_16px_30px_rgba(15,23,42,0.08)] ring-1 ring-white/80">
                 <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Nya</div>
@@ -450,14 +621,14 @@ export default function ProspectsClient() {
                 <div className="mt-1 text-[13px] text-slate-500">Behöver första kontakt</div>
               </div>
               <div className="rounded-[18px] border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(252,253,252,0.98))] p-3 shadow-[0_16px_30px_rgba(15,23,42,0.08)] ring-1 ring-white/80">
-                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Kvalificerade</div>
-                <div className="mt-1 text-[clamp(1.35rem,2vw,1.8rem)] font-bold tracking-[-0.04em] text-slate-950">{stats.qualified}</div>
-                <div className="mt-1 text-[13px] text-slate-500">Har tydligare köp- eller offertsignal</div>
+                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Offertläge</div>
+                <div className="mt-1 text-[clamp(1.35rem,2vw,1.8rem)] font-bold tracking-[-0.04em] text-slate-950">{stats.quoted}</div>
+                <div className="mt-1 text-[13px] text-slate-500">Prospekt där offerten är nästa eller nuvarande steg</div>
               </div>
               <div className="rounded-[18px] border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(252,253,252,0.98))] p-3 shadow-[0_16px_30px_rgba(15,23,42,0.08)] ring-1 ring-white/80">
-                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Valt prospekt</div>
-                <div className="mt-1 truncate text-[clamp(1rem,1.5vw,1.2rem)] font-bold tracking-[-0.04em] text-slate-950">{stats.selected}</div>
-                <div className="mt-1 text-[13px] text-slate-500">Öppna detalj för nästa steg</div>
+                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Vunna</div>
+                <div className="mt-1 text-[clamp(1.35rem,2vw,1.8rem)] font-bold tracking-[-0.04em] text-slate-950">{stats.won}</div>
+                <div className="mt-1 text-[13px] text-slate-500">Klara att lämna vidare mot order</div>
               </div>
             </div>
 
@@ -525,60 +696,45 @@ export default function ProspectsClient() {
                 </p>
               </div>
             ) : (
-              visibleItems.map((item) => {
-                const active = selectedId === item.id;
-                const meta = buildProspectMeta(item);
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => {
-                      setSelectedId(item.id);
-                      setDetailOpen(true);
+              <div className="grid items-start gap-3 xl:grid-cols-3 2xl:grid-cols-6">
+                {groupedVisibleProspects.map((section) => (
+                  <div
+                    key={section.status}
+                    onDragOver={(event) => {
+                      if (!draggedProspectId) return;
+                      event.preventDefault();
+                      event.dataTransfer.dropEffect = 'move';
+                      if (dragTargetStatus !== section.status) setDragTargetStatus(section.status);
+                    }}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      const prospectId = draggedProspectId || event.dataTransfer.getData('text/plain');
+                      if (!prospectId) return;
+                      void moveProspectToStatus(prospectId, section.status);
                     }}
                     className={cn(
-                      'relative grid min-w-0 gap-3 overflow-hidden rounded-[22px] border px-3.5 py-3 text-left transition-[border-color,box-shadow,transform,background-color] md:grid-cols-[minmax(0,1.18fr)_minmax(0,0.98fr)_auto] md:items-center',
-                      active
-                        ? 'border-emerald-300 bg-[linear-gradient(135deg,rgba(237,252,245,0.98)_0%,rgba(255,255,255,0.98)_55%,rgba(240,253,250,0.95)_100%)] shadow-[0_22px_40px_rgba(16,185,129,0.14)] ring-1 ring-emerald-100'
-                        : 'border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98)_0%,rgba(248,250,252,0.95)_100%)] hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_18px_32px_rgba(15,23,42,0.08)]'
+                      'grid gap-3 rounded-[20px] border border-slate-200/85 bg-[linear-gradient(180deg,rgba(255,255,255,0.9),rgba(249,250,249,0.96))] p-3 shadow-[0_12px_30px_rgba(15,23,42,0.05)] transition-[border-color,box-shadow,background-color]',
+                      dragTargetStatus === section.status ? 'border-emerald-300 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(244,250,246,0.98))] shadow-[0_16px_34px_rgba(15,23,42,0.08)]' : null,
                     )}
                   >
-                    <span className={cn('absolute inset-y-0 left-0 w-1.5 rounded-l-[24px]', item.status === 'won' ? 'bg-emerald-400' : item.status === 'quoted' ? 'bg-amber-400' : item.status === 'contacted' ? 'bg-sky-400' : item.status === 'qualified' ? 'bg-violet-400' : item.status === 'lost' ? 'bg-rose-300' : 'bg-slate-300')} />
-
-                    <div className="grid min-w-0 gap-2 pl-2 md:grid-cols-[auto_minmax(0,1fr)] md:items-center">
-                      <div className={cn(
-                        'flex h-10 w-10 items-center justify-center rounded-xl border text-xs font-bold tracking-[0.08em] shadow-[inset_0_1px_0_rgba(255,255,255,0.7)] md:h-11 md:w-11 md:text-sm',
-                        active ? 'border-emerald-200 bg-white text-emerald-800' : 'border-slate-200 bg-white text-slate-600'
-                      )}>
-                        {getProspectInitials(item.company_name) || 'P'}
-                      </div>
-
-                      <div className="grid min-w-0 gap-1.5">
-                        <div className="flex min-w-0 flex-wrap items-center gap-2">
-                          <strong className="break-words text-[15px] font-bold tracking-[-0.03em] text-slate-950 md:text-base">{item.company_name}</strong>
-                          <span className={cn('w-fit rounded-full border px-2 py-0.5 text-[10px] font-semibold md:px-2.5 md:py-1 md:text-[11px]', statusClass[item.status])}>
-                            {statusLabel[item.status]}
+                    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/90 pb-2">
+                      <div className="grid gap-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <strong className="text-[15px] font-bold tracking-[-0.02em] text-slate-950">{statusLabel[section.status]}</strong>
+                          <span className={cn('rounded-full border px-2.5 py-1 text-[11px] font-bold shadow-[0_10px_18px_rgba(15,23,42,0.08)] ring-1 ring-white/70', statusClass[section.status])}>
+                            {section.items.length}
                           </span>
                         </div>
-                        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-slate-500 md:text-xs">
-                          {meta.length > 0 ? meta.map((label) => <span key={label} className="break-words">{label}</span>) : <span>Ingen metadata än</span>}
-                        </div>
+                        <span className="text-[11px] text-slate-500">{prospectBoardMeta[section.status].hint}</span>
                       </div>
                     </div>
 
-                    <div className="flex min-w-0 flex-wrap gap-1.5 pl-2 text-[11px] text-slate-600 md:text-xs md:pl-0 md:justify-start">
-                      {item.phone ? <span className="break-words rounded-full border border-slate-200/90 bg-white/90 px-2 py-1 shadow-[0_4px_10px_rgba(15,23,42,0.03)]">{item.phone}</span> : null}
-                      {item.email ? <span className="break-words rounded-full border border-slate-200/90 bg-white/90 px-2 py-1 shadow-[0_4px_10px_rgba(15,23,42,0.03)]">{item.email}</span> : null}
-                      {item.organization_number ? <span className="break-words rounded-full border border-slate-200/90 bg-white/90 px-2 py-1 shadow-[0_4px_10px_rgba(15,23,42,0.03)]">Org.nr: {item.organization_number}</span> : null}
+                    <div className="grid gap-3">
+                      {section.items.length > 0 ? section.items.map((item) => renderProspectBoardCard(item)) : <div className="rounded-[16px] border border-dashed border-slate-200 bg-white/70 px-3 py-6 text-center text-sm text-slate-500">{prospectBoardMeta[section.status].empty}</div>}
                     </div>
-
-                    <div className="grid gap-1 pl-2 text-[11px] text-slate-500 md:justify-items-end md:pl-0">
-                      <span className="font-medium text-slate-400 md:text-xs">Uppdaterad {formatDateTime(item.updated_at)}</span>
-                      <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Öppna detalj</span>
-                    </div>
-                  </button>
-                );
-              })
+                  </div>
+                ))}
+              </div>
             )}
             </div>
           </div>
@@ -810,14 +966,42 @@ export default function ProspectsClient() {
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="grid gap-0.5">
                   <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-amber-700/70">CRM / Offerter</span>
-                  <strong className="text-sm font-semibold text-slate-900">Offerter på prospektet</strong>
+                  <strong className="text-sm font-semibold text-slate-900">Offertsteget på prospektet</strong>
                 </div>
-                <a
-                  href="/crm/offerter"
-                  className="inline-flex min-h-9 items-center justify-center rounded-full border border-amber-500 bg-[linear-gradient(180deg,#f59e0b_0%,#d97706_100%)] px-3 py-2 text-xs font-semibold text-white shadow-[0_14px_24px_rgba(217,119,6,0.18)] transition hover:brightness-[0.97]"
-                >
-                  Öppna offerter
-                </a>
+                <div className="flex flex-wrap gap-2">
+                  <a
+                    href={`/crm/offerter?prospect_id=${selected.id}&new=1`}
+                    className="inline-flex min-h-9 items-center justify-center rounded-full border border-amber-500 bg-[linear-gradient(180deg,#f59e0b_0%,#d97706_100%)] px-3 py-2 text-xs font-semibold text-white shadow-[0_14px_24px_rgba(217,119,6,0.18)] transition hover:brightness-[0.97]"
+                  >
+                    Skapa offert
+                  </a>
+                  <a
+                    href={`/crm/offerter?prospect_id=${selected.id}`}
+                    className="inline-flex min-h-9 items-center justify-center rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-[0_10px_18px_rgba(15,23,42,0.04)] transition hover:border-slate-300 hover:text-slate-900"
+                  >
+                    Visa i offertregistret
+                  </a>
+                </div>
+              </div>
+              <p className="m-0 text-sm leading-6 text-slate-600">
+                Här ser du alla offerter kopplade till prospektet. Offerten är ett delsteg i affären, medan prospektet fortsätter bära själva pipelineläget.
+              </p>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="rounded-[18px] border border-amber-200/70 bg-white px-3 py-3 shadow-[0_10px_22px_rgba(15,23,42,0.04)]">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-amber-700/70">Offerter</div>
+                  <div className="mt-1 text-lg font-bold tracking-[-0.03em] text-slate-950">{quoteSummary.total}</div>
+                  <div className="mt-1 text-xs text-slate-500">Antal registrerade offerter på prospektet</div>
+                </div>
+                <div className="rounded-[18px] border border-amber-200/70 bg-white px-3 py-3 shadow-[0_10px_22px_rgba(15,23,42,0.04)]">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-amber-700/70">Senaste offert</div>
+                  <div className="mt-1 text-sm font-bold tracking-[-0.02em] text-slate-950">{quoteSummary.latest ? quoteStatusLabel[quoteSummary.latest.status] : 'Ingen ännu'}</div>
+                  <div className="mt-1 text-xs text-slate-500">{quoteSummary.latest ? `${formatCurrency(quoteSummary.latest.amount, quoteSummary.latest.currency_code)} · ${formatDate(quoteSummary.latest.quote_date)}` : 'Skapa första offerten när affären är redo'}</div>
+                </div>
+                <div className="rounded-[18px] border border-amber-200/70 bg-white px-3 py-3 shadow-[0_10px_22px_rgba(15,23,42,0.04)]">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-amber-700/70">Nästa offertuppföljning</div>
+                  <div className="mt-1 text-sm font-bold tracking-[-0.02em] text-slate-950">{quoteSummary.nextFollowUp ? formatDate(quoteSummary.nextFollowUp.follow_up_date) : 'Ingen satt'}</div>
+                  <div className="mt-1 text-xs text-slate-500">{quoteSummary.nextFollowUp ? quoteSummary.nextFollowUp.project_name : 'Lägg en uppföljning när offerten är ute'}</div>
+                </div>
               </div>
               {relatedQuotesLoading ? (
                 <div className="grid gap-2">
@@ -830,7 +1014,7 @@ export default function ProspectsClient() {
                 </div>
               ) : relatedQuotes.length === 0 ? (
                 <div className="rounded-[18px] border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-sm text-slate-600">
-                  Inga offerter registrerade ännu för det här prospektet.
+                  Ingen offert registrerad ännu för det här prospektet.
                 </div>
               ) : (
                 <div className="grid gap-2">
