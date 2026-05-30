@@ -4,10 +4,21 @@ export const crmQuoteSelect = `
   id,
   prospect_id,
   customer_name,
+  quote_type,
+  customer_snapshot,
+  pricing_summary,
+  line_items,
+  rot_details,
+  internal_handoff,
   project_name,
   description,
   amount,
   currency_code,
+  vat_percent,
+  valid_until,
+  work_order_id,
+  work_order_number,
+  converted_to_work_order_at,
   status,
   quote_date,
   follow_up_date,
@@ -26,14 +37,75 @@ export const crmQuoteSelect = `
 `;
 
 type CrmQuoteStatus = 'draft' | 'sent' | 'follow_up' | 'won' | 'lost';
+type CrmQuoteType = 'private' | 'business';
+
+type CustomerSnapshot = {
+  customer_name?: string | null;
+  company_name?: string | null;
+  personal_number?: string | null;
+  contact_name?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  street_address?: string | null;
+  postal_code?: string | null;
+  city?: string | null;
+  visit_address?: string | null;
+  delivery_address?: string | null;
+  invoice_address?: string | null;
+};
+
+type PricingSummary = {
+  subtotal?: number;
+  vat?: number;
+  total?: number;
+};
+
+type QuoteLineItem = {
+  id: string;
+  construction?: 'vagg' | 'snedtak' | 'vind' | '';
+  m2?: string;
+  thickness_mm?: string;
+  auto_price?: boolean;
+  unit_price?: string;
+  pricing_mode?: 'm3' | 'item';
+  quantity?: string;
+  article_id?: string | null;
+  article_name?: string | null;
+  article_number?: string | null;
+  article_price?: number | null;
+  article_unit_name?: string | null;
+  discount_percent?: string;
+};
+
+type RotDetails = {
+  enabled?: boolean;
+  applicant_name?: string | null;
+  personal_number?: string | null;
+  property_designation?: string | null;
+  rot_percent?: number;
+};
+
+type InternalHandoff = {
+  desired_installation_date?: string | null;
+  handoff_notes?: string | null;
+  work_scope?: string | null;
+};
 
 type CreateCrmQuoteInput = {
   prospect_id: string | null;
   customer_name: string | null;
+  quote_type: CrmQuoteType;
+  customer_snapshot: CustomerSnapshot;
+  pricing_summary: PricingSummary;
+  line_items: QuoteLineItem[];
+  rot_details: RotDetails;
+  internal_handoff: InternalHandoff;
   project_name: string;
   description: string | null;
   amount: number;
   currency_code: string;
+  vat_percent: number;
+  valid_until: string | null;
   status: CrmQuoteStatus;
   quote_date: string;
   follow_up_date: string | null;
