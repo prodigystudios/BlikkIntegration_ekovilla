@@ -2,6 +2,23 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Melodic Frost — CRM-specific design tokens */
+.crm-shell {
+  --crm-sidebar-bg: #0d2117;
+  --crm-sidebar-active: #1b3c2a;
+  --crm-sidebar-hover: #162f21;
+  --crm-sidebar-border: rgba(255,255,255,0.06);
+  --crm-sidebar-text: rgba(255,255,255,0.80);
+  --crm-sidebar-text-active: #ffffff;
+  --crm-sidebar-text-muted: rgba(255,255,255,0.40);
+  --crm-sidebar-icon-active: #6ee7b7;
+  --crm-content-bg: #f0f7f2;
+  --crm-card-bg: #ffffff;
+  --crm-primary: #1a3f26;
+  --crm-primary-hover: #122c1b;
+  --crm-primary-text: #ffffff;
+}
+
 :root {
   --ui-surface-page: #ffffff;
   --ui-surface-card: #ffffff;
