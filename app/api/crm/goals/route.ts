@@ -1,5 +1,6 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { listCrmGoals, mapCrmGoalRows, upsertCrmGoals } from '@/lib/domains/crm/goals';
 import {
   listCrmGoalsQuerySchema,
@@ -23,7 +24,9 @@ export async function GET(req: Request) {
     });
     if (!parsedQuery.success) return validationError(parsedQuery.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    // Admin client needed: listCrmGoals joins profiles for all team members,
+    // and profiles RLS only allows self-reads with a session client.
+    const supabase = getSupabaseAdmin();
     const query = await listCrmGoals(supabase, {
       periodType: parsedQuery.data.period_type,
       periodStart: parsedQuery.data.period_start,

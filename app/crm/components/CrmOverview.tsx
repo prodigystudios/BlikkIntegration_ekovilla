@@ -752,6 +752,7 @@ function LeaderboardPanel({
               <div className="mt-2 grid gap-1">
                 <TeamProgressRow label="Samtal" value={entry.callsDone} target={entry.callsTarget} tone="sky" />
                 <TeamProgressRow label="Offerter" value={entry.quotesDone} target={entry.quotesTarget} tone="emerald" />
+                <TeamProgressRow label="Offertvärde" value={entry.quoteValueDone} target={entry.quoteValueTarget} tone="teal" currency />
               </div>
             </div>
           ))}
@@ -761,7 +762,7 @@ function LeaderboardPanel({
   );
 }
 
-function TeamProgressRow({ label, value, target, tone }: { label: string; value: number; target: number; tone: 'sky' | 'emerald' | 'teal' }) {
+function TeamProgressRow({ label, value, target, tone, currency = false }: { label: string; value: number; target: number; tone: 'sky' | 'emerald' | 'teal'; currency?: boolean }) {
   const toneClass = {
     sky: 'bg-sky-500',
     emerald: 'bg-emerald-500',
@@ -771,12 +772,14 @@ function TeamProgressRow({ label, value, target, tone }: { label: string; value:
   const width = target > 0
     ? value <= 0 ? 0 : Math.min(100, (value / target) * 100)
     : 0;
+  const displayValue = currency ? formatCurrency(value, 'SEK') : value;
+  const displayTarget = currency ? formatCurrency(target, 'SEK') : target;
 
   return (
     <div className="grid gap-0.5">
       <div className="flex items-center justify-between gap-2 text-[11px] text-slate-500">
         <span>{label}</span>
-        <strong className="text-slate-700">{value} / {target}</strong>
+        <strong className="text-slate-700">{displayValue} / {displayTarget}</strong>
       </div>
       <div className="h-1 rounded-full bg-slate-100">
         <div className={`h-1 rounded-full ${toneClass}`} style={{ width: `${width}%` }} />
