@@ -1,8 +1,9 @@
 "use client";
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import SectionCard from '../../../components/ui/SectionCard';
 import Input from '../../../components/ui/Input';
+import Select from '../../../components/ui/Select';
 import Textarea from '../../../components/ui/Textarea';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
@@ -23,14 +24,26 @@ type QuoteProspect = {
   status: ProspectItem['status'];
 };
 
+type QuoteCustomerSourceKind = 'prospect' | 'local' | 'fortnox';
+type QuoteCustomerSyncIntent = 'local_only' | 'on_work_order' | 'linked';
+
+type QuoteCustomerSource = {
+  kind?: QuoteCustomerSourceKind | null;
+  sync_intent?: QuoteCustomerSyncIntent | null;
+  fortnox_customer_id?: string | null;
+  fortnox_customer_name?: string | null;
+};
+
 type QuoteItem = {
   id: string;
   prospect_id: string | null;
   customer_name: string | null;
   quote_type: 'private' | 'business';
+  customer_source: QuoteCustomerSource | null;
   customer_snapshot: {
     customer_name?: string | null;
     company_name?: string | null;
+    organization_number?: string | null;
     personal_number?: string | null;
     contact_name?: string | null;
     email?: string | null;
@@ -93,6 +106,7 @@ type QuoteLineItem = {
   article_price: number | null;
   article_unit_name: string | null;
   discount_percent: string;
+  line_note: string;
 };
 
 type ArticleLite = {
@@ -106,8 +120,15 @@ type ArticleLite = {
 type QuoteDraft = {
   prospect_id: string;
   quote_type: 'private' | 'business';
+  customer_source: {
+    kind: QuoteCustomerSourceKind;
+    sync_intent: QuoteCustomerSyncIntent;
+    fortnox_customer_id: string;
+    fortnox_customer_name: string;
+  };
   customer_name: string;
   company_name: string;
+  organization_number: string;
   personal_number: string;
   contact_name: string;
   email: string;
@@ -140,6 +161,16 @@ type QuoteDraft = {
 };
 
 type QuoteFilter = 'all' | 'active' | 'follow_up' | 'won' | 'lost';
+
+type EffectiveQuoteRow = QuoteLineItem & {
+  amount: number;
+  unit: number;
+  effectiveUnit: number;
+  label: string;
+  mode: 'm3' | 'item';
+  rowTotal: number;
+  isConfigured: boolean;
+};
 
 const quoteStatusMeta: Record<QuoteItem['status'], { label: string; className: string; cardClass: string; amountClass: string }> = {
   draft: {
@@ -177,8 +208,15 @@ const quoteStatusMeta: Record<QuoteItem['status'], { label: string; className: s
 const initialDraft: QuoteDraft = {
   prospect_id: '',
   quote_type: 'business',
+  customer_source: {
+    kind: 'local',
+    sync_intent: 'local_only',
+    fortnox_customer_id: '',
+    fortnox_customer_name: '',
+  },
   customer_name: '',
   company_name: '',
+  organization_number: '',
   personal_number: '',
   contact_name: '',
   email: '',
@@ -219,6 +257,8 @@ const quoteFilterMeta: Record<QuoteFilter, { label: string; hint: string; tone: 
 };
 
 const quotesSectionClass = 'grid gap-3 border-emerald-200/65 bg-[linear-gradient(180deg,rgba(250,253,250,0.98),rgba(244,249,245,0.98))] p-4 shadow-[0_18px_38px_rgba(15,23,42,0.06)] md:p-5';
+const quoteModalCardClass = 'grid min-w-0 gap-4 rounded-[22px] border border-slate-200 bg-white p-4 shadow-[0_10px_24px_rgba(15,23,42,0.05)] md:p-5 [&_label]:gap-0.5 [&_label]:text-sm [&_label>span:first-child]:text-[11px] [&_label>span:first-child]:font-semibold [&_label>span:first-child]:uppercase [&_label>span:first-child]:tracking-[0.1em] [&_label>span:first-child]:text-slate-400 [&_input]:min-h-10 [&_input]:px-2.5 [&_input]:py-1.5 [&_input]:text-sm [&_textarea]:min-h-[96px] [&_textarea]:px-2.5 [&_textarea]:py-1.5 [&_textarea]:text-sm [&_select]:py-2 [&_select]:text-sm';
+const quoteModalMutedCardClass = 'grid min-w-0 gap-4 rounded-[22px] border border-slate-200 bg-[linear-gradient(180deg,#fcfcfd_0%,#f8fafc_100%)] p-4 shadow-[0_10px_24px_rgba(15,23,42,0.05)] md:p-5 [&_label]:gap-0.5 [&_label]:text-sm [&_label>span:first-child]:text-[11px] [&_label>span:first-child]:font-semibold [&_label>span:first-child]:uppercase [&_label>span:first-child]:tracking-[0.1em] [&_label>span:first-child]:text-slate-400 [&_input]:min-h-10 [&_input]:px-2.5 [&_input]:py-1.5 [&_input]:text-sm [&_textarea]:min-h-[96px] [&_textarea]:px-2.5 [&_textarea]:py-1.5 [&_textarea]:text-sm [&_select]:py-2 [&_select]:text-sm';
 
 function createEmptyLineItem(): QuoteLineItem {
   return {
@@ -236,6 +276,7 @@ function createEmptyLineItem(): QuoteLineItem {
     article_price: null,
     article_unit_name: null,
     discount_percent: '',
+    line_note: '',
   };
 }
 
@@ -289,6 +330,968 @@ function formatDate(value: string | null | undefined) {
   return new Intl.DateTimeFormat('sv-SE', { dateStyle: 'medium' }).format(date);
 }
 
+function getQuoteTypeCopy(type: QuoteDraft['quote_type']) {
+  return type === 'private'
+    ? {
+        label: 'Privatkund',
+        detail: 'Visa bara privatkundens fält och ROT när det faktiskt är relevant.',
+      }
+    : {
+        label: 'Företag',
+        detail: 'Visa företagsuppgifter och organisationsnummer, utan privatkundslogik och ROT.',
+      };
+}
+
+function getDefaultDraftCustomerSource(prospectId?: string | null): QuoteDraft['customer_source'] {
+  return {
+    kind: prospectId ? 'prospect' : 'local',
+    sync_intent: 'local_only',
+    fortnox_customer_id: '',
+    fortnox_customer_name: '',
+  };
+}
+
+function getDraftCustomerSource(source: QuoteCustomerSource | null | undefined, prospectId?: string | null): QuoteDraft['customer_source'] {
+  const kind = source?.kind === 'prospect' || source?.kind === 'local' || source?.kind === 'fortnox'
+    ? source.kind
+    : (prospectId ? 'prospect' : 'local');
+  const syncIntent = source?.sync_intent === 'on_work_order' || source?.sync_intent === 'linked'
+    ? source.sync_intent
+    : 'local_only';
+
+  return {
+    kind,
+    sync_intent: kind === 'fortnox' ? 'linked' : syncIntent,
+    fortnox_customer_id: source?.fortnox_customer_id || '',
+    fortnox_customer_name: source?.fortnox_customer_name || '',
+  };
+}
+
+function getCustomerSourceCopy(source: QuoteDraft['customer_source']) {
+  if (source.kind === 'prospect') {
+    return source.sync_intent === 'on_work_order'
+      ? {
+          label: 'Prospekt som källa, Fortnox först vid arbetsorder',
+          detail: 'Prospektet driver kundgrunden nu. Om offerten vinns är kunden markerad för att först skapas i Fortnox när arbetsorder skapas.',
+        }
+      : {
+          label: 'Prospekt som källa',
+          detail: 'Prospektet är kundkälla för offerten. Kunddata stannar i CRM tills du aktivt väljer något annat senare.',
+        };
+  }
+
+  if (source.kind === 'fortnox') {
+    return {
+      label: 'Fortnox-reserverad kund',
+      detail: 'Själva Fortnox-sökningen är ännu inte byggd. Valet markerar bara att offerten senare ska kunna länkas mot en Fortnox-kund.',
+    };
+  }
+
+  return source.sync_intent === 'on_work_order'
+    ? {
+        label: 'Lokal kund, Fortnox först vid arbetsorder',
+        detail: 'Kunden byggs lokalt i offertsteget men är markerad för att sparas i Fortnox först när offerten faktiskt blir arbetsorder.',
+      }
+    : {
+        label: 'Lokal offertkund',
+        detail: 'Kunden hålls helt lokalt i CRM och påverkar inte Fortnox-registret.',
+      };
+}
+
+function getDraftAmountValue(value: string) {
+  const normalized = Number(value.replace(',', '.'));
+  return Number.isFinite(normalized) ? normalized : NaN;
+}
+
+function getQuoteDraftValidationIssues({
+  draft,
+  effectiveRows,
+}: {
+  draft: QuoteDraft;
+  effectiveRows: EffectiveQuoteRow[];
+}) {
+  const issues: string[] = [];
+  const effectiveCustomerName = draft.quote_type === 'business'
+    ? (draft.company_name.trim() || draft.customer_name.trim())
+    : draft.customer_name.trim();
+  const hasAnyLineItemInput = draft.items.some((item) => item.article_name || item.m2 || item.quantity || item.unit_price);
+
+  if (!draft.project_name.trim()) {
+    issues.push('Offertnamn saknas');
+  }
+
+  if (!draft.prospect_id && !effectiveCustomerName) {
+    issues.push('Kund eller prospekt måste anges');
+  }
+
+  if (draft.customer_source.kind === 'prospect' && !draft.prospect_id) {
+    issues.push('Prospektkälla kräver valt prospekt');
+  }
+
+  if (draft.customer_source.kind === 'fortnox' && !draft.customer_source.fortnox_customer_name.trim()) {
+    issues.push('Fortnox-kund behöver en reserverad kundreferens');
+  }
+
+  if (draft.quote_type === 'private' && !draft.personal_number.trim()) {
+    issues.push('Privatkund behöver personnummer');
+  }
+
+  if (draft.quote_type === 'business' && !draft.company_name.trim() && !draft.customer_name.trim()) {
+    issues.push('Företagskund behöver företagsnamn');
+  }
+
+  if (draft.quote_type === 'business' && draft.rot_enabled) {
+    issues.push('ROT är bara tillåtet för privatkund');
+  }
+
+  if (draft.quote_type === 'private' && draft.rot_enabled) {
+    if (!draft.rot_personal_number.trim()) {
+      issues.push('ROT kräver personnummer för sökande');
+    }
+
+    if (!draft.rot_property_designation.trim()) {
+      issues.push('ROT kräver fastighetsbeteckning');
+    }
+  }
+
+  if (!draft.amount.trim() || Number(draft.amount.replace(',', '.')) < 0) {
+    if (!hasAnyLineItemInput) {
+      issues.push('Ange giltigt belopp eller bygg offerten med rader');
+    }
+  }
+
+  if (hasAnyLineItemInput) {
+    const hasInvalidConfiguredRow = effectiveRows.some((item) => item.isConfigured && (!(item.amount > 0) || !(item.effectiveUnit >= 0)));
+    if (hasInvalidConfiguredRow) {
+      issues.push('Alla konfigurerade offert-rader behöver mängd och pris');
+    }
+  }
+
+  return issues;
+}
+
+function QuoteCustomerSourceSection({
+  draft,
+  setDraft,
+  prospects,
+  prospectsById,
+}: {
+  draft: QuoteDraft;
+  setDraft: React.Dispatch<React.SetStateAction<QuoteDraft>>;
+  prospects: ProspectItem[];
+  prospectsById: Map<string, ProspectItem>;
+}) {
+  const sourceCopy = getCustomerSourceCopy(draft.customer_source);
+  const selectedProspect = draft.prospect_id ? prospectsById.get(draft.prospect_id) || null : null;
+
+  return (
+    <div className={quoteModalMutedCardClass}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="grid gap-1">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Kundtyp och källa</div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700">
+            {getQuoteTypeCopy(draft.quote_type).label}
+          </span>
+          <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700">
+            {sourceCopy.label}
+          </span>
+        </div>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-4">
+        <label className="grid gap-1 text-sm text-slate-600">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Prospekt</span>
+          <Select
+            value={draft.prospect_id}
+            onChange={(event) => {
+              const prospectId = event.target.value;
+              const prospect = prospectId ? prospectsById.get(prospectId) || null : null;
+              setDraft((current) => ({
+                ...current,
+                prospect_id: prospectId,
+                customer_source: {
+                  ...current.customer_source,
+                  kind: !prospectId && current.customer_source.kind === 'prospect' ? 'local' : current.customer_source.kind,
+                },
+                customer_name: current.quote_type === 'private' ? current.customer_name : (prospect ? prospect.company_name : current.customer_name),
+                company_name: current.quote_type === 'business' && prospect ? prospect.company_name : current.company_name,
+              }));
+            }}
+          >
+            <option value="">Ingen prospektkoppling</option>
+            {prospects.map((prospect) => (
+              <option key={prospect.id} value={prospect.id}>{prospect.company_name}</option>
+            ))}
+          </Select>
+        </label>
+
+        <label className="grid gap-1 text-sm text-slate-600">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Kundtyp</span>
+          <Select
+            value={draft.quote_type}
+            onChange={(event) => {
+              const nextType = event.target.value as 'private' | 'business';
+              setDraft((current) => ({
+                ...current,
+                quote_type: nextType,
+                rot_enabled: nextType === 'private' ? current.rot_enabled : false,
+                customer_name: nextType === 'business'
+                  ? (current.company_name || current.customer_name)
+                  : current.customer_name,
+              }));
+            }}
+          >
+            <option value="business">Företag</option>
+            <option value="private">Privatkund</option>
+          </Select>
+        </label>
+
+        <label className="grid gap-1 text-sm text-slate-600">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Kundkälla</span>
+          <Select
+            value={draft.customer_source.kind}
+            onChange={(event) => {
+              const nextKind = event.target.value as QuoteCustomerSourceKind;
+              setDraft((current) => ({
+                ...current,
+                customer_source: {
+                  ...current.customer_source,
+                  kind: nextKind,
+                  sync_intent: nextKind === 'fortnox' ? 'linked' : (current.customer_source.sync_intent === 'linked' ? 'local_only' : current.customer_source.sync_intent),
+                },
+              }));
+            }}
+          >
+            <option value="prospect">Prospekt</option>
+            <option value="local">Lokal offertkund</option>
+            <option value="fortnox">Fortnox-kund / framtida sökning</option>
+          </Select>
+        </label>
+
+        <label className="grid gap-1 text-sm text-slate-600">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Kundregister</span>
+          <Select
+            value={draft.customer_source.kind === 'fortnox' ? 'linked' : draft.customer_source.sync_intent}
+            onChange={(event) => {
+              const nextIntent = event.target.value as QuoteCustomerSyncIntent;
+              setDraft((current) => ({
+                ...current,
+                customer_source: {
+                  ...current.customer_source,
+                  sync_intent: nextIntent,
+                },
+              }));
+            }}
+            disabled={draft.customer_source.kind === 'fortnox'}
+          >
+            <option value="local_only">Stanna lokalt i CRM</option>
+            <option value="on_work_order">Skapa i Fortnox först vid arbetsorder</option>
+            <option value="linked">Redan länkad till Fortnox</option>
+          </Select>
+        </label>
+      </div>
+
+      {draft.customer_source.kind === 'fortnox' ? (
+        <div className="grid gap-4 rounded-[22px] border border-sky-200 bg-sky-50 p-5 md:grid-cols-2">
+          <div className="md:col-span-2 text-sm text-sky-900">
+            Fortnox-sökningen är ännu inte byggd. Sektionen nedan reserverar plats för framtida lookup och eventuell lagrad kundreferens utan att ändra modalens struktur senare.
+          </div>
+          <label className="grid gap-1 text-sm text-slate-600">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Fortnox-kundnamn</span>
+            <Input
+              value={draft.customer_source.fortnox_customer_name}
+              onChange={(event) => setDraft((current) => ({
+                ...current,
+                customer_source: {
+                  ...current.customer_source,
+                  fortnox_customer_name: event.target.value,
+                },
+              }))}
+              placeholder="Reserverad för framtida lookup eller länkad kund"
+            />
+          </label>
+          <label className="grid gap-1 text-sm text-slate-600">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Fortnox-kundid</span>
+            <Input
+              value={draft.customer_source.fortnox_customer_id}
+              onChange={(event) => setDraft((current) => ({
+                ...current,
+                customer_source: {
+                  ...current.customer_source,
+                  fortnox_customer_id: event.target.value,
+                },
+              }))}
+              placeholder="Kommer normalt från sökningen senare"
+            />
+          </label>
+        </div>
+      ) : (
+        <div className="grid gap-4 rounded-[22px] border border-slate-200 bg-white p-5 md:grid-cols-2">
+          <div className="grid gap-1 rounded-[18px] border border-slate-200 bg-slate-50 px-4 py-4">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Aktiv källa</span>
+            <span className="text-sm font-semibold text-slate-950">
+              {draft.customer_source.kind === 'prospect'
+                ? selectedProspect?.company_name || 'Prospekt måste väljas'
+                : 'Kunden byggs i offerten'}
+            </span>
+            <span className="text-sm text-slate-600">
+              {draft.customer_source.kind === 'prospect'
+                ? 'Kundbasen hämtas från prospektet och kan kompletteras i offertens kundkort.'
+                : draft.customer_source.sync_intent === 'on_work_order'
+                  ? 'Kunden stannar lokalt nu men är markerad för att först skapas i Fortnox vid arbetsorder.'
+                  : 'Kunden är helt lokal tills du senare väljer annat integrationsspår.'}
+            </span>
+          </div>
+          <div className="grid gap-1 rounded-[18px] border border-slate-200 bg-slate-50 px-4 py-4">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Nästa registersteg</span>
+            <span className="text-sm font-semibold text-slate-950">
+              {draft.customer_source.sync_intent === 'on_work_order' ? 'Först när arbetsorder skapas' : 'Ingen extern synk planerad ännu'}
+            </span>
+            <span className="text-sm text-slate-600">
+              {draft.customer_source.sync_intent === 'on_work_order'
+                ? 'Bra när sälj vill undvika att fylla Fortnox-registret med kunder som aldrig blir riktiga jobb.'
+                : 'Det här håller offertsteget rent tills vi har riktig Fortnox-sökning och länkning på plats.'}
+            </span>
+          </div>
+        </div>
+      )}
+
+    </div>
+  );
+}
+
+function QuoteValidationFooter({
+  draft,
+  effectiveRows,
+  totals,
+}: {
+  draft: QuoteDraft;
+  effectiveRows: EffectiveQuoteRow[];
+  totals: { subtotal: number; vat: number; total: number };
+}) {
+  const hasAnyLineItemInput = draft.items.some((item) => item.article_name || item.m2 || item.quantity || item.unit_price);
+  const draftAmount = getDraftAmountValue(draft.amount);
+  const validationItems = [
+    {
+      label: 'Källa och affärstyp',
+      ready: draft.customer_source.kind !== 'prospect' || Boolean(draft.prospect_id),
+      detail: draft.customer_source.kind === 'prospect' && !draft.prospect_id
+        ? 'Välj prospekt eller byt kundkälla till lokal kund.'
+        : 'Kundtyp och källa är satta.',
+    },
+    {
+      label: 'Kundidentitet',
+      ready: draft.quote_type === 'business'
+        ? Boolean((draft.company_name || draft.customer_name).trim())
+        : Boolean(draft.customer_name.trim() && draft.personal_number.trim()),
+      detail: draft.quote_type === 'business'
+        ? 'Företagsnamn bör finnas innan offerten sparas.'
+        : 'Privatkund kräver namn och personnummer.',
+    },
+    {
+      label: 'Ekonomi',
+      ready: hasAnyLineItemInput
+        ? effectiveRows.every((item) => !item.isConfigured || (item.amount > 0 && item.effectiveUnit >= 0))
+        : Number.isFinite(draftAmount) && draftAmount >= 0,
+      detail: hasAnyLineItemInput
+        ? `Radsummering: ${formatCurrency(totals.total, 'SEK')}`
+        : 'Ange grundbelopp eller bygg ekonomin via offert­rader.',
+    },
+    {
+      label: 'ROT-underlag',
+      ready: !draft.rot_enabled || Boolean(draft.rot_applicant_name.trim() && draft.rot_personal_number.trim() && draft.rot_property_designation.trim()),
+      detail: draft.rot_enabled
+        ? 'ROT kräver sökande, personnummer och fastighetsbeteckning.'
+        : 'Inte aktivt i den här offerten.',
+    },
+    {
+      label: 'Offertgrund',
+      ready: Boolean(draft.project_name.trim() && draft.quote_date.trim()),
+      detail: 'Offertnamn och datum behöver finnas för att flödet ska bli spårbart.',
+    },
+  ];
+  const readyCount = validationItems.filter((item) => item.ready).length;
+
+  return (
+    <div className="grid gap-4 rounded-[26px] border border-slate-200 bg-slate-50 px-5 py-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Valideringssammanfattning</div>
+          <div className="text-sm font-semibold text-slate-900">{readyCount} av {validationItems.length} kärnpunkter klara innan sparning</div>
+        </div>
+        <span className={cn(
+          'rounded-full border px-3 py-1.5 text-xs font-semibold',
+          readyCount === validationItems.length
+            ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
+            : 'border-amber-200 bg-amber-50 text-amber-900',
+        )}>
+          {readyCount === validationItems.length ? 'Redo att spara' : 'Komplettera innan nästa steg'}
+        </span>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
+        {validationItems.map((item) => (
+          <div key={item.label} className={cn(
+            'grid gap-1 rounded-[18px] border px-3 py-3',
+            item.ready ? 'border-emerald-200 bg-white' : 'border-amber-200 bg-white',
+          )}>
+            <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">{item.label}</span>
+            <span className={cn('text-sm font-semibold', item.ready ? 'text-slate-950' : 'text-amber-950')}>
+              {item.ready ? 'Klar' : 'Saknar underlag'}
+            </span>
+            <span className="text-sm text-slate-600">{item.detail}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function QuoteCustomerSection({
+  draft,
+  setDraft,
+}: {
+  draft: QuoteDraft;
+  setDraft: React.Dispatch<React.SetStateAction<QuoteDraft>>;
+}) {
+  return (
+    <div className={cn(quoteModalMutedCardClass, 'md:grid-cols-2')}>
+      <div>
+        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Kunduppgifter</div>
+      </div>
+
+      {draft.quote_type === 'business' ? (
+        <>
+          <label className="grid gap-1 text-sm text-slate-600 md:col-span-2">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Företagsnamn</span>
+            <Input value={draft.company_name} onChange={(event) => setDraft((current) => ({ ...current, company_name: event.target.value, customer_name: event.target.value || current.customer_name }))} placeholder="Bolag AB" />
+          </label>
+
+          <label className="grid gap-1 text-sm text-slate-600">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Organisationsnummer</span>
+            <Input value={draft.organization_number} onChange={(event) => setDraft((current) => ({ ...current, organization_number: event.target.value }))} placeholder="556123-4567" />
+          </label>
+
+          <label className="grid gap-1 text-sm text-slate-600">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Kontaktperson</span>
+            <Input value={draft.contact_name} onChange={(event) => setDraft((current) => ({ ...current, contact_name: event.target.value }))} placeholder="Namn på kontakt" />
+          </label>
+        </>
+      ) : (
+        <>
+          <label className="grid gap-1 text-sm text-slate-600">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Kundnamn</span>
+            <Input value={draft.customer_name} onChange={(event) => setDraft((current) => ({ ...current, customer_name: event.target.value }))} placeholder="För- och efternamn" />
+          </label>
+
+          <label className="grid gap-1 text-sm text-slate-600">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Personnummer</span>
+            <Input value={draft.personal_number} onChange={(event) => setDraft((current) => ({ ...current, personal_number: event.target.value }))} placeholder="ÅÅÅÅMMDD-XXXX" />
+          </label>
+        </>
+      )}
+
+      <label className="grid gap-1 text-sm text-slate-600">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">E-post</span>
+        <Input value={draft.email} onChange={(event) => setDraft((current) => ({ ...current, email: event.target.value }))} placeholder="namn@example.com" />
+      </label>
+
+      <label className="grid gap-1 text-sm text-slate-600">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Telefon</span>
+        <Input value={draft.phone} onChange={(event) => setDraft((current) => ({ ...current, phone: event.target.value }))} placeholder="070..." />
+      </label>
+
+      <label className="grid gap-1 text-sm text-slate-600">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Gatuadress</span>
+        <Input value={draft.street_address} onChange={(event) => setDraft((current) => ({ ...current, street_address: event.target.value }))} placeholder="Gata 1" />
+      </label>
+
+      <label className="grid gap-1 text-sm text-slate-600">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Postnummer</span>
+        <Input value={draft.postal_code} onChange={(event) => setDraft((current) => ({ ...current, postal_code: event.target.value }))} placeholder="123 45" />
+      </label>
+
+      <label className="grid gap-1 text-sm text-slate-600">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Ort</span>
+        <Input value={draft.city} onChange={(event) => setDraft((current) => ({ ...current, city: event.target.value }))} placeholder="Ort" />
+      </label>
+
+      <label className="grid gap-1 text-sm text-slate-600 md:col-span-2">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Besöksadress</span>
+        <Input value={draft.visit_address} onChange={(event) => setDraft((current) => ({ ...current, visit_address: event.target.value }))} placeholder="Besöksadress om annan än kundadress" />
+      </label>
+
+      <label className="grid gap-1 text-sm text-slate-600 md:col-span-2">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Leveransadress</span>
+        <Input value={draft.delivery_address} onChange={(event) => setDraft((current) => ({ ...current, delivery_address: event.target.value }))} placeholder="Leveransadress" />
+      </label>
+
+      <label className="grid gap-1 text-sm text-slate-600 md:col-span-2">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Fakturaadress</span>
+        <Input value={draft.invoice_address} onChange={(event) => setDraft((current) => ({ ...current, invoice_address: event.target.value }))} placeholder="Fakturaadress" />
+      </label>
+    </div>
+  );
+}
+
+
+function QuoteBasicsSection({
+  draft,
+  setDraft,
+}: {
+  draft: QuoteDraft;
+  setDraft: React.Dispatch<React.SetStateAction<QuoteDraft>>;
+}) {
+  return (
+    <div className={cn(quoteModalCardClass, 'md:grid-cols-2')}>
+      <div>
+        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Offertgrund</div>
+      </div>
+
+      <label className="grid gap-1 text-sm text-slate-600 md:col-span-2">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Offertnamn / projekt</span>
+        <Input value={draft.project_name} onChange={(event) => setDraft((current) => ({ ...current, project_name: event.target.value }))} placeholder="Ex. Takisolering villa Norrköping" />
+      </label>
+
+      <label className="grid gap-1 text-sm text-slate-600 md:col-span-2">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Beskrivning</span>
+        <Textarea value={draft.description} onChange={(event) => setDraft((current) => ({ ...current, description: event.target.value }))} rows={3} placeholder="Kort om omfattning eller vad som offereras" />
+      </label>
+
+      <label className="grid gap-1 text-sm text-slate-600">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Belopp</span>
+        <Input value={draft.amount} onChange={(event) => setDraft((current) => ({ ...current, amount: event.target.value }))} inputMode="decimal" placeholder="0" />
+      </label>
+
+      <label className="grid gap-1 text-sm text-slate-600">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Moms %</span>
+        <Input value={draft.vat_percent} onChange={(event) => setDraft((current) => ({ ...current, vat_percent: event.target.value }))} inputMode="decimal" placeholder="25" />
+      </label>
+
+      <label className="grid gap-1 text-sm text-slate-600">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Status</span>
+        <Select value={draft.status} onChange={(event) => setDraft((current) => ({ ...current, status: event.target.value as QuoteItem['status'] }))}>
+          {Object.entries(quoteStatusMeta).map(([value, meta]) => (
+            <option key={value} value={value}>{meta.label}</option>
+          ))}
+        </Select>
+      </label>
+
+      <label className="grid gap-1 text-sm text-slate-600">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Offertdatum</span>
+        <Input value={draft.quote_date} onChange={(event) => setDraft((current) => ({ ...current, quote_date: event.target.value }))} type="date" />
+      </label>
+
+      <label className="grid gap-1 text-sm text-slate-600">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Följ upp senast</span>
+        <Input value={draft.follow_up_date} onChange={(event) => setDraft((current) => ({ ...current, follow_up_date: event.target.value }))} type="date" />
+      </label>
+
+      <label className="grid gap-1 text-sm text-slate-600">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Giltig till</span>
+        <Input value={draft.valid_until} onChange={(event) => setDraft((current) => ({ ...current, valid_until: event.target.value }))} type="date" />
+      </label>
+    </div>
+  );
+}
+
+function QuoteLineItemsSection({
+  draft,
+  setDraft,
+  effectiveRows,
+  totals,
+}: {
+  draft: QuoteDraft;
+  setDraft: React.Dispatch<React.SetStateAction<QuoteDraft>>;
+  effectiveRows: EffectiveQuoteRow[];
+  totals: { subtotal: number; vat: number; total: number };
+}) {
+  const configuredRows = effectiveRows.filter((item) => item.isConfigured).length;
+
+  return (
+    <div className={quoteModalCardClass}>
+      <div>
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Offert­rader</div>
+        </div>
+      </div>
+
+      <div className="grid gap-2.5 rounded-[18px] border border-slate-200 bg-slate-50 p-3.5 md:grid-cols-2 xl:grid-cols-4">
+        <div className="rounded-[18px] border border-slate-200 bg-white px-3 py-3">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Konfigurerade rader</div>
+          <div className="mt-0.5 text-[1.45rem] font-bold text-slate-950">{configuredRows}</div>
+        </div>
+        <div className="rounded-[18px] border border-slate-200 bg-white px-3 py-3">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Delsumma</div>
+          <div className="mt-0.5 text-[1.45rem] font-bold text-slate-950">{formatCurrency(totals.subtotal, 'SEK')}</div>
+        </div>
+        <div className="rounded-[18px] border border-slate-200 bg-white px-3 py-3">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Moms</div>
+          <div className="mt-0.5 text-[1.45rem] font-bold text-slate-950">{formatCurrency(totals.vat, 'SEK')}</div>
+        </div>
+        <div className="rounded-[18px] border border-emerald-200 bg-emerald-50 px-3 py-3">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-emerald-700">Total</div>
+          <div className="mt-0.5 text-[1.45rem] font-bold text-emerald-950">{formatCurrency(totals.total, 'SEK')}</div>
+        </div>
+      </div>
+
+      <div className="rounded-[16px] border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm leading-5 text-slate-600">
+        Om du bygger offerten med artiklar och rader används summeringen här som ekonomiskt underlag. Om du ännu inte har fyllt raderna fullt ut kan grundbeloppet ovan fortfarande användas som tillfällig offertnivå.
+      </div>
+
+      <div className="grid gap-3.5 rounded-[18px] border border-slate-200 bg-slate-50 p-3.5 md:p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-[16px] border border-slate-200 bg-white/90 px-3 py-2.5">
+          <div className="grid gap-0.5">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Artikelrader</div>
+            <div className="text-sm font-semibold text-slate-900">Lägg till och justera rader som bygger offertens total</div>
+          </div>
+          <button type="button" onClick={() => setDraft((current) => ({ ...current, items: [...current.items, createEmptyLineItem()] }))} className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-sm font-semibold text-emerald-900 transition hover:border-emerald-300 hover:bg-emerald-100">
+            + Lägg till rad
+          </button>
+        </div>
+
+        <div className="grid gap-3">
+          {draft.items.map((row, index) => {
+            const rowMetrics = effectiveRows.find((item) => item.id === row.id);
+            const isM3 = (row.pricing_mode ?? 'm3') === 'm3';
+
+            return (
+              <div key={row.id} className="grid gap-3 rounded-[16px] border border-slate-200 bg-white p-3.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                    Rad {index + 1}
+                  </span>
+                </div>
+
+                <div className="grid gap-3 xl:grid-cols-12 xl:items-end">
+                  <label className="grid gap-1 text-sm text-slate-600 xl:col-span-6">
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Artikel</span>
+                    <ArticlePicker
+                      value={row.article_name || ''}
+                      onSelect={(article) => {
+                        const construction = inferConstructionFromArticle(article.name);
+                        const unitName = getArticleUnitName(article.unit);
+                        const normalizedUnit = unitName.trim().toLowerCase();
+                        const pricingMode: 'm3' | 'item' = normalizedUnit === 'm3' || normalizedUnit === 'm³' || /m\s*³/i.test(normalizedUnit) ? 'm3' : 'item';
+                        setDraft((current) => ({
+                          ...current,
+                          items: current.items.map((item) => item.id === row.id ? {
+                            ...item,
+                            article_id: article.id || null,
+                            article_name: article.name || null,
+                            article_number: article.articleNumber || null,
+                            article_price: typeof article.price === 'number' ? article.price : null,
+                            article_unit_name: unitName || null,
+                            construction: construction || item.construction,
+                            pricing_mode: pricingMode,
+                            auto_price: false,
+                            unit_price: article.price != null ? String(article.price) : item.unit_price,
+                            quantity: pricingMode === 'item' && (!item.quantity || Number(item.quantity) <= 0) ? '1' : item.quantity,
+                          } : item),
+                        }));
+                      }}
+                      onClear={() => setDraft((current) => ({
+                        ...current,
+                        items: current.items.map((item) => item.id === row.id ? {
+                          ...item,
+                          article_id: null,
+                          article_name: null,
+                          article_number: null,
+                          article_price: null,
+                          article_unit_name: null,
+                        } : item),
+                      }))}
+                      showSelectionHint={false}
+                    />
+                  </label>
+
+                  <div className="grid gap-1 text-sm text-slate-600 xl:col-span-6">
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Vald artikel</span>
+                    <div className="min-h-10 rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-sm text-slate-700">
+                      {row.article_name
+                        ? `${row.article_name}${row.article_number ? ` (${row.article_number})` : ''}`
+                        : 'Ingen artikel vald'}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid gap-3 xl:grid-cols-12 xl:items-end">
+                  <div className={cn('grid gap-3 sm:grid-cols-2', isM3 ? 'xl:col-span-4' : 'xl:col-span-3')}>
+                    {isM3 ? (
+                      <label className="grid gap-1 text-sm text-slate-600">
+                        <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">m²</span>
+                        <Input value={row.m2} onChange={(event) => setDraft((current) => ({ ...current, items: current.items.map((item) => item.id === row.id ? { ...item, m2: event.target.value } : item) }))} inputMode="decimal" placeholder="0" className="min-h-10 px-2.5 py-1.5 text-sm" />
+                      </label>
+                    ) : (
+                      <label className="grid gap-1 text-sm text-slate-600">
+                        <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Antal</span>
+                        <Input value={row.quantity} onChange={(event) => setDraft((current) => ({ ...current, items: current.items.map((item) => item.id === row.id ? { ...item, quantity: event.target.value } : item) }))} inputMode="decimal" placeholder="1" className="min-h-10 px-2.5 py-1.5 text-sm" />
+                      </label>
+                    )}
+
+                    {isM3 ? (
+                      <label className="grid gap-1 text-sm text-slate-600">
+                        <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Tjocklek mm</span>
+                        <Input value={row.thickness_mm} onChange={(event) => setDraft((current) => ({ ...current, items: current.items.map((item) => item.id === row.id ? { ...item, thickness_mm: event.target.value } : item) }))} inputMode="decimal" placeholder="200" className="min-h-10 px-2.5 py-1.5 text-sm" />
+                      </label>
+                    ) : (
+                      <div className="hidden sm:block" />
+                    )}
+                  </div>
+
+                  <div className={cn('grid gap-2', isM3 ? 'xl:col-span-7' : 'xl:col-span-8')}>
+                    <div className="grid gap-1 text-sm text-slate-600 md:grid-cols-[minmax(0,1fr)_auto_minmax(84px,0.8fr)] md:items-end">
+                      <label className="grid gap-1">
+                        <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">A-pris</span>
+                        <Input value={row.auto_price ? String(rowMetrics?.unit ?? row.article_price ?? '') : row.unit_price} onChange={(event) => setDraft((current) => ({ ...current, items: current.items.map((item) => item.id === row.id ? { ...item, unit_price: event.target.value } : item) }))} inputMode="decimal" placeholder="0" disabled={row.auto_price} className="min-h-10 px-2.5 py-1.5 text-sm" />
+                      </label>
+                      <label className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-600">
+                        <input type="checkbox" checked={!row.auto_price} onChange={(event) => setDraft((current) => ({ ...current, items: current.items.map((item) => item.id === row.id ? { ...item, auto_price: !event.target.checked } : item) }))} className="h-4 w-4 rounded border-slate-300" />
+                        Manuellt
+                      </label>
+                      <label className="grid gap-1">
+                        <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Rabatt %</span>
+                        <Input value={row.discount_percent} onChange={(event) => setDraft((current) => ({ ...current, items: current.items.map((item) => item.id === row.id ? { ...item, discount_percent: event.target.value } : item) }))} inputMode="decimal" placeholder="0" className="min-h-10 px-2.5 py-1.5 text-sm" />
+                      </label>
+                    </div>
+                    <label className="grid gap-1 text-sm text-slate-600">
+                      <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Radtext</span>
+                      <Input
+                        value={row.line_note}
+                        onChange={(event) => setDraft((current) => ({
+                          ...current,
+                          items: current.items.map((item) => item.id === row.id ? { ...item, line_note: event.target.value } : item),
+                        }))}
+                        placeholder="Fritext för raden"
+                        className="min-h-10 px-2.5 py-1.5 text-sm"
+                      />
+                    </label>
+                  </div>
+
+                  <div className="flex xl:col-span-1 xl:justify-end">
+                    <button type="button" onClick={() => setDraft((current) => ({ ...current, items: current.items.length > 1 ? current.items.filter((item) => item.id !== row.id) : [createEmptyLineItem()] }))} className="rounded-full border border-rose-200 bg-white px-3 py-1.5 text-sm font-semibold text-rose-700 transition hover:border-rose-300 hover:bg-rose-50">
+                      Ta bort
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 border-t border-slate-200 pt-3 text-xs text-slate-600">
+                  <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1">{rowMetrics?.label || 'Konfigurera raden'}</span>
+                  <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1">Mängd {rowMetrics?.amount?.toFixed(2) || '0.00'}</span>
+                  <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1">A-pris {formatCurrency(rowMetrics?.effectiveUnit ?? 0, 'SEK')}</span>
+                  {row.line_note ? <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1">Radtext: {row.line_note}</span> : null}
+                  <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 font-semibold text-emerald-900">Radsumma {formatCurrency(rowMetrics?.rowTotal ?? 0, 'SEK')}</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function QuoteRotSection({
+  draft,
+  setDraft,
+}: {
+  draft: QuoteDraft;
+  setDraft: React.Dispatch<React.SetStateAction<QuoteDraft>>;
+}) {
+  if (draft.quote_type !== 'private') return null;
+
+  return (
+    <div className={quoteModalMutedCardClass}>
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">ROT</div>
+        </div>
+        <label className="inline-flex items-center gap-2 text-sm text-slate-600">
+          <input type="checkbox" checked={draft.rot_enabled} onChange={(event) => setDraft((current) => ({ ...current, rot_enabled: event.target.checked }))} className="h-4 w-4 rounded border-slate-300" />
+          ROT-avdrag
+        </label>
+      </div>
+      <div className="grid gap-4 md:grid-cols-2">
+        <label className="grid gap-1 text-sm text-slate-600">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">ROT-sökande</span>
+          <Input value={draft.rot_applicant_name} onChange={(event) => setDraft((current) => ({ ...current, rot_applicant_name: event.target.value }))} placeholder="Namn på sökande" disabled={!draft.rot_enabled} />
+        </label>
+        <label className="grid gap-1 text-sm text-slate-600">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">ROT personnummer</span>
+          <Input value={draft.rot_personal_number} onChange={(event) => setDraft((current) => ({ ...current, rot_personal_number: event.target.value }))} placeholder="ÅÅÅÅMMDD-XXXX" disabled={!draft.rot_enabled} />
+        </label>
+        <label className="grid gap-1 text-sm text-slate-600 md:col-span-2">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Fastighetsbeteckning</span>
+          <Input value={draft.rot_property_designation} onChange={(event) => setDraft((current) => ({ ...current, rot_property_designation: event.target.value }))} placeholder="Fastighetsbeteckning" disabled={!draft.rot_enabled} />
+        </label>
+        <label className="grid gap-1 text-sm text-slate-600">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">ROT %</span>
+          <Input value={draft.rot_percent} onChange={(event) => setDraft((current) => ({ ...current, rot_percent: event.target.value }))} inputMode="decimal" placeholder="30" disabled={!draft.rot_enabled} />
+        </label>
+        <div className="rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-600">
+          ROT följer med till intern handoff och framtida orderflöde, men ska senare kunna styras separat från PDF-innehållet.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function QuoteInternalHandoffSection({
+  draft,
+  setDraft,
+}: {
+  draft: QuoteDraft;
+  setDraft: React.Dispatch<React.SetStateAction<QuoteDraft>>;
+}) {
+  return (
+    <div className={quoteModalMutedCardClass}>
+      <div>
+        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Intern handoff</div>
+      </div>
+      <div className="grid gap-4 md:grid-cols-2">
+        <label className="grid gap-1 text-sm text-slate-600">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Önskat installationsdatum</span>
+          <Input value={draft.desired_installation_date} onChange={(event) => setDraft((current) => ({ ...current, desired_installation_date: event.target.value }))} type="date" />
+        </label>
+        <label className="grid gap-1 text-sm text-slate-600">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Arbetets scope</span>
+          <Input value={draft.work_scope} onChange={(event) => setDraft((current) => ({ ...current, work_scope: event.target.value }))} placeholder="Kort operativ scope" />
+        </label>
+        <label className="grid gap-1 text-sm text-slate-600 md:col-span-2">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Överlämningsnotering</span>
+          <Textarea value={draft.handoff_notes} onChange={(event) => setDraft((current) => ({ ...current, handoff_notes: event.target.value }))} rows={3} placeholder="Intern information för projekt eller arbetsorder" />
+        </label>
+        <label className="grid gap-1 text-sm text-slate-600 md:col-span-2">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Interna anteckningar</span>
+          <Textarea value={draft.notes} onChange={(event) => setDraft((current) => ({ ...current, notes: event.target.value }))} rows={4} placeholder="Det här ska vi komma ihåg inför uppföljningen" />
+        </label>
+      </div>
+    </div>
+  );
+}
+
+function QuoteWorkOrderSection({
+  editingQuote,
+  draftStatus,
+  creatingWorkOrder,
+  onOpenWorkOrder,
+  onCreateWorkOrder,
+}: {
+  editingQuote: QuoteItem | null;
+  draftStatus: QuoteItem['status'];
+  creatingWorkOrder: boolean;
+  onOpenWorkOrder: () => void;
+  onCreateWorkOrder: () => void;
+}) {
+  if (!editingQuote) return null;
+
+  const hasWorkOrder = Boolean(editingQuote.work_order_id || editingQuote.work_order_number);
+
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-[26px] border border-emerald-200 bg-emerald-50 px-5 py-4">
+      <div className="grid gap-0.5">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-800">Arbetsorder</span>
+        <span className="text-sm text-emerald-950">
+          {editingQuote.work_order_number
+            ? `Arbetsorder ${editingQuote.work_order_number} är redan skapad.`
+            : draftStatus === 'won'
+              ? 'Offerten är vunnen och kan nu bli en intern arbetsorder.'
+              : 'Sätt offerten till vunnen för att skapa arbetsorder.'}
+        </span>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {editingQuote.work_order_id ? (
+          <button
+            type="button"
+            onClick={onOpenWorkOrder}
+            className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+          >
+            Öppna arbetsorder
+          </button>
+        ) : null}
+        <button
+          type="button"
+          onClick={onCreateWorkOrder}
+          disabled={draftStatus !== 'won' || hasWorkOrder || creatingWorkOrder}
+          className="rounded-full border border-emerald-900 bg-emerald-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-950 disabled:cursor-not-allowed disabled:border-emerald-300 disabled:bg-white disabled:text-emerald-700 disabled:opacity-70"
+        >
+          {creatingWorkOrder
+            ? 'Skapar arbetsorder...'
+            : editingQuote.work_order_number
+              ? 'Arbetsorder skapad'
+              : 'Skapa arbetsorder'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function QuoteValidationSummary({
+  draft,
+  effectiveRows,
+  editingQuoteId,
+  submitting,
+}: {
+  draft: QuoteDraft;
+  effectiveRows: EffectiveQuoteRow[];
+  editingQuoteId: string | null;
+  submitting: boolean;
+}) {
+  const issues = getQuoteDraftValidationIssues({ draft, effectiveRows });
+  const ready = issues.length === 0;
+  const rowCount = effectiveRows.filter((item) => item.isConfigured).length;
+
+  return (
+    <div className={cn(
+      'grid gap-3 rounded-[22px] border px-4 py-3',
+      ready ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50',
+    )}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="grid gap-0.5">
+          <span className={cn('text-[11px] font-semibold uppercase tracking-[0.16em]', ready ? 'text-emerald-800' : 'text-amber-800')}>
+            Valideringssammanfattning
+          </span>
+          <span className={cn('text-sm', ready ? 'text-emerald-950' : 'text-amber-950')}>
+            {ready ? 'Offerten har de fält som krävs för att sparas.' : 'Det finns fortfarande saker att fylla i innan offerten är komplett.'}
+          </span>
+        </div>
+        <div className="flex flex-wrap gap-2 text-xs">
+          <span className="rounded-full border border-white/70 bg-white px-2.5 py-1 font-semibold text-slate-700">{rowCount} rader konfigurerade</span>
+          <span className="rounded-full border border-white/70 bg-white px-2.5 py-1 font-semibold text-slate-700">{draft.customer_source.kind === 'fortnox' ? 'Fortnox-reservation' : draft.customer_source.sync_intent === 'on_work_order' ? 'Fortnox vid arbetsorder' : 'Lokal kund'}</span>
+          <span className="rounded-full border border-white/70 bg-white px-2.5 py-1 font-semibold text-slate-700">{editingQuoteId ? 'Redigerar befintlig offert' : 'Ny offert'}</span>
+        </div>
+      </div>
+
+      {issues.length > 0 ? (
+        <div className="flex flex-wrap gap-2">
+          {issues.map((issue) => (
+            <span key={issue} className="rounded-full border border-amber-300 bg-white px-2.5 py-1 text-xs font-semibold text-amber-900">
+              {issue}
+            </span>
+          ))}
+        </div>
+      ) : (
+        <div className="text-sm text-emerald-900">
+          Nästa steg efter sparning styrs av statusen. Kundkälla och intern handoff följer med utan att du behöver göra ytterligare mappning nu.
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <span className="text-sm text-slate-600">
+          När offertstatus går till skickad eller följ upp synkas prospektet automatiskt till offertläget.
+        </span>
+        <div className="flex flex-wrap gap-2">
+          <span className={cn('rounded-full px-3 py-1 text-xs font-semibold', ready ? 'bg-emerald-900 text-white' : 'bg-amber-100 text-amber-900')}>
+            {submitting ? 'Sparar…' : ready ? 'Redo att spara' : `${issues.length} saker kvar`}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function isOverdue(item: QuoteItem) {
   if (!item.follow_up_date || item.status === 'won' || item.status === 'lost') return false;
   const today = new Date();
@@ -332,12 +1335,24 @@ export default function QuotesClient() {
   const [movingQuoteId, setMovingQuoteId] = useState<string | null>(null);
   const [creatingWorkOrderId, setCreatingWorkOrderId] = useState<string | null>(null);
   const [hasAppliedPreset, setHasAppliedPreset] = useState(false);
+  const [activeQuoteTab, setActiveQuoteTab] = useState<'kund' | 'offert' | 'rot_internt' | 'arbetsorder'>('kund');
+  const draftAtOpen = useRef<string>('');
+
+  useEffect(() => {
+    if (modalOpen) {
+      draftAtOpen.current = JSON.stringify(draft);
+    }
+  // intentionally only fires when modal opens, not on every draft change
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modalOpen]);
+
+  const isDirty = modalOpen && JSON.stringify(draft) !== draftAtOpen.current;
 
   const presetProspectId = searchParams.get('prospect_id') || '';
   const shouldOpenCreateForPreset = searchParams.get('new') === '1';
 
   const prospectsById = useMemo(() => new Map(prospects.map((item) => [item.id, item])), [prospects]);
-  const effectiveRows = useMemo(() => {
+  const effectiveRows = useMemo<EffectiveQuoteRow[]>(() => {
     return draft.items.map((item) => {
       const baseUnit = item.auto_price
         ? computeUnitPrice(item.construction, parseFloat(item.thickness_mm || '0') || 0)
@@ -475,6 +1490,11 @@ export default function QuotesClient() {
     lost: quotes.filter((item) => item.status === 'lost').length,
   }), [quotes]);
 
+  const editingQuote = useMemo(
+    () => (editingQuoteId ? quotes.find((item) => item.id === editingQuoteId) || null : null),
+    [editingQuoteId, quotes],
+  );
+
   useEffect(() => {
   if (!shouldOpenCreateForPreset || hasAppliedPreset || loading) return;
   const presetProspect = presetProspectId ? prospectsById.get(presetProspectId) || null : null;
@@ -482,11 +1502,13 @@ export default function QuotesClient() {
   setDraft({
     ...initialDraft,
     prospect_id: presetProspectId,
+    customer_source: getDefaultDraftCustomerSource(presetProspectId),
     customer_name: presetProspect?.company_name || '',
     company_name: presetProspect?.company_name || '',
     contact_name: presetProspect?.contact_name || '',
     city: presetProspect?.city || '',
   });
+  setActiveQuoteTab('kund');
   setModalOpen(true);
   setHasAppliedPreset(true);
   }, [hasAppliedPreset, loading, presetProspectId, prospectsById, shouldOpenCreateForPreset]);
@@ -524,10 +1546,10 @@ export default function QuotesClient() {
           <span className={cn('absolute inset-y-0 left-0 w-1 rounded-l-[18px]', item.status === 'won' ? 'bg-emerald-400' : item.status === 'follow_up' ? 'bg-amber-400' : item.status === 'sent' ? 'bg-sky-400' : item.status === 'lost' ? 'bg-rose-300' : 'bg-slate-300')} />
 
           <div className="grid min-h-[52px] w-full content-start gap-0.5 pl-2">
-            <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
               {prospect ? 'Kopplat prospekt' : 'Fristående offert'}
             </span>
-            <strong className="truncate text-[15px] font-bold tracking-[-0.03em] text-slate-950">{item.project_name}</strong>
+            <strong className="truncate text-base font-bold tracking-[-0.03em] text-slate-950">{item.project_name}</strong>
             <p className="m-0 truncate text-sm text-slate-600">{getQuoteCustomerName(item)}</p>
           </div>
 
@@ -562,7 +1584,7 @@ export default function QuotesClient() {
         <span className={cn('absolute inset-y-0 left-0 w-1.5 rounded-l-[24px]', item.status === 'won' ? 'bg-emerald-400' : item.status === 'follow_up' ? 'bg-amber-400' : item.status === 'sent' ? 'bg-sky-400' : item.status === 'lost' ? 'bg-rose-300' : 'bg-slate-300')} />
 
         <div className="grid gap-1.5 pl-2">
-          <span className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">
             {prospect ? 'Kopplat prospekt' : 'Fristående offert'}
           </span>
           <div className="grid gap-0.5">
@@ -611,12 +1633,19 @@ export default function QuotesClient() {
     setDraft({
 	  ...initialDraft,
 	  prospect_id: presetProspectId,
+    customer_source: getDefaultDraftCustomerSource(presetProspectId),
 	  customer_name: presetProspect?.company_name || '',
     company_name: presetProspect?.company_name || '',
     contact_name: presetProspect?.contact_name || '',
     city: presetProspect?.city || '',
 	});
+    setActiveQuoteTab('kund');
     setModalOpen(true);
+  }
+
+  function closeModal() {
+    if (isDirty && !window.confirm('Du har osparade ändringar. Vill du verkligen stänga utan att spara?')) return;
+    setModalOpen(false);
   }
 
   function openEditModal(item: QuoteItem) {
@@ -624,8 +1653,10 @@ export default function QuotesClient() {
     setDraft({
       prospect_id: item.prospect_id || '',
       quote_type: item.quote_type || 'business',
+      customer_source: getDraftCustomerSource(item.customer_source, item.prospect_id),
       customer_name: item.customer_name || '',
       company_name: item.customer_snapshot?.company_name || '',
+      organization_number: item.customer_snapshot?.organization_number || '',
       personal_number: item.customer_snapshot?.personal_number || '',
       contact_name: item.customer_snapshot?.contact_name || '',
       email: item.customer_snapshot?.email || '',
@@ -636,7 +1667,12 @@ export default function QuotesClient() {
       visit_address: item.customer_snapshot?.visit_address || '',
       delivery_address: item.customer_snapshot?.delivery_address || '',
       invoice_address: item.customer_snapshot?.invoice_address || '',
-      items: item.line_items?.length ? item.line_items : [createEmptyLineItem()],
+      items: item.line_items?.length
+        ? item.line_items.map((line) => ({
+            ...line,
+            line_note: line.line_note || '',
+          }))
+        : [createEmptyLineItem()],
       project_name: item.project_name,
       description: item.description || '',
       amount: String(item.amount ?? ''),
@@ -656,6 +1692,7 @@ export default function QuotesClient() {
       notes: item.notes || '',
       create_follow_up_task: false,
     });
+    setActiveQuoteTab('kund');
     setModalOpen(true);
   }
 
@@ -728,12 +1765,16 @@ export default function QuotesClient() {
   }
 
   async function saveQuote() {
+    const effectiveCustomerName = draft.quote_type === 'business'
+      ? (draft.company_name.trim() || draft.customer_name.trim())
+      : draft.customer_name.trim();
+
     if (!draft.project_name.trim()) {
       toast.error('Offertnamn krävs');
       return;
     }
 
-    if (!draft.prospect_id && !draft.customer_name.trim()) {
+    if (!draft.prospect_id && !effectiveCustomerName) {
       toast.error('Välj prospekt eller ange kundnamn');
       return;
     }
@@ -780,12 +1821,19 @@ export default function QuotesClient() {
         : (Number.isFinite(vatPercentNumber) ? amountNumber * (vatPercentNumber / 100) : 0);
       const payload = {
         prospect_id: draft.prospect_id || null,
-        customer_name: draft.customer_name,
+        customer_name: effectiveCustomerName,
         quote_type: draft.quote_type,
+        customer_source: {
+          kind: draft.customer_source.kind,
+          sync_intent: draft.customer_source.kind === 'fortnox' ? 'linked' : draft.customer_source.sync_intent,
+          fortnox_customer_id: draft.customer_source.fortnox_customer_id || null,
+          fortnox_customer_name: draft.customer_source.fortnox_customer_name || null,
+        },
         customer_snapshot: {
-          customer_name: draft.customer_name || null,
-          company_name: draft.company_name || null,
-          personal_number: draft.personal_number || null,
+          customer_name: draft.quote_type === 'private' ? draft.customer_name || null : effectiveCustomerName || null,
+          company_name: draft.quote_type === 'business' ? draft.company_name || null : null,
+          organization_number: draft.quote_type === 'business' ? draft.organization_number || null : null,
+          personal_number: draft.quote_type === 'private' ? draft.personal_number || null : null,
           contact_name: draft.contact_name || null,
           email: draft.email || null,
           phone: draft.phone || null,
@@ -803,11 +1851,11 @@ export default function QuotesClient() {
         },
         line_items: draft.items,
         rot_details: {
-          enabled: draft.rot_enabled,
-          applicant_name: draft.rot_applicant_name || null,
-          personal_number: draft.rot_personal_number || null,
-          property_designation: draft.rot_property_designation || null,
-          rot_percent: Number(draft.rot_percent || '30'),
+          enabled: draft.quote_type === 'private' ? draft.rot_enabled : false,
+          applicant_name: draft.quote_type === 'private' && draft.rot_enabled ? draft.rot_applicant_name || null : null,
+          personal_number: draft.quote_type === 'private' && draft.rot_enabled ? draft.rot_personal_number || null : null,
+          property_designation: draft.quote_type === 'private' && draft.rot_enabled ? draft.rot_property_designation || null : null,
+          rot_percent: draft.quote_type === 'private' && draft.rot_enabled ? Number(draft.rot_percent || '30') : 30,
         },
         internal_handoff: {
           desired_installation_date: draft.desired_installation_date || null,
@@ -879,6 +1927,7 @@ export default function QuotesClient() {
           prospect_id: currentItem.prospect_id,
           customer_name: currentItem.customer_name,
           quote_type: currentItem.quote_type,
+          customer_source: currentItem.customer_source,
           customer_snapshot: currentItem.customer_snapshot,
           pricing_summary: currentItem.pricing_summary,
           line_items: currentItem.line_items,
@@ -954,22 +2003,22 @@ export default function QuotesClient() {
             <div className="rounded-[18px] border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(252,253,252,0.98))] p-3 shadow-[0_16px_30px_rgba(15,23,42,0.08)] ring-1 ring-white/80">
                 <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Alla offerter</div>
                 <div className="mt-1 text-[clamp(1.35rem,2vw,1.8rem)] font-bold tracking-[-0.04em] text-slate-950">{stats.total}</div>
-                <div className="mt-1 text-[13px] text-slate-500">Hela offertregistret oavsett utfall</div>
+                <div className="mt-1 text-sm text-slate-500">Hela offertregistret oavsett utfall</div>
             </div>
             <div className="rounded-[18px] border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(252,253,252,0.98))] p-3 shadow-[0_16px_30px_rgba(15,23,42,0.08)] ring-1 ring-white/80">
                 <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Aktiva</div>
                 <div className="mt-1 text-[clamp(1.35rem,2vw,1.8rem)] font-bold tracking-[-0.04em] text-slate-950">{stats.active}</div>
-                <div className="mt-1 text-[13px] text-slate-500">Utkast, skickade och uppföljning</div>
+                <div className="mt-1 text-sm text-slate-500">Utkast, skickade och uppföljning</div>
             </div>
             <div className="rounded-[18px] border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(252,253,252,0.98))] p-3 shadow-[0_16px_30px_rgba(15,23,42,0.08)] ring-1 ring-white/80">
                 <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Följ upp</div>
                 <div className="mt-1 text-[clamp(1.35rem,2vw,1.8rem)] font-bold tracking-[-0.04em] text-slate-950">{stats.followUp}</div>
-                <div className="mt-1 text-[13px] text-slate-500">Behöver nästa offertsteg</div>
+                <div className="mt-1 text-sm text-slate-500">Behöver nästa offertsteg</div>
             </div>
             <div className="rounded-[18px] border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(252,253,252,0.98))] p-3 shadow-[0_16px_30px_rgba(15,23,42,0.08)] ring-1 ring-white/80">
                 <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Vunna</div>
                 <div className="mt-1 text-[clamp(1.35rem,2vw,1.8rem)] font-bold tracking-[-0.04em] text-slate-950">{stats.won}</div>
-                <div className="mt-1 text-[13px] text-slate-500">Offerter som landat i affär</div>
+                <div className="mt-1 text-sm text-slate-500">Offerter som landat i affär</div>
             </div>
           </div>
         </div>
@@ -1029,401 +2078,164 @@ export default function QuotesClient() {
 
       {modalOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6 backdrop-blur-sm">
-          <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_30px_100px_rgba(15,23,42,0.25)] md:p-6">
-            <div className="grid gap-5">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="grid gap-1">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">CRM / Offerter</span>
-                  <h2 className="m-0 text-2xl font-bold tracking-[-0.04em] text-slate-950">{editingQuoteId ? 'Redigera offert' : 'Ny offert'}</h2>
-                  <p className="m-0 text-sm leading-6 text-slate-500">Registrera eller uppdatera en offert kopplad till ett prospekt. Själva pipelineförflyttningen sker i prospektflödet.</p>
+          <div className="flex h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#f8fafc_100%)] shadow-[0_20px_70px_rgba(15,23,42,0.22)] xl:max-w-[1380px]">
+
+            {/* Sticky header: title + tab strip */}
+            <div className="shrink-0 border-b border-slate-200 bg-white/95 backdrop-blur">
+              <div className="flex flex-wrap items-start justify-between gap-3 px-5 py-4">
+                <div className="grid gap-0.5">
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">CRM / Offerter</span>
+                  <h2 className="m-0 text-[clamp(1.4rem,2.2vw,2rem)] font-bold tracking-[-0.04em] text-slate-950">
+                    {editingQuoteId ? 'Redigera offert' : 'Ny offert'}
+                  </h2>
                 </div>
-                <button type="button" onClick={() => setModalOpen(false)} className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50">
+                <button type="button" onClick={closeModal} className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50">
                   Stäng
                 </button>
               </div>
-
-              <div className="grid gap-4 md:grid-cols-2">
-                <label className="grid gap-1 text-sm text-slate-600">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Prospekt</span>
-                  <select
-                    value={draft.prospect_id}
-                    onChange={(event) => {
-                      const prospectId = event.target.value;
-                      const prospect = prospectId ? prospectsById.get(prospectId) || null : null;
-                      setDraft((current) => ({
-                        ...current,
-                        prospect_id: prospectId,
-                        customer_name: prospect ? prospect.company_name : current.customer_name,
-                      }));
-                    }}
-                    className="rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 outline-none transition focus:border-slate-300"
-                  >
-                    <option value="">Ingen prospektkoppling</option>
-                    {prospects.map((prospect) => (
-                      <option key={prospect.id} value={prospect.id}>{prospect.company_name}</option>
-                    ))}
-                  </select>
-                </label>
-
-                <label className="grid gap-1 text-sm text-slate-600">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Kundtyp</span>
-                  <select value={draft.quote_type} onChange={(event) => setDraft((current) => ({ ...current, quote_type: event.target.value as 'private' | 'business', rot_enabled: event.target.value === 'business' ? false : current.rot_enabled }))} className="rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 outline-none transition focus:border-slate-300">
-                    <option value="business">Företag</option>
-                    <option value="private">Privatkund</option>
-                  </select>
-                </label>
-
-                <label className="grid gap-1 text-sm text-slate-600">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Kundnamn</span>
-                  <Input value={draft.customer_name} onChange={(event) => setDraft((current) => ({ ...current, customer_name: event.target.value }))} placeholder="Företag eller kund" />
-                </label>
-
-                <label className="grid gap-1 text-sm text-slate-600">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Företagsnamn</span>
-                  <Input value={draft.company_name} onChange={(event) => setDraft((current) => ({ ...current, company_name: event.target.value, customer_name: current.quote_type === 'business' && !current.customer_name ? event.target.value : current.customer_name }))} placeholder="Bolag AB" />
-                </label>
-
-                <label className="grid gap-1 text-sm text-slate-600">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Personnummer</span>
-                  <Input value={draft.personal_number} onChange={(event) => setDraft((current) => ({ ...current, personal_number: event.target.value }))} placeholder="ÅÅÅÅMMDD-XXXX" />
-                </label>
-
-                <label className="grid gap-1 text-sm text-slate-600">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Kontaktperson</span>
-                  <Input value={draft.contact_name} onChange={(event) => setDraft((current) => ({ ...current, contact_name: event.target.value }))} placeholder="Namn på kontakt" />
-                </label>
-
-                <label className="grid gap-1 text-sm text-slate-600">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">E-post</span>
-                  <Input value={draft.email} onChange={(event) => setDraft((current) => ({ ...current, email: event.target.value }))} placeholder="namn@example.com" />
-                </label>
-
-                <label className="grid gap-1 text-sm text-slate-600">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Telefon</span>
-                  <Input value={draft.phone} onChange={(event) => setDraft((current) => ({ ...current, phone: event.target.value }))} placeholder="070..." />
-                </label>
-
-                <label className="grid gap-1 text-sm text-slate-600">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Gatuadress</span>
-                  <Input value={draft.street_address} onChange={(event) => setDraft((current) => ({ ...current, street_address: event.target.value }))} placeholder="Gata 1" />
-                </label>
-
-                <label className="grid gap-1 text-sm text-slate-600">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Postnummer</span>
-                  <Input value={draft.postal_code} onChange={(event) => setDraft((current) => ({ ...current, postal_code: event.target.value }))} placeholder="123 45" />
-                </label>
-
-                <label className="grid gap-1 text-sm text-slate-600">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Ort</span>
-                  <Input value={draft.city} onChange={(event) => setDraft((current) => ({ ...current, city: event.target.value }))} placeholder="Ort" />
-                </label>
-
-                <label className="grid gap-1 text-sm text-slate-600 md:col-span-2">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Besöksadress</span>
-                  <Input value={draft.visit_address} onChange={(event) => setDraft((current) => ({ ...current, visit_address: event.target.value }))} placeholder="Besöksadress om annan än kundadress" />
-                </label>
-
-                <label className="grid gap-1 text-sm text-slate-600 md:col-span-2">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Leveransadress</span>
-                  <Input value={draft.delivery_address} onChange={(event) => setDraft((current) => ({ ...current, delivery_address: event.target.value }))} placeholder="Leveransadress" />
-                </label>
-
-                <label className="grid gap-1 text-sm text-slate-600 md:col-span-2">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Fakturaadress</span>
-                  <Input value={draft.invoice_address} onChange={(event) => setDraft((current) => ({ ...current, invoice_address: event.target.value }))} placeholder="Fakturaadress" />
-                </label>
-
-                <label className="grid gap-1 text-sm text-slate-600 md:col-span-2">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Offertnamn / projekt</span>
-                  <Input value={draft.project_name} onChange={(event) => setDraft((current) => ({ ...current, project_name: event.target.value }))} placeholder="Ex. Takisolering villa Norrköping" />
-                </label>
-
-                <label className="grid gap-1 text-sm text-slate-600">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Belopp</span>
-                  <Input value={draft.amount} onChange={(event) => setDraft((current) => ({ ...current, amount: event.target.value }))} inputMode="decimal" placeholder="0" />
-                </label>
-
-                <label className="grid gap-1 text-sm text-slate-600">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Moms %</span>
-                  <Input value={draft.vat_percent} onChange={(event) => setDraft((current) => ({ ...current, vat_percent: event.target.value }))} inputMode="decimal" placeholder="25" />
-                </label>
-
-                <label className="grid gap-1 text-sm text-slate-600">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Status</span>
-                  <select value={draft.status} onChange={(event) => setDraft((current) => ({ ...current, status: event.target.value as QuoteItem['status'] }))} className="rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 outline-none transition focus:border-slate-300">
-                    {Object.entries(quoteStatusMeta).map(([value, meta]) => (
-                      <option key={value} value={value}>{meta.label}</option>
-                    ))}
-                  </select>
-                </label>
-
-                <label className="grid gap-1 text-sm text-slate-600">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Offertdatum</span>
-                  <Input value={draft.quote_date} onChange={(event) => setDraft((current) => ({ ...current, quote_date: event.target.value }))} type="date" />
-                </label>
-
-                <label className="grid gap-1 text-sm text-slate-600">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Följ upp senast</span>
-                  <Input value={draft.follow_up_date} onChange={(event) => setDraft((current) => ({ ...current, follow_up_date: event.target.value }))} type="date" />
-                </label>
-
-                <label className="grid gap-1 text-sm text-slate-600">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Giltig till</span>
-                  <Input value={draft.valid_until} onChange={(event) => setDraft((current) => ({ ...current, valid_until: event.target.value }))} type="date" />
-                </label>
-
-                <label className="grid gap-1 text-sm text-slate-600 md:col-span-2">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Beskrivning</span>
-                  <Textarea value={draft.description} onChange={(event) => setDraft((current) => ({ ...current, description: event.target.value }))} rows={3} placeholder="Kort om omfattning eller vad som offereras" />
-                </label>
-
-                <div className="grid gap-4 rounded-[22px] border border-slate-200 bg-white p-4 md:col-span-2">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Offert­rader</div>
-                      <div className="text-sm font-semibold text-slate-900">Artiklar och mängder som bygger beloppet</div>
-                    </div>
-                    <button type="button" onClick={() => setDraft((current) => ({ ...current, items: [...current.items, createEmptyLineItem()] }))} className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-sm font-semibold text-emerald-900 transition hover:border-emerald-300 hover:bg-emerald-100">
-                      + Lägg till rad
-                    </button>
-                  </div>
-
-                  <div className="grid gap-3">
-                    {draft.items.map((row) => {
-                      const rowMetrics = effectiveRows.find((item) => item.id === row.id);
-                      const isM3 = (row.pricing_mode ?? 'm3') === 'm3';
-
+              {(() => {
+                const tabIssueKeys: Record<string, string[]> = {
+                  kund: [
+                    'Kund eller prospekt måste anges',
+                    'Prospektkälla kräver valt prospekt',
+                    'Fortnox-kund behöver en reserverad kundreferens',
+                    'Privatkund behöver personnummer',
+                    'Företagskund behöver företagsnamn',
+                  ],
+                  offert: [
+                    'Offertnamn saknas',
+                    'Ange giltigt belopp eller bygg offerten med rader',
+                    'Alla konfigurerade offert-rader behöver mängd och pris',
+                  ],
+                  rot_internt: [
+                    'ROT är bara tillåtet för privatkund',
+                    'ROT kräver personnummer för sökande',
+                    'ROT kräver fastighetsbeteckning',
+                  ],
+                };
+                const currentIssues = getQuoteDraftValidationIssues({ draft, effectiveRows });
+                return (
+                  <div className="flex flex-wrap gap-2 border-t border-slate-100 px-5 py-3">
+                    {(['kund', 'offert', 'rot_internt', ...(editingQuoteId ? ['arbetsorder'] : [])] as Array<'kund' | 'offert' | 'rot_internt' | 'arbetsorder'>).map((tab) => {
+                      const labels: Record<string, string> = {
+                        kund: 'Kund',
+                        offert: 'Offert & rader',
+                        rot_internt: draft.quote_type === 'private' ? 'ROT & Internt' : 'Internt',
+                        arbetsorder: 'Arbetsorder',
+                      };
+                      const tabKeys = tabIssueKeys[tab];
+                      const hasError = activeQuoteTab !== tab && tabKeys?.some((key) => currentIssues.includes(key));
                       return (
-                        <div key={row.id} className="grid gap-3 rounded-[20px] border border-slate-200 bg-slate-50 p-3">
-                          <div className="grid gap-3 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,1.2fr)_auto] xl:items-end">
-                            <label className="grid gap-1 text-sm text-slate-600">
-                              <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Artikel</span>
-                              <ArticlePicker
-                                value={row.article_name || ''}
-                                onSelect={(article) => {
-                                  const construction = inferConstructionFromArticle(article.name);
-                                  const unitName = getArticleUnitName(article.unit);
-                                  const normalizedUnit = unitName.trim().toLowerCase();
-                                  const pricingMode: 'm3' | 'item' = normalizedUnit === 'm3' || normalizedUnit === 'm³' || /m\s*³/i.test(normalizedUnit) ? 'm3' : 'item';
-                                  setDraft((current) => ({
-                                    ...current,
-                                    items: current.items.map((item) => item.id === row.id ? {
-                                      ...item,
-                                      article_id: article.id || null,
-                                      article_name: article.name || null,
-                                      article_number: article.articleNumber || null,
-                                      article_price: typeof article.price === 'number' ? article.price : null,
-                                      article_unit_name: unitName || null,
-                                      construction: construction || item.construction,
-                                      pricing_mode: pricingMode,
-                                      auto_price: false,
-                                      unit_price: article.price != null ? String(article.price) : item.unit_price,
-                                      quantity: pricingMode === 'item' && (!item.quantity || Number(item.quantity) <= 0) ? '1' : item.quantity,
-                                    } : item),
-                                  }));
-                                }}
-                                onClear={() => setDraft((current) => ({
-                                  ...current,
-                                  items: current.items.map((item) => item.id === row.id ? {
-                                    ...item,
-                                    article_id: null,
-                                    article_name: null,
-                                    article_number: null,
-                                    article_price: null,
-                                    article_unit_name: null,
-                                  } : item),
-                                }))}
-                              />
-                            </label>
-
-                            {isM3 ? (
-                              <label className="grid gap-1 text-sm text-slate-600">
-                                <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">m²</span>
-                                <Input value={row.m2} onChange={(event) => setDraft((current) => ({ ...current, items: current.items.map((item) => item.id === row.id ? { ...item, m2: event.target.value } : item) }))} inputMode="decimal" placeholder="0" />
-                              </label>
-                            ) : (
-                              <label className="grid gap-1 text-sm text-slate-600">
-                                <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Antal</span>
-                                <Input value={row.quantity} onChange={(event) => setDraft((current) => ({ ...current, items: current.items.map((item) => item.id === row.id ? { ...item, quantity: event.target.value } : item) }))} inputMode="decimal" placeholder="1" />
-                              </label>
-                            )}
-
-                            {isM3 ? (
-                              <label className="grid gap-1 text-sm text-slate-600">
-                                <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Tjocklek mm</span>
-                                <Input value={row.thickness_mm} onChange={(event) => setDraft((current) => ({ ...current, items: current.items.map((item) => item.id === row.id ? { ...item, thickness_mm: event.target.value } : item) }))} inputMode="decimal" placeholder="200" />
-                              </label>
-                            ) : (
-                              <div className="hidden xl:block" />
-                            )}
-
-                            <div className="grid gap-2">
-                              <div className="grid gap-1 text-sm text-slate-600 md:grid-cols-[minmax(0,1fr)_auto_minmax(96px,0.8fr)] md:items-end">
-                                <label className="grid gap-1">
-                                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">A-pris</span>
-                                  <Input value={row.auto_price ? String(rowMetrics?.unit ?? row.article_price ?? '') : row.unit_price} onChange={(event) => setDraft((current) => ({ ...current, items: current.items.map((item) => item.id === row.id ? { ...item, unit_price: event.target.value } : item) }))} inputMode="decimal" placeholder="0" disabled={row.auto_price} />
-                                </label>
-                                <label className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600">
-                                  <input type="checkbox" checked={!row.auto_price} onChange={(event) => setDraft((current) => ({ ...current, items: current.items.map((item) => item.id === row.id ? { ...item, auto_price: !event.target.checked } : item) }))} className="h-4 w-4 rounded border-slate-300" />
-                                  Manuellt
-                                </label>
-                                <label className="grid gap-1">
-                                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Rabatt %</span>
-                                  <Input value={row.discount_percent} onChange={(event) => setDraft((current) => ({ ...current, items: current.items.map((item) => item.id === row.id ? { ...item, discount_percent: event.target.value } : item) }))} inputMode="decimal" placeholder="0" />
-                                </label>
-                              </div>
-                            </div>
-
-                            <button type="button" onClick={() => setDraft((current) => ({ ...current, items: current.items.length > 1 ? current.items.filter((item) => item.id !== row.id) : [createEmptyLineItem()] }))} className="rounded-full border border-rose-200 bg-white px-3 py-2 text-sm font-semibold text-rose-700 transition hover:border-rose-300 hover:bg-rose-50">
-                              Ta bort
-                            </button>
-                          </div>
-
-                          <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
-                            <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1">{rowMetrics?.label || 'Konfigurera raden'}</span>
-                            <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1">Mängd {rowMetrics?.amount?.toFixed(2) || '0.00'}</span>
-                            <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1">A-pris {formatCurrency(rowMetrics?.effectiveUnit ?? 0, 'SEK')}</span>
-                            <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 font-semibold text-emerald-900">Radsumma {formatCurrency(rowMetrics?.rowTotal ?? 0, 'SEK')}</span>
-                          </div>
-                        </div>
+                        <button
+                          key={tab}
+                          type="button"
+                          onClick={() => setActiveQuoteTab(tab)}
+                          className={cn(
+                            'relative rounded-full border px-3 py-1.5 text-sm font-semibold transition',
+                            activeQuoteTab === tab
+                              ? 'border-slate-900 bg-slate-900 text-white'
+                              : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50',
+                          )}
+                        >
+                          {labels[tab]}
+                          {hasError ? (
+                            <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border-2 border-white bg-rose-500" />
+                          ) : null}
+                        </button>
                       );
                     })}
                   </div>
-
-                  <div className="flex flex-wrap items-center gap-2 text-sm text-slate-600">
-                    <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5">Delsumma {formatCurrency(totals.subtotal, 'SEK')}</span>
-                    <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5">Moms {formatCurrency(totals.vat, 'SEK')}</span>
-                    <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 font-semibold text-emerald-900">Total {formatCurrency(totals.total, 'SEK')}</span>
-                  </div>
-                </div>
-
-                <div className="grid gap-3 rounded-[22px] border border-slate-200 bg-slate-50 p-4 md:col-span-2">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">ROT</div>
-                      <div className="text-sm font-semibold text-slate-900">Privatkund och skatteunderlag</div>
-                    </div>
-                    <label className="inline-flex items-center gap-2 text-sm text-slate-600">
-                      <input type="checkbox" checked={draft.rot_enabled} disabled={draft.quote_type !== 'private'} onChange={(event) => setDraft((current) => ({ ...current, rot_enabled: event.target.checked }))} className="h-4 w-4 rounded border-slate-300" />
-                      ROT-avdrag
-                    </label>
-                  </div>
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <label className="grid gap-1 text-sm text-slate-600">
-                      <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">ROT-sökande</span>
-                      <Input value={draft.rot_applicant_name} onChange={(event) => setDraft((current) => ({ ...current, rot_applicant_name: event.target.value }))} placeholder="Namn på sökande" disabled={!draft.rot_enabled} />
-                    </label>
-                    <label className="grid gap-1 text-sm text-slate-600">
-                      <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">ROT personnummer</span>
-                      <Input value={draft.rot_personal_number} onChange={(event) => setDraft((current) => ({ ...current, rot_personal_number: event.target.value }))} placeholder="ÅÅÅÅMMDD-XXXX" disabled={!draft.rot_enabled} />
-                    </label>
-                    <label className="grid gap-1 text-sm text-slate-600 md:col-span-2">
-                      <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Fastighetsbeteckning</span>
-                      <Input value={draft.rot_property_designation} onChange={(event) => setDraft((current) => ({ ...current, rot_property_designation: event.target.value }))} placeholder="Fastighetsbeteckning" disabled={!draft.rot_enabled} />
-                    </label>
-                    <label className="grid gap-1 text-sm text-slate-600">
-                      <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">ROT %</span>
-                      <Input value={draft.rot_percent} onChange={(event) => setDraft((current) => ({ ...current, rot_percent: event.target.value }))} inputMode="decimal" placeholder="30" disabled={!draft.rot_enabled} />
-                    </label>
-                    <div className="rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-600">
-                      ROT följer med till intern handoff och framtida orderflöde, men ska senare kunna styras separat från PDF-innehållet.
-                    </div>
-                  </div>
-                </div>
-
-                <label className="grid gap-1 text-sm text-slate-600 md:col-span-2">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Interna anteckningar</span>
-                  <Textarea value={draft.notes} onChange={(event) => setDraft((current) => ({ ...current, notes: event.target.value }))} rows={4} placeholder="Det här ska vi komma ihåg inför uppföljningen" />
-                </label>
-
-                <div className="grid gap-4 rounded-[22px] border border-slate-200 bg-slate-50 p-4 md:col-span-2">
-                  <div>
-                    <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Intern handoff</div>
-                    <div className="text-sm font-semibold text-slate-900">Fält som följer med till arbetsorder men inte behöver vara med i PDF</div>
-                  </div>
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <label className="grid gap-1 text-sm text-slate-600">
-                      <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Önskat installationsdatum</span>
-                      <Input value={draft.desired_installation_date} onChange={(event) => setDraft((current) => ({ ...current, desired_installation_date: event.target.value }))} type="date" />
-                    </label>
-                    <label className="grid gap-1 text-sm text-slate-600">
-                      <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Arbetets scope</span>
-                      <Input value={draft.work_scope} onChange={(event) => setDraft((current) => ({ ...current, work_scope: event.target.value }))} placeholder="Kort operativ scope" />
-                    </label>
-                    <label className="grid gap-1 text-sm text-slate-600 md:col-span-2">
-                      <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Överlämningsnotering</span>
-                      <Textarea value={draft.handoff_notes} onChange={(event) => setDraft((current) => ({ ...current, handoff_notes: event.target.value }))} rows={3} placeholder="Intern information för projekt eller arbetsorder" />
-                    </label>
-                  </div>
-                </div>
-
-                {editingQuoteId ? (
-                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-[22px] border border-emerald-200 bg-emerald-50 px-4 py-3 md:col-span-2">
-                    <div className="grid gap-0.5">
-                      <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-800">Arbetsorder</span>
-                      <span className="text-sm text-emerald-950">
-                        {quotes.find((item) => item.id === editingQuoteId)?.work_order_number
-                          ? `Arbetsorder ${quotes.find((item) => item.id === editingQuoteId)?.work_order_number} är redan skapad.`
-                          : draft.status === 'won'
-                            ? 'Offerten är vunnen och kan nu bli en intern arbetsorder.'
-                            : 'Sätt offerten till vunnen för att skapa arbetsorder.'}
-                      </span>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {quotes.find((item) => item.id === editingQuoteId)?.work_order_id ? (
-                        <button
-                          type="button"
-                          onClick={() => router.push(`/crm/arbetsorder?work_order_id=${quotes.find((item) => item.id === editingQuoteId)?.work_order_id}`)}
-                          className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
-                        >
-                          Öppna arbetsorder
-                        </button>
-                      ) : null}
-                      <button
-                        type="button"
-                        onClick={() => editingQuoteId ? createWorkOrderFromQuote(editingQuoteId) : null}
-                        disabled={!editingQuoteId || draft.status !== 'won' || Boolean(quotes.find((item) => item.id === editingQuoteId)?.work_order_id || quotes.find((item) => item.id === editingQuoteId)?.work_order_number) || creatingWorkOrderId === editingQuoteId}
-                        className="rounded-full border border-emerald-900 bg-emerald-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-950 disabled:cursor-not-allowed disabled:border-emerald-300 disabled:bg-white disabled:text-emerald-700 disabled:opacity-70"
-                      >
-                        {creatingWorkOrderId === editingQuoteId
-                          ? 'Skapar arbetsorder...'
-                          : quotes.find((item) => item.id === editingQuoteId)?.work_order_number
-                            ? 'Arbetsorder skapad'
-                            : 'Skapa arbetsorder'}
-                      </button>
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-
-              {!editingQuoteId ? (
-                <label className="flex items-start gap-3 rounded-[22px] border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-                  <input
-                    type="checkbox"
-                    checked={draft.create_follow_up_task}
-                    onChange={(event) => setDraft((current) => ({ ...current, create_follow_up_task: event.target.checked }))}
-                    className="mt-0.5 h-4 w-4 rounded border-slate-300"
-                  />
-                  <span>
-                    Skapa uppföljningsuppgift automatiskt om ett uppföljningsdatum anges.
-                  </span>
-                </label>
-              ) : null}
-
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <span className="text-sm text-slate-500">
-                  När offertstatus går till skickad eller följ upp synkas prospektet automatiskt till offertläget.
-                </span>
-                <div className="flex flex-wrap gap-2">
-                  <button type="button" onClick={() => setModalOpen(false)} className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50">
-                    Avbryt
-                  </button>
-                  <button type="button" onClick={saveQuote} disabled={submitting} className="rounded-full border border-slate-900 bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-950 disabled:cursor-not-allowed disabled:opacity-60">
-                    {submitting ? 'Sparar…' : editingQuoteId ? 'Spara offert' : 'Skapa offert'}
-                  </button>
-                </div>
-              </div>
+                );
+              })()}
             </div>
+
+            {/* Scrollable tab content */}
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 md:px-6">
+
+              {activeQuoteTab === 'kund' && (
+                <div className="grid gap-5">
+                  <QuoteCustomerSourceSection draft={draft} setDraft={setDraft} prospects={prospects} prospectsById={prospectsById} />
+                  <QuoteCustomerSection draft={draft} setDraft={setDraft} />
+                </div>
+              )}
+
+              {activeQuoteTab === 'offert' && (
+                <div className="grid gap-5">
+                  <QuoteBasicsSection draft={draft} setDraft={setDraft} />
+                  {!editingQuoteId ? (
+                    <label className="flex items-start gap-3 rounded-[22px] border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                      <input
+                        type="checkbox"
+                        checked={draft.create_follow_up_task}
+                        onChange={(event) => setDraft((current) => ({ ...current, create_follow_up_task: event.target.checked }))}
+                        className="mt-0.5 h-4 w-4 rounded border-slate-300"
+                      />
+                      <span>Skapa uppföljningsuppgift automatiskt om ett uppföljningsdatum anges.</span>
+                    </label>
+                  ) : null}
+                  <QuoteLineItemsSection draft={draft} setDraft={setDraft} effectiveRows={effectiveRows} totals={totals} />
+                </div>
+              )}
+
+              {activeQuoteTab === 'rot_internt' && (
+                <div className="grid gap-5 lg:grid-cols-2 lg:items-start">
+                  <QuoteRotSection draft={draft} setDraft={setDraft} />
+                  <QuoteInternalHandoffSection draft={draft} setDraft={setDraft} />
+                </div>
+              )}
+
+              {activeQuoteTab === 'arbetsorder' && editingQuoteId ? (
+                <QuoteWorkOrderSection
+                  editingQuote={editingQuote}
+                  draftStatus={draft.status}
+                  creatingWorkOrder={creatingWorkOrderId === editingQuoteId}
+                  onOpenWorkOrder={() => {
+                    if (editingQuote?.work_order_id) {
+                      router.push(`/crm/arbetsorder?work_order_id=${editingQuote.work_order_id}`);
+                    }
+                  }}
+                  onCreateWorkOrder={() => {
+                    if (editingQuoteId) {
+                      void createWorkOrderFromQuote(editingQuoteId);
+                    }
+                  }}
+                />
+              ) : null}
+            </div>
+
+            {/* Sticky footer: validation strip + action buttons */}
+            {(() => {
+              const validationIssues = getQuoteDraftValidationIssues({ draft, effectiveRows });
+              return (
+                <div className="shrink-0 border-t border-slate-200 bg-white/95 px-5 py-4 backdrop-blur">
+                  <div className={cn(
+                    'mb-3 flex flex-wrap items-center justify-between gap-3 rounded-[18px] border px-4 py-2.5',
+                    validationIssues.length === 0 ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50',
+                  )}>
+                    <span className={cn('text-sm font-semibold', validationIssues.length === 0 ? 'text-emerald-950' : 'text-amber-950')}>
+                      {validationIssues.length === 0 ? 'Redo att spara' : `${validationIssues.length} saker saknas`}
+                    </span>
+                    {validationIssues.length > 0 ? (
+                      <div className="flex flex-wrap gap-1.5">
+                        {validationIssues.map((issue) => (
+                          <span key={issue} className="rounded-full border border-amber-300 bg-white px-2 py-0.5 text-xs font-semibold text-amber-900">
+                            {issue}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    <button type="button" onClick={closeModal} className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50">
+                      Avbryt
+                    </button>
+                    <button type="button" onClick={saveQuote} disabled={submitting} className="rounded-full border border-slate-900 bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-950 disabled:cursor-not-allowed disabled:opacity-60">
+                      {submitting ? 'Sparar…' : editingQuoteId ? 'Spara offert' : 'Skapa offert'}
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         </div>
       ) : null}
@@ -1431,7 +2243,7 @@ export default function QuotesClient() {
   );
 }
 
-function ArticlePicker({ value, onSelect, onClear }: { value: string; onSelect: (article: ArticleLite) => void; onClear: () => void }) {
+function ArticlePicker({ value, onSelect, onClear, showSelectionHint = true }: { value: string; onSelect: (article: ArticleLite) => void; onClear: () => void; showSelectionHint?: boolean }) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -1483,15 +2295,16 @@ function ArticlePicker({ value, onSelect, onClear }: { value: string; onSelect: 
           }}
           onFocus={() => setOpen(true)}
           placeholder={value || 'Sök artikel...'}
+          className="min-h-10 px-2.5 py-1.5 text-sm"
         />
         {value ? (
-          <button type="button" onClick={onClear} className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50">
+          <button type="button" onClick={onClear} className="rounded-full border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50">
             Rensa
           </button>
         ) : null}
       </div>
 
-      {value ? <div className="text-xs text-slate-500">Vald artikel: {value}</div> : null}
+      {value && showSelectionHint ? <div className="text-xs text-slate-500">Vald artikel: {value}</div> : null}
 
       {open && query.trim().length >= 2 ? (
         <div className="absolute left-0 right-0 top-full z-20 mt-1 grid overflow-hidden rounded-[18px] border border-slate-200 bg-white shadow-[0_18px_38px_rgba(15,23,42,0.12)]">

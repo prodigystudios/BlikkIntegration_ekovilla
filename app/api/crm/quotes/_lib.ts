@@ -19,12 +19,22 @@ function parseAmount(value: unknown) {
 const statusSchema = z.enum(['draft', 'sent', 'follow_up', 'won', 'lost']);
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Ogiltigt datum');
 const quoteTypeSchema = z.enum(['private', 'business']);
+const customerSourceKindSchema = z.enum(['prospect', 'local', 'fortnox']);
+const customerSyncIntentSchema = z.enum(['local_only', 'on_work_order', 'linked']);
 const lineItemConstructionSchema = z.enum(['vagg', 'snedtak', 'vind', '']);
 const lineItemPricingSchema = z.enum(['m3', 'item']);
+
+const customerSourceSchema = z.object({
+  kind: customerSourceKindSchema.optional().default('local'),
+  sync_intent: customerSyncIntentSchema.optional().default('local_only'),
+  fortnox_customer_id: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
+  fortnox_customer_name: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
+});
 
 const customerSnapshotSchema = z.object({
   customer_name: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
   company_name: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
+  organization_number: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
   personal_number: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
   contact_name: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
   email: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
@@ -72,6 +82,7 @@ const quoteLineItemSchema = z.object({
   article_price: z.preprocess((value) => (value == null || value === '' ? null : parseAmount(value)), z.number().finite('Ogiltigt artikelpris').nullable()).optional().default(null),
   article_unit_name: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
   discount_percent: z.preprocess((value) => normalizeOptionalText(value) ?? '', z.string()).optional().default(''),
+  line_note: z.preprocess((value) => normalizeOptionalText(value) ?? '', z.string()).optional().default(''),
 });
 
 export const listCrmQuotesQuerySchema = z.object({
@@ -86,6 +97,7 @@ export const createCrmQuoteSchema = z.object({
   project_name: z.string().trim().min(1, 'Offertnamn krävs'),
   description: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
   quote_type: quoteTypeSchema.optional().default('business'),
+  customer_source: customerSourceSchema.optional().default({}),
   customer_snapshot: customerSnapshotSchema.optional().default({}),
   pricing_summary: pricingSummarySchema.optional().default({}),
   line_items: z.array(quoteLineItemSchema).optional().default([]),
@@ -150,6 +162,22 @@ export const createCrmQuoteSchema = z.object({
         message: 'Lägg till minst en offert-rad eller rensa radlistan',
       });
     }
+  }
+
+  if (value.customer_source.kind === 'prospect' && !value.prospect_id) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['customer_source', 'kind'],
+      message: 'Prospekt måste vara valt när kundkällan är prospekt',
+    });
+  }
+
+  if (value.customer_source.kind === 'fortnox' && !value.customer_source.fortnox_customer_name) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['customer_source', 'fortnox_customer_name'],
+      message: 'Fortnox-kund kräver reserverat kundnamn tills sökningen är byggd',
+    });
   }
 });
 

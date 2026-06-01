@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import SectionCard from '../../../components/ui/SectionCard';
 import Input from '../../../components/ui/Input';
+import Select from '../../../components/ui/Select';
 import Textarea from '../../../components/ui/Textarea';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
@@ -141,6 +142,8 @@ function formatCurrency(value: number | string | null | undefined, currencyCode:
 
 export default function WorkOrdersClient() {
   const toast = useToast();
+  const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
   const [workOrders, setWorkOrders] = useState<WorkOrderItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -160,8 +163,28 @@ export default function WorkOrdersClient() {
   const [postingComment, setPostingComment] = useState(false);
   const [timeDraft, setTimeDraft] = useState({ work_date: new Date().toISOString().slice(0, 10), hours: '', note: '' });
   const [commentDraft, setCommentDraft] = useState('');
+  const [suppressHighlightedAutoOpen, setSuppressHighlightedAutoOpen] = useState(false);
 
   const highlightedWorkOrderId = searchParams.get('work_order_id') || '';
+
+  function closeWorkOrderModal() {
+    setSuppressHighlightedAutoOpen(true);
+    setModalOpen(false);
+    setSelectedWorkOrderId(null);
+
+    if (!highlightedWorkOrderId) return;
+
+    const nextParams = new URLSearchParams(searchParams.toString());
+    nextParams.delete('work_order_id');
+    const nextQuery = nextParams.toString();
+    router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, { scroll: false });
+  }
+
+  useEffect(() => {
+    if (!highlightedWorkOrderId) {
+      setSuppressHighlightedAutoOpen(false);
+    }
+  }, [highlightedWorkOrderId]);
 
   useEffect(() => {
     let active = true;
@@ -211,6 +234,7 @@ export default function WorkOrdersClient() {
 
   useEffect(() => {
     if (highlightedWorkOrderId) {
+      if (suppressHighlightedAutoOpen) return;
       const highlighted = visibleWorkOrders.find((item) => item.id === highlightedWorkOrderId);
       if (highlighted) {
         setSelectedWorkOrderId(highlighted.id);
@@ -224,7 +248,7 @@ export default function WorkOrdersClient() {
       setSelectedWorkOrderId(null);
       return;
     }
-  }, [highlightedWorkOrderId, modalOpen, visibleWorkOrders]);
+  }, [highlightedWorkOrderId, modalOpen, suppressHighlightedAutoOpen, visibleWorkOrders]);
 
   const selectedWorkOrder = useMemo(
     () => workOrders.find((item) => item.id === selectedWorkOrderId) || null,
@@ -527,20 +551,25 @@ export default function WorkOrdersClient() {
 
       {modalOpen && selectedWorkOrder ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 px-4 py-6 backdrop-blur-sm">
-          <div className="max-h-[92vh] w-full max-w-6xl overflow-y-auto rounded-[30px] border border-slate-200 bg-white p-5 shadow-[0_30px_100px_rgba(15,23,42,0.25)] md:p-6">
-            <div className="grid gap-5">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="grid gap-1">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">CRM / Arbetsorder / {selectedWorkOrder.order_number}</span>
-                  <h2 className="m-0 text-[clamp(1.6rem,2.5vw,2.2rem)] font-bold tracking-[-0.04em] text-slate-950">{selectedWorkOrder.project_name}</h2>
-                  <p className="m-0 text-sm leading-6 text-slate-500">{selectedWorkOrder.client_name}. Offertens ekonomi ligger kvar separat, medan arbetsordern här blir underlaget för fortsatt leverans, tid och kommentarer.</p>
+          <div className="flex h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-[30px] border border-slate-200 bg-white shadow-[0_30px_100px_rgba(15,23,42,0.25)]">
+
+            {/* Sticky header: title + tab strip */}
+            <div className="shrink-0 border-b border-slate-200 bg-white/95 backdrop-blur">
+              <div className="flex flex-wrap items-start justify-between gap-3 px-5 py-4">
+                <div className="grid gap-0.5">
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                    CRM / Arbetsorder / {selectedWorkOrder.order_number}
+                  </span>
+                  <h2 className="m-0 text-[clamp(1.4rem,2.2vw,2rem)] font-bold tracking-[-0.04em] text-slate-950">
+                    {selectedWorkOrder.project_name}
+                  </h2>
+                  <p className="m-0 text-sm text-slate-500">{selectedWorkOrder.client_name}</p>
                 </div>
-                <button type="button" onClick={() => setModalOpen(false)} className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50">
+                <button type="button" onClick={closeWorkOrderModal} className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50">
                   Stäng
                 </button>
               </div>
-
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap gap-2 border-t border-slate-100 px-5 py-3">
                 {([
                   ['overview', 'Översikt'],
                   ['economy', 'Ekonomi'],
@@ -561,6 +590,10 @@ export default function WorkOrdersClient() {
                   </button>
                 ))}
               </div>
+            </div>
+
+            {/* Scrollable tab content */}
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 md:px-6">
 
               {activeTab === 'overview' ? (
                 <div className="grid gap-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
@@ -568,9 +601,9 @@ export default function WorkOrdersClient() {
                     <div className="grid gap-4 rounded-[24px] border border-slate-200 bg-slate-50 p-4 md:grid-cols-2">
                       <label className="grid gap-1 text-sm text-slate-600">
                         <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Status</span>
-                        <select value={draft.status} onChange={(event) => setDraft((current) => ({ ...current, status: event.target.value as WorkOrderStatus }))} className="rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 outline-none transition focus:border-slate-300">
+                        <Select value={draft.status} onChange={(event) => setDraft((current) => ({ ...current, status: event.target.value as WorkOrderStatus }))}>
                           {Object.entries(workOrderStatusMeta).map(([value, meta]) => <option key={value} value={value}>{meta.label}</option>)}
-                        </select>
+                        </Select>
                       </label>
                       <label className="grid gap-1 text-sm text-slate-600">
                         <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Önskat installationsdatum</span>
@@ -599,10 +632,7 @@ export default function WorkOrdersClient() {
                     </div>
 
                     <div className="grid gap-4 rounded-[24px] border border-slate-200 bg-white p-4">
-                      <div>
-                        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Intern handoff</div>
-                        <div className="text-sm font-semibold text-slate-900">Det operativa underlaget som teamet tar vidare</div>
-                      </div>
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Intern handoff</div>
                       <label className="grid gap-1 text-sm text-slate-600">
                         <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Arbetets scope</span>
                         <Input value={draft.work_scope} onChange={(event) => setDraft((current) => ({ ...current, work_scope: event.target.value }))} placeholder="Kort operativ scope" />
@@ -618,7 +648,7 @@ export default function WorkOrdersClient() {
                     </div>
                   </div>
 
-                  <div className="grid gap-4">
+                  <div className="grid gap-4 lg:content-start">
                     <div className="grid gap-3 rounded-[24px] border border-slate-200 bg-slate-50 p-4">
                       <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Snabböversikt</div>
                       <div className="grid gap-2 text-sm text-slate-600">
@@ -642,17 +672,13 @@ export default function WorkOrdersClient() {
                 <div className="grid gap-4">
                   <div className="grid gap-3 rounded-[24px] border border-slate-200 bg-white p-4">
                     <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Ekonomi</div>
-                        <div className="text-sm font-semibold text-slate-900">Underlag som senare kan bli fakturabas</div>
-                      </div>
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Ekonomi</div>
                       <div className="flex flex-wrap gap-2 text-sm text-slate-600">
                         <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5">Delsumma {formatCurrency(selectedWorkOrder.pricing_summary?.subtotal ?? 0, selectedWorkOrder.currency_code)}</span>
                         <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5">Moms {formatCurrency(selectedWorkOrder.pricing_summary?.vat ?? 0, selectedWorkOrder.currency_code)}</span>
                         <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 font-semibold text-emerald-900">Total {formatCurrency(selectedWorkOrder.pricing_summary?.total ?? selectedWorkOrder.amount, selectedWorkOrder.currency_code)}</span>
                       </div>
                     </div>
-
                     <div className="grid gap-3 md:grid-cols-3">
                       <div className="rounded-[20px] border border-slate-200 bg-slate-50 p-4">
                         <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Valuta</div>
@@ -673,10 +699,7 @@ export default function WorkOrdersClient() {
 
               {activeTab === 'articles' ? (
                 <div className="grid gap-3 rounded-[24px] border border-slate-200 bg-white p-4">
-                  <div>
-                    <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Artiklar</div>
-                    <div className="text-sm font-semibold text-slate-900">Raderna ärvda från offerten</div>
-                  </div>
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Artiklar</div>
                   <div className="grid gap-2">
                     {(selectedWorkOrder.line_items || []).map((item) => (
                       <div key={item.id} className="flex flex-wrap items-center justify-between gap-2 rounded-[18px] border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
@@ -697,10 +720,7 @@ export default function WorkOrdersClient() {
                 <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
                   <div className="grid gap-3 rounded-[24px] border border-slate-200 bg-white p-4">
                     <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Tidrapporter</div>
-                        <div className="text-sm font-semibold text-slate-900">Rapporterad tid mot arbetsordern</div>
-                      </div>
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Tidrapporter</div>
                       <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-sm font-semibold text-emerald-900">{totalLoggedHours.toFixed(1)} h totalt</div>
                     </div>
                     {timeEntriesLoading ? <div className="text-sm text-slate-500">Laddar tid...</div> : null}
@@ -717,11 +737,8 @@ export default function WorkOrdersClient() {
                     )) : null}
                   </div>
 
-                  <div className="grid gap-3 rounded-[24px] border border-slate-200 bg-slate-50 p-4">
-                    <div>
-                      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Ny tidrad</div>
-                      <div className="text-sm font-semibold text-slate-900">För installatör eller intern uppföljning</div>
-                    </div>
+                  <div className="grid gap-3 rounded-[24px] border border-slate-200 bg-slate-50 p-4 lg:content-start">
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Ny tidrad</div>
                     <label className="grid gap-1 text-sm text-slate-600">
                       <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Datum</span>
                       <Input value={timeDraft.work_date} onChange={(event) => setTimeDraft((current) => ({ ...current, work_date: event.target.value }))} type="date" />
@@ -744,10 +761,7 @@ export default function WorkOrdersClient() {
               {activeTab === 'comments' ? (
                 <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
                   <div className="grid gap-3 rounded-[24px] border border-slate-200 bg-white p-4">
-                    <div>
-                      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Projektkommentarer</div>
-                      <div className="text-sm font-semibold text-slate-900">Löpande kommentarer om projektet och arbetsordern</div>
-                    </div>
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Projektkommentarer</div>
                     {commentsLoading ? <div className="text-sm text-slate-500">Laddar kommentarer...</div> : null}
                     {!commentsLoading && comments.length === 0 ? <div className="rounded-[18px] border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">Inga kommentarer ännu.</div> : null}
                     {!commentsLoading ? comments.map((item) => (
@@ -761,11 +775,8 @@ export default function WorkOrdersClient() {
                     )) : null}
                   </div>
 
-                  <div className="grid gap-3 rounded-[24px] border border-slate-200 bg-slate-50 p-4">
-                    <div>
-                      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Ny kommentar</div>
-                      <div className="text-sm font-semibold text-slate-900">Kommentera projektets läge eller avvikelser</div>
-                    </div>
+                  <div className="grid gap-3 rounded-[24px] border border-slate-200 bg-slate-50 p-4 lg:content-start">
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Ny kommentar</div>
                     <label className="grid gap-1 text-sm text-slate-600">
                       <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Kommentar</span>
                       <Textarea value={commentDraft} onChange={(event) => setCommentDraft(event.target.value)} rows={8} placeholder="Skriv en kommentar om projektet" />
@@ -776,13 +787,14 @@ export default function WorkOrdersClient() {
                   </div>
                 </div>
               ) : null}
+            </div>
 
-              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-2">
-                <div className="text-sm text-slate-500">Källa: vunnen offert {selectedWorkOrder.quote_id.slice(0, 8)}...</div>
-                <button type="button" onClick={saveWorkOrder} disabled={saving} className="rounded-full border border-slate-900 bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-950 disabled:cursor-not-allowed disabled:opacity-60">
-                  {saving ? 'Sparar...' : 'Spara arbetsorder'}
-                </button>
-              </div>
+            {/* Sticky footer */}
+            <div className="shrink-0 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-white/95 px-5 py-4 backdrop-blur">
+              <span className="text-sm text-slate-500">Källa: vunnen offert {selectedWorkOrder.quote_id.slice(0, 8)}...</span>
+              <button type="button" onClick={saveWorkOrder} disabled={saving} className="rounded-full border border-slate-900 bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-950 disabled:cursor-not-allowed disabled:opacity-60">
+                {saving ? 'Sparar...' : 'Spara arbetsorder'}
+              </button>
             </div>
           </div>
         </div>

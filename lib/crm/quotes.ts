@@ -5,6 +5,7 @@ export const crmQuoteSelect = `
   prospect_id,
   customer_name,
   quote_type,
+  customer_source,
   customer_snapshot,
   pricing_summary,
   line_items,
@@ -39,9 +40,17 @@ export const crmQuoteSelect = `
 type CrmQuoteStatus = 'draft' | 'sent' | 'follow_up' | 'won' | 'lost';
 type CrmQuoteType = 'private' | 'business';
 
+type CustomerSource = {
+  kind?: 'prospect' | 'local' | 'fortnox' | null;
+  sync_intent?: 'local_only' | 'on_work_order' | 'linked' | null;
+  fortnox_customer_id?: string | null;
+  fortnox_customer_name?: string | null;
+};
+
 type CustomerSnapshot = {
   customer_name?: string | null;
   company_name?: string | null;
+  organization_number?: string | null;
   personal_number?: string | null;
   contact_name?: string | null;
   email?: string | null;
@@ -75,6 +84,7 @@ type QuoteLineItem = {
   article_price?: number | null;
   article_unit_name?: string | null;
   discount_percent?: string;
+  line_note?: string;
 };
 
 type RotDetails = {
@@ -95,6 +105,7 @@ type CreateCrmQuoteInput = {
   prospect_id: string | null;
   customer_name: string | null;
   quote_type: CrmQuoteType;
+  customer_source: CustomerSource;
   customer_snapshot: CustomerSnapshot;
   pricing_summary: PricingSummary;
   line_items: QuoteLineItem[];
