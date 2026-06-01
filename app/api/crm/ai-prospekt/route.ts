@@ -4,7 +4,7 @@ import {
   createCrmAiProspectSuggestion,
   listCrmAiProspectSuggestions,
   mapCrmAiProspectSuggestionRows,
-} from '@/lib/crm/aiProspects';
+} from '@/lib/domains/crm/aiProspects';
 import {
   createCrmAiProspectSuggestionSchema,
   listCrmAiProspectSuggestionsQuerySchema,

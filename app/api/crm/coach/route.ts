@@ -1,6 +1,6 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { generateCoachReply, loadCoachContext } from '@/lib/crm/coach';
+import { generateCoachReply, loadCoachContext } from '@/lib/domains/crm/coach';
 import { coachRequestSchema, ok, requireCrmUser, routeError, validationError } from './_lib';
 
 export async function POST(req: Request) {

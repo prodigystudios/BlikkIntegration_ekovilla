@@ -1,5 +1,7 @@
+// getSupabaseAdmin: listing assignable users requires reading profiles across all
+// users, which session-scoped RLS would restrict to the requesting user's own profile.
 import { getSupabaseAdmin } from '@/lib/supabase/server';
-import { listAssignableCrmUsers } from '@/lib/crm/ringlists';
+import { listAssignableCrmUsers } from '@/lib/domains/crm/ringlists';
 import { ok, requireCrmAdmin, routeError } from '../_lib';
 
 export async function GET() {

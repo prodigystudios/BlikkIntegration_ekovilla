@@ -1,5 +1,7 @@
+// getSupabaseAdmin: ringlist assignment writes cross user ownership boundaries and
+// cannot be expressed through the session client's RLS policies.
 import { getSupabaseAdmin } from '@/lib/supabase/server';
-import { assignCrmProspects } from '@/lib/crm/ringlists';
+import { assignCrmProspects } from '@/lib/domains/crm/ringlists';
 import {
   assignCrmRinglistProspectsSchema,
   ok,

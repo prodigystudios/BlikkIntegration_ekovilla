@@ -1,5 +1,7 @@
+// getSupabaseAdmin: bulk ringlist import creates prospects on behalf of other users and
+// requires elevated access beyond what the importer's own RLS policies allow.
 import { getSupabaseAdmin } from '@/lib/supabase/server';
-import { importCrmProspects } from '@/lib/crm/ringlists';
+import { importCrmProspects } from '@/lib/domains/crm/ringlists';
 import {
   importCrmRinglistRowsSchema,
   ok,

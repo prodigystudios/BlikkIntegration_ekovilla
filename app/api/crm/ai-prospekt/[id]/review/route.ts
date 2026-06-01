@@ -5,7 +5,7 @@ import {
   getCrmAiProspectSuggestion,
   mapCrmAiProspectSuggestionRow,
   reviewCrmAiProspectSuggestion,
-} from '@/lib/crm/aiProspects';
+} from '@/lib/domains/crm/aiProspects';
 import { ok, requireCrmAdmin, reviewCrmAiProspectSuggestionSchema, routeError, validationError } from '../../_lib';
 
 export async function POST(req: Request, { params }: { params: { id: string } }) {

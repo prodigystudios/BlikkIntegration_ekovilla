@@ -1,6 +1,6 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { listCrmWorkOrdersWithFilters } from '@/lib/crm/work-orders';
+import { listCrmWorkOrdersWithFilters } from '@/lib/domains/crm/work-orders';
 import { listCrmWorkOrdersQuerySchema, ok, requireCrmUser, routeError, validationError } from './_lib';
 
 export async function GET(req: Request) {

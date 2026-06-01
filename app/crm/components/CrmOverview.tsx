@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import SectionCard from '../../../components/ui/SectionCard';
+import EmptyState from '../../../components/ui/EmptyState';
 import type { UserRole } from '@/lib/roles';
 import { getVisibleCrmNavItems } from '../_lib/nav';
 
@@ -580,7 +581,7 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
             <SectionCard className={`${overviewPanelClass} h-full`}>
           <SectionHeader title="Senaste prospekt" href="/crm/prospekt" />
           {loading ? <OverviewLoadingRows /> : null}
-          {!loading && recentProspects.length === 0 ? <EmptyState text="Inga prospekt ännu." /> : null}
+          {!loading && recentProspects.length === 0 ? <EmptyState description="Inga prospekt ännu." /> : null}
           {!loading && recentProspects.length > 0 ? (
             <div className="grid gap-2.5">
               {recentProspects.map((prospect) => (
@@ -602,7 +603,7 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
             <SectionCard className={`${overviewPanelClass} h-full`}>
           <SectionHeader title="Senaste samtal" href="/crm/samtal" />
           {loading ? <OverviewLoadingRows /> : null}
-          {!loading && recentCalls.length === 0 ? <EmptyState text="Inga samtal loggade ännu." /> : null}
+          {!loading && recentCalls.length === 0 ? <EmptyState description="Inga samtal loggade ännu." /> : null}
           {!loading && recentCalls.length > 0 ? (
             <div className="grid gap-2.5">
               {recentCalls.map((call) => (
@@ -627,7 +628,7 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
             <SectionCard className={`${overviewPanelClass} h-full`}>
           <SectionHeader title="Öppna uppgifter" href="/crm/uppgifter" />
           {loading ? <OverviewLoadingRows /> : null}
-          {!loading && nextTasks.length === 0 ? <EmptyState text="Inga öppna uppgifter just nu." /> : null}
+          {!loading && nextTasks.length === 0 ? <EmptyState description="Inga öppna uppgifter just nu." /> : null}
           {!loading && nextTasks.length > 0 ? (
             <div className="grid gap-2.5">
               {nextTasks.map((task) => (
@@ -652,7 +653,7 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
             <SectionCard className={`${overviewPanelClass} h-full`}>
           <SectionHeader title="Senaste offertsteg" href="/crm/offerter" />
           {loading ? <OverviewLoadingRows /> : null}
-          {!loading && recentQuotes.length === 0 ? <EmptyState text="Inga offertsteg registrerade ännu." /> : null}
+          {!loading && recentQuotes.length === 0 ? <EmptyState description="Inga offertsteg registrerade ännu." /> : null}
           {!loading && recentQuotes.length > 0 ? (
             <div className="grid gap-2.5">
               {recentQuotes.map((quote) => (
@@ -903,9 +904,6 @@ function OverviewLoadingRows() {
   );
 }
 
-function EmptyState({ text }: { text: string }) {
-  return <p className="m-0 rounded-[18px] border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-sm font-medium leading-6 text-slate-700">{text}</p>;
-}
 
 function TeamProgressRow({ label, value, target, tone, currency = false }: { label: string; value: number; target: number; tone: 'sky' | 'emerald' | 'teal'; currency?: boolean }) {
   const toneClass = {

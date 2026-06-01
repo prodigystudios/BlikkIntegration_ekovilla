@@ -1,7 +1,6 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { listCrmGoals, mapCrmGoalRows, upsertCrmGoals } from '@/lib/crm/goals';
-import { getSupabaseAdmin } from '@/lib/supabase/server';
+import { listCrmGoals, mapCrmGoalRows, upsertCrmGoals } from '@/lib/domains/crm/goals';
 import {
   listCrmGoalsQuerySchema,
   ok,
@@ -24,7 +23,7 @@ export async function GET(req: Request) {
     });
     if (!parsedQuery.success) return validationError(parsedQuery.error);
 
-    const supabase = getSupabaseAdmin();
+    const supabase = createRouteHandlerClient({ cookies });
     const query = await listCrmGoals(supabase, {
       periodType: parsedQuery.data.period_type,
       periodStart: parsedQuery.data.period_start,

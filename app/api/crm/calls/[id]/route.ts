@@ -1,6 +1,6 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { updateCrmCall } from '@/lib/crm/calls';
+import { updateCrmCall } from '@/lib/domains/crm/calls';
 import {
   ok,
   requireCrmUser,

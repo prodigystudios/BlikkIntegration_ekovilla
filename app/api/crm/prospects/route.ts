@@ -1,6 +1,6 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { createCrmProspect, listCrmProspects } from '@/lib/crm/prospects';
+import { createCrmProspect, listCrmProspects } from '@/lib/domains/crm/prospects';
 import {
   createCrmProspectSchema,
   listCrmProspectsQuerySchema,

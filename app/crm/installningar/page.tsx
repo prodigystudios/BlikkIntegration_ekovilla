@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 import { getUserProfile } from '@/lib/getUserProfile';
-import { getCurrentWeekStartDate, mapCrmGoalRows } from '@/lib/crm/goals';
+import { getCurrentWeekStartDate, mapCrmGoalRows } from '@/lib/domains/crm/goals';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import CrmSettingsView from './CrmSettingsView';
 

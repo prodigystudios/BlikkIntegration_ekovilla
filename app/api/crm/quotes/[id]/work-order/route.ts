@@ -1,6 +1,6 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { createCrmWorkOrderFromQuote } from '@/lib/crm/work-orders';
+import { createCrmWorkOrderFromQuote } from '@/lib/domains/crm/work-orders';
 import { ok, requireCrmUser, routeError } from '../../_lib';
 
 type RouteContext = {

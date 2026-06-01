@@ -1,6 +1,6 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { createCrmWorkOrderComment, listCrmWorkOrderComments } from '@/lib/crm/work-orders';
+import { createCrmWorkOrderComment, listCrmWorkOrderComments } from '@/lib/domains/crm/work-orders';
 import { createWorkOrderCommentSchema, ok, requireSignedInUser, routeError, validationError } from '../../_lib';
 
 type RouteContext = {
