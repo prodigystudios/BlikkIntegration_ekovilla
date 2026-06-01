@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import SectionCard from '../../../components/ui/SectionCard';
 import Input from '../../../components/ui/Input';
+import MetricCard from '../components/MetricCard';
 import Textarea from '../../../components/ui/Textarea';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
@@ -404,194 +404,153 @@ export default function CallsClient() {
   }
 
   return (
-    <div className="grid gap-4">
-      <SectionCard className="overflow-hidden border-emerald-300/80 bg-[radial-gradient(circle_at_top_left,_rgba(22,163,74,0.22),_transparent_30%),radial-gradient(circle_at_top_right,_rgba(101,163,13,0.16),_transparent_24%),linear-gradient(135deg,#f6fbf4_0%,#e5f4e8_56%,#f5fbf6_100%)] p-4 shadow-[0_24px_70px_rgba(15,23,42,0.08)] md:p-5 xl:p-6">
-        <div className="grid gap-5">
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
-            <div className="grid gap-3">
-              <div className="inline-flex w-fit items-center rounded-full border border-emerald-200/80 bg-white/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-emerald-900 shadow-[0_8px_18px_rgba(255,255,255,0.35)]">
-                CRM / Samtal
-              </div>
-              <div className="grid gap-1.5">
-                <div className="flex flex-wrap items-center gap-3">
-                  <h1 className="m-0 text-[clamp(1.75rem,3vw,2.8rem)] font-bold tracking-[-0.05em] text-slate-950">Samtal</h1>
-                  <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-900">
-                    {stats.logged} loggade
-                  </div>
-                </div>
-                <p className="m-0 max-w-3xl text-sm text-slate-600">
-                  Logga utfallet direkt efter samtalet, följ upp rätt konversationer och fånga fristående kontakter utan att lämna arbetsytan.
-                </p>
-              </div>
-            </div>
-
-            <div className="flex flex-wrap gap-2 lg:justify-end">
-              <button
-                type="button"
-                onClick={openStandaloneLogModal}
-                className="inline-flex items-center rounded-full border border-emerald-800 bg-emerald-800 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-900"
-              >
-                Logga nytt samtal
-              </button>
-            </div>
-          </div>
-
-          <div className="grid gap-3 md:grid-cols-4">
-            <div className="rounded-[18px] border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(252,253,252,0.98))] p-3 shadow-[0_16px_30px_rgba(15,23,42,0.08)] ring-1 ring-white/80">
-              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Loggade</div>
-              <div className="mt-1 text-[clamp(1.35rem,2vw,1.8rem)] font-bold tracking-[-0.04em] text-slate-950">{stats.logged}</div>
-              <div className="mt-1 text-[13px] text-slate-500">Senaste samtalen i historiken</div>
-            </div>
-            <div className="rounded-[18px] border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(252,253,252,0.98))] p-3 shadow-[0_16px_30px_rgba(15,23,42,0.08)] ring-1 ring-white/80">
-              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Följ upp</div>
-              <div className="mt-1 text-[clamp(1.35rem,2vw,1.8rem)] font-bold tracking-[-0.04em] text-slate-950">{stats.followUp}</div>
-              <div className="mt-1 text-[13px] text-slate-500">Utfall som kräver nytt steg</div>
-            </div>
-            <div className="rounded-[18px] border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(252,253,252,0.98))] p-3 shadow-[0_16px_30px_rgba(15,23,42,0.08)] ring-1 ring-white/80">
-              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Fristående</div>
-              <div className="mt-1 text-[clamp(1.35rem,2vw,1.8rem)] font-bold tracking-[-0.04em] text-slate-950">{stats.standalone}</div>
-              <div className="mt-1 text-[13px] text-slate-500">Kan lyftas till prospekt</div>
-            </div>
-            <div className="rounded-[18px] border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(252,253,252,0.98))] p-3 shadow-[0_16px_30px_rgba(15,23,42,0.08)] ring-1 ring-white/80">
-              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Kopplade</div>
-              <div className="mt-1 text-[clamp(1.35rem,2vw,1.8rem)] font-bold tracking-[-0.04em] text-slate-950">{stats.linked}</div>
-              <div className="mt-1 text-[13px] text-slate-500">Samtal som redan har ett prospekt</div>
-            </div>
-          </div>
-
-          {error ? <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
+    <div className="grid gap-6">
+      {/* Page header */}
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="m-0 text-2xl font-bold tracking-tight text-slate-900">Samtal</h1>
+          <p className="m-0 mt-1 text-sm text-slate-500">Här kan du boka in och följa upp samtalsaktiviteter med dina prospekt och kunder</p>
         </div>
-      </SectionCard>
+        <button
+          type="button"
+          onClick={openStandaloneLogModal}
+          className="inline-flex items-center rounded-xl px-4 py-2 text-sm font-semibold text-white transition"
+          style={{ backgroundColor: 'var(--crm-primary)' }}
+        >
+          + Logga samtal
+        </button>
+      </div>
 
-      <SectionCard className="border-emerald-200/65 bg-[linear-gradient(180deg,rgba(250,253,250,0.98),rgba(244,249,245,0.98))] p-4 shadow-[0_18px_38px_rgba(15,23,42,0.06)] md:p-5">
-        <div className="grid gap-4">
-          <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
-            <div className="grid gap-1">
-              <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Historik</span>
-              <strong className="text-[1.3rem] font-bold tracking-[-0.04em] text-slate-950">Senaste samtal</strong>
-              <p className="m-0 text-sm text-slate-500">Jobba från färska samtal först och fånga fristående kontakter innan de tappas bort.</p>
+      {/* Metric cards */}
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <MetricCard label="Loggade samtal" value={stats.logged} helper="Senaste samtalen i historiken" />
+        <MetricCard label="Kräver uppföljning" value={stats.followUp} helper="Utfall som kräver nytt steg" />
+        <MetricCard label="Fristående kontakter" value={stats.standalone} helper="Kan lyftas till prospekt" />
+        <MetricCard label="Kopplade samtal" value={stats.linked} helper="Samtal med ett prospekt" />
+      </div>
+
+      {error ? (
+        <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
+      ) : null}
+
+      {/* Activity list */}
+      <div className="rounded-2xl border border-slate-200 bg-white shadow-[0_2px_12px_rgba(0,0,0,0.04)]">
+        <div className="border-b border-slate-100 px-5 py-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="m-0 text-base font-bold text-slate-900">Samtalsaktiviteter</h2>
+              <p className="m-0 mt-0.5 text-xs text-slate-500">Alla loggade samtal och uppföljningar</p>
             </div>
-            <div className="grid gap-2 rounded-[20px] border border-slate-200/85 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(250,252,250,0.96))] p-2 shadow-[0_14px_30px_rgba(15,23,42,0.05)]">
-              <div className="flex items-center justify-between gap-3 px-2 pt-1">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Historikfilter</div>
-                <div className="text-xs text-slate-500">{calls.length} loggade</div>
-              </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-400">{calls.length} loggade</span>
               <Input
                 value={historySearch}
                 onChange={(event) => setHistorySearch(event.target.value)}
-                placeholder="Sök i samtalshistoriken"
-                className="max-w-xl"
+                placeholder="Sök samtal…"
+                className="w-48"
               />
             </div>
           </div>
-
-          <div className="grid gap-3">
-            {loading ? (
-              Array.from({ length: 3 }).map((_, index) => (
-                <div key={index} className="grid gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                  <div className="h-3 w-40 rounded-full bg-slate-200" />
-                  <div className="h-3 w-24 rounded-full bg-slate-200" />
-                </div>
-              ))
-            ) : calls.length === 0 ? (
-              <div className="rounded-[24px] border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-sm leading-6 text-slate-600">
-                Inga samtal loggade ännu. Börja med att logga första samtalet från listan ovan eller skapa ett fristående samtal.
-              </div>
-            ) : (
-              calls.map((call) => {
-                const meta = buildCallMeta(call);
-                const standalone = isStandaloneCall(call);
-                const promoting = promotingCallIds.includes(call.id);
-                const promoted = promotedCallIds.includes(call.id);
-                const linkedProspect = getProspectFromCall(call);
-                const promotedProspectId = promotedProspectIdsByCallId[call.id] || null;
-                const canOpenProspect = Boolean(linkedProspect?.id || promotedProspectId);
-                return (
-                  <div key={call.id} className="grid gap-2.5 rounded-[22px] border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(248,250,249,0.96))] px-3.5 py-2.5 shadow-[0_12px_24px_rgba(15,23,42,0.05)] md:grid-cols-[minmax(0,1fr)_220px] md:items-start">
-                    <div className="grid min-w-0 gap-1.5">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <strong className="break-words text-base font-bold tracking-[-0.03em] text-slate-950">{getCallCompanyName(call)}</strong>
-                        {standalone ? <span className="rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-[11px] font-semibold text-sky-800">Lead från samtal</span> : null}
-                        <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-semibold md:px-2.5 md:py-1 md:text-[11px]', outcomeMeta[call.outcome].className)}>
-                          {outcomeMeta[call.outcome].label}
-                        </span>
-                      </div>
-                      <p className="m-0 whitespace-pre-wrap break-words text-sm leading-5 text-slate-600">{call.summary}</p>
-                      <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                        <span>{formatDateTime(call.call_at)}</span>
-                        {call.next_step ? <span>Nästa steg: {call.next_step}</span> : null}
-                      </div>
-                      {meta.length > 0 ? (
-                        <div className="flex flex-wrap gap-1.5 pt-0.5">
-                          {meta.map((item) => (
-                            <span
-                              key={item}
-                              className={cn(
-                                'rounded-full border px-2.5 py-1 text-[11px] font-medium shadow-[0_4px_10px_rgba(15,23,42,0.03)]',
-                                standalone ? 'border-sky-200 bg-sky-50 text-sky-800' : 'border-slate-200 bg-slate-50 text-slate-600'
-                              )}
-                            >
-                              {item}
-                            </span>
-                          ))}
-                        </div>
-                      ) : null}
-                      <div className="flex flex-wrap gap-2 pt-0.5">
-                        <button
-                          type="button"
-                          onClick={() => openEditCallModal(call)}
-                          className="inline-flex min-h-9 items-center justify-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 shadow-[0_8px_16px_rgba(15,23,42,0.04)] transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900"
-                        >
-                          Redigera samtal
-                        </button>
-                      </div>
-                    </div>
-                    <div
-                      className={cn(
-                        'rounded-[18px] border px-3 py-2.5 text-xs',
-                        standalone ? 'border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(246,250,247,0.96))] text-slate-600 shadow-[0_8px_18px_rgba(15,23,42,0.04)]' : 'border-slate-200 bg-slate-50 text-slate-600'
-                      )}
-                    >
-                      <strong className="block text-slate-900">{standalone ? (canOpenProspect ? 'Prospekt skapat' : 'Fristående kontakt') : 'Kopplat prospekt'}</strong>
-                      <span>
-                        {standalone
-                          ? canOpenProspect
-                            ? 'Det här samtalet har nu ett prospekt att följa vidare i prospektytan.'
-                            : 'Samtalet sparades utan prospekt och bär därför sina egna kontaktuppgifter.'
-                          : 'Samtalet är redan kopplat till ett prospekt och följs vidare i prospektytan.'}
-                      </span>
-                      {standalone && !canOpenProspect ? (
-                        <button
-                          type="button"
-                          onClick={() => promoteCallToProspect(call)}
-                          disabled={promoting || promoted}
-                          className={cn(
-                            'mt-2.5 inline-flex min-h-10 w-full items-center justify-center rounded-full border px-3 py-2 text-sm font-semibold transition',
-                            promoted
-                              ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                              : 'border-emerald-800 bg-emerald-800 text-white hover:bg-emerald-900',
-                            promoting ? 'cursor-wait opacity-70' : '',
-                          )}
-                        >
-                          {promoting ? 'Skapar prospekt…' : promoted ? 'Prospekt skapat' : 'Skapa prospekt'}
-                        </button>
-                      ) : canOpenProspect ? (
-                        <button
-                          type="button"
-                          onClick={() => router.push('/crm/prospekt')}
-                          className="mt-2.5 inline-flex min-h-10 w-full items-center justify-center rounded-full border border-slate-900 bg-slate-900 px-3 py-2 text-sm font-semibold text-white transition hover:bg-slate-950"
-                        >
-                          Öppna prospekt
-                        </button>
-                      ) : null}
-                    </div>
-                  </div>
-                );
-              })
-            )}
-          </div>
         </div>
-      </SectionCard>
+
+        <div className="divide-y divide-slate-100">
+          {loading ? (
+            Array.from({ length: 3 }).map((_, index) => (
+              <div key={index} className="flex gap-3 px-5 py-4">
+                <div className="h-9 w-9 animate-pulse rounded-full bg-slate-100" />
+                <div className="flex-1 grid gap-2">
+                  <div className="h-3 w-40 animate-pulse rounded-full bg-slate-100" />
+                  <div className="h-3 w-24 animate-pulse rounded-full bg-slate-100" />
+                </div>
+              </div>
+            ))
+          ) : calls.length === 0 ? (
+            <div className="px-5 py-8 text-center text-sm text-slate-500">
+              Inga samtal loggade ännu. Logga det första samtalet med knappen ovan.
+            </div>
+          ) : (
+            calls.map((call) => {
+              const meta = buildCallMeta(call);
+              const standalone = isStandaloneCall(call);
+              const promoting = promotingCallIds.includes(call.id);
+              const promoted = promotedCallIds.includes(call.id);
+              const linkedProspect = getProspectFromCall(call);
+              const promotedProspectId = promotedProspectIdsByCallId[call.id] || null;
+              const canOpenProspect = Boolean(linkedProspect?.id || promotedProspectId);
+              return (
+                <article key={call.id} className="grid gap-3 px-5 py-4 md:grid-cols-[minmax(0,1fr)_200px] md:items-start">
+                  <div className="grid min-w-0 gap-1.5">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-100">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#059669" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6A19.79 19.79 0 012.12 4.18 2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z" />
+                        </svg>
+                      </div>
+                      <div className="grid gap-0">
+                        <strong className="text-sm font-semibold text-slate-900">{getCallCompanyName(call)}</strong>
+                        {call.contact_name || getProspectFromCall(call)?.contact_name ? (
+                          <span className="text-xs text-slate-500">{call.contact_name || getProspectFromCall(call)?.contact_name}</span>
+                        ) : null}
+                      </div>
+                      {standalone ? <span className="rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-semibold text-sky-700">Lead</span> : null}
+                      <span className={cn('rounded-full border px-2 py-0.5 text-[11px] font-semibold', outcomeMeta[call.outcome].className)}>
+                        {outcomeMeta[call.outcome].label}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                      <span>{formatDateTime(call.call_at)}</span>
+                      {call.next_step ? <span>· Nästa steg: {call.next_step}</span> : null}
+                    </div>
+                    {call.summary ? <p className="m-0 text-sm leading-5 text-slate-700">{call.summary}</p> : null}
+                    {meta.length > 0 ? (
+                      <div className="flex flex-wrap gap-1.5">
+                        {meta.map((item) => (
+                          <span key={item} className={cn('rounded-full border px-2 py-0.5 text-[11px] font-medium', standalone ? 'border-sky-200 bg-sky-50 text-sky-700' : 'border-slate-200 bg-slate-50 text-slate-600')}>
+                            {item}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <button
+                      type="button"
+                      onClick={() => openEditCallModal(call)}
+                      className="inline-flex w-full items-center justify-center rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
+                    >
+                      Redigera samtal
+                    </button>
+                    {standalone && !canOpenProspect ? (
+                      <button
+                        type="button"
+                        onClick={() => promoteCallToProspect(call)}
+                        disabled={promoting || promoted}
+                        aria-label={`Skapa prospekt från samtal med ${getCallCompanyName(call)}`}
+                        className={cn(
+                          'inline-flex w-full items-center justify-center rounded-xl border px-3 py-2 text-xs font-semibold transition',
+                          promoted ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'text-white',
+                          promoting ? 'cursor-wait opacity-70' : '',
+                        )}
+                        style={!promoted ? { backgroundColor: 'var(--crm-primary)', borderColor: 'var(--crm-primary)' } : undefined}
+                      >
+                        {promoting ? 'Skapar…' : promoted ? 'Prospekt skapat' : 'Skapa prospekt'}
+                      </button>
+                    ) : canOpenProspect ? (
+                      <button
+                        type="button"
+                        onClick={() => router.push('/crm/prospekt')}
+                        className="inline-flex w-full items-center justify-center rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
+                      >
+                        Öppna prospekt
+                      </button>
+                    ) : null}
+                  </div>
+                </article>
+              );
+            })
+          )}
+        </div>
+      </div>
 
       {logOpen ? (
         <div className="fixed inset-0 z-[2800] flex items-end justify-center bg-slate-950/45 p-3 [backdrop-filter:blur(4px)] sm:items-center sm:p-4" onClick={() => setLogOpen(false)}>
@@ -600,28 +559,27 @@ export default function CallsClient() {
             aria-modal="true"
             aria-label="Logga samtal"
             onClick={(event) => event.stopPropagation()}
-            className="grid w-full max-w-[760px] gap-4 rounded-[28px] border border-white/70 bg-[linear-gradient(180deg,#ffffff_0%,#f6faf8_100%)] p-4 shadow-[0_30px_80px_rgba(15,23,42,0.28)] sm:max-h-[88vh] sm:overflow-y-auto sm:p-5"
+            className="grid w-full max-w-[760px] gap-4 rounded-2xl border border-white/70 bg-white p-5 shadow-[0_30px_80px_rgba(15,23,42,0.28)] sm:max-h-[88vh] sm:overflow-y-auto"
           >
             <div className="flex flex-wrap items-start justify-between gap-3">
-              <div className="grid gap-1">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">CRM / Samtal</span>
-                <strong className="text-[1.5rem] font-bold tracking-[-0.05em] text-slate-950">
+              <div className="grid gap-0.5">
+                <strong className="text-xl font-bold tracking-tight text-slate-900">
                   {prospects.find((item) => item.id === draft.prospect_id)?.company_name || draft.company_name || 'Nytt samtal'}
                 </strong>
-                <p className="m-0 max-w-2xl text-sm leading-6 text-slate-600">
-                  {editingCallId ? 'Justera uppgifter eller utfall utan att tappa samtalshistoriken.' : 'Registrera utfallet direkt efter samtalet och få historiken på plats utan att lämna arbetsflödet.'}
+                <p className="m-0 text-sm text-slate-500">
+                  {editingCallId ? 'Justera uppgifter eller utfall.' : 'Registrera utfallet direkt efter samtalet.'}
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => setLogOpen(false)}
-                className="inline-flex min-h-10 items-center justify-center rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 shadow-[0_10px_18px_rgba(15,23,42,0.04)] hover:border-slate-300 hover:text-slate-900"
+                className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 hover:border-slate-300"
               >
                 Stäng
               </button>
             </div>
 
-            <div className="grid gap-4 rounded-[28px] border border-white/80 bg-white/92 p-4 shadow-[0_20px_44px_rgba(15,23,42,0.06)]">
+            <div className="grid gap-4 rounded-2xl border border-slate-100 bg-slate-50/50 p-4">
               <label className="grid gap-1 text-sm text-slate-600">
                 <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Prospekt</span>
                 <select
@@ -751,7 +709,7 @@ export default function CallsClient() {
                     setEditingCallId(null);
                     setDraft(initialDraft);
                   }}
-                  className="inline-flex min-h-11 items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
+                  className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
                 >
                   Avbryt
                 </button>
@@ -759,7 +717,8 @@ export default function CallsClient() {
                   type="button"
                   onClick={submitCall}
                   disabled={submitting}
-                  className="inline-flex min-h-11 items-center justify-center rounded-full border border-slate-900 bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-950 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="inline-flex items-center justify-center rounded-xl px-4 py-2.5 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-60"
+                  style={{ backgroundColor: 'var(--crm-primary)' }}
                 >
                   {submitting ? 'Sparar…' : editingCallId ? 'Spara ändringar' : 'Logga samtal'}
                 </button>

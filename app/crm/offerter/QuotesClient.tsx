@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import SectionCard from '../../../components/ui/SectionCard';
+import MetricCard from '../components/MetricCard';
 import Input from '../../../components/ui/Input';
 import Select from '../../../components/ui/Select';
 import Textarea from '../../../components/ui/Textarea';
@@ -1968,63 +1968,36 @@ export default function QuotesClient() {
   }
 
   return (
-    <div className="grid gap-4">
-      <SectionCard className="overflow-hidden border-emerald-300/80 bg-[radial-gradient(circle_at_top_left,_rgba(22,163,74,0.22),_transparent_30%),radial-gradient(circle_at_top_right,_rgba(101,163,13,0.16),_transparent_24%),linear-gradient(135deg,#f6fbf4_0%,#e5f4e8_56%,#f5fbf6_100%)] p-4 shadow-[0_24px_70px_rgba(15,23,42,0.08)] md:p-5 xl:p-6">
-        <div className="grid gap-5">
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
-            <div className="grid gap-3">
-              <div className="inline-flex w-fit items-center rounded-full border border-emerald-200/80 bg-white/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-emerald-900 shadow-[0_8px_18px_rgba(255,255,255,0.35)]">
-                CRM / Offerter
-              </div>
-              <div className="grid gap-1.5">
-                <div className="flex flex-wrap items-center gap-3">
-                  <h1 className="m-0 text-[clamp(1.75rem,3vw,2.8rem)] font-bold tracking-[-0.05em] text-slate-950">Offerter</h1>
-                  <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-900">
-                      {stats.total} i registret
-                  </div>
-                  {presetProspectId ? (
-					<div className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 shadow-[0_8px_18px_rgba(15,23,42,0.04)]">
-					  Filtrerad på valt prospekt
-					</div>
-				) : null}
-                </div>
-                  <p className="m-0 text-sm text-slate-600">Offertytan är ett register över alla offerter. Själva affärsresan bärs av prospektet, medan du här skummar offertläge, belopp och uppföljning.</p>
-              </div>
-            </div>
-
-            <div className="flex flex-wrap gap-2 lg:justify-end">
-              <button type="button" onClick={openCreateModal} className="inline-flex items-center rounded-full border border-emerald-800 bg-emerald-800 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-900">
-                Ny offert
-              </button>
-            </div>
-          </div>
-
-          <div className="grid gap-3 md:grid-cols-4">
-            <div className="rounded-[18px] border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(252,253,252,0.98))] p-3 shadow-[0_16px_30px_rgba(15,23,42,0.08)] ring-1 ring-white/80">
-                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Alla offerter</div>
-                <div className="mt-1 text-[clamp(1.35rem,2vw,1.8rem)] font-bold tracking-[-0.04em] text-slate-950">{stats.total}</div>
-                <div className="mt-1 text-sm text-slate-500">Hela offertregistret oavsett utfall</div>
-            </div>
-            <div className="rounded-[18px] border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(252,253,252,0.98))] p-3 shadow-[0_16px_30px_rgba(15,23,42,0.08)] ring-1 ring-white/80">
-                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Aktiva</div>
-                <div className="mt-1 text-[clamp(1.35rem,2vw,1.8rem)] font-bold tracking-[-0.04em] text-slate-950">{stats.active}</div>
-                <div className="mt-1 text-sm text-slate-500">Utkast, skickade och uppföljning</div>
-            </div>
-            <div className="rounded-[18px] border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(252,253,252,0.98))] p-3 shadow-[0_16px_30px_rgba(15,23,42,0.08)] ring-1 ring-white/80">
-                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Följ upp</div>
-                <div className="mt-1 text-[clamp(1.35rem,2vw,1.8rem)] font-bold tracking-[-0.04em] text-slate-950">{stats.followUp}</div>
-                <div className="mt-1 text-sm text-slate-500">Behöver nästa offertsteg</div>
-            </div>
-            <div className="rounded-[18px] border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(252,253,252,0.98))] p-3 shadow-[0_16px_30px_rgba(15,23,42,0.08)] ring-1 ring-white/80">
-                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Vunna</div>
-                <div className="mt-1 text-[clamp(1.35rem,2vw,1.8rem)] font-bold tracking-[-0.04em] text-slate-950">{stats.won}</div>
-                <div className="mt-1 text-sm text-slate-500">Offerter som landat i affär</div>
-            </div>
-          </div>
+    <div className="grid gap-6">
+      {/* Page header */}
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="m-0 text-2xl font-bold tracking-tight text-slate-900">Offerter</h1>
+          <p className="m-0 mt-1 text-sm text-slate-500">
+            Här kan du skapa och följa upp offerter som din säljare lägger ut för att nå era mål
+            {presetProspectId ? <span className="ml-2 rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-600">Filtrerad på prospekt</span> : null}
+          </p>
         </div>
-      </SectionCard>
+        <button
+          type="button"
+          onClick={openCreateModal}
+          className="inline-flex items-center rounded-xl px-4 py-2 text-sm font-semibold text-white transition"
+          style={{ backgroundColor: 'var(--crm-primary)' }}
+        >
+          + Skapa offert
+        </button>
+      </div>
 
-      <SectionCard className={`${quotesSectionClass}`}>
+      {/* Metric cards */}
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <MetricCard label="Alla offerter" value={stats.total} helper="Hela offertregistret oavsett utfall" />
+        <MetricCard label="Aktiva offerter" value={stats.active} helper="Utkast, skickade och uppföljning" />
+        <MetricCard label="Kräver uppföljning" value={stats.followUp} helper="Behöver nästa offertsteg" />
+        <MetricCard label="Vunna offerter" value={stats.won} helper="Offerter som landat i affär" />
+      </div>
+
+      {/* Activity management */}
+      <div className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_2px_12px_rgba(0,0,0,0.04)] md:p-5">
         <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
           <Input
             value={search}
@@ -2074,7 +2047,7 @@ export default function QuotesClient() {
             {sortedVisibleQuotes.map((item) => renderQuoteCard(item))}
           </div>
         ) : null}
-      </SectionCard>
+      </div>
 
       {modalOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6 backdrop-blur-sm">
