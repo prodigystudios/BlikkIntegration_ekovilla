@@ -3,6 +3,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 export const crmQuoteSelect = `
   id,
   prospect_id,
+  opportunity_id,
   customer_name,
   quote_type,
   customer_source,
@@ -33,6 +34,11 @@ export const crmQuoteSelect = `
     company_name,
     contact_name,
     city,
+    status
+  ),
+  opportunity:crm_opportunities(
+    id,
+    title,
     status
   )
 `;
@@ -103,6 +109,7 @@ type InternalHandoff = {
 
 type CreateCrmQuoteInput = {
   prospect_id: string | null;
+  opportunity_id?: string | null;
   customer_name: string | null;
   quote_type: CrmQuoteType;
   customer_source: CustomerSource;
@@ -131,29 +138,8 @@ type ListCrmQuotesOptions = {
   search?: string;
   status?: CrmQuoteStatus;
   prospectId?: string;
+  opportunityId?: string;
 };
-
-function getProspectStatusFromQuoteStatus(status: CrmQuoteStatus) {
-  switch (status) {
-    case 'sent':
-    case 'follow_up':
-      return 'quoted' as const;
-    case 'won':
-      return 'won' as const;
-    case 'lost':
-      return 'lost' as const;
-    default:
-      return null;
-  }
-}
-
-async function syncProspectStatusFromQuote(supabase: SupabaseClient, prospectId: string | null, status: CrmQuoteStatus) {
-  const nextStatus = getProspectStatusFromQuoteStatus(status);
-
-  if (!prospectId || !nextStatus) return;
-
-  await supabase.from('crm_prospects').update({ status: nextStatus }).eq('id', prospectId);
-}
 
 export async function listCrmQuotesWithFilters(supabase: SupabaseClient, options: ListCrmQuotesOptions) {
   let query = supabase
@@ -178,25 +164,17 @@ export async function listCrmQuotesWithFilters(supabase: SupabaseClient, options
     query = query.eq('prospect_id', options.prospectId);
   }
 
+  if (options.opportunityId) {
+    query = query.eq('opportunity_id', options.opportunityId);
+  }
+
   return query;
 }
 
 export async function createCrmQuote(supabase: SupabaseClient, input: CreateCrmQuoteInput) {
-  const result = await supabase.from('crm_quotes').insert(input).select(crmQuoteSelect).single();
-
-  if (!result.error) {
-    await syncProspectStatusFromQuote(supabase, input.prospect_id, input.status);
-  }
-
-  return result;
+  return supabase.from('crm_quotes').insert(input).select(crmQuoteSelect).single();
 }
 
 export async function updateCrmQuote(supabase: SupabaseClient, id: string, input: UpdateCrmQuoteInput) {
-  const result = await supabase.from('crm_quotes').update(input).eq('id', id).select(crmQuoteSelect).single();
-
-  if (!result.error) {
-    await syncProspectStatusFromQuote(supabase, input.prospect_id, input.status);
-  }
-
-  return result;
+  return supabase.from('crm_quotes').update(input).eq('id', id).select(crmQuoteSelect).single();
 }

@@ -37,6 +37,7 @@ type QuoteCustomerSource = {
 type QuoteItem = {
   id: string;
   prospect_id: string | null;
+  opportunity_id: string | null;
   customer_name: string | null;
   quote_type: 'private' | 'business';
   customer_source: QuoteCustomerSource | null;
@@ -89,6 +90,7 @@ type QuoteItem = {
   created_at: string;
   updated_at: string;
   prospect: QuoteProspect | QuoteProspect[] | null;
+  opportunity: { id: string; title: string; status: string } | null;
 };
 
 type QuoteLineItem = {
@@ -119,6 +121,7 @@ type ArticleLite = {
 
 type QuoteDraft = {
   prospect_id: string;
+  opportunity_id: string;
   quote_type: 'private' | 'business';
   customer_source: {
     kind: QuoteCustomerSourceKind;
@@ -207,6 +210,7 @@ const quoteStatusMeta: Record<QuoteItem['status'], { label: string; className: s
 
 const initialDraft: QuoteDraft = {
   prospect_id: '',
+  opportunity_id: '',
   quote_type: 'business',
   customer_source: {
     kind: 'local',
@@ -420,8 +424,8 @@ function getQuoteDraftValidationIssues({
     issues.push('Offertnamn saknas');
   }
 
-  if (!draft.prospect_id && !effectiveCustomerName) {
-    issues.push('Kund eller prospekt måste anges');
+  if (!draft.prospect_id && !draft.opportunity_id && !effectiveCustomerName) {
+    issues.push('Kund, prospekt eller affärsmöjlighet måste anges');
   }
 
   if (draft.customer_source.kind === 'prospect' && !draft.prospect_id) {
@@ -1349,6 +1353,7 @@ export default function QuotesClient() {
   const isDirty = modalOpen && JSON.stringify(draft) !== draftAtOpen.current;
 
   const presetProspectId = searchParams.get('prospect_id') || '';
+  const presetOpportunityId = searchParams.get('opportunity_id') || '';
   const shouldOpenCreateForPreset = searchParams.get('new') === '1';
 
   const prospectsById = useMemo(() => new Map(prospects.map((item) => [item.id, item])), [prospects]);
@@ -1453,7 +1458,7 @@ export default function QuotesClient() {
 
   useEffect(() => {
 	setHasAppliedPreset(false);
-  }, [presetProspectId, shouldOpenCreateForPreset]);
+  }, [presetProspectId, presetOpportunityId, shouldOpenCreateForPreset]);
 
   useEffect(() => {
     if (!modalOpen) return;
@@ -1496,22 +1501,54 @@ export default function QuotesClient() {
   );
 
   useEffect(() => {
-  if (!shouldOpenCreateForPreset || hasAppliedPreset || loading) return;
-  const presetProspect = presetProspectId ? prospectsById.get(presetProspectId) || null : null;
-  setEditingQuoteId(null);
-  setDraft({
-    ...initialDraft,
-    prospect_id: presetProspectId,
-    customer_source: getDefaultDraftCustomerSource(presetProspectId),
-    customer_name: presetProspect?.company_name || '',
-    company_name: presetProspect?.company_name || '',
-    contact_name: presetProspect?.contact_name || '',
-    city: presetProspect?.city || '',
-  });
-  setActiveQuoteTab('kund');
-  setModalOpen(true);
-  setHasAppliedPreset(true);
-  }, [hasAppliedPreset, loading, presetProspectId, prospectsById, shouldOpenCreateForPreset]);
+    if (!shouldOpenCreateForPreset || hasAppliedPreset || loading) return;
+
+    if (presetOpportunityId) {
+      setHasAppliedPreset(true);
+      fetch(`/api/crm/opportunities/${presetOpportunityId}`, { cache: 'no-store' })
+        .then((res) => res.json().catch(() => ({})))
+        .then((json) => {
+          const opportunity = json?.data?.item;
+          const prospect = opportunity?.prospect || null;
+          setEditingQuoteId(null);
+          setDraft({
+            ...initialDraft,
+            opportunity_id: presetOpportunityId,
+            prospect_id: prospect?.id || '',
+            customer_source: getDefaultDraftCustomerSource(prospect?.id || null),
+            customer_name: prospect?.company_name || opportunity?.title || '',
+            company_name: prospect?.company_name || '',
+            contact_name: prospect?.contact_name || '',
+            city: prospect?.city || '',
+            project_name: opportunity?.title || '',
+          });
+          setActiveQuoteTab('kund');
+          setModalOpen(true);
+        })
+        .catch(() => {
+          setEditingQuoteId(null);
+          setDraft({ ...initialDraft, opportunity_id: presetOpportunityId });
+          setActiveQuoteTab('kund');
+          setModalOpen(true);
+        });
+      return;
+    }
+
+    const presetProspect = presetProspectId ? prospectsById.get(presetProspectId) || null : null;
+    setEditingQuoteId(null);
+    setDraft({
+      ...initialDraft,
+      prospect_id: presetProspectId,
+      customer_source: getDefaultDraftCustomerSource(presetProspectId),
+      customer_name: presetProspect?.company_name || '',
+      company_name: presetProspect?.company_name || '',
+      contact_name: presetProspect?.contact_name || '',
+      city: presetProspect?.city || '',
+    });
+    setActiveQuoteTab('kund');
+    setModalOpen(true);
+    setHasAppliedPreset(true);
+  }, [hasAppliedPreset, loading, presetOpportunityId, presetProspectId, prospectsById, shouldOpenCreateForPreset]);
 
   function renderQuoteCard(item: QuoteItem, options?: { compact?: boolean; hideStatusBadge?: boolean }) {
     const prospect = getProspectFromQuote(item);
@@ -1547,7 +1584,7 @@ export default function QuotesClient() {
 
           <div className="grid min-h-[52px] w-full content-start gap-0.5 pl-2">
             <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
-              {prospect ? 'Kopplat prospekt' : 'Fristående offert'}
+              {item.opportunity ? item.opportunity.title : prospect ? 'Kopplat prospekt' : 'Fristående offert'}
             </span>
             <strong className="truncate text-base font-bold tracking-[-0.03em] text-slate-950">{item.project_name}</strong>
             <p className="m-0 truncate text-sm text-slate-600">{getQuoteCustomerName(item)}</p>
@@ -1585,7 +1622,7 @@ export default function QuotesClient() {
 
         <div className="grid gap-1.5 pl-2">
           <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">
-            {prospect ? 'Kopplat prospekt' : 'Fristående offert'}
+            {item.opportunity ? item.opportunity.title : prospect ? 'Kopplat prospekt' : 'Fristående offert'}
           </span>
           <div className="grid gap-0.5">
             <strong className="text-[17px] font-bold tracking-[-0.03em] text-slate-950">{item.project_name}</strong>
@@ -1652,6 +1689,7 @@ export default function QuotesClient() {
     setEditingQuoteId(item.id);
     setDraft({
       prospect_id: item.prospect_id || '',
+      opportunity_id: item.opportunity_id || '',
       quote_type: item.quote_type || 'business',
       customer_source: getDraftCustomerSource(item.customer_source, item.prospect_id),
       customer_name: item.customer_name || '',
@@ -1774,8 +1812,8 @@ export default function QuotesClient() {
       return;
     }
 
-    if (!draft.prospect_id && !effectiveCustomerName) {
-      toast.error('Välj prospekt eller ange kundnamn');
+    if (!draft.prospect_id && !draft.opportunity_id && !effectiveCustomerName) {
+      toast.error('Välj prospekt, affärsmöjlighet eller ange kundnamn');
       return;
     }
 
@@ -1821,6 +1859,7 @@ export default function QuotesClient() {
         : (Number.isFinite(vatPercentNumber) ? amountNumber * (vatPercentNumber / 100) : 0);
       const payload = {
         prospect_id: draft.prospect_id || null,
+        opportunity_id: draft.opportunity_id || null,
         customer_name: effectiveCustomerName,
         quote_type: draft.quote_type,
         customer_source: {

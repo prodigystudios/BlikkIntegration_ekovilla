@@ -54,6 +54,6 @@ export const createCrmProspectSchema = z.object({
 });
 
 export const updateCrmProspectSchema = createCrmProspectSchema.extend({
-  status: z.enum(['new', 'contacted', 'qualified', 'quoted', 'won', 'lost']),
+  status: z.enum(['new', 'contacted', 'qualified', 'quoted', 'won', 'lost']).optional(),
 });
 

@@ -3,6 +3,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 export const crmCallSelect = `
   id,
   prospect_id,
+  opportunity_id,
   company_name,
   organization_number,
   contact_name,
@@ -30,6 +31,7 @@ export const crmCallSelect = `
 
 type CreateCrmCallInput = {
   prospect_id: string | null;
+  opportunity_id?: string | null;
   company_name: string | null;
   organization_number: string | null;
   contact_name: string | null;
@@ -63,10 +65,12 @@ export async function createCrmCall(supabase: SupabaseClient, input: CreateCrmCa
 type ListCrmCallsOptions = {
   search?: string;
   prospectId?: string;
+  opportunityId?: string;
 };
 
 type UpdateCrmCallInput = {
   prospect_id: string | null;
+  opportunity_id?: string | null;
   company_name: string | null;
   organization_number: string | null;
   contact_name: string | null;
@@ -91,6 +95,10 @@ export async function listCrmCallsWithFilters(supabase: SupabaseClient, options:
 
   if (options.prospectId) {
     query = query.eq('prospect_id', options.prospectId);
+  }
+
+  if (options.opportunityId) {
+    query = query.eq('opportunity_id', options.opportunityId);
   }
 
   return query;

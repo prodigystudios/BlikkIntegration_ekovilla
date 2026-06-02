@@ -19,9 +19,16 @@ type ProspectItem = {
   status: 'new' | 'contacted' | 'qualified' | 'quoted' | 'won' | 'lost';
 };
 
+type OpportunityOption = {
+  id: string;
+  title: string;
+  prospect: { company_name: string } | null;
+};
+
 type CallItem = {
   id: string;
   prospect_id: string | null;
+  opportunity_id: string | null;
   company_name: string | null;
   organization_number: string | null;
   contact_name: string | null;
@@ -40,6 +47,7 @@ type CallItem = {
 
 type CallDraft = {
   prospect_id: string;
+  opportunity_id: string;
   company_name: string;
   organization_number: string;
   contact_name: string;
@@ -77,6 +85,7 @@ const outcomeMeta: Record<CallItem['outcome'], { label: string; className: strin
 
 const initialDraft: CallDraft = {
   prospect_id: '',
+  opportunity_id: '',
   company_name: '',
   organization_number: '',
   contact_name: '',
@@ -126,6 +135,7 @@ export default function CallsClient() {
   const searchParams = useSearchParams();
   const toast = useToast();
   const [prospects, setProspects] = useState<ProspectItem[]>([]);
+  const [opportunities, setOpportunities] = useState<OpportunityOption[]>([]);
   const [calls, setCalls] = useState<CallItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -147,14 +157,16 @@ export default function CallsClient() {
       setError(null);
 
       try {
-        const [prospectsRes, callsRes] = await Promise.all([
+        const [prospectsRes, callsRes, opportunitiesRes] = await Promise.all([
           fetch('/api/crm/prospects', { cache: 'no-store' }),
           fetch(`/api/crm/calls${historySearch.trim() ? `?q=${encodeURIComponent(historySearch.trim())}` : ''}`, { cache: 'no-store' }),
+          fetch('/api/crm/opportunities', { cache: 'no-store' }),
         ]);
 
-        const [prospectsJson, callsJson] = await Promise.all([
+        const [prospectsJson, callsJson, opportunitiesJson] = await Promise.all([
           prospectsRes.json().catch(() => ({})),
           callsRes.json().catch(() => ({})),
+          opportunitiesRes.json().catch(() => ({})),
         ]);
 
         if (!active) return;
@@ -175,6 +187,7 @@ export default function CallsClient() {
 
         setProspects(Array.isArray(prospectsJson?.data?.items) ? prospectsJson.data.items : []);
         setCalls(Array.isArray(callsJson?.data?.items) ? callsJson.data.items : []);
+        setOpportunities(Array.isArray(opportunitiesJson?.data?.items) ? opportunitiesJson.data.items : []);
       } catch {
         if (!active) return;
         setError('Kunde inte ladda samtalsytan.');
@@ -221,36 +234,15 @@ export default function CallsClient() {
   function openLogModal(prospect: ProspectItem) {
     setEditingCallId(null);
     setDraft({
+      ...initialDraft,
       prospect_id: prospect.id,
-      company_name: '',
-      organization_number: '',
-      contact_name: '',
-      phone: '',
-      email: '',
-      city: '',
-      source: '',
-      outcome: 'follow_up',
-      summary: '',
-      next_step: '',
     });
     setLogOpen(true);
   }
 
   function openStandaloneLogModal() {
     setEditingCallId(null);
-    setDraft({
-      prospect_id: '',
-      company_name: '',
-      organization_number: '',
-      contact_name: '',
-      phone: '',
-      email: '',
-      city: '',
-      source: '',
-      outcome: 'follow_up',
-      summary: '',
-      next_step: '',
-    });
+    setDraft(initialDraft);
     setLogOpen(true);
   }
 
@@ -259,6 +251,7 @@ export default function CallsClient() {
     setEditingCallId(call.id);
     setDraft({
       prospect_id: prospect?.id || call.prospect_id || '',
+      opportunity_id: call.opportunity_id || '',
       company_name: call.company_name || '',
       organization_number: call.organization_number || '',
       contact_name: call.contact_name || '',
@@ -285,7 +278,10 @@ export default function CallsClient() {
       const res = await fetch(isEditing ? `/api/crm/calls/${editingCallId}` : '/api/crm/calls', {
         method: isEditing ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(draft),
+        body: JSON.stringify({
+          ...draft,
+          opportunity_id: draft.opportunity_id || null,
+        }),
       });
       const json = await res.json().catch(() => ({}));
 
@@ -580,40 +576,58 @@ export default function CallsClient() {
             </div>
 
             <div className="grid gap-4 rounded-2xl border border-slate-100 bg-slate-50/50 p-4">
-              <label className="grid gap-1 text-sm text-slate-600">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Prospekt</span>
-                <select
-                  value={draft.prospect_id}
-                  onChange={(event) => {
-                    const prospectId = event.target.value;
-                    setDraft((current) => ({
-                      ...current,
-                      prospect_id: prospectId,
-                      ...(prospectId
-                        ? {
-                            company_name: '',
-                            organization_number: '',
-                            contact_name: '',
-                            phone: '',
-                            email: '',
-                            city: '',
-                            source: '',
-                          }
-                        : {}),
-                    }));
-                  }}
-                  className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/20"
-                >
-                  <option value="">Inget prospekt valt</option>
-                  {prospects.map((prospect) => (
-                    <option key={prospect.id} value={prospect.id}>
-                      {prospect.company_name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="grid gap-1 text-sm text-slate-600">
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Prospekt</span>
+                  <select
+                    value={draft.prospect_id}
+                    onChange={(event) => {
+                      const prospectId = event.target.value;
+                      setDraft((current) => ({
+                        ...current,
+                        prospect_id: prospectId,
+                        ...(prospectId
+                          ? {
+                              company_name: '',
+                              organization_number: '',
+                              contact_name: '',
+                              phone: '',
+                              email: '',
+                              city: '',
+                              source: '',
+                            }
+                          : {}),
+                      }));
+                    }}
+                    className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/20"
+                  >
+                    <option value="">Inget prospekt</option>
+                    {prospects.map((prospect) => (
+                      <option key={prospect.id} value={prospect.id}>
+                        {prospect.company_name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
 
-              {!draft.prospect_id ? (
+                <label className="grid gap-1 text-sm text-slate-600">
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Affärsmöjlighet (valfritt)</span>
+                  <select
+                    value={draft.opportunity_id}
+                    onChange={(event) => setDraft((current) => ({ ...current, opportunity_id: event.target.value }))}
+                    className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/20"
+                  >
+                    <option value="">Ingen affärsmöjlighet</option>
+                    {opportunities.map((opp) => (
+                      <option key={opp.id} value={opp.id}>
+                        {opp.title}{opp.prospect?.company_name ? ` – ${opp.prospect.company_name}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              {!draft.prospect_id && !draft.opportunity_id ? (
                 <div className="grid gap-3 rounded-[24px] border border-slate-200 bg-slate-50/80 p-4">
                   <div className="grid gap-1">
                     <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Ny kontakt</span>

@@ -44,7 +44,7 @@ type UpdateCrmProspectInput = {
   city: string | null;
   source: string | null;
   notes: string | null;
-  status: 'new' | 'contacted' | 'qualified' | 'quoted' | 'won' | 'lost';
+  status?: 'new' | 'contacted' | 'qualified' | 'quoted' | 'won' | 'lost';
 };
 
 export async function updateCrmProspect(supabase: SupabaseClient, id: string, input: UpdateCrmProspectInput) {
