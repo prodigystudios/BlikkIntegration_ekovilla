@@ -139,6 +139,7 @@ type ListCrmQuotesOptions = {
   status?: CrmQuoteStatus;
   prospectId?: string;
   opportunityId?: string;
+  customerId?: string;
 };
 
 export async function listCrmQuotesWithFilters(supabase: SupabaseClient, options: ListCrmQuotesOptions) {
@@ -168,7 +169,19 @@ export async function listCrmQuotesWithFilters(supabase: SupabaseClient, options
     query = query.eq('opportunity_id', options.opportunityId);
   }
 
+  if (options.customerId) {
+    query = query.eq('customer_id', options.customerId);
+  }
+
   return query;
+}
+
+export async function getCrmQuoteStatus(supabase: SupabaseClient, id: string) {
+  return supabase
+    .from('crm_quotes')
+    .select('id, status, prospect_id')
+    .eq('id', id)
+    .single();
 }
 
 export async function createCrmQuote(supabase: SupabaseClient, input: CreateCrmQuoteInput) {

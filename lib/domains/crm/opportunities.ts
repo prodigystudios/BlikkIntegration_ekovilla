@@ -5,6 +5,10 @@ export type CrmOpportunityStatus = 'qualified' | 'quoted' | 'won' | 'lost';
 export const crmOpportunitySelect = `
   id,
   prospect_id,
+  customer_id,
+  customer_type,
+  customer_name,
+  contact_name,
   title,
   status,
   notes,
@@ -18,11 +22,22 @@ export const crmOpportunitySelect = `
     contact_name,
     city,
     source
+  ),
+  customer:crm_customers(
+    id,
+    customer_type,
+    company_name,
+    first_name,
+    last_name
   )
 `;
 
 type CreateCrmOpportunityInput = {
   prospect_id: string | null;
+  customer_id?: string | null;
+  customer_type?: 'business' | 'private' | null;
+  customer_name?: string | null;
+  contact_name?: string | null;
   title: string;
   status: CrmOpportunityStatus;
   notes: string | null;
@@ -32,6 +47,10 @@ type CreateCrmOpportunityInput = {
 
 type UpdateCrmOpportunityInput = {
   prospect_id: string | null;
+  customer_id?: string | null;
+  customer_type?: 'business' | 'private' | null;
+  customer_name?: string | null;
+  contact_name?: string | null;
   title: string;
   status: CrmOpportunityStatus;
   notes: string | null;
@@ -41,6 +60,7 @@ type ListCrmOpportunitiesOptions = {
   search?: string;
   status?: CrmOpportunityStatus;
   prospectId?: string;
+  customerId?: string;
 };
 
 export async function listCrmOpportunities(supabase: SupabaseClient, options: ListCrmOpportunitiesOptions = {}) {
@@ -62,6 +82,10 @@ export async function listCrmOpportunities(supabase: SupabaseClient, options: Li
 
   if (options.prospectId) {
     query = query.eq('prospect_id', options.prospectId);
+  }
+
+  if (options.customerId) {
+    query = query.eq('customer_id', options.customerId);
   }
 
   return query;

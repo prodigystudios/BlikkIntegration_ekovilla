@@ -1,6 +1,7 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { updateCrmQuote } from '@/lib/domains/crm/quotes';
+import { getCrmQuoteStatus, updateCrmQuote } from '@/lib/domains/crm/quotes';
+import { convertProspectToCustomer } from '@/lib/domains/crm/customers';
 import {
   ok,
   requireCrmUser,
@@ -24,6 +25,31 @@ export async function PATCH(req: Request, context: RouteContext) {
     if (!parsedBody.success) return validationError(parsedBody.error);
 
     const supabase = createRouteHandlerClient({ cookies });
+
+    // Konvertera prospekt till kund vid statusövergång till 'won'
+    if (parsedBody.data.status === 'won') {
+      const { data: current, error: fetchError } = await getCrmQuoteStatus(supabase, context.params.id);
+
+      if (fetchError) {
+        return routeError(500, 'crm_quote_fetch_failed', fetchError.message);
+      }
+
+      // Konvertera bara vid övergång, inte vid re-sparning av redan vunnen offert
+      // Använd DB:ns prospect_id, inte det som klienten skickade
+      if (current.status !== 'won' && current.prospect_id) {
+        const { error: conversionError } = await convertProspectToCustomer(
+          supabase,
+          current.prospect_id,
+          crmUser.currentUser.id,
+          crmUser.currentUser.id
+        );
+
+        if (conversionError) {
+          return routeError(500, 'crm_customer_conversion_failed', conversionError);
+        }
+      }
+    }
+
     const { data, error } = await updateCrmQuote(supabase, context.params.id, {
       ...parsedBody.data,
       currency_code: parsedBody.data.currency_code || 'SEK',

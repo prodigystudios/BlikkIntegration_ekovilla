@@ -1,9 +1,9 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { createCrmQuote, listCrmQuotesWithFilters } from '@/lib/domains/crm/quotes';
+import { createCrmCustomer, listCrmCustomers } from '@/lib/domains/crm/customers';
 import {
-  createCrmQuoteSchema,
-  listCrmQuotesQuerySchema,
+  createCrmCustomerSchema,
+  listCrmCustomersQuerySchema,
   ok,
   requireCrmUser,
   routeError,
@@ -16,33 +16,27 @@ export async function GET(req: Request) {
     if (crmUser.response) return crmUser.response;
 
     const url = new URL(req.url);
-    const parsedQuery = listCrmQuotesQuerySchema.safeParse({
+    const parsedQuery = listCrmCustomersQuerySchema.safeParse({
       q: url.searchParams.get('q') || undefined,
       status: url.searchParams.get('status') || undefined,
-      prospect_id: url.searchParams.get('prospect_id') || undefined,
-      opportunity_id: url.searchParams.get('opportunity_id') || undefined,
-      customer_id: url.searchParams.get('customer_id') || undefined,
+      assigned_to: url.searchParams.get('assigned_to') || undefined,
     });
-
     if (!parsedQuery.success) return validationError(parsedQuery.error);
 
     const supabase = createRouteHandlerClient({ cookies });
-    const query = await listCrmQuotesWithFilters(supabase, {
+    const { data, error } = await listCrmCustomers(supabase, {
       search: parsedQuery.data.q,
       status: parsedQuery.data.status,
-      prospectId: parsedQuery.data.prospect_id,
-      opportunityId: parsedQuery.data.opportunity_id,
-      customerId: parsedQuery.data.customer_id,
+      assignedTo: parsedQuery.data.assigned_to,
     });
-    const { data, error } = await query;
 
     if (error) {
-      return routeError(500, 'crm_quotes_list_failed', error.message);
+      return routeError(500, 'crm_customers_list_failed', error.message);
     }
 
     return ok({ items: data || [] });
   } catch (e: any) {
-    return routeError(500, 'crm_quotes_unexpected', e?.message || 'Failed to list quotes');
+    return routeError(500, 'crm_customers_unexpected', e?.message || 'Failed to list customers');
   }
 }
 
@@ -51,25 +45,22 @@ export async function POST(req: Request) {
     const crmUser = await requireCrmUser();
     if (crmUser.response || !crmUser.currentUser) return crmUser.response;
 
-    const parsedBody = createCrmQuoteSchema.safeParse(await req.json().catch(() => null));
+    const parsedBody = createCrmCustomerSchema.safeParse(await req.json().catch(() => null));
     if (!parsedBody.success) return validationError(parsedBody.error);
 
     const supabase = createRouteHandlerClient({ cookies });
-    const payload = {
+    const { data, error } = await createCrmCustomer(supabase, {
       ...parsedBody.data,
       created_by: crmUser.currentUser.id,
       assigned_to: crmUser.currentUser.id,
-      currency_code: parsedBody.data.currency_code || 'SEK',
-    };
-
-    const { data, error } = await createCrmQuote(supabase, payload);
+    });
 
     if (error) {
-      return routeError(500, 'crm_quote_create_failed', error.message);
+      return routeError(500, 'crm_customer_create_failed', error.message);
     }
 
     return ok({ item: data }, 201);
   } catch (e: any) {
-    return routeError(500, 'crm_quote_unexpected', e?.message || 'Failed to create quote');
+    return routeError(500, 'crm_customer_create_unexpected', e?.message || 'Failed to create customer');
   }
 }

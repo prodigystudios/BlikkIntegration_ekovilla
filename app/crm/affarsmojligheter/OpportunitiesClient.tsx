@@ -12,6 +12,10 @@ type OpportunityStatus = 'qualified' | 'quoted' | 'won' | 'lost';
 type OpportunityItem = {
   id: string;
   prospect_id: string | null;
+  customer_id: string | null;
+  customer_type: 'business' | 'private' | null;
+  customer_name: string | null;
+  contact_name: string | null;
   title: string;
   status: OpportunityStatus;
   notes: string | null;
@@ -23,6 +27,13 @@ type OpportunityItem = {
     contact_name: string | null;
     city: string | null;
     source: string | null;
+  } | null;
+  customer: {
+    id: string;
+    customer_type: 'business' | 'private';
+    company_name: string | null;
+    first_name: string | null;
+    last_name: string | null;
   } | null;
 };
 
@@ -59,15 +70,27 @@ const filterMeta: Record<OpportunityFilter, { label: string }> = {
   lost: { label: 'Förlorade' },
 };
 
+type IdentityMode = 'prospect' | 'customer' | 'new';
+
 type CreateDraft = {
+  identity_mode: IdentityMode;
   prospect_id: string;
+  customer_id: string;
+  customer_type: 'business' | 'private';
+  customer_name: string;
+  contact_name: string;
   title: string;
   status: OpportunityStatus;
   notes: string;
 };
 
 const initialDraft: CreateDraft = {
+  identity_mode: 'prospect',
   prospect_id: '',
+  customer_id: '',
+  customer_type: 'business',
+  customer_name: '',
+  contact_name: '',
   title: '',
   status: 'qualified',
   notes: '',
@@ -78,6 +101,25 @@ type ProspectOption = {
   company_name: string;
   contact_name: string | null;
 };
+
+type CustomerOption = {
+  id: string;
+  customer_type: 'business' | 'private';
+  company_name: string | null;
+  first_name: string | null;
+  last_name: string | null;
+};
+
+function getCustomerDisplayName(c: CustomerOption): string {
+  if (c.customer_type === 'business') return c.company_name || 'Okänt företag';
+  return [c.first_name, c.last_name].filter(Boolean).join(' ') || 'Okänd kund';
+}
+
+function getOpportunityDisplayName(item: OpportunityItem): string {
+  if (item.prospect) return item.prospect.company_name;
+  if (item.customer) return getCustomerDisplayName(item.customer);
+  return item.customer_name || '–';
+}
 
 type RelatedQuote = {
   id: string;
@@ -135,11 +177,12 @@ export default function OpportunitiesClient() {
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailEditing, setDetailEditing] = useState(false);
   const [savingDetail, setSavingDetail] = useState(false);
-  const [detailDraft, setDetailDraft] = useState<Omit<CreateDraft, 'prospect_id'>>({ title: '', status: 'qualified', notes: '' });
+  const [detailDraft, setDetailDraft] = useState<Omit<CreateDraft, 'prospect_id' | 'customer_id' | 'identity_mode'>>({ title: '', status: 'qualified', notes: '', customer_type: 'business', customer_name: '', contact_name: '' });
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [dragTargetStatus, setDragTargetStatus] = useState<OpportunityStatus | null>(null);
   const [movingId, setMovingId] = useState<string | null>(null);
   const [prospectOptions, setProspectOptions] = useState<ProspectOption[]>([]);
+  const [customerOptions, setCustomerOptions] = useState<CustomerOption[]>([]);
   const [relatedQuotes, setRelatedQuotes] = useState<RelatedQuote[]>([]);
   const [relatedQuotesLoading, setRelatedQuotesLoading] = useState(false);
 
@@ -180,24 +223,41 @@ export default function OpportunitiesClient() {
   }, [search]);
 
   useEffect(() => {
-    async function loadProspects() {
+    async function loadOptions() {
       try {
-        const res = await fetch('/api/crm/prospects', { cache: 'no-store' });
-        const json = await res.json().catch(() => ({}));
-        if (res.ok && json.ok) {
+        const [prospectRes, customerRes] = await Promise.all([
+          fetch('/api/crm/prospects', { cache: 'no-store' }),
+          fetch('/api/crm/customers', { cache: 'no-store' }),
+        ]);
+        const [prospectJson, customerJson] = await Promise.all([
+          prospectRes.json().catch(() => ({})),
+          customerRes.json().catch(() => ({})),
+        ]);
+        if (prospectRes.ok && prospectJson.ok) {
           setProspectOptions(
-            (json.data?.items || []).map((p: any) => ({
+            (prospectJson.data?.items || []).map((p: any) => ({
               id: p.id,
               company_name: p.company_name,
               contact_name: p.contact_name,
             }))
           );
         }
+        if (customerRes.ok && customerJson.ok) {
+          setCustomerOptions(
+            (customerJson.data?.items || []).map((c: any) => ({
+              id: c.id,
+              customer_type: c.customer_type,
+              company_name: c.company_name,
+              first_name: c.first_name,
+              last_name: c.last_name,
+            }))
+          );
+        }
       } catch {
-        // prospektlistan är valfri i formuläret
+        // listor är valfria i formuläret
       }
     }
-    loadProspects();
+    loadOptions();
   }, []);
 
   useEffect(() => {
@@ -237,7 +297,7 @@ export default function OpportunitiesClient() {
 
   useEffect(() => {
     if (!selected) return;
-    setDetailDraft({ title: selected.title, status: selected.status, notes: selected.notes || '' });
+    setDetailDraft({ title: selected.title, status: selected.status, notes: selected.notes || '', customer_type: selected.customer_type || 'business', customer_name: selected.customer_name || '', contact_name: selected.contact_name || '' });
   }, [selected]);
 
   const visibleItems = useMemo(() => {
@@ -274,21 +334,35 @@ export default function OpportunitiesClient() {
   }), [items]);
 
   async function createOpportunity() {
-    if (!draft.title.trim()) {
-      toast.error('Titel krävs');
-      return;
+    if (!draft.title.trim()) { toast.error('Titel krävs'); return; }
+    if (draft.identity_mode === 'new' && !draft.customer_name.trim()) { toast.error('Namn eller företag krävs'); return; }
+    if (draft.identity_mode === 'prospect' && !draft.prospect_id) { toast.error('Välj ett prospekt'); return; }
+    if (draft.identity_mode === 'customer' && !draft.customer_id) { toast.error('Välj en kund'); return; }
+
+    const body: Record<string, unknown> = {
+      title: draft.title,
+      status: draft.status,
+      notes: draft.notes || null,
+      prospect_id: null,
+      customer_id: null,
+      customer_name: null,
+      customer_type: null,
+      contact_name: null,
+    };
+    if (draft.identity_mode === 'prospect') body.prospect_id = draft.prospect_id || null;
+    if (draft.identity_mode === 'customer') body.customer_id = draft.customer_id || null;
+    if (draft.identity_mode === 'new') {
+      body.customer_name = draft.customer_name.trim();
+      body.customer_type = draft.customer_type;
+      body.contact_name = draft.contact_name.trim() || null;
     }
+
     setCreating(true);
     try {
       const res = await fetch('/api/crm/opportunities', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prospect_id: draft.prospect_id || null,
-          title: draft.title,
-          status: draft.status,
-          notes: draft.notes || null,
-        }),
+        body: JSON.stringify(body),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.ok) {
@@ -323,6 +397,10 @@ export default function OpportunitiesClient() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           prospect_id: selected.prospect_id,
+          customer_id: selected.customer_id,
+          customer_name: detailDraft.customer_name?.trim() || selected.customer_name,
+          customer_type: selected.customer_type,
+          contact_name: detailDraft.contact_name?.trim() || selected.contact_name,
           title: detailDraft.title,
           status: detailDraft.status,
           notes: detailDraft.notes || null,
@@ -359,6 +437,10 @@ export default function OpportunitiesClient() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           prospect_id: current.prospect_id,
+          customer_id: current.customer_id,
+          customer_name: current.customer_name,
+          customer_type: current.customer_type,
+          contact_name: current.contact_name,
           title: current.title,
           status: nextStatus,
           notes: current.notes,
@@ -386,7 +468,8 @@ export default function OpportunitiesClient() {
 
   function renderCard(item: OpportunityItem) {
     const active = selectedId === item.id;
-    const companyName = item.prospect?.company_name || null;
+    const displayName = getOpportunityDisplayName(item);
+    const subLine = item.prospect?.city || (item.customer ? null : null);
 
     return (
       <button
@@ -410,9 +493,10 @@ export default function OpportunitiesClient() {
 
         <div className="grid min-h-[56px] w-full content-start gap-1 pl-2">
           <strong className="line-clamp-2 text-[15px] font-bold tracking-[-0.03em] text-slate-950">{item.title}</strong>
-          {companyName ? (
-            <span className="text-[12px] text-slate-500">{companyName}{item.prospect?.city ? ` · ${item.prospect.city}` : ''}</span>
-          ) : null}
+          <span className="text-[12px] text-slate-500">
+            {displayName}{subLine ? ` · ${subLine}` : ''}
+            {item.customer_id ? ' · Kund' : item.prospect_id ? ' · Prospekt' : ''}
+          </span>
         </div>
 
         <div className="mt-auto grid gap-1 pl-2 text-[11px] text-slate-500">
@@ -558,7 +642,7 @@ export default function OpportunitiesClient() {
                 <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Ny affärsmöjlighet</span>
                 <strong className="text-[1.5rem] font-bold tracking-[-0.05em] text-slate-950">Registrera affären</strong>
                 <p className="m-0 text-sm leading-6 text-slate-600">
-                  Koppla till ett prospekt och ge affären ett beskrivande namn.
+                  Koppla till ett prospekt, befintlig kund eller registrera direkt.
                 </p>
               </div>
               <button
@@ -576,21 +660,87 @@ export default function OpportunitiesClient() {
                 onChange={(e) => setDraft((c) => ({ ...c, title: e.target.value }))}
                 placeholder="Titel, t.ex. Takisolering 2026"
               />
-              <label className="grid gap-1 text-sm text-slate-600">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Koppla till prospekt (valfritt)</span>
+
+              {/* Identitetsläge */}
+              <div className="grid gap-1">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Vem gäller affären?</span>
+                <div className="flex gap-1.5">
+                  {(['prospect', 'customer', 'new'] as IdentityMode[]).map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => setDraft((c) => ({ ...c, identity_mode: mode }))}
+                      className={cn(
+                        'flex-1 rounded-xl border py-2 text-xs font-semibold transition',
+                        draft.identity_mode === mode
+                          ? 'border-transparent text-white'
+                          : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300',
+                      )}
+                      style={draft.identity_mode === mode ? { backgroundColor: 'var(--crm-primary)' } : undefined}
+                    >
+                      {mode === 'prospect' ? 'Prospekt' : mode === 'customer' ? 'Befintlig kund' : 'Ny direkt'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {draft.identity_mode === 'prospect' && (
                 <select
                   value={draft.prospect_id}
                   onChange={(e) => setDraft((c) => ({ ...c, prospect_id: e.target.value }))}
                   className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/20"
                 >
-                  <option value="">— Inget prospekt —</option>
+                  <option value="">— Välj prospekt —</option>
                   {prospectOptions.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.company_name}{p.contact_name ? ` (${p.contact_name})` : ''}
-                    </option>
+                    <option key={p.id} value={p.id}>{p.company_name}{p.contact_name ? ` (${p.contact_name})` : ''}</option>
                   ))}
                 </select>
-              </label>
+              )}
+
+              {draft.identity_mode === 'customer' && (
+                <select
+                  value={draft.customer_id}
+                  onChange={(e) => setDraft((c) => ({ ...c, customer_id: e.target.value }))}
+                  className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/20"
+                >
+                  <option value="">— Välj kund —</option>
+                  {customerOptions.map((c) => (
+                    <option key={c.id} value={c.id}>{getCustomerDisplayName(c)}</option>
+                  ))}
+                </select>
+              )}
+
+              {draft.identity_mode === 'new' && (
+                <div className="grid gap-2">
+                  <div className="flex gap-1.5">
+                    {(['business', 'private'] as const).map((t) => (
+                      <button
+                        key={t}
+                        type="button"
+                        onClick={() => setDraft((c) => ({ ...c, customer_type: t }))}
+                        className={cn(
+                          'flex-1 rounded-xl border py-2 text-xs font-semibold transition',
+                          draft.customer_type === t ? 'border-slate-700 bg-slate-800 text-white' : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300',
+                        )}
+                      >
+                        {t === 'business' ? 'Företag' : 'Privat'}
+                      </button>
+                    ))}
+                  </div>
+                  <Input
+                    value={draft.customer_name}
+                    onChange={(e) => setDraft((c) => ({ ...c, customer_name: e.target.value }))}
+                    placeholder={draft.customer_type === 'business' ? 'Företagsnamn' : 'Förnamn Efternamn'}
+                  />
+                  {draft.customer_type === 'business' && (
+                    <Input
+                      value={draft.contact_name}
+                      onChange={(e) => setDraft((c) => ({ ...c, contact_name: e.target.value }))}
+                      placeholder="Kontaktperson (valfritt)"
+                    />
+                  )}
+                </div>
+              )}
               <label className="grid gap-1 text-sm text-slate-600">
                 <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Status</span>
                 <select
@@ -704,7 +854,7 @@ export default function OpportunitiesClient() {
                 <div className="flex flex-wrap justify-end gap-2">
                   <button
                     type="button"
-                    onClick={() => { setDetailEditing(false); setDetailDraft({ title: selected.title, status: selected.status, notes: selected.notes || '' }); }}
+                    onClick={() => { setDetailEditing(false); setDetailDraft({ title: selected.title, status: selected.status, notes: selected.notes || '', customer_type: selected.customer_type || 'business', customer_name: selected.customer_name || '', contact_name: selected.contact_name || '' }); }}
                     className="inline-flex min-h-11 items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-600 hover:border-slate-300"
                   >
                     Avbryt
@@ -734,20 +884,26 @@ export default function OpportunitiesClient() {
               </div>
             )}
 
-            {selected.prospect ? (
+            {(selected.prospect || selected.customer || selected.customer_name) ? (
               <div className="grid gap-2 rounded-[20px] border border-slate-200/80 bg-white px-4 py-3 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Kopplat prospekt</span>
+                <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                  {selected.prospect ? 'Kopplat prospekt' : selected.customer ? 'Kopplad kund' : 'Kund'}
+                </span>
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
-                    <p className="m-0 text-sm font-semibold text-slate-900">{selected.prospect.company_name}</p>
-                    {selected.prospect.contact_name ? <p className="m-0 text-xs text-slate-500">{selected.prospect.contact_name}</p> : null}
+                    <p className="m-0 text-sm font-semibold text-slate-900">{getOpportunityDisplayName(selected)}</p>
+                    {selected.prospect?.contact_name ? <p className="m-0 text-xs text-slate-500">{selected.prospect.contact_name}</p> : null}
+                    {selected.contact_name && !selected.prospect ? <p className="m-0 text-xs text-slate-500">{selected.contact_name}</p> : null}
                   </div>
-                  <a
-                    href={`/crm/prospekt`}
-                    className="inline-flex min-h-9 items-center justify-center rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-[0_10px_18px_rgba(15,23,42,0.04)] transition hover:border-slate-300"
-                  >
-                    Gå till prospektregister
-                  </a>
+                  {selected.prospect ? (
+                    <a href="/crm/prospekt" className="inline-flex min-h-9 items-center justify-center rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:border-slate-300">
+                      Gå till prospektregister
+                    </a>
+                  ) : selected.customer ? (
+                    <a href={`/crm/kunder`} className="inline-flex min-h-9 items-center justify-center rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:border-slate-300">
+                      Gå till kundregister
+                    </a>
+                  ) : null}
                 </div>
               </div>
             ) : null}

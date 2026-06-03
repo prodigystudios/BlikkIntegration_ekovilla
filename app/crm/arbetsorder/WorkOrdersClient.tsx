@@ -60,6 +60,7 @@ type WorkOrderItem = {
   notes: string | null;
   created_at: string;
   updated_at: string;
+  customer_id: string | null;
 };
 
 type WorkOrderDraft = {
@@ -563,7 +564,14 @@ export default function WorkOrdersClient() {
                   <h2 className="m-0 text-[clamp(1.4rem,2.2vw,2rem)] font-bold tracking-[-0.04em] text-slate-950">
                     {selectedWorkOrder.project_name}
                   </h2>
-                  <p className="m-0 text-sm text-slate-500">{selectedWorkOrder.client_name}</p>
+                  <div className="flex items-center gap-2">
+                    <p className="m-0 text-sm text-slate-500">{selectedWorkOrder.client_name}</p>
+                    {selectedWorkOrder.customer_id ? (
+                      <a href="/crm/kunder" className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600 hover:border-slate-300">
+                        Kundkort →
+                      </a>
+                    ) : null}
+                  </div>
                 </div>
                 <button type="button" onClick={closeWorkOrderModal} className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50">
                   Stäng

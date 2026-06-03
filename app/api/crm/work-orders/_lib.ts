@@ -24,6 +24,7 @@ export const listCrmWorkOrdersQuerySchema = z.object({
   q: z.string().trim().optional(),
   status: workOrderStatusSchema.optional(),
   work_order_id: z.string().uuid('Ogiltig arbetsorder').optional(),
+  customer_id: z.string().uuid('Ogiltig kund').optional(),
 });
 
 export const updateCrmWorkOrderSchema = z.object({

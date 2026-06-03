@@ -221,7 +221,7 @@ export async function createCrmWorkOrderFromQuote(supabase: SupabaseClient, quot
 
 export async function listCrmWorkOrdersWithFilters(
   supabase: SupabaseClient,
-  options: { search?: string; status?: CrmWorkOrderStatus; workOrderId?: string },
+  options: { search?: string; status?: CrmWorkOrderStatus; workOrderId?: string; customerId?: string },
 ) {
   let query = supabase
     .from('crm_work_orders')
@@ -242,6 +242,10 @@ export async function listCrmWorkOrdersWithFilters(
 
   if (options.workOrderId) {
     query = query.eq('id', options.workOrderId);
+  }
+
+  if (options.customerId) {
+    query = query.eq('customer_id', options.customerId);
   }
 
   return query;

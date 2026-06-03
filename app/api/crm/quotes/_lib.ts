@@ -89,6 +89,7 @@ export const listCrmQuotesQuerySchema = z.object({
   status: statusSchema.optional(),
   prospect_id: z.string().uuid('Ogiltigt prospekt').optional(),
   opportunity_id: z.string().uuid('Ogiltig affärsmöjlighet').optional(),
+  customer_id: z.string().uuid('Ogiltig kund').optional(),
 });
 
 export const createCrmQuoteSchema = z.object({

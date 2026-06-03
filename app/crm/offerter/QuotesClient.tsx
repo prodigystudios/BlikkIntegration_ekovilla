@@ -91,6 +91,7 @@ type QuoteItem = {
   updated_at: string;
   prospect: QuoteProspect | QuoteProspect[] | null;
   opportunity: { id: string; title: string; status: string } | null;
+  customer_id: string | null;
 };
 
 type QuoteLineItem = {
@@ -1584,7 +1585,7 @@ export default function QuotesClient() {
 
           <div className="grid min-h-[52px] w-full content-start gap-0.5 pl-2">
             <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
-              {item.opportunity ? item.opportunity.title : prospect ? 'Kopplat prospekt' : 'Fristående offert'}
+              {item.opportunity ? item.opportunity.title : item.customer_id ? 'Kopplad kund' : prospect ? 'Kopplat prospekt' : 'Fristående offert'}
             </span>
             <strong className="truncate text-base font-bold tracking-[-0.03em] text-slate-950">{item.project_name}</strong>
             <p className="m-0 truncate text-sm text-slate-600">{getQuoteCustomerName(item)}</p>
@@ -1622,7 +1623,7 @@ export default function QuotesClient() {
 
         <div className="grid gap-1.5 pl-2">
           <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">
-            {item.opportunity ? item.opportunity.title : prospect ? 'Kopplat prospekt' : 'Fristående offert'}
+            {item.opportunity ? item.opportunity.title : item.customer_id ? 'Kopplad kund' : prospect ? 'Kopplat prospekt' : 'Fristående offert'}
           </span>
           <div className="grid gap-0.5">
             <strong className="text-[17px] font-bold tracking-[-0.03em] text-slate-950">{item.project_name}</strong>
