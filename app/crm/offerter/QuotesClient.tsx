@@ -36,6 +36,7 @@ type QuoteCustomerSource = {
 
 type QuoteItem = {
   id: string;
+  quote_number: string | null;
   prospect_id: string | null;
   opportunity_id: string | null;
   customer_name: string | null;
@@ -120,7 +121,22 @@ type ArticleLite = {
   unit?: string | { name?: string | null; objectiveName?: string | null } | null;
 };
 
+type CrmCustomerLite = {
+  id: string;
+  customer_type: 'business' | 'private';
+  company_name: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  organization_number: string | null;
+  personal_number: string | null;
+  fortnox_customer_id: string | null;
+  visit_address: { street: string | null; postal_code: string | null; city: string | null } | null;
+  contacts: Array<{ id: string; name: string; role: string | null; phone: string | null; email: string | null; is_primary: boolean }>;
+};
+
 type QuoteDraft = {
+  customer_id: string | null;
+  create_customer: boolean;
   prospect_id: string;
   opportunity_id: string;
   quote_type: 'private' | 'business';
@@ -210,6 +226,8 @@ const quoteStatusMeta: Record<QuoteItem['status'], { label: string; className: s
 };
 
 const initialDraft: QuoteDraft = {
+  customer_id: null,
+  create_customer: false,
   prospect_id: '',
   opportunity_id: '',
   quote_type: 'business',
@@ -261,7 +279,28 @@ const quoteFilterMeta: Record<QuoteFilter, { label: string; hint: string; tone: 
   lost: { label: 'Förlorade', hint: 'Offerter som inte gick vidare', tone: 'border-rose-200 bg-rose-50 text-rose-800' },
 };
 
-const quotesSectionClass = 'grid gap-3 border-emerald-200/65 bg-[linear-gradient(180deg,rgba(250,253,250,0.98),rgba(244,249,245,0.98))] p-4 shadow-[0_18px_38px_rgba(15,23,42,0.06)] md:p-5';
+const stepIssueKeys: Record<number, string[]> = {
+  1: [
+    'Kund, prospekt eller affärsmöjlighet måste anges',
+    'Prospektkälla kräver valt prospekt',
+    'Fortnox-kund behöver en reserverad kundreferens',
+    'Privatkund behöver personnummer',
+    'Företagskund behöver företagsnamn',
+  ],
+  2: [
+    'Offertnamn saknas',
+    'Ange giltigt belopp eller bygg offerten med rader',
+  ],
+  3: [
+    'Alla konfigurerade offert-rader behöver mängd och pris',
+  ],
+  4: [
+    'ROT är bara tillåtet för privatkund',
+    'ROT kräver personnummer för sökande',
+    'ROT kräver fastighetsbeteckning',
+  ],
+};
+
 const quoteModalCardClass = 'grid min-w-0 gap-4 rounded-[22px] border border-slate-200 bg-white p-4 shadow-[0_10px_24px_rgba(15,23,42,0.05)] md:p-5 [&_label]:gap-0.5 [&_label]:text-sm [&_label>span:first-child]:text-[11px] [&_label>span:first-child]:font-semibold [&_label>span:first-child]:uppercase [&_label>span:first-child]:tracking-[0.1em] [&_label>span:first-child]:text-slate-400 [&_input]:min-h-10 [&_input]:px-2.5 [&_input]:py-1.5 [&_input]:text-sm [&_textarea]:min-h-[96px] [&_textarea]:px-2.5 [&_textarea]:py-1.5 [&_textarea]:text-sm [&_select]:py-2 [&_select]:text-sm';
 const quoteModalMutedCardClass = 'grid min-w-0 gap-4 rounded-[22px] border border-slate-200 bg-[linear-gradient(180deg,#fcfcfd_0%,#f8fafc_100%)] p-4 shadow-[0_10px_24px_rgba(15,23,42,0.05)] md:p-5 [&_label]:gap-0.5 [&_label]:text-sm [&_label>span:first-child]:text-[11px] [&_label>span:first-child]:font-semibold [&_label>span:first-child]:uppercase [&_label>span:first-child]:tracking-[0.1em] [&_label>span:first-child]:text-slate-400 [&_input]:min-h-10 [&_input]:px-2.5 [&_input]:py-1.5 [&_input]:text-sm [&_textarea]:min-h-[96px] [&_textarea]:px-2.5 [&_textarea]:py-1.5 [&_textarea]:text-sm [&_select]:py-2 [&_select]:text-sm';
 
@@ -312,21 +351,12 @@ function getQuoteCustomerName(item: QuoteItem) {
   return getProspectFromQuote(item)?.company_name || item.customer_snapshot?.customer_name || item.customer_snapshot?.company_name || item.customer_name || 'Okänd kund';
 }
 
-function formatPercent(value: string | number | null | undefined) {
-  const numeric = typeof value === 'number' ? value : Number(String(value || ''));
-  return Number.isFinite(numeric) ? `${numeric}%` : '–';
-}
-
 function formatCurrency(value: number | string, currencyCode: string) {
   const numeric = typeof value === 'number' ? value : Number(String(value));
   if (!Number.isFinite(numeric)) return '–';
   return new Intl.NumberFormat('sv-SE', { style: 'currency', currency: currencyCode || 'SEK', maximumFractionDigits: 0 }).format(numeric);
 }
 
-function getNumericAmount(value: number | string) {
-  const numeric = typeof value === 'number' ? value : Number(String(value));
-  return Number.isFinite(numeric) ? numeric : 0;
-}
 
 function formatDate(value: string | null | undefined) {
   if (!value) return '–';
@@ -335,17 +365,6 @@ function formatDate(value: string | null | undefined) {
   return new Intl.DateTimeFormat('sv-SE', { dateStyle: 'medium' }).format(date);
 }
 
-function getQuoteTypeCopy(type: QuoteDraft['quote_type']) {
-  return type === 'private'
-    ? {
-        label: 'Privatkund',
-        detail: 'Visa bara privatkundens fält och ROT när det faktiskt är relevant.',
-      }
-    : {
-        label: 'Företag',
-        detail: 'Visa företagsuppgifter och organisationsnummer, utan privatkundslogik och ROT.',
-      };
-}
 
 function getDefaultDraftCustomerSource(prospectId?: string | null): QuoteDraft['customer_source'] {
   return {
@@ -372,41 +391,6 @@ function getDraftCustomerSource(source: QuoteCustomerSource | null | undefined, 
   };
 }
 
-function getCustomerSourceCopy(source: QuoteDraft['customer_source']) {
-  if (source.kind === 'prospect') {
-    return source.sync_intent === 'on_work_order'
-      ? {
-          label: 'Prospekt som källa, Fortnox först vid arbetsorder',
-          detail: 'Prospektet driver kundgrunden nu. Om offerten vinns är kunden markerad för att först skapas i Fortnox när arbetsorder skapas.',
-        }
-      : {
-          label: 'Prospekt som källa',
-          detail: 'Prospektet är kundkälla för offerten. Kunddata stannar i CRM tills du aktivt väljer något annat senare.',
-        };
-  }
-
-  if (source.kind === 'fortnox') {
-    return {
-      label: 'Fortnox-reserverad kund',
-      detail: 'Själva Fortnox-sökningen är ännu inte byggd. Valet markerar bara att offerten senare ska kunna länkas mot en Fortnox-kund.',
-    };
-  }
-
-  return source.sync_intent === 'on_work_order'
-    ? {
-        label: 'Lokal kund, Fortnox först vid arbetsorder',
-        detail: 'Kunden byggs lokalt i offertsteget men är markerad för att sparas i Fortnox först när offerten faktiskt blir arbetsorder.',
-      }
-    : {
-        label: 'Lokal offertkund',
-        detail: 'Kunden hålls helt lokalt i CRM och påverkar inte Fortnox-registret.',
-      };
-}
-
-function getDraftAmountValue(value: string) {
-  const normalized = Number(value.replace(',', '.'));
-  return Number.isFinite(normalized) ? normalized : NaN;
-}
 
 function getQuoteDraftValidationIssues({
   draft,
@@ -473,285 +457,6 @@ function getQuoteDraftValidationIssues({
   }
 
   return issues;
-}
-
-function QuoteCustomerSourceSection({
-  draft,
-  setDraft,
-  prospects,
-  prospectsById,
-}: {
-  draft: QuoteDraft;
-  setDraft: React.Dispatch<React.SetStateAction<QuoteDraft>>;
-  prospects: ProspectItem[];
-  prospectsById: Map<string, ProspectItem>;
-}) {
-  const sourceCopy = getCustomerSourceCopy(draft.customer_source);
-  const selectedProspect = draft.prospect_id ? prospectsById.get(draft.prospect_id) || null : null;
-
-  return (
-    <div className={quoteModalMutedCardClass}>
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="grid gap-1">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Kundtyp och källa</div>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700">
-            {getQuoteTypeCopy(draft.quote_type).label}
-          </span>
-          <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700">
-            {sourceCopy.label}
-          </span>
-        </div>
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-4">
-        <label className="grid gap-1 text-sm text-slate-600">
-          <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Prospekt</span>
-          <Select
-            value={draft.prospect_id}
-            onChange={(event) => {
-              const prospectId = event.target.value;
-              const prospect = prospectId ? prospectsById.get(prospectId) || null : null;
-              setDraft((current) => ({
-                ...current,
-                prospect_id: prospectId,
-                customer_source: {
-                  ...current.customer_source,
-                  kind: !prospectId && current.customer_source.kind === 'prospect' ? 'local' : current.customer_source.kind,
-                },
-                customer_name: current.quote_type === 'private' ? current.customer_name : (prospect ? prospect.company_name : current.customer_name),
-                company_name: current.quote_type === 'business' && prospect ? prospect.company_name : current.company_name,
-              }));
-            }}
-          >
-            <option value="">Ingen prospektkoppling</option>
-            {prospects.map((prospect) => (
-              <option key={prospect.id} value={prospect.id}>{prospect.company_name}</option>
-            ))}
-          </Select>
-        </label>
-
-        <label className="grid gap-1 text-sm text-slate-600">
-          <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Kundtyp</span>
-          <Select
-            value={draft.quote_type}
-            onChange={(event) => {
-              const nextType = event.target.value as 'private' | 'business';
-              setDraft((current) => ({
-                ...current,
-                quote_type: nextType,
-                rot_enabled: nextType === 'private' ? current.rot_enabled : false,
-                customer_name: nextType === 'business'
-                  ? (current.company_name || current.customer_name)
-                  : current.customer_name,
-              }));
-            }}
-          >
-            <option value="business">Företag</option>
-            <option value="private">Privatkund</option>
-          </Select>
-        </label>
-
-        <label className="grid gap-1 text-sm text-slate-600">
-          <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Kundkälla</span>
-          <Select
-            value={draft.customer_source.kind}
-            onChange={(event) => {
-              const nextKind = event.target.value as QuoteCustomerSourceKind;
-              setDraft((current) => ({
-                ...current,
-                customer_source: {
-                  ...current.customer_source,
-                  kind: nextKind,
-                  sync_intent: nextKind === 'fortnox' ? 'linked' : (current.customer_source.sync_intent === 'linked' ? 'local_only' : current.customer_source.sync_intent),
-                },
-              }));
-            }}
-          >
-            <option value="prospect">Prospekt</option>
-            <option value="local">Lokal offertkund</option>
-            <option value="fortnox">Fortnox-kund / framtida sökning</option>
-          </Select>
-        </label>
-
-        <label className="grid gap-1 text-sm text-slate-600">
-          <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Kundregister</span>
-          <Select
-            value={draft.customer_source.kind === 'fortnox' ? 'linked' : draft.customer_source.sync_intent}
-            onChange={(event) => {
-              const nextIntent = event.target.value as QuoteCustomerSyncIntent;
-              setDraft((current) => ({
-                ...current,
-                customer_source: {
-                  ...current.customer_source,
-                  sync_intent: nextIntent,
-                },
-              }));
-            }}
-            disabled={draft.customer_source.kind === 'fortnox'}
-          >
-            <option value="local_only">Stanna lokalt i CRM</option>
-            <option value="on_work_order">Skapa i Fortnox först vid arbetsorder</option>
-            <option value="linked">Redan länkad till Fortnox</option>
-          </Select>
-        </label>
-      </div>
-
-      {draft.customer_source.kind === 'fortnox' ? (
-        <div className="grid gap-4 rounded-[22px] border border-sky-200 bg-sky-50 p-5 md:grid-cols-2">
-          <div className="md:col-span-2 text-sm text-sky-900">
-            Fortnox-sökningen är ännu inte byggd. Sektionen nedan reserverar plats för framtida lookup och eventuell lagrad kundreferens utan att ändra modalens struktur senare.
-          </div>
-          <label className="grid gap-1 text-sm text-slate-600">
-            <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Fortnox-kundnamn</span>
-            <Input
-              value={draft.customer_source.fortnox_customer_name}
-              onChange={(event) => setDraft((current) => ({
-                ...current,
-                customer_source: {
-                  ...current.customer_source,
-                  fortnox_customer_name: event.target.value,
-                },
-              }))}
-              placeholder="Reserverad för framtida lookup eller länkad kund"
-            />
-          </label>
-          <label className="grid gap-1 text-sm text-slate-600">
-            <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Fortnox-kundid</span>
-            <Input
-              value={draft.customer_source.fortnox_customer_id}
-              onChange={(event) => setDraft((current) => ({
-                ...current,
-                customer_source: {
-                  ...current.customer_source,
-                  fortnox_customer_id: event.target.value,
-                },
-              }))}
-              placeholder="Kommer normalt från sökningen senare"
-            />
-          </label>
-        </div>
-      ) : (
-        <div className="grid gap-4 rounded-[22px] border border-slate-200 bg-white p-5 md:grid-cols-2">
-          <div className="grid gap-1 rounded-[18px] border border-slate-200 bg-slate-50 px-4 py-4">
-            <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Aktiv källa</span>
-            <span className="text-sm font-semibold text-slate-950">
-              {draft.customer_source.kind === 'prospect'
-                ? selectedProspect?.company_name || 'Prospekt måste väljas'
-                : 'Kunden byggs i offerten'}
-            </span>
-            <span className="text-sm text-slate-600">
-              {draft.customer_source.kind === 'prospect'
-                ? 'Kundbasen hämtas från prospektet och kan kompletteras i offertens kundkort.'
-                : draft.customer_source.sync_intent === 'on_work_order'
-                  ? 'Kunden stannar lokalt nu men är markerad för att först skapas i Fortnox vid arbetsorder.'
-                  : 'Kunden är helt lokal tills du senare väljer annat integrationsspår.'}
-            </span>
-          </div>
-          <div className="grid gap-1 rounded-[18px] border border-slate-200 bg-slate-50 px-4 py-4">
-            <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Nästa registersteg</span>
-            <span className="text-sm font-semibold text-slate-950">
-              {draft.customer_source.sync_intent === 'on_work_order' ? 'Först när arbetsorder skapas' : 'Ingen extern synk planerad ännu'}
-            </span>
-            <span className="text-sm text-slate-600">
-              {draft.customer_source.sync_intent === 'on_work_order'
-                ? 'Bra när sälj vill undvika att fylla Fortnox-registret med kunder som aldrig blir riktiga jobb.'
-                : 'Det här håller offertsteget rent tills vi har riktig Fortnox-sökning och länkning på plats.'}
-            </span>
-          </div>
-        </div>
-      )}
-
-    </div>
-  );
-}
-
-function QuoteValidationFooter({
-  draft,
-  effectiveRows,
-  totals,
-}: {
-  draft: QuoteDraft;
-  effectiveRows: EffectiveQuoteRow[];
-  totals: { subtotal: number; vat: number; total: number };
-}) {
-  const hasAnyLineItemInput = draft.items.some((item) => item.article_name || item.m2 || item.quantity || item.unit_price);
-  const draftAmount = getDraftAmountValue(draft.amount);
-  const validationItems = [
-    {
-      label: 'Källa och affärstyp',
-      ready: draft.customer_source.kind !== 'prospect' || Boolean(draft.prospect_id),
-      detail: draft.customer_source.kind === 'prospect' && !draft.prospect_id
-        ? 'Välj prospekt eller byt kundkälla till lokal kund.'
-        : 'Kundtyp och källa är satta.',
-    },
-    {
-      label: 'Kundidentitet',
-      ready: draft.quote_type === 'business'
-        ? Boolean((draft.company_name || draft.customer_name).trim())
-        : Boolean(draft.customer_name.trim() && draft.personal_number.trim()),
-      detail: draft.quote_type === 'business'
-        ? 'Företagsnamn bör finnas innan offerten sparas.'
-        : 'Privatkund kräver namn och personnummer.',
-    },
-    {
-      label: 'Ekonomi',
-      ready: hasAnyLineItemInput
-        ? effectiveRows.every((item) => !item.isConfigured || (item.amount > 0 && item.effectiveUnit >= 0))
-        : Number.isFinite(draftAmount) && draftAmount >= 0,
-      detail: hasAnyLineItemInput
-        ? `Radsummering: ${formatCurrency(totals.total, 'SEK')}`
-        : 'Ange grundbelopp eller bygg ekonomin via offert­rader.',
-    },
-    {
-      label: 'ROT-underlag',
-      ready: !draft.rot_enabled || Boolean(draft.rot_applicant_name.trim() && draft.rot_personal_number.trim() && draft.rot_property_designation.trim()),
-      detail: draft.rot_enabled
-        ? 'ROT kräver sökande, personnummer och fastighetsbeteckning.'
-        : 'Inte aktivt i den här offerten.',
-    },
-    {
-      label: 'Offertgrund',
-      ready: Boolean(draft.project_name.trim() && draft.quote_date.trim()),
-      detail: 'Offertnamn och datum behöver finnas för att flödet ska bli spårbart.',
-    },
-  ];
-  const readyCount = validationItems.filter((item) => item.ready).length;
-
-  return (
-    <div className="grid gap-4 rounded-[26px] border border-slate-200 bg-slate-50 px-5 py-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Valideringssammanfattning</div>
-          <div className="text-sm font-semibold text-slate-900">{readyCount} av {validationItems.length} kärnpunkter klara innan sparning</div>
-        </div>
-        <span className={cn(
-          'rounded-full border px-3 py-1.5 text-xs font-semibold',
-          readyCount === validationItems.length
-            ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
-            : 'border-amber-200 bg-amber-50 text-amber-900',
-        )}>
-          {readyCount === validationItems.length ? 'Redo att spara' : 'Komplettera innan nästa steg'}
-        </span>
-      </div>
-
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
-        {validationItems.map((item) => (
-          <div key={item.label} className={cn(
-            'grid gap-1 rounded-[18px] border px-3 py-3',
-            item.ready ? 'border-emerald-200 bg-white' : 'border-amber-200 bg-white',
-          )}>
-            <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">{item.label}</span>
-            <span className={cn('text-sm font-semibold', item.ready ? 'text-slate-950' : 'text-amber-950')}>
-              {item.ready ? 'Klar' : 'Saknar underlag'}
-            </span>
-            <span className="text-sm text-slate-600">{item.detail}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
 }
 
 function QuoteCustomerSection({
@@ -1233,69 +938,6 @@ function QuoteWorkOrderSection({
   );
 }
 
-function QuoteValidationSummary({
-  draft,
-  effectiveRows,
-  editingQuoteId,
-  submitting,
-}: {
-  draft: QuoteDraft;
-  effectiveRows: EffectiveQuoteRow[];
-  editingQuoteId: string | null;
-  submitting: boolean;
-}) {
-  const issues = getQuoteDraftValidationIssues({ draft, effectiveRows });
-  const ready = issues.length === 0;
-  const rowCount = effectiveRows.filter((item) => item.isConfigured).length;
-
-  return (
-    <div className={cn(
-      'grid gap-3 rounded-[22px] border px-4 py-3',
-      ready ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50',
-    )}>
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="grid gap-0.5">
-          <span className={cn('text-[11px] font-semibold uppercase tracking-[0.16em]', ready ? 'text-emerald-800' : 'text-amber-800')}>
-            Valideringssammanfattning
-          </span>
-          <span className={cn('text-sm', ready ? 'text-emerald-950' : 'text-amber-950')}>
-            {ready ? 'Offerten har de fält som krävs för att sparas.' : 'Det finns fortfarande saker att fylla i innan offerten är komplett.'}
-          </span>
-        </div>
-        <div className="flex flex-wrap gap-2 text-xs">
-          <span className="rounded-full border border-white/70 bg-white px-2.5 py-1 font-semibold text-slate-700">{rowCount} rader konfigurerade</span>
-          <span className="rounded-full border border-white/70 bg-white px-2.5 py-1 font-semibold text-slate-700">{draft.customer_source.kind === 'fortnox' ? 'Fortnox-reservation' : draft.customer_source.sync_intent === 'on_work_order' ? 'Fortnox vid arbetsorder' : 'Lokal kund'}</span>
-          <span className="rounded-full border border-white/70 bg-white px-2.5 py-1 font-semibold text-slate-700">{editingQuoteId ? 'Redigerar befintlig offert' : 'Ny offert'}</span>
-        </div>
-      </div>
-
-      {issues.length > 0 ? (
-        <div className="flex flex-wrap gap-2">
-          {issues.map((issue) => (
-            <span key={issue} className="rounded-full border border-amber-300 bg-white px-2.5 py-1 text-xs font-semibold text-amber-900">
-              {issue}
-            </span>
-          ))}
-        </div>
-      ) : (
-        <div className="text-sm text-emerald-900">
-          Nästa steg efter sparning styrs av statusen. Kundkälla och intern handoff följer med utan att du behöver göra ytterligare mappning nu.
-        </div>
-      )}
-
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <span className="text-sm text-slate-600">
-          När offertstatus går till skickad eller följ upp synkas prospektet automatiskt till offertläget.
-        </span>
-        <div className="flex flex-wrap gap-2">
-          <span className={cn('rounded-full px-3 py-1 text-xs font-semibold', ready ? 'bg-emerald-900 text-white' : 'bg-amber-100 text-amber-900')}>
-            {submitting ? 'Sparar…' : ready ? 'Redo att spara' : `${issues.length} saker kvar`}
-          </span>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 function isOverdue(item: QuoteItem) {
   if (!item.follow_up_date || item.status === 'won' || item.status === 'lost') return false;
@@ -1321,6 +963,171 @@ function compareQuotesForBoard(a: QuoteItem, b: QuoteItem) {
   return b.updated_at.localeCompare(a.updated_at);
 }
 
+function buildCustomerSource(customer: CrmCustomerLite | null): QuoteDraft['customer_source'] {
+  if (!customer) {
+    return { kind: 'local', sync_intent: 'local_only', fortnox_customer_id: '', fortnox_customer_name: '' };
+  }
+  if (customer.fortnox_customer_id) {
+    return { kind: 'fortnox', sync_intent: 'linked', fortnox_customer_id: customer.fortnox_customer_id, fortnox_customer_name: customer.company_name || '' };
+  }
+  return { kind: 'local', sync_intent: 'on_work_order', fortnox_customer_id: '', fortnox_customer_name: '' };
+}
+
+function CustomerSearchPicker({
+  selectedCustomer,
+  onSelect,
+  onClear,
+  onCreateNew,
+  createMode,
+}: {
+  selectedCustomer: CrmCustomerLite | null;
+  onSelect: (customer: CrmCustomerLite) => void;
+  onClear: () => void;
+  onCreateNew: () => void;
+  createMode: boolean;
+}) {
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [results, setResults] = useState<CrmCustomerLite[]>([]);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (query.trim().length < 2) {
+      setResults([]);
+      setOpen(false);
+      return;
+    }
+
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(async () => {
+      setLoading(true);
+      try {
+        const res = await fetch(`/api/crm/customers?q=${encodeURIComponent(query.trim())}`, { cache: 'no-store' });
+        const json = await res.json().catch(() => ({}));
+        setResults(Array.isArray(json?.data?.items) ? json.data.items : []);
+        setOpen(true);
+      } catch {
+        setResults([]);
+      } finally {
+        setLoading(false);
+      }
+    }, 300);
+
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [query]);
+
+  if (selectedCustomer) {
+    const displayName = selectedCustomer.customer_type === 'business'
+      ? (selectedCustomer.company_name || 'Kund')
+      : `${selectedCustomer.first_name || ''} ${selectedCustomer.last_name || ''}`.trim();
+    const city = selectedCustomer.visit_address?.city;
+
+    return (
+      <div className="flex items-center justify-between gap-3 rounded-[18px] border border-emerald-200 bg-emerald-50 px-4 py-3">
+        <div className="grid gap-0.5">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-emerald-700">Vald kund</span>
+          <span className="text-sm font-semibold text-slate-900">{displayName}</span>
+          {city ? <span className="text-xs text-slate-500">{city}</span> : null}
+          {selectedCustomer.fortnox_customer_id ? (
+            <span className="text-[11px] font-medium text-sky-700">Synkad med Fortnox</span>
+          ) : null}
+        </div>
+        <button
+          type="button"
+          onClick={onClear}
+          className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
+        >
+          Byt kund
+        </button>
+      </div>
+    );
+  }
+
+  if (createMode) {
+    return (
+      <div className="flex items-center justify-between gap-3 rounded-[18px] border border-amber-200 bg-amber-50 px-4 py-3">
+        <div className="grid gap-0.5">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-700">Ny kund</span>
+          <span className="text-sm font-semibold text-slate-900">Fyll i uppgifterna nedan — kunden skapas i registret när offerten sparas</span>
+        </div>
+        <button
+          type="button"
+          onClick={onClear}
+          className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
+        >
+          Sök igen
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative grid gap-2">
+      <div className="relative">
+        <Input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onFocus={() => query.trim().length >= 2 && setOpen(true)}
+          onBlur={() => setTimeout(() => setOpen(false), 150)}
+          placeholder="Sök kund i register (namn, org.nr)…"
+        />
+        {loading ? (
+          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">Söker…</span>
+        ) : null}
+      </div>
+
+      {open && query.trim().length >= 2 ? (
+        <div className="absolute left-0 right-0 top-full z-20 mt-1 overflow-hidden rounded-[18px] border border-slate-200 bg-white shadow-[0_18px_38px_rgba(15,23,42,0.12)]">
+          {results.length > 0 ? (
+            results.map((customer) => {
+              const name = customer.customer_type === 'business'
+                ? (customer.company_name || 'Okänt företag')
+                : `${customer.first_name || ''} ${customer.last_name || ''}`.trim() || 'Okänd kund';
+              const primary = customer.contacts.find((c) => c.is_primary) || customer.contacts[0] || null;
+              return (
+                <button
+                  key={customer.id}
+                  type="button"
+                  onMouseDown={() => {
+                    onSelect(customer);
+                    setQuery('');
+                    setOpen(false);
+                  }}
+                  className="grid w-full gap-0.5 border-b border-slate-100 px-4 py-3 text-left transition last:border-b-0 hover:bg-slate-50"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold text-slate-900">{name}</span>
+                    {customer.fortnox_customer_id ? (
+                      <span className="rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[10px] font-semibold text-sky-700">Fortnox</span>
+                    ) : null}
+                  </div>
+                  <span className="text-xs text-slate-500">
+                    {[customer.organization_number, customer.visit_address?.city, primary?.phone].filter(Boolean).join(' · ')}
+                  </span>
+                </button>
+              );
+            })
+          ) : (
+            <div className="grid gap-2 px-4 py-3">
+              <p className="text-sm text-slate-500">Ingen kund hittades för <strong>{query}</strong></p>
+              <button
+                type="button"
+                onMouseDown={onCreateNew}
+                className="w-fit rounded-full border border-slate-900 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-950"
+              >
+                + Skapa ny kund
+              </button>
+            </div>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function QuotesClient() {
   const toast = useToast();
   const router = useRouter();
@@ -1340,7 +1147,8 @@ export default function QuotesClient() {
   const [movingQuoteId, setMovingQuoteId] = useState<string | null>(null);
   const [creatingWorkOrderId, setCreatingWorkOrderId] = useState<string | null>(null);
   const [hasAppliedPreset, setHasAppliedPreset] = useState(false);
-  const [activeQuoteTab, setActiveQuoteTab] = useState<'kund' | 'offert' | 'rot_internt' | 'arbetsorder'>('kund');
+  const [activeStep, setActiveStep] = useState(1);
+  const [selectedCustomer, setSelectedCustomer] = useState<CrmCustomerLite | null>(null);
   const draftAtOpen = useRef<string>('');
 
   useEffect(() => {
@@ -1523,13 +1331,13 @@ export default function QuotesClient() {
             city: prospect?.city || '',
             project_name: opportunity?.title || '',
           });
-          setActiveQuoteTab('kund');
+          setActiveStep(1);
           setModalOpen(true);
         })
         .catch(() => {
           setEditingQuoteId(null);
           setDraft({ ...initialDraft, opportunity_id: presetOpportunityId });
-          setActiveQuoteTab('kund');
+          setActiveStep(1);
           setModalOpen(true);
         });
       return;
@@ -1546,7 +1354,7 @@ export default function QuotesClient() {
       contact_name: presetProspect?.contact_name || '',
       city: presetProspect?.city || '',
     });
-    setActiveQuoteTab('kund');
+    setActiveStep(1);
     setModalOpen(true);
     setHasAppliedPreset(true);
   }, [hasAppliedPreset, loading, presetOpportunityId, presetProspectId, prospectsById, shouldOpenCreateForPreset]);
@@ -1666,18 +1474,10 @@ export default function QuotesClient() {
   }
 
   function openCreateModal() {
-    const presetProspect = presetProspectId ? prospectsById.get(presetProspectId) || null : null;
     setEditingQuoteId(null);
-    setDraft({
-	  ...initialDraft,
-	  prospect_id: presetProspectId,
-    customer_source: getDefaultDraftCustomerSource(presetProspectId),
-	  customer_name: presetProspect?.company_name || '',
-    company_name: presetProspect?.company_name || '',
-    contact_name: presetProspect?.contact_name || '',
-    city: presetProspect?.city || '',
-	});
-    setActiveQuoteTab('kund');
+    setSelectedCustomer(null);
+    setDraft({ ...initialDraft });
+    setActiveStep(1);
     setModalOpen(true);
   }
 
@@ -1688,7 +1488,10 @@ export default function QuotesClient() {
 
   function openEditModal(item: QuoteItem) {
     setEditingQuoteId(item.id);
+    setSelectedCustomer(null);
     setDraft({
+      customer_id: item.customer_id || null,
+      create_customer: false,
       prospect_id: item.prospect_id || '',
       opportunity_id: item.opportunity_id || '',
       quote_type: item.quote_type || 'business',
@@ -1731,7 +1534,7 @@ export default function QuotesClient() {
       notes: item.notes || '',
       create_follow_up_task: false,
     });
-    setActiveQuoteTab('kund');
+    setActiveStep(1);
     setModalOpen(true);
   }
 
@@ -1853,6 +1656,34 @@ export default function QuotesClient() {
     setSubmitting(true);
     try {
       const isEditing = Boolean(editingQuoteId);
+
+      // Steg 1: Skapa ny kund om säljaren valt "Skapa ny kund"-läget
+      let resolvedCustomerId = draft.customer_id;
+      if (draft.create_customer && !isEditing) {
+        const customerPayload = {
+          customer_type: draft.quote_type,
+          company_name: draft.quote_type === 'business' ? draft.company_name || null : null,
+          first_name: draft.quote_type === 'private' ? (draft.customer_name.split(' ')[0] || null) : null,
+          last_name: draft.quote_type === 'private' ? (draft.customer_name.split(' ').slice(1).join(' ') || null) : null,
+          organization_number: draft.organization_number || null,
+          personal_number: draft.personal_number || null,
+          visit_address: draft.street_address
+            ? { street: draft.street_address, postal_code: draft.postal_code || null, city: draft.city || null }
+            : null,
+        };
+        const customerRes = await fetch('/api/crm/customers', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(customerPayload),
+        });
+        const customerJson = await customerRes.json().catch(() => ({}));
+        if (!customerRes.ok || !customerJson.ok) {
+          toast.error(customerJson?.error || 'Kunde inte skapa kund');
+          return;
+        }
+        resolvedCustomerId = customerJson?.data?.item?.id || null;
+      }
+
       const amountNumber = hasAnyLineItemInput ? totals.total : Number(draft.amount.replace(',', '.'));
       const vatPercentNumber = Number(draft.vat_percent.replace(',', '.'));
       const vatAmount = hasAnyLineItemInput
@@ -1861,6 +1692,7 @@ export default function QuotesClient() {
       const payload = {
         prospect_id: draft.prospect_id || null,
         opportunity_id: draft.opportunity_id || null,
+        customer_id: resolvedCustomerId || null,
         customer_name: effectiveCustomerName,
         quote_type: draft.quote_type,
         customer_source: {
@@ -2065,7 +1897,7 @@ export default function QuotesClient() {
                 >
                   <div className="flex items-center justify-between gap-3">
                     <span className="text-sm font-semibold">{quoteFilterMeta[value].label}</span>
-                    <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-bold', filter === value ? 'bg-white/16 text-white' : 'bg-white/80 text-current')}>
+                    <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-bold', filter === value ? 'bg-white/20 text-white' : 'bg-white/80 text-current')}>
                       {filterCounts[value]}
                     </span>
                   </div>
@@ -2091,70 +1923,70 @@ export default function QuotesClient() {
 
       {modalOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6 backdrop-blur-sm">
-          <div className="flex h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#f8fafc_100%)] shadow-[0_20px_70px_rgba(15,23,42,0.22)] xl:max-w-[1380px]">
+          <div className="flex h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-[28px] shadow-[0_20px_70px_rgba(15,23,42,0.22)] xl:max-w-6xl">
 
-            {/* Sticky header: title + tab strip */}
-            <div className="shrink-0 border-b border-slate-200 bg-white/95 backdrop-blur">
-              <div className="flex flex-wrap items-start justify-between gap-3 px-5 py-4">
-                <div className="grid gap-0.5">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">CRM / Offerter</span>
-                  <h2 className="m-0 text-[clamp(1.4rem,2.2vw,2rem)] font-bold tracking-[-0.04em] text-slate-950">
-                    {editingQuoteId ? 'Redigera offert' : 'Ny offert'}
-                  </h2>
-                </div>
-                <button type="button" onClick={closeModal} className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50">
-                  Stäng
-                </button>
-              </div>
+            {/* Stepper header – dark green */}
+            <div className="shrink-0 rounded-t-[28px] bg-[var(--crm-primary)] px-6 pb-5 pt-5">
+              <h2 className="mb-5 text-xl font-bold text-white">
+                {editingQuoteId ? 'Redigera offert' : 'Skapa ny offert'}
+              </h2>
+
+              {/* Step indicators */}
               {(() => {
-                const tabIssueKeys: Record<string, string[]> = {
-                  kund: [
-                    'Kund eller prospekt måste anges',
-                    'Prospektkälla kräver valt prospekt',
-                    'Fortnox-kund behöver en reserverad kundreferens',
-                    'Privatkund behöver personnummer',
-                    'Företagskund behöver företagsnamn',
-                  ],
-                  offert: [
-                    'Offertnamn saknas',
-                    'Ange giltigt belopp eller bygg offerten med rader',
-                    'Alla konfigurerade offert-rader behöver mängd och pris',
-                  ],
-                  rot_internt: [
-                    'ROT är bara tillåtet för privatkund',
-                    'ROT kräver personnummer för sökande',
-                    'ROT kräver fastighetsbeteckning',
-                  ],
-                };
-                const currentIssues = getQuoteDraftValidationIssues({ draft, effectiveRows });
+                const allIssues = getQuoteDraftValidationIssues({ draft, effectiveRows });
                 return (
-                  <div className="flex flex-wrap gap-2 border-t border-slate-100 px-5 py-3">
-                    {(['kund', 'offert', 'rot_internt', ...(editingQuoteId ? ['arbetsorder'] : [])] as Array<'kund' | 'offert' | 'rot_internt' | 'arbetsorder'>).map((tab) => {
-                      const labels: Record<string, string> = {
-                        kund: 'Kund',
-                        offert: 'Offert & rader',
-                        rot_internt: draft.quote_type === 'private' ? 'ROT & Internt' : 'Internt',
-                        arbetsorder: 'Arbetsorder',
-                      };
-                      const tabKeys = tabIssueKeys[tab];
-                      const hasError = activeQuoteTab !== tab && tabKeys?.some((key) => currentIssues.includes(key));
+                  <div className="flex items-start">
+                    {(['Kundinformation', 'Offertdetaljer', 'Produkter & Priser', 'Villkor & Granska'] as const).map((label, index) => {
+                      const step = index + 1;
+                      const isCompleted = step < activeStep;
+                      const isCurrent = step === activeStep;
+                      const hasError = stepIssueKeys[step]?.some((key) => allIssues.includes(key));
+
                       return (
-                        <button
-                          key={tab}
-                          type="button"
-                          onClick={() => setActiveQuoteTab(tab)}
-                          className={cn(
-                            'relative rounded-full border px-3 py-1.5 text-sm font-semibold transition',
-                            activeQuoteTab === tab
-                              ? 'border-slate-900 bg-slate-900 text-white'
-                              : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50',
-                          )}
-                        >
-                          {labels[tab]}
-                          {hasError ? (
-                            <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border-2 border-white bg-rose-500" />
+                        <div key={step} className="contents">
+                          <button
+                            type="button"
+                            onClick={() => setActiveStep(step)}
+                            aria-label={`Gå till steg ${step}: ${label}${hasError ? ' (saknar uppgifter)' : ''}`}
+                            aria-current={isCurrent ? 'step' : undefined}
+                            className="relative flex flex-col items-center gap-1.5 rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-transparent"
+                          >
+                            <div className={cn(
+                              'flex h-9 w-9 items-center justify-center rounded-full text-sm font-bold transition-all',
+                              isCompleted ? 'bg-white/25 text-white ring-2 ring-white/50' :
+                              isCurrent ? 'bg-white text-slate-900 shadow-[0_2px_8px_rgba(0,0,0,0.2)]' :
+                              'bg-white/10 text-white/40',
+                            )}>
+                              {isCompleted ? (
+                                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                                  <path d="M3 8l3.5 3.5L13 5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                                </svg>
+                              ) : step}
+                            </div>
+                            {hasError ? (
+                              <span
+                                className={cn(
+                                  'absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border-2 bg-rose-500',
+                                  isCurrent ? 'border-white' : 'border-[var(--crm-primary)]',
+                                )}
+                                aria-hidden="true"
+                              />
+                            ) : null}
+                            <span className={cn(
+                              'max-w-[72px] text-center text-[10px] font-medium leading-tight',
+                              isCurrent ? 'text-white' : isCompleted ? 'text-white/70' : 'text-white/35',
+                            )}>
+                              {label}
+                            </span>
+                          </button>
+
+                          {index < 3 ? (
+                            <div className={cn(
+                              'mx-1.5 mt-[18px] h-0.5 flex-1 self-start rounded-full transition-all',
+                              index + 1 < activeStep ? 'bg-white/60' : 'bg-white/15',
+                            )} />
                           ) : null}
-                        </button>
+                        </div>
                       );
                     })}
                   </div>
@@ -2162,89 +1994,229 @@ export default function QuotesClient() {
               })()}
             </div>
 
-            {/* Scrollable tab content */}
-            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 md:px-6">
+            {/* White scrollable content */}
+            <div className="min-h-0 flex-1 overflow-y-auto bg-white">
+              <div className="px-6 py-6">
+                {(() => {
+                  const allIssues = getQuoteDraftValidationIssues({ draft, effectiveRows });
+                  const stepErrors = stepIssueKeys[activeStep]?.filter((k) => allIssues.includes(k)) ?? [];
+                  return stepErrors.length > 0 ? (
+                    <div className="mb-5 flex flex-wrap gap-1.5 rounded-[18px] border border-amber-200 bg-amber-50 px-4 py-3">
+                      {stepErrors.map((issue) => (
+                        <span key={issue} className="rounded-full border border-amber-300 bg-white px-2.5 py-1 text-xs font-semibold text-amber-900">
+                          {issue}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null;
+                })()}
 
-              {activeQuoteTab === 'kund' && (
-                <div className="grid gap-5">
-                  <QuoteCustomerSourceSection draft={draft} setDraft={setDraft} prospects={prospects} prospectsById={prospectsById} />
-                  <QuoteCustomerSection draft={draft} setDraft={setDraft} />
-                </div>
-              )}
+                {activeStep === 1 && (
+                  <div className="grid gap-5">
+                    <CustomerSearchPicker
+                      selectedCustomer={selectedCustomer}
+                      createMode={draft.create_customer}
+                      onSelect={(customer) => {
+                        setSelectedCustomer(customer);
+                        const primary = customer.contacts.find((c) => c.is_primary) || customer.contacts[0] || null;
+                        setDraft((current) => ({
+                          ...current,
+                          customer_id: customer.id,
+                          create_customer: false,
+                          quote_type: customer.customer_type,
+                          customer_source: buildCustomerSource(customer),
+                          company_name: customer.company_name || '',
+                          customer_name: customer.company_name || `${customer.first_name || ''} ${customer.last_name || ''}`.trim(),
+                          organization_number: customer.organization_number || '',
+                          personal_number: customer.personal_number || '',
+                          contact_name: primary?.name || '',
+                          phone: primary?.phone || '',
+                          email: primary?.email || '',
+                          street_address: customer.visit_address?.street || '',
+                          postal_code: customer.visit_address?.postal_code || '',
+                          city: customer.visit_address?.city || '',
+                        }));
+                      }}
+                      onClear={() => {
+                        setSelectedCustomer(null);
+                        setDraft((current) => ({
+                          ...current,
+                          customer_id: null,
+                          create_customer: false,
+                          customer_source: buildCustomerSource(null),
+                          company_name: '',
+                          customer_name: '',
+                          organization_number: '',
+                          personal_number: '',
+                          contact_name: '',
+                          phone: '',
+                          email: '',
+                          street_address: '',
+                          postal_code: '',
+                          city: '',
+                        }));
+                      }}
+                      onCreateNew={() => {
+                        setSelectedCustomer(null);
+                        setDraft((current) => ({
+                          ...current,
+                          customer_id: null,
+                          create_customer: true,
+                          customer_source: buildCustomerSource(null),
+                        }));
+                      }}
+                    />
+                    <QuoteCustomerSection draft={draft} setDraft={setDraft} />
+                  </div>
+                )}
 
-              {activeQuoteTab === 'offert' && (
-                <div className="grid gap-5">
-                  <QuoteBasicsSection draft={draft} setDraft={setDraft} />
-                  {!editingQuoteId ? (
-                    <label className="flex items-start gap-3 rounded-[22px] border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-                      <input
-                        type="checkbox"
-                        checked={draft.create_follow_up_task}
-                        onChange={(event) => setDraft((current) => ({ ...current, create_follow_up_task: event.target.checked }))}
-                        className="mt-0.5 h-4 w-4 rounded border-slate-300"
+                {activeStep === 2 && (
+                  <div className="grid gap-5">
+                    <div className="grid gap-1.5">
+                      <span className="text-[11px] font-semibold uppercase tracking-[0.1em] text-slate-400">Offertnummer</span>
+                      <Input
+                        value={editingQuote?.quote_number ?? 'Genereras automatiskt'}
+                        disabled
+                        className="bg-slate-50 text-slate-500"
                       />
-                      <span>Skapa uppföljningsuppgift automatiskt om ett uppföljningsdatum anges.</span>
-                    </label>
-                  ) : null}
+                    </div>
+                    <QuoteBasicsSection draft={draft} setDraft={setDraft} />
+                    {!editingQuoteId ? (
+                      <label className="flex items-start gap-3 rounded-[22px] border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                        <input
+                          type="checkbox"
+                          checked={draft.create_follow_up_task}
+                          onChange={(event) => setDraft((current) => ({ ...current, create_follow_up_task: event.target.checked }))}
+                          className="mt-0.5 h-4 w-4 rounded border-slate-300"
+                        />
+                        <span>Skapa uppföljningsuppgift automatiskt om ett uppföljningsdatum anges.</span>
+                      </label>
+                    ) : null}
+                  </div>
+                )}
+
+                {activeStep === 3 && (
                   <QuoteLineItemsSection draft={draft} setDraft={setDraft} effectiveRows={effectiveRows} totals={totals} />
-                </div>
-              )}
+                )}
 
-              {activeQuoteTab === 'rot_internt' && (
-                <div className="grid gap-5 lg:grid-cols-2 lg:items-start">
-                  <QuoteRotSection draft={draft} setDraft={setDraft} />
-                  <QuoteInternalHandoffSection draft={draft} setDraft={setDraft} />
-                </div>
-              )}
+                {activeStep === 4 && (
+                  <div className="grid gap-5">
+                    {draft.quote_type === 'private' ? (
+                      <QuoteRotSection draft={draft} setDraft={setDraft} />
+                    ) : null}
+                    <QuoteInternalHandoffSection draft={draft} setDraft={setDraft} />
 
-              {activeQuoteTab === 'arbetsorder' && editingQuoteId ? (
-                <QuoteWorkOrderSection
-                  editingQuote={editingQuote}
-                  draftStatus={draft.status}
-                  creatingWorkOrder={creatingWorkOrderId === editingQuoteId}
-                  onOpenWorkOrder={() => {
-                    if (editingQuote?.work_order_id) {
-                      router.push(`/crm/arbetsorder?work_order_id=${editingQuote.work_order_id}`);
-                    }
-                  }}
-                  onCreateWorkOrder={() => {
-                    if (editingQuoteId) {
-                      void createWorkOrderFromQuote(editingQuoteId);
-                    }
-                  }}
-                />
-              ) : null}
+                    {/* Sammanfattning */}
+                    <div className="rounded-[22px] border border-emerald-200 bg-emerald-50 px-5 py-4">
+                      <div className="mb-3 text-sm font-semibold text-emerald-900">Sammanfattning</div>
+                      <div className="grid gap-2.5 text-sm">
+                        <div className="flex items-center justify-between text-slate-600">
+                          <span>Kund:</span>
+                          <span className="font-medium text-slate-900">
+                            {draft.quote_type === 'business' ? (draft.company_name || '–') : (draft.customer_name || '–')}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between text-slate-600">
+                          <span>Projekt:</span>
+                          <span className="font-medium text-slate-900">{draft.project_name || '–'}</span>
+                        </div>
+                        <div className="flex items-center justify-between text-slate-600">
+                          <span>Produkter:</span>
+                          <span className="font-medium text-slate-900">
+                            {effectiveRows.filter((row) => row.isConfigured).length} st
+                          </span>
+                        </div>
+                        <div className="border-t border-emerald-200 pt-2.5">
+                          <div className="flex items-center justify-between">
+                            <span className="font-semibold text-slate-900">Totalt belopp:</span>
+                            <span className="text-lg font-bold text-emerald-700">
+                              {effectiveRows.some((row) => row.isConfigured)
+                                ? formatCurrency(totals.total, 'SEK')
+                                : draft.amount ? formatCurrency(Number(draft.amount.replace(',', '.')), 'SEK') : '–'}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {editingQuoteId ? (
+                      <QuoteWorkOrderSection
+                        editingQuote={editingQuote}
+                        draftStatus={draft.status}
+                        creatingWorkOrder={creatingWorkOrderId === editingQuoteId}
+                        onOpenWorkOrder={() => {
+                          if (editingQuote?.work_order_id) {
+                            router.push(`/crm/arbetsorder?work_order_id=${editingQuote.work_order_id}`);
+                          }
+                        }}
+                        onCreateWorkOrder={() => {
+                          if (editingQuoteId) void createWorkOrderFromQuote(editingQuoteId);
+                        }}
+                      />
+                    ) : null}
+                  </div>
+                )}
+              </div>
             </div>
 
-            {/* Sticky footer: validation strip + action buttons */}
+            {/* Footer navigation */}
             {(() => {
               const validationIssues = getQuoteDraftValidationIssues({ draft, effectiveRows });
               return (
-                <div className="shrink-0 border-t border-slate-200 bg-white/95 px-5 py-4 backdrop-blur">
-                  <div className={cn(
-                    'mb-3 flex flex-wrap items-center justify-between gap-3 rounded-[18px] border px-4 py-2.5',
-                    validationIssues.length === 0 ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50',
-                  )}>
-                    <span className={cn('text-sm font-semibold', validationIssues.length === 0 ? 'text-emerald-950' : 'text-amber-950')}>
-                      {validationIssues.length === 0 ? 'Redo att spara' : `${validationIssues.length} saker saknas`}
-                    </span>
-                    {validationIssues.length > 0 ? (
-                      <div className="flex flex-wrap gap-1.5">
-                        {validationIssues.map((issue) => (
-                          <span key={issue} className="rounded-full border border-amber-300 bg-white px-2 py-0.5 text-xs font-semibold text-amber-900">
-                            {issue}
-                          </span>
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                  <div className="flex flex-wrap items-center justify-end gap-2">
-                    <button type="button" onClick={closeModal} className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50">
-                      Avbryt
+                <div className="shrink-0 rounded-b-[28px] border-t border-slate-200 bg-white px-6 py-4">
+                  {validationIssues.length > 0 ? (
+                    <div className="mb-3 flex flex-wrap items-center gap-1.5 rounded-[18px] border border-amber-200 bg-amber-50 px-4 py-2.5">
+                      <span className="mr-1 text-xs font-semibold text-amber-800">Saknas:</span>
+                      {validationIssues.map((issue) => (
+                        <span key={issue} className="rounded-full border border-amber-300 bg-white px-2 py-0.5 text-xs font-semibold text-amber-900">
+                          {issue}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="mb-3 rounded-[18px] border border-emerald-200 bg-emerald-50 px-4 py-2.5">
+                      <span className="text-xs font-semibold text-emerald-800">Redo att spara</span>
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between">
+                    <button
+                      type="button"
+                      onClick={activeStep === 1 ? closeModal : () => setActiveStep((s) => s - 1)}
+                      className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+                    >
+                      <svg width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden="true">
+                        <path d="M9.5 3L5.5 7.5l4 4.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                      {activeStep === 1 ? 'Avbryt' : 'Tillbaka'}
                     </button>
-                    <button type="button" onClick={saveQuote} disabled={submitting} className="rounded-full border border-slate-900 bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-950 disabled:cursor-not-allowed disabled:opacity-60">
-                      {submitting ? 'Sparar…' : editingQuoteId ? 'Spara offert' : 'Skapa offert'}
-                    </button>
+
+                    <span className="text-xs font-medium text-slate-400">Steg {activeStep} av 4</span>
+
+                    {activeStep < 4 ? (
+                      <button
+                        type="button"
+                        onClick={() => setActiveStep((s) => s + 1)}
+                        className="flex items-center gap-1.5 rounded-xl bg-[var(--crm-primary)] px-4 py-2.5 text-sm font-semibold text-white transition hover:opacity-90"
+                      >
+                        Nästa
+                        <svg width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden="true">
+                          <path d="M5.5 3l4 4.5-4 4.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={saveQuote}
+                        disabled={submitting}
+                        className="flex items-center gap-1.5 rounded-xl bg-[var(--crm-primary)] px-4 py-2.5 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <svg width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden="true">
+                          <path d="M2.5 7.5l3.5 3.5 6.5-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                        {submitting ? 'Sparar…' : editingQuoteId ? 'Spara offert' : 'Skapa offert'}
+                      </button>
+                    )}
                   </div>
                 </div>
               );

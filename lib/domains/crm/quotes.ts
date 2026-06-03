@@ -2,8 +2,10 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 
 export const crmQuoteSelect = `
   id,
+  quote_number,
   prospect_id,
   opportunity_id,
+  customer_id,
   customer_name,
   quote_type,
   customer_source,
