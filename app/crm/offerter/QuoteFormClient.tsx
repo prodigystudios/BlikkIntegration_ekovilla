@@ -343,10 +343,20 @@ function ArticlePicker({ value, onSelect, onClear }: { value: string; onSelect: 
     let cancelled = false;
     setLoading(true);
     setError(null);
-    fetch(`/api/blikk/articles?q=${encodeURIComponent(query)}&page=1&pageSize=10`, { cache: 'no-store' })
+    fetch(`/api/fortnox/articles?q=${encodeURIComponent(query)}&limit=10`, { cache: 'no-store' })
       .then((r) => r.json().catch(() => ({})))
       .then((json) => {
-        if (!cancelled) setItems(Array.isArray(json?.items) ? json.items : Array.isArray(json?.data?.items) ? json.data.items : []);
+        if (!cancelled) {
+          const raw: Array<{ article_number: string; description: string | null; sales_price: number | null; unit: string | null }> =
+            Array.isArray(json?.data?.items) ? json.data.items : [];
+          setItems(raw.map((a) => ({
+            id: a.article_number,
+            name: a.description ?? undefined,
+            articleNumber: a.article_number,
+            price: a.sales_price,
+            unit: a.unit ?? undefined,
+          })));
+        }
       })
       .catch(() => { if (!cancelled) { setError('Kunde inte hämta artiklar'); setItems([]); } })
       .finally(() => { if (!cancelled) setLoading(false); });

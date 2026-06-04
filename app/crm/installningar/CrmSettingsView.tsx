@@ -1,5 +1,7 @@
 import Link from 'next/link';
 import CrmGoalsPanel from './CrmGoalsPanel';
+import FortnoxIntegrationBlock from './FortnoxIntegrationBlock';
+import type { FortnoxConnectionStatus } from '@/lib/domains/fortnox/types';
 
 type CrmTeamMember = {
   id: string;
@@ -54,6 +56,7 @@ export default function CrmSettingsView({
   goalPeriodStart,
   stats,
   integrations,
+  fortnoxStatus,
 }: {
   team: CrmTeamMember[];
   goalTeam: Array<{ id: string; full_name: string | null; role: 'sales' | 'admin' }>;
@@ -61,6 +64,7 @@ export default function CrmSettingsView({
   goalPeriodStart: string;
   stats: SettingsStat[];
   integrations: IntegrationItem[];
+  fortnoxStatus: FortnoxConnectionStatus;
 }) {
   return (
     <div className="grid gap-6">
@@ -163,6 +167,8 @@ export default function CrmSettingsView({
               ))}
             </div>
           </div>
+
+          <FortnoxIntegrationBlock initialStatus={fortnoxStatus} />
         </div>
       </div>
     </div>

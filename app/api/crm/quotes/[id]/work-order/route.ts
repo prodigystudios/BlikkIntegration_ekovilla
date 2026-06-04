@@ -1,6 +1,8 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { createCrmWorkOrderFromQuote } from '@/lib/domains/crm/work-orders';
+import { pushWorkOrderToFortnox } from '@/lib/domains/fortnox/orders';
+import { FortnoxNotConnectedError } from '@/lib/domains/fortnox/client';
 import { ok, requireCrmUser, routeError } from '../../_lib';
 
 type RouteContext = {
@@ -27,6 +29,15 @@ export async function POST(_req: Request, context: RouteContext) {
       }
 
       return routeError(500, 'crm_work_order_create_failed', result.error?.message || 'Kunde inte skapa arbetsorder');
+    }
+
+    // Auto-push work order to Fortnox. Non-fatal: creation succeeds regardless.
+    try {
+      await pushWorkOrderToFortnox(result.data.workOrder.id);
+    } catch (e) {
+      if (!(e instanceof FortnoxNotConnectedError)) {
+        console.error('[fortnox] Auto-push arbetsorder misslyckades:', (e as any)?.message);
+      }
     }
 
     return ok(result.data, 201);

@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import { getUserProfile } from '@/lib/getUserProfile';
 import { getCurrentWeekStartDate, mapCrmGoalRows, type CrmGoalRow } from '@/lib/domains/crm/goals';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
+import { getFortnoxConnectionStatus } from '@/lib/domains/fortnox/auth';
 import CrmSettingsView from './CrmSettingsView';
 
 export const dynamic = 'force-dynamic';
@@ -13,7 +14,7 @@ export default async function CrmSettingsPage() {
   const supabase = getSupabaseAdmin();
   const currentWeekStart = getCurrentWeekStartDate();
 
-  const [teamRes, goalsRes, unassignedProspectsRes, openTasksRes, quoteFollowUpsRes] = await Promise.all([
+  const [teamRes, goalsRes, unassignedProspectsRes, openTasksRes, quoteFollowUpsRes, fortnoxStatus] = await Promise.all([
     supabase
       .from('profiles')
       .select('id, full_name, phone, role')
@@ -37,6 +38,7 @@ export default async function CrmSettingsPage() {
       .from('crm_quotes')
       .select('id', { count: 'exact', head: true })
       .in('status', ['sent', 'follow_up']),
+    getFortnoxConnectionStatus(),
   ]);
 
   const crmTeam = (teamRes.data || [])
@@ -122,6 +124,7 @@ export default async function CrmSettingsPage() {
       goalPeriodStart={currentWeekStart}
       stats={stats}
       integrations={integrations}
+      fortnoxStatus={fortnoxStatus}
     />
   );
 }
