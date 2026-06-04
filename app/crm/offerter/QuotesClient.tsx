@@ -302,7 +302,12 @@ export default function QuotesClient() {
         return;
       }
       const offerNumber = json?.data?.fortnox_offer_number as string | undefined;
-      toast.success(offerNumber ? `Fortnox-offert ${offerNumber} skapad` : 'Skickad till Fortnox');
+      const wasUpdated = json?.data?.updated as boolean | undefined;
+      toast.success(
+        offerNumber
+          ? `Fortnox-offert #${offerNumber} ${wasUpdated ? 'uppdaterad' : 'skapad'}`
+          : 'Skickad till Fortnox',
+      );
       // Refresh list to pick up new fortnox_offer_number and sync_status
       setQuotes((current) =>
         current.map((q) =>

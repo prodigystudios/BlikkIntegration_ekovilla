@@ -18,6 +18,7 @@ type WorkOrderRow = {
     quantity?: string | null;
     discount_percent?: string | null;
     line_note?: string | null;
+    is_rot_work?: boolean | null;
   }> | null;
 };
 
@@ -25,7 +26,7 @@ export type PushOrderResult = {
   fortnox_order_number: string;
 };
 
-function buildOrderRows(lineItems: WorkOrderRow['line_items'], vatPercent: number) {
+function buildOrderRows(lineItems: WorkOrderRow['line_items'], vatPercent: number, rotEnabled: boolean) {
   if (!lineItems?.length) return [];
   return lineItems.map((item) => {
     const price = item.unit_price ? parseFloat(item.unit_price) : (item.article_price ?? 0);
@@ -39,6 +40,7 @@ function buildOrderRows(lineItems: WorkOrderRow['line_items'], vatPercent: numbe
       VAT: vatPercent,
       ...(item.article_unit_name ? { Unit: item.article_unit_name } : {}),
       ...(discount > 0 ? { Discount: discount } : {}),
+      ...(rotEnabled && item.is_rot_work ? { HouseWork: true, HouseWorkType: 'CONSTRUCTION' } : {}),
     };
   });
 }
@@ -94,27 +96,45 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
 
     let fortnoxOrderNumber: string;
 
-    // Try converting the linked Fortnox offer to an order first
-    const fortnoxOfferNumber = workOrder.quote_id
+    // Fetch linked quote data in one query – used for offer number, customer resolution,
+    // and reference fields on standalone orders.
+    type LinkedQuote = {
+      fortnox_offer_number: string | null;
+      customer_id: string | null;
+      customer_source: { kind?: string; fortnox_customer_id?: string } | null;
+      assigned_to: string | null;
+      customer_snapshot: {
+        contact_name?: string | null;
+        delivery_address?: string | null;
+        postal_code?: string | null;
+        city?: string | null;
+      } | null;
+      rot_details: { enabled?: boolean | null } | null;
+    };
+
+    const linkedQuote: LinkedQuote | null = workOrder.quote_id
       ? await (async () => {
-          const { data: quote } = await supabase
+          const { data } = await supabase
             .from('crm_quotes')
-            .select('fortnox_offer_number')
+            .select('fortnox_offer_number, customer_id, customer_source, assigned_to, customer_snapshot, rot_details')
             .eq('id', workOrder.quote_id!)
             .maybeSingle();
-          return quote?.fortnox_offer_number as string | null ?? null;
+          return data as LinkedQuote | null;
         })()
       : null;
 
+    const fortnoxOfferNumber = linkedQuote?.fortnox_offer_number ?? null;
+
     if (fortnoxOfferNumber) {
-      // Convert existing Fortnox offer → order
+      // Convert existing Fortnox offer → order.
+      // Fortnox carries OurReference, YourReference, and DeliveryAddress from the offer automatically.
       const response = await fortnoxPut<{ Order: { DocumentNumber: string } }>(
         `/offers/${fortnoxOfferNumber}/createorder`,
       );
       fortnoxOrderNumber = response.Order?.DocumentNumber;
       if (!fortnoxOrderNumber) throw new Error('Fortnox returnerade inget ordernummer vid konvertering');
     } else {
-      // No Fortnox offer exists – create a standalone order
+      // No Fortnox offer exists – create a standalone order with full reference data.
       const customerNumber = await resolveCustomerNumber(workOrder.quote_id);
       if (!customerNumber) {
         throw new Error(
@@ -122,14 +142,37 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
         );
       }
 
+      let ourReference: string | undefined;
+      if (linkedQuote?.assigned_to) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('full_name')
+          .eq('id', linkedQuote.assigned_to)
+          .maybeSingle();
+        ourReference = (profile as { full_name?: string | null } | null)?.full_name ?? undefined;
+      }
+
+      const snapshot = linkedQuote?.customer_snapshot;
+      const deliveryAddress = snapshot?.delivery_address;
+
       const vatPercent = typeof workOrder.vat_percent === 'number' ? workOrder.vat_percent : 25;
-      const orderRows = buildOrderRows(workOrder.line_items, vatPercent);
+      const rotEnabled = linkedQuote?.rot_details?.enabled === true;
+      const orderRows = buildOrderRows(workOrder.line_items, vatPercent, rotEnabled);
 
       const response = await fortnoxPost<{ Order: { DocumentNumber: string } }>('/orders', {
         Order: {
           CustomerNumber: customerNumber,
           OrderDate: new Date().toISOString().slice(0, 10),
-          YourReference: workOrder.project_name,
+          ...(ourReference ? { OurReference: ourReference } : {}),
+          ...(snapshot?.contact_name ? { YourReference: snapshot.contact_name } : {}),
+          ...(rotEnabled ? { TaxReductionType: 'rot' } : {}),
+          ...(deliveryAddress
+            ? {
+                DeliveryAddress1: deliveryAddress,
+                ...(snapshot?.postal_code ? { DeliveryZipCode: snapshot.postal_code } : {}),
+                ...(snapshot?.city ? { DeliveryCity: snapshot.city } : {}),
+              }
+            : {}),
           OrderRows: orderRows,
         },
       });

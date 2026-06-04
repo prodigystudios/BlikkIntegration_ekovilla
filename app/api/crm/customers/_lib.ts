@@ -37,7 +37,6 @@ export const createCrmCustomerSchema = z
     personal_number: z.string().trim().nullable().optional().default(null),
     visit_address: addressSchema,
     invoice_address: addressSchema,
-    source_prospect_id: z.string().uuid().nullable().optional().default(null),
     fortnox_customer_id: z.string().trim().nullable().optional().default(null),
     source: z.string().trim().nullable().optional().default(null),
     notes: z.string().trim().nullable().optional().default(null),

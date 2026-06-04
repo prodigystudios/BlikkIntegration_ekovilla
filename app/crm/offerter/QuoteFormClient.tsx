@@ -35,6 +35,7 @@ type QuoteLineItem = {
   article_unit_name: string | null;
   discount_percent: string;
   line_note: string;
+  is_rot_work: boolean;
 };
 
 type QuoteItem = {
@@ -194,6 +195,7 @@ function createEmptyLineItem(): QuoteLineItem {
     article_unit_name: null,
     discount_percent: '',
     line_note: '',
+    is_rot_work: false,
   };
 }
 
@@ -255,7 +257,11 @@ function getDraftCustomerSource(source: QuoteCustomerSource | null | undefined, 
 function buildCustomerSource(customer: CrmCustomerLite | null): QuoteDraft['customer_source'] {
   if (!customer) return { kind: 'local', sync_intent: 'local_only', fortnox_customer_id: '', fortnox_customer_name: '' };
   if (customer.fortnox_customer_id) {
-    return { kind: 'fortnox', sync_intent: 'linked', fortnox_customer_id: customer.fortnox_customer_id, fortnox_customer_name: customer.company_name || '' };
+    const displayName =
+      customer.company_name ||
+      [customer.first_name, customer.last_name].filter(Boolean).join(' ') ||
+      'Kund';
+    return { kind: 'fortnox', sync_intent: 'linked', fortnox_customer_id: customer.fortnox_customer_id, fortnox_customer_name: displayName };
   }
   return { kind: 'local', sync_intent: 'on_work_order', fortnox_customer_id: '', fortnox_customer_name: '' };
 }
@@ -606,7 +612,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           delivery_address: item.customer_snapshot?.delivery_address || '',
           invoice_address: item.customer_snapshot?.invoice_address || '',
           items: item.line_items?.length
-            ? item.line_items.map((line) => ({ ...line, line_note: line.line_note || '' }))
+            ? item.line_items.map((line) => ({ ...line, line_note: line.line_note || '', is_rot_work: line.is_rot_work ?? false }))
             : [createEmptyLineItem()],
           project_name: item.project_name,
           description: item.description || '',
@@ -1300,6 +1306,17 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
                       />
                       Manuellt pris
                     </label>
+                    {draft.rot_enabled ? (
+                      <label className="inline-flex items-center gap-2 text-xs text-slate-500">
+                        <input
+                          type="checkbox"
+                          checked={row.is_rot_work}
+                          onChange={(e) => setDraft((d) => ({ ...d, items: d.items.map((item) => item.id === row.id ? { ...item, is_rot_work: e.target.checked } : item) }))}
+                          className="h-3.5 w-3.5 rounded border-slate-300"
+                        />
+                        ROT-arbete
+                      </label>
+                    ) : null}
                   </div>
 
                   <Field label="Radtext">

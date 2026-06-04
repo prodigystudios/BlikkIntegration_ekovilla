@@ -2,6 +2,8 @@ import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { fortnoxGet } from './client';
 import type { FortnoxCustomerListResponse, FortnoxCustomer } from './types';
 
+type FortnoxCustomerDetailResponse = { Customer: FortnoxCustomer };
+
 const PAGE_SIZE = 500;
 
 export type CustomerSyncResult = {
@@ -11,7 +13,14 @@ export type CustomerSyncResult = {
 };
 
 function mapFortnoxCustomerToRow(c: FortnoxCustomer, now: string) {
-  const isCompany = c.Type !== 'PRIVATE';
+  // Type is only returned by the individual GET endpoint, not the list endpoint.
+  // Default to 'private' when missing – safer than guessing from OrganisationNumber
+  // since private persons can also have a personal number in that field.
+  const isCompany = c.Type === 'COMPANY';
+  const isPrivate = c.Type === 'PRIVATE';
+  if (!isCompany && !isPrivate) {
+    console.warn(`[Fortnox sync] Kund ${c.CustomerNumber} har oväntat Type-värde: "${c.Type}" → klassificeras som privat`);
+  }
   return {
     customer_type: isCompany ? 'business' : 'private',
     customer_stage: 'fortnox_customer' as const,
@@ -52,10 +61,19 @@ export async function syncFortnoxCustomers(triggeredByUserId: string): Promise<C
       sortorder: 'ascending',
     });
 
-    const customers = response.Customers ?? [];
+    const listCustomers = response.Customers ?? [];
     totalPages = response.MetaInformation?.['@TotalPages'] ?? 1;
 
-    if (customers.length > 0) {
+    if (listCustomers.length > 0) {
+      // Fetch each customer individually – the list endpoint does not return Type.
+      const customers = await Promise.all(
+        listCustomers.map((c) =>
+          fortnoxGet<FortnoxCustomerDetailResponse>(`/customers/${c.CustomerNumber}`)
+            .then((r) => r.Customer)
+            .catch(() => c), // fall back to list data if individual fetch fails
+        ),
+      );
+
       // Check which fortnox_customer_ids already exist
       const ids = customers.map((c) => c.CustomerNumber);
       const { data: existing } = await supabase
