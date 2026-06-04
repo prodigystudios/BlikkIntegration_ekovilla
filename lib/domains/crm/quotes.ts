@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { convertProspectToCustomer } from './customers';
 
 export const crmQuoteSelect = `
   id,
@@ -178,6 +179,14 @@ export async function listCrmQuotesWithFilters(supabase: SupabaseClient, options
   return query;
 }
 
+export async function getCrmQuote(supabase: SupabaseClient, id: string) {
+  return supabase
+    .from('crm_quotes')
+    .select(crmQuoteSelect)
+    .eq('id', id)
+    .single();
+}
+
 export async function getCrmQuoteStatus(supabase: SupabaseClient, id: string) {
   return supabase
     .from('crm_quotes')
@@ -192,4 +201,64 @@ export async function createCrmQuote(supabase: SupabaseClient, input: CreateCrmQ
 
 export async function updateCrmQuote(supabase: SupabaseClient, id: string, input: UpdateCrmQuoteInput) {
   return supabase.from('crm_quotes').update(input).eq('id', id).select(crmQuoteSelect).single();
+}
+
+type WonResult = { data: unknown; error: { code: string; message: string } | null };
+
+/**
+ * Handles the 'won' status transition for a quote.
+ *
+ * Separates the orchestration from the HTTP layer: if the quote has a prospect_id
+ * and is not yet won, the prospect is converted to a customer before the quote is
+ * updated. The two operations are sequential without a true DB transaction — if the
+ * quote update fails after conversion, the error message identifies the partial state
+ * so it can be reconciled manually.
+ */
+export async function markCrmQuoteWon(
+  supabase: SupabaseClient,
+  quoteId: string,
+  assignedTo: string,
+  createdBy: string,
+  updateInput: UpdateCrmQuoteInput
+): Promise<WonResult> {
+  const { data: current, error: fetchError } = await getCrmQuoteStatus(supabase, quoteId);
+  if (fetchError || !current) {
+    return { data: null, error: { code: 'crm_quote_not_found', message: fetchError?.message ?? 'Offert hittades inte' } };
+  }
+
+  // Already won, or no prospect to convert — just update
+  if (current.status === 'won' || !current.prospect_id) {
+    const { data, error } = await updateCrmQuote(supabase, quoteId, updateInput);
+    if (error) return { data: null, error: { code: 'crm_quote_update_failed', message: error.message } };
+    return { data, error: null };
+  }
+
+  // Transitioning to 'won' with a prospect: convert first
+  const { customerId, error: conversionError } = await convertProspectToCustomer(
+    supabase,
+    current.prospect_id,
+    assignedTo,
+    createdBy
+  );
+
+  if (conversionError || !customerId) {
+    return { data: null, error: { code: 'crm_customer_conversion_failed', message: conversionError ?? 'Konvertering misslyckades' } };
+  }
+
+  const { data, error: updateError } = await updateCrmQuote(supabase, quoteId, updateInput);
+  if (updateError) {
+    // Conversion succeeded but quote update failed — partial state, needs manual reconciliation
+    console.error(
+      `[markCrmQuoteWon] Quote ${quoteId} update failed after prospect ${current.prospect_id} was converted to customer ${customerId}.`
+    );
+    return {
+      data: null,
+      error: {
+        code: 'crm_quote_update_after_conversion_failed',
+        message: `Prospektet konverterades men offertuppdateringen misslyckades: ${updateError.message}`,
+      },
+    };
+  }
+
+  return { data, error: null };
 }
