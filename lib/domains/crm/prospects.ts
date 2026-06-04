@@ -1,11 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-// Bakåtkompatibel select-sträng för de delar av koden som fortfarande läser crm_prospects direkt
-// (ringlists.ts, coach.ts). Tabellen finns kvar som legacy.
-export const crmProspectSelect =
-  'id, company_name, organization_number, contact_name, phone, email, street_address, postal_code, city, status, source, notes, created_by, assigned_to, created_at, updated_at';
-
-// Prospects är numera crm_customers med customer_stage = 'prospect'.
+// Prospects är crm_customers med customer_stage = 'prospect'.
 // Dessa funktioner proxar mot crm_customers och returnerar data i det gamla
 // ProspectItem-formatet för bakåtkompatibilitet med befintliga API-rutter.
 

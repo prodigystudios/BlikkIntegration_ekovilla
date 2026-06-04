@@ -17,7 +17,7 @@ export const crmTaskSelect = `
   metadata
 `;
 
-type CrmTaskStatus = 'open' | 'done';
+type CrmTaskStatus = 'open' | 'done' | 'cancelled';
 type CrmTaskPriority = 'low' | 'normal' | 'high';
 
 type CreateCrmTaskInput = {
@@ -72,7 +72,7 @@ export function mapCrmTaskRow(row: RawCrmTaskRow) {
     user_id: row.user_id,
     title: row.title,
     details: row.body,
-    status: row.status === 'done' ? 'done' : 'open',
+    status: row.status === 'done' ? 'done' : row.status === 'cancelled' ? 'cancelled' : 'open',
     priority: getTaskPriority((metadata as Record<string, unknown>).priority),
     due_date: row.due_at ? String(row.due_at).slice(0, 10) : null,
     remind_at: row.remind_at,
@@ -95,7 +95,8 @@ export async function listCrmTasks(supabase: SupabaseClient, options: ListCrmTas
   }
 
   if (options.status) {
-    query = query.eq('status', options.status === 'done' ? 'done' : 'active');
+    const dbStatus = options.status === 'done' ? 'done' : options.status === 'cancelled' ? 'cancelled' : 'active';
+    query = query.eq('status', dbStatus);
   }
 
   if (options.prospectId) {
@@ -111,7 +112,7 @@ export async function createCrmTask(supabase: SupabaseClient, input: CreateCrmTa
     kind: 'note',
     title: input.title,
     body: input.details,
-    status: input.status === 'done' ? 'done' : 'active',
+    status: input.status === 'done' ? 'done' : input.status === 'cancelled' ? 'cancelled' : 'active',
     due_at: input.due_date ? `${input.due_date}T12:00:00.000Z` : null,
     remind_at: input.remind_at,
     related_type: input.prospect_id ? 'crm_prospect' : null,
@@ -134,7 +135,7 @@ export async function updateCrmTask(supabase: SupabaseClient, id: string, input:
   const result = await supabase.from('dashboard_work_items').update({
     title: input.title,
     body: input.details,
-    status: input.status === 'done' ? 'done' : 'active',
+    status: input.status === 'done' ? 'done' : input.status === 'cancelled' ? 'cancelled' : 'active',
     due_at: input.due_date ? `${input.due_date}T12:00:00.000Z` : null,
     remind_at: input.remind_at,
     related_type: input.prospect_id ? 'crm_prospect' : null,

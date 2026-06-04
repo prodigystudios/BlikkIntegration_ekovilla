@@ -2,7 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { createCrmProspect } from './prospects';
 
 export const crmAiProspectSuggestionSelect =
-  'id, company_name, organization_number, contact_name, phone, email, city, website, source, rationale, notes, status, created_by, reviewed_by, approved_prospect_id, review_note, reviewed_at, created_at, updated_at, approved_prospect:crm_prospects(id, company_name)';
+  'id, company_name, organization_number, contact_name, phone, email, city, website, source, rationale, notes, status, created_by, reviewed_by, approved_customer_id, review_note, reviewed_at, created_at, updated_at, approved_prospect:crm_customers(id, company_name)';
 
 type SuggestionStatus = 'pending' | 'approved' | 'rejected';
 
@@ -26,7 +26,7 @@ type CrmAiProspectSuggestionRow = {
   status: SuggestionStatus;
   created_by: string;
   reviewed_by: string | null;
-  approved_prospect_id: string | null;
+  approved_customer_id: string | null;
   review_note: string | null;
   reviewed_at: string | null;
   created_at: string;
@@ -36,6 +36,7 @@ type CrmAiProspectSuggestionRow = {
 
 export type CrmAiProspectSuggestion = Omit<CrmAiProspectSuggestionRow, 'approved_prospect'> & {
   approved_prospect: ApprovedProspectRow | null;
+  approved_customer_id: string | null;
 };
 
 type ListCrmAiProspectSuggestionsArgs = {
@@ -62,7 +63,7 @@ type ReviewCrmAiProspectSuggestionInput = {
   reviewed_by: string;
   review_note: string | null;
   reviewed_at: string;
-  approved_prospect_id?: string | null;
+  approved_customer_id?: string | null;
 };
 
 function getApprovedProspect(value: CrmAiProspectSuggestionRow['approved_prospect']) {
@@ -139,7 +140,7 @@ export async function reviewCrmAiProspectSuggestion(
       reviewed_by: input.reviewed_by,
       review_note: input.review_note,
       reviewed_at: input.reviewed_at,
-      approved_prospect_id: input.approved_prospect_id ?? null,
+      approved_customer_id: input.approved_customer_id ?? null,
     })
     .eq('id', id)
     .select(crmAiProspectSuggestionSelect)

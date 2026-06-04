@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 import { getUserProfile } from '@/lib/getUserProfile';
-import { getCurrentWeekStartDate, mapCrmGoalRows } from '@/lib/domains/crm/goals';
+import { getCurrentWeekStartDate, mapCrmGoalRows, type CrmGoalRow } from '@/lib/domains/crm/goals';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import CrmSettingsView from './CrmSettingsView';
 
@@ -24,8 +24,9 @@ export default async function CrmSettingsPage() {
       .eq('period_type', 'week')
       .eq('period_start', currentWeekStart),
     supabase
-      .from('crm_prospects')
+      .from('crm_customers')
       .select('id', { count: 'exact', head: true })
+      .eq('customer_stage', 'prospect')
       .is('assigned_to', null),
     supabase
       .from('dashboard_work_items')
@@ -52,7 +53,7 @@ export default async function CrmSettingsPage() {
   const goalTeam = crmTeam.filter((member): member is { id: string; full_name: string | null; phone: string | null; role: 'sales' | 'admin' } => (
     member.role === 'sales' || member.role === 'admin'
   ));
-  const currentGoals = mapCrmGoalRows(goalsRes.data as any[] | null | undefined);
+  const currentGoals = mapCrmGoalRows(goalsRes.data as CrmGoalRow[] | null);
 
   const adminCount = crmTeam.filter((member) => member.role === 'admin').length;
 

@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { crmProspectSelect } from './prospects';
+import { createCrmProspect } from './prospects';
 
 export type AssignableCrmUser = {
   id: string;
@@ -15,12 +15,15 @@ export async function listAssignableCrmUsers(supabase: SupabaseClient) {
     .order('full_name', { ascending: true });
 }
 
+const assignProspectSelect = 'id, company_name, organization_number, assigned_to, source, notes, created_at, updated_at';
+
 export async function assignCrmProspects(supabase: SupabaseClient, prospectIds: string[], assignedTo: string | null) {
   return supabase
-    .from('crm_prospects')
+    .from('crm_customers')
     .update({ assigned_to: assignedTo })
     .in('id', prospectIds)
-    .select(crmProspectSelect);
+    .eq('customer_stage', 'prospect')
+    .select(assignProspectSelect);
 }
 
 type ImportCrmProspectRow = {
@@ -35,18 +38,12 @@ type ImportCrmProspectRow = {
   notes: string | null;
 };
 
-type ExistingProspect = {
+type ExistingCustomerProspect = {
   id: string;
   company_name: string;
   organization_number: string | null;
-  contact_name: string | null;
-  phone: string | null;
-  email: string | null;
-  city: string | null;
   source: string | null;
   notes: string | null;
-  status: 'new' | 'contacted' | 'qualified' | 'quoted' | 'won' | 'lost';
-  created_by: string;
   assigned_to: string | null;
 };
 
@@ -71,29 +68,30 @@ function normalizeImportRow(row: ImportCrmProspectRow): ImportCrmProspectRow {
 async function listExistingProspectsForImport(supabase: SupabaseClient, rows: ImportCrmProspectRow[]) {
   const orgNumbers = Array.from(new Set(rows.map((row) => row.organization_number).filter(Boolean))) as string[];
   const companyNames = Array.from(new Set(rows.map((row) => row.company_name.trim()).filter(Boolean)));
-  const emails = Array.from(new Set(rows.map((row) => row.email).filter(Boolean))) as string[];
-  const merged = new Map<string, ExistingProspect>();
+  const merged = new Map<string, ExistingCustomerProspect>();
+
+  const existingSelect = 'id, company_name, organization_number, source, notes, assigned_to';
 
   if (orgNumbers.length > 0) {
-    const { data, error } = await supabase.from('crm_prospects').select(crmProspectSelect).in('organization_number', orgNumbers);
+    const { data, error } = await supabase
+      .from('crm_customers')
+      .select(existingSelect)
+      .eq('customer_stage', 'prospect')
+      .in('organization_number', orgNumbers);
     if (error) return { data: null, error };
-    for (const item of (data || []) as ExistingProspect[]) {
+    for (const item of (data || []) as ExistingCustomerProspect[]) {
       merged.set(item.id, item);
     }
   }
 
   if (companyNames.length > 0) {
-    const { data, error } = await supabase.from('crm_prospects').select(crmProspectSelect).in('company_name', companyNames);
+    const { data, error } = await supabase
+      .from('crm_customers')
+      .select(existingSelect)
+      .eq('customer_stage', 'prospect')
+      .in('company_name', companyNames);
     if (error) return { data: null, error };
-    for (const item of (data || []) as ExistingProspect[]) {
-      merged.set(item.id, item);
-    }
-  }
-
-  if (emails.length > 0) {
-    const { data, error } = await supabase.from('crm_prospects').select(crmProspectSelect).in('email', emails);
-    if (error) return { data: null, error };
-    for (const item of (data || []) as ExistingProspect[]) {
+    for (const item of (data || []) as ExistingCustomerProspect[]) {
       merged.set(item.id, item);
     }
   }
@@ -101,7 +99,7 @@ async function listExistingProspectsForImport(supabase: SupabaseClient, rows: Im
   return { data: Array.from(merged.values()), error: null };
 }
 
-function findExistingProspect(row: ImportCrmProspectRow, existingItems: ExistingProspect[]) {
+function findExistingProspect(row: ImportCrmProspectRow, existingItems: ExistingCustomerProspect[]) {
   const normalizedOrg = normalizeValue(row.organization_number);
   if (normalizedOrg) {
     const orgMatch = existingItems.find((item) => normalizeValue(item.organization_number) === normalizedOrg);
@@ -109,23 +107,6 @@ function findExistingProspect(row: ImportCrmProspectRow, existingItems: Existing
   }
 
   const normalizedCompany = normalizeValue(row.company_name);
-  const normalizedEmail = normalizeValue(row.email);
-  const normalizedContact = normalizeValue(row.contact_name);
-
-  if (normalizedCompany && normalizedEmail) {
-    const companyEmailMatch = existingItems.find(
-      (item) => normalizeValue(item.company_name) === normalizedCompany && normalizeValue(item.email) === normalizedEmail,
-    );
-    if (companyEmailMatch) return { item: companyEmailMatch, matchReason: 'foretag_epost' as const };
-  }
-
-  if (normalizedCompany && normalizedContact) {
-    const companyContactMatch = existingItems.find(
-      (item) => normalizeValue(item.company_name) === normalizedCompany && normalizeValue(item.contact_name) === normalizedContact,
-    );
-    if (companyContactMatch) return { item: companyContactMatch, matchReason: 'foretag_kontakt' as const };
-  }
-
   if (normalizedCompany) {
     const companyMatch = existingItems.find((item) => normalizeValue(item.company_name) === normalizedCompany) || null;
     if (companyMatch) return { item: companyMatch, matchReason: 'foretag' as const };
@@ -138,7 +119,7 @@ type ImportRowResult = {
   row_number: number;
   company_name: string;
   action: 'created' | 'updated';
-  matched_on: 'orgnummer' | 'foretag_epost' | 'foretag_kontakt' | 'foretag' | null;
+  matched_on: 'orgnummer' | 'foretag' | null;
 };
 
 export async function importCrmProspects(
@@ -158,33 +139,24 @@ export async function importCrmProspects(
   }
 
   const existingItems = existingResult.data || [];
-  const createdPayload: Array<(ExistingProspect & { assigned_to: string | null }) & { row_number: number }> = [];
-  const updatedPayload: Array<(ExistingProspect & { assigned_to: string | null }) & { row_number: number; matched_on: ImportRowResult['matched_on'] }> = [];
+  const toCreate: Array<ImportCrmProspectRow & { row_number: number }> = [];
+  const toUpdate: Array<{ row: ImportCrmProspectRow; existing: ExistingCustomerProspect; matchReason: 'orgnummer' | 'foretag' }> = [];
   const rowResults: ImportRowResult[] = [];
 
   for (const row of normalizedRows) {
     const existing = findExistingProspect(row, existingItems);
     if (existing) {
-      updatedPayload.push({
-        ...existing.item,
-        row_number: row.row_number,
-        matched_on: existing.matchReason,
-        company_name: row.company_name,
-        organization_number: row.organization_number || existing.item.organization_number,
-        contact_name: row.contact_name || existing.item.contact_name,
-        phone: row.phone || existing.item.phone,
-        email: row.email || existing.item.email,
-        city: row.city || existing.item.city,
-        source: row.source || existing.item.source || 'excel-import',
-        notes: existing.item.notes || row.notes,
-        assigned_to: assignedTo,
-      });
-      continue;
+      toUpdate.push({ row, existing: existing.item, matchReason: existing.matchReason });
+    } else {
+      toCreate.push(row);
     }
+  }
 
-    createdPayload.push({
-      row_number: row.row_number,
-      id: '',
+  const createdItems: ExistingCustomerProspect[] = [];
+  const updatedItems: ExistingCustomerProspect[] = [];
+
+  for (const row of toCreate) {
+    const { data, error } = await createCrmProspect(supabase, {
       company_name: row.company_name,
       organization_number: row.organization_number,
       contact_name: row.contact_name,
@@ -193,79 +165,55 @@ export async function importCrmProspects(
       city: row.city,
       source: row.source || 'excel-import',
       notes: row.notes,
-      status: 'new',
       created_by: currentUserId,
-      assigned_to: assignedTo,
-    } as (ExistingProspect & { assigned_to: string | null }) & { row_number: number });
-  }
-
-  const changedItems: ExistingProspect[] = [];
-
-  if (createdPayload.length > 0) {
-    const { data, error } = await supabase
-      .from('crm_prospects')
-      .insert(
-        createdPayload.map((item) => ({
-          company_name: item.company_name,
-          organization_number: item.organization_number,
-          contact_name: item.contact_name,
-          phone: item.phone,
-          email: item.email,
-          city: item.city,
-          source: item.source,
-          notes: item.notes,
-          status: 'new',
-          created_by: currentUserId,
-          assigned_to: item.assigned_to,
-        })),
-      )
-      .select(crmProspectSelect);
+      assigned_to: assignedTo ?? currentUserId,
+      status: 'new',
+    });
 
     if (error) return { data: null, error };
-    changedItems.push(...((data || []) as ExistingProspect[]));
-    rowResults.push(
-      ...createdPayload.map((item) => ({
-        row_number: item.row_number,
-        company_name: item.company_name,
-        action: 'created' as const,
-        matched_on: null,
-      })),
-    );
+    if (data) {
+      createdItems.push({
+        id: data.id as string,
+        company_name: data.company_name as string,
+        organization_number: data.organization_number as string | null,
+        source: data.source as string | null,
+        notes: data.notes as string | null,
+        assigned_to: data.assigned_to as string | null,
+      });
+    }
+    rowResults.push({ row_number: row.row_number, company_name: row.company_name, action: 'created', matched_on: null });
   }
 
-  for (const item of updatedPayload) {
+  for (const { row, existing, matchReason } of toUpdate) {
+    const visitAddress =
+      row.city
+        ? { street: null, postal_code: null, city: row.city }
+        : undefined;
+
     const { data, error } = await supabase
-      .from('crm_prospects')
+      .from('crm_customers')
       .update({
-        company_name: item.company_name,
-        organization_number: item.organization_number,
-        contact_name: item.contact_name,
-        phone: item.phone,
-        email: item.email,
-        city: item.city,
-        source: item.source,
-        notes: item.notes,
-        assigned_to: item.assigned_to,
+        company_name: row.company_name,
+        organization_number: row.organization_number || existing.organization_number,
+        ...(visitAddress ? { visit_address: visitAddress, invoice_address: visitAddress } : {}),
+        source: row.source || existing.source || 'excel-import',
+        notes: existing.notes || row.notes,
+        assigned_to: assignedTo,
       })
-      .eq('id', item.id)
-      .select(crmProspectSelect)
+      .eq('id', existing.id)
+      .select('id, company_name, organization_number, source, notes, assigned_to')
       .single();
 
     if (error) return { data: null, error };
-    if (data) changedItems.push(data as ExistingProspect);
-    rowResults.push({
-      row_number: item.row_number,
-      company_name: item.company_name,
-      action: 'updated',
-      matched_on: item.matched_on,
-    });
+    if (data) updatedItems.push(data as ExistingCustomerProspect);
+    rowResults.push({ row_number: row.row_number, company_name: row.company_name, action: 'updated', matched_on: matchReason });
   }
 
   return {
     data: {
-      created: createdPayload.length,
-      updated: updatedPayload.length,
-      items: changedItems,
+      created: toCreate.length,
+      updated: toUpdate.length,
+      items: [...createdItems, ...updatedItems],
       results: rowResults.sort((a, b) => a.row_number - b.row_number),
     },
     error: null,

@@ -18,17 +18,13 @@ export const crmCallSelect = `
   next_step,
   call_at,
   created_at,
-  prospect:crm_prospects(
+  prospect:crm_customers!prospect_id(
     id,
     company_name,
-    contact_name,
-    phone,
-    email,
-    city,
-    source,
-    status
+    customer_stage,
+    source
   ),
-  customer:crm_customers(
+  customer:crm_customers!customer_id(
     id,
     customer_stage,
     customer_type,

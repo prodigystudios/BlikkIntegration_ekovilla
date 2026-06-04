@@ -32,12 +32,10 @@ export const crmQuoteSelect = `
   assigned_to,
   created_at,
   updated_at,
-  prospect:crm_prospects(
+  prospect:crm_customers!prospect_id(
     id,
     company_name,
-    contact_name,
-    city,
-    status
+    customer_stage
   ),
   opportunity:crm_opportunities(
     id,
@@ -156,7 +154,7 @@ export async function listCrmQuotesWithFilters(supabase: SupabaseClient, options
 
   if (options.search) {
     query = query.or(
-      `project_name.ilike.%${options.search}%,customer_name.ilike.%${options.search}%,description.ilike.%${options.search}%,notes.ilike.%${options.search}%,crm_prospects.company_name.ilike.%${options.search}%`
+      `project_name.ilike.%${options.search}%,customer_name.ilike.%${options.search}%,description.ilike.%${options.search}%,notes.ilike.%${options.search}%`
     );
   }
 

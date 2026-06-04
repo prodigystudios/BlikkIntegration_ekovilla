@@ -22,7 +22,6 @@ export const crmCustomerSelect = `
   personal_number,
   visit_address,
   invoice_address,
-  source_prospect_id,
   fortnox_customer_id,
   sync_status,
   last_synced_at,
@@ -65,7 +64,6 @@ export type CreateCrmCustomerInput = {
   personal_number?: string | null;
   visit_address?: CrmAddress | null;
   invoice_address?: CrmAddress | null;
-  source_prospect_id?: string | null;
   fortnox_customer_id?: string | null;
   sync_status?: CrmCustomerSyncStatus;
   source?: string | null;
@@ -192,97 +190,39 @@ export async function deleteCrmCustomerContact(supabase: SupabaseClient, id: str
 export async function convertProspectToCustomer(
   supabase: SupabaseClient,
   prospectId: string,
-  assignedTo: string,
-  createdBy: string
+  _assignedTo: string,
+  _createdBy: string
 ): Promise<{ customerId: string | null; error: string | null }> {
-  // Check if the prospectId refers to a crm_customers row (new flow)
-  const { data: existingCustomer } = await supabase
+  const { data: customer, error } = await supabase
     .from('crm_customers')
     .select('id, customer_stage')
     .eq('id', prospectId)
     .maybeSingle();
 
-  if (existingCustomer) {
-    if (existingCustomer.customer_stage !== 'prospect') {
-      return { customerId: existingCustomer.id, error: null };
-    }
-    const { data: updated, error: updateError } = await supabase
-      .from('crm_customers')
-      .update({ customer_stage: 'customer', status: 'active' })
-      .eq('id', prospectId)
-      .select('id')
-      .single();
-    if (updateError || !updated) {
-      return { customerId: null, error: updateError?.message || 'Kunde inte konvertera prospekt' };
-    }
-    return { customerId: updated.id, error: null };
+  if (error) {
+    return { customerId: null, error: error.message };
   }
 
-  // Legacy fallback: prospectId refers to crm_prospects
-  const { data: prospect, error: prospectError } = await supabase
-    .from('crm_prospects')
-    .select('id, company_name, organization_number, contact_name, phone, email, street_address, postal_code, city, assigned_to')
+  if (!customer) {
+    return { customerId: null, error: 'Prospekt hittades inte' };
+  }
+
+  if (customer.customer_stage !== 'prospect') {
+    return { customerId: customer.id, error: null };
+  }
+
+  const { data: updated, error: updateError } = await supabase
+    .from('crm_customers')
+    .update({ customer_stage: 'customer', status: 'active' })
     .eq('id', prospectId)
-    .single();
-
-  if (prospectError || !prospect) {
-    return { customerId: null, error: prospectError?.message || 'Prospekt hittades inte' };
-  }
-
-  const { data: existing } = await supabase
-    .from('crm_customers')
-    .select('id')
-    .eq('source_prospect_id', prospectId)
-    .maybeSingle();
-
-  if (existing) {
-    return { customerId: existing.id, error: null };
-  }
-
-  const visitAddress: CrmAddress = {
-    street: prospect.street_address ?? null,
-    postal_code: prospect.postal_code ?? null,
-    city: prospect.city ?? null,
-  };
-
-  const { data: customer, error: createError } = await supabase
-    .from('crm_customers')
-    .insert({
-      customer_type: 'business',
-      customer_stage: 'customer',
-      company_name: prospect.company_name,
-      organization_number: prospect.organization_number ?? null,
-      visit_address: visitAddress,
-      invoice_address: visitAddress,
-      source_prospect_id: prospectId,
-      sync_status: 'not_synced',
-      status: 'active',
-      assigned_to: prospect.assigned_to ?? assignedTo,
-      created_by: createdBy,
-    })
     .select('id')
     .single();
 
-  if (createError || !customer) {
-    return { customerId: null, error: createError?.message || 'Kunde inte skapa kund' };
+  if (updateError || !updated) {
+    return { customerId: null, error: updateError?.message || 'Kunde inte konvertera prospekt' };
   }
 
-  if (prospect.contact_name) {
-    await supabase.from('crm_customer_contacts').insert({
-      customer_id: customer.id,
-      name: prospect.contact_name,
-      phone: prospect.phone ?? null,
-      email: prospect.email ?? null,
-      is_primary: true,
-    });
-  }
-
-  await supabase
-    .from('crm_prospects')
-    .update({ status: 'won' })
-    .eq('id', prospectId);
-
-  return { customerId: customer.id, error: null };
+  return { customerId: updated.id, error: null };
 }
 
 export function getCrmCustomerDisplayName(customer: {

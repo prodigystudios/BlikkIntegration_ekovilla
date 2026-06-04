@@ -16,14 +16,13 @@ export const crmOpportunitySelect = `
   assigned_to,
   created_at,
   updated_at,
-  prospect:crm_prospects(
+  prospect:crm_customers!prospect_id(
     id,
     company_name,
-    contact_name,
-    city,
+    customer_stage,
     source
   ),
-  customer:crm_customers(
+  customer:crm_customers!customer_id(
     id,
     customer_type,
     company_name,
@@ -72,7 +71,7 @@ export async function listCrmOpportunities(supabase: SupabaseClient, options: Li
 
   if (options.search) {
     query = query.or(
-      `title.ilike.%${options.search}%,notes.ilike.%${options.search}%,crm_prospects.company_name.ilike.%${options.search}%`
+      `title.ilike.%${options.search}%,notes.ilike.%${options.search}%,customer_name.ilike.%${options.search}%`
     );
   }
 

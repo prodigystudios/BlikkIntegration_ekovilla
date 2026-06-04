@@ -1,7 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 import { crmCallSelect } from './calls';
-import { crmProspectSelect } from './prospects';
 import { crmQuoteSelect } from './quotes';
 
 type CoachContextRef = {
@@ -36,13 +35,15 @@ type QuoteProspect = {
   company_name: string;
 };
 
+type ProspectContact = { name: string; is_primary: boolean };
+
 type ProspectRow = {
   id: string;
   company_name: string;
-  contact_name: string | null;
-  city: string | null;
-  status: 'new' | 'contacted' | 'qualified' | 'quoted' | 'won' | 'lost';
+  customer_stage: string;
+  visit_address: { city?: string | null } | null;
   source: string | null;
+  contacts: ProspectContact[] | null;
 };
 
 type CallRow = {
@@ -99,15 +100,6 @@ type OpenAiCompatibleResponse = {
   }>;
 };
 
-const prospectStatusLabel: Record<ProspectRow['status'], string> = {
-  new: 'Ny',
-  contacted: 'Kontaktad',
-  qualified: 'Kvalificerad',
-  quoted: 'Offert',
-  won: 'Vunnen',
-  lost: 'Förlorad',
-};
-
 const quoteStatusLabel: Record<QuoteRow['status'], string> = {
   draft: 'Utkast',
   sent: 'Skickad',
@@ -142,14 +134,16 @@ function getQuoteLabel(item: QuoteRow) {
 }
 
 function buildProspectContext(item: ProspectRow): CoachContextSummary {
+  const contacts = Array.isArray(item.contacts) ? item.contacts : [];
+  const primary = contacts.find((c) => c.is_primary) || contacts[0] || null;
+  const city = item.visit_address?.city;
   return {
     type: 'prospect',
     id: item.id,
     label: item.company_name,
     summary: [
-      item.contact_name ? `Kontakt: ${item.contact_name}` : null,
-      item.city ? `Ort: ${item.city}` : null,
-      `Status: ${prospectStatusLabel[item.status]}`,
+      primary ? `Kontakt: ${primary.name}` : null,
+      city ? `Ort: ${city}` : null,
       item.source ? `Källa: ${item.source}` : null,
     ].filter(Boolean) as string[],
   };
@@ -185,7 +179,11 @@ function buildQuoteContext(item: QuoteRow): CoachContextSummary {
 
 export async function loadCoachContext(supabase: SupabaseClient, ref: CoachContextRef) {
   if (ref.type === 'prospect') {
-    const result = await supabase.from('crm_prospects').select(crmProspectSelect).eq('id', ref.id).single();
+    const result = await supabase
+      .from('crm_customers')
+      .select('id, company_name, customer_stage, visit_address, source, contacts:crm_customer_contacts(name, is_primary)')
+      .eq('id', ref.id)
+      .single();
     return {
       data: result.data ? buildProspectContext(result.data as ProspectRow) : null,
       error: result.error,

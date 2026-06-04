@@ -9,7 +9,7 @@ type GoalUserRow = {
   role: 'sales' | 'admin' | 'member' | 'konsult';
 };
 
-type CrmGoalRow = {
+export type CrmGoalRow = {
   id: string;
   user_id: string;
   period_type: 'week';

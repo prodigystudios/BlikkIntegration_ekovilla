@@ -53,7 +53,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       reviewed_by: crmUser.currentUser.id,
       review_note: parsedBody.data.review_note,
       reviewed_at: new Date().toISOString(),
-      approved_prospect_id: approvedProspect?.id || null,
+      approved_customer_id: (approvedProspect as { id: string } | null)?.id ?? null,
     });
 
     if (reviewResult.error) {
