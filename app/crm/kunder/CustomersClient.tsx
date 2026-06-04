@@ -9,6 +9,7 @@ import { cn } from '@/lib/shared/cn';
 
 type CustomerType = 'business' | 'private';
 type CustomerStatus = 'active' | 'inactive' | 'churned';
+type CustomerStage = 'prospect' | 'customer' | 'fortnox_customer';
 
 type CustomerContact = {
   id: string;
@@ -28,6 +29,7 @@ type CustomerAddress = {
 type CustomerItem = {
   id: string;
   customer_type: CustomerType;
+  customer_stage: CustomerStage;
   company_name: string | null;
   organization_number: string | null;
   first_name: string | null;
@@ -71,13 +73,25 @@ const syncClass: Record<string, string> = {
   failed: 'border-rose-200 bg-rose-50 text-rose-700',
 };
 
-type StatusFilter = 'alla' | CustomerStatus;
+const stageLabel: Record<CustomerStage, string> = {
+  prospect: 'Prospekt',
+  customer: 'Kund',
+  fortnox_customer: 'Fortnox-kund',
+};
 
-const filterMeta: Record<StatusFilter, { label: string }> = {
+const stageClass: Record<CustomerStage, string> = {
+  prospect: 'border-sky-200 bg-sky-50 text-sky-700',
+  customer: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  fortnox_customer: 'border-violet-200 bg-violet-50 text-violet-700',
+};
+
+type StageFilter = 'alla' | CustomerStage;
+
+const filterMeta: Record<StageFilter, { label: string }> = {
   alla: { label: 'Alla' },
-  active: { label: 'Aktiva' },
-  inactive: { label: 'Inaktiva' },
-  churned: { label: 'Churnade' },
+  prospect: { label: 'Prospekt' },
+  customer: { label: 'Kunder' },
+  fortnox_customer: { label: 'Fortnox-kunder' },
 };
 
 type CreateDraft = {
@@ -169,7 +183,7 @@ export default function CustomersClient() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
-  const [filter, setFilter] = useState<StatusFilter>('alla');
+  const [filter, setFilter] = useState<StageFilter>('alla');
   const [createPanelOpen, setCreatePanelOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState<CreateDraft>(initialDraft);
@@ -278,22 +292,22 @@ export default function CustomersClient() {
   }, [selected]);
 
   const visibleItems = useMemo(() => {
-    const filtered = filter === 'alla' ? items : items.filter((i) => i.status === filter);
+    const filtered = filter === 'alla' ? items : items.filter((i) => i.customer_stage === filter);
     return filtered.slice().sort((a, b) => b.updated_at.localeCompare(a.updated_at));
   }, [filter, items]);
 
-  const filterCounts = useMemo<Record<StatusFilter, number>>(() => ({
+  const filterCounts = useMemo<Record<StageFilter, number>>(() => ({
     alla: items.length,
-    active: items.filter((i) => i.status === 'active').length,
-    inactive: items.filter((i) => i.status === 'inactive').length,
-    churned: items.filter((i) => i.status === 'churned').length,
+    prospect: items.filter((i) => i.customer_stage === 'prospect').length,
+    customer: items.filter((i) => i.customer_stage === 'customer').length,
+    fortnox_customer: items.filter((i) => i.customer_stage === 'fortnox_customer').length,
   }), [items]);
 
   const stats = useMemo(() => ({
     total: items.length,
-    active: items.filter((i) => i.status === 'active').length,
-    synced: items.filter((i) => i.sync_status === 'synced').length,
-    pending: items.filter((i) => i.sync_status === 'pending' || i.sync_status === 'not_synced').length,
+    prospects: items.filter((i) => i.customer_stage === 'prospect').length,
+    customers: items.filter((i) => i.customer_stage === 'customer').length,
+    fortnox: items.filter((i) => i.customer_stage === 'fortnox_customer').length,
   }), [items]);
 
   async function createCustomer() {
@@ -425,7 +439,7 @@ export default function CustomersClient() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="m-0 text-2xl font-bold tracking-tight text-slate-900">Kundregister</h1>
-          <p className="m-0 mt-1 text-sm text-slate-500">Konverterade kunder och deras historik</p>
+          <p className="m-0 mt-1 text-sm text-slate-500">Prospekt, kunder och Fortnox-kopplade konton</p>
         </div>
         <button
           type="button"
@@ -438,10 +452,10 @@ export default function CustomersClient() {
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <MetricCard label="Totalt kunder" value={stats.total} helper="I registret" />
-        <MetricCard label="Aktiva" value={stats.active} helper="Status aktiv" />
-        <MetricCard label="Synkade mot Fortnox" value={stats.synced} helper="Fortnox-koppling bekräftad" />
-        <MetricCard label="Ej synkade" value={stats.pending} helper="Väntar på Fortnox-synk" />
+        <MetricCard label="Totalt" value={stats.total} helper="Alla i registret" />
+        <MetricCard label="Prospekt" value={stats.prospects} helper="Potentiella kunder" />
+        <MetricCard label="Kunder" value={stats.customers} helper="Aktiva kundrelationer" />
+        <MetricCard label="Fortnox-kunder" value={stats.fortnox} helper="Fortnox-koppling aktiv" />
       </div>
 
       <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_2px_12px_rgba(0,0,0,0.04)]">
@@ -453,7 +467,7 @@ export default function CustomersClient() {
             className="max-w-xs"
           />
           <div className="flex flex-wrap gap-1.5">
-            {(Object.keys(filterMeta) as StatusFilter[]).map((value) => {
+            {(Object.keys(filterMeta) as StageFilter[]).map((value) => {
               const active = filter === value;
               return (
                 <button
@@ -491,9 +505,13 @@ export default function CustomersClient() {
           </div>
         ) : visibleItems.length === 0 ? (
           <div className="grid gap-2 rounded-[24px] border border-dashed border-slate-300 bg-slate-50 px-5 py-8 text-center">
-            <strong className="text-base font-bold text-slate-900">Inga kunder i det här filtret</strong>
+            <strong className="text-base font-bold text-slate-900">Inga poster i det här filtret</strong>
             <p className="m-0 text-sm leading-6 text-slate-600">
-              Kunder skapas när ett prospekt konverteras vid vunnen offert, eller manuellt härifrån.
+              {filter === 'prospect'
+                ? 'Lägg till ett prospekt med knappen ovan, eller logga ett samtal för att skapa ett.'
+                : filter === 'fortnox_customer'
+                ? 'Fortnox-kunder visas här när Fortnox-integrationen är aktiv.'
+                : 'Prospekt konverteras till kunder när en offert vinns.'}
             </p>
           </div>
         ) : (
@@ -519,12 +537,14 @@ export default function CustomersClient() {
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-1.5">
-                  <span className={cn('rounded-full border px-2 py-0.5 text-[11px] font-semibold', syncClass[item.sync_status])}>
-                    {syncLabel[item.sync_status]}
+                  <span className={cn('rounded-full border px-2 py-0.5 text-[11px] font-semibold', stageClass[item.customer_stage])}>
+                    {stageLabel[item.customer_stage]}
                   </span>
-                  <span className={cn('rounded-full border px-2 py-0.5 text-[11px] font-semibold', statusClass[item.status])}>
-                    {statusLabel[item.status]}
-                  </span>
+                  {item.customer_stage === 'fortnox_customer' ? (
+                    <span className={cn('rounded-full border px-2 py-0.5 text-[11px] font-semibold', syncClass[item.sync_status])}>
+                      {syncLabel[item.sync_status]}
+                    </span>
+                  ) : null}
                 </div>
               </button>
             ))}
@@ -629,19 +649,21 @@ export default function CustomersClient() {
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="grid gap-1">
                 <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
-                  {selected.customer_type === 'business' ? 'Företagskund' : 'Privatkund'}
+                  {stageLabel[selected.customer_stage]} · {selected.customer_type === 'business' ? 'Företag' : 'Privat'}
                 </span>
                 <strong className="text-[1.4rem] font-bold tracking-[-0.05em] text-slate-950">{getDisplayName(selected)}</strong>
                 {selected.organization_number ? <p className="m-0 text-sm text-slate-500">Org-nr: {selected.organization_number}</p> : null}
                 {selected.personal_number ? <p className="m-0 text-sm text-slate-500">Personnr: {selected.personal_number}</p> : null}
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <span className={cn('rounded-full border px-2.5 py-1 text-xs font-semibold', statusClass[selected.status])}>
-                  {statusLabel[selected.status]}
+                <span className={cn('rounded-full border px-2.5 py-1 text-xs font-semibold', stageClass[selected.customer_stage])}>
+                  {stageLabel[selected.customer_stage]}
                 </span>
-                <span className={cn('rounded-full border px-2.5 py-1 text-xs font-semibold', syncClass[selected.sync_status])}>
-                  {syncLabel[selected.sync_status]}
-                </span>
+                {selected.customer_stage === 'fortnox_customer' ? (
+                  <span className={cn('rounded-full border px-2.5 py-1 text-xs font-semibold', syncClass[selected.sync_status])}>
+                    {syncLabel[selected.sync_status]}
+                  </span>
+                ) : null}
                 <button type="button" onClick={() => setDetailEditing((c) => !c)} className="inline-flex min-h-10 items-center justify-center rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 hover:border-slate-300">
                   {detailEditing ? 'Avsluta redigering' : 'Redigera'}
                 </button>

@@ -2,6 +2,9 @@
 // requires elevated access beyond what the importer's own RLS policies allow.
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { importCrmProspects } from '@/lib/domains/crm/ringlists';
+import { resolveRoutingUser } from '@/lib/domains/crm/routingRules';
+import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { cookies } from 'next/headers';
 import {
   importCrmRinglistRowsSchema,
   ok,
@@ -18,12 +21,19 @@ export async function POST(req: Request) {
     const parsedBody = importCrmRinglistRowsSchema.safeParse(await req.json().catch(() => null));
     if (!parsedBody.success) return validationError(parsedBody.error);
 
+    // Resolve assigned_to via routing rule if county provided but no explicit user
+    let resolvedAssignedTo = parsedBody.data.assigned_to;
+    if (!resolvedAssignedTo && parsedBody.data.county) {
+      const sessionSupabase = createRouteHandlerClient({ cookies });
+      resolvedAssignedTo = await resolveRoutingUser(sessionSupabase, parsedBody.data.county);
+    }
+
     const supabase = getSupabaseAdmin();
     const result = await importCrmProspects(
       supabase,
       parsedBody.data.rows,
       crmAdmin.currentUser.id,
-      parsedBody.data.assigned_to,
+      resolvedAssignedTo,
     );
 
     if (result.error) {

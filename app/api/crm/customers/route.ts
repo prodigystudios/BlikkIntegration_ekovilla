@@ -9,6 +9,7 @@ import {
   routeError,
   validationError,
 } from './_lib';
+import type { CrmCustomerStage } from '@/lib/domains/crm/customers';
 
 export async function GET(req: Request) {
   try {
@@ -19,6 +20,7 @@ export async function GET(req: Request) {
     const parsedQuery = listCrmCustomersQuerySchema.safeParse({
       q: url.searchParams.get('q') || undefined,
       status: url.searchParams.get('status') || undefined,
+      stage: url.searchParams.get('stage') || undefined,
       assigned_to: url.searchParams.get('assigned_to') || undefined,
     });
     if (!parsedQuery.success) return validationError(parsedQuery.error);
@@ -27,6 +29,7 @@ export async function GET(req: Request) {
     const { data, error } = await listCrmCustomers(supabase, {
       search: parsedQuery.data.q,
       status: parsedQuery.data.status,
+      stage: parsedQuery.data.stage as CrmCustomerStage | undefined,
       assignedTo: parsedQuery.data.assigned_to,
     });
 

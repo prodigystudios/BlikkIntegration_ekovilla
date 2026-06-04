@@ -14,6 +14,7 @@ const optionalTextSchema = z.preprocess((value) => {
 
 export const importCrmRinglistRowsSchema = z.object({
   assigned_to: z.string().uuid('Ogiltig användare').nullable(),
+  county: z.string().trim().nullable().optional().default(null),
   rows: z.array(z.object({
     row_number: z.number().int().positive(),
     company_name: z.string().trim().min(1, 'Företagsnamn krävs'),

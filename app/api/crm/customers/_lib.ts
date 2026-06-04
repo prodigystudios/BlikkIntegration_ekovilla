@@ -3,6 +3,7 @@ export { ok, routeError, validationError, requireCrmUser } from '../_shared';
 
 const customerTypeSchema = z.enum(['business', 'private']);
 const customerStatusSchema = z.enum(['active', 'inactive', 'churned']);
+const customerStageSchema = z.enum(['prospect', 'customer', 'fortnox_customer']);
 
 const addressSchema = z
   .object({
@@ -17,12 +18,18 @@ const addressSchema = z
 export const listCrmCustomersQuerySchema = z.object({
   q: z.string().trim().optional(),
   status: customerStatusSchema.optional(),
+  stage: customerStageSchema.optional(),
   assigned_to: z.string().uuid().optional(),
+});
+
+export const searchCrmCustomersQuerySchema = z.object({
+  q: z.string().trim().min(1, 'Sökterm krävs'),
 });
 
 export const createCrmCustomerSchema = z
   .object({
     customer_type: customerTypeSchema,
+    customer_stage: customerStageSchema.optional().default('customer'),
     company_name: z.string().trim().nullable().optional().default(null),
     organization_number: z.string().trim().nullable().optional().default(null),
     first_name: z.string().trim().nullable().optional().default(null),
@@ -32,6 +39,8 @@ export const createCrmCustomerSchema = z
     invoice_address: addressSchema,
     source_prospect_id: z.string().uuid().nullable().optional().default(null),
     fortnox_customer_id: z.string().trim().nullable().optional().default(null),
+    source: z.string().trim().nullable().optional().default(null),
+    notes: z.string().trim().nullable().optional().default(null),
   })
   .refine(
     (d) =>
@@ -42,6 +51,7 @@ export const createCrmCustomerSchema = z
 export const updateCrmCustomerSchema = z
   .object({
     customer_type: customerTypeSchema.optional(),
+    customer_stage: customerStageSchema.optional(),
     company_name: z.string().trim().nullable().optional(),
     organization_number: z.string().trim().nullable().optional(),
     first_name: z.string().trim().nullable().optional(),
@@ -51,6 +61,8 @@ export const updateCrmCustomerSchema = z
     invoice_address: addressSchema,
     fortnox_customer_id: z.string().trim().nullable().optional(),
     status: customerStatusSchema.optional(),
+    source: z.string().trim().nullable().optional(),
+    notes: z.string().trim().nullable().optional(),
     assigned_to: z.string().uuid().optional(),
   });
 

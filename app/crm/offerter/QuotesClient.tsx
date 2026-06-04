@@ -591,17 +591,17 @@ function QuoteBasicsSection({
 
       <label className="grid gap-1 text-sm text-slate-600">
         <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Offertdatum</span>
-        <Input value={draft.quote_date} onChange={(event) => setDraft((current) => ({ ...current, quote_date: event.target.value }))} type="date" />
+        <Input value={draft.quote_date} onChange={(event) => setDraft((current) => ({ ...current, quote_date: event.target.value }))} type="date" lang="sv-SE" />
       </label>
 
       <label className="grid gap-1 text-sm text-slate-600">
         <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Följ upp senast</span>
-        <Input value={draft.follow_up_date} onChange={(event) => setDraft((current) => ({ ...current, follow_up_date: event.target.value }))} type="date" />
+        <Input value={draft.follow_up_date} onChange={(event) => setDraft((current) => ({ ...current, follow_up_date: event.target.value }))} type="date" lang="sv-SE" placeholder="ÅÅÅÅ-MM-DD" />
       </label>
 
       <label className="grid gap-1 text-sm text-slate-600">
         <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Giltig till</span>
-        <Input value={draft.valid_until} onChange={(event) => setDraft((current) => ({ ...current, valid_until: event.target.value }))} type="date" />
+        <Input value={draft.valid_until} onChange={(event) => setDraft((current) => ({ ...current, valid_until: event.target.value }))} type="date" lang="sv-SE" />
       </label>
     </div>
   );
@@ -1149,6 +1149,8 @@ export default function QuotesClient() {
   const [hasAppliedPreset, setHasAppliedPreset] = useState(false);
   const [activeStep, setActiveStep] = useState(1);
   const [selectedCustomer, setSelectedCustomer] = useState<CrmCustomerLite | null>(null);
+  const [detailPanelOpen, setDetailPanelOpen] = useState(false);
+  const [detailQuoteId, setDetailQuoteId] = useState<string | null>(null);
   const draftAtOpen = useRef<string>('');
 
   useEffect(() => {
@@ -1309,6 +1311,11 @@ export default function QuotesClient() {
     [editingQuoteId, quotes],
   );
 
+  const detailQuote = useMemo(
+    () => (detailQuoteId ? quotes.find((item) => item.id === detailQuoteId) || null : null),
+    [detailQuoteId, quotes],
+  );
+
   useEffect(() => {
     if (!shouldOpenCreateForPreset || hasAppliedPreset || loading) return;
 
@@ -1359,12 +1366,11 @@ export default function QuotesClient() {
     setHasAppliedPreset(true);
   }, [hasAppliedPreset, loading, presetOpportunityId, presetProspectId, prospectsById, shouldOpenCreateForPreset]);
 
-  function renderQuoteCard(item: QuoteItem, options?: { compact?: boolean; hideStatusBadge?: boolean }) {
+  function renderQuoteCard(item: QuoteItem, options?: { compact?: boolean }) {
     const prospect = getProspectFromQuote(item);
     const overdue = isOverdue(item);
     const statusMeta = quoteStatusMeta[item.status];
     const compact = options?.compact ?? false;
-    const hideStatusBadge = options?.hideStatusBadge ?? false;
 
     if (compact) {
       return (
@@ -1416,57 +1422,43 @@ export default function QuotesClient() {
       );
     }
 
+    const statusDot = item.status === 'won' ? 'bg-emerald-400' : item.status === 'follow_up' ? 'bg-amber-400' : item.status === 'sent' ? 'bg-sky-400' : item.status === 'lost' ? 'bg-rose-300' : 'bg-slate-300';
+
     return (
       <button
         key={item.id}
         type="button"
-        onClick={() => openEditModal(item)}
+        onClick={() => openDetailPanel(item)}
         className={cn(
-          'relative grid gap-3 overflow-hidden rounded-[22px] border p-3.5 text-left shadow-[0_12px_30px_rgba(15,23,42,0.06)] transition hover:-translate-y-0.5 hover:shadow-[0_18px_36px_rgba(15,23,42,0.10)] md:grid-cols-[minmax(0,1.16fr)_minmax(0,0.92fr)_auto] md:items-center',
-          statusMeta.cardClass,
-          overdue && item.status !== 'follow_up' ? 'ring-1 ring-amber-100' : null,
+          'grid grid-cols-[auto_1fr_auto] items-center gap-3 rounded-[18px] border bg-white px-4 py-3 text-left shadow-[0_2px_8px_rgba(15,23,42,0.04)] transition hover:-translate-y-0.5 hover:shadow-[0_8px_20px_rgba(15,23,42,0.08)] sm:grid-cols-[auto_1fr_auto_auto_auto]',
+          overdue ? 'border-amber-200' : 'border-slate-200',
+          movingQuoteId === item.id ? 'opacity-60' : null,
         )}
       >
-        <span className={cn('absolute inset-y-0 left-0 w-1.5 rounded-l-[24px]', item.status === 'won' ? 'bg-emerald-400' : item.status === 'follow_up' ? 'bg-amber-400' : item.status === 'sent' ? 'bg-sky-400' : item.status === 'lost' ? 'bg-rose-300' : 'bg-slate-300')} />
+        <span className={cn('h-2 w-2 shrink-0 rounded-full', statusDot)} />
 
-        <div className="grid gap-1.5 pl-2">
-          <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">
-            {item.opportunity ? item.opportunity.title : item.customer_id ? 'Kopplad kund' : prospect ? 'Kopplat prospekt' : 'Fristående offert'}
-          </span>
-          <div className="grid gap-0.5">
-            <strong className="text-[17px] font-bold tracking-[-0.03em] text-slate-950">{item.project_name}</strong>
-            <p className="m-0 text-sm font-medium text-slate-600">{getQuoteCustomerName(item)}</p>
-          </div>
+        <div className="grid min-w-0 gap-0.5">
+          <strong className="truncate text-sm font-bold text-slate-900">{item.project_name}</strong>
+          <span className="truncate text-xs text-slate-500">{getQuoteCustomerName(item)}</span>
         </div>
 
-        <div className="grid gap-2 pl-2 md:pl-0">
-          {(item.description || item.notes) ? (
-            <p className="m-0 line-clamp-2 text-sm leading-5 text-slate-600">{item.description || item.notes}</p>
-          ) : (
-            <p className="m-0 text-sm text-slate-500">Ingen beskrivning ännu. Klicka för att lägga till offertdetaljer och nästa steg.</p>
-          )}
+        <span className={cn('hidden rounded-full border px-2.5 py-1 text-[11px] font-semibold sm:inline-flex', statusMeta.className)}>
+          {statusMeta.label}
+        </span>
 
-          <div className="flex flex-wrap gap-2 text-xs text-slate-600">
-            <span className="rounded-full border border-slate-200/90 bg-white/80 px-2.5 py-1 font-medium text-slate-700">Offertdatum {formatDate(item.quote_date)}</span>
-            {item.follow_up_date ? <span className="rounded-full border border-slate-200/90 bg-white/80 px-2.5 py-1 font-medium text-slate-700">Följ upp {formatDate(item.follow_up_date)}</span> : null}
-            {prospect?.city ? <span className="rounded-full border border-slate-200/90 bg-white/80 px-2.5 py-1">{prospect.city}</span> : null}
-            {item.work_order_number ? <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 font-semibold text-emerald-900">Arbetsorder {item.work_order_number}</span> : null}
-          </div>
-        </div>
+        <span className={cn('hidden rounded-full border px-2.5 py-1 text-sm font-bold sm:inline-flex', statusMeta.amountClass)}>
+          {formatCurrency(item.amount, item.currency_code)}
+        </span>
 
-        <div className="grid content-start justify-items-start gap-2 pl-2 md:justify-items-end md:pl-0">
-          {!hideStatusBadge ? (
-            <span className={cn('rounded-full border px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.1em] shadow-[0_10px_18px_rgba(15,23,42,0.06)]', statusMeta.className)}>
-              {statusMeta.label}
+        <div className="grid gap-0.5 text-right">
+          <span className="text-xs text-slate-500">{formatDate(item.quote_date)}</span>
+          {item.follow_up_date ? (
+            <span className={cn('text-[11px] font-semibold', overdue ? 'text-amber-700' : 'text-slate-400')}>
+              {overdue ? '⚠ ' : ''}Följ upp {formatDate(item.follow_up_date)}
             </span>
           ) : null}
-          <span className={cn('rounded-full border px-3 py-1.5 text-sm font-bold shadow-[0_10px_18px_rgba(15,23,42,0.05)]', statusMeta.amountClass)}>
-            {formatCurrency(item.amount, item.currency_code)}
-          </span>
-          {overdue ? (
-            <span className="rounded-full border border-amber-300 bg-amber-100 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-amber-900">
-              Sen uppföljning
-            </span>
+          {item.work_order_number ? (
+            <span className="text-[11px] font-semibold text-emerald-700">AO {item.work_order_number}</span>
           ) : null}
         </div>
       </button>
@@ -1479,6 +1471,11 @@ export default function QuotesClient() {
     setDraft({ ...initialDraft });
     setActiveStep(1);
     setModalOpen(true);
+  }
+
+  function openDetailPanel(item: QuoteItem) {
+    setDetailQuoteId(item.id);
+    setDetailPanelOpen(true);
   }
 
   function closeModal() {
@@ -1870,43 +1867,34 @@ export default function QuotesClient() {
 
       {/* Activity management */}
       <div className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_2px_12px_rgba(0,0,0,0.04)] md:p-5">
-        <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
+        <div className="flex flex-wrap items-center gap-3">
           <Input
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            placeholder="Sök på offert, prospekt, kund eller anteckning"
-            className="max-w-xl"
+            placeholder="Sök på offert, kund eller anteckning"
+            className="max-w-xs"
           />
-          <div className="grid gap-2 rounded-[20px] border border-slate-200/85 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(250,252,250,0.96))] p-2 shadow-[0_14px_30px_rgba(15,23,42,0.05)]">
-            <div className="flex items-center justify-between gap-3 px-2 pt-1">
-              <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Sales cockpit</div>
-              <div className="text-xs text-slate-500">{filterCounts[filter]} i vy</div>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {((['all', 'active', 'follow_up', 'won', 'lost']) as const).map((value) => (
+          <div className="flex flex-wrap gap-1.5">
+            {((['all', 'active', 'follow_up', 'won', 'lost']) as const).map((value) => {
+              const active = filter === value;
+              return (
                 <button
                   key={value}
                   type="button"
                   onClick={() => setFilter(value)}
                   className={cn(
-                    'grid min-w-[120px] gap-0.5 rounded-[20px] border px-3 py-2 text-left transition',
-                    filter === value
-                      ? 'border-emerald-900 bg-emerald-900 text-white shadow-[0_14px_24px_rgba(15,23,42,0.16)]'
-                      : cn(quoteFilterMeta[value].tone, 'hover:-translate-y-0.5 hover:shadow-[0_10px_20px_rgba(15,23,42,0.08)]'),
+                    'inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-sm font-semibold transition',
+                    active ? 'border-transparent text-white' : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300',
                   )}
+                  style={active ? { backgroundColor: 'var(--crm-primary)' } : undefined}
                 >
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-sm font-semibold">{quoteFilterMeta[value].label}</span>
-                    <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-bold', filter === value ? 'bg-white/20 text-white' : 'bg-white/80 text-current')}>
-                      {filterCounts[value]}
-                    </span>
-                  </div>
-                  <span className={cn('text-[11px]', filter === value ? 'text-white/80' : 'text-current/70')}>
-                    {quoteFilterMeta[value].hint}
+                  {quoteFilterMeta[value].label}
+                  <span className={cn('rounded-full px-1.5 py-0.5 text-[10px] font-bold', active ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600')}>
+                    {filterCounts[value]}
                   </span>
                 </button>
-              ))}
-            </div>
+              );
+            })}
           </div>
         </div>
 
@@ -1915,104 +1903,161 @@ export default function QuotesClient() {
         {!loading && visibleQuotes.length === 0 ? <div className="rounded-[24px] border border-dashed border-slate-200 bg-white/70 px-4 py-8 text-center text-sm text-slate-500">Inga offerter matchar just nu.</div> : null}
 
         {!loading && visibleQuotes.length > 0 ? (
-          <div className="grid gap-3 2xl:grid-cols-2">
+          <div className="grid gap-2">
             {sortedVisibleQuotes.map((item) => renderQuoteCard(item))}
           </div>
         ) : null}
       </div>
 
-      {modalOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6 backdrop-blur-sm">
-          <div className="flex h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-[28px] shadow-[0_20px_70px_rgba(15,23,42,0.22)] xl:max-w-6xl">
-
-            {/* Stepper header – dark green */}
-            <div className="shrink-0 rounded-t-[28px] bg-[var(--crm-primary)] px-6 pb-5 pt-5">
-              <h2 className="mb-5 text-xl font-bold text-white">
-                {editingQuoteId ? 'Redigera offert' : 'Skapa ny offert'}
-              </h2>
-
-              {/* Step indicators */}
-              {(() => {
-                const allIssues = getQuoteDraftValidationIssues({ draft, effectiveRows });
-                return (
-                  <div className="flex items-start">
-                    {(['Kundinformation', 'Offertdetaljer', 'Produkter & Priser', 'Villkor & Granska'] as const).map((label, index) => {
-                      const step = index + 1;
-                      const isCompleted = step < activeStep;
-                      const isCurrent = step === activeStep;
-                      const hasError = stepIssueKeys[step]?.some((key) => allIssues.includes(key));
-
-                      return (
-                        <div key={step} className="contents">
-                          <button
-                            type="button"
-                            onClick={() => setActiveStep(step)}
-                            aria-label={`Gå till steg ${step}: ${label}${hasError ? ' (saknar uppgifter)' : ''}`}
-                            aria-current={isCurrent ? 'step' : undefined}
-                            className="relative flex flex-col items-center gap-1.5 rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-transparent"
-                          >
-                            <div className={cn(
-                              'flex h-9 w-9 items-center justify-center rounded-full text-sm font-bold transition-all',
-                              isCompleted ? 'bg-white/25 text-white ring-2 ring-white/50' :
-                              isCurrent ? 'bg-white text-slate-900 shadow-[0_2px_8px_rgba(0,0,0,0.2)]' :
-                              'bg-white/10 text-white/40',
-                            )}>
-                              {isCompleted ? (
-                                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                                  <path d="M3 8l3.5 3.5L13 5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-                                </svg>
-                              ) : step}
-                            </div>
-                            {hasError ? (
-                              <span
-                                className={cn(
-                                  'absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border-2 bg-rose-500',
-                                  isCurrent ? 'border-white' : 'border-[var(--crm-primary)]',
-                                )}
-                                aria-hidden="true"
-                              />
-                            ) : null}
-                            <span className={cn(
-                              'max-w-[72px] text-center text-[10px] font-medium leading-tight',
-                              isCurrent ? 'text-white' : isCompleted ? 'text-white/70' : 'text-white/35',
-                            )}>
-                              {label}
-                            </span>
-                          </button>
-
-                          {index < 3 ? (
-                            <div className={cn(
-                              'mx-1.5 mt-[18px] h-0.5 flex-1 self-start rounded-full transition-all',
-                              index + 1 < activeStep ? 'bg-white/60' : 'bg-white/15',
-                            )} />
-                          ) : null}
-                        </div>
-                      );
-                    })}
-                  </div>
-                );
-              })()}
+      {detailPanelOpen && detailQuote ? (
+        <div
+          className="fixed inset-0 z-[2800] flex items-end justify-center bg-slate-950/45 p-3 [backdrop-filter:blur(4px)] sm:items-center sm:p-4"
+          onClick={() => setDetailPanelOpen(false)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Offert ${detailQuote.project_name}`}
+            onClick={(e) => e.stopPropagation()}
+            className="grid w-full max-w-[760px] gap-4 rounded-[28px] border border-white/70 bg-[linear-gradient(180deg,#ffffff_0%,#f6faf8_100%)] p-4 shadow-[0_30px_80px_rgba(15,23,42,0.28)] sm:max-h-[88vh] sm:overflow-y-auto sm:p-5"
+          >
+            {/* Rubrik */}
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="grid gap-1">
+                {detailQuote.quote_number ? (
+                  <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">#{detailQuote.quote_number}</span>
+                ) : null}
+                <strong className="text-[1.4rem] font-bold tracking-[-0.05em] text-slate-950">{detailQuote.project_name}</strong>
+                <p className="m-0 text-sm text-slate-500">{getQuoteCustomerName(detailQuote)}</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className={cn('rounded-full border px-2.5 py-1 text-xs font-semibold', quoteStatusMeta[detailQuote.status].className)}>
+                  {quoteStatusMeta[detailQuote.status].label}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => { setDetailPanelOpen(false); openEditModal(detailQuote); }}
+                  className="inline-flex min-h-10 items-center justify-center rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 hover:border-slate-300"
+                >
+                  Redigera
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDetailPanelOpen(false)}
+                  className="inline-flex min-h-10 items-center justify-center rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 hover:border-slate-300"
+                >
+                  Stäng
+                </button>
+              </div>
             </div>
 
-            {/* White scrollable content */}
-            <div className="min-h-0 flex-1 overflow-y-auto bg-white">
-              <div className="px-6 py-6">
-                {(() => {
-                  const allIssues = getQuoteDraftValidationIssues({ draft, effectiveRows });
-                  const stepErrors = stepIssueKeys[activeStep]?.filter((k) => allIssues.includes(k)) ?? [];
-                  return stepErrors.length > 0 ? (
-                    <div className="mb-5 flex flex-wrap gap-1.5 rounded-[18px] border border-amber-200 bg-amber-50 px-4 py-3">
-                      {stepErrors.map((issue) => (
-                        <span key={issue} className="rounded-full border border-amber-300 bg-white px-2.5 py-1 text-xs font-semibold text-amber-900">
-                          {issue}
-                        </span>
-                      ))}
-                    </div>
-                  ) : null;
-                })()}
+            {/* Nyckelinfo */}
+            <div className="grid grid-cols-2 gap-3 rounded-[20px] border border-slate-200/80 bg-white px-4 py-3 shadow-[0_10px_24px_rgba(15,23,42,0.04)] sm:grid-cols-4">
+              <div className="grid gap-0.5">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Belopp</span>
+                <span className="text-sm font-bold text-slate-900">{formatCurrency(detailQuote.amount, detailQuote.currency_code)}</span>
+              </div>
+              <div className="grid gap-0.5">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Offertdatum</span>
+                <span className="text-sm text-slate-700">{formatDate(detailQuote.quote_date)}</span>
+              </div>
+              <div className="grid gap-0.5">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Följ upp</span>
+                <span className="text-sm text-slate-700">{formatDate(detailQuote.follow_up_date) || '–'}</span>
+              </div>
+              <div className="grid gap-0.5">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Giltig till</span>
+                <span className="text-sm text-slate-700">{formatDate(detailQuote.valid_until) || '–'}</span>
+              </div>
+              {detailQuote.description ? (
+                <div className="col-span-2 grid gap-0.5 sm:col-span-4">
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Beskrivning</span>
+                  <p className="m-0 text-sm leading-5 text-slate-700">{detailQuote.description}</p>
+                </div>
+              ) : null}
+            </div>
 
-                {activeStep === 1 && (
-                  <div className="grid gap-5">
+            {/* Snabb statusändring */}
+            <div className="grid gap-2 rounded-[20px] border border-slate-200/80 bg-white px-4 py-3 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
+              <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Byt status</span>
+              <div className="flex flex-wrap gap-2">
+                {(Object.entries(quoteStatusMeta) as Array<[QuoteItem['status'], typeof quoteStatusMeta[QuoteItem['status']]]>).map(([s, meta]) => (
+                  <button
+                    key={s}
+                    type="button"
+                    disabled={movingQuoteId === detailQuote.id || detailQuote.status === s}
+                    onClick={() => void moveQuoteToStatus(detailQuote.id, s)}
+                    className={cn(
+                      'rounded-full border px-3 py-1.5 text-xs font-semibold transition',
+                      detailQuote.status === s
+                        ? cn(meta.className, 'cursor-default opacity-90')
+                        : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50 disabled:opacity-50',
+                    )}
+                  >
+                    {meta.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Anteckningar */}
+            {detailQuote.notes ? (
+              <div className="grid gap-2 rounded-[20px] border border-slate-200/80 bg-white px-4 py-3 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Anteckningar</span>
+                <p className="m-0 whitespace-pre-wrap text-sm leading-6 text-slate-700">{detailQuote.notes}</p>
+              </div>
+            ) : null}
+
+            {/* Arbetsorder */}
+            <QuoteWorkOrderSection
+              editingQuote={detailQuote}
+              draftStatus={detailQuote.status}
+              creatingWorkOrder={creatingWorkOrderId === detailQuote.id}
+              onOpenWorkOrder={() => {
+                if (detailQuote.work_order_id) router.push(`/crm/arbetsorder?work_order_id=${detailQuote.work_order_id}`);
+              }}
+              onCreateWorkOrder={() => void createWorkOrderFromQuote(detailQuote.id)}
+            />
+          </div>
+        </div>
+      ) : null}
+
+      {modalOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6 backdrop-blur-sm">
+          <div className="flex h-[94vh] w-full max-w-5xl flex-col overflow-hidden rounded-[28px] shadow-[0_20px_70px_rgba(15,23,42,0.22)] xl:max-w-6xl">
+
+            {/* Header */}
+            <div className="shrink-0 rounded-t-[28px] px-6 py-5" style={{ backgroundColor: 'var(--crm-primary)' }}>
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <h2 className="m-0 text-xl font-bold text-white">
+                    {editingQuoteId ? 'Redigera offert' : 'Skapa ny offert'}
+                  </h2>
+                  <p className="m-0 mt-0.5 text-sm text-white/70">Fyll i all information nedan</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={closeModal}
+                  className="rounded-full border border-white/20 bg-white/10 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-white/20"
+                >
+                  Avbryt
+                </button>
+              </div>
+            </div>
+
+            {/* Scrollable content */}
+            <div className="min-h-0 flex-1 overflow-y-auto bg-[#f8fafc]">
+              <div className="grid gap-5 px-6 py-6">
+
+                {/* Sektion 1 & 2 — två kolumner på stora skärmar */}
+                <div className="grid gap-5 lg:grid-cols-2">
+
+                  {/* 1. Kundinformation */}
+                  <div className="grid content-start gap-4 rounded-[22px] border border-emerald-100 bg-[linear-gradient(180deg,#f8fdf9_0%,#f0faf3_100%)] p-5">
+                    <div className="flex items-center gap-2.5">
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-sm font-bold text-white" style={{ backgroundColor: 'var(--crm-primary)' }}>1</span>
+                      <span className="text-base font-bold text-slate-900">Kundinformation</span>
+                    </div>
                     <CustomerSearchPicker
                       selectedCustomer={selectedCustomer}
                       createMode={draft.create_customer}
@@ -2068,21 +2113,22 @@ export default function QuotesClient() {
                     />
                     <QuoteCustomerSection draft={draft} setDraft={setDraft} />
                   </div>
-                )}
 
-                {activeStep === 2 && (
-                  <div className="grid gap-5">
-                    <div className="grid gap-1.5">
-                      <span className="text-[11px] font-semibold uppercase tracking-[0.1em] text-slate-400">Offertnummer</span>
-                      <Input
-                        value={editingQuote?.quote_number ?? 'Genereras automatiskt'}
-                        disabled
-                        className="bg-slate-50 text-slate-500"
-                      />
+                  {/* 2. Offertdetaljer */}
+                  <div className="grid content-start gap-4 rounded-[22px] border border-sky-100 bg-[linear-gradient(180deg,#f8fbff_0%,#f0f6ff_100%)] p-5">
+                    <div className="flex items-center gap-2.5">
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-sky-600 text-sm font-bold text-white">2</span>
+                      <span className="text-base font-bold text-slate-900">Offertdetaljer</span>
                     </div>
+                    {editingQuote?.quote_number ? (
+                      <div className="grid gap-1">
+                        <span className="text-[11px] font-semibold uppercase tracking-[0.1em] text-slate-400">Offertnummer</span>
+                        <Input value={editingQuote.quote_number} disabled className="bg-white/70 text-slate-500" />
+                      </div>
+                    ) : null}
                     <QuoteBasicsSection draft={draft} setDraft={setDraft} />
                     {!editingQuoteId ? (
-                      <label className="flex items-start gap-3 rounded-[22px] border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                      <label className="flex items-start gap-3 rounded-[18px] border border-white/80 bg-white/60 px-4 py-3 text-sm text-slate-600">
                         <input
                           type="checkbox"
                           checked={draft.create_follow_up_task}
@@ -2093,84 +2139,81 @@ export default function QuotesClient() {
                       </label>
                     ) : null}
                   </div>
-                )}
+                </div>
 
-                {activeStep === 3 && (
+                {/* 3. Produkter & Priser */}
+                <div className="grid gap-4 rounded-[22px] border border-violet-100 bg-[linear-gradient(180deg,#faf8ff_0%,#f5f0ff_100%)] p-5">
+                  <div className="flex items-center gap-2.5">
+                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-violet-600 text-sm font-bold text-white">3</span>
+                    <span className="text-base font-bold text-slate-900">Produkter & Priser</span>
+                  </div>
                   <QuoteLineItemsSection draft={draft} setDraft={setDraft} effectiveRows={effectiveRows} totals={totals} />
-                )}
+                </div>
 
-                {activeStep === 4 && (
-                  <div className="grid gap-5">
-                    {draft.quote_type === 'private' ? (
-                      <QuoteRotSection draft={draft} setDraft={setDraft} />
-                    ) : null}
-                    <QuoteInternalHandoffSection draft={draft} setDraft={setDraft} />
+                {/* 4. Villkor & Handoff */}
+                <div className="grid gap-4 rounded-[22px] border border-slate-200 bg-white p-5">
+                  <div className="flex items-center gap-2.5">
+                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-500 text-sm font-bold text-white">4</span>
+                    <span className="text-base font-bold text-slate-900">Villkor & Handoff</span>
+                  </div>
+                  <QuoteRotSection draft={draft} setDraft={setDraft} />
+                  <QuoteInternalHandoffSection draft={draft} setDraft={setDraft} />
+                </div>
 
-                    {/* Sammanfattning */}
-                    <div className="rounded-[22px] border border-emerald-200 bg-emerald-50 px-5 py-4">
-                      <div className="mb-3 text-sm font-semibold text-emerald-900">Sammanfattning</div>
-                      <div className="grid gap-2.5 text-sm">
-                        <div className="flex items-center justify-between text-slate-600">
-                          <span>Kund:</span>
-                          <span className="font-medium text-slate-900">
-                            {draft.quote_type === 'business' ? (draft.company_name || '–') : (draft.customer_name || '–')}
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between text-slate-600">
-                          <span>Projekt:</span>
-                          <span className="font-medium text-slate-900">{draft.project_name || '–'}</span>
-                        </div>
-                        <div className="flex items-center justify-between text-slate-600">
-                          <span>Produkter:</span>
-                          <span className="font-medium text-slate-900">
-                            {effectiveRows.filter((row) => row.isConfigured).length} st
-                          </span>
-                        </div>
-                        <div className="border-t border-emerald-200 pt-2.5">
-                          <div className="flex items-center justify-between">
-                            <span className="font-semibold text-slate-900">Totalt belopp:</span>
-                            <span className="text-lg font-bold text-emerald-700">
-                              {effectiveRows.some((row) => row.isConfigured)
-                                ? formatCurrency(totals.total, 'SEK')
-                                : draft.amount ? formatCurrency(Number(draft.amount.replace(',', '.')), 'SEK') : '–'}
-                            </span>
-                          </div>
-                        </div>
+                {/* Sammanfattning */}
+                <div className="rounded-[22px] border border-emerald-200 bg-emerald-50 px-5 py-4">
+                  <div className="mb-3 text-sm font-semibold text-emerald-900">Sammanfattning</div>
+                  <div className="grid gap-2.5 text-sm">
+                    <div className="flex items-center justify-between text-slate-600">
+                      <span>Kund:</span>
+                      <span className="font-medium text-slate-900">
+                        {draft.quote_type === 'business' ? (draft.company_name || '–') : (draft.customer_name || '–')}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-slate-600">
+                      <span>Projekt:</span>
+                      <span className="font-medium text-slate-900">{draft.project_name || '–'}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-slate-600">
+                      <span>Produkter:</span>
+                      <span className="font-medium text-slate-900">{effectiveRows.filter((row) => row.isConfigured).length} st</span>
+                    </div>
+                    <div className="border-t border-emerald-200 pt-2.5">
+                      <div className="flex items-center justify-between">
+                        <span className="font-semibold text-slate-900">Totalt belopp:</span>
+                        <span className="text-lg font-bold text-emerald-700">
+                          {effectiveRows.some((row) => row.isConfigured)
+                            ? formatCurrency(totals.total, 'SEK')
+                            : draft.amount ? formatCurrency(Number(draft.amount.replace(',', '.')), 'SEK') : '–'}
+                        </span>
                       </div>
                     </div>
-
-                    {editingQuoteId ? (
-                      <QuoteWorkOrderSection
-                        editingQuote={editingQuote}
-                        draftStatus={draft.status}
-                        creatingWorkOrder={creatingWorkOrderId === editingQuoteId}
-                        onOpenWorkOrder={() => {
-                          if (editingQuote?.work_order_id) {
-                            router.push(`/crm/arbetsorder?work_order_id=${editingQuote.work_order_id}`);
-                          }
-                        }}
-                        onCreateWorkOrder={() => {
-                          if (editingQuoteId) void createWorkOrderFromQuote(editingQuoteId);
-                        }}
-                      />
-                    ) : null}
                   </div>
-                )}
+                </div>
+
+                {/* Arbetsorder (bara vid redigering) */}
+                {editingQuoteId ? (
+                  <QuoteWorkOrderSection
+                    editingQuote={editingQuote}
+                    draftStatus={draft.status}
+                    creatingWorkOrder={creatingWorkOrderId === editingQuoteId}
+                    onOpenWorkOrder={() => { if (editingQuote?.work_order_id) router.push(`/crm/arbetsorder?work_order_id=${editingQuote.work_order_id}`); }}
+                    onCreateWorkOrder={() => { if (editingQuoteId) void createWorkOrderFromQuote(editingQuoteId); }}
+                  />
+                ) : null}
               </div>
             </div>
 
-            {/* Footer navigation */}
+            {/* Footer */}
             {(() => {
-              const validationIssues = getQuoteDraftValidationIssues({ draft, effectiveRows });
+              const issues = getQuoteDraftValidationIssues({ draft, effectiveRows });
               return (
                 <div className="shrink-0 rounded-b-[28px] border-t border-slate-200 bg-white px-6 py-4">
-                  {validationIssues.length > 0 ? (
+                  {issues.length > 0 ? (
                     <div className="mb-3 flex flex-wrap items-center gap-1.5 rounded-[18px] border border-amber-200 bg-amber-50 px-4 py-2.5">
                       <span className="mr-1 text-xs font-semibold text-amber-800">Saknas:</span>
-                      {validationIssues.map((issue) => (
-                        <span key={issue} className="rounded-full border border-amber-300 bg-white px-2 py-0.5 text-xs font-semibold text-amber-900">
-                          {issue}
-                        </span>
+                      {issues.map((issue) => (
+                        <span key={issue} className="rounded-full border border-amber-300 bg-white px-2 py-0.5 text-xs font-semibold text-amber-900">{issue}</span>
                       ))}
                     </div>
                   ) : (
@@ -2178,45 +2221,26 @@ export default function QuotesClient() {
                       <span className="text-xs font-semibold text-emerald-800">Redo att spara</span>
                     </div>
                   )}
-
                   <div className="flex items-center justify-between">
                     <button
                       type="button"
-                      onClick={activeStep === 1 ? closeModal : () => setActiveStep((s) => s - 1)}
-                      className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+                      onClick={closeModal}
+                      className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+                    >
+                      Avbryt
+                    </button>
+                    <button
+                      type="button"
+                      onClick={saveQuote}
+                      disabled={submitting}
+                      className="flex items-center gap-1.5 rounded-xl px-5 py-2.5 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+                      style={{ backgroundColor: 'var(--crm-primary)' }}
                     >
                       <svg width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden="true">
-                        <path d="M9.5 3L5.5 7.5l4 4.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+                        <path d="M2.5 7.5l3.5 3.5 6.5-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                       </svg>
-                      {activeStep === 1 ? 'Avbryt' : 'Tillbaka'}
+                      {submitting ? 'Sparar…' : editingQuoteId ? 'Spara offert' : 'Skapa offert'}
                     </button>
-
-                    <span className="text-xs font-medium text-slate-400">Steg {activeStep} av 4</span>
-
-                    {activeStep < 4 ? (
-                      <button
-                        type="button"
-                        onClick={() => setActiveStep((s) => s + 1)}
-                        className="flex items-center gap-1.5 rounded-xl bg-[var(--crm-primary)] px-4 py-2.5 text-sm font-semibold text-white transition hover:opacity-90"
-                      >
-                        Nästa
-                        <svg width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden="true">
-                          <path d="M5.5 3l4 4.5-4 4.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
-                        </svg>
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={saveQuote}
-                        disabled={submitting}
-                        className="flex items-center gap-1.5 rounded-xl bg-[var(--crm-primary)] px-4 py-2.5 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        <svg width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden="true">
-                          <path d="M2.5 7.5l3.5 3.5 6.5-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                        </svg>
-                        {submitting ? 'Sparar…' : editingQuoteId ? 'Spara offert' : 'Skapa offert'}
-                      </button>
-                    )}
                   </div>
                 </div>
               );

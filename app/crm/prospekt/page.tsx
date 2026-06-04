@@ -1,7 +1,7 @@
-import ProspectsClient from './ProspectsClient';
+import { redirect } from 'next/navigation';
 
 export const dynamic = 'force-dynamic';
 
 export default function CrmProspectsPage() {
-  return <ProspectsClient />;
+  redirect('/crm/kunder');
 }

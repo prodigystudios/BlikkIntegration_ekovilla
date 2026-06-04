@@ -46,7 +46,21 @@ type ImportResult = {
   matched_on: 'orgnummer' | 'foretag_epost' | 'foretag_kontakt' | 'foretag' | null;
 };
 
+type RoutingRule = {
+  id: string;
+  county: string;
+  user_id: string;
+  created_at: string;
+};
+
 type AssignmentFilter = 'all' | 'unassigned' | 'assigned';
+
+const SWEDISH_COUNTIES = [
+  'Blekinge','Dalarna','Gävleborg','Gotland','Halland','Jämtland','Jönköping',
+  'Kalmar','Kronoberg','Norrbotten','Skåne','Stockholm','Södermanland',
+  'Uppsala','Värmland','Västerbotten','Västernorrland','Västmanland',
+  'Västra Götaland','Örebro','Östergötland',
+] as const;
 type StatusFilter = 'all' | ProspectItem['status'];
 
 const assignmentFilterMeta: Record<AssignmentFilter, { label: string; hint: string; tone: string }> = {
@@ -134,7 +148,16 @@ export default function RingListsClient({ adminName }: { adminName: string | nul
   const [importResults, setImportResults] = useState<ImportResult[]>([]);
   const [importing, setImporting] = useState(false);
   const [importFileName, setImportFileName] = useState<string | null>(null);
+  const [importCounty, setImportCounty] = useState('');
   const [error, setError] = useState<string | null>(null);
+
+  // Routingregler
+  const [rules, setRules] = useState<RoutingRule[]>([]);
+  const [rulesOpen, setRulesOpen] = useState(false);
+  const [newRuleCounty, setNewRuleCounty] = useState('');
+  const [newRuleUserId, setNewRuleUserId] = useState('');
+  const [savingRule, setSavingRule] = useState(false);
+  const [deletingRuleId, setDeletingRuleId] = useState<string | null>(null);
 
   const usersById = useMemo(() => new Map(users.map((user) => [user.id, user])), [users]);
 
@@ -176,6 +199,13 @@ export default function RingListsClient({ adminName }: { adminName: string | nul
 
         setProspects(Array.isArray(prospectsJson?.data?.items) ? prospectsJson.data.items : []);
         setUsers(Array.isArray(usersJson?.data?.items) ? usersJson.data.items : []);
+
+        // Ladda routingregler
+        const rulesRes = await fetch('/api/crm/routing-rules', { cache: 'no-store' });
+        const rulesJson = await rulesRes.json().catch(() => ({}));
+        if (rulesRes.ok && rulesJson.ok) {
+          setRules(Array.isArray(rulesJson?.data?.items) ? rulesJson.data.items : []);
+        }
       } catch {
         if (!active) return;
         setError('Kunde inte ladda ringlistor.');
@@ -348,6 +378,44 @@ export default function RingListsClient({ adminName }: { adminName: string | nul
     }
   }
 
+  async function saveRoutingRule() {
+    if (!newRuleCounty || !newRuleUserId) { toast.error('Välj ett län och en säljare'); return; }
+    setSavingRule(true);
+    try {
+      const res = await fetch('/api/crm/routing-rules', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ county: newRuleCounty, user_id: newRuleUserId }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte spara routingregel'); return; }
+      const item = json?.data?.item as RoutingRule | undefined;
+      if (item) setRules((c) => [...c.filter((r) => r.county !== item.county), item].sort((a, b) => a.county.localeCompare(b.county, 'sv')));
+      setNewRuleCounty('');
+      setNewRuleUserId('');
+      toast.success(`Regel sparad: ${newRuleCounty}`);
+    } catch {
+      toast.error('Fel vid sparande av routingregel');
+    } finally {
+      setSavingRule(false);
+    }
+  }
+
+  async function deleteRoutingRule(id: string) {
+    setDeletingRuleId(id);
+    try {
+      const res = await fetch(`/api/crm/routing-rules/${id}`, { method: 'DELETE' });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte ta bort regel'); return; }
+      setRules((c) => c.filter((r) => r.id !== id));
+      toast.success('Regel borttagen');
+    } catch {
+      toast.error('Fel vid borttagning av routingregel');
+    } finally {
+      setDeletingRuleId(null);
+    }
+  }
+
   async function importPreparedRows() {
     if (importRows.length === 0) {
       toast.info('Ladda upp en fil först.');
@@ -361,6 +429,7 @@ export default function RingListsClient({ adminName }: { adminName: string | nul
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           assigned_to: selectedUserId || null,
+          county: importCounty || null,
           rows: importRows,
         }),
       });
@@ -428,6 +497,34 @@ export default function RingListsClient({ adminName }: { adminName: string | nul
               </button>
             </div>
           </div>
+
+          {/* Import-inställningar — visas när fil är laddad */}
+          {importRows.length > 0 ? (
+            <div className="flex flex-wrap items-center gap-3 rounded-[20px] border border-emerald-200 bg-white/90 px-4 py-3 shadow-[0_8px_20px_rgba(15,23,42,0.05)]">
+              <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Vilket län gäller denna import?</span>
+              <select
+                value={importCounty}
+                onChange={(e) => setImportCounty(e.target.value)}
+                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+              >
+                <option value="">Inget specifikt län</option>
+                {SWEDISH_COUNTIES.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+              {importCounty ? (() => {
+                const rule = rules.find((r) => r.county === importCounty);
+                const user = rule ? usersById.get(rule.user_id) : null;
+                return rule ? (
+                  <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-800">
+                    Tilldelas automatiskt: {user?.full_name || 'Okänd säljare'}
+                  </span>
+                ) : (
+                  <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-800">
+                    Ingen routingregel för {importCounty} — välj säljare manuellt nedan
+                  </span>
+                );
+              })() : null}
+            </div>
+          ) : null}
 
           <div className="grid gap-3 md:grid-cols-4">
             <div className="rounded-[18px] border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(252,253,252,0.98))] p-3 shadow-[0_16px_30px_rgba(15,23,42,0.08)] ring-1 ring-white/80">
@@ -738,6 +835,93 @@ export default function RingListsClient({ adminName }: { adminName: string | nul
               ))}
             </div>
             {importResults.length > 12 ? <div className="text-xs text-slate-500">Visar de första 12 raderna med utfall.</div> : null}
+          </div>
+        ) : null}
+      </SectionCard>
+
+      {/* ── Routingregler ─────────────────────────────────────────── */}
+      <SectionCard className="grid gap-4 border-slate-200 bg-white p-4 shadow-[0_8px_24px_rgba(15,23,42,0.05)] md:p-5">
+        <div className="flex items-center justify-between gap-3">
+          <div className="grid gap-0.5">
+            <strong className="text-sm font-semibold text-slate-900">Länbaserad routing</strong>
+            <p className="m-0 text-sm text-slate-500">Koppla ett län till en säljare — leads tilldelas automatiskt vid import.</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setRulesOpen((c) => !c)}
+            className="inline-flex min-h-9 items-center justify-center rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 transition hover:border-slate-300"
+          >
+            {rulesOpen ? 'Dölj' : `Hantera (${rules.length})`}
+          </button>
+        </div>
+
+        {rulesOpen ? (
+          <div className="grid gap-4">
+            {/* Ny regel */}
+            <div className="grid gap-3 rounded-[20px] border border-slate-200 bg-slate-50/80 p-4 sm:grid-cols-[1fr_1fr_auto]">
+              <select
+                value={newRuleCounty}
+                onChange={(e) => setNewRuleCounty(e.target.value)}
+                className="min-h-11 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-slate-300"
+              >
+                <option value="">Välj län…</option>
+                {SWEDISH_COUNTIES.map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+              <select
+                value={newRuleUserId}
+                onChange={(e) => setNewRuleUserId(e.target.value)}
+                className="min-h-11 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-slate-300"
+              >
+                <option value="">Välj säljare…</option>
+                {users.map((u) => (
+                  <option key={u.id} value={u.id}>{u.full_name || 'Okänd'}</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={saveRoutingRule}
+                disabled={savingRule || !newRuleCounty || !newRuleUserId}
+                className="inline-flex min-h-11 items-center justify-center rounded-xl border border-emerald-600 bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {savingRule ? 'Sparar…' : 'Spara regel'}
+              </button>
+            </div>
+
+            {/* Befintliga regler */}
+            {rules.length === 0 ? (
+              <div className="rounded-[18px] border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
+                Inga routingregler konfigurerade ännu.
+              </div>
+            ) : (
+              <div className="grid gap-2">
+                {rules.map((rule) => {
+                  const user = usersById.get(rule.user_id);
+                  return (
+                    <div key={rule.id} className="flex items-center justify-between gap-3 rounded-[18px] border border-slate-200 bg-white px-4 py-3">
+                      <div className="flex flex-wrap items-center gap-3">
+                        <span className="rounded-full border border-slate-200 bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">
+                          {rule.county}
+                        </span>
+                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true" className="text-slate-300">
+                          <path d="M2 7h10M8 4l4 3-4 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                        <span className="text-sm font-semibold text-slate-900">{user?.full_name || 'Okänd säljare'}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => deleteRoutingRule(rule.id)}
+                        disabled={deletingRuleId === rule.id}
+                        className="text-xs font-semibold text-slate-400 transition hover:text-rose-600 disabled:opacity-50"
+                      >
+                        {deletingRuleId === rule.id ? 'Tar bort…' : 'Ta bort'}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         ) : null}
       </SectionCard>
