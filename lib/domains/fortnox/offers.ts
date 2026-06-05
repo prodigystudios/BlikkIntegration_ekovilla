@@ -1,6 +1,8 @@
 import { getSupabaseAdmin } from '@/lib/supabase/server';
+import { parseDecimal } from '@/lib/shared/number';
 import { fortnoxPost, fortnoxPut, FortnoxNotConnectedError } from './client';
 import { resolveOurReference } from './helpers';
+import { buildFortnoxCustomerPayload, createFortnoxCustomer, type FortnoxCustomerSource } from './customers';
 
 type QuoteLineItem = {
   article_number?: string | null;
@@ -71,7 +73,7 @@ export type PushOfferResult = {
   updated: boolean;
 };
 
-function buildOfferRows(
+export function buildOfferRows(
   lineItems: QuoteLineItem[],
   vatPercent: number,
   rotEnabled: boolean,
@@ -79,16 +81,15 @@ function buildOfferRows(
   if (!lineItems.length) return [];
 
   return lineItems.map((item) => {
-    const price = item.unit_price
-      ? parseFloat(item.unit_price)
-      : (item.article_price ?? 0);
-    const quantity = item.quantity ? parseFloat(item.quantity) : 1;
-    const discount = item.discount_percent ? parseFloat(item.discount_percent) : 0;
+    // parseDecimal handles Swedish comma input ("1,5") that plain parseFloat truncates.
+    const price = item.unit_price ? parseDecimal(item.unit_price) : (item.article_price ?? 0);
+    const quantity = item.quantity ? parseDecimal(item.quantity, 1) : 1;
+    const discount = item.discount_percent ? parseDecimal(item.discount_percent) : 0;
 
     const row: FortnoxOfferRow = {
       Description: item.article_name || item.line_note || 'Artikel',
-      Quantity: Number.isFinite(quantity) ? quantity : 1,
-      Price: Number.isFinite(price) ? price : 0,
+      Quantity: quantity,
+      Price: price,
       VAT: vatPercent,
     };
 
@@ -125,38 +126,66 @@ async function resolveFortnoxCustomerNumber(quote: QuoteRow): Promise<string | n
   return null;
 }
 
-// Creates the customer in Fortnox from the quote's snapshot data.
-// Uses company_name for businesses and customer_name for private persons –
-// both map to Fortnox's single Name field.
-// Writes the resulting CustomerNumber back to crm_customers so future
-// quote pushes resolve it directly without a new API call.
-async function createCustomerInFortnox(quote: QuoteRow): Promise<string> {
-  const snapshot = quote.customer_snapshot;
-  const name = snapshot?.company_name ?? snapshot?.customer_name ?? quote.customer_name;
-  if (!name) throw new Error('Kunden saknar namn – kan inte skapas i Fortnox automatiskt.');
+// Maps a quote's customer snapshot to the shared FortnoxCustomerSource shape so the
+// auto-create-from-quote path uses the SAME payload mapper as the customer form.
+// The snapshot is a flatter capture than a crm_customers row (single name field,
+// string addresses, no mobile/terms/VAT) – absent fields map to null.
+export function snapshotToFortnoxSource(quote: QuoteRow): FortnoxCustomerSource {
+  const s = quote.customer_snapshot;
+  const isCompany = Boolean(s?.company_name);
+  const fullName = s?.customer_name ?? quote.customer_name ?? null;
+  const mainAddress = (s?.street_address || s?.postal_code || s?.city)
+    ? { street: s?.street_address ?? null, postal_code: s?.postal_code ?? null, city: s?.city ?? null }
+    : null;
+  // Snapshot has no separate delivery postal/city – reuse the main ones, as before.
+  const deliveryAddress = s?.delivery_address
+    ? { street: s.delivery_address, postal_code: s?.postal_code ?? null, city: s?.city ?? null }
+    : null;
 
-  const customerPayload: Record<string, unknown> = {
-    Name: name,
-    Type: snapshot?.company_name ? 'COMPANY' : 'PRIVATE',
+  return {
+    customer_type: isCompany ? 'business' : 'private',
+    company_name: s?.company_name ?? null,
+    first_name: isCompany ? null : (fullName?.split(' ')[0] ?? null),
+    last_name: isCompany ? null : (fullName?.split(' ').slice(1).join(' ') || null),
+    organization_number: s?.organization_number ?? null,
+    personal_number: s?.personal_number ?? null,
+    email: s?.email ?? null,
+    phone: s?.phone ?? null,
+    mobile: null,
+    visit_address: null,
+    invoice_address: mainAddress,
+    delivery_address: deliveryAddress,
+    invoice_email: null,
+    payment_terms: null,
+    price_list: null,
+    discount: null,
+    vat_number: null,
+    reverse_vat: null,
+    fortnox_customer_id: null,
   };
-  // For companies: OrganisationNumber = org number. For private persons: OrganisationNumber = personal number (Fortnox uses the same field for both).
-  if (snapshot?.organization_number) customerPayload.OrganisationNumber = snapshot.organization_number;
-  else if (snapshot?.personal_number) customerPayload.OrganisationNumber = snapshot.personal_number;
-  if (snapshot?.email) customerPayload.Email = snapshot.email;
-  if (snapshot?.phone) customerPayload.Phone1 = snapshot.phone;
-  if (snapshot?.street_address) customerPayload.Address1 = snapshot.street_address;
-  if (snapshot?.postal_code) customerPayload.ZipCode = snapshot.postal_code;
-  if (snapshot?.city) customerPayload.City = snapshot.city;
-  if (snapshot?.contact_name) customerPayload.YourReference = snapshot.contact_name;
-  if (snapshot?.delivery_address) {
-    customerPayload.DeliveryAddress1 = snapshot.delivery_address;
-    // Reuse invoice postal/city for delivery when no separate delivery address exists
-    if (snapshot?.postal_code) customerPayload.DeliveryZipCode = snapshot.postal_code;
-    if (snapshot?.city) customerPayload.DeliveryCity = snapshot.city;
+}
+
+// Creates the customer in Fortnox for a quote that has no resolvable Fortnox number.
+// Reuses the shared customer push (buildFortnoxCustomerPayload) so the offer path and
+// the customer form stay in sync. Writes the CustomerNumber back so future quote
+// pushes resolve it directly without creating a duplicate.
+async function createCustomerInFortnox(quote: QuoteRow): Promise<string> {
+  // A CRM customer is already linked – reuse the shared push entirely: it loads the
+  // full row, maps every field, and updates the row's sync state.
+  if (quote.customer_id) {
+    const { fortnoxCustomerNumber } = await createFortnoxCustomer(quote.customer_id);
+    return fortnoxCustomerNumber;
   }
 
+  // No linked CRM customer – build the Fortnox payload from the quote snapshot using
+  // the SAME mapper as the customer form, then create + link a DB row for next time.
+  const snapshot = quote.customer_snapshot;
+  const source = snapshotToFortnoxSource(quote);
+  const name = source.company_name ?? [source.first_name, source.last_name].filter(Boolean).join(' ');
+  if (!name) throw new Error('Kunden saknar namn – kan inte skapas i Fortnox automatiskt.');
+
   const response = await fortnoxPost<{ Customer: { CustomerNumber: string } }>('/customers', {
-    Customer: customerPayload,
+    Customer: buildFortnoxCustomerPayload(source),
   });
 
   const customerNumber = response.Customer?.CustomerNumber;
@@ -164,88 +193,79 @@ async function createCustomerInFortnox(quote: QuoteRow): Promise<string> {
 
   const supabase = getSupabaseAdmin();
 
-  if (quote.customer_id) {
-    // Link the Fortnox number back to the existing CRM customer
-    await supabase
-      .from('crm_customers')
-      .update({ fortnox_customer_id: customerNumber })
-      .eq('id', quote.customer_id);
-  } else {
-    // No CRM customer linked – create one in our DB so future syncs find it.
-    // assigned_to/created_by are NOT NULL – use the quote's assigned user.
-    if (!quote.assigned_to) {
-      console.warn(`[Fortnox] Kan inte skapa crm_customers-rad för offert ${quote.id}: assigned_to saknas`);
-      return customerNumber;
-    }
-    const isCompany = Boolean(snapshot?.company_name);
-    const now = new Date().toISOString();
-    const hasAddress = snapshot?.street_address || snapshot?.postal_code || snapshot?.city;
-    const addressJson = hasAddress
-      ? { street: snapshot?.street_address ?? null, postal_code: snapshot?.postal_code ?? null, city: snapshot?.city ?? null }
-      : null;
+  // assigned_to/created_by are NOT NULL – use the quote's assigned user.
+  if (!quote.assigned_to) {
+    console.warn(`[Fortnox] Kan inte skapa crm_customers-rad för offert ${quote.id}: assigned_to saknas`);
+    return customerNumber;
+  }
+  const isCompany = Boolean(snapshot?.company_name);
+  const now = new Date().toISOString();
+  const hasAddress = snapshot?.street_address || snapshot?.postal_code || snapshot?.city;
+  const addressJson = hasAddress
+    ? { street: snapshot?.street_address ?? null, postal_code: snapshot?.postal_code ?? null, city: snapshot?.city ?? null }
+    : null;
 
-    const { data: newCustomer, error: insertError } = await supabase
-      .from('crm_customers')
-      .insert({
-        customer_type: isCompany ? 'business' : 'private',
-        customer_stage: 'fortnox_customer',
-        company_name: snapshot?.company_name ?? null,
-        first_name: !isCompany ? (snapshot?.customer_name?.split(' ')[0] ?? null) : null,
-        last_name: !isCompany ? (snapshot?.customer_name?.split(' ').slice(1).join(' ') || null) : null,
-        organization_number: snapshot?.organization_number ?? null,
-        personal_number: !isCompany ? (snapshot?.personal_number ?? null) : null,
-        visit_address: addressJson,
-        invoice_address: addressJson,
+  const { data: newCustomer, error: insertError } = await supabase
+    .from('crm_customers')
+    .insert({
+      customer_type: isCompany ? 'business' : 'private',
+      customer_stage: 'fortnox_customer',
+      company_name: snapshot?.company_name ?? null,
+      first_name: !isCompany ? (snapshot?.customer_name?.split(' ')[0] ?? null) : null,
+      last_name: !isCompany ? (snapshot?.customer_name?.split(' ').slice(1).join(' ') || null) : null,
+      organization_number: snapshot?.organization_number ?? null,
+      personal_number: !isCompany ? (snapshot?.personal_number ?? null) : null,
+      visit_address: addressJson,
+      invoice_address: addressJson,
+      fortnox_customer_id: customerNumber,
+      assigned_to: quote.assigned_to,
+      created_by: quote.assigned_to,
+      sync_status: 'synced',
+      last_synced_at: now,
+      status: 'active',
+      source: 'fortnox_auto_created',
+      created_at: now,
+      updated_at: now,
+    })
+    .select('id')
+    .maybeSingle();
+
+  if (insertError) {
+    console.error(`[Fortnox] Kunde inte skapa crm_customers-rad för offert ${quote.id}:`, insertError.message);
+  }
+
+  if (newCustomer?.id) {
+    // Create a primary contact with the phone/email from the quote snapshot
+    const contactName = snapshot?.contact_name ?? snapshot?.customer_name ?? snapshot?.company_name ?? name;
+    if (snapshot?.email || snapshot?.phone) {
+      await supabase.from('crm_customer_contacts').insert({
+        customer_id: newCustomer.id,
+        name: contactName,
+        phone: snapshot?.phone ?? null,
+        email: snapshot?.email ?? null,
+        is_primary: true,
+      });
+    }
+  }
+
+  // Always link customer_source on the quote regardless of whether the DB insert succeeded.
+  // This ensures resolveFortnoxCustomerNumber finds the Fortnox number on the next push
+  // and skips createCustomerInFortnox – preventing duplicate Fortnox customers on retry.
+  const { error: quoteUpdateError } = await supabase
+    .from('crm_quotes')
+    .update({
+      ...(newCustomer?.id ? { customer_id: newCustomer.id } : {}),
+      customer_source: {
+        kind: 'fortnox',
+        sync_intent: 'linked',
         fortnox_customer_id: customerNumber,
-        assigned_to: quote.assigned_to,
-        created_by: quote.assigned_to,
-        sync_status: 'synced',
-        last_synced_at: now,
-        status: 'active',
-        source: 'fortnox_auto_created',
-        created_at: now,
-        updated_at: now,
-      })
-      .select('id')
-      .maybeSingle();
+        fortnox_customer_name: name,
+      },
+    })
+    .eq('id', quote.id);
 
-    if (insertError) {
-      console.error(`[Fortnox] Kunde inte skapa crm_customers-rad för offert ${quote.id}:`, insertError.message);
-    }
-
-    if (newCustomer?.id) {
-      // Create a primary contact with the phone/email from the quote snapshot
-      const contactName = snapshot?.contact_name ?? snapshot?.customer_name ?? snapshot?.company_name ?? name;
-      if (snapshot?.email || snapshot?.phone) {
-        await supabase.from('crm_customer_contacts').insert({
-          customer_id: newCustomer.id,
-          name: contactName,
-          phone: snapshot?.phone ?? null,
-          email: snapshot?.email ?? null,
-          is_primary: true,
-        });
-      }
-    }
-
-    // Always link customer_source on the quote regardless of whether the DB insert succeeded.
-    // This ensures resolveFortnoxCustomerNumber finds the Fortnox number on the next push
-    // and skips createCustomerInFortnox – preventing duplicate Fortnox customers on retry.
-    const { error: quoteUpdateError } = await supabase
-      .from('crm_quotes')
-      .update({
-        ...(newCustomer?.id ? { customer_id: newCustomer.id } : {}),
-        customer_source: {
-          kind: 'fortnox',
-          sync_intent: 'linked',
-          fortnox_customer_id: customerNumber,
-          fortnox_customer_name: name,
-        },
-      })
-      .eq('id', quote.id);
-
-    if (quoteUpdateError) {
-      throw new Error(`[Fortnox] Kunde inte länka customer_source på offert ${quote.id}: ${quoteUpdateError.message}`);
-    }
+  if (quoteUpdateError) {
+    throw new Error(`[Fortnox] Kunde inte länka customer_source på offert ${quote.id}: ${quoteUpdateError.message}`);
   }
 
   return customerNumber;

@@ -1,4 +1,5 @@
 import { getSupabaseAdmin } from '@/lib/supabase/server';
+import { parseDecimal } from '@/lib/shared/number';
 import { fortnoxPost, fortnoxPut, FortnoxNotConnectedError } from './client';
 import { resolveOurReference } from './helpers';
 
@@ -30,14 +31,15 @@ export type PushOrderResult = {
 function buildOrderRows(lineItems: WorkOrderRow['line_items'], vatPercent: number, rotEnabled: boolean) {
   if (!lineItems?.length) return [];
   return lineItems.map((item) => {
-    const price = item.unit_price ? parseFloat(item.unit_price) : (item.article_price ?? 0);
-    const quantity = item.quantity ? parseFloat(item.quantity) : 1;
-    const discount = item.discount_percent ? parseFloat(item.discount_percent) : 0;
+    // parseDecimal handles Swedish comma input ("1,5") that plain parseFloat truncates.
+    const price = item.unit_price ? parseDecimal(item.unit_price) : (item.article_price ?? 0);
+    const quantity = item.quantity ? parseDecimal(item.quantity, 1) : 1;
+    const discount = item.discount_percent ? parseDecimal(item.discount_percent) : 0;
     return {
       ...(item.article_number ? { ArticleNumber: item.article_number } : {}),
       Description: item.article_name || item.line_note || 'Artikel',
-      Quantity: Number.isFinite(quantity) ? quantity : 1,
-      Price: Number.isFinite(price) ? price : 0,
+      Quantity: quantity,
+      Price: price,
       VAT: vatPercent,
       ...(item.article_unit_name ? { Unit: item.article_unit_name } : {}),
       ...(discount > 0 ? { Discount: discount } : {}),

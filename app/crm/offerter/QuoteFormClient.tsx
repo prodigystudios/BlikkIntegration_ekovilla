@@ -6,6 +6,7 @@ import Select from '../../../components/ui/Select';
 import Textarea from '../../../components/ui/Textarea';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
+import { parseDecimal } from '@/lib/shared/number';
 import { crm } from '@/app/crm/lib/crmTokens';
 import {
   getEffectiveCustomerName,
@@ -288,7 +289,7 @@ function getValidationIssues(draft: QuoteDraft, effectiveRows: EffectiveRow[]) {
     if (!draft.rot_personal_number.trim()) issues.push('ROT kräver personnummer för sökande');
     if (!draft.rot_property_designation.trim()) issues.push('ROT kräver fastighetsbeteckning');
   }
-  if (!draft.amount.trim() || Number(draft.amount.replace(',', '.')) < 0) {
+  if (!draft.amount.trim() || parseDecimal(draft.amount) < 0) {
     if (!hasAnyLineItemInput) issues.push('Ange belopp eller lägg till rader');
   }
   if (hasAnyLineItemInput) {
@@ -908,16 +909,15 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   const effectiveRows = useMemo<EffectiveRow[]>(() => {
     return draft.items.map((item) => {
       const baseUnit = item.auto_price
-        ? computeUnitPrice(item.construction, parseFloat(item.thickness_mm || '0') || 0)
-        : (parseFloat(item.unit_price || '0') || 0);
+        ? computeUnitPrice(item.construction, parseDecimal(item.thickness_mm))
+        : parseDecimal(item.unit_price);
       const mode = item.pricing_mode === 'item' ? 'item' : 'm3';
-      const m2 = parseFloat(item.m2 || '0') || 0;
-      const thicknessM = (parseFloat(item.thickness_mm || '0') || 0) / 1000;
+      const m2 = parseDecimal(item.m2);
+      const thicknessM = parseDecimal(item.thickness_mm) / 1000;
       const volume = Math.max(0, m2 * thicknessM);
-      const quantity = parseFloat(item.quantity || '0') || 0;
+      const quantity = parseDecimal(item.quantity);
       const amount = mode === 'm3' ? volume : quantity;
-      const rawDiscount = parseFloat(item.discount_percent || '0');
-      const discount = Number.isFinite(rawDiscount) ? Math.min(100, Math.max(0, rawDiscount)) : 0;
+      const discount = Math.min(100, Math.max(0, parseDecimal(item.discount_percent)));
       const effectiveUnit = Math.max(0, baseUnit * (1 - discount / 100));
       const constructionLabel = item.construction === 'vagg' ? 'Vägg' : item.construction === 'snedtak' ? 'Snedtak' : item.construction === 'vind' ? 'Vind' : '';
       const baseLabel = item.article_name ? `${item.article_name}${item.article_number ? ` (${item.article_number})` : ''}` : `${constructionLabel || 'Okänd'}${item.thickness_mm ? ` ${item.thickness_mm} mm` : ''}`;
@@ -933,7 +933,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
 
   const totals = useMemo(() => {
     const subtotal = Math.max(0, effectiveRows.reduce((sum, item) => sum + item.rowTotal, 0));
-    const vatPercent = parseFloat(draft.vat_percent || '0') || 0;
+    const vatPercent = parseDecimal(draft.vat_percent);
     const vat = Math.max(0, subtotal * (vatPercent / 100));
     return { subtotal, vat, total: subtotal + vat };
   }, [draft.vat_percent, effectiveRows]);
@@ -1029,8 +1029,8 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
       const hasAnyLineItemInput = draft.items.some((item) => item.article_name || item.m2 || item.quantity || item.unit_price);
       const effectiveCustomerName = getEffectiveCustomerName(draft);
 
-      const amountNumber = hasAnyLineItemInput ? totals.total : Number(draft.amount.replace(',', '.'));
-      const vatPercentNumber = Number(draft.vat_percent.replace(',', '.'));
+      const amountNumber = hasAnyLineItemInput ? totals.total : parseDecimal(draft.amount);
+      const vatPercentNumber = parseDecimal(draft.vat_percent);
       const vatAmount = hasAnyLineItemInput ? totals.vat : (Number.isFinite(vatPercentNumber) ? amountNumber * (vatPercentNumber / 100) : 0);
 
       const payload = {
@@ -1124,7 +1124,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     : draft.customer_name;
   const sidebarTotal = hasAnyLineItemInput
     ? totals.total
-    : (draft.amount ? Number(draft.amount.replace(',', '.')) : null);
+    : (draft.amount ? parseDecimal(draft.amount) : null);
 
   // Single source of truth for the visible sections (in order). Drives both the
   // section header numbers and the sidebar nav so they can never drift apart.
