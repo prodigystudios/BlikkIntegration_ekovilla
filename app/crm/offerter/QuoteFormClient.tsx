@@ -6,6 +6,13 @@ import Select from '../../../components/ui/Select';
 import Textarea from '../../../components/ui/Textarea';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
+import { crm } from '@/app/crm/lib/crmTokens';
+import {
+  getEffectiveCustomerName,
+  buildCustomerSnapshot,
+  buildRotDetails,
+  buildInternalHandoff,
+} from './quoteSerializers';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -93,7 +100,6 @@ type QuoteItem = {
 
 type QuoteDraft = {
   customer_id: string | null;
-  create_customer: boolean;
   prospect_id: string;
   opportunity_id: string;
   quote_type: 'private' | 'business';
@@ -268,9 +274,7 @@ function buildCustomerSource(customer: CrmCustomerLite | null): QuoteDraft['cust
 
 function getValidationIssues(draft: QuoteDraft, effectiveRows: EffectiveRow[]) {
   const issues: string[] = [];
-  const effectiveCustomerName = draft.quote_type === 'business'
-    ? (draft.company_name.trim() || draft.customer_name.trim())
-    : draft.customer_name.trim();
+  const effectiveCustomerName = getEffectiveCustomerName(draft);
   const hasAnyLineItemInput = draft.items.some((item) => item.article_name || item.m2 || item.quantity || item.unit_price);
 
   if (!draft.project_name.trim()) issues.push('Offertnamn saknas');
@@ -296,7 +300,6 @@ function getValidationIssues(draft: QuoteDraft, effectiveRows: EffectiveRow[]) {
 
 const initialDraft: QuoteDraft = {
   customer_id: null,
-  create_customer: false,
   prospect_id: '',
   opportunity_id: '',
   quote_type: 'business',
@@ -417,13 +420,11 @@ function CustomerSearchPicker({
   onSelect,
   onClear,
   onCreateNew,
-  createMode,
 }: {
   selectedCustomer: CrmCustomerLite | null;
   onSelect: (customer: CrmCustomerLite) => void;
   onClear: () => void;
   onCreateNew: () => void;
-  createMode: boolean;
 }) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
@@ -460,20 +461,6 @@ function CustomerSearchPicker({
         </div>
         <button type="button" onClick={onClear} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:border-slate-300 transition-colors">
           Byt kund
-        </button>
-      </div>
-    );
-  }
-
-  if (createMode) {
-    return (
-      <div className="flex items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
-        <div className="grid gap-0.5">
-          <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-700">Ny kund</span>
-          <span className="text-sm text-slate-700">Fyll i uppgifterna nedan — kunden skapas när offerten sparas</span>
-        </div>
-        <button type="button" onClick={onClear} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:border-slate-300 transition-colors">
-          Sök igen
         </button>
       </div>
     );
@@ -558,7 +545,160 @@ function Field({
   );
 }
 
+// ─── Section header (numbered circle + title + optional action) ────────────────
+
+function SectionHeader({
+  step,
+  title,
+  action,
+  muted,
+  className,
+}: {
+  step: React.ReactNode;
+  title: string;
+  action?: React.ReactNode;
+  muted?: boolean;
+  className?: string;
+}) {
+  return (
+    <div className={cn('mb-6 flex items-center gap-3', action ? 'justify-between' : '', className)}>
+      <div className="flex items-center gap-3">
+        <span
+          className={cn(
+            'flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold',
+            muted ? 'bg-slate-200 text-slate-600' : 'text-white',
+          )}
+          style={muted ? undefined : { backgroundColor: 'var(--crm-primary)' }}
+        >
+          {step}
+        </span>
+        <h2 className="text-sm font-semibold text-slate-900">{title}</h2>
+      </div>
+      {action ?? null}
+    </div>
+  );
+}
+
+// ─── LineItemRow (one product/price row) ──────────────────────────────────────
+
+function LineItemRow({
+  row,
+  index,
+  metrics,
+  rotEnabled,
+  onChange,
+  onSelectArticle,
+  onClearArticle,
+  onRemove,
+}: {
+  row: QuoteLineItem;
+  index: number;
+  metrics: EffectiveRow | undefined;
+  rotEnabled: boolean;
+  onChange: (patch: Partial<QuoteLineItem>) => void;
+  onSelectArticle: (article: ArticleLite) => void;
+  onClearArticle: () => void;
+  onRemove: () => void;
+}) {
+  const isM3 = (row.pricing_mode ?? 'm3') === 'm3';
+
+  return (
+    <div className="grid gap-4 rounded-xl border border-slate-100 p-5">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-semibold text-slate-400">Rad {index + 1}</span>
+        <button
+          type="button"
+          onClick={onRemove}
+          className="text-xs text-slate-400 transition-colors hover:text-rose-600"
+        >
+          Ta bort
+        </button>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-2">
+        <Field label="Artikel" className="md:col-span-2">
+          <ArticlePicker value={row.article_name || ''} onSelect={onSelectArticle} onClear={onClearArticle} />
+        </Field>
+        {row.article_name ? (
+          <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700 md:col-span-2">
+            {row.article_name}{row.article_number ? ` · ${row.article_number}` : ''}
+          </div>
+        ) : null}
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
+        {isM3 ? (
+          <>
+            <Field label="m²">
+              <Input value={row.m2} onChange={(e) => onChange({ m2: e.target.value })} inputMode="decimal" placeholder="0" />
+            </Field>
+            <Field label="Tjocklek mm">
+              <Input value={row.thickness_mm} onChange={(e) => onChange({ thickness_mm: e.target.value })} inputMode="decimal" placeholder="200" />
+            </Field>
+          </>
+        ) : (
+          <Field label="Antal">
+            <Input value={row.quantity} onChange={(e) => onChange({ quantity: e.target.value })} inputMode="decimal" placeholder="1" />
+          </Field>
+        )}
+        <Field label="A-pris">
+          <Input
+            value={row.auto_price ? String(metrics?.unit ?? row.article_price ?? '') : row.unit_price}
+            onChange={(e) => onChange({ unit_price: e.target.value })}
+            inputMode="decimal"
+            placeholder="0"
+            disabled={row.auto_price}
+          />
+        </Field>
+        <Field label="Rabatt %">
+          <Input value={row.discount_percent} onChange={(e) => onChange({ discount_percent: e.target.value })} inputMode="decimal" placeholder="0" />
+        </Field>
+      </div>
+
+      <div className="flex items-center gap-4">
+        <label className="inline-flex items-center gap-2 text-xs text-slate-500">
+          <input
+            type="checkbox"
+            checked={!row.auto_price}
+            onChange={(e) => onChange({ auto_price: !e.target.checked })}
+            className="h-3.5 w-3.5 rounded border-slate-300"
+          />
+          Manuellt pris
+        </label>
+        {rotEnabled ? (
+          <label className="inline-flex items-center gap-2 text-xs text-slate-500">
+            <input
+              type="checkbox"
+              checked={row.is_rot_work}
+              onChange={(e) => onChange({ is_rot_work: e.target.checked })}
+              className="h-3.5 w-3.5 rounded border-slate-300"
+            />
+            ROT-arbete
+          </label>
+        ) : null}
+      </div>
+
+      <Field label="Radtext">
+        <Input value={row.line_note} onChange={(e) => onChange({ line_note: e.target.value })} placeholder="Fritext för raden" />
+      </Field>
+
+      {metrics?.isConfigured ? (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-slate-100 pt-3 text-xs text-slate-500">
+          <span>{metrics.label}</span>
+          <span>Mängd {metrics.amount.toFixed(2)}</span>
+          <span>A-pris {formatCurrency(metrics.effectiveUnit, 'SEK')}</span>
+          <span className="ml-auto font-semibold text-slate-900">Radsumma {formatCurrency(metrics.rowTotal, 'SEK')}</span>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 // ─── QuoteFormClient ──────────────────────────────────────────────────────────
+
+// How long a stashed draft survives the "create customer" round-trip before it's
+// considered stale and ignored.
+const DRAFT_TTL_MS = 30 * 60 * 1000;
 
 export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   const router = useRouter();
@@ -574,9 +714,46 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   const [loadedQuote, setLoadedQuote] = useState<QuoteItem | null>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<CrmCustomerLite | null>(null);
   const [extraAddressesOpen, setExtraAddressesOpen] = useState(false);
+  const restoredRef = useRef(false);
 
   const presetProspectId = searchParams.get('prospect_id') || '';
   const presetOpportunityId = searchParams.get('opportunity_id') || '';
+
+  // Per-form storage key so a new-quote draft never collides with an edit draft.
+  const draftStorageKey = quoteId ? `crm:quote-draft:edit:${quoteId}` : 'crm:quote-draft:new';
+
+  function persistDraft() {
+    try {
+      localStorage.setItem(draftStorageKey, JSON.stringify({ version: 1, savedAt: Date.now(), quoteId: quoteId ?? null, draft }));
+    } catch { /* localStorage unavailable — ignore */ }
+  }
+
+  function clearPersistedDraft() {
+    try { localStorage.removeItem(draftStorageKey); } catch { /* ignore */ }
+  }
+
+  // Populate the draft from a chosen customer. Shared by the search picker and the
+  // post-create round-trip so both paths fill identical fields.
+  function applySelectedCustomer(customer: CrmCustomerLite) {
+    setSelectedCustomer(customer);
+    const primary = customer.contacts.find((c) => c.is_primary) || customer.contacts[0] || null;
+    setDraft((current) => ({
+      ...current,
+      customer_id: customer.id,
+      quote_type: customer.customer_type,
+      customer_source: buildCustomerSource(customer),
+      company_name: customer.company_name || '',
+      customer_name: customer.company_name || `${customer.first_name || ''} ${customer.last_name || ''}`.trim(),
+      organization_number: customer.organization_number || '',
+      personal_number: customer.personal_number || '',
+      contact_name: primary?.name || '',
+      phone: primary?.phone || '',
+      email: primary?.email || '',
+      street_address: customer.visit_address?.street || '',
+      postal_code: customer.visit_address?.postal_code || '',
+      city: customer.visit_address?.city || '',
+    }));
+  }
 
   // Load quote for edit mode
   useEffect(() => {
@@ -593,7 +770,6 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
         setLoadedQuote(item);
         setDraft({
           customer_id: item.customer_id || null,
-          create_customer: false,
           prospect_id: item.prospect_id || '',
           opportunity_id: item.opportunity_id || '',
           quote_type: item.quote_type || 'business',
@@ -682,6 +858,52 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Returning from "create new customer": restore the stashed draft and auto-select
+  // the newly created customer. Runs once, after any edit-mode load has finished.
+  useEffect(() => {
+    if (loading || restoredRef.current) return;
+    restoredRef.current = true;
+
+    const createdCustomerId = searchParams.get('created_customer_id');
+    const restoreQuote = searchParams.get('restore_quote');
+    if (!createdCustomerId && !restoreQuote) return;
+
+    // Restore the draft we stashed before navigating away (new quotes only — in edit
+    // mode the loaded quote stays and only the customer is swapped in below).
+    if (!isEditing) {
+      try {
+        const raw = localStorage.getItem(draftStorageKey);
+        if (raw) {
+          const envelope = JSON.parse(raw);
+          const fresh = envelope && typeof envelope.savedAt === 'number'
+            && Date.now() - envelope.savedAt < DRAFT_TTL_MS && envelope.draft;
+          if (fresh) {
+            setDraft(envelope.draft);
+            if (envelope.draft.visit_address || envelope.draft.delivery_address || envelope.draft.invoice_address) {
+              setExtraAddressesOpen(true);
+            }
+          }
+        }
+      } catch { /* ignore malformed draft */ }
+    }
+    clearPersistedDraft();
+
+    // Only auto-select when a customer was actually created (save path, not cancel).
+    if (createdCustomerId) {
+      fetch(`/api/crm/customers/${createdCustomerId}`, { cache: 'no-store' })
+        .then((r) => r.json().catch(() => ({})))
+        .then((json) => {
+          if (json?.ok && json?.data?.item) applySelectedCustomer(json.data.item as CrmCustomerLite);
+          else toast.error('Kunde inte hämta vald kund');
+        })
+        .catch(() => toast.error('Kunde inte hämta vald kund'));
+    }
+
+    // Strip the param so a refresh doesn't re-run this.
+    router.replace(quoteId ? `/crm/offerter/${quoteId}/redigera` : '/crm/offerter/ny');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading]);
+
   const effectiveRows = useMemo<EffectiveRow[]>(() => {
     return draft.items.map((item) => {
       const baseUnit = item.auto_price
@@ -721,9 +943,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   const fieldErrors = useMemo(() => {
     if (!submitAttempted) return {} as Record<string, string>;
     const hasAnyRows = draft.items.some((item) => item.article_name || item.m2 || item.quantity || item.unit_price);
-    const effectiveCustomerName = draft.quote_type === 'business'
-      ? (draft.company_name.trim() || draft.customer_name.trim())
-      : draft.customer_name.trim();
+    const effectiveCustomerName = getEffectiveCustomerName(draft);
     const errs: Record<string, string> = {};
     if (!draft.project_name.trim()) errs.project_name = 'Offertnamn saknas';
     if (!draft.prospect_id && !draft.opportunity_id && !effectiveCustomerName) {
@@ -762,6 +982,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   }
 
   function handleBack() {
+    clearPersistedDraft();
     router.push('/crm/offerter');
   }
 
@@ -787,36 +1008,21 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   async function saveQuote() {
     setSubmitAttempted(true);
     if (submitting) return;
+
+    // Enforce the client-side validation instead of only displaying it: don't submit
+    // an incomplete quote — surface the first issue and scroll to its field.
+    if (issues.length > 0) {
+      toast.error(issues[0]);
+      const firstFieldId = issueFieldIds[issues[0]];
+      if (firstFieldId) scrollToField(firstFieldId);
+      return;
+    }
+
     setSubmitting(true);
 
     try {
       const hasAnyLineItemInput = draft.items.some((item) => item.article_name || item.m2 || item.quantity || item.unit_price);
-      const effectiveCustomerName = draft.quote_type === 'business'
-        ? (draft.company_name.trim() || draft.customer_name.trim())
-        : draft.customer_name.trim();
-
-      // Create new customer record if needed (create mode only)
-      let resolvedCustomerId = draft.customer_id;
-      if (draft.create_customer && !isEditing) {
-        const customerRes = await fetch('/api/crm/customers', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            customer_type: draft.quote_type,
-            company_name: draft.quote_type === 'business' ? draft.company_name || null : null,
-            first_name: draft.quote_type === 'private' ? (draft.customer_name.split(' ')[0] || null) : null,
-            last_name: draft.quote_type === 'private' ? (draft.customer_name.split(' ').slice(1).join(' ') || null) : null,
-            organization_number: draft.organization_number || null,
-            personal_number: draft.personal_number || null,
-            visit_address: draft.street_address
-              ? { street: draft.street_address, postal_code: draft.postal_code || null, city: draft.city || null }
-              : null,
-          }),
-        });
-        const customerJson = await customerRes.json().catch(() => ({}));
-        if (!customerRes.ok || !customerJson.ok) { toast.error(customerJson?.error || 'Kunde inte skapa kund'); return; }
-        resolvedCustomerId = customerJson?.data?.item?.id || null;
-      }
+      const effectiveCustomerName = getEffectiveCustomerName(draft);
 
       const amountNumber = hasAnyLineItemInput ? totals.total : Number(draft.amount.replace(',', '.'));
       const vatPercentNumber = Number(draft.vat_percent.replace(',', '.'));
@@ -825,7 +1031,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
       const payload = {
         prospect_id: draft.prospect_id || null,
         opportunity_id: draft.opportunity_id || null,
-        customer_id: resolvedCustomerId || null,
+        customer_id: draft.customer_id || null,
         customer_name: effectiveCustomerName,
         quote_type: draft.quote_type,
         customer_source: {
@@ -834,39 +1040,15 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           fortnox_customer_id: draft.customer_source.fortnox_customer_id || null,
           fortnox_customer_name: draft.customer_source.fortnox_customer_name || null,
         },
-        customer_snapshot: {
-          customer_name: draft.quote_type === 'private' ? draft.customer_name || null : effectiveCustomerName || null,
-          company_name: draft.quote_type === 'business' ? draft.company_name || null : null,
-          organization_number: draft.quote_type === 'business' ? draft.organization_number || null : null,
-          personal_number: draft.quote_type === 'private' ? draft.personal_number || null : null,
-          contact_name: draft.contact_name || null,
-          email: draft.email || null,
-          phone: draft.phone || null,
-          street_address: draft.street_address || null,
-          postal_code: draft.postal_code || null,
-          city: draft.city || null,
-          visit_address: draft.visit_address || null,
-          delivery_address: draft.delivery_address || null,
-          invoice_address: draft.invoice_address || null,
-        },
+        customer_snapshot: buildCustomerSnapshot(draft),
         pricing_summary: {
           subtotal: hasAnyLineItemInput ? totals.subtotal : amountNumber,
           vat: vatAmount,
           total: hasAnyLineItemInput ? totals.total : amountNumber + vatAmount,
         },
         line_items: draft.items,
-        rot_details: {
-          enabled: draft.quote_type === 'private' ? draft.rot_enabled : false,
-          applicant_name: draft.quote_type === 'private' && draft.rot_enabled ? draft.rot_applicant_name || null : null,
-          personal_number: draft.quote_type === 'private' && draft.rot_enabled ? draft.rot_personal_number || null : null,
-          property_designation: draft.quote_type === 'private' && draft.rot_enabled ? draft.rot_property_designation || null : null,
-          rot_percent: draft.quote_type === 'private' && draft.rot_enabled ? Number(draft.rot_percent || '30') : 30,
-        },
-        internal_handoff: {
-          desired_installation_date: draft.desired_installation_date || null,
-          handoff_notes: draft.handoff_notes || null,
-          work_scope: draft.work_scope || null,
-        },
+        rot_details: buildRotDetails(draft),
+        internal_handoff: buildInternalHandoff(draft),
         project_name: draft.project_name,
         description: draft.description,
         amount: amountNumber,
@@ -892,6 +1074,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
         if (!taskCreated) toast.info('Offerten sparades, men uppföljningsuppgiften kunde inte skapas automatiskt.');
       }
 
+      clearPersistedDraft();
       toast.success(isEditing ? 'Offert uppdaterad' : 'Offert skapad');
       router.push('/crm/offerter');
     } catch {
@@ -995,59 +1178,38 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
 
           {/* ── Section 1: Kund ── */}
           <div className="px-8 py-8">
-            <div className="mb-6 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white" style={{ backgroundColor: 'var(--crm-primary)' }}>1</span>
-                <h2 className="text-sm font-semibold text-slate-900">Kund</h2>
-              </div>
-              <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5">
-                {(['business', 'private'] as const).map((type) => (
-                  <button
-                    key={type}
-                    type="button"
-                    onClick={() => setDraft((d) => ({ ...d, quote_type: type }))}
-                    className={cn(
-                      'rounded-md px-3.5 py-1.5 text-sm font-medium transition-all',
-                      draft.quote_type === type
-                        ? 'bg-white text-slate-900 shadow-sm'
-                        : 'text-slate-500 hover:text-slate-700',
-                    )}
-                  >
-                    {type === 'business' ? 'Företag' : 'Privat'}
-                  </button>
-                ))}
-              </div>
-            </div>
+            <SectionHeader
+              step={1}
+              title="Kund"
+              action={
+                <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5">
+                  {(['business', 'private'] as const).map((type) => (
+                    <button
+                      key={type}
+                      type="button"
+                      onClick={() => setDraft((d) => ({ ...d, quote_type: type }))}
+                      className={cn(
+                        'rounded-md px-3.5 py-1.5 text-sm font-medium transition-all',
+                        draft.quote_type === type
+                          ? 'bg-white text-slate-900 shadow-sm'
+                          : 'text-slate-500 hover:text-slate-700',
+                      )}
+                    >
+                      {type === 'business' ? 'Företag' : 'Privat'}
+                    </button>
+                  ))}
+                </div>
+              }
+            />
 
             <div className="grid gap-4">
             <CustomerSearchPicker
               selectedCustomer={selectedCustomer}
-              createMode={draft.create_customer}
-              onSelect={(customer) => {
-                setSelectedCustomer(customer);
-                const primary = customer.contacts.find((c) => c.is_primary) || customer.contacts[0] || null;
-                setDraft((current) => ({
-                  ...current,
-                  customer_id: customer.id,
-                  create_customer: false,
-                  quote_type: customer.customer_type,
-                  customer_source: buildCustomerSource(customer),
-                  company_name: customer.company_name || '',
-                  customer_name: customer.company_name || `${customer.first_name || ''} ${customer.last_name || ''}`.trim(),
-                  organization_number: customer.organization_number || '',
-                  personal_number: customer.personal_number || '',
-                  contact_name: primary?.name || '',
-                  phone: primary?.phone || '',
-                  email: primary?.email || '',
-                  street_address: customer.visit_address?.street || '',
-                  postal_code: customer.visit_address?.postal_code || '',
-                  city: customer.visit_address?.city || '',
-                }));
-              }}
+              onSelect={applySelectedCustomer}
               onClear={() => {
                 setSelectedCustomer(null);
                 setDraft((current) => ({
-                  ...current, customer_id: null, create_customer: false,
+                  ...current, customer_id: null,
                   customer_source: buildCustomerSource(null),
                   company_name: '', customer_name: '', organization_number: '',
                   personal_number: '', contact_name: '', phone: '', email: '',
@@ -1055,8 +1217,11 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
                 }));
               }}
               onCreateNew={() => {
-                setSelectedCustomer(null);
-                setDraft((current) => ({ ...current, customer_id: null, create_customer: true, customer_source: buildCustomerSource(null) }));
+                // Stash the in-progress quote, then go register the customer on its own
+                // page; we return here (returnTo) and auto-select the new customer.
+                persistDraft();
+                const returnTo = isEditing ? `/crm/offerter/${quoteId}/redigera` : '/crm/offerter/ny';
+                router.push(`/crm/kunder/ny?returnTo=${encodeURIComponent(returnTo)}`);
               }}
             />
 
@@ -1128,10 +1293,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
 
           {/* ── Section 2: Offert ── */}
           <div className="border-t border-slate-100 px-8 py-8">
-            <div className="mb-6 flex items-center gap-3">
-              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white" style={{ backgroundColor: 'var(--crm-primary)' }}>2</span>
-              <h2 className="text-sm font-semibold text-slate-900">Offert</h2>
-            </div>
+            <SectionHeader step={2} title="Offert" />
 
           {isEditing && loadedQuote?.quote_number ? (
             <div className="mb-4">
@@ -1177,10 +1339,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
 
           {/* ── Section 3: Rader ── */}
           <div className="border-t border-slate-100 px-8 py-8">
-            <div className="mb-6 flex items-center gap-3">
-              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white" style={{ backgroundColor: 'var(--crm-primary)' }}>3</span>
-              <h2 className="text-sm font-semibold text-slate-900">Produkter & priser</h2>
-            </div>
+            <SectionHeader step={3} title="Produkter & priser" />
 
           {/* Totals bar */}
           {hasAnyLineItemInput ? (
@@ -1209,136 +1368,45 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           )}
 
           <div className="grid gap-3">
-            {draft.items.map((row, index) => {
-              const rowMetrics = effectiveRows.find((r) => r.id === row.id);
-              const isM3 = (row.pricing_mode ?? 'm3') === 'm3';
-
-              return (
-                <div key={row.id} className="grid gap-4 rounded-xl border border-slate-100 p-5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-slate-400">Rad {index + 1}</span>
-                    <button
-                      type="button"
-                      onClick={() => setDraft((d) => ({ ...d, items: d.items.length > 1 ? d.items.filter((item) => item.id !== row.id) : [createEmptyLineItem()] }))}
-                      className="text-xs text-slate-400 transition-colors hover:text-rose-600"
-                    >
-                      Ta bort
-                    </button>
-                  </div>
-
-                  <div className="grid gap-3 md:grid-cols-2">
-                    <Field label="Artikel" className="md:col-span-2">
-                      <ArticlePicker
-                        value={row.article_name || ''}
-                        onSelect={(article) => {
-                          const construction = inferConstructionFromArticle(article.name);
-                          const unitName = getArticleUnitName(article.unit);
-                          const normalizedUnit = unitName.trim().toLowerCase();
-                          const pricingMode: 'm3' | 'item' = normalizedUnit === 'm3' || normalizedUnit === 'm³' || /m\s*³/i.test(normalizedUnit) ? 'm3' : 'item';
-                          setDraft((current) => ({
-                            ...current,
-                            items: current.items.map((item) => item.id === row.id ? {
-                              ...item,
-                              article_id: article.id || null,
-                              article_name: article.name || null,
-                              article_number: article.articleNumber || null,
-                              article_price: typeof article.price === 'number' ? article.price : null,
-                              article_unit_name: unitName || null,
-                              construction: construction || item.construction,
-                              pricing_mode: pricingMode,
-                              auto_price: false,
-                              unit_price: article.price != null ? String(article.price) : item.unit_price,
-                              quantity: pricingMode === 'item' && (!item.quantity || Number(item.quantity) <= 0) ? '1' : item.quantity,
-                            } : item),
-                          }));
-                        }}
-                        onClear={() => setDraft((current) => ({
-                          ...current,
-                          items: current.items.map((item) => item.id === row.id ? {
-                            ...item, article_id: null, article_name: null, article_number: null, article_price: null, article_unit_name: null,
-                          } : item),
-                        }))}
-                      />
-                    </Field>
-                    {row.article_name ? (
-                      <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700 md:col-span-2">
-                        {row.article_name}{row.article_number ? ` · ${row.article_number}` : ''}
-                      </div>
-                    ) : null}
-                  </div>
-
-                  <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
-                    {isM3 ? (
-                      <>
-                        <Field label="m²">
-                          <Input value={row.m2} onChange={(e) => setDraft((d) => ({ ...d, items: d.items.map((item) => item.id === row.id ? { ...item, m2: e.target.value } : item) }))} inputMode="decimal" placeholder="0" />
-                        </Field>
-                        <Field label="Tjocklek mm">
-                          <Input value={row.thickness_mm} onChange={(e) => setDraft((d) => ({ ...d, items: d.items.map((item) => item.id === row.id ? { ...item, thickness_mm: e.target.value } : item) }))} inputMode="decimal" placeholder="200" />
-                        </Field>
-                      </>
-                    ) : (
-                      <Field label="Antal">
-                        <Input value={row.quantity} onChange={(e) => setDraft((d) => ({ ...d, items: d.items.map((item) => item.id === row.id ? { ...item, quantity: e.target.value } : item) }))} inputMode="decimal" placeholder="1" />
-                      </Field>
-                    )}
-                    <Field label="A-pris">
-                      <Input
-                        value={row.auto_price ? String(rowMetrics?.unit ?? row.article_price ?? '') : row.unit_price}
-                        onChange={(e) => setDraft((d) => ({ ...d, items: d.items.map((item) => item.id === row.id ? { ...item, unit_price: e.target.value } : item) }))}
-                        inputMode="decimal"
-                        placeholder="0"
-                        disabled={row.auto_price}
-                      />
-                    </Field>
-                    <Field label="Rabatt %">
-                      <Input value={row.discount_percent} onChange={(e) => setDraft((d) => ({ ...d, items: d.items.map((item) => item.id === row.id ? { ...item, discount_percent: e.target.value } : item) }))} inputMode="decimal" placeholder="0" />
-                    </Field>
-                  </div>
-
-                  <div className="flex items-center gap-4">
-                    <label className="inline-flex items-center gap-2 text-xs text-slate-500">
-                      <input
-                        type="checkbox"
-                        checked={!row.auto_price}
-                        onChange={(e) => setDraft((d) => ({ ...d, items: d.items.map((item) => item.id === row.id ? { ...item, auto_price: !e.target.checked } : item) }))}
-                        className="h-3.5 w-3.5 rounded border-slate-300"
-                      />
-                      Manuellt pris
-                    </label>
-                    {draft.rot_enabled ? (
-                      <label className="inline-flex items-center gap-2 text-xs text-slate-500">
-                        <input
-                          type="checkbox"
-                          checked={row.is_rot_work}
-                          onChange={(e) => setDraft((d) => ({ ...d, items: d.items.map((item) => item.id === row.id ? { ...item, is_rot_work: e.target.checked } : item) }))}
-                          className="h-3.5 w-3.5 rounded border-slate-300"
-                        />
-                        ROT-arbete
-                      </label>
-                    ) : null}
-                  </div>
-
-                  <Field label="Radtext">
-                    <Input
-                      value={row.line_note}
-                      onChange={(e) => setDraft((d) => ({ ...d, items: d.items.map((item) => item.id === row.id ? { ...item, line_note: e.target.value } : item) }))}
-                      placeholder="Fritext för raden"
-                    />
-                  </Field>
-
-                  {/* Row summary */}
-                  {rowMetrics?.isConfigured ? (
-                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-slate-100 pt-3 text-xs text-slate-500">
-                      <span>{rowMetrics.label}</span>
-                      <span>Mängd {rowMetrics.amount.toFixed(2)}</span>
-                      <span>A-pris {formatCurrency(rowMetrics.effectiveUnit, 'SEK')}</span>
-                      <span className="ml-auto font-semibold text-slate-900">Radsumma {formatCurrency(rowMetrics.rowTotal, 'SEK')}</span>
-                    </div>
-                  ) : null}
-                </div>
-              );
-            })}
+            {draft.items.map((row, index) => (
+              <LineItemRow
+                key={row.id}
+                row={row}
+                index={index}
+                metrics={effectiveRows.find((r) => r.id === row.id)}
+                rotEnabled={draft.rot_enabled}
+                onChange={(patch) => setDraft((d) => ({ ...d, items: d.items.map((item) => item.id === row.id ? { ...item, ...patch } : item) }))}
+                onSelectArticle={(article) => {
+                  const construction = inferConstructionFromArticle(article.name);
+                  const unitName = getArticleUnitName(article.unit);
+                  const normalizedUnit = unitName.trim().toLowerCase();
+                  const pricingMode: 'm3' | 'item' = normalizedUnit === 'm3' || normalizedUnit === 'm³' || /m\s*³/i.test(normalizedUnit) ? 'm3' : 'item';
+                  setDraft((current) => ({
+                    ...current,
+                    items: current.items.map((item) => item.id === row.id ? {
+                      ...item,
+                      article_id: article.id || null,
+                      article_name: article.name || null,
+                      article_number: article.articleNumber || null,
+                      article_price: typeof article.price === 'number' ? article.price : null,
+                      article_unit_name: unitName || null,
+                      construction: construction || item.construction,
+                      pricing_mode: pricingMode,
+                      auto_price: false,
+                      unit_price: article.price != null ? String(article.price) : item.unit_price,
+                      quantity: pricingMode === 'item' && (!item.quantity || Number(item.quantity) <= 0) ? '1' : item.quantity,
+                    } : item),
+                  }));
+                }}
+                onClearArticle={() => setDraft((current) => ({
+                  ...current,
+                  items: current.items.map((item) => item.id === row.id ? {
+                    ...item, article_id: null, article_name: null, article_number: null, article_price: null, article_unit_name: null,
+                  } : item),
+                }))}
+                onRemove={() => setDraft((d) => ({ ...d, items: d.items.length > 1 ? d.items.filter((item) => item.id !== row.id) : [createEmptyLineItem()] }))}
+              />
+            ))}
           </div>
 
           <button
@@ -1353,16 +1421,16 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           {/* ── Section 4: ROT ── */}
           {draft.quote_type === 'private' ? (
             <div className="border-t border-slate-100 px-8 py-8">
-              <div className="mb-6 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white" style={{ backgroundColor: 'var(--crm-primary)' }}>4</span>
-                  <h2 className="text-sm font-semibold text-slate-900">ROT-avdrag</h2>
-                </div>
-                <label className="inline-flex items-center gap-2 text-sm text-slate-600">
-                  <input type="checkbox" checked={draft.rot_enabled} onChange={(e) => setDraft((d) => ({ ...d, rot_enabled: e.target.checked }))} className="h-4 w-4 rounded border-slate-300" />
-                  Aktivera
-                </label>
-              </div>
+              <SectionHeader
+                step={4}
+                title="ROT-avdrag"
+                action={
+                  <label className="inline-flex items-center gap-2 text-sm text-slate-600">
+                    <input type="checkbox" checked={draft.rot_enabled} onChange={(e) => setDraft((d) => ({ ...d, rot_enabled: e.target.checked }))} className="h-4 w-4 rounded border-slate-300" />
+                    Aktivera
+                  </label>
+                }
+              />
               <div className="grid gap-4 md:grid-cols-2">
                 <Field label="ROT-sökande">
                   <Input value={draft.rot_applicant_name} onChange={(e) => setDraft((d) => ({ ...d, rot_applicant_name: e.target.value }))} placeholder="Namn på sökande" disabled={!draft.rot_enabled} />
@@ -1382,10 +1450,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
 
           {/* ── Section 5: Intern handoff ── */}
           <div className="border-t border-slate-100 px-8 py-8">
-            <div className="mb-6 flex items-center gap-3">
-              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white" style={{ backgroundColor: 'var(--crm-primary)' }}>{draft.quote_type === 'private' ? 5 : 4}</span>
-              <h2 className="text-sm font-semibold text-slate-900">Intern handoff</h2>
-            </div>
+            <SectionHeader step={draft.quote_type === 'private' ? 5 : 4} title="Intern handoff" />
             <div className="grid gap-4 md:grid-cols-2">
               <Field label="Önskat installationsdatum">
                 <Input value={draft.desired_installation_date} onChange={(e) => setDraft((d) => ({ ...d, desired_installation_date: e.target.value }))} type="date" />
@@ -1405,10 +1470,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           {/* ── Section 6: Arbetsorder (edit mode) ── */}
           {isEditing && loadedQuote ? (
             <div className="border-t border-slate-100 px-8 py-8">
-              <div className="mb-4 flex items-center gap-3">
-                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-slate-200 text-[11px] font-bold text-slate-600">{draft.quote_type === 'private' ? 6 : 5}</span>
-                <h2 className="text-sm font-semibold text-slate-900">Arbetsorder</h2>
-              </div>
+              <SectionHeader step={draft.quote_type === 'private' ? 6 : 5} title="Arbetsorder" muted className="mb-4" />
               <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-slate-100 bg-slate-50 px-5 py-4">
                 <span className="text-sm text-slate-700">
                   {loadedQuote.work_order_number
@@ -1542,8 +1604,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
               type="button"
               onClick={saveQuote}
               disabled={submitting}
-              className="w-full rounded-xl py-2.5 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-              style={{ backgroundColor: 'var(--crm-primary)' }}
+              className={crm.saveButton}
             >
               {submitting ? 'Sparar…' : isEditing ? 'Spara offert' : 'Skapa offert'}
             </button>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Input from '../../../components/ui/Input';
 import Select from '../../../components/ui/Select';
 import FortnoxCodeSelect from './FortnoxCodeSelect';
@@ -70,6 +70,11 @@ function buildAddress(street: string, postalCode: string, city: string) {
   return { street: street || null, postal_code: postalCode || null, city: city || null };
 }
 
+// Only allow returning into the offer form (allowlist guards against open redirect).
+function safeReturnTo(returnTo: string | null): string | null {
+  return returnTo && returnTo.startsWith('/crm/offerter/') ? returnTo : null;
+}
+
 function FieldLabel({ children }: { children: React.ReactNode }) {
   return <p className={crm.label}>{children}</p>;
 }
@@ -111,7 +116,12 @@ type Props = { fortnoxConnected: boolean };
 
 export default function CustomerFormClient({ fortnoxConnected }: Props) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const toast = useToast();
+  const returnTo = safeReturnTo(searchParams.get('returnTo'));
+  // Where the back/cancel controls go. When we came from the offer form, return there
+  // (restore_quote tells it to restore the stashed draft, without selecting a customer).
+  const cancelTo = returnTo ? `${returnTo}?restore_quote=1` : '/crm/kunder';
   const [draft, setDraft] = useState<Draft>(initial);
   const [createInFortnox, setCreateInFortnox] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -169,7 +179,14 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
         toast.success('Kund skapad');
       }
 
-      router.push(item?.id ? `/crm/kunder/${item.id}` : '/crm/kunder');
+      // When sent here from the offer form, return there with the new customer id
+      // so it can be auto-selected. Otherwise go to the new customer's detail page.
+      if (returnTo && item?.id) {
+        const sep = returnTo.includes('?') ? '&' : '?';
+        router.push(`${returnTo}${sep}created_customer_id=${item.id}`);
+      } else {
+        router.push(item?.id ? `/crm/kunder/${item.id}` : '/crm/kunder');
+      }
     } catch {
       toast.error('Fel vid skapande av kund');
     } finally {
@@ -186,13 +203,13 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
       <div>
         <button
           type="button"
-          onClick={() => router.push('/crm/kunder')}
+          onClick={() => router.push(cancelTo)}
           className="mb-2 inline-flex items-center gap-1.5 text-sm text-slate-500 transition hover:text-slate-800"
         >
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
             <path d="M9 2L4 7l5 5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
-          Kundregister
+          {returnTo ? 'Tillbaka till offert' : 'Kundregister'}
         </button>
         <h1 className="m-0 text-2xl font-bold tracking-tight text-slate-900">Registrera kund</h1>
         <p className="m-0 mt-0.5 text-sm text-slate-500">Fyll i uppgifterna nedan för att skapa en ny kundpost</p>
@@ -376,7 +393,7 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
             </button>
             <button
               type="button"
-              onClick={() => router.push('/crm/kunder')}
+              onClick={() => router.push(cancelTo)}
               className="inline-flex h-10 w-full items-center justify-center rounded-xl border border-slate-200 bg-white text-sm font-semibold text-slate-600 transition hover:border-slate-300"
             >
               Avbryt
