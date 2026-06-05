@@ -713,7 +713,6 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   const [draft, setDraft] = useState<QuoteDraft>(initialDraft);
   const [loadedQuote, setLoadedQuote] = useState<QuoteItem | null>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<CrmCustomerLite | null>(null);
-  const [extraAddressesOpen, setExtraAddressesOpen] = useState(false);
   const restoredRef = useRef(false);
 
   const presetProspectId = searchParams.get('prospect_id') || '';
@@ -721,6 +720,14 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
 
   // Per-form storage key so a new-quote draft never collides with an edit draft.
   const draftStorageKey = quoteId ? `crm:quote-draft:edit:${quoteId}` : 'crm:quote-draft:new';
+  // This offer's own URL — used as returnTo when leaving to create/edit a customer.
+  const offerSelfUrl = isEditing ? `/crm/offerter/${quoteId}/redigera` : '/crm/offerter/ny';
+
+  // Stash the draft and leave to a customer page; we return via returnTo.
+  function goToCustomerPage(path: string) {
+    persistDraft();
+    router.push(`${path}?returnTo=${encodeURIComponent(offerSelfUrl)}`);
+  }
 
   function persistDraft() {
     try {
@@ -809,9 +816,6 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           notes: item.notes || '',
           create_follow_up_task: false,
         });
-        if (item.customer_snapshot?.visit_address || item.customer_snapshot?.delivery_address || item.customer_snapshot?.invoice_address) {
-          setExtraAddressesOpen(true);
-        }
       })
       .catch(() => { if (active) { toast.error('Kunde inte ladda offert'); router.push('/crm/offerter'); } })
       .finally(() => { if (active) setLoading(false); });
@@ -879,9 +883,6 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
             && Date.now() - envelope.savedAt < DRAFT_TTL_MS && envelope.draft;
           if (fresh) {
             setDraft(envelope.draft);
-            if (envelope.draft.visit_address || envelope.draft.delivery_address || envelope.draft.invoice_address) {
-              setExtraAddressesOpen(true);
-            }
           }
         }
       } catch { /* ignore malformed draft */ }
@@ -900,7 +901,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     }
 
     // Strip the param so a refresh doesn't re-run this.
-    router.replace(quoteId ? `/crm/offerter/${quoteId}/redigera` : '/crm/offerter/ny');
+    router.replace(offerSelfUrl);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading]);
 
@@ -968,9 +969,9 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
 
   // Map validation issues to field IDs for scroll-to
   const issueFieldIds: Record<string, string> = {
-    'Kund måste anges': 'field-company-name',
-    'Företagsnamn krävs': 'field-company-name',
-    'Personnummer krävs': 'field-personal-number',
+    'Kund måste anges': 'section-kund',
+    'Företagsnamn krävs': 'section-kund',
+    'Personnummer krävs': 'section-kund',
     'Offertnamn saknas': 'field-project-name',
     'Ange belopp eller lägg till rader': 'field-amount',
     'ROT kräver personnummer för sökande': 'field-rot-personal-number',
@@ -979,6 +980,10 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
 
   function scrollToField(fieldId: string) {
     document.getElementById(fieldId)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  function scrollToSection(id: string) {
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
   function handleBack() {
@@ -1121,21 +1126,22 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     ? totals.total
     : (draft.amount ? Number(draft.amount.replace(',', '.')) : null);
 
-  const progressSteps = [
-    {
-      label: 'Kund',
-      done: Boolean(draft.quote_type === 'business' ? (draft.company_name || draft.customer_name) : draft.customer_name),
-    },
-    {
-      label: 'Offert',
-      done: Boolean(draft.project_name.trim()),
-    },
-    {
-      label: 'Belopp',
-      done: hasAnyLineItemInput || Boolean(draft.amount.trim()),
-    },
+  // Single source of truth for the visible sections (in order). Drives both the
+  // section header numbers and the sidebar nav so they can never drift apart.
+  // `done: undefined` marks an internal section with no completion requirement.
+  const sections: { id: string; label: string; done?: boolean }[] = [
+    { id: 'section-kund', label: 'Kund', done: Boolean(draft.quote_type === 'business' ? (draft.company_name || draft.customer_name) : draft.customer_name) },
+    { id: 'section-offert', label: 'Offert', done: Boolean(draft.project_name.trim()) },
+    { id: 'section-rader', label: 'Produkter & priser', done: hasAnyLineItemInput || Boolean(draft.amount.trim()) },
+    ...(draft.quote_type === 'private' && draft.rot_enabled
+      ? [{ id: 'section-rot', label: 'ROT-avdrag', done: Boolean(draft.rot_personal_number.trim() && draft.rot_property_designation.trim()) }]
+      : []),
+    { id: 'section-handoff', label: 'Intern handoff' },
+    ...(isEditing && loadedQuote ? [{ id: 'section-arbetsorder', label: 'Arbetsorder' }] : []),
   ];
-  const doneSteps = progressSteps.filter((s) => s.done).length;
+  const requiredSections = sections.filter((s) => s.done !== undefined);
+  const doneSteps = requiredSections.filter((s) => s.done).length;
+  const stepOf = (id: string) => sections.findIndex((s) => s.id === id) + 1;
 
   return (
     <div className="min-h-screen bg-[#f5f6f8]">
@@ -1170,16 +1176,16 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
       </div>
 
       {/* ── Two-column layout ── */}
-      <div className="mx-auto max-w-6xl px-6 py-8">
+      <div className="mx-auto max-w-6xl px-6 pt-8 pb-24 lg:pb-8">
         <div className="grid gap-6 lg:grid-cols-[1fr_304px]">
 
           {/* ── Left: form card ── */}
           <div className="grid gap-0 rounded-2xl border border-slate-200 bg-white shadow-sm">
 
           {/* ── Section 1: Kund ── */}
-          <div className="px-8 py-8">
+          <div id="section-kund" className="scroll-mt-4 px-8 py-8">
             <SectionHeader
-              step={1}
+              step={stepOf('section-kund')}
               title="Kund"
               action={
                 <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5">
@@ -1216,84 +1222,26 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
                   street_address: '', postal_code: '', city: '',
                 }));
               }}
-              onCreateNew={() => {
-                // Stash the in-progress quote, then go register the customer on its own
-                // page; we return here (returnTo) and auto-select the new customer.
-                persistDraft();
-                const returnTo = isEditing ? `/crm/offerter/${quoteId}/redigera` : '/crm/offerter/ny';
-                router.push(`/crm/kunder/ny?returnTo=${encodeURIComponent(returnTo)}`);
-              }}
+              onCreateNew={() => goToCustomerPage('/crm/kunder/ny')}
             />
 
-            {draft.quote_type === 'business' ? (
-              <div className="grid gap-4 md:grid-cols-2">
-                <Field fieldId="field-company-name" label="Företagsnamn" className="md:col-span-2" error={fieldErrors.company_name}>
-                  <Input value={draft.company_name} onChange={(e) => setDraft((d) => ({ ...d, company_name: e.target.value, customer_name: e.target.value || d.customer_name }))} placeholder="Bolag AB" />
-                </Field>
-                <Field label="Organisationsnummer">
-                  <Input value={draft.organization_number} onChange={(e) => setDraft((d) => ({ ...d, organization_number: e.target.value }))} placeholder="556123-4567" />
-                </Field>
-                <Field label="Kontaktperson">
-                  <Input value={draft.contact_name} onChange={(e) => setDraft((d) => ({ ...d, contact_name: e.target.value }))} placeholder="Namn på kontakt" />
-                </Field>
-              </div>
-            ) : (
-              <div className="grid gap-4 md:grid-cols-2">
-                <Field fieldId="field-customer-name" label="Kundnamn" error={fieldErrors.customer_name}>
-                  <Input value={draft.customer_name} onChange={(e) => setDraft((d) => ({ ...d, customer_name: e.target.value }))} placeholder="För- och efternamn" />
-                </Field>
-                <Field fieldId="field-personal-number" label="Personnummer" error={fieldErrors.personal_number}>
-                  <Input value={draft.personal_number} onChange={(e) => setDraft((d) => ({ ...d, personal_number: e.target.value }))} placeholder="ÅÅÅÅMMDD-XXXX" />
-                </Field>
-              </div>
-            )}
-
-            <div className="grid gap-4 md:grid-cols-2">
-              <Field label="E-post">
-                <Input value={draft.email} onChange={(e) => setDraft((d) => ({ ...d, email: e.target.value }))} placeholder="namn@example.com" type="email" />
-              </Field>
-              <Field label="Telefon">
-                <Input value={draft.phone} onChange={(e) => setDraft((d) => ({ ...d, phone: e.target.value }))} placeholder="070…" />
-              </Field>
-              <Field label="Gatuadress">
-                <Input value={draft.street_address} onChange={(e) => setDraft((d) => ({ ...d, street_address: e.target.value }))} placeholder="Gata 1" />
-              </Field>
-              <Field label="Postnummer">
-                <Input value={draft.postal_code} onChange={(e) => setDraft((d) => ({ ...d, postal_code: e.target.value }))} placeholder="123 45" />
-              </Field>
-              <Field label="Ort" className="md:col-span-2">
-                <Input value={draft.city} onChange={(e) => setDraft((d) => ({ ...d, city: e.target.value }))} placeholder="Ort" />
-              </Field>
-            </div>
-
-            {/* Progressive disclosure — extra addresses */}
-            {extraAddressesOpen || Boolean(draft.visit_address || draft.delivery_address || draft.invoice_address) ? (
-              <div className="grid gap-4 md:grid-cols-2">
-                <Field label="Besöksadress" className="md:col-span-2">
-                  <Input value={draft.visit_address} onChange={(e) => setDraft((d) => ({ ...d, visit_address: e.target.value }))} placeholder="Om annan än kundadress" />
-                </Field>
-                <Field label="Leveransadress" className="md:col-span-2">
-                  <Input value={draft.delivery_address} onChange={(e) => setDraft((d) => ({ ...d, delivery_address: e.target.value }))} placeholder="Leveransadress" />
-                </Field>
-                <Field label="Fakturaadress" className="md:col-span-2">
-                  <Input value={draft.invoice_address} onChange={(e) => setDraft((d) => ({ ...d, invoice_address: e.target.value }))} placeholder="Fakturaadress" />
-                </Field>
-              </div>
-            ) : (
+            {selectedCustomer ? (
               <button
                 type="button"
-                onClick={() => setExtraAddressesOpen(true)}
+                onClick={() => goToCustomerPage(`/crm/kunder/${selectedCustomer.id}`)}
                 className="w-fit text-xs font-medium text-slate-400 transition-colors hover:text-slate-700"
               >
-                + Lägg till alternativ adress
+                Öppna kundkort →
               </button>
+            ) : (
+              <p className="text-xs text-slate-400">Sök fram en befintlig kund eller skapa en ny. Kunduppgifterna hämtas från kundkortet.</p>
             )}
           </div>
           </div>
 
           {/* ── Section 2: Offert ── */}
-          <div className="border-t border-slate-100 px-8 py-8">
-            <SectionHeader step={2} title="Offert" />
+          <div id="section-offert" className="scroll-mt-4 border-t border-slate-100 px-8 py-8">
+            <SectionHeader step={stepOf('section-offert')} title="Offert" />
 
           {isEditing && loadedQuote?.quote_number ? (
             <div className="mb-4">
@@ -1338,8 +1286,8 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           </div>
 
           {/* ── Section 3: Rader ── */}
-          <div className="border-t border-slate-100 px-8 py-8">
-            <SectionHeader step={3} title="Produkter & priser" />
+          <div id="section-rader" className="scroll-mt-4 border-t border-slate-100 px-8 py-8">
+            <SectionHeader step={stepOf('section-rader')} title="Produkter & priser" />
 
           {/* Totals bar */}
           {hasAnyLineItemInput ? (
@@ -1418,39 +1366,30 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           </button>
           </div>
 
-          {/* ── Section 4: ROT ── */}
-          {draft.quote_type === 'private' ? (
-            <div className="border-t border-slate-100 px-8 py-8">
-              <SectionHeader
-                step={4}
-                title="ROT-avdrag"
-                action={
-                  <label className="inline-flex items-center gap-2 text-sm text-slate-600">
-                    <input type="checkbox" checked={draft.rot_enabled} onChange={(e) => setDraft((d) => ({ ...d, rot_enabled: e.target.checked }))} className="h-4 w-4 rounded border-slate-300" />
-                    Aktivera
-                  </label>
-                }
-              />
+          {/* ── Section 4: ROT (toggled on via the sidebar) ── */}
+          {draft.quote_type === 'private' && draft.rot_enabled ? (
+            <div id="section-rot" className="scroll-mt-4 border-t border-slate-100 px-8 py-8">
+              <SectionHeader step={stepOf('section-rot')} title="ROT-avdrag" />
               <div className="grid gap-4 md:grid-cols-2">
                 <Field label="ROT-sökande">
-                  <Input value={draft.rot_applicant_name} onChange={(e) => setDraft((d) => ({ ...d, rot_applicant_name: e.target.value }))} placeholder="Namn på sökande" disabled={!draft.rot_enabled} />
+                  <Input value={draft.rot_applicant_name} onChange={(e) => setDraft((d) => ({ ...d, rot_applicant_name: e.target.value }))} placeholder="Namn på sökande" />
                 </Field>
                 <Field fieldId="field-rot-personal-number" label="ROT personnummer" error={fieldErrors.rot_personal_number}>
-                  <Input value={draft.rot_personal_number} onChange={(e) => setDraft((d) => ({ ...d, rot_personal_number: e.target.value }))} placeholder="ÅÅÅÅMMDD-XXXX" disabled={!draft.rot_enabled} />
+                  <Input value={draft.rot_personal_number} onChange={(e) => setDraft((d) => ({ ...d, rot_personal_number: e.target.value }))} placeholder="ÅÅÅÅMMDD-XXXX" />
                 </Field>
                 <Field fieldId="field-rot-property" label="Fastighetsbeteckning" className="md:col-span-2" error={fieldErrors.rot_property_designation}>
-                  <Input value={draft.rot_property_designation} onChange={(e) => setDraft((d) => ({ ...d, rot_property_designation: e.target.value }))} placeholder="Fastighetsbeteckning" disabled={!draft.rot_enabled} />
+                  <Input value={draft.rot_property_designation} onChange={(e) => setDraft((d) => ({ ...d, rot_property_designation: e.target.value }))} placeholder="Fastighetsbeteckning" />
                 </Field>
                 <Field label="ROT %">
-                  <Input value={draft.rot_percent} onChange={(e) => setDraft((d) => ({ ...d, rot_percent: e.target.value }))} inputMode="decimal" placeholder="30" disabled={!draft.rot_enabled} />
+                  <Input value={draft.rot_percent} onChange={(e) => setDraft((d) => ({ ...d, rot_percent: e.target.value }))} inputMode="decimal" placeholder="30" />
                 </Field>
               </div>
             </div>
           ) : null}
 
           {/* ── Section 5: Intern handoff ── */}
-          <div className="border-t border-slate-100 px-8 py-8">
-            <SectionHeader step={draft.quote_type === 'private' ? 5 : 4} title="Intern handoff" />
+          <div id="section-handoff" className="scroll-mt-4 border-t border-slate-100 px-8 py-8">
+            <SectionHeader step={stepOf('section-handoff')} title="Intern handoff" muted />
             <div className="grid gap-4 md:grid-cols-2">
               <Field label="Önskat installationsdatum">
                 <Input value={draft.desired_installation_date} onChange={(e) => setDraft((d) => ({ ...d, desired_installation_date: e.target.value }))} type="date" />
@@ -1469,8 +1408,8 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
 
           {/* ── Section 6: Arbetsorder (edit mode) ── */}
           {isEditing && loadedQuote ? (
-            <div className="border-t border-slate-100 px-8 py-8">
-              <SectionHeader step={draft.quote_type === 'private' ? 6 : 5} title="Arbetsorder" muted className="mb-4" />
+            <div id="section-arbetsorder" className="scroll-mt-4 border-t border-slate-100 px-8 py-8">
+              <SectionHeader step={stepOf('section-arbetsorder')} title="Arbetsorder" muted className="mb-4" />
               <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-slate-100 bg-slate-50 px-5 py-4">
                 <span className="text-sm text-slate-700">
                   {loadedQuote.work_order_number
@@ -1505,24 +1444,38 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
 
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
 
-            {/* Progress indicator */}
-            <div className="mb-5 flex items-center justify-between">
-              <div className="flex items-center gap-1.5">
-                {progressSteps.map((step, i) => (
-                  <span
-                    key={i}
-                    title={step.label}
-                    className={cn(
-                      'h-1.5 w-6 rounded-full transition-colors',
-                      step.done ? 'bg-emerald-400' : 'bg-slate-200',
-                    )}
-                  />
-                ))}
+            {/* Section nav — click to jump, mirrors the form sections + completion */}
+            <nav className="mb-5">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Sektioner</span>
+                <span className="text-[11px] font-medium text-slate-400">{doneSteps}/{requiredSections.length} klara</span>
               </div>
-              <span className="text-[11px] font-medium text-slate-400">
-                {doneSteps}/{progressSteps.length} steg klara
-              </span>
-            </div>
+              <ul className="grid gap-0.5">
+                {sections.map((section, i) => (
+                  <li key={section.id}>
+                    <button
+                      type="button"
+                      onClick={() => scrollToSection(section.id)}
+                      className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-sm text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-900"
+                    >
+                      <span
+                        className={cn(
+                          'flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[10px] font-bold',
+                          section.done === true
+                            ? 'border-emerald-200 bg-emerald-50 text-emerald-600'
+                            : section.done === false
+                              ? 'border-slate-200 text-slate-400'
+                              : 'border-transparent bg-slate-100 text-slate-400',
+                        )}
+                      >
+                        {section.done === true ? '✓' : i + 1}
+                      </span>
+                      <span className="min-w-0 truncate">{section.label}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </nav>
 
             <div className="mb-3 grid gap-0.5">
               <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Projekt</span>
@@ -1566,6 +1519,19 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
                 <Input value={draft.follow_up_date} onChange={(e) => setDraft((d) => ({ ...d, follow_up_date: e.target.value }))} type="date" lang="sv-SE" />
               </Field>
             </div>
+
+            {/* ROT toggle — only relevant for private customers */}
+            {draft.quote_type === 'private' ? (
+              <label className="mt-4 flex cursor-pointer select-none items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50/60 px-3.5 py-2.5">
+                <span className="text-sm font-medium text-slate-700">ROT-avdrag</span>
+                <input
+                  type="checkbox"
+                  checked={draft.rot_enabled}
+                  onChange={(e) => setDraft((d) => ({ ...d, rot_enabled: e.target.checked }))}
+                  className="h-4 w-4 rounded border-slate-300 accent-emerald-600"
+                />
+              </label>
+            ) : null}
 
             {/* Divider */}
             <div className="my-5 border-t border-slate-100" />
@@ -1622,6 +1588,24 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
 
         </div>{/* end two-column grid */}
       </div>{/* end page wrapper */}
+
+      {/* ── Mobile sticky action bar (sidebar handles this on lg+) ── */}
+      <div className="fixed inset-x-0 bottom-0 z-30 flex items-center gap-3 border-t border-slate-200 bg-white/95 px-4 py-3 backdrop-blur lg:hidden">
+        <div className="min-w-0">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Totalt inkl. moms</p>
+          <p className="truncate text-base font-bold text-slate-950">
+            {sidebarTotal != null && Number.isFinite(sidebarTotal) ? formatCurrency(sidebarTotal, 'SEK') : '—'}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={saveQuote}
+          disabled={submitting}
+          className={cn(crm.saveButton, 'ml-auto w-auto px-6')}
+        >
+          {submitting ? 'Sparar…' : isEditing ? 'Spara' : 'Skapa'}
+        </button>
+      </div>
     </div>
   );
 }

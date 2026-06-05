@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Input from '../../../components/ui/Input';
 import FortnoxCodeSelect from './FortnoxCodeSelect';
 import { useToast } from '@/lib/Toast';
@@ -170,6 +170,15 @@ function AddressEditColumn({
 
 export default function CustomerDetailClient({ customerId, fortnoxConnected }: { customerId: string; fortnoxConnected: boolean }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  // When opened from the offer form, go back there (and re-select this customer so
+  // edited details flow into the quote). Otherwise back to the customer register.
+  const returnTo = (() => {
+    const rt = searchParams.get('returnTo');
+    return rt && rt.startsWith('/crm/offerter/') ? rt : null;
+  })();
+  const backTo = returnTo ? `${returnTo}?created_customer_id=${customerId}` : '/crm/kunder';
+  const backLabel = returnTo ? 'Tillbaka till offert' : 'Kundregister';
   const toast = useToast();
 
   const [customer, setCustomer] = useState<Customer | null>(null);
@@ -387,8 +396,8 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
   if (error || !customer) {
     return (
       <div className="grid gap-4">
-        <button type="button" onClick={() => router.push('/crm/kunder')} className="inline-flex w-fit items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800 transition">
-          <BackArrow /> Kundregister
+        <button type="button" onClick={() => router.push(backTo)} className="inline-flex w-fit items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800 transition">
+          <BackArrow /> {backLabel}
         </button>
         <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-700">{error || 'Kunden hittades inte.'}</div>
       </div>
@@ -634,8 +643,8 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
 
       {/* Header */}
       <div>
-        <button type="button" onClick={() => router.push('/crm/kunder')} className="mb-2 inline-flex w-fit items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800 transition">
-          <BackArrow /> Kundregister
+        <button type="button" onClick={() => router.push(backTo)} className="mb-2 inline-flex w-fit items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800 transition">
+          <BackArrow /> {backLabel}
         </button>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="grid gap-1.5 min-w-0">
