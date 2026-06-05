@@ -1,6 +1,15 @@
 import { z } from 'zod';
 export { ok, routeError, validationError, requireCrmUser } from '../_shared';
 
+// Zod's built-in .email() rejects Unicode domain names (e.g. byggmästaren.se).
+// This helper validates the structural shape of an email while accepting IDN domains.
+function intlEmail(msg: string) {
+  return z.string().trim()
+    .refine((val) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val), { message: msg })
+    .nullable()
+    .optional();
+}
+
 const customerTypeSchema = z.enum(['business', 'private']);
 const customerStatusSchema = z.enum(['active', 'inactive', 'churned']);
 const customerStageSchema = z.enum(['prospect', 'customer', 'fortnox_customer']);
@@ -35,11 +44,22 @@ export const createCrmCustomerSchema = z
     first_name: z.string().trim().nullable().optional().default(null),
     last_name: z.string().trim().nullable().optional().default(null),
     personal_number: z.string().trim().nullable().optional().default(null),
+    email: intlEmail('Ogiltig e-post').default(null),
+    phone: z.string().trim().nullable().optional().default(null),
+    mobile: z.string().trim().nullable().optional().default(null),
     visit_address: addressSchema,
+    delivery_address: addressSchema,
     invoice_address: addressSchema,
+    invoice_email: intlEmail('Ogiltig faktura-epost').default(null),
+    payment_terms: z.string().trim().nullable().optional().default(null),
+    price_list: z.string().trim().nullable().optional().default(null),
+    discount: z.coerce.number().min(0).max(100).nullable().optional().default(null),
+    vat_number: z.string().trim().nullable().optional().default(null),
+    reverse_vat: z.boolean().optional().default(false),
     fortnox_customer_id: z.string().trim().nullable().optional().default(null),
     source: z.string().trim().nullable().optional().default(null),
     notes: z.string().trim().nullable().optional().default(null),
+    create_in_fortnox: z.boolean().optional().default(false),
   })
   .refine(
     (d) =>
@@ -56,8 +76,18 @@ export const updateCrmCustomerSchema = z
     first_name: z.string().trim().nullable().optional(),
     last_name: z.string().trim().nullable().optional(),
     personal_number: z.string().trim().nullable().optional(),
+    email: intlEmail('Ogiltig e-post'),
+    phone: z.string().trim().nullable().optional(),
+    mobile: z.string().trim().nullable().optional(),
     visit_address: addressSchema,
+    delivery_address: addressSchema,
     invoice_address: addressSchema,
+    invoice_email: intlEmail('Ogiltig faktura-epost'),
+    payment_terms: z.string().trim().nullable().optional(),
+    price_list: z.string().trim().nullable().optional(),
+    discount: z.coerce.number().min(0).max(100).nullable().optional(),
+    vat_number: z.string().trim().nullable().optional(),
+    reverse_vat: z.boolean().optional(),
     fortnox_customer_id: z.string().trim().nullable().optional(),
     status: customerStatusSchema.optional(),
     source: z.string().trim().nullable().optional(),
@@ -69,7 +99,7 @@ export const createCrmCustomerContactSchema = z.object({
   name: z.string().trim().min(1, 'Namn krävs'),
   role: z.string().trim().nullable().optional().default(null),
   phone: z.string().trim().nullable().optional().default(null),
-  email: z.string().trim().email('Ogiltig e-post').nullable().optional().default(null),
+  email: intlEmail('Ogiltig e-post').default(null),
   is_primary: z.boolean().optional().default(false),
 });
 
@@ -77,6 +107,6 @@ export const updateCrmCustomerContactSchema = z.object({
   name: z.string().trim().min(1, 'Namn krävs').optional(),
   role: z.string().trim().nullable().optional(),
   phone: z.string().trim().nullable().optional(),
-  email: z.string().trim().email('Ogiltig e-post').nullable().optional(),
+  email: intlEmail('Ogiltig e-post'),
   is_primary: z.boolean().optional(),
 });

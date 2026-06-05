@@ -73,8 +73,20 @@ export type FortnoxCustomer = {
   Email: string | null;
   Phone1: string | null;
   Phone2: string | null;
+  Mobile: string | null;
   Type: 'COMPANY' | 'PRIVATE' | string;
   Active: boolean;
+  // Delivery address
+  DeliveryAddress1: string | null;
+  DeliveryZipCode: string | null;
+  DeliveryCity: string | null;
+  // Billing fields
+  EmailInvoice: string | null;
+  PaymentTerms: string | null;
+  PriceList: string | null;
+  InvoiceDiscount: number | null;
+  VatNumber: string | null;
+  VatType: 'SEVAT' | 'SEREVERSEDVAT' | string | null;
 };
 
 export type FortnoxCustomerListResponse = {

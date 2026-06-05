@@ -1,5 +1,5 @@
 import { getSupabaseAdmin } from '@/lib/supabase/server';
-import { fortnoxGet } from './client';
+import { fortnoxGet, fortnoxPost } from './client';
 import type { FortnoxCustomerListResponse, FortnoxCustomer } from './types';
 
 type FortnoxCustomerDetailResponse = { Customer: FortnoxCustomer };
@@ -45,12 +45,24 @@ function mapFortnoxCustomerToRow(c: FortnoxCustomer, now: string) {
     first_name: !isCompany ? (c.Name?.split(' ')[0] ?? null) : null,
     last_name: !isCompany ? (c.Name?.split(' ').slice(1).join(' ') || null) : null,
     organization_number: c.OrganisationNumber ?? null,
+    email: c.Email ?? null,
+    phone: c.Phone1 ?? null,
+    mobile: c.Mobile ?? c.Phone2 ?? null,
     visit_address: (c.Address1 || c.ZipCode || c.City)
       ? { street: c.Address1 ?? null, postal_code: c.ZipCode ?? null, city: c.City ?? null }
+      : null,
+    delivery_address: (c.DeliveryAddress1 || c.DeliveryZipCode || c.DeliveryCity)
+      ? { street: c.DeliveryAddress1 ?? null, postal_code: c.DeliveryZipCode ?? null, city: c.DeliveryCity ?? null }
       : null,
     invoice_address: (c.Address1 || c.ZipCode || c.City)
       ? { street: c.Address1 ?? null, postal_code: c.ZipCode ?? null, city: c.City ?? null }
       : null,
+    invoice_email: c.EmailInvoice ?? null,
+    payment_terms: c.PaymentTerms ?? null,
+    price_list: c.PriceList ?? null,
+    discount: c.InvoiceDiscount ?? null,
+    vat_number: c.VatNumber ?? null,
+    reverse_vat: c.VatType === 'SEREVERSEDVAT',
     fortnox_customer_id: c.CustomerNumber,
     sync_status: 'synced' as const,
     last_synced_at: now,
@@ -148,4 +160,68 @@ export async function searchFortnoxCustomersLive(query: string): Promise<Fortnox
     limit: '20',
   });
   return response.Customers ?? [];
+}
+
+type FortnoxCustomerCreateResponse = { Customer: FortnoxCustomer };
+
+// Push a CRM customer to Fortnox. Creates the customer in Fortnox and updates
+// our DB record with the returned CustomerNumber. Uses service role – approved
+// use for integration writes that cannot go through the session client.
+export async function createFortnoxCustomer(customerId: string): Promise<{ fortnoxCustomerNumber: string }> {
+  const supabase = getSupabaseAdmin();
+
+  const { data: customer, error } = await supabase
+    .from('crm_customers')
+    .select('*')
+    .eq('id', customerId)
+    .single();
+
+  if (error || !customer) {
+    throw new Error('Kund hittades inte i databasen');
+  }
+
+  const name =
+    customer.customer_type === 'business'
+      ? (customer.company_name ?? '')
+      : [customer.first_name, customer.last_name].filter(Boolean).join(' ');
+
+  const body = {
+    Customer: {
+      Name: name || undefined,
+      Type: customer.customer_type === 'business' ? 'COMPANY' : 'PRIVATE',
+      OrganisationNumber: customer.organization_number ?? undefined,
+      Email: customer.email ?? undefined,
+      Phone1: customer.phone ?? undefined,
+      Phone2: customer.mobile ?? undefined,
+      Address1: customer.invoice_address?.street ?? undefined,
+      ZipCode: customer.invoice_address?.postal_code ?? undefined,
+      City: customer.invoice_address?.city ?? undefined,
+      DeliveryAddress1: customer.delivery_address?.street ?? undefined,
+      DeliveryZipCode: customer.delivery_address?.postal_code ?? undefined,
+      DeliveryCity: customer.delivery_address?.city ?? undefined,
+      EmailInvoice: customer.invoice_email ?? undefined,
+      PaymentTerms: customer.payment_terms ?? undefined,
+      PriceList: customer.price_list ?? undefined,
+      InvoiceDiscount: customer.discount ?? undefined,
+      VatNumber: customer.vat_number ?? undefined,
+      VatType: customer.reverse_vat ? 'SEREVERSEDVAT' : 'SEVAT',
+    },
+  };
+
+  const response = await fortnoxPost<FortnoxCustomerCreateResponse>('/customers', body);
+  const fortnoxCustomerNumber = response.Customer.CustomerNumber;
+  const now = new Date().toISOString();
+
+  await supabase
+    .from('crm_customers')
+    .update({
+      fortnox_customer_id: fortnoxCustomerNumber,
+      customer_stage: 'fortnox_customer',
+      sync_status: 'synced',
+      last_synced_at: now,
+      updated_at: now,
+    })
+    .eq('id', customerId);
+
+  return { fortnoxCustomerNumber };
 }
