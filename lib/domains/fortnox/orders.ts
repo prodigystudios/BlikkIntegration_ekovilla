@@ -1,5 +1,6 @@
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { fortnoxPost, fortnoxPut, FortnoxNotConnectedError } from './client';
+import { resolveOurReference } from './helpers';
 
 type WorkOrderRow = {
   id: string;
@@ -45,28 +46,23 @@ function buildOrderRows(lineItems: WorkOrderRow['line_items'], vatPercent: numbe
   });
 }
 
-// Resolves the Fortnox customer number via the work order's linked quote.
-async function resolveCustomerNumber(quoteId: string | null): Promise<string | null> {
-  if (!quoteId) return null;
-  const supabase = getSupabaseAdmin();
-  const { data } = await supabase
-    .from('crm_quotes')
-    .select('customer_id, customer_source')
-    .eq('id', quoteId)
-    .maybeSingle();
+// Resolves the Fortnox customer number from an already-fetched linked quote.
+// Checks customer_source first, then falls back to crm_customers.fortnox_customer_id.
+async function resolveCustomerNumberFromQuote(
+  linkedQuote: { customer_source: { kind?: string; fortnox_customer_id?: string } | null; customer_id: string | null } | null,
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+): Promise<string | null> {
+  if (!linkedQuote) return null;
 
-  if (!data) return null;
-
-  const source = data.customer_source as { kind?: string; fortnox_customer_id?: string } | null;
-  if (source?.kind === 'fortnox' && source.fortnox_customer_id) {
-    return source.fortnox_customer_id;
+  if (linkedQuote.customer_source?.kind === 'fortnox' && linkedQuote.customer_source.fortnox_customer_id) {
+    return linkedQuote.customer_source.fortnox_customer_id;
   }
 
-  if (data.customer_id) {
+  if (linkedQuote.customer_id) {
     const { data: customer } = await supabase
       .from('crm_customers')
       .select('fortnox_customer_id')
-      .eq('id', data.customer_id)
+      .eq('id', linkedQuote.customer_id)
       .maybeSingle();
     if (customer?.fortnox_customer_id) return customer.fortnox_customer_id;
   }
@@ -135,22 +131,14 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
       if (!fortnoxOrderNumber) throw new Error('Fortnox returnerade inget ordernummer vid konvertering');
     } else {
       // No Fortnox offer exists – create a standalone order with full reference data.
-      const customerNumber = await resolveCustomerNumber(workOrder.quote_id);
+      const customerNumber = await resolveCustomerNumberFromQuote(linkedQuote, supabase);
       if (!customerNumber) {
         throw new Error(
           'Ingen Fortnox-kundkoppling hittades. Kunden måste vara synkad till Fortnox.',
         );
       }
 
-      let ourReference: string | undefined;
-      if (linkedQuote?.assigned_to) {
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('full_name')
-          .eq('id', linkedQuote.assigned_to)
-          .maybeSingle();
-        ourReference = (profile as { full_name?: string | null } | null)?.full_name ?? undefined;
-      }
+      const ourReference = await resolveOurReference(linkedQuote?.assigned_to ?? null, supabase);
 
       const snapshot = linkedQuote?.customer_snapshot;
       const deliveryAddress = snapshot?.delivery_address;

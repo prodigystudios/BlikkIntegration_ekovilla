@@ -1,5 +1,6 @@
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { fortnoxPost, fortnoxPut, FortnoxNotConnectedError } from './client';
+import { resolveOurReference } from './helpers';
 
 type QuoteLineItem = {
   article_number?: string | null;
@@ -224,20 +225,26 @@ async function createCustomerInFortnox(quote: QuoteRow): Promise<string> {
           is_primary: true,
         });
       }
+    }
 
-      // Update the quote: link customer_id and mark source as fortnox
-      await supabase
-        .from('crm_quotes')
-        .update({
-          customer_id: newCustomer.id,
-          customer_source: {
-            kind: 'fortnox',
-            sync_intent: 'linked',
-            fortnox_customer_id: customerNumber,
-            fortnox_customer_name: name,
-          },
-        })
-        .eq('id', quote.id);
+    // Always link customer_source on the quote regardless of whether the DB insert succeeded.
+    // This ensures resolveFortnoxCustomerNumber finds the Fortnox number on the next push
+    // and skips createCustomerInFortnox – preventing duplicate Fortnox customers on retry.
+    const { error: quoteUpdateError } = await supabase
+      .from('crm_quotes')
+      .update({
+        ...(newCustomer?.id ? { customer_id: newCustomer.id } : {}),
+        customer_source: {
+          kind: 'fortnox',
+          sync_intent: 'linked',
+          fortnox_customer_id: customerNumber,
+          fortnox_customer_name: name,
+        },
+      })
+      .eq('id', quote.id);
+
+    if (quoteUpdateError) {
+      throw new Error(`[Fortnox] Kunde inte länka customer_source på offert ${quote.id}: ${quoteUpdateError.message}`);
     }
   }
 
@@ -299,15 +306,7 @@ export async function pushQuoteToFortnox(quoteId: string): Promise<PushOfferResu
     const rotEnabled = quote.rot_details?.enabled === true;
     const offerRows = buildOfferRows(lineItems, vatPercent, rotEnabled);
 
-    let ourReference: string | undefined;
-    if (quote.assigned_to) {
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('full_name')
-        .eq('id', quote.assigned_to)
-        .maybeSingle();
-      ourReference = profile?.full_name ?? undefined;
-    }
+    const ourReference = await resolveOurReference(quote.assigned_to, supabase);
 
     const snapshot = quote.customer_snapshot;
     const deliveryAddress = snapshot?.delivery_address;

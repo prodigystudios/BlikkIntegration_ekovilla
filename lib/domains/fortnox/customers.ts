@@ -5,6 +5,23 @@ import type { FortnoxCustomerListResponse, FortnoxCustomer } from './types';
 type FortnoxCustomerDetailResponse = { Customer: FortnoxCustomer };
 
 const PAGE_SIZE = 500;
+const FETCH_CONCURRENCY = 10;
+
+// Runs fn over items in serial batches of batchSize concurrent calls.
+// Avoids hitting Fortnox rate limits when fetching individual customer records.
+async function fetchInBatches<T, R>(
+  items: T[],
+  batchSize: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = [];
+  for (let i = 0; i < items.length; i += batchSize) {
+    const batch = items.slice(i, i + batchSize);
+    const batchResults = await Promise.all(batch.map(fn));
+    results.push(...batchResults);
+  }
+  return results;
+}
 
 export type CustomerSyncResult = {
   created: number;
@@ -66,12 +83,17 @@ export async function syncFortnoxCustomers(triggeredByUserId: string): Promise<C
 
     if (listCustomers.length > 0) {
       // Fetch each customer individually – the list endpoint does not return Type.
-      const customers = await Promise.all(
-        listCustomers.map((c) =>
+      // Batched at FETCH_CONCURRENCY to stay within Fortnox rate limits.
+      const customers = await fetchInBatches(
+        listCustomers,
+        FETCH_CONCURRENCY,
+        (c) =>
           fortnoxGet<FortnoxCustomerDetailResponse>(`/customers/${c.CustomerNumber}`)
             .then((r) => r.Customer)
-            .catch(() => c), // fall back to list data if individual fetch fails
-        ),
+            .catch((err) => {
+              console.warn(`[Fortnox sync] Kunde inte hämta kund ${c.CustomerNumber} individuellt (${(err as Error)?.message ?? err}) → faller tillbaka på listdata, Type saknas`);
+              return c;
+            }),
       );
 
       // Check which fortnox_customer_ids already exist
@@ -100,16 +122,15 @@ export async function syncFortnoxCustomers(triggeredByUserId: string): Promise<C
         totalCreated += rows.length;
       }
 
-      // Update existing rows
-      for (const c of toUpdate) {
-        const updates = mapFortnoxCustomerToRow(c, now);
+      // Update existing rows in one bulk upsert.
+      // mapFortnoxCustomerToRow does not include assigned_to/created_by so those are preserved.
+      if (toUpdate.length > 0) {
+        const rows = toUpdate.map((c) => mapFortnoxCustomerToRow(c, now));
         const { error } = await supabase
           .from('crm_customers')
-          .update(updates)
-          .eq('fortnox_customer_id', c.CustomerNumber);
-
-        if (error) throw new Error(`Kunde inte uppdatera kund ${c.CustomerNumber}: ${error.message}`);
-        totalUpdated++;
+          .upsert(rows, { onConflict: 'fortnox_customer_id' });
+        if (error) throw new Error(`Kunde inte uppdatera Fortnox-kunder: ${error.message}`);
+        totalUpdated += rows.length;
       }
     }
 

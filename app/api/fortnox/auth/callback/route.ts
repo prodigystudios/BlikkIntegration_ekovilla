@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { getCurrentUser } from '@/lib/auth/route';
+import { requireCrmAdmin } from '@/app/api/fortnox/_shared';
 import { exchangeCodeForToken, saveFortnoxIntegration } from '@/lib/domains/fortnox/auth';
 
 const SETTINGS_URL = '/crm/installningar';
@@ -35,8 +35,9 @@ export async function GET(req: Request) {
     );
   }
 
-  const currentUser = await getCurrentUser();
-  if (!currentUser || currentUser.role !== 'admin') {
+  // Use shared helper for role check; redirect on failure instead of returning JSON.
+  const { currentUser, response } = await requireCrmAdmin();
+  if (response || !currentUser) {
     return NextResponse.redirect(
       new URL(`${SETTINGS_URL}?fortnox_error=unauthorized`, req.url),
     );

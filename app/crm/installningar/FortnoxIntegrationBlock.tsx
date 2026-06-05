@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type { FortnoxConnectionStatus } from '@/lib/domains/fortnox/types';
 
 type SyncState = 'idle' | 'loading' | 'success' | 'error';
@@ -153,6 +153,21 @@ function SyncRow({
   message: string | null;
   onSync: () => void;
 }) {
+  const [elapsed, setElapsed] = useState(0);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    if (state === 'loading') {
+      setElapsed(0);
+      intervalRef.current = setInterval(() => setElapsed((s) => s + 1), 1000);
+    } else {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    }
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
+  }, [state]);
+
   return (
     <div className="rounded-xl border border-slate-100 p-3">
       <div className="mb-1 flex items-center justify-between gap-3">
@@ -165,7 +180,7 @@ function SyncRow({
           disabled={state === 'loading'}
           className="shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
         >
-          {state === 'loading' ? 'Synkar...' : 'Synka'}
+          {state === 'loading' ? `Synkar... ${elapsed}s` : 'Synka'}
         </button>
       </div>
       {message && (
