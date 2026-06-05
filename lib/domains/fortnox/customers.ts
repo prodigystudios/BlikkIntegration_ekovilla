@@ -1,15 +1,21 @@
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { fortnoxGet, fortnoxPost, fortnoxPut } from './client';
-import type { FortnoxCustomerListResponse, FortnoxCustomer } from './types';
+import type {
+  FortnoxCustomerListResponse,
+  FortnoxCustomer,
+  FortnoxTermsOfPaymentListResponse,
+  FortnoxPriceListResponse,
+} from './types';
 
 type FortnoxCustomerDetailResponse = { Customer: FortnoxCustomer };
 
 const PAGE_SIZE = 500;
 const FETCH_CONCURRENCY = 10;
 
-// Runs fn over items in serial batches of batchSize concurrent calls.
-// Avoids hitting Fortnox rate limits when fetching individual customer records.
-async function fetchInBatches<T, R>(
+// Runs fn over items in serial batches of batchSize concurrent calls. Used for
+// both reads (per-customer GETs) and writes (per-customer UPDATEs) to stay within
+// Fortnox rate limits / avoid flooding the DB with concurrent statements.
+async function runInBatches<T, R>(
   items: T[],
   batchSize: number,
   fn: (item: T) => Promise<R>,
@@ -96,7 +102,7 @@ export async function syncFortnoxCustomers(triggeredByUserId: string): Promise<C
     if (listCustomers.length > 0) {
       // Fetch each customer individually – the list endpoint does not return Type.
       // Batched at FETCH_CONCURRENCY to stay within Fortnox rate limits.
-      const customers = await fetchInBatches(
+      const customers = await runInBatches(
         listCustomers,
         FETCH_CONCURRENCY,
         (c) =>
@@ -139,7 +145,7 @@ export async function syncFortnoxCustomers(triggeredByUserId: string): Promise<C
       // INSERT and fail the NOT NULL constraint on assigned_to/created_by, which
       // mapFortnoxCustomerToRow intentionally omits to preserve ownership.
       if (toUpdate.length > 0) {
-        await fetchInBatches(toUpdate, FETCH_CONCURRENCY, async (c) => {
+        await runInBatches(toUpdate, FETCH_CONCURRENCY, async (c) => {
           const { error } = await supabase
             .from('crm_customers')
             .update(mapFortnoxCustomerToRow(c, now))
@@ -169,11 +175,63 @@ export async function searchFortnoxCustomersLive(query: string): Promise<Fortnox
 
 type FortnoxCustomerWriteResponse = { Customer: FortnoxCustomer };
 
+type FortnoxAddress = { street: string | null; postal_code: string | null; city: string | null } | null;
+
+// The subset of a crm_customers row that maps to the Fortnox Customer payload.
+// Defined explicitly (rather than `any`) so the field mapping stays type-checked –
+// this is the exact mapping that caused the VatType/VATType field-name bug.
+export type FortnoxCustomerSource = {
+  customer_type: 'business' | 'private' | string;
+  company_name: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  organization_number: string | null;
+  email: string | null;
+  phone: string | null;
+  mobile: string | null;
+  invoice_address: FortnoxAddress;
+  delivery_address: FortnoxAddress;
+  invoice_email: string | null;
+  payment_terms: string | null;
+  price_list: string | null;
+  discount: number | null;
+  vat_number: string | null;
+  reverse_vat: boolean | null;
+  fortnox_customer_id: string | null;
+};
+
+// Fields that map into the Fortnox Customer payload. Used to decide whether an
+// update actually needs to be pushed to Fortnox (changes to e.g. notes/status/
+// assigned_to are not relevant). visit_address is intentionally absent – it is
+// not part of the Fortnox payload.
+const FORTNOX_SCALAR_FIELDS = [
+  'customer_type', 'company_name', 'first_name', 'last_name', 'organization_number',
+  'email', 'phone', 'mobile', 'invoice_email', 'payment_terms', 'price_list',
+  'discount', 'vat_number', 'reverse_vat',
+] as const;
+const FORTNOX_ADDRESS_FIELDS = ['invoice_address', 'delivery_address'] as const;
+
+// True if any Fortnox-relevant field differs between two customer rows. Lets the
+// update route skip a Fortnox round-trip when an edit touched no synced field.
+export function fortnoxCustomerFieldsChanged(
+  before: Partial<FortnoxCustomerSource> | null | undefined,
+  after: Partial<FortnoxCustomerSource> | null | undefined,
+): boolean {
+  if (!before || !after) return true;
+  for (const f of FORTNOX_SCALAR_FIELDS) {
+    if ((before[f] ?? null) !== (after[f] ?? null)) return true;
+  }
+  for (const f of FORTNOX_ADDRESS_FIELDS) {
+    if (JSON.stringify(before[f] ?? null) !== JSON.stringify(after[f] ?? null)) return true;
+  }
+  return false;
+}
+
 // Build the Fortnox Customer payload from a crm_customers row.
 // Field names must match the Fortnox API exactly (VATType/VATNumber/TermsOfPayment).
 // undefined values are omitted from the JSON body so we never overwrite Fortnox
 // data with blanks on update.
-function buildFortnoxCustomerPayload(customer: any) {
+export function buildFortnoxCustomerPayload(customer: FortnoxCustomerSource) {
   const name =
     customer.customer_type === 'business'
       ? (customer.company_name ?? '')
@@ -201,7 +259,7 @@ function buildFortnoxCustomerPayload(customer: any) {
   };
 }
 
-async function loadCustomerRow(customerId: string) {
+async function loadCustomerRow(customerId: string): Promise<FortnoxCustomerSource> {
   const supabase = getSupabaseAdmin();
   const { data: customer, error } = await supabase
     .from('crm_customers')
@@ -212,7 +270,7 @@ async function loadCustomerRow(customerId: string) {
   if (error || !customer) {
     throw new Error('Kund hittades inte i databasen');
   }
-  return customer;
+  return customer as FortnoxCustomerSource;
 }
 
 // Push a CRM customer to Fortnox. Creates the customer in Fortnox and updates
@@ -280,10 +338,6 @@ export async function updateFortnoxCustomer(customerId: string): Promise<{ fortn
   return { fortnoxCustomerNumber };
 }
 
-type FortnoxTermsOfPaymentListResponse = {
-  TermsOfPayments: { Code: string; Description: string }[];
-};
-
 // List the account's terms-of-payment register from Fortnox so sellers pick a
 // valid Code instead of typing free text (Fortnox rejects unknown codes on the
 // Customer endpoint). Returns [] if Fortnox returns nothing.
@@ -291,10 +345,6 @@ export async function listFortnoxTermsOfPayment(): Promise<{ code: string; descr
   const response = await fortnoxGet<FortnoxTermsOfPaymentListResponse>('/termsofpayments');
   return (response.TermsOfPayments ?? []).map((t) => ({ code: t.Code, description: t.Description }));
 }
-
-type FortnoxPriceListResponse = {
-  PriceLists: { Code: string; Description: string }[];
-};
 
 // List the account's price-list register from Fortnox so the customer form can
 // offer valid codes instead of free text. Requires the `price` scope.

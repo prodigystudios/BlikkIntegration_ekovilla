@@ -97,3 +97,8 @@ export type FortnoxCustomerListResponse = {
     '@CurrentPage': number;
   };
 };
+
+// Register endpoints used to populate customer-form dropdowns with valid codes.
+export type FortnoxRegisterEntry = { Code: string; Description: string };
+export type FortnoxTermsOfPaymentListResponse = { TermsOfPayments: FortnoxRegisterEntry[] };
+export type FortnoxPriceListResponse = { PriceLists: FortnoxRegisterEntry[] };
