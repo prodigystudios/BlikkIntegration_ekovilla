@@ -76,6 +76,10 @@ export type FortnoxCustomer = {
   Mobile: string | null;
   Type: 'COMPANY' | 'PRIVATE' | string;
   Active: boolean;
+  // Visiting address (besöksadress) – a separate register from the main/invoice address.
+  VisitingAddress: string | null;
+  VisitingZipCode: string | null;
+  VisitingCity: string | null;
   // Delivery address
   DeliveryAddress1: string | null;
   DeliveryZipCode: string | null;

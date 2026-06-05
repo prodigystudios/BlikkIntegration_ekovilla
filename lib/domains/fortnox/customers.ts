@@ -50,12 +50,14 @@ function mapFortnoxCustomerToRow(c: FortnoxCustomer, now: string) {
     company_name: isCompany ? (c.Name ?? null) : null,
     first_name: !isCompany ? (c.Name?.split(' ')[0] ?? null) : null,
     last_name: !isCompany ? (c.Name?.split(' ').slice(1).join(' ') || null) : null,
-    organization_number: c.OrganisationNumber ?? null,
+    // OrganisationNumber holds a company's org.nr or a private person's personnummer.
+    organization_number: isCompany ? (c.OrganisationNumber ?? null) : null,
+    personal_number: isCompany ? null : (c.OrganisationNumber ?? null),
     email: c.Email ?? null,
     phone: c.Phone1 ?? null,
     mobile: c.Mobile ?? c.Phone2 ?? null,
-    visit_address: (c.Address1 || c.ZipCode || c.City)
-      ? { street: c.Address1 ?? null, postal_code: c.ZipCode ?? null, city: c.City ?? null }
+    visit_address: (c.VisitingAddress || c.VisitingZipCode || c.VisitingCity)
+      ? { street: c.VisitingAddress ?? null, postal_code: c.VisitingZipCode ?? null, city: c.VisitingCity ?? null }
       : null,
     delivery_address: (c.DeliveryAddress1 || c.DeliveryZipCode || c.DeliveryCity)
       ? { street: c.DeliveryAddress1 ?? null, postal_code: c.DeliveryZipCode ?? null, city: c.DeliveryCity ?? null }
@@ -186,9 +188,11 @@ export type FortnoxCustomerSource = {
   first_name: string | null;
   last_name: string | null;
   organization_number: string | null;
+  personal_number: string | null;
   email: string | null;
   phone: string | null;
   mobile: string | null;
+  visit_address: FortnoxAddress;
   invoice_address: FortnoxAddress;
   delivery_address: FortnoxAddress;
   invoice_email: string | null;
@@ -202,14 +206,15 @@ export type FortnoxCustomerSource = {
 
 // Fields that map into the Fortnox Customer payload. Used to decide whether an
 // update actually needs to be pushed to Fortnox (changes to e.g. notes/status/
-// assigned_to are not relevant). visit_address is intentionally absent – it is
-// not part of the Fortnox payload.
+// assigned_to are not relevant). personal_number is included because it maps to
+// OrganisationNumber for private customers; visit_address maps to the Fortnox
+// VisitingAddress register.
 const FORTNOX_SCALAR_FIELDS = [
   'customer_type', 'company_name', 'first_name', 'last_name', 'organization_number',
-  'email', 'phone', 'mobile', 'invoice_email', 'payment_terms', 'price_list',
-  'discount', 'vat_number', 'reverse_vat',
+  'personal_number', 'email', 'phone', 'mobile', 'invoice_email', 'payment_terms',
+  'price_list', 'discount', 'vat_number', 'reverse_vat',
 ] as const;
-const FORTNOX_ADDRESS_FIELDS = ['invoice_address', 'delivery_address'] as const;
+const FORTNOX_ADDRESS_FIELDS = ['visit_address', 'invoice_address', 'delivery_address'] as const;
 
 // True if any Fortnox-relevant field differs between two customer rows. Lets the
 // update route skip a Fortnox round-trip when an edit touched no synced field.
@@ -232,21 +237,30 @@ export function fortnoxCustomerFieldsChanged(
 // undefined values are omitted from the JSON body so we never overwrite Fortnox
 // data with blanks on update.
 export function buildFortnoxCustomerPayload(customer: FortnoxCustomerSource) {
-  const name =
-    customer.customer_type === 'business'
-      ? (customer.company_name ?? '')
-      : [customer.first_name, customer.last_name].filter(Boolean).join(' ');
+  const isBusiness = customer.customer_type === 'business';
+  const name = isBusiness
+    ? (customer.company_name ?? '')
+    : [customer.first_name, customer.last_name].filter(Boolean).join(' ');
+
+  // Fortnox has no dedicated personal-number field – a private person's
+  // personnummer lives in the same OrganisationNumber field as a company's org.nr.
+  const organisationNumber = isBusiness
+    ? customer.organization_number
+    : customer.personal_number;
 
   return {
     Name: name || undefined,
-    Type: customer.customer_type === 'business' ? 'COMPANY' : 'PRIVATE',
-    OrganisationNumber: customer.organization_number ?? undefined,
+    Type: isBusiness ? 'COMPANY' : 'PRIVATE',
+    OrganisationNumber: organisationNumber ?? undefined,
     Email: customer.email ?? undefined,
     Phone1: customer.phone ?? undefined,
-    Phone2: customer.mobile ?? undefined,
+    Mobile: customer.mobile ?? undefined,
     Address1: customer.invoice_address?.street ?? undefined,
     ZipCode: customer.invoice_address?.postal_code ?? undefined,
     City: customer.invoice_address?.city ?? undefined,
+    VisitingAddress: customer.visit_address?.street ?? undefined,
+    VisitingZipCode: customer.visit_address?.postal_code ?? undefined,
+    VisitingCity: customer.visit_address?.city ?? undefined,
     DeliveryAddress1: customer.delivery_address?.street ?? undefined,
     DeliveryZipCode: customer.delivery_address?.postal_code ?? undefined,
     DeliveryCity: customer.delivery_address?.city ?? undefined,

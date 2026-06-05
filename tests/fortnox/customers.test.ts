@@ -12,9 +12,11 @@ function source(overrides: Partial<FortnoxCustomerSource> = {}): FortnoxCustomer
     first_name: null,
     last_name: null,
     organization_number: '556000-0000',
+    personal_number: null,
     email: 'info@acme.se',
     phone: '08-123',
     mobile: '070-123',
+    visit_address: { street: 'Besöksgatan 3', postal_code: '33344', city: 'Uppsala' },
     invoice_address: { street: 'Gatan 1', postal_code: '11122', city: 'Stockholm' },
     delivery_address: { street: 'Lagervägen 2', postal_code: '22233', city: 'Solna' },
     invoice_email: 'faktura@acme.se',
@@ -59,6 +61,36 @@ describe('buildFortnoxCustomerPayload', () => {
     expect(payload.Name).toBe('Anna Svensson');
   });
 
+  it('skickar org.nr i OrganisationNumber för företag', () => {
+    const payload = buildFortnoxCustomerPayload(
+      source({ customer_type: 'business', organization_number: '556000-0000', personal_number: '900101-1234' }),
+    );
+    expect(payload.OrganisationNumber).toBe('556000-0000');
+  });
+
+  it('skickar personnummer i OrganisationNumber för privatkund', () => {
+    const payload = buildFortnoxCustomerPayload(
+      source({ customer_type: 'private', company_name: null, first_name: 'Anna', last_name: 'Svensson',
+        organization_number: null, personal_number: '900101-1234' }),
+    );
+    expect(payload.OrganisationNumber).toBe('900101-1234');
+  });
+
+  it('skickar mobil i det dedikerade Mobile-fältet (inte Phone2)', () => {
+    const payload = buildFortnoxCustomerPayload(source({ mobile: '070-123' }));
+    expect(payload.Mobile).toBe('070-123');
+    expect(payload).not.toHaveProperty('Phone2');
+  });
+
+  it('mappar besöksadress till Visiting* utan att röra Address1 (fakturaadress)', () => {
+    const payload = buildFortnoxCustomerPayload(source());
+    expect(payload.VisitingAddress).toBe('Besöksgatan 3');
+    expect(payload.VisitingZipCode).toBe('33344');
+    expect(payload.VisitingCity).toBe('Uppsala');
+    // Visiting and Address1 are separate registers – must not bleed into each other.
+    expect(payload.Address1).toBe('Gatan 1');
+  });
+
   it('sätter VATType=SEREVERSEDVAT vid omvänd moms, annars SEVAT', () => {
     expect(buildFortnoxCustomerPayload(source({ reverse_vat: true })).VATType).toBe('SEREVERSEDVAT');
     expect(buildFortnoxCustomerPayload(source({ reverse_vat: false })).VATType).toBe('SEVAT');
@@ -84,11 +116,12 @@ describe('buildFortnoxCustomerPayload', () => {
 
   it('utelämnar tomma fält (undefined) så de inte nollar Fortnox-data vid uppdatering', () => {
     const payload = buildFortnoxCustomerPayload(
-      source({ email: null, vat_number: null, invoice_address: null, delivery_address: null }),
+      source({ email: null, vat_number: null, visit_address: null, invoice_address: null, delivery_address: null }),
     );
     expect(payload.Email).toBeUndefined();
     expect(payload.VATNumber).toBeUndefined();
     expect(payload.Address1).toBeUndefined();
+    expect(payload.VisitingAddress).toBeUndefined();
     expect(payload.DeliveryCity).toBeUndefined();
   });
 });
@@ -102,19 +135,25 @@ describe('fortnoxCustomerFieldsChanged', () => {
     expect(fortnoxCustomerFieldsChanged(source(), source())).toBe(false);
   });
 
-  it('ignorerar fält som inte pushas (t.ex. status/notes/visit_address)', () => {
-    const before = { ...source(), status: 'active', notes: 'a', visit_address: { street: 'X', postal_code: null, city: null } } as any;
-    const after = { ...source(), status: 'inactive', notes: 'b', visit_address: { street: 'Y', postal_code: null, city: null } } as any;
+  it('ignorerar fält som inte pushas (t.ex. status/notes)', () => {
+    const before = { ...source(), status: 'active', notes: 'a' } as any;
+    const after = { ...source(), status: 'inactive', notes: 'b' } as any;
     expect(fortnoxCustomerFieldsChanged(before, after)).toBe(false);
   });
 
   it('returnerar true när ett skalärt Fortnox-fält ändras', () => {
     expect(fortnoxCustomerFieldsChanged(source(), source({ payment_terms: '10' }))).toBe(true);
     expect(fortnoxCustomerFieldsChanged(source(), source({ reverse_vat: true }))).toBe(true);
+    expect(fortnoxCustomerFieldsChanged(source(), source({ personal_number: '900101-1234' }))).toBe(true);
   });
 
   it('returnerar true när en adress ändras (djupjämförelse)', () => {
     const after = source({ invoice_address: { street: 'Gatan 2', postal_code: '11122', city: 'Stockholm' } });
+    expect(fortnoxCustomerFieldsChanged(source(), after)).toBe(true);
+  });
+
+  it('returnerar true när besöksadressen ändras (pushas nu till Visiting*)', () => {
+    const after = source({ visit_address: { street: 'Besöksgatan 9', postal_code: '33344', city: 'Uppsala' } });
     expect(fortnoxCustomerFieldsChanged(source(), after)).toBe(true);
   });
 

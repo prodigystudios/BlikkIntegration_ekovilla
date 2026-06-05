@@ -8,6 +8,7 @@ import FortnoxCodeSelect from './FortnoxCodeSelect';
 import { useToast } from '@/lib/Toast';
 import { crm } from '@/app/crm/lib/crmTokens';
 import { cn } from '@/lib/shared/cn';
+import { formatSwedishIdNumber, isValidSwedishOrgNumber, vatFromOrgNumber } from './customerNumbers';
 
 type CustomerType = 'business' | 'private';
 
@@ -130,6 +131,31 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
     setDraft((c) => ({ ...c, [key]: value }));
   }
 
+  // Switching customer type clears the fields that belong to the other type, so a
+  // private customer never carries an org number / VAT / reverse VAT (all
+  // business-only concepts) and a business customer never carries a personal number.
+  function setCustomerType(type: CustomerType) {
+    setDraft((c) =>
+      type === 'private'
+        ? { ...c, customer_type: type, organization_number: '', vat_number: '', reverse_vat: false }
+        : { ...c, customer_type: type, personal_number: '' },
+    );
+  }
+
+  // Auto-derive the VAT number from the org number for business customers,
+  // but only while the VAT field is still empty so manual edits are preserved.
+  function setOrganizationNumber(value: string) {
+    const formatted = formatSwedishIdNumber(value);
+    setDraft((c) => {
+      const next = { ...c, organization_number: formatted };
+      if (!c.vat_number.trim()) {
+        const derived = vatFromOrgNumber(formatted);
+        if (derived) next.vat_number = derived;
+      }
+      return next;
+    });
+  }
+
   async function handleSubmit() {
     const isB2B = draft.customer_type === 'business';
     if (isB2B && !draft.company_name.trim()) { toast.error('Företagsnamn krävs'); return; }
@@ -231,7 +257,7 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
                   <FieldLabel>Kundtyp</FieldLabel>
                   <Select
                     value={draft.customer_type}
-                    onChange={(e) => set('customer_type', e.target.value as CustomerType)}
+                    onChange={(e) => setCustomerType(e.target.value as CustomerType)}
                   >
                     <option value="business">Företag</option>
                     <option value="private">Privat</option>
@@ -246,7 +272,10 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
                     </div>
                     <div>
                       <FieldLabel>Organisationsnummer</FieldLabel>
-                      <Input value={draft.organization_number} onChange={(e) => set('organization_number', e.target.value)} placeholder="556000-0000" />
+                      <Input value={draft.organization_number} onChange={(e) => setOrganizationNumber(e.target.value)} placeholder="556000-0000" />
+                      {draft.organization_number.replace(/\D/g, '').length === 10 && !isValidSwedishOrgNumber(draft.organization_number) ? (
+                        <p className="mt-1 text-xs text-amber-600">Ogiltigt organisationsnummer – kontrollsiffran stämmer inte.</p>
+                      ) : null}
                     </div>
                   </>
                 ) : (
@@ -263,7 +292,7 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
                     </div>
                     <div>
                       <FieldLabel>Personnummer</FieldLabel>
-                      <Input value={draft.personal_number} onChange={(e) => set('personal_number', e.target.value)} placeholder="ÅÅMMDD-XXXX" />
+                      <Input value={draft.personal_number} onChange={(e) => set('personal_number', formatSwedishIdNumber(e.target.value))} placeholder="ÅÅMMDD-XXXX" />
                     </div>
                   </>
                 )}
@@ -340,20 +369,24 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
                   <FieldLabel>Rabatt (%)</FieldLabel>
                   <Input value={draft.discount} onChange={(e) => set('discount', e.target.value)} placeholder="0" type="number" min="0" max="100" step="0.01" />
                 </div>
-                <div>
-                  <FieldLabel>Momsreg-nummer</FieldLabel>
-                  <Input value={draft.vat_number} onChange={(e) => set('vat_number', e.target.value)} placeholder="SE556000000001" />
-                </div>
+                {isB2B ? (
+                  <div>
+                    <FieldLabel>Momsreg-nummer</FieldLabel>
+                    <Input value={draft.vat_number} onChange={(e) => set('vat_number', e.target.value)} placeholder="SE556000000001" />
+                  </div>
+                ) : null}
               </div>
-              <label className="flex items-center gap-2.5 text-sm text-slate-700 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={draft.reverse_vat}
-                  onChange={(e) => set('reverse_vat', e.target.checked)}
-                  className="h-4 w-4 rounded border-slate-300 accent-emerald-600"
-                />
-                Omvänd skattskyldighet
-              </label>
+              {isB2B ? (
+                <label className="flex items-center gap-2.5 text-sm text-slate-700 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={draft.reverse_vat}
+                    onChange={(e) => set('reverse_vat', e.target.checked)}
+                    className="h-4 w-4 rounded border-slate-300 accent-emerald-600"
+                  />
+                  Omvänd skattskyldighet
+                </label>
+              ) : null}
             </div>
           </CardSection>
 

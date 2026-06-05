@@ -7,6 +7,7 @@ import FortnoxCodeSelect from './FortnoxCodeSelect';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
 import { crm, customerStageLabel, customerStageClass, syncStatusLabel, syncStatusClass, opportunityStatusLabel } from '@/app/crm/lib/crmTokens';
+import { formatSwedishIdNumber, isValidSwedishOrgNumber, vatFromOrgNumber } from './customerNumbers';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -278,6 +279,21 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
     setEditDraft((c) => c ? { ...c, [key]: value } : c);
   }
 
+  // Mask the org number and auto-derive the VAT number from it, but only while the
+  // VAT field is still empty so a manually entered/edited VAT is preserved.
+  function setOrgNumber(value: string) {
+    const formatted = formatSwedishIdNumber(value);
+    setEditDraft((c) => {
+      if (!c) return c;
+      const next = { ...c, organization_number: formatted };
+      if (!c.vat_number.trim()) {
+        const derived = vatFromOrgNumber(formatted);
+        if (derived) next.vat_number = derived;
+      }
+      return next;
+    });
+  }
+
   async function saveEdits() {
     if (!customer || !editDraft) return;
     setSaving(true);
@@ -534,7 +550,10 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
                       </div>
                       <div>
                         <FieldLabel>Organisationsnummer</FieldLabel>
-                        <Input value={editDraft.organization_number} onChange={(e) => setField('organization_number', e.target.value)} placeholder="556000-0000" />
+                        <Input value={editDraft.organization_number} onChange={(e) => setOrgNumber(e.target.value)} placeholder="556000-0000" />
+                        {editDraft.organization_number.replace(/\D/g, '').length === 10 && !isValidSwedishOrgNumber(editDraft.organization_number) ? (
+                          <p className="mt-1 text-xs text-amber-600">Ogiltigt organisationsnummer – kontrollsiffran stämmer inte.</p>
+                        ) : null}
                       </div>
                     </>
                   ) : (
@@ -551,7 +570,7 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
                       </div>
                       <div>
                         <FieldLabel>Personnummer</FieldLabel>
-                        <Input value={editDraft.personal_number} onChange={(e) => setField('personal_number', e.target.value)} placeholder="ÅÅMMDD-XXXX" />
+                        <Input value={editDraft.personal_number} onChange={(e) => setField('personal_number', formatSwedishIdNumber(e.target.value))} placeholder="ÅÅMMDD-XXXX" />
                       </div>
                     </>
                   )}
@@ -606,12 +625,16 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
                   <div><FieldLabel>Betalningsvillkor</FieldLabel><FortnoxCodeSelect value={editDraft.payment_terms} onChange={(v) => setField('payment_terms', v)} endpoint="/api/fortnox/terms-of-payment" emptyLabel="Standard (Fortnox)" placeholder="30 dagar" /></div>
                   <div><FieldLabel>Prislista</FieldLabel><FortnoxCodeSelect value={editDraft.price_list} onChange={(v) => setField('price_list', v)} endpoint="/api/fortnox/price-lists" emptyLabel="Standard (Fortnox)" placeholder="A" /></div>
                   <div><FieldLabel>Rabatt (%)</FieldLabel><Input value={editDraft.discount} onChange={(e) => setField('discount', e.target.value)} placeholder="0" type="number" min="0" max="100" step="0.01" /></div>
-                  <div><FieldLabel>Momsreg-nummer</FieldLabel><Input value={editDraft.vat_number} onChange={(e) => setField('vat_number', e.target.value)} placeholder="SE556…" /></div>
+                  {isB2B ? (
+                    <div><FieldLabel>Momsreg-nummer</FieldLabel><Input value={editDraft.vat_number} onChange={(e) => setField('vat_number', e.target.value)} placeholder="SE556…" /></div>
+                  ) : null}
                 </div>
-                <label className="flex items-center gap-2.5 text-sm text-slate-700 cursor-pointer select-none">
-                  <input type="checkbox" checked={editDraft.reverse_vat} onChange={(e) => setField('reverse_vat', e.target.checked)} className="h-4 w-4 rounded border-slate-300 accent-emerald-600" />
-                  Omvänd skattskyldighet
-                </label>
+                {isB2B ? (
+                  <label className="flex items-center gap-2.5 text-sm text-slate-700 cursor-pointer select-none">
+                    <input type="checkbox" checked={editDraft.reverse_vat} onChange={(e) => setField('reverse_vat', e.target.checked)} className="h-4 w-4 rounded border-slate-300 accent-emerald-600" />
+                    Omvänd skattskyldighet
+                  </label>
+                ) : null}
               </div>
             </Card>
 
