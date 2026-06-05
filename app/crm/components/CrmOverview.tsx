@@ -427,7 +427,7 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
   }, [state.calls, state.goals, state.quotes]);
 
   return (
-    <div className="grid gap-6">
+    <div className="grid grid-cols-1 gap-6">
       {/* Page header */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>

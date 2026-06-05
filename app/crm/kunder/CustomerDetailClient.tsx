@@ -375,7 +375,7 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
 
   if (loading) {
     return (
-      <div className="grid gap-6">
+      <div className="grid grid-cols-1 gap-6">
         <div className="h-7 w-32 animate-pulse rounded-lg bg-slate-100" />
         <div className="h-10 w-72 animate-pulse rounded-xl bg-slate-100" />
         <div className="grid gap-5 lg:grid-cols-[1fr_360px]">

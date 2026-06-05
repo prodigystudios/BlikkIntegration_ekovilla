@@ -450,7 +450,7 @@ export default function WorkOrdersClient() {
   }
 
   return (
-    <div className="grid gap-6">
+    <div className="grid grid-cols-1 gap-6">
       {/* Page header */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>

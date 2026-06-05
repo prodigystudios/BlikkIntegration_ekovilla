@@ -321,7 +321,7 @@ export default function TasksClient() {
   }
 
   return (
-    <div className="grid gap-6">
+    <div className="grid grid-cols-1 gap-6">
 
       {/* ── Header ── */}
       <div className="flex flex-wrap items-center justify-between gap-4">
@@ -360,7 +360,7 @@ export default function TasksClient() {
             placeholder="Sök på titel, prospekt eller källa…"
             className="w-full sm:w-64"
           />
-          <div className="flex flex-1 gap-1.5 overflow-x-auto [-webkit-overflow-scrolling:touch]">
+          <div className="flex min-w-0 flex-1 gap-1.5 overflow-x-auto [-webkit-overflow-scrolling:touch]">
             {([
               ['all', 'Alla'],
               ['open', 'Öppna'],

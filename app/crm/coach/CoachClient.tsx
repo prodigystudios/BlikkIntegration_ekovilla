@@ -365,7 +365,7 @@ export default function CoachClient({ userName }: { userName: string | null }) {
   const selectedContextSummary = selectedContext ? selectedContext.summary.slice(0, 2).join(' · ') : null;
 
   return (
-    <div className="grid gap-6">
+    <div className="grid grid-cols-1 gap-6">
       {/* Page header */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>

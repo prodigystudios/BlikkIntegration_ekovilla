@@ -197,7 +197,7 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
   const isB2B = draft.customer_type === 'business';
 
   return (
-    <div className="grid gap-6">
+    <div className="grid grid-cols-1 gap-6">
 
       {/* ── Header ── */}
       <div>

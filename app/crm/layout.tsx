@@ -28,12 +28,12 @@ export default async function CrmLayout({ children }: { children: ReactNode }) {
 
   return (
     <div
-      className="crm-shell flex"
+      className="crm-shell flex flex-col lg:flex-row"
       style={{ height: 'calc(100dvh - var(--header-base, 56px) - var(--safe-top, 0px))' }}
     >
       <CrmSidebar role={effectiveRole} userName={fullName} userInitial={initial} />
       <main
-        className="min-w-0 flex-1 overflow-auto px-6 py-6"
+        className="min-h-0 min-w-0 flex-1 overflow-auto px-4 py-4 lg:px-6 lg:py-6"
         style={{ backgroundColor: 'var(--crm-content-bg)' }}
       >
         {children}
