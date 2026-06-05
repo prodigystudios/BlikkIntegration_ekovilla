@@ -535,7 +535,7 @@ function Field({
   return (
     <div className={cn('grid gap-1.5', className)} id={fieldId}>
       <label className="grid gap-1.5">
-        <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">{label}</span>
+        <span className="text-xs font-semibold text-slate-600">{label}</span>
         {children}
       </label>
       {error ? (
@@ -1144,46 +1144,36 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   const stepOf = (id: string) => sections.findIndex((s) => s.id === id) + 1;
 
   return (
-    <div className="min-h-screen bg-[#f5f6f8]">
+    <div className="grid gap-6 pb-20 lg:pb-0">
 
-      {/* ── Top bar ── */}
-      <div className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-6xl items-center gap-3 px-6 py-3.5">
-          <button
-            type="button"
-            onClick={handleBack}
-            className="inline-flex items-center gap-1.5 text-sm text-slate-400 transition-colors hover:text-slate-700"
-          >
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-              <path d="M9 2L4 7l5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-            Offerter
-          </button>
-          <span className="text-slate-300">/</span>
-          <span className="truncate text-sm font-semibold text-slate-900">
-            {isEditing ? (draft.project_name || 'Redigera offert') : 'Ny offert'}
-          </span>
-          <div className="ml-auto">
-            <button
-              type="button"
-              onClick={handleBack}
-              className="text-sm text-slate-400 transition-colors hover:text-slate-700"
-            >
-              Avbryt
-            </button>
-          </div>
-        </div>
+      {/* ── Header (matches the customer page) ── */}
+      <div>
+        <button
+          type="button"
+          onClick={handleBack}
+          className="mb-2 inline-flex items-center gap-1.5 text-sm text-slate-500 transition hover:text-slate-800"
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+            <path d="M9 2L4 7l5 5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          Offerter
+        </button>
+        <h1 className={crm.pageTitle}>
+          {isEditing ? (draft.project_name || 'Redigera offert') : 'Ny offert'}
+        </h1>
+        <p className={cn('mt-0.5', crm.pageSubtitle)}>
+          {isEditing ? 'Uppdatera offertens uppgifter och status.' : 'Fyll i uppgifterna nedan för att skapa en ny offert.'}
+        </p>
       </div>
 
       {/* ── Two-column layout ── */}
-      <div className="mx-auto max-w-6xl px-6 pt-8 pb-24 lg:pb-8">
-        <div className="grid gap-6 lg:grid-cols-[1fr_304px]">
+      <div className="grid gap-5 lg:grid-cols-[1fr_304px] lg:items-start">
 
-          {/* ── Left: form card ── */}
-          <div className="grid gap-0 rounded-2xl border border-slate-200 bg-white shadow-sm">
+        {/* ── Left: form sections (each its own card) ── */}
+        <div className="grid gap-5">
 
           {/* ── Section 1: Kund ── */}
-          <div id="section-kund" className="scroll-mt-4 px-8 py-8">
+          <div id="section-kund" className={cn('scroll-mt-6', crm.cardInner)}>
             <SectionHeader
               step={stepOf('section-kund')}
               title="Kund"
@@ -1240,7 +1230,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           </div>
 
           {/* ── Section 2: Offert ── */}
-          <div id="section-offert" className="scroll-mt-4 border-t border-slate-100 px-8 py-8">
+          <div id="section-offert" className={cn('scroll-mt-6', crm.cardInner)}>
             <SectionHeader step={stepOf('section-offert')} title="Offert" />
 
           {isEditing && loadedQuote?.quote_number ? (
@@ -1286,7 +1276,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           </div>
 
           {/* ── Section 3: Rader ── */}
-          <div id="section-rader" className="scroll-mt-4 border-t border-slate-100 px-8 py-8">
+          <div id="section-rader" className={cn('scroll-mt-6', crm.cardInner)}>
             <SectionHeader step={stepOf('section-rader')} title="Produkter & priser" />
 
           {/* Totals bar */}
@@ -1368,7 +1358,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
 
           {/* ── Section 4: ROT (toggled on via the sidebar) ── */}
           {draft.quote_type === 'private' && draft.rot_enabled ? (
-            <div id="section-rot" className="scroll-mt-4 border-t border-slate-100 px-8 py-8">
+            <div id="section-rot" className={cn('scroll-mt-6', crm.cardInner)}>
               <SectionHeader step={stepOf('section-rot')} title="ROT-avdrag" />
               <div className="grid gap-4 md:grid-cols-2">
                 <Field label="ROT-sökande">
@@ -1388,7 +1378,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           ) : null}
 
           {/* ── Section 5: Intern handoff ── */}
-          <div id="section-handoff" className="scroll-mt-4 border-t border-slate-100 px-8 py-8">
+          <div id="section-handoff" className={cn('scroll-mt-6', crm.cardInner)}>
             <SectionHeader step={stepOf('section-handoff')} title="Intern handoff" muted />
             <div className="grid gap-4 md:grid-cols-2">
               <Field label="Önskat installationsdatum">
@@ -1408,7 +1398,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
 
           {/* ── Section 6: Arbetsorder (edit mode) ── */}
           {isEditing && loadedQuote ? (
-            <div id="section-arbetsorder" className="scroll-mt-4 border-t border-slate-100 px-8 py-8">
+            <div id="section-arbetsorder" className={cn('scroll-mt-6', crm.cardInner)}>
               <SectionHeader step={stepOf('section-arbetsorder')} title="Arbetsorder" muted className="mb-4" />
               <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-slate-100 bg-slate-50 px-5 py-4">
                 <span className="text-sm text-slate-700">
@@ -1437,133 +1427,161 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
             </div>
           ) : null}
 
-        </div>{/* end left form card */}
+        </div>{/* end left column */}
 
         {/* ── Right: sticky sidebar ── */}
         <aside className="self-start lg:sticky lg:top-6">
 
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
 
-            {/* Section nav — click to jump, mirrors the form sections + completion */}
-            <nav className="mb-5">
-              <div className="mb-2 flex items-center justify-between">
+            {/* Section nav — desktop only. A jump list is redundant on mobile (you
+                just scroll) and, kept always-open, it ate most of the small viewport. */}
+            <nav className="hidden lg:block">
+              <div className="mb-2.5 flex items-center justify-between">
                 <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Sektioner</span>
                 <span className="text-[11px] font-medium text-slate-400">{doneSteps}/{requiredSections.length} klara</span>
               </div>
-              <ul className="grid gap-0.5">
+              <div className="grid gap-1">
                 {sections.map((section, i) => (
-                  <li key={section.id}>
-                    <button
-                      type="button"
-                      onClick={() => scrollToSection(section.id)}
-                      className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-sm text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-900"
+                  <button
+                    key={section.id}
+                    type="button"
+                    onClick={() => scrollToSection(section.id)}
+                    className="group flex w-full items-center gap-2.5 rounded-lg border border-slate-100 bg-white px-2.5 py-2 text-left text-sm font-medium text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900"
+                  >
+                    <span
+                      className={cn(
+                        'flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[10px] font-bold',
+                        section.done === true
+                          ? 'border-emerald-200 bg-emerald-50 text-emerald-600'
+                          : section.done === false
+                            ? 'border-slate-200 text-slate-400'
+                            : 'border-transparent bg-slate-100 text-slate-400',
+                      )}
                     >
-                      <span
-                        className={cn(
-                          'flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[10px] font-bold',
-                          section.done === true
-                            ? 'border-emerald-200 bg-emerald-50 text-emerald-600'
-                            : section.done === false
-                              ? 'border-slate-200 text-slate-400'
-                              : 'border-transparent bg-slate-100 text-slate-400',
-                        )}
-                      >
-                        {section.done === true ? '✓' : i + 1}
-                      </span>
-                      <span className="min-w-0 truncate">{section.label}</span>
-                    </button>
-                  </li>
+                      {section.done === true ? '✓' : i + 1}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate">{section.label}</span>
+                    <svg
+                      className="shrink-0 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-slate-500"
+                      width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"
+                    >
+                      <path d="M4.5 2.5 8 6l-3.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </button>
                 ))}
-              </ul>
+              </div>
             </nav>
 
-            <div className="mb-3 grid gap-0.5">
-              <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Projekt</span>
-              <p className="text-sm font-semibold leading-5 text-slate-900">
-                {draft.project_name || <span className="text-slate-300">—</span>}
-              </p>
-            </div>
-            <div className="mb-5 grid gap-0.5">
-              <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Kund</span>
-              <p className="text-sm text-slate-700">
-                {sidebarDisplayName || <span className="text-slate-300">—</span>}
-              </p>
-            </div>
+            {/* Divider — hidden on mobile together with the section nav above */}
+            <div className="my-5 hidden border-t border-slate-100 lg:block" />
 
-            {/* Total — prominent */}
-            <div className="mb-5 rounded-xl bg-slate-50 px-4 py-3.5">
-              <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Totalt inkl. moms</span>
-              <p className="mt-1 text-2xl font-bold tracking-tight text-slate-950">
-                {sidebarTotal != null && Number.isFinite(sidebarTotal)
-                  ? formatCurrency(sidebarTotal, 'SEK')
-                  : <span className="text-xl text-slate-300">—</span>}
-              </p>
-              {hasAnyLineItemInput && totals.subtotal > 0 ? (
-                <p className="mt-0.5 text-xs text-slate-400">
-                  {formatCurrency(totals.subtotal, 'SEK')} + {formatCurrency(totals.vat, 'SEK')} moms
+            {/* Summary: projekt + kund + total */}
+            <div className="grid gap-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="grid gap-0.5">
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Projekt</span>
+                  <p className="truncate text-sm font-semibold leading-5 text-slate-900">
+                    {draft.project_name || <span className="text-slate-300">—</span>}
+                  </p>
+                </div>
+                <div className="grid gap-0.5">
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Kund</span>
+                  <p className="truncate text-sm text-slate-700">
+                    {sidebarDisplayName || <span className="text-slate-300">—</span>}
+                  </p>
+                </div>
+              </div>
+
+              {/* Total — prominent */}
+              <div className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3.5">
+                <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Totalt inkl. moms</span>
+                <p className="mt-1 text-2xl font-bold tracking-tight text-slate-950">
+                  {sidebarTotal != null && Number.isFinite(sidebarTotal)
+                    ? formatCurrency(sidebarTotal, 'SEK')
+                    : <span className="text-xl text-slate-300">—</span>}
                 </p>
-              ) : null}
+                {hasAnyLineItemInput && totals.subtotal > 0 ? (
+                  <p className="mt-0.5 text-xs text-slate-400">
+                    {formatCurrency(totals.subtotal, 'SEK')} + {formatCurrency(totals.vat, 'SEK')} moms
+                  </p>
+                ) : null}
+              </div>
             </div>
 
-            {/* Status */}
-            <Field label="Status">
-              <Select value={draft.status} onChange={(e) => setDraft((d) => ({ ...d, status: e.target.value as QuoteItem['status'] }))}>
-                {Object.entries(quoteStatusMeta).map(([value, meta]) => (
-                  <option key={value} value={value}>{meta.label}</option>
-                ))}
-              </Select>
-            </Field>
+            {/* Divider */}
+            <div className="my-5 border-t border-slate-100" />
 
-            <div className="mt-4">
+            {/* Settings: status + follow-up + ROT */}
+            <div className="grid gap-4">
+              <Field label="Status">
+                <Select value={draft.status} onChange={(e) => setDraft((d) => ({ ...d, status: e.target.value as QuoteItem['status'] }))}>
+                  {Object.entries(quoteStatusMeta).map(([value, meta]) => (
+                    <option key={value} value={value}>{meta.label}</option>
+                  ))}
+                </Select>
+              </Field>
+
               <Field label="Följ upp senast">
                 <Input value={draft.follow_up_date} onChange={(e) => setDraft((d) => ({ ...d, follow_up_date: e.target.value }))} type="date" lang="sv-SE" />
               </Field>
-            </div>
 
-            {/* ROT toggle — only relevant for private customers */}
-            {draft.quote_type === 'private' ? (
-              <label className="mt-4 flex cursor-pointer select-none items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50/60 px-3.5 py-2.5">
-                <span className="text-sm font-medium text-slate-700">ROT-avdrag</span>
-                <input
-                  type="checkbox"
-                  checked={draft.rot_enabled}
-                  onChange={(e) => setDraft((d) => ({ ...d, rot_enabled: e.target.checked }))}
-                  className="h-4 w-4 rounded border-slate-300 accent-emerald-600"
-                />
-              </label>
-            ) : null}
+              {/* ROT toggle — only relevant for private customers */}
+              {draft.quote_type === 'private' ? (
+                <label className="flex cursor-pointer select-none items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50/60 px-3.5 py-2.5">
+                  <span className="text-sm font-medium text-slate-700">ROT-avdrag</span>
+                  <input
+                    type="checkbox"
+                    checked={draft.rot_enabled}
+                    onChange={(e) => setDraft((d) => ({ ...d, rot_enabled: e.target.checked }))}
+                    className="h-4 w-4 rounded border-slate-300 accent-emerald-600"
+                  />
+                </label>
+              ) : null}
+            </div>
 
             {/* Divider */}
             <div className="my-5 border-t border-slate-100" />
 
             {/* Validation status */}
             {isReady ? (
-              <div className="mb-4 flex items-center gap-2 text-xs text-emerald-700">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+              <div className="mb-4 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-3 text-sm font-semibold text-emerald-800">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <path d="M3.5 8.5 6.5 11.5 12.5 4.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
                 Redo att spara
               </div>
             ) : (
-              <ul className="mb-4 grid gap-1.5">
-                {issues.map((issue) => {
-                  const targetId = issueFieldIds[issue];
-                  return (
-                    <li key={issue}>
+              <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 p-3">
+                <div className="mb-2 flex items-center gap-2 text-amber-900">
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true" className="shrink-0">
+                    <path d="M8 1.8 15 14H1L8 1.8Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+                    <path d="M8 6.2v3.4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                    <circle cx="8" cy="11.8" r="0.85" fill="currentColor" />
+                  </svg>
+                  <span className="text-xs font-bold uppercase tracking-[0.08em]">{issues.length} att åtgärda</span>
+                </div>
+                <div className="grid gap-0.5">
+                  {issues.map((issue) => {
+                    const targetId = issueFieldIds[issue];
+                    return (
                       <button
+                        key={issue}
                         type="button"
                         onClick={() => targetId && scrollToField(targetId)}
                         className={cn(
-                          'flex w-full items-start gap-1.5 text-left text-xs text-slate-500',
-                          targetId ? 'cursor-pointer hover:text-slate-800' : 'cursor-default',
+                          'flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs font-medium text-amber-900 transition',
+                          targetId ? 'cursor-pointer hover:bg-amber-100' : 'cursor-default',
                         )}
                       >
-                        <span className="mt-1 h-1 w-1 shrink-0 rounded-full bg-amber-400" />
-                        {issue}
-                        {targetId ? <span className="ml-auto shrink-0 text-[10px] text-slate-300">↑</span> : null}
+                        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" />
+                        <span className="min-w-0 flex-1">{issue}</span>
+                        {targetId ? <span className="shrink-0 text-[11px] text-amber-500">↑</span> : null}
                       </button>
-                    </li>
-                  );
-                })}
-              </ul>
+                    );
+                  })}
+                </div>
+              </div>
             )}
 
             <button
@@ -1587,7 +1605,6 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
         </aside>
 
         </div>{/* end two-column grid */}
-      </div>{/* end page wrapper */}
 
       {/* ── Mobile sticky action bar (sidebar handles this on lg+) ── */}
       <div className="fixed inset-x-0 bottom-0 z-30 flex items-center gap-3 border-t border-slate-200 bg-white/95 px-4 py-3 backdrop-blur lg:hidden">
