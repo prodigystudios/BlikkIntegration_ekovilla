@@ -7,6 +7,7 @@ import MetricCard from '../components/MetricCard';
 import Textarea from '../../../components/ui/Textarea';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
+import { crm, customerStageLabel as stageLabel, customerStageClass as stageClass } from '@/app/crm/lib/crmTokens';
 
 type EntitySearchResult = {
   id: string;
@@ -90,17 +91,6 @@ const outcomeMeta: Record<CallItem['outcome'], { label: string; className: strin
   },
 };
 
-const stageLabel: Record<string, string> = {
-  prospect: 'Prospekt',
-  customer: 'Kund',
-  fortnox_customer: 'Fortnox-kund',
-};
-
-const stageClass: Record<string, string> = {
-  prospect: 'border-sky-200 bg-sky-50 text-sky-700',
-  customer: 'border-emerald-200 bg-emerald-50 text-emerald-700',
-  fortnox_customer: 'border-violet-200 bg-violet-50 text-violet-700',
-};
 
 const initialDraft: CallDraft = {
   customer_id: null,
@@ -524,13 +514,13 @@ export default function CallsClient() {
                           <span className="text-xs text-slate-500">{linked?.contact_name || call.contact_name}</span>
                         ) : null}
                       </div>
-                      {standalone ? <span className="rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-semibold text-sky-700">Lead</span> : null}
+                      {standalone ? <span className={cn(crm.badge, 'border-sky-200 bg-sky-50 text-sky-700')}>Lead</span> : null}
                       {linked?.stage ? (
-                        <span className={cn('rounded-full border px-2 py-0.5 text-[11px] font-semibold', stageClass[linked.stage] || 'border-slate-200 bg-slate-50 text-slate-600')}>
-                          {stageLabel[linked.stage] || linked.stage}
+                        <span className={cn(crm.badge, stageClass[linked.stage as keyof typeof stageClass] || 'border-slate-200 bg-slate-50 text-slate-600')}>
+                          {stageLabel[linked.stage as keyof typeof stageLabel] || linked.stage}
                         </span>
                       ) : null}
-                      <span className={cn('rounded-full border px-2 py-0.5 text-[11px] font-semibold', outcomeMeta[call.outcome].className)}>
+                      <span className={cn(crm.badge, outcomeMeta[call.outcome].className)}>
                         {outcomeMeta[call.outcome].label}
                       </span>
                     </div>
@@ -542,7 +532,7 @@ export default function CallsClient() {
                     {meta.length > 0 ? (
                       <div className="flex flex-wrap gap-1.5">
                         {meta.map((m) => (
-                          <span key={m} className={cn('rounded-full border px-2 py-0.5 text-[11px] font-medium', standalone ? 'border-sky-200 bg-sky-50 text-sky-700' : 'border-slate-200 bg-slate-50 text-slate-600')}>
+                          <span key={m} className={cn(crm.badge, standalone ? 'border-sky-200 bg-sky-50 text-sky-700' : 'border-slate-200 bg-slate-50 text-slate-600')}>
                             {m}
                           </span>
                         ))}
@@ -625,13 +615,13 @@ export default function CallsClient() {
             <div className="grid gap-4 rounded-2xl border border-slate-100 bg-slate-50/50 p-4">
               {/* Entity search */}
               <div className="grid gap-2">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Kund eller prospekt</span>
+                <span className={crm.sectionTitle}>Kund eller prospekt</span>
                 {selectedEntity ? (
                   <div className="flex items-center justify-between gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5">
                     <div className="grid gap-0.5">
                       <span className="text-sm font-semibold text-slate-900">{selectedEntity.display_name}</span>
                       <div className="flex flex-wrap gap-1.5">
-                        <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-semibold', stageClass[selectedEntity.customer_stage] || 'border-slate-200 bg-slate-50 text-slate-600')}>
+                        <span className={cn(crm.badge, stageClass[selectedEntity.customer_stage] || 'border-slate-200 bg-slate-50 text-slate-600')}>
                           {stageLabel[selectedEntity.customer_stage] || selectedEntity.customer_stage}
                         </span>
                         {selectedEntity.organization_number ? <span className="text-[11px] text-slate-500">{selectedEntity.organization_number}</span> : null}
@@ -667,7 +657,7 @@ export default function CallsClient() {
                                 {[e.organization_number, e.primary_contact_name, e.city].filter(Boolean).join(' · ')}
                               </span>
                             </div>
-                            <span className={cn('shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold', stageClass[e.customer_stage] || 'border-slate-200 bg-slate-50 text-slate-600')}>
+                            <span className={cn('shrink-0', crm.badge, stageClass[e.customer_stage] || 'border-slate-200 bg-slate-50 text-slate-600')}>
                               {stageLabel[e.customer_stage] || e.customer_stage}
                             </span>
                           </button>
@@ -684,7 +674,7 @@ export default function CallsClient() {
 
               {/* Affärsmöjlighet */}
               <label className="grid gap-1 text-sm text-slate-600">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Affärsmöjlighet (valfritt)</span>
+                <span className={crm.sectionTitle}>Affärsmöjlighet (valfritt)</span>
                 <select
                   value={draft.opportunity_id}
                   onChange={(e) => setDraft((c) => ({ ...c, opportunity_id: e.target.value }))}
@@ -701,7 +691,7 @@ export default function CallsClient() {
               {!draft.customer_id ? (
                 <div className="grid gap-3 rounded-[24px] border border-slate-200 bg-slate-50/80 p-4">
                   <div className="grid gap-1">
-                    <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Ny kontakt</span>
+                    <span className={crm.sectionTitle}>Ny kontakt</span>
                     <p className="m-0 text-sm leading-6 text-slate-600">
                       Hittades ingen kund ovan? Fyll i uppgifterna — du kan lyfta kontakten till prospekt efter samtalet.
                     </p>
@@ -722,7 +712,7 @@ export default function CallsClient() {
 
               {/* Utfall */}
               <div className="grid gap-2">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Utfall</span>
+                <span className={crm.sectionTitle}>Utfall</span>
                 <div className="grid gap-2 sm:grid-cols-2">
                   {Object.entries(outcomeMeta).map(([key, meta]) => {
                     const outcome = key as CallItem['outcome'];

@@ -3,6 +3,8 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Input from '../../../components/ui/Input';
+import Select from '../../../components/ui/Select';
+import FortnoxCodeSelect from './FortnoxCodeSelect';
 import { useToast } from '@/lib/Toast';
 import { crm } from '@/app/crm/lib/crmTokens';
 import { cn } from '@/lib/shared/cn';
@@ -210,14 +212,13 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
               <div className="grid gap-3">
                 <div>
                   <FieldLabel>Kundtyp</FieldLabel>
-                  <select
+                  <Select
                     value={draft.customer_type}
                     onChange={(e) => set('customer_type', e.target.value as CustomerType)}
-                    className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 transition-colors hover:border-slate-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/20"
                   >
                     <option value="business">Företag</option>
                     <option value="private">Privat</option>
-                  </select>
+                  </Select>
                 </div>
 
                 {isB2B ? (
@@ -300,11 +301,23 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 <div>
                   <FieldLabel>Betalningsvillkor</FieldLabel>
-                  <Input value={draft.payment_terms} onChange={(e) => set('payment_terms', e.target.value)} placeholder="30 dagar" />
+                  <FortnoxCodeSelect
+                    value={draft.payment_terms}
+                    onChange={(v) => set('payment_terms', v)}
+                    endpoint="/api/fortnox/terms-of-payment"
+                    emptyLabel="Standard (Fortnox)"
+                    placeholder="30 dagar"
+                  />
                 </div>
                 <div>
                   <FieldLabel>Prislista</FieldLabel>
-                  <Input value={draft.price_list} onChange={(e) => set('price_list', e.target.value)} placeholder="A" />
+                  <FortnoxCodeSelect
+                    value={draft.price_list}
+                    onChange={(v) => set('price_list', v)}
+                    endpoint="/api/fortnox/price-lists"
+                    emptyLabel="Standard (Fortnox)"
+                    placeholder="A"
+                  />
                 </div>
                 <div>
                   <FieldLabel>Rabatt (%)</FieldLabel>

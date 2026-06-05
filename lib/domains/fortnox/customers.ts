@@ -1,5 +1,5 @@
 import { getSupabaseAdmin } from '@/lib/supabase/server';
-import { fortnoxGet, fortnoxPost } from './client';
+import { fortnoxGet, fortnoxPost, fortnoxPut } from './client';
 import type { FortnoxCustomerListResponse, FortnoxCustomer } from './types';
 
 type FortnoxCustomerDetailResponse = { Customer: FortnoxCustomer };
@@ -58,11 +58,11 @@ function mapFortnoxCustomerToRow(c: FortnoxCustomer, now: string) {
       ? { street: c.Address1 ?? null, postal_code: c.ZipCode ?? null, city: c.City ?? null }
       : null,
     invoice_email: c.EmailInvoice ?? null,
-    payment_terms: c.PaymentTerms ?? null,
+    payment_terms: c.TermsOfPayment ?? null,
     price_list: c.PriceList ?? null,
     discount: c.InvoiceDiscount ?? null,
-    vat_number: c.VatNumber ?? null,
-    reverse_vat: c.VatType === 'SEREVERSEDVAT',
+    vat_number: c.VATNumber ?? null,
+    reverse_vat: c.VATType === 'SEREVERSEDVAT',
     fortnox_customer_id: c.CustomerNumber,
     sync_status: 'synced' as const,
     last_synced_at: now,
@@ -134,15 +134,20 @@ export async function syncFortnoxCustomers(triggeredByUserId: string): Promise<C
         totalCreated += rows.length;
       }
 
-      // Update existing rows in one bulk upsert.
-      // mapFortnoxCustomerToRow does not include assigned_to/created_by so those are preserved.
+      // Update existing rows with a real UPDATE per customer (matched on the
+      // unique fortnox_customer_id). An upsert would treat the row as a potential
+      // INSERT and fail the NOT NULL constraint on assigned_to/created_by, which
+      // mapFortnoxCustomerToRow intentionally omits to preserve ownership.
       if (toUpdate.length > 0) {
-        const rows = toUpdate.map((c) => mapFortnoxCustomerToRow(c, now));
-        const { error } = await supabase
-          .from('crm_customers')
-          .upsert(rows, { onConflict: 'fortnox_customer_id' });
-        if (error) throw new Error(`Kunde inte uppdatera Fortnox-kunder: ${error.message}`);
-        totalUpdated += rows.length;
+        await fetchInBatches(toUpdate, FETCH_CONCURRENCY, async (c) => {
+          const { error } = await supabase
+            .from('crm_customers')
+            .update(mapFortnoxCustomerToRow(c, now))
+            .eq('fortnox_customer_id', c.CustomerNumber);
+          if (error) throw new Error(`Kunde inte uppdatera Fortnox-kund ${c.CustomerNumber}: ${error.message}`);
+          return null;
+        });
+        totalUpdated += toUpdate.length;
       }
     }
 
@@ -162,14 +167,42 @@ export async function searchFortnoxCustomersLive(query: string): Promise<Fortnox
   return response.Customers ?? [];
 }
 
-type FortnoxCustomerCreateResponse = { Customer: FortnoxCustomer };
+type FortnoxCustomerWriteResponse = { Customer: FortnoxCustomer };
 
-// Push a CRM customer to Fortnox. Creates the customer in Fortnox and updates
-// our DB record with the returned CustomerNumber. Uses service role – approved
-// use for integration writes that cannot go through the session client.
-export async function createFortnoxCustomer(customerId: string): Promise<{ fortnoxCustomerNumber: string }> {
+// Build the Fortnox Customer payload from a crm_customers row.
+// Field names must match the Fortnox API exactly (VATType/VATNumber/TermsOfPayment).
+// undefined values are omitted from the JSON body so we never overwrite Fortnox
+// data with blanks on update.
+function buildFortnoxCustomerPayload(customer: any) {
+  const name =
+    customer.customer_type === 'business'
+      ? (customer.company_name ?? '')
+      : [customer.first_name, customer.last_name].filter(Boolean).join(' ');
+
+  return {
+    Name: name || undefined,
+    Type: customer.customer_type === 'business' ? 'COMPANY' : 'PRIVATE',
+    OrganisationNumber: customer.organization_number ?? undefined,
+    Email: customer.email ?? undefined,
+    Phone1: customer.phone ?? undefined,
+    Phone2: customer.mobile ?? undefined,
+    Address1: customer.invoice_address?.street ?? undefined,
+    ZipCode: customer.invoice_address?.postal_code ?? undefined,
+    City: customer.invoice_address?.city ?? undefined,
+    DeliveryAddress1: customer.delivery_address?.street ?? undefined,
+    DeliveryZipCode: customer.delivery_address?.postal_code ?? undefined,
+    DeliveryCity: customer.delivery_address?.city ?? undefined,
+    EmailInvoice: customer.invoice_email ?? undefined,
+    TermsOfPayment: customer.payment_terms ?? undefined,
+    PriceList: customer.price_list ?? undefined,
+    InvoiceDiscount: customer.discount ?? undefined,
+    VATNumber: customer.vat_number ?? undefined,
+    VATType: customer.reverse_vat ? 'SEREVERSEDVAT' : 'SEVAT',
+  };
+}
+
+async function loadCustomerRow(customerId: string) {
   const supabase = getSupabaseAdmin();
-
   const { data: customer, error } = await supabase
     .from('crm_customers')
     .select('*')
@@ -179,36 +212,19 @@ export async function createFortnoxCustomer(customerId: string): Promise<{ fortn
   if (error || !customer) {
     throw new Error('Kund hittades inte i databasen');
   }
+  return customer;
+}
 
-  const name =
-    customer.customer_type === 'business'
-      ? (customer.company_name ?? '')
-      : [customer.first_name, customer.last_name].filter(Boolean).join(' ');
+// Push a CRM customer to Fortnox. Creates the customer in Fortnox and updates
+// our DB record with the returned CustomerNumber. Uses service role – approved
+// use for integration writes that cannot go through the session client.
+export async function createFortnoxCustomer(customerId: string): Promise<{ fortnoxCustomerNumber: string }> {
+  const supabase = getSupabaseAdmin();
+  const customer = await loadCustomerRow(customerId);
 
-  const body = {
-    Customer: {
-      Name: name || undefined,
-      Type: customer.customer_type === 'business' ? 'COMPANY' : 'PRIVATE',
-      OrganisationNumber: customer.organization_number ?? undefined,
-      Email: customer.email ?? undefined,
-      Phone1: customer.phone ?? undefined,
-      Phone2: customer.mobile ?? undefined,
-      Address1: customer.invoice_address?.street ?? undefined,
-      ZipCode: customer.invoice_address?.postal_code ?? undefined,
-      City: customer.invoice_address?.city ?? undefined,
-      DeliveryAddress1: customer.delivery_address?.street ?? undefined,
-      DeliveryZipCode: customer.delivery_address?.postal_code ?? undefined,
-      DeliveryCity: customer.delivery_address?.city ?? undefined,
-      EmailInvoice: customer.invoice_email ?? undefined,
-      PaymentTerms: customer.payment_terms ?? undefined,
-      PriceList: customer.price_list ?? undefined,
-      InvoiceDiscount: customer.discount ?? undefined,
-      VatNumber: customer.vat_number ?? undefined,
-      VatType: customer.reverse_vat ? 'SEREVERSEDVAT' : 'SEVAT',
-    },
-  };
-
-  const response = await fortnoxPost<FortnoxCustomerCreateResponse>('/customers', body);
+  const response = await fortnoxPost<FortnoxCustomerWriteResponse>('/customers', {
+    Customer: buildFortnoxCustomerPayload(customer),
+  });
   const fortnoxCustomerNumber = response.Customer.CustomerNumber;
   const now = new Date().toISOString();
 
@@ -224,4 +240,65 @@ export async function createFortnoxCustomer(customerId: string): Promise<{ fortn
     .eq('id', customerId);
 
   return { fortnoxCustomerNumber };
+}
+
+// Push updates for an already-synced CRM customer back to Fortnox.
+// Requires fortnox_customer_id to be set – otherwise there is nothing to update.
+// Marks sync_status as 'failed' and re-throws if Fortnox rejects the update, so
+// the customer is flagged for re-sync rather than silently diverging.
+export async function updateFortnoxCustomer(customerId: string): Promise<{ fortnoxCustomerNumber: string }> {
+  const supabase = getSupabaseAdmin();
+  const customer = await loadCustomerRow(customerId);
+
+  const fortnoxCustomerNumber = customer.fortnox_customer_id;
+  if (!fortnoxCustomerNumber) {
+    throw new Error('Kunden saknar Fortnox-koppling och kan inte uppdateras i Fortnox');
+  }
+
+  const now = new Date().toISOString();
+  try {
+    await fortnoxPut<FortnoxCustomerWriteResponse>(`/customers/${fortnoxCustomerNumber}`, {
+      Customer: buildFortnoxCustomerPayload(customer),
+    });
+  } catch (err) {
+    await supabase
+      .from('crm_customers')
+      .update({ sync_status: 'failed', updated_at: now })
+      .eq('id', customerId);
+    throw err;
+  }
+
+  await supabase
+    .from('crm_customers')
+    .update({
+      sync_status: 'synced',
+      last_synced_at: now,
+      updated_at: now,
+    })
+    .eq('id', customerId);
+
+  return { fortnoxCustomerNumber };
+}
+
+type FortnoxTermsOfPaymentListResponse = {
+  TermsOfPayments: { Code: string; Description: string }[];
+};
+
+// List the account's terms-of-payment register from Fortnox so sellers pick a
+// valid Code instead of typing free text (Fortnox rejects unknown codes on the
+// Customer endpoint). Returns [] if Fortnox returns nothing.
+export async function listFortnoxTermsOfPayment(): Promise<{ code: string; description: string }[]> {
+  const response = await fortnoxGet<FortnoxTermsOfPaymentListResponse>('/termsofpayments');
+  return (response.TermsOfPayments ?? []).map((t) => ({ code: t.Code, description: t.Description }));
+}
+
+type FortnoxPriceListResponse = {
+  PriceLists: { Code: string; Description: string }[];
+};
+
+// List the account's price-list register from Fortnox so the customer form can
+// offer valid codes instead of free text. Requires the `price` scope.
+export async function listFortnoxPriceLists(): Promise<{ code: string; description: string }[]> {
+  const response = await fortnoxGet<FortnoxPriceListResponse>('/pricelists');
+  return (response.PriceLists ?? []).map((p) => ({ code: p.Code, description: p.Description }));
 }

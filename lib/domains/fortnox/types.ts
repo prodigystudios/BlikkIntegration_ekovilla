@@ -82,11 +82,11 @@ export type FortnoxCustomer = {
   DeliveryCity: string | null;
   // Billing fields
   EmailInvoice: string | null;
-  PaymentTerms: string | null;
+  TermsOfPayment: string | null;
   PriceList: string | null;
   InvoiceDiscount: number | null;
-  VatNumber: string | null;
-  VatType: 'SEVAT' | 'SEREVERSEDVAT' | string | null;
+  VATNumber: string | null;
+  VATType: 'SEVAT' | 'SEREVERSEDVAT' | string | null;
 };
 
 export type FortnoxCustomerListResponse = {

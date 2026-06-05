@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Input from '../../../components/ui/Input';
+import FortnoxCodeSelect from './FortnoxCodeSelect';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
 import { crm, customerStageLabel, customerStageClass, syncStatusLabel, syncStatusClass, opportunityStatusLabel } from '@/app/crm/lib/crmTokens';
@@ -167,7 +168,7 @@ function AddressEditColumn({
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export default function CustomerDetailClient({ customerId }: { customerId: string }) {
+export default function CustomerDetailClient({ customerId, fortnoxConnected }: { customerId: string; fortnoxConnected: boolean }) {
   const router = useRouter();
   const toast = useToast();
 
@@ -178,6 +179,7 @@ export default function CustomerDetailClient({ customerId }: { customerId: strin
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [editDraft, setEditDraft] = useState<EditDraft | null>(null);
+  const [pushingFortnox, setPushingFortnox] = useState(false);
 
   const [contacts, setContacts] = useState<CustomerContact[]>([]);
   const [addingContact, setAddingContact] = useState(false);
@@ -299,9 +301,31 @@ export default function CustomerDetailClient({ customerId }: { customerId: strin
       const updated: Customer = json.data?.item;
       if (updated) { setCustomer(updated); setContacts(updated.contacts || []); }
       setEditing(false);
-      toast.success('Kund uppdaterad');
+      if (json.data?.fortnox_error) {
+        toast.error(`Kund uppdaterad men Fortnox-synk misslyckades: ${json.data.fortnox_error}`);
+      } else {
+        toast.success('Kund uppdaterad');
+      }
     } catch { toast.error('Fel vid uppdatering'); }
     finally { setSaving(false); }
+  }
+
+  async function pushToFortnox() {
+    if (!customer) return;
+    setPushingFortnox(true);
+    try {
+      const res = await fetch(`/api/crm/customers/${customer.id}/fortnox`, { method: 'POST' });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte skapa kund i Fortnox'); return; }
+      const updated: Customer = json.data?.item;
+      if (updated) { setCustomer(updated); setContacts(updated.contacts || []); }
+      if (json.data?.fortnox_error) {
+        toast.error(`Fortnox-push misslyckades: ${json.data.fortnox_error}`);
+      } else {
+        toast.success(updated?.fortnox_customer_id ? `Kund skapad i Fortnox (#${updated.fortnox_customer_id})` : 'Kund synkad med Fortnox');
+      }
+    } catch { toast.error('Fel vid Fortnox-push'); }
+    finally { setPushingFortnox(false); }
   }
 
   async function saveContact() {
@@ -570,8 +594,8 @@ export default function CustomerDetailClient({ customerId }: { customerId: strin
               <SectionTitle>Fakturainställningar</SectionTitle>
               <div className="grid gap-4">
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                  <div><FieldLabel>Betalningsvillkor</FieldLabel><Input value={editDraft.payment_terms} onChange={(e) => setField('payment_terms', e.target.value)} placeholder="30 dagar" /></div>
-                  <div><FieldLabel>Prislista</FieldLabel><Input value={editDraft.price_list} onChange={(e) => setField('price_list', e.target.value)} placeholder="A" /></div>
+                  <div><FieldLabel>Betalningsvillkor</FieldLabel><FortnoxCodeSelect value={editDraft.payment_terms} onChange={(v) => setField('payment_terms', v)} endpoint="/api/fortnox/terms-of-payment" emptyLabel="Standard (Fortnox)" placeholder="30 dagar" /></div>
+                  <div><FieldLabel>Prislista</FieldLabel><FortnoxCodeSelect value={editDraft.price_list} onChange={(v) => setField('price_list', v)} endpoint="/api/fortnox/price-lists" emptyLabel="Standard (Fortnox)" placeholder="A" /></div>
                   <div><FieldLabel>Rabatt (%)</FieldLabel><Input value={editDraft.discount} onChange={(e) => setField('discount', e.target.value)} placeholder="0" type="number" min="0" max="100" step="0.01" /></div>
                   <div><FieldLabel>Momsreg-nummer</FieldLabel><Input value={editDraft.vat_number} onChange={(e) => setField('vat_number', e.target.value)} placeholder="SE556…" /></div>
                 </div>
@@ -766,6 +790,20 @@ export default function CustomerDetailClient({ customerId }: { customerId: strin
 
         {/* Right sidebar */}
         <div className="grid gap-4 lg:sticky lg:top-6">
+          {fortnoxConnected && !customer.fortnox_customer_id ? (
+            <div className="rounded-2xl border border-violet-200 bg-gradient-to-b from-violet-50 to-white p-5">
+              <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.14em] text-violet-500">Fortnox</p>
+              <p className="mb-3 text-xs text-slate-500 leading-relaxed">Den här kunden finns inte i Fortnox ännu. Skapa den för att kunna fakturera.</p>
+              <button
+                type="button"
+                onClick={pushToFortnox}
+                disabled={pushingFortnox}
+                className="inline-flex h-10 w-full items-center justify-center rounded-xl border border-violet-600 bg-gradient-to-b from-violet-500 to-violet-600 text-sm font-semibold text-white shadow-[0_4px_12px_rgba(139,92,246,0.28)] transition hover:brightness-[0.97] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {pushingFortnox ? 'Skapar…' : 'Skapa i Fortnox'}
+              </button>
+            </div>
+          ) : null}
           {historySidebar}
         </div>
       </div>

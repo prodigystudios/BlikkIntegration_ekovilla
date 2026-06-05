@@ -5,8 +5,14 @@ export const FORTNOX_API_BASE = 'https://api.fortnox.se/3';
 export const FORTNOX_TOKEN_URL = 'https://apps.fortnox.se/oauth-v1/token';
 export const FORTNOX_AUTH_URL = 'https://apps.fortnox.se/oauth-v1/auth';
 
-// Scopes required by this integration
-export const FORTNOX_SCOPES = 'article offer order customer';
+// Scopes required by this integration.
+// settings: needed for the terms-of-payment register (/termsofpayments) – per
+//   Fortnox docs, "Terms Of Payments" is under the Settings scope. Must be enabled
+//   on the Fortnox app registration, otherwise authorization fails with invalid_scope.
+// price: needed for the price-list register (/pricelists).
+// NOTE: changing this requires reconnecting Fortnox – existing tokens keep their
+// originally-granted scopes until a new authorization is performed.
+export const FORTNOX_SCOPES = 'article customer order offer invoice price settings';
 
 export class FortnoxNotConnectedError extends Error {
   constructor() {
