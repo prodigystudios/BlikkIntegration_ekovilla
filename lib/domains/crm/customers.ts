@@ -20,8 +20,18 @@ export const crmCustomerSelect = `
   first_name,
   last_name,
   personal_number,
+  email,
+  phone,
+  mobile,
   visit_address,
+  delivery_address,
   invoice_address,
+  invoice_email,
+  payment_terms,
+  price_list,
+  discount,
+  vat_number,
+  reverse_vat,
   fortnox_customer_id,
   sync_status,
   last_synced_at,
@@ -62,8 +72,18 @@ export type CreateCrmCustomerInput = {
   first_name?: string | null;
   last_name?: string | null;
   personal_number?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  mobile?: string | null;
   visit_address?: CrmAddress | null;
+  delivery_address?: CrmAddress | null;
   invoice_address?: CrmAddress | null;
+  invoice_email?: string | null;
+  payment_terms?: string | null;
+  price_list?: string | null;
+  discount?: number | null;
+  vat_number?: string | null;
+  reverse_vat?: boolean;
   fortnox_customer_id?: string | null;
   sync_status?: CrmCustomerSyncStatus;
   source?: string | null;
@@ -80,8 +100,18 @@ export type UpdateCrmCustomerInput = {
   first_name?: string | null;
   last_name?: string | null;
   personal_number?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  mobile?: string | null;
   visit_address?: CrmAddress | null;
+  delivery_address?: CrmAddress | null;
   invoice_address?: CrmAddress | null;
+  invoice_email?: string | null;
+  payment_terms?: string | null;
+  price_list?: string | null;
+  discount?: number | null;
+  vat_number?: string | null;
+  reverse_vat?: boolean;
   fortnox_customer_id?: string | null;
   sync_status?: CrmCustomerSyncStatus;
   last_synced_at?: string | null;

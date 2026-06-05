@@ -80,28 +80,94 @@ export default function CrmSidebar({ role, userName, userInitial = 'U' }: CrmSid
   const pathname = usePathname();
   const items = getVisibleCrmNavItems(role);
   const [pendingHref, setPendingHref] = useState<string | null>(null);
+  const [mobileOpen, setMobileOpen] = useState(false);
 
+  // Reset pending state and close the mobile drawer whenever navigation completes.
   useEffect(() => {
     setPendingHref(null);
+    setMobileOpen(false);
   }, [pathname]);
 
+  // Close the mobile drawer on Escape.
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMobileOpen(false);
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [mobileOpen]);
+
   return (
-    <aside
-      aria-label="CRM-navigation"
-      className="crm-sidebar sticky top-0 flex h-[calc(100dvh-var(--header-base,56px)-var(--safe-top,0px))] w-56 shrink-0 flex-col overflow-y-auto"
-      style={{ backgroundColor: 'var(--crm-sidebar-bg)' }}
-    >
+    <>
+      {/* Mobile top bar (hidden on desktop) */}
+      <div
+        className="flex items-center gap-3 px-4 py-2.5 lg:hidden"
+        style={{ backgroundColor: 'var(--crm-sidebar-bg)' }}
+      >
+        <button
+          type="button"
+          onClick={() => setMobileOpen(true)}
+          aria-label="Öppna meny"
+          aria-haspopup="dialog"
+          aria-expanded={mobileOpen}
+          aria-controls="crm-sidebar-nav"
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-white/25 bg-white/10 text-white transition-colors hover:bg-white/20"
+        >
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="12" x2="21" y2="12" /><line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+        </button>
+        <span className="text-sm font-bold text-white">Ekovilla</span>
+        <span className="text-[11px] font-medium" style={{ color: 'var(--crm-sidebar-text-muted)' }}>CRM</span>
+      </div>
+
+      {/* Backdrop (mobile only, when open) */}
+      {mobileOpen && (
+        <button
+          type="button"
+          aria-label="Stäng meny"
+          onClick={() => setMobileOpen(false)}
+          className="fixed inset-0 z-40 bg-black/40 lg:hidden"
+        />
+      )}
+
+      <aside
+        id="crm-sidebar-nav"
+        aria-label="CRM-navigation"
+        className={cn(
+          'crm-sidebar flex w-56 shrink-0 flex-col overflow-y-auto',
+          // Mobile: off-canvas drawer pinned below the global header
+          'fixed left-0 z-50 h-[calc(100dvh-var(--header-base,56px)-var(--safe-top,0px))] top-[calc(var(--header-base,56px)_+_var(--safe-top,0px))] transition-transform duration-300 ease-out',
+          mobileOpen ? 'translate-x-0' : '-translate-x-full',
+          // Desktop: static sticky sidebar (unchanged behavior)
+          'lg:sticky lg:top-0 lg:z-auto lg:translate-x-0 lg:transition-none'
+        )}
+        style={{ backgroundColor: 'var(--crm-sidebar-bg)' }}
+      >
       {/* Logo */}
-      <div className="px-4 pb-3 pt-5">
-        <p className="text-base font-bold leading-tight text-white">Ekovilla</p>
-        <p className="text-[11px] font-medium" style={{ color: 'var(--crm-sidebar-text-muted)' }}>CRM System</p>
+      <div className="flex items-center justify-between px-4 pb-3 pt-5">
+        <div>
+          <p className="text-base font-bold leading-tight text-white">Ekovilla</p>
+          <p className="text-[11px] font-medium" style={{ color: 'var(--crm-sidebar-text-muted)' }}>CRM System</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setMobileOpen(false)}
+          aria-label="Stäng meny"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-white transition-colors hover:bg-white/10 lg:hidden"
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
       </div>
 
       <div className="mx-3 mb-3 h-px" style={{ backgroundColor: 'var(--crm-sidebar-border)' }} />
 
       {/* Nav items */}
       <nav className="flex-1 px-2">
-        <ul role="list" className="grid gap-0.5">
+        <ul role="list" className="grid list-none gap-0.5 p-0">
           {items.map((item) => {
             const active = item.href === '/crm'
               ? pathname === '/crm'
@@ -159,6 +225,7 @@ export default function CrmSidebar({ role, userName, userInitial = 'U' }: CrmSid
           <p className="truncate text-[11px]" style={{ color: 'var(--crm-sidebar-text-muted)' }}>CRM</p>
         </div>
       </div>
-    </aside>
+      </aside>
+    </>
   );
 }

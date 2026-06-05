@@ -6,6 +6,8 @@ import EmptyState from '../../../components/ui/EmptyState';
 import MetricCard from './MetricCard';
 import type { UserRole } from '@/lib/roles';
 import { getVisibleCrmNavItems } from '../_lib/nav';
+import { cn } from '@/lib/shared/cn';
+import { crm } from '@/app/crm/lib/crmTokens';
 
 type ProspectItem = {
   id: string;
@@ -425,24 +427,24 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
   }, [state.calls, state.goals, state.quotes]);
 
   return (
-    <div className="grid gap-6">
+    <div className="grid grid-cols-1 gap-6">
       {/* Page header */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="m-0 text-2xl font-bold tracking-tight text-slate-900">Dashboard Overview</h1>
-          <p className="m-0 mt-1 text-sm text-slate-500">Välkommen tillbaka! Här är vad som händer i ditt CRM idag.</p>
+          <h1 className={cn('m-0', crm.pageTitle)}>CRM-översikt</h1>
+          <p className={cn('m-0 mt-1', crm.pageSubtitle)}>Välkommen tillbaka! Här är vad som händer i ditt CRM idag.</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Link
             href="/crm/samtal"
-            className="inline-flex items-center rounded-xl px-4 py-2 text-sm font-semibold text-white no-underline transition"
+            className={cn(crm.primaryButton, 'no-underline')}
             style={{ backgroundColor: 'var(--crm-primary)' }}
           >
             + Logga samtal
           </Link>
           <Link
             href="/crm/uppgifter"
-            className="inline-flex items-center rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 no-underline transition hover:border-slate-300"
+            className={cn(crm.ghostButton, 'no-underline')}
           >
             Öppna uppgifter
           </Link>
@@ -502,11 +504,11 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(280px,0.6fr)]">
         <div className="grid gap-4">
           {/* Next actions */}
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_2px_12px_rgba(0,0,0,0.04)]">
+          <div className={crm.cardInner}>
             <div className="mb-4 flex items-center justify-between gap-3">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">Att agera på</p>
-                <h2 className="m-0 mt-0.5 text-lg font-bold tracking-tight text-slate-900">Nästa fokus</h2>
+                <p className={cn('mb-1', crm.sectionTitle)}>Att agera på</p>
+                <h2 className="m-0 text-lg font-bold tracking-tight text-slate-900">Nästa fokus</h2>
               </div>
               {!loading && (
                 <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">
@@ -550,7 +552,7 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
                         <strong className="block truncate text-sm font-semibold text-slate-900">{prospect.company_name}</strong>
                         <p className="m-0 truncate text-xs text-slate-500">{[prospect.contact_name, prospect.city, prospect.source].filter(Boolean).join(' · ') || 'Ingen extra info'}</p>
                       </div>
-                      <span className="shrink-0 rounded-full border border-slate-200 bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">{prospectStatusLabel[prospect.status]}</span>
+                      <span className="shrink-0 rounded-full border border-slate-200 bg-slate-100 px-2.5 py-0.5 text-[11px] font-semibold text-slate-600">{prospectStatusLabel[prospect.status]}</span>
                     </Link>
                   ))}
                 </div>
@@ -566,7 +568,7 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
                         <strong className="block truncate text-sm font-semibold text-slate-900">{getCallCompanyName(call)}</strong>
                         <p className="m-0 truncate text-xs text-slate-500">{formatDateTime(call.call_at)}</p>
                       </div>
-                      <span className="shrink-0 rounded-full border border-slate-200 bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">{outcomeLabel[call.outcome]}</span>
+                      <span className="shrink-0 rounded-full border border-slate-200 bg-slate-100 px-2.5 py-0.5 text-[11px] font-semibold text-slate-600">{outcomeLabel[call.outcome]}</span>
                     </Link>
                   ))}
                 </div>
@@ -582,7 +584,7 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
                         <strong className="block truncate text-sm font-semibold text-slate-900">{task.title}</strong>
                         <p className="m-0 truncate text-xs text-slate-500">{formatDate(task.due_date)}</p>
                       </div>
-                      <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-semibold ${taskPriorityClass[task.priority]}`}>{taskPriorityLabel[task.priority]}</span>
+                      <span className={`shrink-0 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${taskPriorityClass[task.priority]}`}>{taskPriorityLabel[task.priority]}</span>
                     </Link>
                   ))}
                 </div>
@@ -598,7 +600,7 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
                         <strong className="block truncate text-sm font-semibold text-slate-900">{quote.project_name}</strong>
                         <p className="m-0 truncate text-xs text-slate-500">{getQuoteCustomerName(quote)} · {formatCurrency(quote.amount, quote.currency_code)}</p>
                       </div>
-                      <span className="shrink-0 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-800">{quoteStatusLabel[quote.status]}</span>
+                      <span className="shrink-0 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[11px] font-semibold text-amber-700">{quoteStatusLabel[quote.status]}</span>
                     </Link>
                   ))}
                 </div>
@@ -610,9 +612,9 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
         {/* Right column: status + leaderboard */}
         <div className="grid gap-4">
           {/* Status strips */}
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_2px_12px_rgba(0,0,0,0.04)]">
-            <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">Statusbild</p>
-            <h2 className="m-0 mb-4 mt-0.5 text-lg font-bold tracking-tight text-slate-900">Fördelning och mål</h2>
+          <div className={crm.cardInner}>
+            <p className={cn('mb-1', crm.sectionTitle)}>Statusbild</p>
+            <h2 className="m-0 mb-4 text-lg font-bold tracking-tight text-slate-900">Fördelning och mål</h2>
             {loading ? <OverviewLoadingRows /> : (
               <div className="grid gap-3">
                 <StatusStrip label="Öppna prospekt" value={summary.pipelineProspects} tone="teal" />
@@ -636,8 +638,8 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
           {items.map((item) => (
             <Link key={item.href} href={item.href} className="no-underline">
-              <div className="rounded-2xl border border-slate-200 bg-white p-4 transition hover:border-slate-300 hover:shadow-[0_4px_16px_rgba(0,0,0,0.06)]">
-                <p className="m-0 text-xs font-semibold uppercase tracking-widest text-slate-400">CRM-sektion</p>
+              <div className={cn(crm.card, 'p-4 transition hover:border-slate-300 hover:shadow-[0_4px_16px_rgba(0,0,0,0.06)]')}>
+                <p className={cn('m-0', crm.sectionTitle)}>CRM-sektion</p>
                 <strong className="mt-1 block text-base font-bold text-slate-900">{item.label}</strong>
                 <p className="m-0 mt-1 text-sm leading-5 text-slate-500">{item.description}</p>
                 <span className="mt-2 block text-sm font-semibold text-emerald-700">Öppna →</span>
@@ -652,7 +654,7 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
 
 function RecentCard({ title, href, loading, children }: { title: string; href: string; loading: boolean; children: React.ReactNode }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_2px_12px_rgba(0,0,0,0.04)]">
+    <div className={crm.cardInner}>
       <div className="mb-3 flex items-center justify-between gap-3">
         <strong className="text-sm font-bold text-slate-900">{title}</strong>
         <Link href={href} className="text-xs font-semibold text-emerald-700 no-underline hover:text-emerald-800">Visa alla</Link>
@@ -722,11 +724,11 @@ function LeaderboardPanel({
   }>;
 }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_2px_12px_rgba(0,0,0,0.04)]">
+    <div className={crm.cardInner}>
       <div className="mb-4 flex items-center justify-between gap-3">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">Teamöversikt</p>
-          <h2 className="m-0 mt-0.5 text-lg font-bold tracking-tight text-slate-900">Topplista</h2>
+          <p className={cn('mb-1', crm.sectionTitle)}>Teamöversikt</p>
+          <h2 className="m-0 text-lg font-bold tracking-tight text-slate-900">Topplista</h2>
         </div>
         <Link href="/crm/installningar" className="text-xs font-semibold text-emerald-700 no-underline hover:text-emerald-800">Justera mål</Link>
       </div>

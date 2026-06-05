@@ -1,6 +1,8 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { createCrmQuote, listCrmQuotesWithFilters } from '@/lib/domains/crm/quotes';
+import { pushQuoteToFortnox } from '@/lib/domains/fortnox/offers';
+import { FortnoxNotConnectedError } from '@/lib/domains/fortnox/client';
 import {
   createCrmQuoteSchema,
   listCrmQuotesQuerySchema,
@@ -66,6 +68,17 @@ export async function POST(req: Request) {
 
     if (error) {
       return routeError(500, 'crm_quote_create_failed', error.message);
+    }
+
+    // Auto-push to Fortnox. Non-fatal: quote creation succeeds regardless.
+    if (data) {
+      try {
+        await pushQuoteToFortnox(data.id);
+      } catch (e) {
+        if (!(e instanceof FortnoxNotConnectedError)) {
+          console.error('[fortnox] Auto-push offert misslyckades:', (e as any)?.message);
+        }
+      }
     }
 
     return ok({ item: data }, 201);

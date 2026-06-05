@@ -2,10 +2,11 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Input from '../../../components/ui/Input';
-import SectionCard from '../../../components/ui/SectionCard';
+import MetricCard from '../components/MetricCard';
 import Textarea from '../../../components/ui/Textarea';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
+import { crm } from '@/app/crm/lib/crmTokens';
 
 type SuggestionStatus = 'pending' | 'approved' | 'rejected';
 
@@ -72,11 +73,11 @@ const statusClass: Record<SuggestionStatus, string> = {
   rejected: 'border-rose-200 bg-rose-50 text-rose-700',
 };
 
-const filterMeta: Record<'all' | SuggestionStatus, { label: string; hint: string; tone: string }> = {
-  pending: { label: 'Väntar', hint: 'Klara för granskning', tone: 'border-amber-200 bg-amber-50 text-amber-800' },
-  approved: { label: 'Godkända', hint: 'Redan till prospekt', tone: 'border-emerald-200 bg-emerald-50 text-emerald-800' },
-  rejected: { label: 'Avvisade', hint: 'Sparade för spårbarhet', tone: 'border-rose-200 bg-rose-50 text-rose-700' },
-  all: { label: 'Alla', hint: 'Hela granskningskön', tone: 'border-slate-300 bg-white text-slate-700' },
+const filterMeta: Record<'all' | SuggestionStatus, { label: string; hint: string }> = {
+  pending:  { label: 'Väntar',   hint: 'Klara för granskning' },
+  approved: { label: 'Godkända', hint: 'Redan till prospekt' },
+  rejected: { label: 'Avvisade', hint: 'Sparade för spårbarhet' },
+  all:      { label: 'Alla',     hint: 'Hela granskningskön' },
 };
 
 function formatDateTime(value: string | null | undefined) {
@@ -257,164 +258,132 @@ export default function AiProspectsClient({ userName }: { userName: string | nul
   }
 
   return (
-    <div className="grid gap-4">
-      <SectionCard className="overflow-hidden border-emerald-300/80 bg-[radial-gradient(circle_at_top_left,_rgba(22,163,74,0.22),_transparent_30%),radial-gradient(circle_at_top_right,_rgba(101,163,13,0.16),_transparent_24%),linear-gradient(135deg,#f6fbf4_0%,#e5f4e8_56%,#f5fbf6_100%)] p-4 shadow-[0_24px_70px_rgba(15,23,42,0.08)] md:p-5 xl:p-6">
-        <div className="grid gap-5">
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
-            <div className="grid gap-3">
-            <div className="inline-flex w-fit items-center rounded-full border border-emerald-200/80 bg-white/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-emerald-900 shadow-[0_8px_18px_rgba(255,255,255,0.35)]">
-              CRM / AI Prospekt
-            </div>
-            <div className="grid gap-1.5">
-              <div className="flex flex-wrap items-center gap-3">
-                <h1 className="m-0 text-[clamp(1.75rem,3vw,2.8rem)] font-bold tracking-[-0.05em] text-slate-950">AI Prospekt</h1>
-                <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-900">Mänsklig granskningskö</div>
-              </div>
-              <p className="m-0 max-w-3xl text-sm text-slate-600">
-                Samla AI-förslag, kvalitetssäkra dem snabbt och släpp bara in det som faktiskt bör bli riktiga prospekt i CRM-flödet.
-              </p>
-            </div>
-            </div>
+    <div className="grid grid-cols-1 gap-6">
+      {/* Page header */}
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className={crm.pageTitle}>AI Prospekt</h1>
+          <p className={cn('mt-1', crm.pageSubtitle)}>
+            Samla AI-förslag, kvalitetssäkra dem snabbt och släpp bara in det som bör bli riktiga prospekt i CRM-flödet.
+          </p>
+        </div>
+        {userName ? (
+          <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700">
+            {userName}
+          </span>
+        ) : null}
+      </div>
 
-            <div className="flex flex-wrap gap-2 lg:justify-end">
-              <div className="rounded-full border border-white/70 bg-white/85 px-3 py-2 text-sm font-semibold text-slate-700 shadow-[0_10px_18px_rgba(15,23,42,0.04)]">
-                {userName || 'CRM-användare'}
-              </div>
-            </div>
+      {/* Metrics */}
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <MetricCard label="Väntar granskning" value={stats.pending} helper="Redo för mänsklig review" />
+        <MetricCard label="Godkända" value={stats.approved} helper="Har blivit riktiga prospekt" />
+        <MetricCard label="Avvisade" value={stats.rejected} helper="Behålls för spårbarhet" />
+        <MetricCard label="Totalt" value={items.length} helper="Alla förslag i kön" />
+      </div>
+
+      {/* Filter + search toolbar */}
+      <div className={crm.card}>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-3">
+          <div className="flex flex-wrap gap-2">
+            {(['pending', 'approved', 'rejected', 'all'] as const).map((value) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setStatus(value)}
+                className={cn(
+                  'rounded-full border px-3 py-1.5 text-sm font-semibold transition',
+                  status === value
+                    ? 'text-white'
+                    : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50',
+                )}
+                style={status === value ? { backgroundColor: 'var(--crm-primary)', borderColor: 'var(--crm-primary)' } : undefined}
+              >
+                {filterMeta[value].label}
+                <span className={cn('ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-bold', status === value ? 'bg-white/20' : 'bg-slate-100 text-slate-500')}>
+                  {filterCounts[value]}
+                </span>
+              </button>
+            ))}
+          </div>
+          <Input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Sök på företag, kontakt, ort eller webb"
+            className="max-w-xs"
+          />
+        </div>
+      </div>
+
+      {error ? (
+        <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div>
+      ) : null}
+
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_420px] xl:items-start">
+        {/* Suggestion queue */}
+        <div className={crm.card}>
+          <div className="border-b border-slate-100 px-5 py-4">
+            <h2 className="m-0 text-base font-bold text-slate-900">Förslagskö</h2>
+            <p className="m-0 mt-0.5 text-xs text-slate-500">Granska inkomna prospektförslag innan de blir en del av ordinarie CRM-flöde.</p>
           </div>
 
-          <div className="grid gap-3 md:grid-cols-4">
-            <div className="rounded-[18px] border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(252,253,252,0.98))] p-3 shadow-[0_16px_30px_rgba(15,23,42,0.08)] ring-1 ring-white/80">
-              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Väntar</div>
-              <div className="mt-1 text-[clamp(1.35rem,2vw,1.8rem)] font-bold tracking-[-0.04em] text-slate-950">{stats.pending}</div>
-              <div className="mt-1 text-[13px] text-slate-500">Redo för mänsklig review</div>
-            </div>
-            <div className="rounded-[18px] border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(252,253,252,0.98))] p-3 shadow-[0_16px_30px_rgba(15,23,42,0.08)] ring-1 ring-white/80">
-              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Godkända</div>
-              <div className="mt-1 text-[clamp(1.35rem,2vw,1.8rem)] font-bold tracking-[-0.04em] text-slate-950">{stats.approved}</div>
-              <div className="mt-1 text-[13px] text-slate-500">Har blivit riktiga prospekt</div>
-            </div>
-            <div className="rounded-[18px] border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(252,253,252,0.98))] p-3 shadow-[0_16px_30px_rgba(15,23,42,0.08)] ring-1 ring-white/80">
-              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Avvisade</div>
-              <div className="mt-1 text-[clamp(1.35rem,2vw,1.8rem)] font-bold tracking-[-0.04em] text-slate-950">{stats.rejected}</div>
-              <div className="mt-1 text-[13px] text-slate-500">Behålls för spårbarhet</div>
-            </div>
-            <div className="rounded-[18px] border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(252,253,252,0.98))] p-3 shadow-[0_16px_30px_rgba(15,23,42,0.08)] ring-1 ring-white/80">
-              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Totalt</div>
-              <div className="mt-1 text-[clamp(1.35rem,2vw,1.8rem)] font-bold tracking-[-0.04em] text-slate-950">{items.length}</div>
-              <div className="mt-1 text-[13px] text-slate-500">Alla förslag i kön</div>
-            </div>
-          </div>
-
-          <div className="grid gap-3 rounded-[24px] border border-white/70 bg-white/75 p-3 shadow-[0_16px_36px_rgba(15,23,42,0.06)] backdrop-blur xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
-            <Input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Sök på företag, kontakt, e-post, ort eller webb"
-              className="max-w-xl"
-            />
-
-            <div className="grid gap-2 rounded-[20px] border border-slate-200/85 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(250,252,250,0.96))] p-2 shadow-[0_14px_30px_rgba(15,23,42,0.05)]">
-              <div className="flex items-center justify-between gap-3 px-2 pt-1">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Sales cockpit</div>
-                <div className="text-xs text-slate-500">{filterCounts[status]} i vy</div>
+          <div className="p-4">
+            {loading ? (
+              <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-5 py-8 text-center text-sm text-slate-500">
+                Laddar AI Prospekt…
               </div>
-              <div className="flex flex-wrap gap-2">
-                {((['pending', 'approved', 'rejected', 'all']) as const).map((value) => {
-                  const active = status === value;
+            ) : items.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-5 py-8 text-center text-sm text-slate-500">
+                Inga förslag matchar filtret ännu.
+              </div>
+            ) : (
+              <div className="grid gap-3">
+                {items.map((item) => {
+                  const active = item.id === selectedId;
                   return (
                     <button
-                      key={value}
+                      key={item.id}
                       type="button"
-                      onClick={() => setStatus(value)}
+                      onClick={() => setSelectedId(item.id)}
                       className={cn(
-                        'grid min-w-[120px] gap-0.5 rounded-[20px] border px-3 py-2 text-left transition',
+                        'relative block w-full rounded-2xl border px-4 py-3 text-left transition',
                         active
-                          ? 'border-emerald-900 bg-emerald-900 text-white shadow-[0_14px_24px_rgba(15,23,42,0.16)]'
-                          : cn(filterMeta[value].tone, 'hover:-translate-y-0.5 hover:shadow-[0_10px_20px_rgba(15,23,42,0.08)]'),
+                          ? 'border-slate-300 bg-slate-50 shadow-[0_2px_8px_rgba(0,0,0,0.06)]'
+                          : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50/60',
                       )}
                     >
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="text-sm font-semibold">{filterMeta[value].label}</span>
-                        <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-bold', active ? 'bg-white/16 text-white' : 'bg-white/80 text-current')}>
-                          {filterCounts[value]}
+                      <span className={cn(
+                        'absolute inset-y-0 left-0 w-1 rounded-l-2xl',
+                        item.status === 'approved' ? 'bg-emerald-400' : item.status === 'rejected' ? 'bg-rose-300' : 'bg-amber-400',
+                      )} />
+                      <div className="flex flex-wrap items-center justify-between gap-2 pl-2">
+                        <strong className="text-sm font-semibold text-slate-900">{item.company_name}</strong>
+                        <span className={cn(crm.badge, active ? 'border-slate-200 bg-white text-slate-700' : statusClass[item.status])}>
+                          {statusLabel[item.status]}
                         </span>
                       </div>
-                      <span className={cn('text-[11px]', active ? 'text-white/80' : 'text-current/70')}>{filterMeta[value].hint}</span>
+                      <div className="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 pl-2 text-xs text-slate-400">
+                        {buildMeta(item).map((entry) => <span key={entry}>{entry}</span>)}
+                      </div>
+                      {item.rationale ? (
+                        <p className="m-0 mt-1.5 pl-2 text-sm leading-5 text-slate-600">{item.rationale}</p>
+                      ) : null}
                     </button>
                   );
                 })}
               </div>
-            </div>
+            )}
           </div>
         </div>
-      </SectionCard>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_420px] xl:items-start">
-        <SectionCard className="grid gap-4 border-emerald-200/65 bg-[linear-gradient(180deg,rgba(250,253,250,0.98),rgba(244,249,245,0.98))] p-4 shadow-[0_18px_38px_rgba(15,23,42,0.06)] md:p-5">
-          <div className="grid gap-1">
-            <div className="grid gap-1">
-              <strong className="text-base font-bold text-slate-950">Förslagskö</strong>
-              <p className="m-0 text-sm leading-6 text-slate-600">Här granskar du inkomna prospektförslag innan de blir en del av ordinarie CRM-flöde.</p>
-            </div>
-          </div>
-
-          {error ? <div className="rounded-[20px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
-
-          {loading ? (
-            <div className="rounded-[24px] border border-dashed border-slate-300 bg-slate-50 px-5 py-8 text-center text-sm text-slate-600">
-              Laddar AI Prospekt…
-            </div>
-          ) : items.length === 0 ? (
-            <div className="rounded-[24px] border border-dashed border-slate-300 bg-slate-50 px-5 py-8 text-center text-sm text-slate-600">
-              Inga förslag matchar filtret ännu.
-            </div>
-          ) : (
-            <div className="grid gap-3">
-              {items.map((item) => {
-                const active = item.id === selectedId;
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => setSelectedId(item.id)}
-                    className={cn(
-                      'relative grid gap-2.5 rounded-[22px] border px-3.5 py-3 text-left shadow-[0_12px_24px_rgba(15,23,42,0.05)] transition-[border-color,box-shadow,transform,background-color]',
-                      active
-                        ? 'border-emerald-300 bg-[linear-gradient(135deg,rgba(237,252,245,0.98)_0%,rgba(255,255,255,0.98)_55%,rgba(240,253,250,0.95)_100%)] shadow-[0_18px_32px_rgba(16,185,129,0.12)] ring-1 ring-emerald-100'
-                        : 'border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#f8fafc_100%)] hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_18px_32px_rgba(15,23,42,0.08)]',
-                    )}
-                  >
-                    <span className={cn('absolute inset-y-0 left-0 w-1.5 rounded-l-[22px]', item.status === 'approved' ? 'bg-emerald-400' : item.status === 'rejected' ? 'bg-rose-300' : 'bg-amber-400')} />
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <strong className="text-[15px] font-bold tracking-[-0.03em] text-slate-950 md:text-base">{item.company_name}</strong>
-                      <span className={cn('rounded-full border px-2.5 py-1 text-[11px] font-semibold', active ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : statusClass[item.status])}>
-                        {statusLabel[item.status]}
-                      </span>
-                    </div>
-                    <div className="flex flex-wrap gap-x-2 gap-y-1 text-xs text-slate-500">
-                      {buildMeta(item).map((entry) => <span key={entry}>{entry}</span>)}
-                    </div>
-                    {item.rationale ? (
-                      <p className="m-0 text-sm leading-6 text-slate-600">
-                        {item.rationale}
-                      </p>
-                    ) : null}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </SectionCard>
-
+        {/* Right panel */}
         <div className="grid gap-4">
-          <SectionCard className="grid gap-4 border-emerald-200/65 bg-[linear-gradient(180deg,rgba(250,253,250,0.98),rgba(244,249,245,0.98))] p-4 shadow-[0_18px_38px_rgba(15,23,42,0.06)] md:p-5">
-            <div className="grid gap-1">
-              <strong className="text-base font-bold text-slate-950">Lägg till förslag manuellt</strong>
-              <p className="m-0 text-sm leading-6 text-slate-600">Använd detta som första arbetsyta innan live-AI eller externa källor kopplas på.</p>
-            </div>
+          {/* Add suggestion */}
+          <div className={crm.cardInner}>
+            <p className="mb-1 text-base font-bold text-slate-900">Lägg till förslag manuellt</p>
+            <p className="m-0 mb-4 text-sm text-slate-500">Använd detta som första arbetsyta innan live-AI eller externa källor kopplas på.</p>
 
-            <div className="grid gap-3 rounded-[24px] border border-white/80 bg-white/92 p-4 shadow-[0_16px_32px_rgba(15,23,42,0.05)]">
+            <div className="grid gap-3">
               <Input value={draft.company_name} onChange={(event) => setDraft((current) => ({ ...current, company_name: event.target.value }))} placeholder="Företagsnamn" />
               <div className="grid gap-3 md:grid-cols-2">
                 <Input value={draft.contact_name} onChange={(event) => setDraft((current) => ({ ...current, contact_name: event.target.value }))} placeholder="Kontaktperson" />
@@ -430,34 +399,33 @@ export default function AiProspectsClient({ userName }: { userName: string | nul
               </div>
               <Input value={draft.source} onChange={(event) => setDraft((current) => ({ ...current, source: event.target.value }))} placeholder="Källa, t.ex. research eller tips" />
               <Textarea value={draft.rationale} onChange={(event) => setDraft((current) => ({ ...current, rationale: event.target.value }))} placeholder="Varför känns detta som ett relevant prospekt?" rows={4} />
-              <Textarea value={draft.notes} onChange={(event) => setDraft((current) => ({ ...current, notes: event.target.value }))} placeholder="Anteckningar eller saker att dubbelkolla i granskningen" rows={4} />
+              <Textarea value={draft.notes} onChange={(event) => setDraft((current) => ({ ...current, notes: event.target.value }))} placeholder="Anteckningar eller saker att dubbelkolla i granskningen" rows={3} />
               <button
                 type="button"
                 onClick={createSuggestion}
                 disabled={creating}
-                className="inline-flex min-h-11 items-center justify-center rounded-full border border-slate-900 bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-950 disabled:cursor-not-allowed disabled:opacity-60"
+                className={crm.saveButton}
               >
                 {creating ? 'Sparar…' : 'Spara förslag'}
               </button>
             </div>
-          </SectionCard>
+          </div>
 
-          <SectionCard className="grid gap-4 border-emerald-200/65 bg-[linear-gradient(180deg,rgba(250,253,250,0.98),rgba(244,249,245,0.98))] p-4 shadow-[0_18px_38px_rgba(15,23,42,0.06)] md:p-5">
-            <div className="grid gap-1">
-              <strong className="text-base font-bold text-slate-950">Granskning</strong>
-              <p className="m-0 text-sm leading-6 text-slate-600">Godkänn förslaget till ett riktigt prospekt eller avvisa det med kommentar.</p>
-            </div>
+          {/* Review panel */}
+          <div className={crm.cardInner}>
+            <p className="mb-1 text-base font-bold text-slate-900">Granskning</p>
+            <p className="m-0 mb-4 text-sm text-slate-500">Godkänn förslaget till ett riktigt prospekt eller avvisa det med kommentar.</p>
 
             {!selected ? (
-              <div className="rounded-[22px] border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-sm text-slate-600">
+              <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">
                 Välj ett förslag i kön för att se detaljer och granska det.
               </div>
             ) : (
               <div className="grid gap-4">
-                <div className="grid gap-2 rounded-[24px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#f8fafc_100%)] px-4 py-4 shadow-[0_12px_24px_rgba(15,23,42,0.05)]">
+                <div className="grid gap-2 rounded-2xl border border-slate-100 bg-slate-50 px-4 py-4">
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <strong className="text-base font-bold tracking-[-0.03em] text-slate-950">{selected.company_name}</strong>
-                    <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${statusClass[selected.status]}`}>
+                    <strong className="text-base font-bold text-slate-900">{selected.company_name}</strong>
+                    <span className={cn(crm.badge, statusClass[selected.status])}>
                       {statusLabel[selected.status]}
                     </span>
                   </div>
@@ -477,16 +445,16 @@ export default function AiProspectsClient({ userName }: { userName: string | nul
                 </div>
 
                 {selected.rationale ? (
-                  <div className="grid gap-2 rounded-[22px] border border-slate-200 bg-white/92 px-4 py-4 shadow-[0_8px_18px_rgba(15,23,42,0.04)]">
-                    <strong className="text-sm font-semibold text-slate-950">Motivering</strong>
-                    <p className="m-0 text-sm leading-6 text-slate-600">{selected.rationale}</p>
+                  <div className="grid gap-1.5 rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3">
+                    <strong className="text-sm font-semibold text-slate-900">Motivering</strong>
+                    <p className="m-0 text-sm leading-5 text-slate-600">{selected.rationale}</p>
                   </div>
                 ) : null}
 
                 {selected.notes ? (
-                  <div className="grid gap-2 rounded-[22px] border border-slate-200 bg-white/92 px-4 py-4 shadow-[0_8px_18px_rgba(15,23,42,0.04)]">
-                    <strong className="text-sm font-semibold text-slate-950">Anteckningar</strong>
-                    <p className="m-0 text-sm leading-6 text-slate-600">{selected.notes}</p>
+                  <div className="grid gap-1.5 rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3">
+                    <strong className="text-sm font-semibold text-slate-900">Anteckningar</strong>
+                    <p className="m-0 text-sm leading-5 text-slate-600">{selected.notes}</p>
                   </div>
                 ) : null}
 
@@ -503,7 +471,7 @@ export default function AiProspectsClient({ userName }: { userName: string | nul
                       type="button"
                       onClick={() => reviewSelected('approve')}
                       disabled={reviewing}
-                      className="inline-flex min-h-11 items-center justify-center rounded-full border border-emerald-800 bg-emerald-800 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-900 disabled:cursor-not-allowed disabled:opacity-60"
+                      className={crm.saveButton}
                     >
                       {reviewing ? 'Arbetar…' : 'Godkänn till prospekt'}
                     </button>
@@ -511,19 +479,19 @@ export default function AiProspectsClient({ userName }: { userName: string | nul
                       type="button"
                       onClick={() => reviewSelected('reject')}
                       disabled={reviewing}
-                      className="inline-flex min-h-11 items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                      className={crm.ghostButton}
                     >
                       {reviewing ? 'Arbetar…' : 'Avvisa förslaget'}
                     </button>
                   </div>
                 ) : (
-                  <div className="rounded-[22px] border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-sm text-slate-600">
+                  <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">
                     Förslaget är redan granskat. Status och granskningsspår ligger kvar för uppföljning.
                   </div>
                 )}
               </div>
             )}
-          </SectionCard>
+          </div>
         </div>
       </div>
     </div>

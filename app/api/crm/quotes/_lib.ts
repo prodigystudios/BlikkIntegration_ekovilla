@@ -82,6 +82,7 @@ const quoteLineItemSchema = z.object({
   article_unit_name: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
   discount_percent: z.preprocess((value) => normalizeOptionalText(value) ?? '', z.string()).optional().default(''),
   line_note: z.preprocess((value) => normalizeOptionalText(value) ?? '', z.string()).optional().default(''),
+  is_rot_work: z.boolean().optional().default(false),
 });
 
 export const listCrmQuotesQuerySchema = z.object({
@@ -174,13 +175,6 @@ export const createCrmQuoteSchema = z.object({
     });
   }
 
-  if (value.customer_source.kind === 'fortnox' && !value.customer_source.fortnox_customer_name) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['customer_source', 'fortnox_customer_name'],
-      message: 'Fortnox-kund kräver reserverat kundnamn tills sökningen är byggd',
-    });
-  }
 });
 
 export const updateCrmQuoteSchema = createCrmQuoteSchema;

@@ -6,6 +6,14 @@ import Select from '../../../components/ui/Select';
 import Textarea from '../../../components/ui/Textarea';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
+import { parseDecimal } from '@/lib/shared/number';
+import { crm } from '@/app/crm/lib/crmTokens';
+import {
+  getEffectiveCustomerName,
+  buildCustomerSnapshot,
+  buildRotDetails,
+  buildInternalHandoff,
+} from './quoteSerializers';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -35,6 +43,7 @@ type QuoteLineItem = {
   article_unit_name: string | null;
   discount_percent: string;
   line_note: string;
+  is_rot_work: boolean;
 };
 
 type QuoteItem = {
@@ -92,7 +101,6 @@ type QuoteItem = {
 
 type QuoteDraft = {
   customer_id: string | null;
-  create_customer: boolean;
   prospect_id: string;
   opportunity_id: string;
   quote_type: 'private' | 'business';
@@ -194,6 +202,7 @@ function createEmptyLineItem(): QuoteLineItem {
     article_unit_name: null,
     discount_percent: '',
     line_note: '',
+    is_rot_work: false,
   };
 }
 
@@ -255,16 +264,18 @@ function getDraftCustomerSource(source: QuoteCustomerSource | null | undefined, 
 function buildCustomerSource(customer: CrmCustomerLite | null): QuoteDraft['customer_source'] {
   if (!customer) return { kind: 'local', sync_intent: 'local_only', fortnox_customer_id: '', fortnox_customer_name: '' };
   if (customer.fortnox_customer_id) {
-    return { kind: 'fortnox', sync_intent: 'linked', fortnox_customer_id: customer.fortnox_customer_id, fortnox_customer_name: customer.company_name || '' };
+    const displayName =
+      customer.company_name ||
+      [customer.first_name, customer.last_name].filter(Boolean).join(' ') ||
+      'Kund';
+    return { kind: 'fortnox', sync_intent: 'linked', fortnox_customer_id: customer.fortnox_customer_id, fortnox_customer_name: displayName };
   }
   return { kind: 'local', sync_intent: 'on_work_order', fortnox_customer_id: '', fortnox_customer_name: '' };
 }
 
 function getValidationIssues(draft: QuoteDraft, effectiveRows: EffectiveRow[]) {
   const issues: string[] = [];
-  const effectiveCustomerName = draft.quote_type === 'business'
-    ? (draft.company_name.trim() || draft.customer_name.trim())
-    : draft.customer_name.trim();
+  const effectiveCustomerName = getEffectiveCustomerName(draft);
   const hasAnyLineItemInput = draft.items.some((item) => item.article_name || item.m2 || item.quantity || item.unit_price);
 
   if (!draft.project_name.trim()) issues.push('Offertnamn saknas');
@@ -278,7 +289,7 @@ function getValidationIssues(draft: QuoteDraft, effectiveRows: EffectiveRow[]) {
     if (!draft.rot_personal_number.trim()) issues.push('ROT kräver personnummer för sökande');
     if (!draft.rot_property_designation.trim()) issues.push('ROT kräver fastighetsbeteckning');
   }
-  if (!draft.amount.trim() || Number(draft.amount.replace(',', '.')) < 0) {
+  if (!draft.amount.trim() || parseDecimal(draft.amount) < 0) {
     if (!hasAnyLineItemInput) issues.push('Ange belopp eller lägg till rader');
   }
   if (hasAnyLineItemInput) {
@@ -290,7 +301,6 @@ function getValidationIssues(draft: QuoteDraft, effectiveRows: EffectiveRow[]) {
 
 const initialDraft: QuoteDraft = {
   customer_id: null,
-  create_customer: false,
   prospect_id: '',
   opportunity_id: '',
   quote_type: 'business',
@@ -343,10 +353,20 @@ function ArticlePicker({ value, onSelect, onClear }: { value: string; onSelect: 
     let cancelled = false;
     setLoading(true);
     setError(null);
-    fetch(`/api/blikk/articles?q=${encodeURIComponent(query)}&page=1&pageSize=10`, { cache: 'no-store' })
+    fetch(`/api/fortnox/articles?q=${encodeURIComponent(query)}&limit=10`, { cache: 'no-store' })
       .then((r) => r.json().catch(() => ({})))
       .then((json) => {
-        if (!cancelled) setItems(Array.isArray(json?.items) ? json.items : Array.isArray(json?.data?.items) ? json.data.items : []);
+        if (!cancelled) {
+          const raw: Array<{ article_number: string; description: string | null; sales_price: number | null; unit: string | null }> =
+            Array.isArray(json?.data?.items) ? json.data.items : [];
+          setItems(raw.map((a) => ({
+            id: a.article_number,
+            name: a.description ?? undefined,
+            articleNumber: a.article_number,
+            price: a.sales_price,
+            unit: a.unit ?? undefined,
+          })));
+        }
       })
       .catch(() => { if (!cancelled) { setError('Kunde inte hämta artiklar'); setItems([]); } })
       .finally(() => { if (!cancelled) setLoading(false); });
@@ -401,13 +421,11 @@ function CustomerSearchPicker({
   onSelect,
   onClear,
   onCreateNew,
-  createMode,
 }: {
   selectedCustomer: CrmCustomerLite | null;
   onSelect: (customer: CrmCustomerLite) => void;
   onClear: () => void;
   onCreateNew: () => void;
-  createMode: boolean;
 }) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
@@ -444,20 +462,6 @@ function CustomerSearchPicker({
         </div>
         <button type="button" onClick={onClear} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:border-slate-300 transition-colors">
           Byt kund
-        </button>
-      </div>
-    );
-  }
-
-  if (createMode) {
-    return (
-      <div className="flex items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
-        <div className="grid gap-0.5">
-          <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-700">Ny kund</span>
-          <span className="text-sm text-slate-700">Fyll i uppgifterna nedan — kunden skapas när offerten sparas</span>
-        </div>
-        <button type="button" onClick={onClear} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:border-slate-300 transition-colors">
-          Sök igen
         </button>
       </div>
     );
@@ -532,7 +536,7 @@ function Field({
   return (
     <div className={cn('grid gap-1.5', className)} id={fieldId}>
       <label className="grid gap-1.5">
-        <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">{label}</span>
+        <span className="text-xs font-semibold text-slate-600">{label}</span>
         {children}
       </label>
       {error ? (
@@ -542,7 +546,160 @@ function Field({
   );
 }
 
+// ─── Section header (numbered circle + title + optional action) ────────────────
+
+function SectionHeader({
+  step,
+  title,
+  action,
+  muted,
+  className,
+}: {
+  step: React.ReactNode;
+  title: string;
+  action?: React.ReactNode;
+  muted?: boolean;
+  className?: string;
+}) {
+  return (
+    <div className={cn('mb-6 flex items-center gap-3', action ? 'justify-between' : '', className)}>
+      <div className="flex items-center gap-3">
+        <span
+          className={cn(
+            'flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold',
+            muted ? 'bg-slate-200 text-slate-600' : 'text-white',
+          )}
+          style={muted ? undefined : { backgroundColor: 'var(--crm-primary)' }}
+        >
+          {step}
+        </span>
+        <h2 className="text-sm font-semibold text-slate-900">{title}</h2>
+      </div>
+      {action ?? null}
+    </div>
+  );
+}
+
+// ─── LineItemRow (one product/price row) ──────────────────────────────────────
+
+function LineItemRow({
+  row,
+  index,
+  metrics,
+  rotEnabled,
+  onChange,
+  onSelectArticle,
+  onClearArticle,
+  onRemove,
+}: {
+  row: QuoteLineItem;
+  index: number;
+  metrics: EffectiveRow | undefined;
+  rotEnabled: boolean;
+  onChange: (patch: Partial<QuoteLineItem>) => void;
+  onSelectArticle: (article: ArticleLite) => void;
+  onClearArticle: () => void;
+  onRemove: () => void;
+}) {
+  const isM3 = (row.pricing_mode ?? 'm3') === 'm3';
+
+  return (
+    <div className="grid gap-4 rounded-xl border border-slate-100 p-5">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-semibold text-slate-400">Rad {index + 1}</span>
+        <button
+          type="button"
+          onClick={onRemove}
+          className="text-xs text-slate-400 transition-colors hover:text-rose-600"
+        >
+          Ta bort
+        </button>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-2">
+        <Field label="Artikel" className="md:col-span-2">
+          <ArticlePicker value={row.article_name || ''} onSelect={onSelectArticle} onClear={onClearArticle} />
+        </Field>
+        {row.article_name ? (
+          <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700 md:col-span-2">
+            {row.article_name}{row.article_number ? ` · ${row.article_number}` : ''}
+          </div>
+        ) : null}
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
+        {isM3 ? (
+          <>
+            <Field label="m²">
+              <Input value={row.m2} onChange={(e) => onChange({ m2: e.target.value })} inputMode="decimal" placeholder="0" />
+            </Field>
+            <Field label="Tjocklek mm">
+              <Input value={row.thickness_mm} onChange={(e) => onChange({ thickness_mm: e.target.value })} inputMode="decimal" placeholder="200" />
+            </Field>
+          </>
+        ) : (
+          <Field label="Antal">
+            <Input value={row.quantity} onChange={(e) => onChange({ quantity: e.target.value })} inputMode="decimal" placeholder="1" />
+          </Field>
+        )}
+        <Field label="A-pris">
+          <Input
+            value={row.auto_price ? String(metrics?.unit ?? row.article_price ?? '') : row.unit_price}
+            onChange={(e) => onChange({ unit_price: e.target.value })}
+            inputMode="decimal"
+            placeholder="0"
+            disabled={row.auto_price}
+          />
+        </Field>
+        <Field label="Rabatt %">
+          <Input value={row.discount_percent} onChange={(e) => onChange({ discount_percent: e.target.value })} inputMode="decimal" placeholder="0" />
+        </Field>
+      </div>
+
+      <div className="flex items-center gap-4">
+        <label className="inline-flex items-center gap-2 text-xs text-slate-500">
+          <input
+            type="checkbox"
+            checked={!row.auto_price}
+            onChange={(e) => onChange({ auto_price: !e.target.checked })}
+            className="h-3.5 w-3.5 rounded border-slate-300"
+          />
+          Manuellt pris
+        </label>
+        {rotEnabled ? (
+          <label className="inline-flex items-center gap-2 text-xs text-slate-500">
+            <input
+              type="checkbox"
+              checked={row.is_rot_work}
+              onChange={(e) => onChange({ is_rot_work: e.target.checked })}
+              className="h-3.5 w-3.5 rounded border-slate-300"
+            />
+            ROT-arbete
+          </label>
+        ) : null}
+      </div>
+
+      <Field label="Radtext">
+        <Input value={row.line_note} onChange={(e) => onChange({ line_note: e.target.value })} placeholder="Fritext för raden" />
+      </Field>
+
+      {metrics?.isConfigured ? (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-slate-100 pt-3 text-xs text-slate-500">
+          <span>{metrics.label}</span>
+          <span>Mängd {metrics.amount.toFixed(2)}</span>
+          <span>A-pris {formatCurrency(metrics.effectiveUnit, 'SEK')}</span>
+          <span className="ml-auto font-semibold text-slate-900">Radsumma {formatCurrency(metrics.rowTotal, 'SEK')}</span>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 // ─── QuoteFormClient ──────────────────────────────────────────────────────────
+
+// How long a stashed draft survives the "create customer" round-trip before it's
+// considered stale and ignored.
+const DRAFT_TTL_MS = 30 * 60 * 1000;
 
 export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   const router = useRouter();
@@ -557,10 +714,54 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   const [draft, setDraft] = useState<QuoteDraft>(initialDraft);
   const [loadedQuote, setLoadedQuote] = useState<QuoteItem | null>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<CrmCustomerLite | null>(null);
-  const [extraAddressesOpen, setExtraAddressesOpen] = useState(false);
+  const restoredRef = useRef(false);
 
   const presetProspectId = searchParams.get('prospect_id') || '';
   const presetOpportunityId = searchParams.get('opportunity_id') || '';
+
+  // Per-form storage key so a new-quote draft never collides with an edit draft.
+  const draftStorageKey = quoteId ? `crm:quote-draft:edit:${quoteId}` : 'crm:quote-draft:new';
+  // This offer's own URL — used as returnTo when leaving to create/edit a customer.
+  const offerSelfUrl = isEditing ? `/crm/offerter/${quoteId}/redigera` : '/crm/offerter/ny';
+
+  // Stash the draft and leave to a customer page; we return via returnTo.
+  function goToCustomerPage(path: string) {
+    persistDraft();
+    router.push(`${path}?returnTo=${encodeURIComponent(offerSelfUrl)}`);
+  }
+
+  function persistDraft() {
+    try {
+      localStorage.setItem(draftStorageKey, JSON.stringify({ version: 1, savedAt: Date.now(), quoteId: quoteId ?? null, draft }));
+    } catch { /* localStorage unavailable — ignore */ }
+  }
+
+  function clearPersistedDraft() {
+    try { localStorage.removeItem(draftStorageKey); } catch { /* ignore */ }
+  }
+
+  // Populate the draft from a chosen customer. Shared by the search picker and the
+  // post-create round-trip so both paths fill identical fields.
+  function applySelectedCustomer(customer: CrmCustomerLite) {
+    setSelectedCustomer(customer);
+    const primary = customer.contacts.find((c) => c.is_primary) || customer.contacts[0] || null;
+    setDraft((current) => ({
+      ...current,
+      customer_id: customer.id,
+      quote_type: customer.customer_type,
+      customer_source: buildCustomerSource(customer),
+      company_name: customer.company_name || '',
+      customer_name: customer.company_name || `${customer.first_name || ''} ${customer.last_name || ''}`.trim(),
+      organization_number: customer.organization_number || '',
+      personal_number: customer.personal_number || '',
+      contact_name: primary?.name || '',
+      phone: primary?.phone || '',
+      email: primary?.email || '',
+      street_address: customer.visit_address?.street || '',
+      postal_code: customer.visit_address?.postal_code || '',
+      city: customer.visit_address?.city || '',
+    }));
+  }
 
   // Load quote for edit mode
   useEffect(() => {
@@ -577,7 +778,6 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
         setLoadedQuote(item);
         setDraft({
           customer_id: item.customer_id || null,
-          create_customer: false,
           prospect_id: item.prospect_id || '',
           opportunity_id: item.opportunity_id || '',
           quote_type: item.quote_type || 'business',
@@ -596,7 +796,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           delivery_address: item.customer_snapshot?.delivery_address || '',
           invoice_address: item.customer_snapshot?.invoice_address || '',
           items: item.line_items?.length
-            ? item.line_items.map((line) => ({ ...line, line_note: line.line_note || '' }))
+            ? item.line_items.map((line) => ({ ...line, line_note: line.line_note || '', is_rot_work: line.is_rot_work ?? false }))
             : [createEmptyLineItem()],
           project_name: item.project_name,
           description: item.description || '',
@@ -617,9 +817,6 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           notes: item.notes || '',
           create_follow_up_task: false,
         });
-        if (item.customer_snapshot?.visit_address || item.customer_snapshot?.delivery_address || item.customer_snapshot?.invoice_address) {
-          setExtraAddressesOpen(true);
-        }
       })
       .catch(() => { if (active) { toast.error('Kunde inte ladda offert'); router.push('/crm/offerter'); } })
       .finally(() => { if (active) setLoading(false); });
@@ -666,19 +863,61 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Returning from "create new customer": restore the stashed draft and auto-select
+  // the newly created customer. Runs once, after any edit-mode load has finished.
+  useEffect(() => {
+    if (loading || restoredRef.current) return;
+    restoredRef.current = true;
+
+    const createdCustomerId = searchParams.get('created_customer_id');
+    const restoreQuote = searchParams.get('restore_quote');
+    if (!createdCustomerId && !restoreQuote) return;
+
+    // Restore the draft we stashed before navigating away (new quotes only — in edit
+    // mode the loaded quote stays and only the customer is swapped in below).
+    if (!isEditing) {
+      try {
+        const raw = localStorage.getItem(draftStorageKey);
+        if (raw) {
+          const envelope = JSON.parse(raw);
+          const fresh = envelope && typeof envelope.savedAt === 'number'
+            && Date.now() - envelope.savedAt < DRAFT_TTL_MS && envelope.draft;
+          if (fresh) {
+            setDraft(envelope.draft);
+          }
+        }
+      } catch { /* ignore malformed draft */ }
+    }
+    clearPersistedDraft();
+
+    // Only auto-select when a customer was actually created (save path, not cancel).
+    if (createdCustomerId) {
+      fetch(`/api/crm/customers/${createdCustomerId}`, { cache: 'no-store' })
+        .then((r) => r.json().catch(() => ({})))
+        .then((json) => {
+          if (json?.ok && json?.data?.item) applySelectedCustomer(json.data.item as CrmCustomerLite);
+          else toast.error('Kunde inte hämta vald kund');
+        })
+        .catch(() => toast.error('Kunde inte hämta vald kund'));
+    }
+
+    // Strip the param so a refresh doesn't re-run this.
+    router.replace(offerSelfUrl);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading]);
+
   const effectiveRows = useMemo<EffectiveRow[]>(() => {
     return draft.items.map((item) => {
       const baseUnit = item.auto_price
-        ? computeUnitPrice(item.construction, parseFloat(item.thickness_mm || '0') || 0)
-        : (parseFloat(item.unit_price || '0') || 0);
+        ? computeUnitPrice(item.construction, parseDecimal(item.thickness_mm))
+        : parseDecimal(item.unit_price);
       const mode = item.pricing_mode === 'item' ? 'item' : 'm3';
-      const m2 = parseFloat(item.m2 || '0') || 0;
-      const thicknessM = (parseFloat(item.thickness_mm || '0') || 0) / 1000;
+      const m2 = parseDecimal(item.m2);
+      const thicknessM = parseDecimal(item.thickness_mm) / 1000;
       const volume = Math.max(0, m2 * thicknessM);
-      const quantity = parseFloat(item.quantity || '0') || 0;
+      const quantity = parseDecimal(item.quantity);
       const amount = mode === 'm3' ? volume : quantity;
-      const rawDiscount = parseFloat(item.discount_percent || '0');
-      const discount = Number.isFinite(rawDiscount) ? Math.min(100, Math.max(0, rawDiscount)) : 0;
+      const discount = Math.min(100, Math.max(0, parseDecimal(item.discount_percent)));
       const effectiveUnit = Math.max(0, baseUnit * (1 - discount / 100));
       const constructionLabel = item.construction === 'vagg' ? 'Vägg' : item.construction === 'snedtak' ? 'Snedtak' : item.construction === 'vind' ? 'Vind' : '';
       const baseLabel = item.article_name ? `${item.article_name}${item.article_number ? ` (${item.article_number})` : ''}` : `${constructionLabel || 'Okänd'}${item.thickness_mm ? ` ${item.thickness_mm} mm` : ''}`;
@@ -694,7 +933,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
 
   const totals = useMemo(() => {
     const subtotal = Math.max(0, effectiveRows.reduce((sum, item) => sum + item.rowTotal, 0));
-    const vatPercent = parseFloat(draft.vat_percent || '0') || 0;
+    const vatPercent = parseDecimal(draft.vat_percent);
     const vat = Math.max(0, subtotal * (vatPercent / 100));
     return { subtotal, vat, total: subtotal + vat };
   }, [draft.vat_percent, effectiveRows]);
@@ -705,9 +944,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   const fieldErrors = useMemo(() => {
     if (!submitAttempted) return {} as Record<string, string>;
     const hasAnyRows = draft.items.some((item) => item.article_name || item.m2 || item.quantity || item.unit_price);
-    const effectiveCustomerName = draft.quote_type === 'business'
-      ? (draft.company_name.trim() || draft.customer_name.trim())
-      : draft.customer_name.trim();
+    const effectiveCustomerName = getEffectiveCustomerName(draft);
     const errs: Record<string, string> = {};
     if (!draft.project_name.trim()) errs.project_name = 'Offertnamn saknas';
     if (!draft.prospect_id && !draft.opportunity_id && !effectiveCustomerName) {
@@ -732,9 +969,9 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
 
   // Map validation issues to field IDs for scroll-to
   const issueFieldIds: Record<string, string> = {
-    'Kund måste anges': 'field-company-name',
-    'Företagsnamn krävs': 'field-company-name',
-    'Personnummer krävs': 'field-personal-number',
+    'Kund måste anges': 'section-kund',
+    'Företagsnamn krävs': 'section-kund',
+    'Personnummer krävs': 'section-kund',
     'Offertnamn saknas': 'field-project-name',
     'Ange belopp eller lägg till rader': 'field-amount',
     'ROT kräver personnummer för sökande': 'field-rot-personal-number',
@@ -745,7 +982,12 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     document.getElementById(fieldId)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 
+  function scrollToSection(id: string) {
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
   function handleBack() {
+    clearPersistedDraft();
     router.push('/crm/offerter');
   }
 
@@ -771,45 +1013,30 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   async function saveQuote() {
     setSubmitAttempted(true);
     if (submitting) return;
+
+    // Enforce the client-side validation instead of only displaying it: don't submit
+    // an incomplete quote — surface the first issue and scroll to its field.
+    if (issues.length > 0) {
+      toast.error(issues[0]);
+      const firstFieldId = issueFieldIds[issues[0]];
+      if (firstFieldId) scrollToField(firstFieldId);
+      return;
+    }
+
     setSubmitting(true);
 
     try {
       const hasAnyLineItemInput = draft.items.some((item) => item.article_name || item.m2 || item.quantity || item.unit_price);
-      const effectiveCustomerName = draft.quote_type === 'business'
-        ? (draft.company_name.trim() || draft.customer_name.trim())
-        : draft.customer_name.trim();
+      const effectiveCustomerName = getEffectiveCustomerName(draft);
 
-      // Create new customer record if needed (create mode only)
-      let resolvedCustomerId = draft.customer_id;
-      if (draft.create_customer && !isEditing) {
-        const customerRes = await fetch('/api/crm/customers', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            customer_type: draft.quote_type,
-            company_name: draft.quote_type === 'business' ? draft.company_name || null : null,
-            first_name: draft.quote_type === 'private' ? (draft.customer_name.split(' ')[0] || null) : null,
-            last_name: draft.quote_type === 'private' ? (draft.customer_name.split(' ').slice(1).join(' ') || null) : null,
-            organization_number: draft.organization_number || null,
-            personal_number: draft.personal_number || null,
-            visit_address: draft.street_address
-              ? { street: draft.street_address, postal_code: draft.postal_code || null, city: draft.city || null }
-              : null,
-          }),
-        });
-        const customerJson = await customerRes.json().catch(() => ({}));
-        if (!customerRes.ok || !customerJson.ok) { toast.error(customerJson?.error || 'Kunde inte skapa kund'); return; }
-        resolvedCustomerId = customerJson?.data?.item?.id || null;
-      }
-
-      const amountNumber = hasAnyLineItemInput ? totals.total : Number(draft.amount.replace(',', '.'));
-      const vatPercentNumber = Number(draft.vat_percent.replace(',', '.'));
+      const amountNumber = hasAnyLineItemInput ? totals.total : parseDecimal(draft.amount);
+      const vatPercentNumber = parseDecimal(draft.vat_percent);
       const vatAmount = hasAnyLineItemInput ? totals.vat : (Number.isFinite(vatPercentNumber) ? amountNumber * (vatPercentNumber / 100) : 0);
 
       const payload = {
         prospect_id: draft.prospect_id || null,
         opportunity_id: draft.opportunity_id || null,
-        customer_id: resolvedCustomerId || null,
+        customer_id: draft.customer_id || null,
         customer_name: effectiveCustomerName,
         quote_type: draft.quote_type,
         customer_source: {
@@ -818,39 +1045,15 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           fortnox_customer_id: draft.customer_source.fortnox_customer_id || null,
           fortnox_customer_name: draft.customer_source.fortnox_customer_name || null,
         },
-        customer_snapshot: {
-          customer_name: draft.quote_type === 'private' ? draft.customer_name || null : effectiveCustomerName || null,
-          company_name: draft.quote_type === 'business' ? draft.company_name || null : null,
-          organization_number: draft.quote_type === 'business' ? draft.organization_number || null : null,
-          personal_number: draft.quote_type === 'private' ? draft.personal_number || null : null,
-          contact_name: draft.contact_name || null,
-          email: draft.email || null,
-          phone: draft.phone || null,
-          street_address: draft.street_address || null,
-          postal_code: draft.postal_code || null,
-          city: draft.city || null,
-          visit_address: draft.visit_address || null,
-          delivery_address: draft.delivery_address || null,
-          invoice_address: draft.invoice_address || null,
-        },
+        customer_snapshot: buildCustomerSnapshot(draft),
         pricing_summary: {
           subtotal: hasAnyLineItemInput ? totals.subtotal : amountNumber,
           vat: vatAmount,
           total: hasAnyLineItemInput ? totals.total : amountNumber + vatAmount,
         },
         line_items: draft.items,
-        rot_details: {
-          enabled: draft.quote_type === 'private' ? draft.rot_enabled : false,
-          applicant_name: draft.quote_type === 'private' && draft.rot_enabled ? draft.rot_applicant_name || null : null,
-          personal_number: draft.quote_type === 'private' && draft.rot_enabled ? draft.rot_personal_number || null : null,
-          property_designation: draft.quote_type === 'private' && draft.rot_enabled ? draft.rot_property_designation || null : null,
-          rot_percent: draft.quote_type === 'private' && draft.rot_enabled ? Number(draft.rot_percent || '30') : 30,
-        },
-        internal_handoff: {
-          desired_installation_date: draft.desired_installation_date || null,
-          handoff_notes: draft.handoff_notes || null,
-          work_scope: draft.work_scope || null,
-        },
+        rot_details: buildRotDetails(draft),
+        internal_handoff: buildInternalHandoff(draft),
         project_name: draft.project_name,
         description: draft.description,
         amount: amountNumber,
@@ -876,6 +1079,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
         if (!taskCreated) toast.info('Offerten sparades, men uppföljningsuppgiften kunde inte skapas automatiskt.');
       }
 
+      clearPersistedDraft();
       toast.success(isEditing ? 'Offert uppdaterad' : 'Offert skapad');
       router.push('/crm/offerter');
     } catch {
@@ -920,202 +1124,114 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     : draft.customer_name;
   const sidebarTotal = hasAnyLineItemInput
     ? totals.total
-    : (draft.amount ? Number(draft.amount.replace(',', '.')) : null);
+    : (draft.amount ? parseDecimal(draft.amount) : null);
 
-  const progressSteps = [
-    {
-      label: 'Kund',
-      done: Boolean(draft.quote_type === 'business' ? (draft.company_name || draft.customer_name) : draft.customer_name),
-    },
-    {
-      label: 'Offert',
-      done: Boolean(draft.project_name.trim()),
-    },
-    {
-      label: 'Belopp',
-      done: hasAnyLineItemInput || Boolean(draft.amount.trim()),
-    },
+  // Single source of truth for the visible sections (in order). Drives both the
+  // section header numbers and the sidebar nav so they can never drift apart.
+  // `done: undefined` marks an internal section with no completion requirement.
+  const sections: { id: string; label: string; done?: boolean }[] = [
+    { id: 'section-kund', label: 'Kund', done: Boolean(draft.quote_type === 'business' ? (draft.company_name || draft.customer_name) : draft.customer_name) },
+    { id: 'section-offert', label: 'Offert', done: Boolean(draft.project_name.trim()) },
+    { id: 'section-rader', label: 'Produkter & priser', done: hasAnyLineItemInput || Boolean(draft.amount.trim()) },
+    ...(draft.quote_type === 'private' && draft.rot_enabled
+      ? [{ id: 'section-rot', label: 'ROT-avdrag', done: Boolean(draft.rot_personal_number.trim() && draft.rot_property_designation.trim()) }]
+      : []),
+    { id: 'section-handoff', label: 'Intern handoff' },
+    ...(isEditing && loadedQuote ? [{ id: 'section-arbetsorder', label: 'Arbetsorder' }] : []),
   ];
-  const doneSteps = progressSteps.filter((s) => s.done).length;
+  const requiredSections = sections.filter((s) => s.done !== undefined);
+  const doneSteps = requiredSections.filter((s) => s.done).length;
+  const stepOf = (id: string) => sections.findIndex((s) => s.id === id) + 1;
 
   return (
-    <div className="min-h-screen bg-[#f5f6f8]">
+    <div className="grid gap-6 pb-20 lg:pb-0">
 
-      {/* ── Top bar ── */}
-      <div className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-6xl items-center gap-3 px-6 py-3.5">
-          <button
-            type="button"
-            onClick={handleBack}
-            className="inline-flex items-center gap-1.5 text-sm text-slate-400 transition-colors hover:text-slate-700"
-          >
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-              <path d="M9 2L4 7l5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-            Offerter
-          </button>
-          <span className="text-slate-300">/</span>
-          <span className="truncate text-sm font-semibold text-slate-900">
-            {isEditing ? (draft.project_name || 'Redigera offert') : 'Ny offert'}
-          </span>
-          <div className="ml-auto">
-            <button
-              type="button"
-              onClick={handleBack}
-              className="text-sm text-slate-400 transition-colors hover:text-slate-700"
-            >
-              Avbryt
-            </button>
-          </div>
-        </div>
+      {/* ── Header (matches the customer page) ── */}
+      <div>
+        <button
+          type="button"
+          onClick={handleBack}
+          className="mb-2 inline-flex items-center gap-1.5 text-sm text-slate-500 transition hover:text-slate-800"
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+            <path d="M9 2L4 7l5 5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          Offerter
+        </button>
+        <h1 className={crm.pageTitle}>
+          {isEditing ? (draft.project_name || 'Redigera offert') : 'Ny offert'}
+        </h1>
+        <p className={cn('mt-0.5', crm.pageSubtitle)}>
+          {isEditing ? 'Uppdatera offertens uppgifter och status.' : 'Fyll i uppgifterna nedan för att skapa en ny offert.'}
+        </p>
       </div>
 
       {/* ── Two-column layout ── */}
-      <div className="mx-auto max-w-6xl px-6 py-8">
-        <div className="grid gap-6 lg:grid-cols-[1fr_304px]">
+      <div className="grid gap-5 lg:grid-cols-[1fr_304px] lg:items-start">
 
-          {/* ── Left: form card ── */}
-          <div className="grid gap-0 rounded-2xl border border-slate-200 bg-white shadow-sm">
+        {/* ── Left: form sections (each its own card) ── */}
+        <div className="grid gap-5">
 
           {/* ── Section 1: Kund ── */}
-          <div className="px-8 py-8">
-            <div className="mb-6 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white" style={{ backgroundColor: 'var(--crm-primary)' }}>1</span>
-                <h2 className="text-sm font-semibold text-slate-900">Kund</h2>
-              </div>
-              <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5">
-                {(['business', 'private'] as const).map((type) => (
-                  <button
-                    key={type}
-                    type="button"
-                    onClick={() => setDraft((d) => ({ ...d, quote_type: type }))}
-                    className={cn(
-                      'rounded-md px-3.5 py-1.5 text-sm font-medium transition-all',
-                      draft.quote_type === type
-                        ? 'bg-white text-slate-900 shadow-sm'
-                        : 'text-slate-500 hover:text-slate-700',
-                    )}
-                  >
-                    {type === 'business' ? 'Företag' : 'Privat'}
-                  </button>
-                ))}
-              </div>
-            </div>
+          <div id="section-kund" className={cn('scroll-mt-6', crm.cardInner)}>
+            <SectionHeader
+              step={stepOf('section-kund')}
+              title="Kund"
+              action={
+                <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5">
+                  {(['business', 'private'] as const).map((type) => (
+                    <button
+                      key={type}
+                      type="button"
+                      onClick={() => setDraft((d) => ({ ...d, quote_type: type }))}
+                      className={cn(
+                        'rounded-md px-3.5 py-1.5 text-sm font-medium transition-all',
+                        draft.quote_type === type
+                          ? 'bg-white text-slate-900 shadow-sm'
+                          : 'text-slate-500 hover:text-slate-700',
+                      )}
+                    >
+                      {type === 'business' ? 'Företag' : 'Privat'}
+                    </button>
+                  ))}
+                </div>
+              }
+            />
 
             <div className="grid gap-4">
             <CustomerSearchPicker
               selectedCustomer={selectedCustomer}
-              createMode={draft.create_customer}
-              onSelect={(customer) => {
-                setSelectedCustomer(customer);
-                const primary = customer.contacts.find((c) => c.is_primary) || customer.contacts[0] || null;
-                setDraft((current) => ({
-                  ...current,
-                  customer_id: customer.id,
-                  create_customer: false,
-                  quote_type: customer.customer_type,
-                  customer_source: buildCustomerSource(customer),
-                  company_name: customer.company_name || '',
-                  customer_name: customer.company_name || `${customer.first_name || ''} ${customer.last_name || ''}`.trim(),
-                  organization_number: customer.organization_number || '',
-                  personal_number: customer.personal_number || '',
-                  contact_name: primary?.name || '',
-                  phone: primary?.phone || '',
-                  email: primary?.email || '',
-                  street_address: customer.visit_address?.street || '',
-                  postal_code: customer.visit_address?.postal_code || '',
-                  city: customer.visit_address?.city || '',
-                }));
-              }}
+              onSelect={applySelectedCustomer}
               onClear={() => {
                 setSelectedCustomer(null);
                 setDraft((current) => ({
-                  ...current, customer_id: null, create_customer: false,
+                  ...current, customer_id: null,
                   customer_source: buildCustomerSource(null),
                   company_name: '', customer_name: '', organization_number: '',
                   personal_number: '', contact_name: '', phone: '', email: '',
                   street_address: '', postal_code: '', city: '',
                 }));
               }}
-              onCreateNew={() => {
-                setSelectedCustomer(null);
-                setDraft((current) => ({ ...current, customer_id: null, create_customer: true, customer_source: buildCustomerSource(null) }));
-              }}
+              onCreateNew={() => goToCustomerPage('/crm/kunder/ny')}
             />
 
-            {draft.quote_type === 'business' ? (
-              <div className="grid gap-4 md:grid-cols-2">
-                <Field fieldId="field-company-name" label="Företagsnamn" className="md:col-span-2" error={fieldErrors.company_name}>
-                  <Input value={draft.company_name} onChange={(e) => setDraft((d) => ({ ...d, company_name: e.target.value, customer_name: e.target.value || d.customer_name }))} placeholder="Bolag AB" />
-                </Field>
-                <Field label="Organisationsnummer">
-                  <Input value={draft.organization_number} onChange={(e) => setDraft((d) => ({ ...d, organization_number: e.target.value }))} placeholder="556123-4567" />
-                </Field>
-                <Field label="Kontaktperson">
-                  <Input value={draft.contact_name} onChange={(e) => setDraft((d) => ({ ...d, contact_name: e.target.value }))} placeholder="Namn på kontakt" />
-                </Field>
-              </div>
-            ) : (
-              <div className="grid gap-4 md:grid-cols-2">
-                <Field fieldId="field-customer-name" label="Kundnamn" error={fieldErrors.customer_name}>
-                  <Input value={draft.customer_name} onChange={(e) => setDraft((d) => ({ ...d, customer_name: e.target.value }))} placeholder="För- och efternamn" />
-                </Field>
-                <Field fieldId="field-personal-number" label="Personnummer" error={fieldErrors.personal_number}>
-                  <Input value={draft.personal_number} onChange={(e) => setDraft((d) => ({ ...d, personal_number: e.target.value }))} placeholder="ÅÅÅÅMMDD-XXXX" />
-                </Field>
-              </div>
-            )}
-
-            <div className="grid gap-4 md:grid-cols-2">
-              <Field label="E-post">
-                <Input value={draft.email} onChange={(e) => setDraft((d) => ({ ...d, email: e.target.value }))} placeholder="namn@example.com" type="email" />
-              </Field>
-              <Field label="Telefon">
-                <Input value={draft.phone} onChange={(e) => setDraft((d) => ({ ...d, phone: e.target.value }))} placeholder="070…" />
-              </Field>
-              <Field label="Gatuadress">
-                <Input value={draft.street_address} onChange={(e) => setDraft((d) => ({ ...d, street_address: e.target.value }))} placeholder="Gata 1" />
-              </Field>
-              <Field label="Postnummer">
-                <Input value={draft.postal_code} onChange={(e) => setDraft((d) => ({ ...d, postal_code: e.target.value }))} placeholder="123 45" />
-              </Field>
-              <Field label="Ort" className="md:col-span-2">
-                <Input value={draft.city} onChange={(e) => setDraft((d) => ({ ...d, city: e.target.value }))} placeholder="Ort" />
-              </Field>
-            </div>
-
-            {/* Progressive disclosure — extra addresses */}
-            {extraAddressesOpen || Boolean(draft.visit_address || draft.delivery_address || draft.invoice_address) ? (
-              <div className="grid gap-4 md:grid-cols-2">
-                <Field label="Besöksadress" className="md:col-span-2">
-                  <Input value={draft.visit_address} onChange={(e) => setDraft((d) => ({ ...d, visit_address: e.target.value }))} placeholder="Om annan än kundadress" />
-                </Field>
-                <Field label="Leveransadress" className="md:col-span-2">
-                  <Input value={draft.delivery_address} onChange={(e) => setDraft((d) => ({ ...d, delivery_address: e.target.value }))} placeholder="Leveransadress" />
-                </Field>
-                <Field label="Fakturaadress" className="md:col-span-2">
-                  <Input value={draft.invoice_address} onChange={(e) => setDraft((d) => ({ ...d, invoice_address: e.target.value }))} placeholder="Fakturaadress" />
-                </Field>
-              </div>
-            ) : (
+            {selectedCustomer ? (
               <button
                 type="button"
-                onClick={() => setExtraAddressesOpen(true)}
+                onClick={() => goToCustomerPage(`/crm/kunder/${selectedCustomer.id}`)}
                 className="w-fit text-xs font-medium text-slate-400 transition-colors hover:text-slate-700"
               >
-                + Lägg till alternativ adress
+                Öppna kundkort →
               </button>
+            ) : (
+              <p className="text-xs text-slate-400">Sök fram en befintlig kund eller skapa en ny. Kunduppgifterna hämtas från kundkortet.</p>
             )}
           </div>
           </div>
 
           {/* ── Section 2: Offert ── */}
-          <div className="border-t border-slate-100 px-8 py-8">
-            <div className="mb-6 flex items-center gap-3">
-              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white" style={{ backgroundColor: 'var(--crm-primary)' }}>2</span>
-              <h2 className="text-sm font-semibold text-slate-900">Offert</h2>
-            </div>
+          <div id="section-offert" className={cn('scroll-mt-6', crm.cardInner)}>
+            <SectionHeader step={stepOf('section-offert')} title="Offert" />
 
           {isEditing && loadedQuote?.quote_number ? (
             <div className="mb-4">
@@ -1160,11 +1276,8 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           </div>
 
           {/* ── Section 3: Rader ── */}
-          <div className="border-t border-slate-100 px-8 py-8">
-            <div className="mb-6 flex items-center gap-3">
-              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white" style={{ backgroundColor: 'var(--crm-primary)' }}>3</span>
-              <h2 className="text-sm font-semibold text-slate-900">Produkter & priser</h2>
-            </div>
+          <div id="section-rader" className={cn('scroll-mt-6', crm.cardInner)}>
+            <SectionHeader step={stepOf('section-rader')} title="Produkter & priser" />
 
           {/* Totals bar */}
           {hasAnyLineItemInput ? (
@@ -1193,125 +1306,45 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           )}
 
           <div className="grid gap-3">
-            {draft.items.map((row, index) => {
-              const rowMetrics = effectiveRows.find((r) => r.id === row.id);
-              const isM3 = (row.pricing_mode ?? 'm3') === 'm3';
-
-              return (
-                <div key={row.id} className="grid gap-4 rounded-xl border border-slate-100 p-5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-slate-400">Rad {index + 1}</span>
-                    <button
-                      type="button"
-                      onClick={() => setDraft((d) => ({ ...d, items: d.items.length > 1 ? d.items.filter((item) => item.id !== row.id) : [createEmptyLineItem()] }))}
-                      className="text-xs text-slate-400 transition-colors hover:text-rose-600"
-                    >
-                      Ta bort
-                    </button>
-                  </div>
-
-                  <div className="grid gap-3 md:grid-cols-2">
-                    <Field label="Artikel" className="md:col-span-2">
-                      <ArticlePicker
-                        value={row.article_name || ''}
-                        onSelect={(article) => {
-                          const construction = inferConstructionFromArticle(article.name);
-                          const unitName = getArticleUnitName(article.unit);
-                          const normalizedUnit = unitName.trim().toLowerCase();
-                          const pricingMode: 'm3' | 'item' = normalizedUnit === 'm3' || normalizedUnit === 'm³' || /m\s*³/i.test(normalizedUnit) ? 'm3' : 'item';
-                          setDraft((current) => ({
-                            ...current,
-                            items: current.items.map((item) => item.id === row.id ? {
-                              ...item,
-                              article_id: article.id || null,
-                              article_name: article.name || null,
-                              article_number: article.articleNumber || null,
-                              article_price: typeof article.price === 'number' ? article.price : null,
-                              article_unit_name: unitName || null,
-                              construction: construction || item.construction,
-                              pricing_mode: pricingMode,
-                              auto_price: false,
-                              unit_price: article.price != null ? String(article.price) : item.unit_price,
-                              quantity: pricingMode === 'item' && (!item.quantity || Number(item.quantity) <= 0) ? '1' : item.quantity,
-                            } : item),
-                          }));
-                        }}
-                        onClear={() => setDraft((current) => ({
-                          ...current,
-                          items: current.items.map((item) => item.id === row.id ? {
-                            ...item, article_id: null, article_name: null, article_number: null, article_price: null, article_unit_name: null,
-                          } : item),
-                        }))}
-                      />
-                    </Field>
-                    {row.article_name ? (
-                      <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700 md:col-span-2">
-                        {row.article_name}{row.article_number ? ` · ${row.article_number}` : ''}
-                      </div>
-                    ) : null}
-                  </div>
-
-                  <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
-                    {isM3 ? (
-                      <>
-                        <Field label="m²">
-                          <Input value={row.m2} onChange={(e) => setDraft((d) => ({ ...d, items: d.items.map((item) => item.id === row.id ? { ...item, m2: e.target.value } : item) }))} inputMode="decimal" placeholder="0" />
-                        </Field>
-                        <Field label="Tjocklek mm">
-                          <Input value={row.thickness_mm} onChange={(e) => setDraft((d) => ({ ...d, items: d.items.map((item) => item.id === row.id ? { ...item, thickness_mm: e.target.value } : item) }))} inputMode="decimal" placeholder="200" />
-                        </Field>
-                      </>
-                    ) : (
-                      <Field label="Antal">
-                        <Input value={row.quantity} onChange={(e) => setDraft((d) => ({ ...d, items: d.items.map((item) => item.id === row.id ? { ...item, quantity: e.target.value } : item) }))} inputMode="decimal" placeholder="1" />
-                      </Field>
-                    )}
-                    <Field label="A-pris">
-                      <Input
-                        value={row.auto_price ? String(rowMetrics?.unit ?? row.article_price ?? '') : row.unit_price}
-                        onChange={(e) => setDraft((d) => ({ ...d, items: d.items.map((item) => item.id === row.id ? { ...item, unit_price: e.target.value } : item) }))}
-                        inputMode="decimal"
-                        placeholder="0"
-                        disabled={row.auto_price}
-                      />
-                    </Field>
-                    <Field label="Rabatt %">
-                      <Input value={row.discount_percent} onChange={(e) => setDraft((d) => ({ ...d, items: d.items.map((item) => item.id === row.id ? { ...item, discount_percent: e.target.value } : item) }))} inputMode="decimal" placeholder="0" />
-                    </Field>
-                  </div>
-
-                  <div className="flex items-center gap-4">
-                    <label className="inline-flex items-center gap-2 text-xs text-slate-500">
-                      <input
-                        type="checkbox"
-                        checked={!row.auto_price}
-                        onChange={(e) => setDraft((d) => ({ ...d, items: d.items.map((item) => item.id === row.id ? { ...item, auto_price: !e.target.checked } : item) }))}
-                        className="h-3.5 w-3.5 rounded border-slate-300"
-                      />
-                      Manuellt pris
-                    </label>
-                  </div>
-
-                  <Field label="Radtext">
-                    <Input
-                      value={row.line_note}
-                      onChange={(e) => setDraft((d) => ({ ...d, items: d.items.map((item) => item.id === row.id ? { ...item, line_note: e.target.value } : item) }))}
-                      placeholder="Fritext för raden"
-                    />
-                  </Field>
-
-                  {/* Row summary */}
-                  {rowMetrics?.isConfigured ? (
-                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-slate-100 pt-3 text-xs text-slate-500">
-                      <span>{rowMetrics.label}</span>
-                      <span>Mängd {rowMetrics.amount.toFixed(2)}</span>
-                      <span>A-pris {formatCurrency(rowMetrics.effectiveUnit, 'SEK')}</span>
-                      <span className="ml-auto font-semibold text-slate-900">Radsumma {formatCurrency(rowMetrics.rowTotal, 'SEK')}</span>
-                    </div>
-                  ) : null}
-                </div>
-              );
-            })}
+            {draft.items.map((row, index) => (
+              <LineItemRow
+                key={row.id}
+                row={row}
+                index={index}
+                metrics={effectiveRows.find((r) => r.id === row.id)}
+                rotEnabled={draft.rot_enabled}
+                onChange={(patch) => setDraft((d) => ({ ...d, items: d.items.map((item) => item.id === row.id ? { ...item, ...patch } : item) }))}
+                onSelectArticle={(article) => {
+                  const construction = inferConstructionFromArticle(article.name);
+                  const unitName = getArticleUnitName(article.unit);
+                  const normalizedUnit = unitName.trim().toLowerCase();
+                  const pricingMode: 'm3' | 'item' = normalizedUnit === 'm3' || normalizedUnit === 'm³' || /m\s*³/i.test(normalizedUnit) ? 'm3' : 'item';
+                  setDraft((current) => ({
+                    ...current,
+                    items: current.items.map((item) => item.id === row.id ? {
+                      ...item,
+                      article_id: article.id || null,
+                      article_name: article.name || null,
+                      article_number: article.articleNumber || null,
+                      article_price: typeof article.price === 'number' ? article.price : null,
+                      article_unit_name: unitName || null,
+                      construction: construction || item.construction,
+                      pricing_mode: pricingMode,
+                      auto_price: false,
+                      unit_price: article.price != null ? String(article.price) : item.unit_price,
+                      quantity: pricingMode === 'item' && (!item.quantity || Number(item.quantity) <= 0) ? '1' : item.quantity,
+                    } : item),
+                  }));
+                }}
+                onClearArticle={() => setDraft((current) => ({
+                  ...current,
+                  items: current.items.map((item) => item.id === row.id ? {
+                    ...item, article_id: null, article_name: null, article_number: null, article_price: null, article_unit_name: null,
+                  } : item),
+                }))}
+                onRemove={() => setDraft((d) => ({ ...d, items: d.items.length > 1 ? d.items.filter((item) => item.id !== row.id) : [createEmptyLineItem()] }))}
+              />
+            ))}
           </div>
 
           <button
@@ -1323,42 +1356,30 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           </button>
           </div>
 
-          {/* ── Section 4: ROT ── */}
-          {draft.quote_type === 'private' ? (
-            <div className="border-t border-slate-100 px-8 py-8">
-              <div className="mb-6 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white" style={{ backgroundColor: 'var(--crm-primary)' }}>4</span>
-                  <h2 className="text-sm font-semibold text-slate-900">ROT-avdrag</h2>
-                </div>
-                <label className="inline-flex items-center gap-2 text-sm text-slate-600">
-                  <input type="checkbox" checked={draft.rot_enabled} onChange={(e) => setDraft((d) => ({ ...d, rot_enabled: e.target.checked }))} className="h-4 w-4 rounded border-slate-300" />
-                  Aktivera
-                </label>
-              </div>
+          {/* ── Section 4: ROT (toggled on via the sidebar) ── */}
+          {draft.quote_type === 'private' && draft.rot_enabled ? (
+            <div id="section-rot" className={cn('scroll-mt-6', crm.cardInner)}>
+              <SectionHeader step={stepOf('section-rot')} title="ROT-avdrag" />
               <div className="grid gap-4 md:grid-cols-2">
                 <Field label="ROT-sökande">
-                  <Input value={draft.rot_applicant_name} onChange={(e) => setDraft((d) => ({ ...d, rot_applicant_name: e.target.value }))} placeholder="Namn på sökande" disabled={!draft.rot_enabled} />
+                  <Input value={draft.rot_applicant_name} onChange={(e) => setDraft((d) => ({ ...d, rot_applicant_name: e.target.value }))} placeholder="Namn på sökande" />
                 </Field>
                 <Field fieldId="field-rot-personal-number" label="ROT personnummer" error={fieldErrors.rot_personal_number}>
-                  <Input value={draft.rot_personal_number} onChange={(e) => setDraft((d) => ({ ...d, rot_personal_number: e.target.value }))} placeholder="ÅÅÅÅMMDD-XXXX" disabled={!draft.rot_enabled} />
+                  <Input value={draft.rot_personal_number} onChange={(e) => setDraft((d) => ({ ...d, rot_personal_number: e.target.value }))} placeholder="ÅÅÅÅMMDD-XXXX" />
                 </Field>
                 <Field fieldId="field-rot-property" label="Fastighetsbeteckning" className="md:col-span-2" error={fieldErrors.rot_property_designation}>
-                  <Input value={draft.rot_property_designation} onChange={(e) => setDraft((d) => ({ ...d, rot_property_designation: e.target.value }))} placeholder="Fastighetsbeteckning" disabled={!draft.rot_enabled} />
+                  <Input value={draft.rot_property_designation} onChange={(e) => setDraft((d) => ({ ...d, rot_property_designation: e.target.value }))} placeholder="Fastighetsbeteckning" />
                 </Field>
                 <Field label="ROT %">
-                  <Input value={draft.rot_percent} onChange={(e) => setDraft((d) => ({ ...d, rot_percent: e.target.value }))} inputMode="decimal" placeholder="30" disabled={!draft.rot_enabled} />
+                  <Input value={draft.rot_percent} onChange={(e) => setDraft((d) => ({ ...d, rot_percent: e.target.value }))} inputMode="decimal" placeholder="30" />
                 </Field>
               </div>
             </div>
           ) : null}
 
           {/* ── Section 5: Intern handoff ── */}
-          <div className="border-t border-slate-100 px-8 py-8">
-            <div className="mb-6 flex items-center gap-3">
-              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white" style={{ backgroundColor: 'var(--crm-primary)' }}>{draft.quote_type === 'private' ? 5 : 4}</span>
-              <h2 className="text-sm font-semibold text-slate-900">Intern handoff</h2>
-            </div>
+          <div id="section-handoff" className={cn('scroll-mt-6', crm.cardInner)}>
+            <SectionHeader step={stepOf('section-handoff')} title="Intern handoff" muted />
             <div className="grid gap-4 md:grid-cols-2">
               <Field label="Önskat installationsdatum">
                 <Input value={draft.desired_installation_date} onChange={(e) => setDraft((d) => ({ ...d, desired_installation_date: e.target.value }))} type="date" />
@@ -1377,11 +1398,8 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
 
           {/* ── Section 6: Arbetsorder (edit mode) ── */}
           {isEditing && loadedQuote ? (
-            <div className="border-t border-slate-100 px-8 py-8">
-              <div className="mb-4 flex items-center gap-3">
-                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-slate-200 text-[11px] font-bold text-slate-600">{draft.quote_type === 'private' ? 6 : 5}</span>
-                <h2 className="text-sm font-semibold text-slate-900">Arbetsorder</h2>
-              </div>
+            <div id="section-arbetsorder" className={cn('scroll-mt-6', crm.cardInner)}>
+              <SectionHeader step={stepOf('section-arbetsorder')} title="Arbetsorder" muted className="mb-4" />
               <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-slate-100 bg-slate-50 px-5 py-4">
                 <span className="text-sm text-slate-700">
                   {loadedQuote.work_order_number
@@ -1409,73 +1427,117 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
             </div>
           ) : null}
 
-        </div>{/* end left form card */}
+        </div>{/* end left column */}
 
         {/* ── Right: sticky sidebar ── */}
         <aside className="self-start lg:sticky lg:top-6">
 
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
 
-            {/* Progress indicator */}
-            <div className="mb-5 flex items-center justify-between">
-              <div className="flex items-center gap-1.5">
-                {progressSteps.map((step, i) => (
-                  <span
-                    key={i}
-                    title={step.label}
-                    className={cn(
-                      'h-1.5 w-6 rounded-full transition-colors',
-                      step.done ? 'bg-emerald-400' : 'bg-slate-200',
-                    )}
-                  />
+            {/* Section nav — desktop only. A jump list is redundant on mobile (you
+                just scroll) and, kept always-open, it ate most of the small viewport. */}
+            <nav className="hidden lg:block">
+              <div className="mb-2.5 flex items-center justify-between">
+                <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Sektioner</span>
+                <span className="text-[11px] font-medium text-slate-400">{doneSteps}/{requiredSections.length} klara</span>
+              </div>
+              <div className="grid gap-1">
+                {sections.map((section, i) => (
+                  <button
+                    key={section.id}
+                    type="button"
+                    onClick={() => scrollToSection(section.id)}
+                    className="group flex w-full items-center gap-2.5 rounded-lg border border-slate-100 bg-white px-2.5 py-2 text-left text-sm font-medium text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900"
+                  >
+                    <span
+                      className={cn(
+                        'flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[10px] font-bold',
+                        section.done === true
+                          ? 'border-emerald-200 bg-emerald-50 text-emerald-600'
+                          : section.done === false
+                            ? 'border-slate-200 text-slate-400'
+                            : 'border-transparent bg-slate-100 text-slate-400',
+                      )}
+                    >
+                      {section.done === true ? '✓' : i + 1}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate">{section.label}</span>
+                    <svg
+                      className="shrink-0 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-slate-500"
+                      width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"
+                    >
+                      <path d="M4.5 2.5 8 6l-3.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </button>
                 ))}
               </div>
-              <span className="text-[11px] font-medium text-slate-400">
-                {doneSteps}/{progressSteps.length} steg klara
-              </span>
-            </div>
+            </nav>
 
-            <div className="mb-3 grid gap-0.5">
-              <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Projekt</span>
-              <p className="text-sm font-semibold leading-5 text-slate-900">
-                {draft.project_name || <span className="text-slate-300">—</span>}
-              </p>
-            </div>
-            <div className="mb-5 grid gap-0.5">
-              <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Kund</span>
-              <p className="text-sm text-slate-700">
-                {sidebarDisplayName || <span className="text-slate-300">—</span>}
-              </p>
-            </div>
+            {/* Divider — hidden on mobile together with the section nav above */}
+            <div className="my-5 hidden border-t border-slate-100 lg:block" />
 
-            {/* Total — prominent */}
-            <div className="mb-5 rounded-xl bg-slate-50 px-4 py-3.5">
-              <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Totalt inkl. moms</span>
-              <p className="mt-1 text-2xl font-bold tracking-tight text-slate-950">
-                {sidebarTotal != null && Number.isFinite(sidebarTotal)
-                  ? formatCurrency(sidebarTotal, 'SEK')
-                  : <span className="text-xl text-slate-300">—</span>}
-              </p>
-              {hasAnyLineItemInput && totals.subtotal > 0 ? (
-                <p className="mt-0.5 text-xs text-slate-400">
-                  {formatCurrency(totals.subtotal, 'SEK')} + {formatCurrency(totals.vat, 'SEK')} moms
+            {/* Summary: projekt + kund + total */}
+            <div className="grid gap-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="grid gap-0.5">
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Projekt</span>
+                  <p className="truncate text-sm font-semibold leading-5 text-slate-900">
+                    {draft.project_name || <span className="text-slate-300">—</span>}
+                  </p>
+                </div>
+                <div className="grid gap-0.5">
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Kund</span>
+                  <p className="truncate text-sm text-slate-700">
+                    {sidebarDisplayName || <span className="text-slate-300">—</span>}
+                  </p>
+                </div>
+              </div>
+
+              {/* Total — prominent */}
+              <div className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3.5">
+                <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Totalt inkl. moms</span>
+                <p className="mt-1 text-2xl font-bold tracking-tight text-slate-950">
+                  {sidebarTotal != null && Number.isFinite(sidebarTotal)
+                    ? formatCurrency(sidebarTotal, 'SEK')
+                    : <span className="text-xl text-slate-300">—</span>}
                 </p>
-              ) : null}
+                {hasAnyLineItemInput && totals.subtotal > 0 ? (
+                  <p className="mt-0.5 text-xs text-slate-400">
+                    {formatCurrency(totals.subtotal, 'SEK')} + {formatCurrency(totals.vat, 'SEK')} moms
+                  </p>
+                ) : null}
+              </div>
             </div>
 
-            {/* Status */}
-            <Field label="Status">
-              <Select value={draft.status} onChange={(e) => setDraft((d) => ({ ...d, status: e.target.value as QuoteItem['status'] }))}>
-                {Object.entries(quoteStatusMeta).map(([value, meta]) => (
-                  <option key={value} value={value}>{meta.label}</option>
-                ))}
-              </Select>
-            </Field>
+            {/* Divider */}
+            <div className="my-5 border-t border-slate-100" />
 
-            <div className="mt-4">
+            {/* Settings: status + follow-up + ROT */}
+            <div className="grid gap-4">
+              <Field label="Status">
+                <Select value={draft.status} onChange={(e) => setDraft((d) => ({ ...d, status: e.target.value as QuoteItem['status'] }))}>
+                  {Object.entries(quoteStatusMeta).map(([value, meta]) => (
+                    <option key={value} value={value}>{meta.label}</option>
+                  ))}
+                </Select>
+              </Field>
+
               <Field label="Följ upp senast">
                 <Input value={draft.follow_up_date} onChange={(e) => setDraft((d) => ({ ...d, follow_up_date: e.target.value }))} type="date" lang="sv-SE" />
               </Field>
+
+              {/* ROT toggle — only relevant for private customers */}
+              {draft.quote_type === 'private' ? (
+                <label className="flex cursor-pointer select-none items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50/60 px-3.5 py-2.5">
+                  <span className="text-sm font-medium text-slate-700">ROT-avdrag</span>
+                  <input
+                    type="checkbox"
+                    checked={draft.rot_enabled}
+                    onChange={(e) => setDraft((d) => ({ ...d, rot_enabled: e.target.checked }))}
+                    className="h-4 w-4 rounded border-slate-300 accent-emerald-600"
+                  />
+                </label>
+              ) : null}
             </div>
 
             {/* Divider */}
@@ -1483,40 +1545,50 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
 
             {/* Validation status */}
             {isReady ? (
-              <div className="mb-4 flex items-center gap-2 text-xs text-emerald-700">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+              <div className="mb-4 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-3 text-sm font-semibold text-emerald-800">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <path d="M3.5 8.5 6.5 11.5 12.5 4.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
                 Redo att spara
               </div>
             ) : (
-              <ul className="mb-4 grid gap-1.5">
-                {issues.map((issue) => {
-                  const targetId = issueFieldIds[issue];
-                  return (
-                    <li key={issue}>
+              <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 p-3">
+                <div className="mb-2 flex items-center gap-2 text-amber-900">
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true" className="shrink-0">
+                    <path d="M8 1.8 15 14H1L8 1.8Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+                    <path d="M8 6.2v3.4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                    <circle cx="8" cy="11.8" r="0.85" fill="currentColor" />
+                  </svg>
+                  <span className="text-xs font-bold uppercase tracking-[0.08em]">{issues.length} att åtgärda</span>
+                </div>
+                <div className="grid gap-0.5">
+                  {issues.map((issue) => {
+                    const targetId = issueFieldIds[issue];
+                    return (
                       <button
+                        key={issue}
                         type="button"
                         onClick={() => targetId && scrollToField(targetId)}
                         className={cn(
-                          'flex w-full items-start gap-1.5 text-left text-xs text-slate-500',
-                          targetId ? 'cursor-pointer hover:text-slate-800' : 'cursor-default',
+                          'flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs font-medium text-amber-900 transition',
+                          targetId ? 'cursor-pointer hover:bg-amber-100' : 'cursor-default',
                         )}
                       >
-                        <span className="mt-1 h-1 w-1 shrink-0 rounded-full bg-amber-400" />
-                        {issue}
-                        {targetId ? <span className="ml-auto shrink-0 text-[10px] text-slate-300">↑</span> : null}
+                        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" />
+                        <span className="min-w-0 flex-1">{issue}</span>
+                        {targetId ? <span className="shrink-0 text-[11px] text-amber-500">↑</span> : null}
                       </button>
-                    </li>
-                  );
-                })}
-              </ul>
+                    );
+                  })}
+                </div>
+              </div>
             )}
 
             <button
               type="button"
               onClick={saveQuote}
               disabled={submitting}
-              className="w-full rounded-xl py-2.5 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-              style={{ backgroundColor: 'var(--crm-primary)' }}
+              className={crm.saveButton}
             >
               {submitting ? 'Sparar…' : isEditing ? 'Spara offert' : 'Skapa offert'}
             </button>
@@ -1533,7 +1605,24 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
         </aside>
 
         </div>{/* end two-column grid */}
-      </div>{/* end page wrapper */}
+
+      {/* ── Mobile sticky action bar (sidebar handles this on lg+) ── */}
+      <div className="fixed inset-x-0 bottom-0 z-30 flex items-center gap-3 border-t border-slate-200 bg-white/95 px-4 py-3 backdrop-blur lg:hidden">
+        <div className="min-w-0">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Totalt inkl. moms</p>
+          <p className="truncate text-base font-bold text-slate-950">
+            {sidebarTotal != null && Number.isFinite(sidebarTotal) ? formatCurrency(sidebarTotal, 'SEK') : '—'}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={saveQuote}
+          disabled={submitting}
+          className={cn(crm.saveButton, 'ml-auto w-auto px-6')}
+        >
+          {submitting ? 'Sparar…' : isEditing ? 'Spara' : 'Skapa'}
+        </button>
+      </div>
     </div>
   );
 }

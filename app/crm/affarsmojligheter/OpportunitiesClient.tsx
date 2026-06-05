@@ -6,8 +6,7 @@ import Input from '../../../components/ui/Input';
 import Textarea from '../../../components/ui/Textarea';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
-
-type OpportunityStatus = 'qualified' | 'quoted' | 'won' | 'lost';
+import { crm, opportunityStatusLabel as statusLabel, opportunityStatusClass as statusClass, OpportunityStatus } from '@/app/crm/lib/crmTokens';
 
 type OpportunityItem = {
   id: string;
@@ -37,19 +36,6 @@ type OpportunityItem = {
   } | null;
 };
 
-const statusLabel: Record<OpportunityStatus, string> = {
-  qualified: 'Kvalificerad',
-  quoted: 'Offert',
-  won: 'Vunnen',
-  lost: 'Förlorad',
-};
-
-const statusClass: Record<OpportunityStatus, string> = {
-  qualified: 'border-violet-200 bg-violet-50 text-violet-700',
-  quoted: 'border-amber-200 bg-amber-50 text-amber-700',
-  won: 'border-emerald-200 bg-emerald-50 text-emerald-700',
-  lost: 'border-rose-200 bg-rose-50 text-rose-700',
-};
 
 const boardMeta: Record<OpportunityStatus, { hint: string; empty: string }> = {
   qualified: { hint: 'Köpintresse bekräftat, affären är igång', empty: 'Skapa en affärsmöjlighet från ett prospekt' },
@@ -507,7 +493,7 @@ export default function OpportunitiesClient() {
   }
 
   return (
-    <div className="grid gap-6">
+    <div className="grid grid-cols-1 gap-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="m-0 text-2xl font-bold tracking-tight text-slate-900">Affärsmöjligheter</h1>

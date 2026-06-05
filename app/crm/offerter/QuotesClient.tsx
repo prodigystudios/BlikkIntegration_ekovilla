@@ -33,6 +33,9 @@ type QuoteItem = {
   work_order_id: string | null;
   work_order_number: string | null;
   converted_to_work_order_at: string | null;
+  fortnox_offer_number: string | null;
+  fortnox_sync_status: 'not_synced' | 'pending' | 'synced' | 'failed' | null;
+  fortnox_synced_at: string | null;
   status: 'draft' | 'sent' | 'follow_up' | 'won' | 'lost';
   quote_date: string;
   follow_up_date: string | null;
@@ -144,6 +147,7 @@ export default function QuotesClient() {
   const [filter, setFilter] = useState<QuoteFilter>('all');
   const [movingQuoteId, setMovingQuoteId] = useState<string | null>(null);
   const [creatingWorkOrderId, setCreatingWorkOrderId] = useState<string | null>(null);
+  const [pushingFortnoxId, setPushingFortnoxId] = useState<string | null>(null);
   const [detailPanelOpen, setDetailPanelOpen] = useState(false);
   const [detailQuoteId, setDetailQuoteId] = useState<string | null>(null);
   const [hasHandledPreset, setHasHandledPreset] = useState(false);
@@ -284,8 +288,48 @@ export default function QuotesClient() {
     } catch { toast.error('Kunde inte skapa arbetsorder'); } finally { setCreatingWorkOrderId(null); }
   }
 
+  async function pushToFortnox(quoteId: string) {
+    setPushingFortnoxId(quoteId);
+    try {
+      const res = await fetch('/api/fortnox/offers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ quote_id: quoteId }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.ok) {
+        toast.error(json?.error || 'Kunde inte skicka till Fortnox');
+        return;
+      }
+      const offerNumber = json?.data?.fortnox_offer_number as string | undefined;
+      const wasUpdated = json?.data?.updated as boolean | undefined;
+      toast.success(
+        offerNumber
+          ? `Fortnox-offert #${offerNumber} ${wasUpdated ? 'uppdaterad' : 'skapad'}`
+          : 'Skickad till Fortnox',
+      );
+      // Refresh list to pick up new fortnox_offer_number and sync_status
+      setQuotes((current) =>
+        current.map((q) =>
+          q.id === quoteId
+            ? {
+                ...q,
+                fortnox_offer_number: offerNumber ?? q.fortnox_offer_number,
+                fortnox_sync_status: 'synced',
+                fortnox_synced_at: new Date().toISOString(),
+              }
+            : q,
+        ),
+      );
+    } catch {
+      toast.error('Kunde inte skicka till Fortnox');
+    } finally {
+      setPushingFortnoxId(null);
+    }
+  }
+
   return (
-    <div className="grid gap-6">
+    <div className="grid grid-cols-1 gap-6">
 
       {/* Page header */}
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -543,6 +587,39 @@ export default function QuotesClient() {
                   {creatingWorkOrderId === detailQuote.id ? 'Skapar…' : detailQuote.work_order_number ? 'Skapad' : 'Skapa arbetsorder'}
                 </button>
               </div>
+            </div>
+
+            {/* Fortnox */}
+            <hr className="border-slate-100" />
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="grid gap-0.5">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Fortnox</span>
+                <span className="text-sm text-slate-700">
+                  {detailQuote.fortnox_offer_number
+                    ? `Fortnox-offert #${detailQuote.fortnox_offer_number} skapad.`
+                    : 'Skicka offerten till Fortnox som en offert.'}
+                </span>
+                {detailQuote.fortnox_sync_status === 'failed' && (
+                  <span className="text-xs font-semibold text-rose-600">Senaste synk misslyckades – försök igen.</span>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => void pushToFortnox(detailQuote.id)}
+                disabled={pushingFortnoxId === detailQuote.id || detailQuote.fortnox_sync_status === 'pending'}
+                className={cn(
+                  'rounded-lg border px-3.5 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50',
+                  detailQuote.fortnox_sync_status === 'synced'
+                    ? 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+                    : 'border-emerald-700 bg-emerald-700 text-white hover:bg-emerald-800',
+                )}
+              >
+                {pushingFortnoxId === detailQuote.id
+                  ? 'Skickar…'
+                  : detailQuote.fortnox_offer_number
+                    ? 'Skicka igen'
+                    : 'Skicka till Fortnox'}
+              </button>
             </div>
           </div>
         </div>
