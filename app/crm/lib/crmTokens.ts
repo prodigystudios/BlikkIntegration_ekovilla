@@ -73,8 +73,8 @@ export const crm = {
   // Cards
   // Use `card` for list-cards (no padding — content controls its own padding).
   // Use `cardInner` for detail/form cards that have their own internal padding.
-  card: 'rounded-2xl border border-slate-200 bg-white shadow-[0_2px_12px_rgba(0,0,0,0.04)]',
-  cardInner: 'rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_2px_12px_rgba(0,0,0,0.04)]',
+  card: 'rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)]',
+  cardInner: 'rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] p-5 shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)]',
 
   // Badge base — combine with a stage/status color class:
   //   cn(crm.badge, customerStageClass[item.customer_stage])
