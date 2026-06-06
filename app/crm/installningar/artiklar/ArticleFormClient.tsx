@@ -185,7 +185,17 @@ export default function ArticleFormClient({
           </Link>
           <h1 className="m-0 mt-1 text-2xl font-bold tracking-tight text-slate-900">{title}</h1>
         </div>
-        <div className="hidden gap-2 sm:flex">
+        <div className="flex flex-wrap gap-2">
+          {!isCreate && (
+            <Button
+              variant="secondary"
+              className="border-red-200 text-red-700 hover:bg-red-50"
+              onClick={() => setConfirmDelete(true)}
+              disabled={busy !== null}
+            >
+              Ta bort
+            </Button>
+          )}
           <Button variant="secondary" onClick={() => router.push(LIST_BASE)} disabled={busy !== null}>
             Avbryt
           </Button>
@@ -337,30 +347,6 @@ export default function ArticleFormClient({
               ))}
             </div>
           )}
-        </div>
-      </div>
-
-      {/* Footer actions (mobile-friendly, delete on edit) */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          {!isCreate && (
-            <Button
-              variant="secondary"
-              className="border-red-200 text-red-700 hover:bg-red-50"
-              onClick={() => setConfirmDelete(true)}
-              disabled={busy !== null}
-            >
-              Ta bort
-            </Button>
-          )}
-        </div>
-        <div className="flex flex-1 justify-end gap-2 sm:flex-none">
-          <Button variant="secondary" fullWidth className="sm:w-auto" onClick={() => router.push(LIST_BASE)} disabled={busy !== null}>
-            Avbryt
-          </Button>
-          <Button variant="primary" fullWidth className="sm:w-auto" onClick={handleSave} disabled={!fortnoxConnected || busy !== null}>
-            {busy === 'save' ? 'Sparar…' : 'Spara'}
-          </Button>
         </div>
       </div>
 
