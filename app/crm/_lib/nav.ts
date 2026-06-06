@@ -28,6 +28,7 @@ export const CRM_NAV_ITEMS: CrmNavItem[] = [
     children: [
       { href: '/crm/installningar', label: 'Översikt', description: 'Mål, användare och integrationer', roles: ['admin'] },
       { href: '/crm/installningar/artiklar', label: 'Artiklar', description: 'Skapa och redigera Fortnox-artiklar', roles: ['admin'] },
+      { href: '/crm/installningar/enheter', label: 'Enheter', description: 'Hantera Fortnox-enheter', roles: ['admin'] },
     ],
   },
 ];

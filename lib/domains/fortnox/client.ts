@@ -151,6 +151,9 @@ export async function fortnoxGet<T>(
   }
 
   const res = await fetch(url.toString(), {
+    // Never serve a cached response – Next.js App Router caches fetch() by
+    // default, which would return stale Fortnox data after a write.
+    cache: 'no-store',
     headers: {
       Authorization: `Bearer ${token}`,
       Accept: 'application/json',
@@ -171,6 +174,7 @@ export async function fortnoxPut<T>(path: string, body?: unknown): Promise<T> {
 
   const res = await fetch(`${FORTNOX_API_BASE}${path}`, {
     method: 'PUT',
+    cache: 'no-store',
     headers: {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
@@ -193,6 +197,7 @@ export async function fortnoxPost<T>(path: string, body: unknown): Promise<T> {
 
   const res = await fetch(`${FORTNOX_API_BASE}${path}`, {
     method: 'POST',
+    cache: 'no-store',
     headers: {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
@@ -216,6 +221,7 @@ export async function fortnoxDelete(path: string): Promise<void> {
 
   const res = await fetch(`${FORTNOX_API_BASE}${path}`, {
     method: 'DELETE',
+    cache: 'no-store',
     headers: {
       Authorization: `Bearer ${token}`,
       Accept: 'application/json',

@@ -1,7 +1,9 @@
 import { z } from 'zod';
-import { routeError } from '../_shared';
-import { FortnoxApiError, FortnoxNotConnectedError } from '@/lib/domains/fortnox/client';
 import type { FortnoxArticleInput, FortnoxArticlePriceInput } from '@/lib/domains/fortnox/types';
+
+// Shared Fortnox error→response mapper, re-exported so the article routes can
+// keep importing it from this module.
+export { fortnoxWriteError } from '../_shared';
 
 // Shared body schema for the article write endpoints. ArticleNumber is only
 // meaningful on create (Fortnox auto-assigns when omitted); the update route
@@ -51,18 +53,4 @@ export function toFortnoxArticleInput(body: FortnoxArticleBody): FortnoxArticleI
 // Extract the per-price-list prices from the API body.
 export function toFortnoxPrices(body: FortnoxArticleBody): FortnoxArticlePriceInput[] {
   return (body.prices ?? []).map((p) => ({ priceList: p.price_list, price: p.price }));
-}
-
-// Translate a thrown error from a Fortnox write into a deliberate route response.
-// FortnoxNotConnectedError → 400 (admin must connect first); FortnoxApiError keeps
-// Fortnox's own status (e.g. 4xx when an article is in use and cannot be deleted).
-export function fortnoxWriteError(e: unknown, code: string, fallback: string) {
-  if (e instanceof FortnoxNotConnectedError) {
-    return routeError(400, 'fortnox_not_connected', e.message);
-  }
-  if (e instanceof FortnoxApiError) {
-    const status = e.status >= 400 && e.status < 600 ? e.status : 502;
-    return routeError(status, 'fortnox_api_error', e.message);
-  }
-  return routeError(500, code, (e as any)?.message || fallback);
 }

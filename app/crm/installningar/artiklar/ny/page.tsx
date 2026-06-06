@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation';
 import { getUserProfile } from '@/lib/getUserProfile';
 import { listFortnoxArticlePriceLists } from '@/lib/domains/fortnox/articles';
-import { listFortnoxUnits } from '@/lib/domains/fortnox/customers';
+import { listFortnoxUnits } from '@/lib/domains/fortnox/units';
 import { getFortnoxConnectionStatus } from '@/lib/domains/fortnox/auth';
 import ArticleFormClient from '../ArticleFormClient';
 
