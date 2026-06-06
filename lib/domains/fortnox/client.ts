@@ -68,8 +68,21 @@ export async function refreshAccessToken(refreshToken: string): Promise<FortnoxT
   return res.json() as Promise<FortnoxTokenResponse>;
 }
 
-// Returns a valid access token, refreshing if needed (5-minute buffer).
-async function getValidAccessToken(): Promise<string> {
+const TOKEN_EXPIRY_BUFFER_MS = 5 * 60 * 1000;
+
+// Single-flight guard: when a refresh is in progress, concurrent callers await
+// the same promise instead of each firing their own. Fortnox rotates the
+// refresh_token on every refresh and invalidates the previous one, so two
+// parallel refreshes would leave the second with an invalid_grant and break the
+// token chain. Scoped per process – the dominant race source (batched sync GETs)
+// runs in one process, so this fully covers it.
+let inflightRefresh: Promise<string> | null = null;
+
+// Refresh the access token and persist the rotated tokens. Re-reads the row
+// first and re-checks expiry: a caller queued behind the lock may find the token
+// already refreshed by the call it waited on, in which case it must NOT refresh
+// again with the now-rotated refresh_token.
+async function refreshAndPersist(): Promise<string> {
   const supabase = getSupabaseAdmin();
   const { data } = await supabase
     .from('fortnox_integrations')
@@ -80,26 +93,50 @@ async function getValidAccessToken(): Promise<string> {
   if (!data) throw new FortnoxNotConnectedError();
 
   const expiresAt = new Date(data.expires_at).getTime();
-  const bufferMs = 5 * 60 * 1000;
-
-  if (Date.now() + bufferMs >= expiresAt) {
-    const refreshed = await refreshAccessToken(data.refresh_token);
-    const newExpiresAt = new Date(Date.now() + refreshed.expires_in * 1000).toISOString();
-
-    await supabase
-      .from('fortnox_integrations')
-      .update({
-        access_token: refreshed.access_token,
-        refresh_token: refreshed.refresh_token,
-        expires_at: newExpiresAt,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('provider', 'fortnox');
-
-    return refreshed.access_token;
+  if (Date.now() + TOKEN_EXPIRY_BUFFER_MS < expiresAt) {
+    return data.access_token;
   }
 
-  return data.access_token;
+  const refreshed = await refreshAccessToken(data.refresh_token);
+  const newExpiresAt = new Date(Date.now() + refreshed.expires_in * 1000).toISOString();
+
+  await supabase
+    .from('fortnox_integrations')
+    .update({
+      access_token: refreshed.access_token,
+      refresh_token: refreshed.refresh_token,
+      expires_at: newExpiresAt,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('provider', 'fortnox');
+
+  return refreshed.access_token;
+}
+
+// Returns a valid access token, refreshing if needed (5-minute buffer).
+async function getValidAccessToken(): Promise<string> {
+  const supabase = getSupabaseAdmin();
+  const { data } = await supabase
+    .from('fortnox_integrations')
+    .select('access_token, expires_at')
+    .eq('provider', 'fortnox')
+    .maybeSingle();
+
+  if (!data) throw new FortnoxNotConnectedError();
+
+  const expiresAt = new Date(data.expires_at).getTime();
+  if (Date.now() + TOKEN_EXPIRY_BUFFER_MS < expiresAt) {
+    return data.access_token;
+  }
+
+  // Near/at expiry: collapse all concurrent refreshes into one in-flight call.
+  // Cleared on settle so the next expiry cycle (or a retry after failure) starts fresh.
+  if (!inflightRefresh) {
+    inflightRefresh = refreshAndPersist().finally(() => {
+      inflightRefresh = null;
+    });
+  }
+  return inflightRefresh;
 }
 
 // Perform a GET request to the Fortnox API.
@@ -114,6 +151,9 @@ export async function fortnoxGet<T>(
   }
 
   const res = await fetch(url.toString(), {
+    // Never serve a cached response – Next.js App Router caches fetch() by
+    // default, which would return stale Fortnox data after a write.
+    cache: 'no-store',
     headers: {
       Authorization: `Bearer ${token}`,
       Accept: 'application/json',
@@ -134,6 +174,7 @@ export async function fortnoxPut<T>(path: string, body?: unknown): Promise<T> {
 
   const res = await fetch(`${FORTNOX_API_BASE}${path}`, {
     method: 'PUT',
+    cache: 'no-store',
     headers: {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
@@ -156,6 +197,7 @@ export async function fortnoxPost<T>(path: string, body: unknown): Promise<T> {
 
   const res = await fetch(`${FORTNOX_API_BASE}${path}`, {
     method: 'POST',
+    cache: 'no-store',
     headers: {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
@@ -170,4 +212,24 @@ export async function fortnoxPost<T>(path: string, body: unknown): Promise<T> {
   }
 
   return res.json() as Promise<T>;
+}
+
+// Perform a DELETE request to the Fortnox API. Fortnox returns an empty body
+// (204) on success, so unlike GET/POST/PUT this does not parse JSON.
+export async function fortnoxDelete(path: string): Promise<void> {
+  const token = await getValidAccessToken();
+
+  const res = await fetch(`${FORTNOX_API_BASE}${path}`, {
+    method: 'DELETE',
+    cache: 'no-store',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json',
+    },
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new FortnoxApiError(res.status, `Fortnox DELETE ${path} misslyckades (${res.status}): ${text}`);
+  }
 }
