@@ -329,6 +329,17 @@ export async function updateCrmWorkOrderComment(supabase: SupabaseClient, id: st
     .maybeSingle();
 }
 
+// Profiles that can be @-mentioned in work order comments. Returns everyone with a
+// name (installers included), not just CRM-assignable roles. Reads across all users,
+// so it needs the admin client (session RLS limits profiles to the requester's own row).
+export async function listMentionableProfiles(supabase: SupabaseClient) {
+  return supabase
+    .from('profiles')
+    .select('id, full_name')
+    .not('full_name', 'is', null)
+    .order('full_name', { ascending: true });
+}
+
 export async function deleteCrmWorkOrderComment(supabase: SupabaseClient, id: string, userId: string) {
   return supabase
     .from('crm_work_order_comments')

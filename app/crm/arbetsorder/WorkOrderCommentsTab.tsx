@@ -1,9 +1,9 @@
 "use client";
 
 import { useState } from 'react';
-import Textarea from '../../../components/ui/Textarea';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
+import MentionTextarea, { type MentionUser } from '@/app/crm/components/MentionTextarea';
 
 export type CommentItem = {
   id: string;
@@ -24,12 +24,13 @@ type Props = {
   comments: CommentItem[];
   loading: boolean;
   currentUserId: string | null;
+  mentionUsers: MentionUser[];
   onCreate: (body: string) => Promise<boolean>;
   onUpdate: (id: string, body: string) => Promise<boolean>;
   onDelete: (id: string) => Promise<boolean>;
 };
 
-export default function WorkOrderCommentsTab({ comments, loading, currentUserId, onCreate, onUpdate, onDelete }: Props) {
+export default function WorkOrderCommentsTab({ comments, loading, currentUserId, mentionUsers, onCreate, onUpdate, onDelete }: Props) {
   const [draft, setDraft] = useState('');
   const [creating, setCreating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -77,7 +78,7 @@ export default function WorkOrderCommentsTab({ comments, loading, currentUserId,
           if (editingId === item.id) {
             return (
               <div key={item.id} className="grid gap-2 rounded-xl border border-emerald-200 bg-[#f1f5ee] px-3 py-3">
-                <Textarea value={editBody} onChange={(e) => setEditBody(e.target.value)} rows={3} />
+                <MentionTextarea value={editBody} onChange={setEditBody} users={mentionUsers} rows={3} />
                 <div className="flex items-center justify-end gap-2">
                   <button type="button" onClick={() => setEditingId(null)} className={crm.ghostButton}>Avbryt</button>
                   <button type="button" onClick={() => submitEdit(item.id)} disabled={busyId === item.id} className={cn(crm.saveButton, 'h-9 w-auto px-4')}>
@@ -117,7 +118,7 @@ export default function WorkOrderCommentsTab({ comments, loading, currentUserId,
 
       <div className={cn(crm.cardInner, 'grid gap-3 lg:content-start')}>
         <p className={crm.sectionTitle}>Ny kommentar</p>
-        <Textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={8} placeholder="Skriv en kommentar om projektet" />
+        <MentionTextarea value={draft} onChange={setDraft} users={mentionUsers} rows={8} placeholder="Skriv en kommentar… använd @ för att tagga någon" />
         <button type="button" onClick={submitCreate} disabled={creating} className={crm.saveButton}>
           {creating ? 'Sparar kommentar…' : 'Spara kommentar'}
         </button>

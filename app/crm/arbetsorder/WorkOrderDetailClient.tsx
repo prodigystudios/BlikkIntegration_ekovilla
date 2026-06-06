@@ -14,6 +14,7 @@ import { inferMaterialFromArticle, sacksFor } from '@/lib/domains/crm/materials'
 import { parseDecimal } from '@/lib/shared/number';
 import WorkOrderTimeTab, { type TimeEntryItem, type TimeDraft } from './WorkOrderTimeTab';
 import WorkOrderCommentsTab, { type CommentItem } from './WorkOrderCommentsTab';
+import { type MentionUser } from '@/app/crm/components/MentionTextarea';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -163,6 +164,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   const [draft, setDraft] = useState<WorkOrderDraft | null>(null);
 
   const [assignees, setAssignees] = useState<AssignableUser[]>([]);
+  const [mentionUsers, setMentionUsers] = useState<MentionUser[]>([]);
   const [customerInfo, setCustomerInfo] = useState<{ contactName: string | null; phone: string | null; email: string | null } | null>(null);
   const [timeEntries, setTimeEntries] = useState<TimeEntryItem[]>([]);
   const [timeEntriesLoading, setTimeEntriesLoading] = useState(false);
@@ -195,18 +197,20 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
     async function loadRelated() {
       setTimeEntriesLoading(true); setCommentsLoading(true);
       try {
-        const [assigneeRes, timeRes, commentRes] = await Promise.all([
+        const [assigneeRes, timeRes, commentRes, mentionRes] = await Promise.all([
           fetch('/api/crm/work-orders/assignees', { cache: 'no-store' }),
           fetch(`/api/crm/work-orders/${workOrderId}/time-entries`, { cache: 'no-store' }),
           fetch(`/api/crm/work-orders/${workOrderId}/comments`, { cache: 'no-store' }),
+          fetch('/api/crm/work-orders/mention-users', { cache: 'no-store' }),
         ]);
-        const [assigneeJson, timeJson, commentJson] = await Promise.all([
-          assigneeRes.json().catch(() => ({})), timeRes.json().catch(() => ({})), commentRes.json().catch(() => ({})),
+        const [assigneeJson, timeJson, commentJson, mentionJson] = await Promise.all([
+          assigneeRes.json().catch(() => ({})), timeRes.json().catch(() => ({})), commentRes.json().catch(() => ({})), mentionRes.json().catch(() => ({})),
         ]);
         if (!active) return;
         setAssignees(assigneeRes.ok && assigneeJson.ok ? assigneeJson.data?.items || [] : []);
         setTimeEntries(timeRes.ok && timeJson.ok ? timeJson.data?.items || [] : []);
         setComments(commentRes.ok && commentJson.ok ? commentJson.data?.items || [] : []);
+        setMentionUsers(mentionRes.ok && mentionJson.ok ? mentionJson.data?.items || [] : []);
       } catch { /* non-fatal */ }
       finally { if (active) { setTimeEntriesLoading(false); setCommentsLoading(false); } }
     }
@@ -743,6 +747,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
           comments={comments}
           loading={commentsLoading}
           currentUserId={currentUserId}
+          mentionUsers={mentionUsers}
           onCreate={createComment}
           onUpdate={updateComment}
           onDelete={deleteComment}
