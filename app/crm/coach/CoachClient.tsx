@@ -486,7 +486,7 @@ export default function CoachClient({ userName }: { userName: string | null }) {
                   </div>
                 ) : (
                   thread.map((item) => (
-                    <div key={item.id} className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_2px_8px_rgba(0,0,0,0.04)]">
+                    <div key={item.id} className="grid gap-3 rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] p-4 shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)]">
                       <div className="grid gap-2 rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
                         <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
                           <span className="rounded-full border border-slate-200 bg-white px-2.5 py-0.5 font-semibold text-slate-600">Din fråga</span>
@@ -574,7 +574,7 @@ export default function CoachClient({ userName }: { userName: string | null }) {
                 <select
                   value={selectedContextId}
                   onChange={(event) => setSelectedContextId(event.target.value)}
-                  className="min-h-11 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+                  className="min-h-11 rounded-lg border border-[#dce4d8] bg-white px-3 py-2 text-sm text-slate-700 transition focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
                 >
                   <option value="">Välj kontext</option>
                   {filteredContexts.map((item) => (

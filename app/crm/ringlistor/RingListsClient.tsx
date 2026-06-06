@@ -541,7 +541,7 @@ export default function RingListsClient({ adminName }: { adminName: string | nul
             <select
               value={statusFilter}
               onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
-              className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-600 outline-none transition hover:border-slate-300"
+              className="rounded-full border border-[#dce4d8] bg-white px-3 py-1.5 text-sm font-semibold text-slate-600 outline-none transition hover:border-[#c8d4c3]"
             >
               <option value="all">Alla statusar</option>
               {Object.entries(statusLabel).map(([value, label]) => (
@@ -573,7 +573,7 @@ export default function RingListsClient({ adminName }: { adminName: string | nul
           <select
             value={selectedUserId}
             onChange={(event) => setSelectedUserId(event.target.value)}
-            className="min-h-9 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+            className="min-h-9 rounded-lg border border-[#dce4d8] bg-white px-3 py-1.5 text-sm text-slate-700 transition focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
           >
             <option value="">Ingen ägare</option>
             {users.map((user) => (
@@ -607,7 +607,7 @@ export default function RingListsClient({ adminName }: { adminName: string | nul
             <select
               value={importCounty}
               onChange={(e) => setImportCounty(e.target.value)}
-              className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+              className="rounded-lg border border-[#dce4d8] bg-white px-3 py-1.5 text-sm text-slate-700 transition focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
             >
               <option value="">Inget specifikt län</option>
               {SWEDISH_COUNTIES.map((c) => <option key={c} value={c}>{c}</option>)}
@@ -637,10 +637,10 @@ export default function RingListsClient({ adminName }: { adminName: string | nul
           {loading ? (
             Array.from({ length: 3 }).map((_, index) => (
               <div key={index} className="flex gap-3 px-5 py-4">
-                <div className="h-9 w-9 animate-pulse rounded-full bg-slate-100" />
+                <div className="h-9 w-9 animate-pulse rounded-full bg-[#dfe6da]" />
                 <div className="flex-1 grid gap-2">
-                  <div className="h-3 w-40 animate-pulse rounded-full bg-slate-100" />
-                  <div className="h-3 w-24 animate-pulse rounded-full bg-slate-100" />
+                  <div className="h-3 w-40 animate-pulse rounded-full bg-[#dfe6da]" />
+                  <div className="h-3 w-24 animate-pulse rounded-full bg-[#dfe6da]" />
                 </div>
               </div>
             ))
@@ -851,7 +851,7 @@ export default function RingListsClient({ adminName }: { adminName: string | nul
               <select
                 value={newRuleCounty}
                 onChange={(e) => setNewRuleCounty(e.target.value)}
-                className="min-h-11 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-slate-300"
+                className="min-h-11 rounded-lg border border-[#dce4d8] bg-white px-3 py-2 text-sm text-slate-700 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
               >
                 <option value="">Välj län…</option>
                 {SWEDISH_COUNTIES.map((c) => (
@@ -861,7 +861,7 @@ export default function RingListsClient({ adminName }: { adminName: string | nul
               <select
                 value={newRuleUserId}
                 onChange={(e) => setNewRuleUserId(e.target.value)}
-                className="min-h-11 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-slate-300"
+                className="min-h-11 rounded-lg border border-[#dce4d8] bg-white px-3 py-2 text-sm text-slate-700 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
               >
                 <option value="">Välj säljare…</option>
                 {users.map((u) => (

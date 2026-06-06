@@ -154,7 +154,9 @@ export default function QuotesClient() {
 
   const presetProspectId = searchParams.get('prospect_id') || '';
   const presetOpportunityId = searchParams.get('opportunity_id') || '';
+  const presetQuoteId = searchParams.get('quote_id') || '';
   const shouldOpenCreate = searchParams.get('new') === '1';
+  const [hasHandledQuotePreset, setHasHandledQuotePreset] = useState(false);
 
   // Redirect preset "new=1" links to the form page
   useEffect(() => {
@@ -192,6 +194,19 @@ export default function QuotesClient() {
 
     return () => { active = false; };
   }, [presetProspectId, search]);
+
+  // Deep-link: open a specific quote's detail panel when arriving with
+  // ?quote_id= (e.g. from a customer's related list). Handled once the matching
+  // quote is loaded so a manual close isn't re-triggered.
+  useEffect(() => { setHasHandledQuotePreset(false); }, [presetQuoteId]);
+
+  useEffect(() => {
+    if (!presetQuoteId || hasHandledQuotePreset || loading) return;
+    if (!quotes.some((q) => q.id === presetQuoteId)) return;
+    setDetailQuoteId(presetQuoteId);
+    setDetailPanelOpen(true);
+    setHasHandledQuotePreset(true);
+  }, [presetQuoteId, hasHandledQuotePreset, loading, quotes]);
 
   const visibleQuotes = useMemo(() => {
     if (filter === 'all') return quotes;
@@ -359,7 +374,7 @@ export default function QuotesClient() {
       </div>
 
       {/* Quote list */}
-      <div className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_2px_12px_rgba(0,0,0,0.04)] md:p-5">
+      <div className="grid gap-3 rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] p-4 shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)] md:p-5">
         <div className="flex flex-wrap items-center gap-3">
           <Input
             value={search}

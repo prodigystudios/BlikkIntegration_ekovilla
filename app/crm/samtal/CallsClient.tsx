@@ -458,7 +458,7 @@ export default function CallsClient() {
         <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
       ) : null}
 
-      <div className="rounded-2xl border border-slate-200 bg-white shadow-[0_2px_12px_rgba(0,0,0,0.04)]">
+      <div className="rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)]">
         <div className="border-b border-slate-100 px-5 py-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -481,10 +481,10 @@ export default function CallsClient() {
           {loading ? (
             Array.from({ length: 3 }).map((_, i) => (
               <div key={i} className="flex gap-3 px-5 py-4">
-                <div className="h-9 w-9 animate-pulse rounded-full bg-slate-100" />
+                <div className="h-9 w-9 animate-pulse rounded-full bg-[#dfe6da]" />
                 <div className="flex-1 grid gap-2">
-                  <div className="h-3 w-40 animate-pulse rounded-full bg-slate-100" />
-                  <div className="h-3 w-24 animate-pulse rounded-full bg-slate-100" />
+                  <div className="h-3 w-40 animate-pulse rounded-full bg-[#dfe6da]" />
+                  <div className="h-3 w-24 animate-pulse rounded-full bg-[#dfe6da]" />
                 </div>
               </div>
             ))
@@ -678,7 +678,7 @@ export default function CallsClient() {
                 <select
                   value={draft.opportunity_id}
                   onChange={(e) => setDraft((c) => ({ ...c, opportunity_id: e.target.value }))}
-                  className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/20"
+                  className="min-h-11 w-full rounded-lg border border-[#dce4d8] bg-white px-3 py-2 text-sm text-slate-900 transition-colors focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
                 >
                   <option value="">Ingen affärsmöjlighet</option>
                   {opportunities.map((opp) => (

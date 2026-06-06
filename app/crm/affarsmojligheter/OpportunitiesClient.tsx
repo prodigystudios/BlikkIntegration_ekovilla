@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import MetricCard from '../components/MetricCard';
 import Input from '../../../components/ui/Input';
 import Textarea from '../../../components/ui/Textarea';
@@ -151,6 +152,9 @@ function compareByUpdated(a: OpportunityItem, b: OpportunityItem) {
 
 export default function OpportunitiesClient() {
   const toast = useToast();
+  const searchParams = useSearchParams();
+  const presetOpportunityId = searchParams.get('opportunity_id') || '';
+  const [hasHandledPreset, setHasHandledPreset] = useState(false);
   const [items, setItems] = useState<OpportunityItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -207,6 +211,19 @@ export default function OpportunitiesClient() {
     load();
     return () => { active = false; };
   }, [search]);
+
+  // Deep-link: open a specific opportunity's detail when arriving with
+  // ?opportunity_id= (e.g. from a customer's related list). Handled once the
+  // matching item is loaded so a manual close isn't re-triggered.
+  useEffect(() => { setHasHandledPreset(false); }, [presetOpportunityId]);
+
+  useEffect(() => {
+    if (!presetOpportunityId || hasHandledPreset || loading) return;
+    if (!items.some((item) => item.id === presetOpportunityId)) return;
+    setSelectedId(presetOpportunityId);
+    setDetailOpen(true);
+    setHasHandledPreset(true);
+  }, [presetOpportunityId, hasHandledPreset, loading, items]);
 
   useEffect(() => {
     async function loadOptions() {
@@ -516,7 +533,7 @@ export default function OpportunitiesClient() {
         <MetricCard label="Vunna" value={stats.won} helper="Klara att lämna vidare mot order" />
       </div>
 
-      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_2px_12px_rgba(0,0,0,0.04)]">
+      <div className="rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] p-4 shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)]">
         <div className="mb-4">
           <h2 className="m-0 text-base font-bold text-slate-900">Pipeline</h2>
         </div>
@@ -674,7 +691,7 @@ export default function OpportunitiesClient() {
                 <select
                   value={draft.prospect_id}
                   onChange={(e) => setDraft((c) => ({ ...c, prospect_id: e.target.value }))}
-                  className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/20"
+                  className="min-h-11 w-full rounded-lg border border-[#dce4d8] bg-white px-3 py-2 text-sm text-slate-900 transition-colors focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
                 >
                   <option value="">— Välj prospekt —</option>
                   {prospectOptions.map((p) => (
@@ -687,7 +704,7 @@ export default function OpportunitiesClient() {
                 <select
                   value={draft.customer_id}
                   onChange={(e) => setDraft((c) => ({ ...c, customer_id: e.target.value }))}
-                  className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/20"
+                  className="min-h-11 w-full rounded-lg border border-[#dce4d8] bg-white px-3 py-2 text-sm text-slate-900 transition-colors focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
                 >
                   <option value="">— Välj kund —</option>
                   {customerOptions.map((c) => (
@@ -732,7 +749,7 @@ export default function OpportunitiesClient() {
                 <select
                   value={draft.status}
                   onChange={(e) => setDraft((c) => ({ ...c, status: e.target.value as OpportunityStatus }))}
-                  className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/20"
+                  className="min-h-11 w-full rounded-lg border border-[#dce4d8] bg-white px-3 py-2 text-sm text-slate-900 transition-colors focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
                 >
                   {(Object.entries(statusLabel) as [OpportunityStatus, string][]).map(([value, label]) => (
                     <option key={value} value={value}>{label}</option>
@@ -824,7 +841,7 @@ export default function OpportunitiesClient() {
                   <select
                     value={detailDraft.status}
                     onChange={(e) => setDetailDraft((c) => ({ ...c, status: e.target.value as OpportunityStatus }))}
-                    className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/20"
+                    className="min-h-11 w-full rounded-lg border border-[#dce4d8] bg-white px-3 py-2 text-sm text-slate-900 transition-colors focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
                   >
                     {(Object.entries(statusLabel) as [OpportunityStatus, string][]).map(([value, label]) => (
                       <option key={value} value={value}>{label}</option>

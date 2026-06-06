@@ -15,7 +15,7 @@ export default function MetricCard({ label, value, helper, icon, iconBg = 'bg-em
   const trendUp = trend != null && trend.value >= 0;
 
   return (
-    <div className={cn('rounded-2xl border border-slate-100 bg-white p-4 shadow-[0_2px_12px_rgba(0,0,0,0.04)]', className)}>
+    <div className={cn('rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] p-4 shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)]', className)}>
       <div className="flex items-start justify-between gap-2">
         {icon ? (
           <div className={cn('flex h-10 w-10 items-center justify-center rounded-xl', iconBg)}>

@@ -416,7 +416,7 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
           ) : null}
 
           {/* Actions */}
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 grid gap-2 shadow-[0_1px_6px_rgba(0,0,0,0.04)]">
+          <div className="rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] p-4 grid gap-2 shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)]">
             <button
               type="button"
               onClick={handleSubmit}

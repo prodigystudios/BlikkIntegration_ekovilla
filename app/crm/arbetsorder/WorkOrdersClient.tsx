@@ -534,7 +534,7 @@ export default function WorkOrdersClient() {
                       setActiveTab('overview');
                     }}
                     className={cn(
-                      'block w-full rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-[0_2px_8px_rgba(0,0,0,0.04)] transition hover:border-slate-300 hover:shadow-[0_4px_16px_rgba(0,0,0,0.08)]',
+                      'block w-full rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] p-4 text-left shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)] transition hover:border-[#cfdcc9] hover:shadow-[0_8px_24px_-8px_rgba(20,44,27,0.20)]',
                       isHighlighted ? 'ring-2 ring-emerald-200' : null,
                     )}
                   >
