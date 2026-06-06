@@ -136,6 +136,72 @@ function InfoField({ label, value }: { label: string; value?: React.ReactNode })
   );
 }
 
+// Strip everything but digits and a leading + so the dialer gets a clean number
+// while the displayed value keeps its human formatting (spaces, dashes).
+function telHref(phone: string): string {
+  return `tel:${phone.replace(/[^\d+]/g, '')}`;
+}
+
+function PhoneGlyph() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden className="shrink-0 opacity-80">
+      <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function MailGlyph() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden className="shrink-0 opacity-80">
+      <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M22 6 12 13 2 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+// Clickable contact value: tap-to-call / tap-to-mail. Inherits the surrounding
+// font size; only sets the accent colour + icon so it reads as actionable.
+function PhoneLink({ value, className }: { value: string; className?: string }) {
+  return (
+    <a href={telHref(value)} className={cn('inline-flex items-center gap-1.5 font-medium text-emerald-700 transition hover:text-emerald-800 hover:underline', className)}>
+      <PhoneGlyph /> {value}
+    </a>
+  );
+}
+
+function EmailLink({ value, className }: { value: string; className?: string }) {
+  return (
+    <a href={`mailto:${value}`} className={cn('inline-flex items-center gap-1.5 font-medium text-emerald-700 transition hover:text-emerald-800 hover:underline', className)}>
+      <MailGlyph /> <span className="break-all">{value}</span>
+    </a>
+  );
+}
+
+function PinGlyph() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden className="mt-0.5 shrink-0 opacity-80">
+      <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="12" cy="10" r="3" stroke="currentColor" strokeWidth="2" />
+    </svg>
+  );
+}
+
+// Address as a tap-to-navigate link. Uses the universal Google Maps URL so it
+// opens the OS map app (and offers navigation) on mobile, a maps tab on desktop.
+// Falls back to a plain dash when no address parts are set.
+function AddressValue({ addr }: { addr: CustomerAddress }) {
+  const text = formatAddress(addr);
+  if (!addr || text === '–') {
+    return <p className="text-sm leading-relaxed text-slate-700">–</p>;
+  }
+  const href = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(text)}`;
+  return (
+    <a href={href} target="_blank" rel="noopener noreferrer" className="inline-flex items-start gap-1.5 text-sm font-medium leading-relaxed text-emerald-700 transition hover:text-emerald-800 hover:underline">
+      <PinGlyph /> <span>{text}</span>
+    </a>
+  );
+}
+
 function Card({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
     <div className={cn(crm.cardInner, className)}>
@@ -710,9 +776,9 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
               {/* Kontakt row */}
               {(customer.email || customer.phone || customer.mobile) ? (
                 <div className="grid gap-3 sm:grid-cols-3">
-                  {customer.email ? <InfoField label="E-post" value={customer.email} /> : null}
-                  {customer.phone ? <InfoField label="Telefon" value={customer.phone} /> : null}
-                  {customer.mobile ? <InfoField label="Mobil" value={customer.mobile} /> : null}
+                  {customer.email ? <InfoField label="E-post" value={<EmailLink value={customer.email} />} /> : null}
+                  {customer.phone ? <InfoField label="Telefon" value={<PhoneLink value={customer.phone} />} /> : null}
+                  {customer.mobile ? <InfoField label="Mobil" value={<PhoneLink value={customer.mobile} />} /> : null}
                 </div>
               ) : (
                 <p className="text-sm text-slate-400">Ingen kontaktinformation registrerad.</p>
@@ -725,16 +791,16 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
               <div className="grid gap-4 sm:grid-cols-3">
                 <div className="grid gap-1">
                   <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">Besöksadress</p>
-                  <p className="text-sm text-slate-700 leading-relaxed">{formatAddress(customer.visit_address)}</p>
+                  <AddressValue addr={customer.visit_address} />
                 </div>
                 <div className="grid gap-1">
                   <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">Leveransadress</p>
-                  <p className="text-sm text-slate-700 leading-relaxed">{formatAddress(customer.delivery_address)}</p>
+                  <AddressValue addr={customer.delivery_address} />
                 </div>
                 <div className="grid gap-1">
                   <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">Fakturaadress</p>
-                  <p className="text-sm text-slate-700 leading-relaxed">{formatAddress(customer.invoice_address)}</p>
-                  {customer.invoice_email ? <p className="text-xs text-slate-500 mt-1">{customer.invoice_email}</p> : null}
+                  <AddressValue addr={customer.invoice_address} />
+                  {customer.invoice_email ? <EmailLink value={customer.invoice_email} className="mt-1 text-xs" /> : null}
                 </div>
               </div>
             </div>
@@ -808,8 +874,8 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
                         {contact.role ? <span className="text-xs text-slate-500">{contact.role}</span> : null}
                       </div>
                       <div className="flex flex-wrap gap-3 text-xs text-slate-500">
-                        {contact.phone ? <span>{contact.phone}</span> : null}
-                        {contact.email ? <span>{contact.email}</span> : null}
+                        {contact.phone ? <PhoneLink value={contact.phone} /> : null}
+                        {contact.email ? <EmailLink value={contact.email} /> : null}
                       </div>
                     </div>
                     <button type="button" onClick={() => deleteContact(contact.id)} className="shrink-0 text-xs text-slate-400 transition hover:text-rose-500">
