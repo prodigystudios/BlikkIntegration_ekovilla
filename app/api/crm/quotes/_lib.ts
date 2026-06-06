@@ -87,6 +87,7 @@ const quoteLineItemSchema = z.object({
   line_note: z.preprocess((value) => normalizeOptionalText(value) ?? '', z.string()).optional().default(''),
   is_rot_work: z.boolean().optional().default(false),
   house_work_type: z.preprocess((value) => normalizeOptionalText(value) ?? 'CONSTRUCTION', z.enum(ROT_HOUSE_WORK_TYPES)).optional().default('CONSTRUCTION'),
+  density: z.preprocess((value) => normalizeOptionalText(value) ?? '', z.string()).optional().default(''),
 });
 
 export const listCrmQuotesQuerySchema = z.object({

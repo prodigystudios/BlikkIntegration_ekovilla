@@ -60,6 +60,7 @@ type QuoteLineItem = {
   line_note: string;
   is_rot_work: boolean;
   house_work_type: string;
+  density: string;
 };
 
 type QuoteItem = {
@@ -222,6 +223,7 @@ function createEmptyLineItem(): QuoteLineItem {
     line_note: '',
     is_rot_work: false,
     house_work_type: 'CONSTRUCTION',
+    density: '',
   };
 }
 
@@ -700,6 +702,7 @@ function LineItemRow({
           <>
             <Field label="m²"><Input value={row.m2} onChange={(e) => onChange({ m2: e.target.value })} inputMode="decimal" placeholder="0" /></Field>
             <Field label="Tjocklek mm"><Input value={row.thickness_mm} onChange={(e) => onChange({ thickness_mm: e.target.value })} inputMode="decimal" placeholder="200" /></Field>
+            <Field label="Densitet (kg/m³)"><Input value={row.density} onChange={(e) => onChange({ density: e.target.value })} inputMode="decimal" placeholder="t.ex. 45" /></Field>
           </>
         ) : (
           <Field label="Antal"><Input value={row.quantity} onChange={(e) => onChange({ quantity: e.target.value })} inputMode="decimal" placeholder="1" /></Field>
@@ -844,7 +847,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           delivery_address: item.customer_snapshot?.delivery_address || '',
           invoice_address: item.customer_snapshot?.invoice_address || '',
           items: item.line_items?.length
-            ? item.line_items.map((line) => ({ ...line, line_note: line.line_note || '', is_rot_work: line.is_rot_work ?? false, house_work_type: line.house_work_type || 'CONSTRUCTION' }))
+            ? item.line_items.map((line) => ({ ...line, line_note: line.line_note || '', is_rot_work: line.is_rot_work ?? false, house_work_type: line.house_work_type || 'CONSTRUCTION', density: line.density || '' }))
             : [createEmptyLineItem()],
           project_name: item.project_name,
           description: item.description || '',
@@ -1025,19 +1028,23 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     return { subtotal, vat, total, rotDeduction, toPay: total - rotDeduction };
   }, [draft.vat_percent, draft.quote_type, draft.rot_enabled, draft.rot_percent, draft.rot_max_deduction, effectiveRows]);
 
-  // Prefill the work description with the m³ rows' dimensions ("Vägg – 100 m² × 200 mm")
-  // so the seller doesn't retype them. Prepends new lines, never overwrites existing
-  // text, and skips lines already present (safe to click repeatedly).
+  // Prefill the work description with a grouped measurement block (material headline →
+  // rows → total sacks). Prepends the block and keeps the seller's manual text below.
+  // Re-clicking replaces the previously inserted block (tracked in a ref) instead of
+  // stacking duplicates.
+  const lastMeasurementBlockRef = useRef('');
   function addMeasurementsToHandoff() {
     const lines = buildMeasurementLines(draft.items);
     if (lines.length === 0) { toast.error('Inga m³-rader med ifyllda mått att hämta'); return; }
+    const block = lines.join('\n');
     setDraft((d) => {
-      const existing = d.handoff_notes.trim();
-      const seen = new Set(existing.split('\n').map((s) => s.trim()));
-      const fresh = lines.filter((l) => !seen.has(l));
-      if (fresh.length === 0) return d;
-      const block = fresh.join('\n');
-      return { ...d, handoff_notes: existing ? `${block}\n${existing}` : block };
+      let rest = d.handoff_notes;
+      const prev = lastMeasurementBlockRef.current;
+      if (prev && rest.startsWith(prev)) {
+        rest = rest.slice(prev.length).replace(/^\n+/, '');
+      }
+      lastMeasurementBlockRef.current = block;
+      return { ...d, handoff_notes: rest.trim() ? `${block}\n\n${rest}` : block };
     });
   }
 

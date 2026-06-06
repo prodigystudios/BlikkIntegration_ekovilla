@@ -5,6 +5,10 @@
 // Inputs are narrow structural types: the form's full QuoteDraft satisfies them, so
 // callers pass `draft` directly, and tests build small plain objects.
 
+import { parseDecimal } from '@/lib/shared/number';
+import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
+import { inferMaterialFromArticle, sacksFor } from '@/lib/domains/crm/materials';
+
 export type QuoteCustomerFields = {
   quote_type: 'private' | 'business';
   customer_name: string;
@@ -103,17 +107,52 @@ export type MeasurementLineItem = {
   m2?: string | null;
   thickness_mm?: string | null;
   pricing_mode?: string | null;
+  density?: string | null;
 };
 
-// Build "Vägg – 100 m² × 200 mm" lines for the m³-priced rows that have both an
-// area and a thickness. Used by the "Hämta mått från rader" button to prefill the
-// work description so the seller doesn't retype the dimensions.
+// Build "Vägg – 100 m² × 200 mm" lines for the m³-priced rows that have both an area
+// and a thickness. When the seller has entered a density AND the material's bag weight
+// can be resolved from the article, the sack count is appended:
+// "Vägg – 100 m² × 200 mm @ 45 kg/m³ – 53 säck". Used by the "Hämta mått från rader"
+// button to prefill the work description so the seller doesn't retype anything.
 export function buildMeasurementLines(items: MeasurementLineItem[]): string[] {
-  return items
-    .filter((it) => (it.pricing_mode ?? 'm3') !== 'item' && (it.m2 ?? '').trim() !== '' && (it.thickness_mm ?? '').trim() !== '')
-    .map((it) => {
-      const label = CONSTRUCTION_LABELS[it.construction ?? ''] || it.article_name || '';
-      const dims = `${(it.m2 ?? '').trim()} m² × ${(it.thickness_mm ?? '').trim()} mm`;
-      return label ? `${label} – ${dims}` : dims;
-    });
+  const qualifying = items.filter(
+    (it) => (it.pricing_mode ?? 'm3') !== 'item' && (it.m2 ?? '').trim() !== '' && (it.thickness_mm ?? '').trim() !== '',
+  );
+  if (qualifying.length === 0) return [];
+
+  // Group rows under their material's short headline (e.g. "EKOVILLA"); rows whose
+  // material can't be resolved fall in an unlabelled group. Sum sacks for the total.
+  const groups: Array<{ heading: string; rows: string[] }> = [];
+  let totalSacks = 0;
+
+  for (const it of qualifying) {
+    const label = CONSTRUCTION_LABELS[it.construction ?? ''] || it.article_name || '';
+    const dims = `${(it.m2 ?? '').trim()} m² × ${(it.thickness_mm ?? '').trim()} mm`;
+    let row = label ? `${label} – ${dims}` : dims;
+
+    const material = inferMaterialFromArticle(it.article_name);
+    const density = parseDecimal(it.density);
+    if (material && density > 0) {
+      const sacks = sacksFor(lineItemQuantity(it), density, material.bagWeight);
+      if (sacks > 0) {
+        row += ` @ ${(it.density ?? '').trim()} kg/m³ – ${sacks} säck`;
+        totalSacks += sacks;
+      }
+    }
+
+    const heading = material?.short ?? '';
+    const group = groups.find((g) => g.heading === heading);
+    if (group) group.rows.push(row);
+    else groups.push({ heading, rows: [row] });
+  }
+
+  const lines: string[] = [];
+  groups.forEach((g, idx) => {
+    if (idx > 0) lines.push('');
+    if (g.heading) lines.push(g.heading);
+    lines.push(...g.rows);
+  });
+  if (totalSacks > 0) lines.push('', `Totalt: ${totalSacks} säck`);
+  return lines;
 }

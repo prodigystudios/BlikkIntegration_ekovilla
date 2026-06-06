@@ -161,6 +161,44 @@ describe('buildRotDetails', () => {
     ]);
   });
 
+  it('buildMeasurementLines: materialrubrik + säckantal + total', () => {
+    // 100 m² × 200 mm = 20 m³ × 45 kg/m³ = 900 kg; Ekovilla 14 kg/säck → ceil(64.3)=65
+    const lines = buildMeasurementLines([
+      { pricing_mode: 'm3', construction: 'vagg', article_name: 'EKOVILLA cellulosa vägg', m2: '100', thickness_mm: '200', density: '45' },
+    ]);
+    expect(lines).toEqual([
+      'EKOVILLA',
+      'Vägg – 100 m² × 200 mm @ 45 kg/m³ – 65 säck',
+      '',
+      'Totalt: 65 säck',
+    ]);
+  });
+
+  it('buildMeasurementLines: flera material → separata rubriker + summerad total', () => {
+    const lines = buildMeasurementLines([
+      { pricing_mode: 'm3', construction: 'vagg', article_name: 'EKOVILLA vägg', m2: '100', thickness_mm: '200', density: '45' },
+      { pricing_mode: 'm3', construction: 'vind', article_name: 'PAROC vind', m2: '50', thickness_mm: '400', density: '30' },
+    ]);
+    expect(lines).toEqual([
+      'EKOVILLA',
+      'Vägg – 100 m² × 200 mm @ 45 kg/m³ – 65 säck',
+      '',
+      'PAROC',
+      'Vind – 50 m² × 400 mm @ 30 kg/m³ – 40 säck',
+      '',
+      'Totalt: 105 säck',
+    ]);
+  });
+
+  it('buildMeasurementLines: rubrik utan säck när densitet saknas; okänt material → ingen rubrik/säck', () => {
+    expect(buildMeasurementLines([
+      { pricing_mode: 'm3', construction: 'vagg', article_name: 'EKOVILLA cellulosa', m2: '100', thickness_mm: '200' },
+    ])).toEqual(['EKOVILLA', 'Vägg – 100 m² × 200 mm']);
+    expect(buildMeasurementLines([
+      { pricing_mode: 'm3', construction: 'vagg', article_name: 'Glasull okänt', m2: '100', thickness_mm: '200', density: '45' },
+    ])).toEqual(['Vägg – 100 m² × 200 mm']);
+  });
+
   it('max_deduction och brf_org_number bevaras när aktiverad, defaultar/nullas annars', () => {
     const r = buildRotDetails(rot({ rot_max_deduction: '100000', rot_brf_org_number: '769600-1234' }));
     expect(r.max_deduction).toBe(100000);

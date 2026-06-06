@@ -3,6 +3,7 @@ export const dynamic = 'force-dynamic';
 import { useEffect, useMemo, useRef, useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
+import { MATERIALS } from '@/lib/domains/crm/materials';
 
 // Reconstructed Egenkontroll form (migrated from historical root page)
 // NOTE: Consider refactoring into smaller components later for maintainability.
@@ -52,17 +53,8 @@ export default function EgenkontrollPage() {
   const [materialUsed, setMaterialUsed] = useState('');
   const [flufferUsed, setFlufferUsed] = useState(false); // whether fluffer used for density
 
-  // Material properties: bag weight (kg/sack) and lambdavärde (W/m²K)
-  const MATERIALS: Record<string, { bagWeight: number; lambda: string }> = useMemo(
-    () => ({
-      'Ekovilla Cellulosa Lösull CE ETA-09/0081': { bagWeight: 14, lambda: '0.038' },
-      'Knauf Supafil Frame Lösull B0709EPCR': { bagWeight: 15.5, lambda: '0.038' },
-      'Isocell/isEco cellulosa Lösull CE ETA-06/0076': { bagWeight: 12, lambda: '0.038' },
-      'Hunton Nativo Träfiber Lösull DoP 02-04-01': { bagWeight: 14, lambda: '0.039' },
-      'PAROC SHT 1, Lösull vind 0809-CPR-1014' : { bagWeight: 15, lambda: '0.041' },
-    }),
-    []
-  );
+  // Material properties (bag weight + lambda) live in lib/domains/crm/materials.ts –
+  // shared with the quote form's sack calculation so the bag weights never drift.
 
   const [eavesVentOk, setEavesVentOk] = useState(false); // Takfotsventilation OK?
   const [eavesVentComment, setEavesVentComment] = useState('');
