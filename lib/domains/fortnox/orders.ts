@@ -1,7 +1,7 @@
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { parseDecimal } from '@/lib/shared/number';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
-import { fortnoxPost, fortnoxPut, FortnoxNotConnectedError } from './client';
+import { fortnoxGet, fortnoxPost, fortnoxPut, FortnoxNotConnectedError } from './client';
 import { resolveOurReference } from './helpers';
 import { DEFAULT_ROT_HOUSE_WORK_TYPE } from './types';
 
@@ -13,6 +13,7 @@ type WorkOrderRow = {
   amount: number;
   vat_percent: number | null;
   currency_code: string;
+  fortnox_order_number: string | null;
   line_items: Array<{
     article_number?: string | null;
     article_name?: string | null;
@@ -93,11 +94,22 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
   try {
     const { data: workOrder, error } = await supabase
       .from('crm_work_orders')
-      .select('id, quote_id, project_name, client_name, amount, vat_percent, currency_code, line_items')
+      .select('id, quote_id, project_name, client_name, amount, vat_percent, currency_code, line_items, fortnox_order_number')
       .eq('id', workOrderId)
       .single<WorkOrderRow>();
 
     if (error || !workOrder) throw new Error(`Arbetsorder ${workOrderId} hittades inte`);
+
+    // Idempotency: if this work order is already linked to a Fortnox order, don't try
+    // to create another one — Fortnox rejects a second createorder on the same offer
+    // (error 2000499). Just confirm the synced state and return the existing number.
+    if (workOrder.fortnox_order_number) {
+      await supabase
+        .from('crm_work_orders')
+        .update({ fortnox_order_sync_status: 'synced', fortnox_order_synced_at: new Date().toISOString() })
+        .eq('id', workOrderId);
+      return { fortnox_order_number: workOrder.fortnox_order_number };
+    }
 
     let fortnoxOrderNumber: string;
 
@@ -133,11 +145,29 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
     if (fortnoxOfferNumber) {
       // Convert existing Fortnox offer → order.
       // Fortnox carries OurReference, YourReference, and DeliveryAddress from the offer automatically.
-      const response = await fortnoxPut<{ Order: { DocumentNumber: string } }>(
-        `/offers/${fortnoxOfferNumber}/createorder`,
-      );
-      fortnoxOrderNumber = response.Order?.DocumentNumber;
-      if (!fortnoxOrderNumber) throw new Error('Fortnox returnerade inget ordernummer vid konvertering');
+      let resolved = '';
+      try {
+        const response = await fortnoxPut<{ Order?: { DocumentNumber?: string | number } }>(
+          `/offers/${fortnoxOfferNumber}/createorder`,
+        );
+        if (response.Order?.DocumentNumber != null) resolved = String(response.Order.DocumentNumber);
+      } catch (e) {
+        // 2000499 = the offer already has an order (a prior push converted it). Any other
+        // error is a real failure and must propagate.
+        const message = String((e as any)?.message || '');
+        if (!message.includes('2000499') && !message.toLowerCase().includes('redan en skapad order')) throw e;
+      }
+      // At this point the order exists in Fortnox (just created, or already converted) but
+      // we may not have captured its number — the createorder response shape can vary, or
+      // the order already existed. Resolve it from the offer's OrderReference so a created
+      // order is never reported as failed.
+      if (!resolved) {
+        const offer = await fortnoxGet<{ Offer?: { OrderReference?: number | string | null } }>(`/offers/${fortnoxOfferNumber}`);
+        const existing = offer.Offer?.OrderReference;
+        if (!existing) throw new Error('Fortnox returnerade inget ordernummer vid konvertering');
+        resolved = String(existing);
+      }
+      fortnoxOrderNumber = resolved;
     } else {
       // No Fortnox offer exists – create a standalone order with full reference data.
       const customerNumber = await resolveCustomerNumberFromQuote(linkedQuote, supabase);

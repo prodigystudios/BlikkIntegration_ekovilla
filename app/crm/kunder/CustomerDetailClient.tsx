@@ -573,7 +573,7 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
         ) : (
           <div className="grid gap-1.5">
             {workOrders.map((wo) => (
-              <a key={wo.id} href={`/crm/arbetsorder?work_order_id=${wo.id}`} className="block rounded-xl border border-slate-100 bg-white px-3 py-2 transition hover:border-slate-300 hover:bg-slate-50">
+              <a key={wo.id} href={`/crm/arbetsorder/${wo.id}`} className="block rounded-xl border border-slate-100 bg-white px-3 py-2 transition hover:border-slate-300 hover:bg-slate-50">
                 <div className="flex items-center justify-between gap-2">
                   <span className="min-w-0 truncate text-sm text-slate-800">{wo.project_name}</span>
                   <span className="shrink-0 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-600">

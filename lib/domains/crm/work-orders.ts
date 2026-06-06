@@ -5,6 +5,7 @@ export const crmWorkOrderSelect = `
   id,
   quote_id,
   prospect_id,
+  customer_id,
   order_number,
   project_name,
   client_name,
@@ -28,7 +29,8 @@ export const crmWorkOrderSelect = `
   created_by,
   assigned_to,
   created_at,
-  updated_at
+  updated_at,
+  assignee:profiles!assigned_to(id, full_name)
 `;
 
 export const crmWorkOrderTimeEntrySelect = `
@@ -74,6 +76,7 @@ type WorkOrderUpdateInput = {
   notes: string | null;
   internal_handoff: Record<string, any>;
   work_address: WorkOrderAddress;
+  assigned_to?: string | null;
 };
 
 type CreateWorkOrderTimeEntryInput = {
@@ -93,6 +96,7 @@ type CreateWorkOrderCommentInput = {
 type QuoteSource = {
   id: string;
   prospect_id: string | null;
+  customer_id: string | null;
   customer_name: string | null;
   quote_type: 'private' | 'business';
   customer_snapshot: Record<string, any> | null;
@@ -138,7 +142,7 @@ function getWorkAddress(source: QuoteSource) {
 export async function createCrmWorkOrderFromQuote(supabase: SupabaseClient, quoteId: string, actorUserId: string) {
   const quoteResult = await supabase
     .from('crm_quotes')
-    .select('id, prospect_id, customer_name, quote_type, customer_snapshot, pricing_summary, line_items, rot_details, internal_handoff, project_name, description, amount, currency_code, vat_percent, status, notes, created_by, assigned_to, work_order_id, work_order_number')
+    .select('id, prospect_id, customer_id, customer_name, quote_type, customer_snapshot, pricing_summary, line_items, rot_details, internal_handoff, project_name, description, amount, currency_code, vat_percent, status, notes, created_by, assigned_to, work_order_id, work_order_number')
     .eq('id', quoteId)
     .single<QuoteSource>();
 
@@ -167,6 +171,7 @@ export async function createCrmWorkOrderFromQuote(supabase: SupabaseClient, quot
     .insert({
       quote_id: quote.id,
       prospect_id: quote.prospect_id,
+      customer_id: quote.customer_id,
       order_number: orderNumber,
       project_name: quote.project_name,
       client_name: getClientName(quote),
@@ -256,6 +261,10 @@ export async function listCrmWorkOrdersWithFilters(
 
 export async function updateCrmWorkOrder(supabase: SupabaseClient, id: string, input: WorkOrderUpdateInput) {
   return supabase.from('crm_work_orders').update(input).eq('id', id).select(crmWorkOrderSelect).single();
+}
+
+export async function getCrmWorkOrder(supabase: SupabaseClient, id: string) {
+  return supabase.from('crm_work_orders').select(crmWorkOrderSelect).eq('id', id).single();
 }
 
 export async function listCrmWorkOrderTimeEntries(supabase: SupabaseClient, workOrderId: string) {

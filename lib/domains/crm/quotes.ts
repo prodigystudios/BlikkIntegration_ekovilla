@@ -137,7 +137,7 @@ type CreateCrmQuoteInput = {
   assigned_to: string;
 };
 
-type UpdateCrmQuoteInput = Omit<CreateCrmQuoteInput, 'created_by' | 'assigned_to'>;
+export type UpdateCrmQuoteInput = Omit<CreateCrmQuoteInput, 'created_by' | 'assigned_to'>;
 
 type ListCrmQuotesOptions = {
   search?: string;
@@ -201,7 +201,7 @@ export async function createCrmQuote(supabase: SupabaseClient, input: CreateCrmQ
   return supabase.from('crm_quotes').insert(input).select(crmQuoteSelect).single();
 }
 
-export async function updateCrmQuote(supabase: SupabaseClient, id: string, input: UpdateCrmQuoteInput) {
+export async function updateCrmQuote(supabase: SupabaseClient, id: string, input: Partial<UpdateCrmQuoteInput>) {
   return supabase.from('crm_quotes').update(input).eq('id', id).select(crmQuoteSelect).single();
 }
 
@@ -221,7 +221,7 @@ export async function markCrmQuoteWon(
   quoteId: string,
   assignedTo: string,
   createdBy: string,
-  updateInput: UpdateCrmQuoteInput
+  updateInput: Partial<UpdateCrmQuoteInput>
 ): Promise<WonResult> {
   const { data: current, error: fetchError } = await getCrmQuoteStatus(supabase, quoteId);
   if (fetchError || !current) {

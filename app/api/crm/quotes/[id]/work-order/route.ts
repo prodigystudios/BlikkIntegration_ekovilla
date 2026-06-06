@@ -31,16 +31,19 @@ export async function POST(_req: Request, context: RouteContext) {
       return routeError(500, 'crm_work_order_create_failed', result.error?.message || 'Kunde inte skapa arbetsorder');
     }
 
-    // Auto-push work order to Fortnox. Non-fatal: creation succeeds regardless.
+    // Auto-push work order to Fortnox. Non-fatal: creation succeeds regardless, but we
+    // surface the reason so the UI can show why a sync failed instead of failing silently.
+    let fortnoxError: string | null = null;
     try {
       await pushWorkOrderToFortnox(result.data.workOrder.id);
     } catch (e) {
       if (!(e instanceof FortnoxNotConnectedError)) {
-        console.error('[fortnox] Auto-push arbetsorder misslyckades:', (e as any)?.message);
+        fortnoxError = (e as any)?.message || 'Fortnox-synk misslyckades';
+        console.error('[fortnox] Auto-push arbetsorder misslyckades:', fortnoxError);
       }
     }
 
-    return ok(result.data, 201);
+    return ok({ ...result.data, fortnox_error: fortnoxError }, 201);
   } catch (e: any) {
     return routeError(500, 'crm_work_order_unexpected', e?.message || 'Failed to create CRM work order');
   }

@@ -298,8 +298,12 @@ export default function QuotesClient() {
       const updated = json?.data?.item as QuoteItem | undefined;
       if (updated) setQuotes((current) => current.map((q) => (q.id === updated.id ? updated : q)));
       const workOrder = json?.data?.workOrder as { id?: string; order_number?: string } | undefined;
-      toast.success(workOrder?.order_number ? `Arbetsorder skapad: ${workOrder.order_number}` : 'Arbetsorder skapad');
-      if (workOrder?.id) router.push(`/crm/arbetsorder?work_order_id=${workOrder.id}`);
+      if (json?.data?.fortnox_error) {
+        toast.error(`Arbetsorder skapad men Fortnox-synk misslyckades: ${json.data.fortnox_error}`);
+      } else {
+        toast.success(workOrder?.order_number ? `Arbetsorder skapad: ${workOrder.order_number}` : 'Arbetsorder skapad');
+      }
+      if (workOrder?.id) router.push(`/crm/arbetsorder/${workOrder.id}`);
     } catch { toast.error('Kunde inte skapa arbetsorder'); } finally { setCreatingWorkOrderId(null); }
   }
 
@@ -587,7 +591,7 @@ export default function QuotesClient() {
                 {detailQuote.work_order_id ? (
                   <button
                     type="button"
-                    onClick={() => router.push(`/crm/arbetsorder?work_order_id=${detailQuote.work_order_id}`)}
+                    onClick={() => router.push(`/crm/arbetsorder/${detailQuote.work_order_id}`)}
                     className="rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300"
                   >
                     Öppna

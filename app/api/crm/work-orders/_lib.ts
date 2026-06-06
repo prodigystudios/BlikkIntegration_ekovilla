@@ -29,6 +29,7 @@ export const listCrmWorkOrdersQuerySchema = z.object({
 
 export const updateCrmWorkOrderSchema = z.object({
   status: workOrderStatusSchema,
+  assigned_to: z.preprocess((value) => normalizeOptionalText(value), z.string().uuid('Ogiltig användare').nullable()).optional(),
   desired_installation_date: z.preprocess((value) => normalizeOptionalText(value), dateSchema.nullable()).optional().default(null),
   notes: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
   internal_handoff: z.object({
