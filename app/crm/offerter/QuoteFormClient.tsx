@@ -14,6 +14,7 @@ import {
   buildCustomerSnapshot,
   buildRotDetails,
   buildInternalHandoff,
+  buildMeasurementLines,
 } from './quoteSerializers';
 import { ROT_HOUSE_WORK_TYPES } from '@/lib/domains/fortnox/types';
 
@@ -1024,6 +1025,22 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     return { subtotal, vat, total, rotDeduction, toPay: total - rotDeduction };
   }, [draft.vat_percent, draft.quote_type, draft.rot_enabled, draft.rot_percent, draft.rot_max_deduction, effectiveRows]);
 
+  // Prefill the work description with the m³ rows' dimensions ("Vägg – 100 m² × 200 mm")
+  // so the seller doesn't retype them. Prepends new lines, never overwrites existing
+  // text, and skips lines already present (safe to click repeatedly).
+  function addMeasurementsToHandoff() {
+    const lines = buildMeasurementLines(draft.items);
+    if (lines.length === 0) { toast.error('Inga m³-rader med ifyllda mått att hämta'); return; }
+    setDraft((d) => {
+      const existing = d.handoff_notes.trim();
+      const seen = new Set(existing.split('\n').map((s) => s.trim()));
+      const fresh = lines.filter((l) => !seen.has(l));
+      if (fresh.length === 0) return d;
+      const block = fresh.join('\n');
+      return { ...d, handoff_notes: existing ? `${block}\n${existing}` : block };
+    });
+  }
+
   const issues = useMemo(() => getValidationIssues(draft, effectiveRows), [draft, effectiveRows]);
   const isReady = issues.length === 0;
 
@@ -1496,9 +1513,19 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
               <Field label="Arbetets scope">
                 <Input value={draft.work_scope} onChange={(e) => setDraft((d) => ({ ...d, work_scope: e.target.value }))} placeholder="Kort operativt scope" />
               </Field>
-              <Field label="Överlämningsnotering" className="md:col-span-2">
-                <Textarea value={draft.handoff_notes} onChange={(e) => setDraft((d) => ({ ...d, handoff_notes: e.target.value }))} rows={3} placeholder="Intern information för projekt eller arbetsorder" />
-              </Field>
+              <div className="grid gap-1.5 md:col-span-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-semibold text-slate-600">Arbetsbeskrivning</span>
+                  <button
+                    type="button"
+                    onClick={addMeasurementsToHandoff}
+                    className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-800"
+                  >
+                    Hämta mått från rader
+                  </button>
+                </div>
+                <Textarea value={draft.handoff_notes} onChange={(e) => setDraft((d) => ({ ...d, handoff_notes: e.target.value }))} rows={3} placeholder="Arbetsbeskrivning för installatör / arbetsorder" />
+              </div>
               <Field label="Interna anteckningar" className="md:col-span-2">
                 <Textarea value={draft.notes} onChange={(e) => setDraft((d) => ({ ...d, notes: e.target.value }))} rows={4} placeholder="Det här ska vi komma ihåg inför uppföljningen" />
               </Field>

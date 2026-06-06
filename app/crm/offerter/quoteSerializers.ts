@@ -94,3 +94,26 @@ export function buildInternalHandoff(d: QuoteHandoffFields) {
     work_scope: d.work_scope || null,
   };
 }
+
+const CONSTRUCTION_LABELS: Record<string, string> = { vagg: 'Vägg', snedtak: 'Snedtak', vind: 'Vind' };
+
+export type MeasurementLineItem = {
+  construction?: string | null;
+  article_name?: string | null;
+  m2?: string | null;
+  thickness_mm?: string | null;
+  pricing_mode?: string | null;
+};
+
+// Build "Vägg – 100 m² × 200 mm" lines for the m³-priced rows that have both an
+// area and a thickness. Used by the "Hämta mått från rader" button to prefill the
+// work description so the seller doesn't retype the dimensions.
+export function buildMeasurementLines(items: MeasurementLineItem[]): string[] {
+  return items
+    .filter((it) => (it.pricing_mode ?? 'm3') !== 'item' && (it.m2 ?? '').trim() !== '' && (it.thickness_mm ?? '').trim() !== '')
+    .map((it) => {
+      const label = CONSTRUCTION_LABELS[it.construction ?? ''] || it.article_name || '';
+      const dims = `${(it.m2 ?? '').trim()} m² × ${(it.thickness_mm ?? '').trim()} mm`;
+      return label ? `${label} – ${dims}` : dims;
+    });
+}

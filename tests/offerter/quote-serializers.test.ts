@@ -4,6 +4,7 @@ import {
   buildCustomerSnapshot,
   buildRotDetails,
   buildInternalHandoff,
+  buildMeasurementLines,
   type QuoteCustomerFields,
   type QuoteRotFields,
   type QuoteHandoffFields,
@@ -143,6 +144,21 @@ describe('buildRotDetails', () => {
 
   it('tom procent → default 30', () => {
     expect(buildRotDetails(rot({ rot_percent: '' })).rot_percent).toBe(30);
+  });
+
+  it('buildMeasurementLines: m³-rader med mått → "Label – m² × mm", övriga ignoreras', () => {
+    const lines = buildMeasurementLines([
+      { pricing_mode: 'm3', construction: 'vagg', m2: '100', thickness_mm: '200' },
+      { pricing_mode: 'm3', construction: 'snedtak', m2: '50', thickness_mm: '300', article_name: 'Snedtaksisolering' },
+      { pricing_mode: 'm3', article_name: 'Vindsisolering', construction: '', m2: '80', thickness_mm: '400' },
+      { pricing_mode: 'item', m2: '', thickness_mm: '', quantity: '5' } as never,
+      { pricing_mode: 'm3', m2: '100', thickness_mm: '' }, // saknar tjocklek → hoppas över
+    ]);
+    expect(lines).toEqual([
+      'Vägg – 100 m² × 200 mm',
+      'Snedtak – 50 m² × 300 mm',
+      'Vindsisolering – 80 m² × 400 mm',
+    ]);
   });
 
   it('max_deduction och brf_org_number bevaras när aktiverad, defaultar/nullas annars', () => {
