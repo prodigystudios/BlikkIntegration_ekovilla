@@ -16,6 +16,21 @@ export default function CrmSubnav({ role }: { role: UserRole | null }) {
     setPendingHref(null);
   }, [pathname]);
 
+  // Flatten dropdown groups into chips: the parent (its overview) plus any
+  // children that point elsewhere (e.g. Artiklar). Keeps the horizontal nav from
+  // hiding sub-pages that the sidebar exposes.
+  const chips = items.flatMap((item) =>
+    item.children?.length
+      ? [item, ...item.children.filter((child) => child.href !== item.href)]
+      : [item],
+  );
+
+  // Only the most specific matching chip is marked active, so /installningar
+  // isn't highlighted alongside /installningar/artiklar.
+  const activeHref = chips
+    .filter((c) => (c.href === '/crm' ? pathname === '/crm' : pathname === c.href || pathname.startsWith(`${c.href}/`)))
+    .sort((a, b) => b.href.length - a.href.length)[0]?.href ?? null;
+
   return (
     <nav aria-label="CRM navigation" className="grid gap-1.5 rounded-[20px] border border-slate-200/80 bg-[linear-gradient(180deg,rgba(248,250,252,0.86),rgba(255,255,255,0.96))] p-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.65)]">
       <div className="flex items-center justify-between gap-3">
@@ -24,10 +39,8 @@ export default function CrmSubnav({ role }: { role: UserRole | null }) {
       </div>
 
       <div className="hscroll flex flex-wrap gap-1.5 overflow-x-auto pb-0.5 md:overflow-visible">
-        {items.map((item) => {
-          const active = item.href === '/crm'
-            ? pathname === '/crm'
-            : pathname === item.href || pathname.startsWith(`${item.href}/`);
+        {chips.map((item) => {
+          const active = item.href === activeHref;
           const pending = pendingHref === item.href && !active;
           return (
             <Link

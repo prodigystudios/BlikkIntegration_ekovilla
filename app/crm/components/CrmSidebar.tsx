@@ -5,7 +5,22 @@ import { useEffect, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/shared/cn';
 import type { UserRole } from '@/lib/roles';
-import { getVisibleCrmNavItems } from '../_lib/nav';
+import { getVisibleCrmNavItems, type CrmNavItem } from '../_lib/nav';
+
+// True when the current path is at or below the given nav href.
+function isHrefActive(href: string, pathname: string) {
+  if (href === '/crm') return pathname === '/crm';
+  return pathname === href || pathname.startsWith(`${href}/`);
+}
+
+// The most specific child whose href matches the current path, so /installningar
+// (Översikt) isn't also marked active while on /installningar/artiklar.
+function activeChildHref(children: CrmNavItem[], pathname: string): string | null {
+  const matches = children
+    .filter((c) => pathname === c.href || pathname.startsWith(`${c.href}/`))
+    .sort((a, b) => b.href.length - a.href.length);
+  return matches[0]?.href ?? null;
+}
 
 const navIcons: Record<string, JSX.Element> = {
   '/crm': (
@@ -81,6 +96,8 @@ export default function CrmSidebar({ role, userName, userInitial = 'U' }: CrmSid
   const items = getVisibleCrmNavItems(role);
   const [pendingHref, setPendingHref] = useState<string | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
+  // Per-group manual expand override; falls back to "open when a child is active".
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   // Reset pending state and close the mobile drawer whenever navigation completes.
   useEffect(() => {
@@ -169,25 +186,20 @@ export default function CrmSidebar({ role, userName, userInitial = 'U' }: CrmSid
       <nav className="flex-1 px-2">
         <ul role="list" className="grid list-none gap-0.5 p-0">
           {items.map((item) => {
-            const active = item.href === '/crm'
-              ? pathname === '/crm'
-              : pathname === item.href || pathname.startsWith(`${item.href}/`);
-            const pending = pendingHref === item.href && !active;
-            const icon = navIcons[item.href] ?? navIcons['/crm/installningar'];
-
-            return (
-              <li key={item.href}>
+            // Renders a single navigable link, shared by top-level items and
+            // dropdown children (children are indented and drop the icon).
+            const renderLink = (navItem: CrmNavItem, active: boolean, isChild: boolean) => {
+              const pending = pendingHref === navItem.href && !active;
+              const icon = navIcons[navItem.href] ?? navIcons['/crm/installningar'];
+              return (
                 <Link
-                  href={item.href}
+                  href={navItem.href}
                   aria-current={active ? 'page' : undefined}
-                  onClick={() => { if (!active) setPendingHref(item.href); }}
+                  onClick={() => { if (!active) setPendingHref(navItem.href); }}
                   className={cn(
-                    'flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium no-underline transition-colors',
-                    active
-                      ? 'text-white'
-                      : pending
-                        ? 'text-emerald-300'
-                        : 'hover:text-white'
+                    'flex items-center gap-3 rounded-xl text-sm font-medium no-underline transition-colors',
+                    isChild ? 'py-2 pl-11 pr-3 text-[13px]' : 'px-3 py-2.5',
+                    active ? 'text-white' : pending ? 'text-emerald-300' : 'hover:text-white'
                   )}
                   style={
                     active
@@ -203,13 +215,57 @@ export default function CrmSidebar({ role, userName, userInitial = 'U' }: CrmSid
                     if (!active) (e.currentTarget as HTMLElement).style.backgroundColor = '';
                   }}
                 >
-                  <span className={cn('shrink-0', active ? 'text-emerald-300' : '')}>
-                    {icon}
-                  </span>
-                  <span className="truncate">{item.label}</span>
+                  {!isChild && (
+                    <span className={cn('shrink-0', active ? 'text-emerald-300' : '')}>{icon}</span>
+                  )}
+                  <span className="truncate">{navItem.label}</span>
                 </Link>
-              </li>
-            );
+              );
+            };
+
+            const children = item.children ?? [];
+            if (children.length > 0) {
+              const childActive = activeChildHref(children, pathname);
+              const groupActive = childActive !== null;
+              const open = expanded[item.href] ?? groupActive;
+              const icon = navIcons[item.href] ?? navIcons['/crm/installningar'];
+
+              return (
+                <li key={item.href}>
+                  <button
+                    type="button"
+                    aria-expanded={open}
+                    onClick={() => setExpanded((prev) => ({ ...prev, [item.href]: !open }))}
+                    className={cn(
+                      'flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors',
+                      groupActive ? 'text-white' : 'hover:text-white'
+                    )}
+                    style={{ color: groupActive ? '#ffffff' : 'var(--crm-sidebar-text)' }}
+                    onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--crm-sidebar-hover)'; }}
+                    onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = ''; }}
+                  >
+                    <span className={cn('shrink-0', groupActive ? 'text-emerald-300' : '')}>{icon}</span>
+                    <span className="flex-1 truncate text-left">{item.label}</span>
+                    <svg
+                      width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+                      className={cn('shrink-0 transition-transform', open && 'rotate-180')}
+                    >
+                      <polyline points="6 9 12 15 18 9" />
+                    </svg>
+                  </button>
+                  {open && (
+                    <ul role="list" className="mt-0.5 grid list-none gap-0.5 p-0">
+                      {children.map((child) => (
+                        <li key={child.href}>{renderLink(child, childActive === child.href, true)}</li>
+                      ))}
+                    </ul>
+                  )}
+                </li>
+              );
+            }
+
+            return <li key={item.href}>{renderLink(item, isHrefActive(item.href, pathname), false)}</li>;
           })}
         </ul>
       </nav>

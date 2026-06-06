@@ -40,6 +40,23 @@ export type FortnoxArticle = {
   Active: boolean;
 };
 
+// Article type as accepted by the Fortnox /articles write endpoints.
+export type FortnoxArticleType = 'STOCK' | 'SERVICE';
+
+// The subset of an article we let admins create/edit from the app. Mirrors the
+// fields we cache in fortnox_articles_cache (plus an optional ArticleNumber on
+// create – Fortnox auto-assigns one when omitted). ArticleNumber cannot change
+// on update; it is the document key.
+export type FortnoxArticleInput = {
+  ArticleNumber?: string | null;
+  Description: string;
+  SalesPrice: number | null;
+  PurchasePrice: number | null;
+  Unit: string | null;
+  Type: FortnoxArticleType;
+  Active: boolean;
+};
+
 export type FortnoxArticleListResponse = {
   Articles: FortnoxArticle[];
   MetaInformation: {
