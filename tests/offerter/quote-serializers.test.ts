@@ -106,19 +106,23 @@ function rot(overrides: Partial<QuoteRotFields> = {}): QuoteRotFields {
   return {
     quote_type: 'private',
     rot_enabled: true,
-    rot_applicant_name: 'Anna',
-    rot_personal_number: '900101-1234',
     rot_property_designation: 'Fastighet 1:2',
     rot_percent: '50',
+    rot_max_deduction: '50000',
+    rot_brf_org_number: '',
+    // The ROT applicant is derived from the customer.
+    customer_name: 'Anna Svensson',
+    personal_number: '900101-1234',
     ...overrides,
   };
 }
 
 describe('buildRotDetails', () => {
-  it('private + aktiverad → fält fyllda, procent parsad', () => {
+  it('private + aktiverad → applicant härleds från kunden, procent parsad', () => {
     const r = buildRotDetails(rot());
     expect(r.enabled).toBe(true);
-    expect(r.applicant_name).toBe('Anna');
+    expect(r.applicant_name).toBe('Anna Svensson');
+    expect(r.personal_number).toBe('900101-1234');
     expect(r.property_designation).toBe('Fastighet 1:2');
     expect(r.rot_percent).toBe(50);
   });
@@ -139,6 +143,14 @@ describe('buildRotDetails', () => {
 
   it('tom procent → default 30', () => {
     expect(buildRotDetails(rot({ rot_percent: '' })).rot_percent).toBe(30);
+  });
+
+  it('max_deduction och brf_org_number bevaras när aktiverad, defaultar/nullas annars', () => {
+    const r = buildRotDetails(rot({ rot_max_deduction: '100000', rot_brf_org_number: '769600-1234' }));
+    expect(r.max_deduction).toBe(100000);
+    expect(r.brf_org_number).toBe('769600-1234');
+    expect(buildRotDetails(rot({ rot_max_deduction: '' })).max_deduction).toBe(50000);
+    expect(buildRotDetails(rot({ rot_enabled: false })).brf_org_number).toBeNull();
   });
 });
 

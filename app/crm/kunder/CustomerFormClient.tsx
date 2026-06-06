@@ -160,6 +160,7 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
     const isB2B = draft.customer_type === 'business';
     if (isB2B && !draft.company_name.trim()) { toast.error('Företagsnamn krävs'); return; }
     if (!isB2B && (!draft.first_name.trim() || !draft.last_name.trim())) { toast.error('För- och efternamn krävs'); return; }
+    if (!isB2B && !draft.personal_number.trim()) { toast.error('Personnummer krävs för privatkund'); return; }
 
     setSaving(true);
     try {
@@ -291,7 +292,7 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
                       </div>
                     </div>
                     <div>
-                      <FieldLabel>Personnummer</FieldLabel>
+                      <FieldLabel>Personnummer *</FieldLabel>
                       <Input value={draft.personal_number} onChange={(e) => set('personal_number', formatSwedishIdNumber(e.target.value))} placeholder="ÅÅMMDD-XXXX" />
                     </div>
                   </>

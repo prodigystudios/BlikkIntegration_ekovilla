@@ -7,6 +7,7 @@ import Textarea from '../../../components/ui/Textarea';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
 import { parseDecimal } from '@/lib/shared/number';
+import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
 import { crm } from '@/app/crm/lib/crmTokens';
 import {
   getEffectiveCustomerName,
@@ -14,6 +15,19 @@ import {
   buildRotDetails,
   buildInternalHandoff,
 } from './quoteSerializers';
+import { ROT_HOUSE_WORK_TYPES } from '@/lib/domains/fortnox/types';
+
+// Swedish labels for the Fortnox ROT HouseWorkType codes shown in the ROT section.
+const ROT_HOUSE_WORK_LABELS: Record<(typeof ROT_HOUSE_WORK_TYPES)[number], string> = {
+  CONSTRUCTION: 'Bygg',
+  ELECTRICITY: 'El',
+  GLASSMETALWORK: 'Glas/plåt',
+  GROUNDDRAINAGEWORK: 'Mark/dränering',
+  HVAC: 'VVS',
+  MASONRY: 'Murning',
+  PAINTINGWALLPAPERING: 'Måleri/tapetsering',
+  OTHERCOSTS: 'Övrigt',
+};
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -44,6 +58,7 @@ type QuoteLineItem = {
   discount_percent: string;
   line_note: string;
   is_rot_work: boolean;
+  house_work_type: string;
 };
 
 type QuoteItem = {
@@ -78,6 +93,8 @@ type QuoteItem = {
     personal_number?: string | null;
     property_designation?: string | null;
     rot_percent?: number;
+    max_deduction?: number | null;
+    brf_org_number?: string | null;
   } | null;
   internal_handoff: {
     desired_installation_date?: string | null;
@@ -130,10 +147,10 @@ type QuoteDraft = {
   vat_percent: string;
   valid_until: string;
   rot_enabled: boolean;
-  rot_applicant_name: string;
-  rot_personal_number: string;
   rot_property_designation: string;
   rot_percent: string;
+  rot_max_deduction: string;
+  rot_brf_org_number: string;
   desired_installation_date: string;
   handoff_notes: string;
   work_scope: string;
@@ -203,6 +220,7 @@ function createEmptyLineItem(): QuoteLineItem {
     discount_percent: '',
     line_note: '',
     is_rot_work: false,
+    house_work_type: 'CONSTRUCTION',
   };
 }
 
@@ -285,9 +303,10 @@ function getValidationIssues(draft: QuoteDraft, effectiveRows: EffectiveRow[]) {
   if (draft.quote_type === 'private' && !draft.personal_number.trim()) issues.push('Personnummer krävs');
   if (draft.quote_type === 'business' && !draft.company_name.trim() && !draft.customer_name.trim()) issues.push('Företagsnamn krävs');
   if (draft.quote_type === 'business' && draft.rot_enabled) issues.push('ROT är bara tillåtet för privatkund');
-  if (draft.quote_type === 'private' && draft.rot_enabled) {
-    if (!draft.rot_personal_number.trim()) issues.push('ROT kräver personnummer för sökande');
-    if (!draft.rot_property_designation.trim()) issues.push('ROT kräver fastighetsbeteckning');
+  // The ROT applicant is the customer – their personal number is already required for
+  // every private customer above. Here we only need the property designation.
+  if (draft.quote_type === 'private' && draft.rot_enabled && !draft.rot_property_designation.trim()) {
+    issues.push('ROT kräver fastighetsbeteckning');
   }
   if (!draft.amount.trim() || parseDecimal(draft.amount) < 0) {
     if (!hasAnyLineItemInput) issues.push('Ange belopp eller lägg till rader');
@@ -325,10 +344,10 @@ const initialDraft: QuoteDraft = {
   vat_percent: '25',
   valid_until: new Date(Date.now() + 14 * 864e5).toISOString().slice(0, 10),
   rot_enabled: false,
-  rot_applicant_name: '',
-  rot_personal_number: '',
   rot_property_designation: '',
   rot_percent: '30',
+  rot_max_deduction: '50000',
+  rot_brf_org_number: '',
   desired_installation_date: '',
   handoff_notes: '',
   work_scope: '',
@@ -602,45 +621,67 @@ function LineItemRow({
   onRemove: () => void;
 }) {
   const isM3 = (row.pricing_mode ?? 'm3') === 'm3';
+  // Collapsed by default once the row has an article; new/empty rows open for editing.
+  const [expanded, setExpanded] = useState(!row.article_name);
 
-  return (
-    <div className="grid gap-4 rounded-xl border border-slate-100 p-5">
-      <div className="flex items-center justify-between">
-        <span className="text-xs font-semibold text-slate-400">Rad {index + 1}</span>
-        <button
-          type="button"
-          onClick={onRemove}
-          className="text-xs text-slate-400 transition-colors hover:text-rose-600"
-        >
-          Ta bort
+  // ── Collapsed: single overview line ──────────────────────────────────────────
+  if (!expanded) {
+    return (
+      <div className="flex items-center gap-2 rounded-xl border border-slate-100 px-3.5 py-2.5 transition-colors hover:border-slate-200">
+        <button type="button" onClick={() => setExpanded(true)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
+          <span className="shrink-0 text-xs font-semibold tabular-nums text-slate-300">{index + 1}</span>
+          <span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-800">
+            {row.article_name || <span className="text-slate-400">Välj artikel…</span>}
+          </span>
+          {metrics?.isConfigured ? (
+            <span className="hidden shrink-0 text-xs tabular-nums text-slate-400 sm:inline">
+              {metrics.amount.toLocaleString('sv-SE', { maximumFractionDigits: 2 })} × {formatCurrency(metrics.effectiveUnit, 'SEK')}
+            </span>
+          ) : null}
+          {row.is_rot_work ? (
+            <span className="shrink-0 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">ROT</span>
+          ) : null}
+          <span className="w-24 shrink-0 text-right text-sm font-semibold tabular-nums text-slate-900">
+            {formatCurrency(metrics?.rowTotal ?? 0, 'SEK')}
+          </span>
+          <svg width="13" height="13" viewBox="0 0 14 14" fill="none" aria-hidden className="shrink-0 text-slate-300">
+            <path d="M3 5l4 4 4-4" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+        <button type="button" onClick={onRemove} aria-label="Ta bort rad" className="shrink-0 px-1 text-slate-300 transition-colors hover:text-rose-600">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
+            <path d="M3.5 3.5l7 7M10.5 3.5l-7 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          </svg>
         </button>
       </div>
+    );
+  }
 
-      <div className="grid gap-3 md:grid-cols-2">
-        <Field label="Artikel" className="md:col-span-2">
-          <ArticlePicker value={row.article_name || ''} onSelect={onSelectArticle} onClear={onClearArticle} />
-        </Field>
-        {row.article_name ? (
-          <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700 md:col-span-2">
-            {row.article_name}{row.article_number ? ` · ${row.article_number}` : ''}
-          </div>
-        ) : null}
+  // ── Expanded: full editor ────────────────────────────────────────────────────
+  return (
+    <div className="grid gap-3 rounded-xl border border-slate-200 bg-slate-50/40 p-4">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-xs font-semibold text-slate-400">Rad {index + 1}</span>
+        <div className="flex items-center gap-3">
+          <button type="button" onClick={() => setExpanded(false)} className="text-xs font-medium text-slate-500 transition-colors hover:text-slate-800">
+            Fäll ihop ▴
+          </button>
+          <button type="button" onClick={onRemove} className="text-xs text-slate-400 transition-colors hover:text-rose-600">
+            Ta bort
+          </button>
+        </div>
       </div>
+
+      <ArticlePicker value={row.article_name || ''} onSelect={onSelectArticle} onClear={onClearArticle} />
 
       <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
         {isM3 ? (
           <>
-            <Field label="m²">
-              <Input value={row.m2} onChange={(e) => onChange({ m2: e.target.value })} inputMode="decimal" placeholder="0" />
-            </Field>
-            <Field label="Tjocklek mm">
-              <Input value={row.thickness_mm} onChange={(e) => onChange({ thickness_mm: e.target.value })} inputMode="decimal" placeholder="200" />
-            </Field>
+            <Field label="m²"><Input value={row.m2} onChange={(e) => onChange({ m2: e.target.value })} inputMode="decimal" placeholder="0" /></Field>
+            <Field label="Tjocklek mm"><Input value={row.thickness_mm} onChange={(e) => onChange({ thickness_mm: e.target.value })} inputMode="decimal" placeholder="200" /></Field>
           </>
         ) : (
-          <Field label="Antal">
-            <Input value={row.quantity} onChange={(e) => onChange({ quantity: e.target.value })} inputMode="decimal" placeholder="1" />
-          </Field>
+          <Field label="Antal"><Input value={row.quantity} onChange={(e) => onChange({ quantity: e.target.value })} inputMode="decimal" placeholder="1" /></Field>
         )}
         <Field label="A-pris">
           <Input
@@ -651,46 +692,32 @@ function LineItemRow({
             disabled={row.auto_price}
           />
         </Field>
-        <Field label="Rabatt %">
-          <Input value={row.discount_percent} onChange={(e) => onChange({ discount_percent: e.target.value })} inputMode="decimal" placeholder="0" />
-        </Field>
+        <Field label="Rabatt %"><Input value={row.discount_percent} onChange={(e) => onChange({ discount_percent: e.target.value })} inputMode="decimal" placeholder="0" /></Field>
       </div>
 
-      <div className="flex items-center gap-4">
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
         <label className="inline-flex items-center gap-2 text-xs text-slate-500">
-          <input
-            type="checkbox"
-            checked={!row.auto_price}
-            onChange={(e) => onChange({ auto_price: !e.target.checked })}
-            className="h-3.5 w-3.5 rounded border-slate-300"
-          />
+          <input type="checkbox" checked={!row.auto_price} onChange={(e) => onChange({ auto_price: !e.target.checked })} className="h-3.5 w-3.5 rounded border-slate-300" />
           Manuellt pris
         </label>
         {rotEnabled ? (
           <label className="inline-flex items-center gap-2 text-xs text-slate-500">
-            <input
-              type="checkbox"
-              checked={row.is_rot_work}
-              onChange={(e) => onChange({ is_rot_work: e.target.checked })}
-              className="h-3.5 w-3.5 rounded border-slate-300"
-            />
+            <input type="checkbox" checked={row.is_rot_work} onChange={(e) => onChange({ is_rot_work: e.target.checked })} className="h-3.5 w-3.5 rounded border-slate-300" />
             ROT-arbete
           </label>
         ) : null}
+        {rotEnabled && row.is_rot_work ? (
+          <label className="inline-flex items-center gap-2 text-xs text-slate-500">
+            Typ
+            <Select value={row.house_work_type} onChange={(e) => onChange({ house_work_type: e.target.value })} className="h-8 py-0 text-xs">
+              {ROT_HOUSE_WORK_TYPES.map((type) => (<option key={type} value={type}>{ROT_HOUSE_WORK_LABELS[type]}</option>))}
+            </Select>
+          </label>
+        ) : null}
+        <span className="ml-auto text-sm font-semibold tabular-nums text-slate-900">{formatCurrency(metrics?.rowTotal ?? 0, 'SEK')}</span>
       </div>
 
-      <Field label="Radtext">
-        <Input value={row.line_note} onChange={(e) => onChange({ line_note: e.target.value })} placeholder="Fritext för raden" />
-      </Field>
-
-      {metrics?.isConfigured ? (
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-slate-100 pt-3 text-xs text-slate-500">
-          <span>{metrics.label}</span>
-          <span>Mängd {metrics.amount.toFixed(2)}</span>
-          <span>A-pris {formatCurrency(metrics.effectiveUnit, 'SEK')}</span>
-          <span className="ml-auto font-semibold text-slate-900">Radsumma {formatCurrency(metrics.rowTotal, 'SEK')}</span>
-        </div>
-      ) : null}
+      <Field label="Radtext"><Input value={row.line_note} onChange={(e) => onChange({ line_note: e.target.value })} placeholder="Fritext för raden" /></Field>
     </div>
   );
 }
@@ -796,7 +823,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           delivery_address: item.customer_snapshot?.delivery_address || '',
           invoice_address: item.customer_snapshot?.invoice_address || '',
           items: item.line_items?.length
-            ? item.line_items.map((line) => ({ ...line, line_note: line.line_note || '', is_rot_work: line.is_rot_work ?? false }))
+            ? item.line_items.map((line) => ({ ...line, line_note: line.line_note || '', is_rot_work: line.is_rot_work ?? false, house_work_type: line.house_work_type || 'CONSTRUCTION' }))
             : [createEmptyLineItem()],
           project_name: item.project_name,
           description: item.description || '',
@@ -804,10 +831,10 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           vat_percent: String(item.vat_percent ?? 25),
           valid_until: item.valid_until || '',
           rot_enabled: Boolean(item.rot_details?.enabled),
-          rot_applicant_name: item.rot_details?.applicant_name || '',
-          rot_personal_number: item.rot_details?.personal_number || '',
           rot_property_designation: item.rot_details?.property_designation || '',
           rot_percent: String(item.rot_details?.rot_percent ?? 30),
+          rot_max_deduction: String(item.rot_details?.max_deduction ?? 50000),
+          rot_brf_org_number: item.rot_details?.brf_org_number || '',
           desired_installation_date: item.internal_handoff?.desired_installation_date || '',
           handoff_notes: item.internal_handoff?.handoff_notes || '',
           work_scope: item.internal_handoff?.work_scope || '',
@@ -912,11 +939,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
         ? computeUnitPrice(item.construction, parseDecimal(item.thickness_mm))
         : parseDecimal(item.unit_price);
       const mode = item.pricing_mode === 'item' ? 'item' : 'm3';
-      const m2 = parseDecimal(item.m2);
-      const thicknessM = parseDecimal(item.thickness_mm) / 1000;
-      const volume = Math.max(0, m2 * thicknessM);
-      const quantity = parseDecimal(item.quantity);
-      const amount = mode === 'm3' ? volume : quantity;
+      const amount = lineItemQuantity(item);
       const discount = Math.min(100, Math.max(0, parseDecimal(item.discount_percent)));
       const effectiveUnit = Math.max(0, baseUnit * (1 - discount / 100));
       const constructionLabel = item.construction === 'vagg' ? 'Vägg' : item.construction === 'snedtak' ? 'Snedtak' : item.construction === 'vind' ? 'Vind' : '';
@@ -935,8 +958,26 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     const subtotal = Math.max(0, effectiveRows.reduce((sum, item) => sum + item.rowTotal, 0));
     const vatPercent = parseDecimal(draft.vat_percent);
     const vat = Math.max(0, subtotal * (vatPercent / 100));
-    return { subtotal, vat, total: subtotal + vat };
-  }, [draft.vat_percent, effectiveRows]);
+    const total = subtotal + vat;
+
+    // ROT deduction (private only): the tax-reduction % of the husarbete rows' amount
+    // INCL VAT, capped at the max deduction. Floored to whole krona to match Fortnox /
+    // Skatteverket (ROT reductions drop the öre), e.g. 393,75 → 393. Flooring is also
+    // the safe direction for the business: the deduction is never overstated.
+    const rotActive = draft.quote_type === 'private' && draft.rot_enabled;
+    const rotBaseInclVat = rotActive
+      ? effectiveRows
+          .filter((r) => r.is_rot_work)
+          .reduce((sum, r) => sum + r.rowTotal * (1 + vatPercent / 100), 0)
+      : 0;
+    const rotPercent = parseDecimal(draft.rot_percent, 30);
+    const maxDeduction = parseDecimal(draft.rot_max_deduction, 50000);
+    const rotDeduction = rotActive
+      ? Math.min(maxDeduction, Math.floor(rotBaseInclVat * (rotPercent / 100)))
+      : 0;
+
+    return { subtotal, vat, total, rotDeduction, toPay: total - rotDeduction };
+  }, [draft.vat_percent, draft.quote_type, draft.rot_enabled, draft.rot_percent, draft.rot_max_deduction, effectiveRows]);
 
   const issues = useMemo(() => getValidationIssues(draft, effectiveRows), [draft, effectiveRows]);
   const isReady = issues.length === 0;
@@ -958,9 +999,6 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
       errs.personal_number = 'Personnummer krävs';
     }
     if (!draft.amount.trim() && !hasAnyRows) errs.amount = 'Ange belopp eller lägg till rader';
-    if (draft.quote_type === 'private' && draft.rot_enabled && !draft.rot_personal_number.trim()) {
-      errs.rot_personal_number = 'ROT kräver personnummer för sökande';
-    }
     if (draft.quote_type === 'private' && draft.rot_enabled && !draft.rot_property_designation.trim()) {
       errs.rot_property_designation = 'ROT kräver fastighetsbeteckning';
     }
@@ -974,7 +1012,6 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     'Personnummer krävs': 'section-kund',
     'Offertnamn saknas': 'field-project-name',
     'Ange belopp eller lägg till rader': 'field-amount',
-    'ROT kräver personnummer för sökande': 'field-rot-personal-number',
     'ROT kräver fastighetsbeteckning': 'field-rot-property',
   };
 
@@ -1134,7 +1171,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     { id: 'section-offert', label: 'Offert', done: Boolean(draft.project_name.trim()) },
     { id: 'section-rader', label: 'Produkter & priser', done: hasAnyLineItemInput || Boolean(draft.amount.trim()) },
     ...(draft.quote_type === 'private' && draft.rot_enabled
-      ? [{ id: 'section-rot', label: 'ROT-avdrag', done: Boolean(draft.rot_personal_number.trim() && draft.rot_property_designation.trim()) }]
+      ? [{ id: 'section-rot', label: 'ROT-avdrag', done: Boolean(draft.personal_number.trim() && draft.rot_property_designation.trim()) }]
       : []),
     { id: 'section-handoff', label: 'Intern handoff' },
     ...(isEditing && loadedQuote ? [{ id: 'section-arbetsorder', label: 'Arbetsorder' }] : []),
@@ -1294,9 +1331,22 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
                 <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Rader</span>
                 <span className="text-sm font-semibold text-slate-900">{configuredRows.length} st</span>
               </div>
+              {totals.rotDeduction > 0 ? (
+                <div className="grid gap-0.5">
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Avgår ROT</span>
+                  <span className="text-sm font-semibold text-emerald-700">−{formatCurrency(totals.rotDeduction, 'SEK')}</span>
+                </div>
+              ) : null}
               <div className="ml-auto grid gap-0.5 text-right">
-                <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Total</span>
-                <span className="text-base font-bold text-slate-950">{formatCurrency(totals.total, 'SEK')}</span>
+                <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">
+                  {totals.rotDeduction > 0 ? 'Att betala' : 'Total'}
+                </span>
+                <span className="text-base font-bold text-slate-950">
+                  {formatCurrency(totals.rotDeduction > 0 ? totals.toPay : totals.total, 'SEK')}
+                </span>
+                {totals.rotDeduction > 0 ? (
+                  <span className="text-[11px] text-slate-400">Total {formatCurrency(totals.total, 'SEK')}</span>
+                ) : null}
               </div>
             </div>
           ) : (
@@ -1305,7 +1355,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
             </p>
           )}
 
-          <div className="grid gap-3">
+          <div className="grid gap-2">
             {draft.items.map((row, index) => (
               <LineItemRow
                 key={row.id}
@@ -1360,18 +1410,32 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           {draft.quote_type === 'private' && draft.rot_enabled ? (
             <div id="section-rot" className={cn('scroll-mt-6', crm.cardInner)}>
               <SectionHeader step={stepOf('section-rot')} title="ROT-avdrag" />
+              {/* The ROT applicant is the selected customer – shown read-only, not entered. */}
+              <div className={cn('mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border px-4 py-3',
+                draft.personal_number.trim() ? 'border-slate-200 bg-slate-50/60' : 'border-amber-200 bg-amber-50')}>
+                <div className="min-w-0">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">ROT-sökande (kund)</p>
+                  <p className="truncate text-sm font-medium text-slate-800">
+                    {draft.customer_name.trim() || <span className="text-slate-400">Ingen kund vald</span>}
+                    {draft.personal_number.trim() ? <span className="font-normal text-slate-500"> · {draft.personal_number}</span> : null}
+                  </p>
+                </div>
+                {!draft.personal_number.trim() ? (
+                  <span className="text-xs font-medium text-amber-700">Kunden saknar personnummer – ROT-avdraget kan inte beräknas i Fortnox.</span>
+                ) : null}
+              </div>
               <div className="grid gap-4 md:grid-cols-2">
-                <Field label="ROT-sökande">
-                  <Input value={draft.rot_applicant_name} onChange={(e) => setDraft((d) => ({ ...d, rot_applicant_name: e.target.value }))} placeholder="Namn på sökande" />
-                </Field>
-                <Field fieldId="field-rot-personal-number" label="ROT personnummer" error={fieldErrors.rot_personal_number}>
-                  <Input value={draft.rot_personal_number} onChange={(e) => setDraft((d) => ({ ...d, rot_personal_number: e.target.value }))} placeholder="ÅÅÅÅMMDD-XXXX" />
-                </Field>
                 <Field fieldId="field-rot-property" label="Fastighetsbeteckning" className="md:col-span-2" error={fieldErrors.rot_property_designation}>
                   <Input value={draft.rot_property_designation} onChange={(e) => setDraft((d) => ({ ...d, rot_property_designation: e.target.value }))} placeholder="Fastighetsbeteckning" />
                 </Field>
-                <Field label="ROT %">
+                <Field label="Skattereduktion %">
                   <Input value={draft.rot_percent} onChange={(e) => setDraft((d) => ({ ...d, rot_percent: e.target.value }))} inputMode="decimal" placeholder="30" />
+                </Field>
+                <Field label="Max. avdrag">
+                  <Input value={draft.rot_max_deduction} onChange={(e) => setDraft((d) => ({ ...d, rot_max_deduction: e.target.value }))} inputMode="decimal" placeholder="50000" />
+                </Field>
+                <Field label="BRF org.nr" className="md:col-span-2">
+                  <Input value={draft.rot_brf_org_number} onChange={(e) => setDraft((d) => ({ ...d, rot_brf_org_number: e.target.value }))} placeholder="Om bostadsrätt" />
                 </Field>
               </div>
             </div>

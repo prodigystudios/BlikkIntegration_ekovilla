@@ -35,6 +35,25 @@ export type CustomerSyncResult = {
   pages: number;
 };
 
+// Split a single "Förnamn Efternamn" string into first/last (first token vs the rest).
+// Shared by every place that maps a single Name field back to our split columns.
+export function splitSwedishName(fullName: string | null | undefined): { first: string | null; last: string | null } {
+  const name = (fullName ?? '').trim();
+  if (!name) return { first: null, last: null };
+  const parts = name.split(' ');
+  return { first: parts[0] ?? null, last: parts.slice(1).join(' ') || null };
+}
+
+// Build a {street, postal_code, city} address object, or null when all parts are empty.
+export function buildFortnoxAddress(
+  street: string | null | undefined,
+  postalCode: string | null | undefined,
+  city: string | null | undefined,
+): { street: string | null; postal_code: string | null; city: string | null } | null {
+  if (!street && !postalCode && !city) return null;
+  return { street: street ?? null, postal_code: postalCode ?? null, city: city ?? null };
+}
+
 function mapFortnoxCustomerToRow(c: FortnoxCustomer, now: string) {
   // Type is only returned by the individual GET endpoint, not the list endpoint.
   // Default to 'private' when missing – safer than guessing from OrganisationNumber
@@ -44,27 +63,22 @@ function mapFortnoxCustomerToRow(c: FortnoxCustomer, now: string) {
   if (!isCompany && !isPrivate) {
     console.warn(`[Fortnox sync] Kund ${c.CustomerNumber} har oväntat Type-värde: "${c.Type}" → klassificeras som privat`);
   }
+  const name = splitSwedishName(c.Name);
   return {
     customer_type: isCompany ? 'business' : 'private',
     customer_stage: 'fortnox_customer' as const,
     company_name: isCompany ? (c.Name ?? null) : null,
-    first_name: !isCompany ? (c.Name?.split(' ')[0] ?? null) : null,
-    last_name: !isCompany ? (c.Name?.split(' ').slice(1).join(' ') || null) : null,
+    first_name: isCompany ? null : name.first,
+    last_name: isCompany ? null : name.last,
     // OrganisationNumber holds a company's org.nr or a private person's personnummer.
     organization_number: isCompany ? (c.OrganisationNumber ?? null) : null,
     personal_number: isCompany ? null : (c.OrganisationNumber ?? null),
     email: c.Email ?? null,
     phone: c.Phone1 ?? null,
     mobile: c.Mobile ?? c.Phone2 ?? null,
-    visit_address: (c.VisitingAddress || c.VisitingZipCode || c.VisitingCity)
-      ? { street: c.VisitingAddress ?? null, postal_code: c.VisitingZipCode ?? null, city: c.VisitingCity ?? null }
-      : null,
-    delivery_address: (c.DeliveryAddress1 || c.DeliveryZipCode || c.DeliveryCity)
-      ? { street: c.DeliveryAddress1 ?? null, postal_code: c.DeliveryZipCode ?? null, city: c.DeliveryCity ?? null }
-      : null,
-    invoice_address: (c.Address1 || c.ZipCode || c.City)
-      ? { street: c.Address1 ?? null, postal_code: c.ZipCode ?? null, city: c.City ?? null }
-      : null,
+    visit_address: buildFortnoxAddress(c.VisitingAddress, c.VisitingZipCode, c.VisitingCity),
+    delivery_address: buildFortnoxAddress(c.DeliveryAddress1, c.DeliveryZipCode, c.DeliveryCity),
+    invoice_address: buildFortnoxAddress(c.Address1, c.ZipCode, c.City),
     invoice_email: c.EmailInvoice ?? null,
     payment_terms: c.TermsOfPayment ?? null,
     price_list: c.PriceList ?? null,

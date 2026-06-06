@@ -65,6 +65,12 @@ export const createCrmCustomerSchema = z
     (d) =>
       d.customer_type === 'business' ? !!d.company_name : !!(d.first_name && d.last_name),
     { message: 'Företagsnamn krävs för företagskund, för- och efternamn krävs för privatkund' }
+  )
+  // Personal number is required for private customers – it is the OrganisationNumber
+  // Fortnox uses to compute ROT deductions, so a private customer must never lack it.
+  .refine(
+    (d) => d.customer_type !== 'private' || !!d.personal_number,
+    { message: 'Personnummer krävs för privatkund', path: ['personal_number'] }
   );
 
 export const updateCrmCustomerSchema = z

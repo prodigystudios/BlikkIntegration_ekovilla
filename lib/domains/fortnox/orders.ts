@@ -1,7 +1,9 @@
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { parseDecimal } from '@/lib/shared/number';
+import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
 import { fortnoxPost, fortnoxPut, FortnoxNotConnectedError } from './client';
 import { resolveOurReference } from './helpers';
+import { DEFAULT_ROT_HOUSE_WORK_TYPE } from './types';
 
 type WorkOrderRow = {
   id: string;
@@ -18,9 +20,13 @@ type WorkOrderRow = {
     unit_price?: string | null;
     article_price?: number | null;
     quantity?: string | null;
+    pricing_mode?: string | null;
+    m2?: string | null;
+    thickness_mm?: string | null;
     discount_percent?: string | null;
     line_note?: string | null;
     is_rot_work?: boolean | null;
+    house_work_type?: string | null;
   }> | null;
 };
 
@@ -33,7 +39,8 @@ function buildOrderRows(lineItems: WorkOrderRow['line_items'], vatPercent: numbe
   return lineItems.map((item) => {
     // parseDecimal handles Swedish comma input ("1,5") that plain parseFloat truncates.
     const price = item.unit_price ? parseDecimal(item.unit_price) : (item.article_price ?? 0);
-    const quantity = item.quantity ? parseDecimal(item.quantity, 1) : 1;
+    // For m³ rows the quantity is the computed volume, not the (empty) quantity field.
+    const quantity = lineItemQuantity(item);
     const discount = item.discount_percent ? parseDecimal(item.discount_percent) : 0;
     return {
       ...(item.article_number ? { ArticleNumber: item.article_number } : {}),
@@ -43,7 +50,7 @@ function buildOrderRows(lineItems: WorkOrderRow['line_items'], vatPercent: numbe
       VAT: vatPercent,
       ...(item.article_unit_name ? { Unit: item.article_unit_name } : {}),
       ...(discount > 0 ? { Discount: discount } : {}),
-      ...(rotEnabled && item.is_rot_work ? { HouseWork: true, HouseWorkType: 'CONSTRUCTION' } : {}),
+      ...(rotEnabled && item.is_rot_work ? { HouseWork: true, HouseWorkType: item.house_work_type || DEFAULT_ROT_HOUSE_WORK_TYPE } : {}),
     };
   });
 }

@@ -1,8 +1,10 @@
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { parseDecimal } from '@/lib/shared/number';
+import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
 import { fortnoxPost, fortnoxPut, FortnoxNotConnectedError } from './client';
 import { resolveOurReference } from './helpers';
-import { buildFortnoxCustomerPayload, createFortnoxCustomer, type FortnoxCustomerSource } from './customers';
+import { buildFortnoxCustomerPayload, createFortnoxCustomer, splitSwedishName, buildFortnoxAddress, type FortnoxCustomerSource } from './customers';
+import { DEFAULT_ROT_HOUSE_WORK_TYPE } from './types';
 
 type QuoteLineItem = {
   article_number?: string | null;
@@ -11,9 +13,13 @@ type QuoteLineItem = {
   unit_price?: string | null;
   article_price?: number | null;
   quantity?: string | null;
+  pricing_mode?: string | null;
+  m2?: string | null;
+  thickness_mm?: string | null;
   discount_percent?: string | null;
   line_note?: string | null;
   is_rot_work?: boolean | null;
+  house_work_type?: string | null;
 };
 
 type QuoteRow = {
@@ -51,6 +57,7 @@ type QuoteRow = {
     applicant_name?: string | null;
     personal_number?: string | null;
     property_designation?: string | null;
+    brf_org_number?: string | null;
   } | null;
   line_items: QuoteLineItem[] | null;
   fortnox_offer_number: string | null;
@@ -83,7 +90,8 @@ export function buildOfferRows(
   return lineItems.map((item) => {
     // parseDecimal handles Swedish comma input ("1,5") that plain parseFloat truncates.
     const price = item.unit_price ? parseDecimal(item.unit_price) : (item.article_price ?? 0);
-    const quantity = item.quantity ? parseDecimal(item.quantity, 1) : 1;
+    // For m³ rows the quantity is the computed volume, not the (empty) quantity field.
+    const quantity = lineItemQuantity(item);
     const discount = item.discount_percent ? parseDecimal(item.discount_percent) : 0;
 
     const row: FortnoxOfferRow = {
@@ -98,7 +106,7 @@ export function buildOfferRows(
     if (discount > 0) row.Discount = discount;
     if (rotEnabled && item.is_rot_work) {
       row.HouseWork = true;
-      row.HouseWorkType = 'CONSTRUCTION';
+      row.HouseWorkType = item.house_work_type || DEFAULT_ROT_HOUSE_WORK_TYPE;
     }
 
     return row;
@@ -133,20 +141,18 @@ async function resolveFortnoxCustomerNumber(quote: QuoteRow): Promise<string | n
 export function snapshotToFortnoxSource(quote: QuoteRow): FortnoxCustomerSource {
   const s = quote.customer_snapshot;
   const isCompany = Boolean(s?.company_name);
-  const fullName = s?.customer_name ?? quote.customer_name ?? null;
-  const mainAddress = (s?.street_address || s?.postal_code || s?.city)
-    ? { street: s?.street_address ?? null, postal_code: s?.postal_code ?? null, city: s?.city ?? null }
-    : null;
+  const name = splitSwedishName(s?.customer_name ?? quote.customer_name);
+  const mainAddress = buildFortnoxAddress(s?.street_address, s?.postal_code, s?.city);
   // Snapshot has no separate delivery postal/city – reuse the main ones, as before.
   const deliveryAddress = s?.delivery_address
-    ? { street: s.delivery_address, postal_code: s?.postal_code ?? null, city: s?.city ?? null }
+    ? buildFortnoxAddress(s.delivery_address, s?.postal_code, s?.city)
     : null;
 
   return {
     customer_type: isCompany ? 'business' : 'private',
     company_name: s?.company_name ?? null,
-    first_name: isCompany ? null : (fullName?.split(' ')[0] ?? null),
-    last_name: isCompany ? null : (fullName?.split(' ').slice(1).join(' ') || null),
+    first_name: isCompany ? null : name.first,
+    last_name: isCompany ? null : name.last,
     organization_number: s?.organization_number ?? null,
     personal_number: s?.personal_number ?? null,
     email: s?.email ?? null,
@@ -200,10 +206,8 @@ async function createCustomerInFortnox(quote: QuoteRow): Promise<string> {
   }
   const isCompany = Boolean(snapshot?.company_name);
   const now = new Date().toISOString();
-  const hasAddress = snapshot?.street_address || snapshot?.postal_code || snapshot?.city;
-  const addressJson = hasAddress
-    ? { street: snapshot?.street_address ?? null, postal_code: snapshot?.postal_code ?? null, city: snapshot?.city ?? null }
-    : null;
+  const dbName = splitSwedishName(snapshot?.customer_name);
+  const addressJson = buildFortnoxAddress(snapshot?.street_address, snapshot?.postal_code, snapshot?.city);
 
   const { data: newCustomer, error: insertError } = await supabase
     .from('crm_customers')
@@ -211,8 +215,8 @@ async function createCustomerInFortnox(quote: QuoteRow): Promise<string> {
       customer_type: isCompany ? 'business' : 'private',
       customer_stage: 'fortnox_customer',
       company_name: snapshot?.company_name ?? null,
-      first_name: !isCompany ? (snapshot?.customer_name?.split(' ')[0] ?? null) : null,
-      last_name: !isCompany ? (snapshot?.customer_name?.split(' ').slice(1).join(' ') || null) : null,
+      first_name: !isCompany ? dbName.first : null,
+      last_name: !isCompany ? dbName.last : null,
       organization_number: snapshot?.organization_number ?? null,
       personal_number: !isCompany ? (snapshot?.personal_number ?? null) : null,
       visit_address: addressJson,
@@ -331,11 +335,15 @@ export async function pushQuoteToFortnox(quoteId: string): Promise<PushOfferResu
     const snapshot = quote.customer_snapshot;
     const deliveryAddress = snapshot?.delivery_address;
 
-    // Build Remarks: description first, then property designation on a new line if ROT
+    // Build Remarks: description first, then ROT property designation / BRF org number
+    // on their own lines (Fortnox offers have no structured field for these).
     const propertyDesignation = rotEnabled && quote.rot_details?.property_designation
       ? `Fastighetsbeteckning: ${quote.rot_details.property_designation}`
       : null;
-    const remarks = [quote.description, propertyDesignation].filter(Boolean).join('\n') || undefined;
+    const brfOrgNumber = rotEnabled && quote.rot_details?.brf_org_number
+      ? `BRF org.nr: ${quote.rot_details.brf_org_number}`
+      : null;
+    const remarks = [quote.description, propertyDesignation, brfOrgNumber].filter(Boolean).join('\n') || undefined;
 
     const offerBody = {
       Offer: {

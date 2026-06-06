@@ -14,15 +14,21 @@ describe('buildOfferRows', () => {
   });
 
   it('parses Swedish comma decimals for price and quantity (regression for parseFloat truncation)', () => {
-    const [row] = buildOfferRows([{ unit_price: '12,50', quantity: '1,5' }], 25, false);
+    const [row] = buildOfferRows([{ pricing_mode: 'item', unit_price: '12,50', quantity: '1,5' }], 25, false);
     expect(row.Price).toBe(12.5);
     expect(row.Quantity).toBe(1.5);
   });
 
-  it('falls back to article_price when unit_price is empty, and quantity 1 when empty', () => {
-    const [row] = buildOfferRows([{ unit_price: '', article_price: 900, quantity: '' }], 25, false);
+  it('sends the computed m³ volume as Quantity, not the empty quantity field (regression)', () => {
+    const [row] = buildOfferRows([{ pricing_mode: 'm3', m2: '100', thickness_mm: '200', unit_price: '700' }], 25, false);
+    expect(row.Quantity).toBe(20);
+    expect(row.Price).toBe(700);
+  });
+
+  it('falls back to article_price when unit_price is empty', () => {
+    const [row] = buildOfferRows([{ pricing_mode: 'item', unit_price: '', article_price: 900, quantity: '5' }], 25, false);
     expect(row.Price).toBe(900);
-    expect(row.Quantity).toBe(1);
+    expect(row.Quantity).toBe(5);
   });
 
   it('maps article number, unit, description and VAT', () => {
@@ -54,6 +60,19 @@ describe('buildOfferRows', () => {
 
     const [rotDisabled] = buildOfferRows([{ unit_price: '100', quantity: '1', is_rot_work: true }], 25, false);
     expect(rotDisabled.HouseWork).toBeUndefined();
+  });
+
+  it('uses each row\'s own HouseWorkType, defaulting to CONSTRUCTION', () => {
+    const rows = buildOfferRows(
+      [
+        { unit_price: '100', quantity: '1', is_rot_work: true, house_work_type: 'ELECTRICITY' },
+        { unit_price: '100', quantity: '1', is_rot_work: true }, // no type → default
+      ],
+      25,
+      true,
+    );
+    expect(rows[0].HouseWorkType).toBe('ELECTRICITY');
+    expect(rows[1].HouseWorkType).toBe('CONSTRUCTION');
   });
 
   it('falls back to line_note then "Artikel" for the description', () => {

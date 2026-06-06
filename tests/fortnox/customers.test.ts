@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
   buildFortnoxCustomerPayload,
   fortnoxCustomerFieldsChanged,
+  splitSwedishName,
+  buildFortnoxAddress,
   type FortnoxCustomerSource,
 } from '@/lib/domains/fortnox/customers';
 
@@ -160,5 +162,32 @@ describe('fortnoxCustomerFieldsChanged', () => {
   it('behandlar null/undefined som ändrat (säker default → pusha)', () => {
     expect(fortnoxCustomerFieldsChanged(null, source())).toBe(true);
     expect(fortnoxCustomerFieldsChanged(source(), undefined)).toBe(true);
+  });
+});
+
+describe('splitSwedishName', () => {
+  it('splits first token vs the rest', () => {
+    expect(splitSwedishName('Anna Svensson')).toEqual({ first: 'Anna', last: 'Svensson' });
+    expect(splitSwedishName('Anna Maria Svensson')).toEqual({ first: 'Anna', last: 'Maria Svensson' });
+  });
+
+  it('returns null parts for single name / empty / nullish', () => {
+    expect(splitSwedishName('Anna')).toEqual({ first: 'Anna', last: null });
+    expect(splitSwedishName('  ')).toEqual({ first: null, last: null });
+    expect(splitSwedishName(null)).toEqual({ first: null, last: null });
+    expect(splitSwedishName(undefined)).toEqual({ first: null, last: null });
+  });
+});
+
+describe('buildFortnoxAddress', () => {
+  it('builds an address object when any part is present', () => {
+    expect(buildFortnoxAddress('Gatan 1', '11122', 'Stockholm')).toEqual({ street: 'Gatan 1', postal_code: '11122', city: 'Stockholm' });
+    expect(buildFortnoxAddress('Gatan 1', null, null)).toEqual({ street: 'Gatan 1', postal_code: null, city: null });
+  });
+
+  it('returns null when all parts are empty/nullish', () => {
+    expect(buildFortnoxAddress(null, null, null)).toBeNull();
+    expect(buildFortnoxAddress('', '', '')).toBeNull();
+    expect(buildFortnoxAddress(undefined, undefined, undefined)).toBeNull();
   });
 });

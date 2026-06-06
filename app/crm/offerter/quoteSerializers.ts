@@ -56,10 +56,15 @@ export function buildCustomerSnapshot(d: QuoteCustomerFields) {
 export type QuoteRotFields = {
   quote_type: 'private' | 'business';
   rot_enabled: boolean;
-  rot_applicant_name: string;
-  rot_personal_number: string;
   rot_property_designation: string;
   rot_percent: string;
+  rot_max_deduction: string;
+  rot_brf_org_number: string;
+  // The ROT applicant is always the customer – derived from the customer fields,
+  // never entered separately, so the personal number Fortnox uses for the deduction
+  // is the same one stored on the customer.
+  customer_name: string;
+  personal_number: string;
 };
 
 // ROT is only valid for private customers; everything is nulled out when disabled.
@@ -67,10 +72,12 @@ export function buildRotDetails(d: QuoteRotFields) {
   const enabled = d.quote_type === 'private' ? d.rot_enabled : false;
   return {
     enabled,
-    applicant_name: enabled ? d.rot_applicant_name || null : null,
-    personal_number: enabled ? d.rot_personal_number || null : null,
+    applicant_name: enabled ? d.customer_name || null : null,
+    personal_number: enabled ? d.personal_number || null : null,
     property_designation: enabled ? d.rot_property_designation || null : null,
     rot_percent: enabled ? Number(d.rot_percent || '30') : 30,
+    max_deduction: enabled ? Number(d.rot_max_deduction || '50000') : 50000,
+    brf_org_number: enabled ? d.rot_brf_org_number || null : null,
   };
 }
 

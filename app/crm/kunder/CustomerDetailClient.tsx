@@ -296,6 +296,9 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
 
   async function saveEdits() {
     if (!customer || !editDraft) return;
+    if (customer.customer_type === 'private' && !editDraft.personal_number.trim()) {
+      toast.error('Personnummer krävs för privatkund'); return;
+    }
     setSaving(true);
     try {
       const body: Record<string, unknown> = {
@@ -569,7 +572,7 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
                         </div>
                       </div>
                       <div>
-                        <FieldLabel>Personnummer</FieldLabel>
+                        <FieldLabel>Personnummer *</FieldLabel>
                         <Input value={editDraft.personal_number} onChange={(e) => setField('personal_number', formatSwedishIdNumber(e.target.value))} placeholder="ÅÅMMDD-XXXX" />
                       </div>
                     </>

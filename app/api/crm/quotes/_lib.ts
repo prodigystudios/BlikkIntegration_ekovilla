@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ROT_HOUSE_WORK_TYPES } from '@/lib/domains/fortnox/types';
 export { ok, routeError, validationError, requireCrmUser } from '../_shared';
 
 function normalizeOptionalText(value: unknown) {
@@ -58,6 +59,8 @@ const rotDetailsSchema = z.object({
   personal_number: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
   property_designation: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
   rot_percent: z.preprocess(parseAmount, z.number().finite('Ogiltig ROT-procent').min(0).max(100)).optional().default(30),
+  max_deduction: z.preprocess(parseAmount, z.number().finite('Ogiltigt maxavdrag').min(0)).optional().default(50000),
+  brf_org_number: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
 });
 
 const internalHandoffSchema = z.object({
@@ -83,6 +86,7 @@ const quoteLineItemSchema = z.object({
   discount_percent: z.preprocess((value) => normalizeOptionalText(value) ?? '', z.string()).optional().default(''),
   line_note: z.preprocess((value) => normalizeOptionalText(value) ?? '', z.string()).optional().default(''),
   is_rot_work: z.boolean().optional().default(false),
+  house_work_type: z.preprocess((value) => normalizeOptionalText(value) ?? 'CONSTRUCTION', z.enum(ROT_HOUSE_WORK_TYPES)).optional().default('CONSTRUCTION'),
 });
 
 export const listCrmQuotesQuerySchema = z.object({

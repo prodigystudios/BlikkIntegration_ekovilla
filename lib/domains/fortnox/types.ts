@@ -61,6 +61,16 @@ export type CachedFortnoxArticle = {
   last_fetched_at: string;
 };
 
+// Valid Fortnox HouseWorkType values for ROT work (the subset relevant to our
+// trade). RUT types are intentionally excluded – we only offer ROT. Shared by the
+// quote form, the Zod schema and the offer/order payload builders so they agree.
+export const ROT_HOUSE_WORK_TYPES = [
+  'CONSTRUCTION', 'ELECTRICITY', 'GLASSMETALWORK', 'GROUNDDRAINAGEWORK',
+  'HVAC', 'MASONRY', 'PAINTINGWALLPAPERING', 'OTHERCOSTS',
+] as const;
+export type RotHouseWorkType = typeof ROT_HOUSE_WORK_TYPES[number];
+export const DEFAULT_ROT_HOUSE_WORK_TYPE: RotHouseWorkType = 'CONSTRUCTION';
+
 // Customer from Fortnox /3/customers
 export type FortnoxCustomer = {
   CustomerNumber: string;

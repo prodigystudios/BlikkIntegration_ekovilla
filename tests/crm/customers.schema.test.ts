@@ -63,8 +63,18 @@ describe('createCrmCustomerSchema', () => {
         customer_type: 'private',
         first_name: 'Anna',
         last_name: 'Svensson',
+        personal_number: '900101-1234',
       });
       expect(result.success).toBe(true);
+    });
+
+    it('misslyckas utan personnummer', () => {
+      const result = createCrmCustomerSchema.safeParse({
+        customer_type: 'private',
+        first_name: 'Anna',
+        last_name: 'Svensson',
+      });
+      expect(result.success).toBe(false);
     });
 
     it('misslyckas utan last_name', () => {
