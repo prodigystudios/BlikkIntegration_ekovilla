@@ -368,11 +368,16 @@ function ArticlePicker({ value, onSelect, onClear }: { value: string; onSelect: 
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!open || query.trim().length < 2) { setItems([]); return; }
+    // Open with no query → default list (recent articles); typed query → search.
+    if (!open) { setItems([]); return; }
     let cancelled = false;
     setLoading(true);
     setError(null);
-    fetch(`/api/fortnox/articles?q=${encodeURIComponent(query)}&limit=10`, { cache: 'no-store' })
+    const q = query.trim();
+    const url = q.length >= 1
+      ? `/api/fortnox/articles?q=${encodeURIComponent(q)}&limit=20`
+      : `/api/fortnox/articles?limit=20`;
+    fetch(url, { cache: 'no-store' })
       .then((r) => r.json().catch(() => ({})))
       .then((json) => {
         if (!cancelled) {
@@ -399,7 +404,8 @@ function ArticlePicker({ value, onSelect, onClear }: { value: string; onSelect: 
           value={query}
           onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
           onFocus={() => setOpen(true)}
-          placeholder={value || 'Sök artikel…'}
+          onBlur={() => setTimeout(() => setOpen(false), 150)}
+          placeholder={value || 'Sök eller välj artikel…'}
         />
         {value ? (
           <button type="button" onClick={onClear} className="shrink-0 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-500 hover:border-slate-300 transition-colors">
@@ -407,17 +413,20 @@ function ArticlePicker({ value, onSelect, onClear }: { value: string; onSelect: 
           </button>
         ) : null}
       </div>
-      {open && query.trim().length >= 2 ? (
-        <div className="absolute left-0 right-0 top-full z-20 mt-1 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_16px_32px_rgba(15,23,42,0.10)]">
+      {open ? (
+        <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-72 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-[0_16px_32px_rgba(15,23,42,0.10)]">
           {loading ? <div className="px-4 py-3 text-sm text-slate-400">Söker…</div> : null}
           {error ? <div className="px-4 py-3 text-sm text-rose-600">{error}</div> : null}
           {!loading && !error && items.length === 0 ? <div className="px-4 py-3 text-sm text-slate-400">Inga artiklar hittades.</div> : null}
+          {!loading && !error && query.trim().length === 0 && items.length > 0 ? (
+            <p className="px-4 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Senaste artiklar</p>
+          ) : null}
           {!loading && !error ? items.map((item) => (
             <button
               key={item.id || item.articleNumber || item.name}
               type="button"
               onClick={() => { onSelect(item); setOpen(false); setQuery(''); }}
-              className="grid w-full gap-0.5 border-b border-slate-100 px-4 py-2.5 text-left transition last:border-b-0 hover:bg-slate-50"
+              className="flex w-full flex-col items-start gap-0.5 border-b border-slate-100 px-4 py-2.5 text-left transition last:border-b-0 hover:bg-slate-50"
             >
               <span className="text-sm font-medium text-slate-900">{item.name || 'Artikel'}</span>
               <span className="text-xs text-slate-400">
@@ -453,19 +462,24 @@ function CustomerSearchPicker({
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    if (query.trim().length < 2) { setResults([]); setOpen(false); return; }
+    // Only fetch while the dropdown is open. Empty query → default list (recent
+    // customers, no `q`); typed query → debounced search.
+    if (!open) return;
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(async () => {
+    const q = query.trim();
+    const run = async () => {
       setLoading(true);
       try {
-        const res = await fetch(`/api/crm/customers?q=${encodeURIComponent(query.trim())}`, { cache: 'no-store' });
+        const url = q.length >= 1 ? `/api/crm/customers?q=${encodeURIComponent(q)}` : '/api/crm/customers';
+        const res = await fetch(url, { cache: 'no-store' });
         const json = await res.json().catch(() => ({}));
         setResults(Array.isArray(json?.data?.items) ? json.data.items : []);
-        setOpen(true);
       } catch { setResults([]); } finally { setLoading(false); }
-    }, 300);
+    };
+    if (q.length === 0) { run(); return; }
+    debounceRef.current = setTimeout(run, 300);
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-  }, [query]);
+  }, [query, open]);
 
   if (selectedCustomer) {
     const displayName = selectedCustomer.customer_type === 'business'
@@ -491,46 +505,52 @@ function CustomerSearchPicker({
       <Input
         value={query}
         onChange={(e) => setQuery(e.target.value)}
-        onFocus={() => query.trim().length >= 2 && setOpen(true)}
+        onFocus={() => setOpen(true)}
         onBlur={() => setTimeout(() => setOpen(false), 150)}
-        placeholder="Sök kund i register (namn, org.nr)…"
+        placeholder="Sök eller välj kund (namn, org.nr)…"
       />
       {loading ? <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">Söker…</span> : null}
-      {open && query.trim().length >= 2 ? (
+      {open ? (
         <div className="absolute left-0 right-0 top-full z-20 mt-1 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_16px_32px_rgba(15,23,42,0.10)]">
-          {results.length > 0 ? results.map((customer) => {
-            const name = customer.customer_type === 'business'
-              ? (customer.company_name || 'Okänt företag')
-              : `${customer.first_name || ''} ${customer.last_name || ''}`.trim() || 'Okänd kund';
-            const primary = customer.contacts.find((c) => c.is_primary) || customer.contacts[0] || null;
-            return (
-              <button
-                key={customer.id}
-                type="button"
-                onMouseDown={() => { onSelect(customer); setQuery(''); setOpen(false); }}
-                className="grid w-full gap-0.5 border-b border-slate-100 px-4 py-3 text-left transition last:border-b-0 hover:bg-slate-50"
-              >
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-semibold text-slate-900">{name}</span>
-                  {customer.fortnox_customer_id ? <span className="rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[10px] font-semibold text-sky-700">Fortnox</span> : null}
-                </div>
-                <span className="text-xs text-slate-400">
-                  {[customer.organization_number, customer.visit_address?.city, primary?.phone].filter(Boolean).join(' · ')}
-                </span>
-              </button>
-            );
-          }) : (
-            <div className="grid gap-2 px-4 py-3">
-              <p className="text-sm text-slate-500">Ingen kund hittades för <strong>{query}</strong></p>
-              <button
-                type="button"
-                onMouseDown={onCreateNew}
-                className="w-fit rounded-lg border border-slate-900 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 transition-colors"
-              >
-                + Skapa ny kund
-              </button>
-            </div>
-          )}
+          <div className="max-h-72 overflow-y-auto">
+            {results.length > 0 ? results.map((customer) => {
+              const name = customer.customer_type === 'business'
+                ? (customer.company_name || 'Okänt företag')
+                : `${customer.first_name || ''} ${customer.last_name || ''}`.trim() || 'Okänd kund';
+              const primary = customer.contacts.find((c) => c.is_primary) || customer.contacts[0] || null;
+              return (
+                <button
+                  key={customer.id}
+                  type="button"
+                  onMouseDown={() => { onSelect(customer); setQuery(''); setOpen(false); }}
+                  className="flex w-full flex-col items-start gap-0.5 border-b border-slate-100 px-4 py-3 text-left transition last:border-b-0 hover:bg-slate-50"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold text-slate-900">{name}</span>
+                    {customer.fortnox_customer_id ? <span className="rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[10px] font-semibold text-sky-700">Fortnox</span> : null}
+                  </div>
+                  <span className="text-xs text-slate-400">
+                    {[customer.organization_number, customer.visit_address?.city, primary?.phone].filter(Boolean).join(' · ')}
+                  </span>
+                </button>
+              );
+            }) : (
+              <p className="px-4 py-3 text-sm text-slate-500">
+                {loading ? 'Söker…' : query.trim()
+                  ? <>Ingen kund hittades för <strong>{query}</strong></>
+                  : 'Inga kunder i registret ännu'}
+              </p>
+            )}
+          </div>
+          {/* Always reachable – two customers can share a name, so "create new" must
+              never hide behind a match. */}
+          <button
+            type="button"
+            onMouseDown={onCreateNew}
+            className="flex w-full items-center justify-start gap-2 border-t border-slate-100 bg-slate-50/60 px-4 py-3 text-left text-sm font-semibold text-slate-900 transition hover:bg-slate-100"
+          >
+            <span className="text-base leading-none">+</span> Skapa ny kund
+          </button>
         </div>
       ) : null}
     </div>
@@ -844,6 +864,31 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           notes: item.notes || '',
           create_follow_up_task: false,
         });
+
+        // Show the linked customer in the picker so editing doesn't look like no
+        // customer is selected. Fetch the live row (silently ignored if it 404s).
+        if (item.customer_id) {
+          fetch(`/api/crm/customers/${item.customer_id}`, { cache: 'no-store' })
+            .then((r) => r.json().catch(() => ({})))
+            .then((cj) => {
+              if (!active) return;
+              const c = cj?.data?.item;
+              if (!c) return;
+              setSelectedCustomer({
+                id: c.id,
+                customer_type: c.customer_type,
+                company_name: c.company_name ?? null,
+                first_name: c.first_name ?? null,
+                last_name: c.last_name ?? null,
+                organization_number: c.organization_number ?? null,
+                personal_number: c.personal_number ?? null,
+                fortnox_customer_id: c.fortnox_customer_id ?? null,
+                visit_address: c.visit_address ?? null,
+                contacts: c.contacts ?? [],
+              });
+            })
+            .catch(() => {});
+        }
       })
       .catch(() => { if (active) { toast.error('Kunde inte ladda offert'); router.push('/crm/offerter'); } })
       .finally(() => { if (active) setLoading(false); });
@@ -1557,19 +1602,47 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
                 </div>
               </div>
 
-              {/* Total — prominent */}
+              {/* Summering — full breakdown (delsumma → moms → total → ROT → att betala) */}
               <div className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3.5">
-                <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Totalt inkl. moms</span>
-                <p className="mt-1 text-2xl font-bold tracking-tight text-slate-950">
-                  {sidebarTotal != null && Number.isFinite(sidebarTotal)
-                    ? formatCurrency(sidebarTotal, 'SEK')
-                    : <span className="text-xl text-slate-300">—</span>}
-                </p>
                 {hasAnyLineItemInput && totals.subtotal > 0 ? (
-                  <p className="mt-0.5 text-xs text-slate-400">
-                    {formatCurrency(totals.subtotal, 'SEK')} + {formatCurrency(totals.vat, 'SEK')} moms
-                  </p>
-                ) : null}
+                  <div className="grid gap-1.5">
+                    <div className="flex items-center justify-between text-xs text-slate-500">
+                      <span>Delsumma</span>
+                      <span className="tabular-nums">{formatCurrency(totals.subtotal, 'SEK')}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs text-slate-500">
+                      <span>Moms</span>
+                      <span className="tabular-nums">{formatCurrency(totals.vat, 'SEK')}</span>
+                    </div>
+                    <div className="flex items-center justify-between border-t border-slate-200/70 pt-1.5 text-xs font-medium text-slate-600">
+                      <span>Total inkl. moms</span>
+                      <span className="tabular-nums">{formatCurrency(totals.total, 'SEK')}</span>
+                    </div>
+                    {totals.rotDeduction > 0 ? (
+                      <div className="flex items-center justify-between text-xs font-medium text-emerald-700">
+                        <span>Avgår ROT</span>
+                        <span className="tabular-nums">−{formatCurrency(totals.rotDeduction, 'SEK')}</span>
+                      </div>
+                    ) : null}
+                    <div className="mt-1 flex items-end justify-between border-t border-slate-200/70 pt-2">
+                      <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">
+                        {totals.rotDeduction > 0 ? 'Att betala' : 'Totalt inkl. moms'}
+                      </span>
+                      <span className="text-2xl font-bold tracking-tight text-slate-950 tabular-nums">
+                        {formatCurrency(totals.rotDeduction > 0 ? totals.toPay : totals.total, 'SEK')}
+                      </span>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Totalt inkl. moms</span>
+                    <p className="mt-1 text-2xl font-bold tracking-tight text-slate-950">
+                      {sidebarTotal != null && Number.isFinite(sidebarTotal)
+                        ? formatCurrency(sidebarTotal, 'SEK')
+                        : <span className="text-xl text-slate-300">—</span>}
+                    </p>
+                  </>
+                )}
               </div>
             </div>
 

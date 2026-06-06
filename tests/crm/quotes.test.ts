@@ -169,6 +169,17 @@ describe('createCrmQuoteSchema', () => {
     const result = createCrmQuoteSchema.safeParse(validQuoteBase);
     expect(result.success && result.data.currency_code).toBe('SEK');
   });
+
+  it('behåller customer_id (kund-länken får inte strippas)', () => {
+    const id = '11111111-1111-1111-1111-111111111111';
+    const result = createCrmQuoteSchema.safeParse({ ...validQuoteBase, customer_id: id });
+    expect(result.success && result.data.customer_id).toBe(id);
+  });
+
+  it('defaultar customer_id till null när den saknas', () => {
+    const result = createCrmQuoteSchema.safeParse(validQuoteBase);
+    expect(result.success && result.data.customer_id).toBeNull();
+  });
 });
 
 describe('listCrmQuotesQuerySchema', () => {

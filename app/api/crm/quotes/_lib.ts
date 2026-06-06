@@ -100,6 +100,9 @@ export const listCrmQuotesQuerySchema = z.object({
 export const createCrmQuoteSchema = z.object({
   prospect_id: z.preprocess((value) => normalizeOptionalText(value), z.string().uuid('Ogiltigt prospekt').nullable()).optional().default(null),
   opportunity_id: z.preprocess((value) => normalizeOptionalText(value), z.string().uuid('Ogiltig affärsmöjlighet').nullable()).optional().default(null),
+  // The linked CRM customer. Without this the quote/customer relation breaks: the
+  // customer's quote list and the edit-view picker both resolve via customer_id.
+  customer_id: z.preprocess((value) => normalizeOptionalText(value), z.string().uuid('Ogiltig kund').nullable()).optional().default(null),
   customer_name: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
   project_name: z.string().trim().min(1, 'Offertnamn krävs'),
   description: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),

@@ -114,6 +114,7 @@ type InternalHandoff = {
 type CreateCrmQuoteInput = {
   prospect_id: string | null;
   opportunity_id?: string | null;
+  customer_id?: string | null;
   customer_name: string | null;
   quote_type: CrmQuoteType;
   customer_source: CustomerSource;
