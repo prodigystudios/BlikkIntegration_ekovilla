@@ -28,6 +28,7 @@ type ArticleFormClientProps = {
   mode: 'create' | 'edit';
   fortnoxConnected: boolean;
   priceLists: FortnoxArticlePriceRow[];
+  units: { code: string; description: string }[];
   initial?: ArticleFormInitial;
   articleNumber?: string;
 };
@@ -62,6 +63,7 @@ export default function ArticleFormClient({
   mode,
   fortnoxConnected,
   priceLists,
+  units,
   initial,
   articleNumber,
 }: ArticleFormClientProps) {
@@ -94,6 +96,14 @@ export default function ArticleFormClient({
 
   const [busy, setBusy] = useState<null | 'save' | 'delete'>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+
+  // Unit options from the Fortnox register; keep the article's current unit
+  // selectable even if it is no longer in the register.
+  const unitOptions = useMemo(() => {
+    const codes = new Set(units.map((u) => u.code));
+    const extra = form.unit && !codes.has(form.unit) ? [{ code: form.unit, description: form.unit }] : [];
+    return [...extra, ...units];
+  }, [units, form.unit]);
 
   function setField<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
     setForm((f) => ({ ...f, [key]: value }));
@@ -249,7 +259,18 @@ export default function ArticleFormClient({
 
             <label className="grid gap-1.5">
               <span className="text-sm font-semibold text-slate-700">Enhet</span>
-              <Input value={form.unit} onChange={(e) => setField('unit', e.target.value)} placeholder="t.ex. st, m², tim" />
+              {units.length === 0 ? (
+                <Input value={form.unit} onChange={(e) => setField('unit', e.target.value)} placeholder="t.ex. st, m², tim" />
+              ) : (
+                <Select value={form.unit} onChange={(e) => setField('unit', e.target.value)}>
+                  <option value="">—</option>
+                  {unitOptions.map((u) => (
+                    <option key={u.code} value={u.code}>
+                      {u.description && u.description !== u.code ? `${u.code} – ${u.description}` : u.code}
+                    </option>
+                  ))}
+                </Select>
+              )}
             </label>
 
             <label className="grid gap-1.5">

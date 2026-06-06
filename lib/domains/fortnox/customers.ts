@@ -5,6 +5,7 @@ import type {
   FortnoxCustomer,
   FortnoxTermsOfPaymentListResponse,
   FortnoxPriceListResponse,
+  FortnoxUnitListResponse,
 } from './types';
 
 type FortnoxCustomerDetailResponse = { Customer: FortnoxCustomer };
@@ -379,4 +380,11 @@ export async function listFortnoxTermsOfPayment(): Promise<{ code: string; descr
 export async function listFortnoxPriceLists(): Promise<{ code: string; description: string }[]> {
   const response = await fortnoxGet<FortnoxPriceListResponse>('/pricelists');
   return (response.PriceLists ?? []).map((p) => ({ code: p.Code, description: p.Description }));
+}
+
+// List the account's unit register from Fortnox so the article form can offer
+// valid unit codes (e.g. st, m², tim) instead of free text.
+export async function listFortnoxUnits(): Promise<{ code: string; description: string }[]> {
+  const response = await fortnoxGet<FortnoxUnitListResponse>('/units');
+  return (response.Units ?? []).map((u) => ({ code: u.Code, description: u.Description }));
 }

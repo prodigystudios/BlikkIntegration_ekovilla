@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { getUserProfile } from '@/lib/getUserProfile';
 import { getFortnoxArticleForEdit } from '@/lib/domains/fortnox/articles';
+import { listFortnoxUnits } from '@/lib/domains/fortnox/customers';
 import { getFortnoxConnectionStatus } from '@/lib/domains/fortnox/auth';
 import ArticleFormClient, { type ArticleFormInitial } from '../ArticleFormClient';
 import type { FortnoxArticlePriceRow } from '@/lib/domains/fortnox/types';
@@ -18,12 +19,17 @@ export default async function RedigeraArtikelPage({ params }: { params: Promise<
 
   let initial: ArticleFormInitial | undefined;
   let priceLists: FortnoxArticlePriceRow[] = [];
+  let units: { code: string; description: string }[] = [];
   let loadError: string | null = null;
 
   if (fortnoxStatus.connected) {
     try {
-      const { article, priceLists: lists } = await getFortnoxArticleForEdit(articleNumber);
+      const [{ article, priceLists: lists }, unitList] = await Promise.all([
+        getFortnoxArticleForEdit(articleNumber),
+        listFortnoxUnits().catch(() => []),
+      ]);
       priceLists = lists;
+      units = unitList;
       initial = {
         article_number: article.ArticleNumber,
         description: article.Description ?? '',
@@ -60,6 +66,7 @@ export default async function RedigeraArtikelPage({ params }: { params: Promise<
       articleNumber={articleNumber}
       initial={initial}
       priceLists={priceLists}
+      units={units}
     />
   );
 }

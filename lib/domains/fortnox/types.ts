@@ -158,3 +158,4 @@ export type FortnoxCustomerListResponse = {
 export type FortnoxRegisterEntry = { Code: string; Description: string };
 export type FortnoxTermsOfPaymentListResponse = { TermsOfPayments: FortnoxRegisterEntry[] };
 export type FortnoxPriceListResponse = { PriceLists: FortnoxRegisterEntry[] };
+export type FortnoxUnitListResponse = { Units: FortnoxRegisterEntry[] };
