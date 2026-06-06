@@ -461,17 +461,17 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
   if (loading) {
     return (
       <div className="grid grid-cols-1 gap-6">
-        <div className="h-7 w-32 animate-pulse rounded-lg bg-slate-100" />
-        <div className="h-10 w-72 animate-pulse rounded-xl bg-slate-100" />
+        <div className="h-7 w-32 animate-pulse rounded-lg bg-[#dfe6da]" />
+        <div className="h-10 w-72 animate-pulse rounded-xl bg-[#dfe6da]" />
         <div className="grid gap-5 lg:grid-cols-[1fr_360px]">
           <div className="grid gap-5">
-            <div className="h-40 animate-pulse rounded-2xl bg-slate-100" />
-            <div className="h-24 animate-pulse rounded-2xl bg-slate-100" />
-            <div className="h-32 animate-pulse rounded-2xl bg-slate-100" />
+            <div className="h-40 animate-pulse rounded-2xl bg-[#dfe6da]" />
+            <div className="h-24 animate-pulse rounded-2xl bg-[#dfe6da]" />
+            <div className="h-32 animate-pulse rounded-2xl bg-[#dfe6da]" />
           </div>
           <div className="grid gap-4">
-            <div className="h-28 animate-pulse rounded-2xl bg-slate-100" />
-            <div className="h-24 animate-pulse rounded-2xl bg-slate-100" />
+            <div className="h-28 animate-pulse rounded-2xl bg-[#dfe6da]" />
+            <div className="h-24 animate-pulse rounded-2xl bg-[#dfe6da]" />
           </div>
         </div>
       </div>
@@ -510,13 +510,13 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
       </Card>
 
       {/* Affärsmöjligheter */}
-      <div className="rounded-2xl border border-violet-100 bg-gradient-to-b from-white to-violet-50/40 p-5 shadow-[0_1px_6px_rgba(0,0,0,0.04)]">
+      <div className="rounded-2xl border border-violet-100 bg-gradient-to-b from-[#f9fbf7] to-violet-50/40 p-5 shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)]">
         <div className="mb-3 flex items-center justify-between gap-2">
           <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-violet-600">Affärsmöjligheter</p>
           <a href="/crm/affarsmojligheter" className="text-xs font-semibold text-slate-400 hover:text-slate-600 transition">Pipeline →</a>
         </div>
         {relatedLoading ? (
-          <div className="h-8 animate-pulse rounded-lg bg-slate-100" />
+          <div className="h-8 animate-pulse rounded-lg bg-[#dfe6da]" />
         ) : opportunities.length === 0 ? (
           <p className="text-xs text-slate-400">Inga kopplade.</p>
         ) : (
@@ -534,13 +534,13 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
       </div>
 
       {/* Offerter */}
-      <div className="rounded-2xl border border-amber-100 bg-gradient-to-b from-white to-amber-50/40 p-5 shadow-[0_1px_6px_rgba(0,0,0,0.04)]">
+      <div className="rounded-2xl border border-amber-100 bg-gradient-to-b from-[#f9fbf7] to-amber-50/40 p-5 shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)]">
         <div className="mb-3 flex items-center justify-between gap-2">
           <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-amber-600">Offerter</p>
           <a href="/crm/offerter" className="text-xs font-semibold text-slate-400 hover:text-slate-600 transition">Offerter →</a>
         </div>
         {relatedLoading ? (
-          <div className="h-8 animate-pulse rounded-lg bg-slate-100" />
+          <div className="h-8 animate-pulse rounded-lg bg-[#dfe6da]" />
         ) : quotes.length === 0 ? (
           <p className="text-xs text-slate-400">Inga kopplade.</p>
         ) : (
@@ -567,7 +567,7 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
           <a href="/crm/arbetsorder" className="text-xs font-semibold text-slate-400 hover:text-slate-600 transition">Arbetsorder →</a>
         </div>
         {relatedLoading ? (
-          <div className="h-8 animate-pulse rounded-lg bg-slate-100" />
+          <div className="h-8 animate-pulse rounded-lg bg-[#dfe6da]" />
         ) : workOrders.length === 0 ? (
           <p className="text-xs text-slate-400">Inga kopplade.</p>
         ) : (

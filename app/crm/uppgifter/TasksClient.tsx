@@ -401,7 +401,7 @@ export default function TasksClient() {
           ) : loading ? (
             <div className="grid gap-3">
               {Array.from({ length: 3 }).map((_, i) => (
-                <div key={i} className="h-20 animate-pulse rounded-2xl border border-slate-100 bg-slate-50" />
+                <div key={i} className="h-20 animate-pulse rounded-2xl border border-slate-100 bg-[#dfe6da]" />
               ))}
             </div>
           ) : visibleTasks.length === 0 ? (
@@ -543,7 +543,7 @@ export default function TasksClient() {
                   <select
                     value={draft.prospect_id}
                     onChange={(e) => setDraft((c) => ({ ...c, prospect_id: e.target.value }))}
-                    className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/20"
+                    className="min-h-11 w-full rounded-lg border border-[#dce4d8] bg-white px-3 py-2 text-sm text-slate-900 transition-colors focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
                   >
                     <option value="">Inget prospekt valt</option>
                     {prospects.map((p) => (
@@ -557,7 +557,7 @@ export default function TasksClient() {
                   <select
                     value={draft.status}
                     onChange={(e) => setDraft((c) => ({ ...c, status: e.target.value as TaskItem['status'] }))}
-                    className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/20"
+                    className="min-h-11 w-full rounded-lg border border-[#dce4d8] bg-white px-3 py-2 text-sm text-slate-900 transition-colors focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
                   >
                     <option value="open">Öppen</option>
                     <option value="done">Klar</option>
@@ -571,7 +571,7 @@ export default function TasksClient() {
                   <select
                     value={draft.priority}
                     onChange={(e) => setDraft((c) => ({ ...c, priority: e.target.value as TaskItem['priority'] }))}
-                    className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/20"
+                    className="min-h-11 w-full rounded-lg border border-[#dce4d8] bg-white px-3 py-2 text-sm text-slate-900 transition-colors focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
                   >
                     <option value="low">Låg</option>
                     <option value="normal">Normal</option>

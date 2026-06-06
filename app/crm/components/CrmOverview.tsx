@@ -456,7 +456,7 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
         {loading ? (
           <>
             {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="h-32 animate-pulse rounded-2xl border border-slate-100 bg-white" />
+              <div key={i} className="h-32 animate-pulse rounded-2xl border border-[#e0e8dc] bg-[#dfe6da]" />
             ))}
           </>
         ) : (
@@ -668,7 +668,7 @@ function OverviewLoadingRows() {
   return (
     <div className="grid gap-2">
       {Array.from({ length: 3 }).map((_, i) => (
-        <div key={i} className="h-14 animate-pulse rounded-xl border border-slate-100 bg-slate-50" />
+        <div key={i} className="h-14 animate-pulse rounded-xl border border-[#e0e8dc] bg-[#dfe6da]" />
       ))}
     </div>
   );

@@ -217,7 +217,7 @@ export default function ArticleFormClient({
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.6fr)_minmax(280px,0.9fr)]">
         {/* Article fields */}
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_2px_12px_rgba(0,0,0,0.04)]">
+        <div className="rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] p-5 shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)]">
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="grid gap-1.5">
               <span className="text-sm font-semibold text-slate-700">Artikelnummer</span>
@@ -253,7 +253,7 @@ export default function ArticleFormClient({
                 value={form.note}
                 onChange={(e) => setField('note', e.target.value)}
                 rows={3}
-                className="w-full rounded-xl border border-ui-border bg-white px-3 py-2 text-sm text-ui-text-strong transition-colors placeholder:text-ui-text-soft hover:border-slate-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ui-accent/20"
+                className="w-full rounded-lg border border-[#dce4d8] bg-white px-3 py-2 text-sm text-ui-text-strong transition-colors placeholder:text-ui-text-soft hover:border-[#c8d4c3] focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
               />
             </label>
 
@@ -324,7 +324,7 @@ export default function ArticleFormClient({
         </div>
 
         {/* Prices per price list */}
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_2px_12px_rgba(0,0,0,0.04)]">
+        <div className="rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] p-5 shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)]">
           <h2 className="m-0 mb-1 text-base font-bold text-slate-900">Priser (ex moms)</h2>
           <p className="m-0 mb-4 text-sm text-slate-500">Försäljningspris per prislista. Lämna tomt för inget pris.</p>
 

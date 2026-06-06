@@ -117,7 +117,7 @@ export default function UnitsClient({ initialUnits, fortnoxConnected }: UnitsCli
         </div>
       )}
 
-      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_2px_12px_rgba(0,0,0,0.04)]">
+      <div className="rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] p-5 shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)]">
         <div className="mb-4 flex items-center justify-between gap-3">
           <h2 className="m-0 text-base font-bold text-slate-900">Enhetsregister</h2>
           <span className="text-xs font-semibold text-slate-500">{units.length} enheter</span>

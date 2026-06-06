@@ -533,7 +533,7 @@ export default function OpportunitiesClient() {
         <MetricCard label="Vunna" value={stats.won} helper="Klara att lämna vidare mot order" />
       </div>
 
-      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_2px_12px_rgba(0,0,0,0.04)]">
+      <div className="rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] p-4 shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)]">
         <div className="mb-4">
           <h2 className="m-0 text-base font-bold text-slate-900">Pipeline</h2>
         </div>
@@ -691,7 +691,7 @@ export default function OpportunitiesClient() {
                 <select
                   value={draft.prospect_id}
                   onChange={(e) => setDraft((c) => ({ ...c, prospect_id: e.target.value }))}
-                  className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/20"
+                  className="min-h-11 w-full rounded-lg border border-[#dce4d8] bg-white px-3 py-2 text-sm text-slate-900 transition-colors focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
                 >
                   <option value="">— Välj prospekt —</option>
                   {prospectOptions.map((p) => (
@@ -704,7 +704,7 @@ export default function OpportunitiesClient() {
                 <select
                   value={draft.customer_id}
                   onChange={(e) => setDraft((c) => ({ ...c, customer_id: e.target.value }))}
-                  className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/20"
+                  className="min-h-11 w-full rounded-lg border border-[#dce4d8] bg-white px-3 py-2 text-sm text-slate-900 transition-colors focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
                 >
                   <option value="">— Välj kund —</option>
                   {customerOptions.map((c) => (
@@ -749,7 +749,7 @@ export default function OpportunitiesClient() {
                 <select
                   value={draft.status}
                   onChange={(e) => setDraft((c) => ({ ...c, status: e.target.value as OpportunityStatus }))}
-                  className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/20"
+                  className="min-h-11 w-full rounded-lg border border-[#dce4d8] bg-white px-3 py-2 text-sm text-slate-900 transition-colors focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
                 >
                   {(Object.entries(statusLabel) as [OpportunityStatus, string][]).map(([value, label]) => (
                     <option key={value} value={value}>{label}</option>
@@ -841,7 +841,7 @@ export default function OpportunitiesClient() {
                   <select
                     value={detailDraft.status}
                     onChange={(e) => setDetailDraft((c) => ({ ...c, status: e.target.value as OpportunityStatus }))}
-                    className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/20"
+                    className="min-h-11 w-full rounded-lg border border-[#dce4d8] bg-white px-3 py-2 text-sm text-slate-900 transition-colors focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
                   >
                     {(Object.entries(statusLabel) as [OpportunityStatus, string][]).map(([value, label]) => (
                       <option key={value} value={value}>{label}</option>
