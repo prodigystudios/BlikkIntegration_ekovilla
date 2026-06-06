@@ -1,23 +1,25 @@
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { fortnoxGet, fortnoxPost, fortnoxPut, fortnoxDelete, FortnoxApiError } from './client';
+import { listFortnoxPriceLists } from './customers';
 import type {
   FortnoxArticle,
   FortnoxArticleListResponse,
   FortnoxArticleInput,
+  FortnoxArticlePriceInput,
+  FortnoxArticlePriceRow,
   CachedFortnoxArticle,
 } from './types';
 
 const PAGE_SIZE = 500;
 
-// Fortnox manages the sales price through a price list when the account is set to
+// Fortnox manages sales prices through price lists when the account is set to
 // price-list-controlled pricing – Article.SalesPrice is then read-only and must
-// be set via /prices instead. 'A' is Fortnox's standard/default price list; make
-// it overridable in case an account uses a different default sales list.
-const DEFAULT_SALES_PRICE_LIST = process.env.FORTNOX_DEFAULT_PRICE_LIST || 'A';
-// The base price tier (FromQuantity 0) – the price shown as Article.SalesPrice.
+// be set via /prices instead. The base price tier (FromQuantity 0) is the price
+// shown as Article.SalesPrice for the account's default list.
 const BASE_PRICE_FROM_QUANTITY = '0';
 
 type FortnoxArticleWriteResponse = { Article: FortnoxArticle };
+type FortnoxPriceResponse = { Price: { Price: number | null } };
 
 export type ArticleSyncResult = {
   synced: number;
@@ -112,7 +114,7 @@ export async function listCachedFortnoxArticles(opts?: {
 // update never overwrites Fortnox data with blanks. ArticleNumber is only sent
 // on create (and only when the user supplied one – Fortnox auto-assigns otherwise).
 // SalesPrice is intentionally NOT sent: it is read-only on price-list-controlled
-// accounts and is set separately via setArticleSalesPrice().
+// accounts and is set separately via the /prices endpoints.
 // Exported for unit testing – the SalesPrice omission and exact Fortnox field
 // names are regression-guarded (Fortnox error 2000321).
 export function buildFortnoxArticlePayload(input: FortnoxArticleInput, includeArticleNumber: boolean) {
@@ -123,33 +125,48 @@ export function buildFortnoxArticlePayload(input: FortnoxArticleInput, includeAr
     Unit: input.Unit ?? undefined,
     Type: input.Type,
     Active: input.Active,
+    VAT: input.VAT ?? undefined,
+    EAN: input.EAN ?? undefined,
+    Manufacturer: input.Manufacturer ?? undefined,
+    ManufacturerArticleNumber: input.ManufacturerArticleNumber ?? undefined,
+    Note: input.Note ?? undefined,
   };
 }
 
-// Set the article's sales price on the default price list via /prices. The price
-// row may or may not already exist (a freshly created article has none, an edited
-// one usually does), so probe with a GET and either update or create. Requires the
-// `price` scope, which the integration already requests.
-async function setArticleSalesPrice(articleNumber: string, price: number): Promise<void> {
-  const list = encodeURIComponent(DEFAULT_SALES_PRICE_LIST);
-  const number = encodeURIComponent(articleNumber);
-  const pricePath = `/prices/${list}/${number}/${BASE_PRICE_FROM_QUANTITY}`;
+function pricePath(articleNumber: string, priceList: string): string {
+  return `/prices/${encodeURIComponent(priceList)}/${encodeURIComponent(articleNumber)}/${BASE_PRICE_FROM_QUANTITY}`;
+}
 
+// Read the article's base price on one price list, or null when no price is set.
+async function getArticlePrice(articleNumber: string, priceList: string): Promise<number | null> {
+  try {
+    const res = await fortnoxGet<FortnoxPriceResponse>(pricePath(articleNumber, priceList));
+    return res.Price?.Price ?? null;
+  } catch (e) {
+    if (e instanceof FortnoxApiError && e.status === 404) return null;
+    throw e;
+  }
+}
+
+// Upsert the article's base price on one price list. The row may or may not
+// already exist (a fresh article has none), so probe with a GET and either PUT
+// (update) or POST (create). Requires the `price` scope.
+async function setArticlePrice(articleNumber: string, priceList: string, price: number): Promise<void> {
   let exists = false;
   try {
-    await fortnoxGet<unknown>(pricePath);
+    await fortnoxGet<FortnoxPriceResponse>(pricePath(articleNumber, priceList));
     exists = true;
   } catch (e) {
     if (!(e instanceof FortnoxApiError) || e.status !== 404) throw e;
   }
 
   if (exists) {
-    await fortnoxPut<unknown>(pricePath, { Price: { Price: price } });
+    await fortnoxPut<unknown>(pricePath(articleNumber, priceList), { Price: { Price: price } });
   } else {
     await fortnoxPost<unknown>('/prices', {
       Price: {
         ArticleNumber: articleNumber,
-        PriceList: DEFAULT_SALES_PRICE_LIST,
+        PriceList: priceList,
         FromQuantity: Number(BASE_PRICE_FROM_QUANTITY),
         Price: price,
       },
@@ -157,20 +174,67 @@ async function setArticleSalesPrice(articleNumber: string, price: number): Promi
   }
 }
 
-// Apply the sales price (when provided) and return the authoritative article.
-// Re-fetches so the cached SalesPrice reflects the price we just set on the list,
-// since the article write response carries the old (read-only) value.
-async function applySalesPrice(
+// Remove the article's base price on one price list. A missing row is a no-op.
+async function deleteArticlePrice(articleNumber: string, priceList: string): Promise<void> {
+  try {
+    await fortnoxDelete(pricePath(articleNumber, priceList));
+  } catch (e) {
+    if (e instanceof FortnoxApiError && e.status === 404) return;
+    throw e;
+  }
+}
+
+// Apply per-price-list prices: a number upserts that list's price, null clears it.
+// Sequential to stay well within Fortnox rate limits (price lists are few).
+async function applyPrices(articleNumber: string, prices: FortnoxArticlePriceInput[]): Promise<void> {
+  for (const { priceList, price } of prices) {
+    if (price === null) {
+      await deleteArticlePrice(articleNumber, priceList);
+    } else {
+      await setArticlePrice(articleNumber, priceList, price);
+    }
+  }
+}
+
+// Apply prices then re-fetch so the cached SalesPrice reflects the account's
+// default list (the article write response carries the old, read-only value).
+async function applyPricesAndReload(
   articleNumber: string,
-  salesPrice: number | null,
+  prices: FortnoxArticlePriceInput[],
   fallback: FortnoxArticle,
 ): Promise<FortnoxArticle> {
-  if (salesPrice === null || salesPrice === undefined) return fallback;
-  await setArticleSalesPrice(articleNumber, salesPrice);
+  if (prices.length === 0) return fallback;
+  await applyPrices(articleNumber, prices);
   const reloaded = await fortnoxGet<FortnoxArticleWriteResponse>(
     `/articles/${encodeURIComponent(articleNumber)}`,
   );
   return reloaded.Article;
+}
+
+// Load the full article plus its base price on every price list, for the edit page.
+export async function getFortnoxArticleForEdit(
+  articleNumber: string,
+): Promise<{ article: FortnoxArticle; priceLists: FortnoxArticlePriceRow[] }> {
+  const [{ Article: article }, lists] = await Promise.all([
+    fortnoxGet<FortnoxArticleWriteResponse>(`/articles/${encodeURIComponent(articleNumber)}`),
+    listFortnoxPriceLists(),
+  ]);
+
+  const priceLists = await Promise.all(
+    lists.map(async (l) => ({
+      code: l.code,
+      description: l.description,
+      price: await getArticlePrice(articleNumber, l.code),
+    })),
+  );
+
+  return { article, priceLists };
+}
+
+// List the account's price lists with empty prices, for the create page.
+export async function listFortnoxArticlePriceLists(): Promise<FortnoxArticlePriceRow[]> {
+  const lists = await listFortnoxPriceLists();
+  return lists.map((l) => ({ code: l.code, description: l.description, price: null }));
 }
 
 // Upsert a single Fortnox article into the local cache after a write so the list
@@ -186,13 +250,16 @@ async function upsertArticleCacheRow(article: FortnoxArticle): Promise<void> {
   if (error) throw new Error(`Kunde inte uppdatera artikelcache: ${error.message}`);
 }
 
-// Create a new article in Fortnox and mirror it into the local cache. The sales
-// price is set separately on the price list (see setArticleSalesPrice).
-export async function createFortnoxArticle(input: FortnoxArticleInput): Promise<FortnoxArticle> {
+// Create a new article in Fortnox and mirror it into the local cache. Sales
+// prices are set separately per price list (see applyPrices).
+export async function createFortnoxArticle(
+  input: FortnoxArticleInput,
+  prices: FortnoxArticlePriceInput[] = [],
+): Promise<FortnoxArticle> {
   const response = await fortnoxPost<FortnoxArticleWriteResponse>('/articles', {
     Article: buildFortnoxArticlePayload(input, true),
   });
-  const article = await applySalesPrice(response.Article.ArticleNumber, input.SalesPrice, response.Article);
+  const article = await applyPricesAndReload(response.Article.ArticleNumber, prices, response.Article);
   await upsertArticleCacheRow(article);
   return article;
 }
@@ -202,12 +269,13 @@ export async function createFortnoxArticle(input: FortnoxArticleInput): Promise<
 export async function updateFortnoxArticle(
   articleNumber: string,
   input: FortnoxArticleInput,
+  prices: FortnoxArticlePriceInput[] = [],
 ): Promise<FortnoxArticle> {
   const response = await fortnoxPut<FortnoxArticleWriteResponse>(
     `/articles/${encodeURIComponent(articleNumber)}`,
     { Article: buildFortnoxArticlePayload(input, false) },
   );
-  const article = await applySalesPrice(articleNumber, input.SalesPrice, response.Article);
+  const article = await applyPricesAndReload(articleNumber, prices, response.Article);
   await upsertArticleCacheRow(article);
   return article;
 }

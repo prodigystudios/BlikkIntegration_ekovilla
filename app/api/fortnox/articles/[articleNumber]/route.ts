@@ -3,7 +3,7 @@ import {
   updateFortnoxArticle,
   deleteFortnoxArticle,
 } from '@/lib/domains/fortnox/articles';
-import { fortnoxArticleInputSchema, toFortnoxArticleInput, fortnoxWriteError } from '../_lib';
+import { fortnoxArticleInputSchema, toFortnoxArticleInput, toFortnoxPrices, fortnoxWriteError } from '../_lib';
 
 type RouteContext = { params: { articleNumber: string } };
 
@@ -18,6 +18,7 @@ export async function PUT(req: Request, { params }: RouteContext) {
     const article = await updateFortnoxArticle(
       decodeURIComponent(params.articleNumber),
       toFortnoxArticleInput(parsed.data),
+      toFortnoxPrices(parsed.data),
     );
     return ok({ article });
   } catch (e: any) {

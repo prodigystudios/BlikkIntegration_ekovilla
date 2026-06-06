@@ -4,7 +4,7 @@ import {
   listCachedFortnoxArticles,
   createFortnoxArticle,
 } from '@/lib/domains/fortnox/articles';
-import { fortnoxArticleInputSchema, toFortnoxArticleInput, fortnoxWriteError } from './_lib';
+import { fortnoxArticleInputSchema, toFortnoxArticleInput, toFortnoxPrices, fortnoxWriteError } from './_lib';
 
 const querySchema = z.object({
   q: z.string().trim().optional(),
@@ -45,7 +45,10 @@ export async function POST(req: Request) {
     const parsed = fortnoxArticleInputSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) return validationError(parsed.error);
 
-    const article = await createFortnoxArticle(toFortnoxArticleInput(parsed.data));
+    const article = await createFortnoxArticle(
+      toFortnoxArticleInput(parsed.data),
+      toFortnoxPrices(parsed.data),
+    );
     return ok({ article }, 201);
   } catch (e: any) {
     return fortnoxWriteError(e, 'fortnox_article_create_failed', 'Kunde inte skapa artikel');

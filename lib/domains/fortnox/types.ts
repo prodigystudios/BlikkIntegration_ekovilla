@@ -29,7 +29,8 @@ export type FortnoxConnectionStatus = {
   is_test_mode: boolean;
 };
 
-// Article from Fortnox /3/articles
+// Article from Fortnox /3/articles. SalesPrice and the extended fields are only
+// returned by the single-article GET, not the list endpoint, so they are optional.
 export type FortnoxArticle = {
   ArticleNumber: string;
   Description: string;
@@ -38,23 +39,47 @@ export type FortnoxArticle = {
   Unit: string | null;
   Type: string;
   Active: boolean;
+  VAT?: number | null;
+  EAN?: string | null;
+  Manufacturer?: string | null;
+  ManufacturerArticleNumber?: string | null;
+  Note?: string | null;
 };
 
 // Article type as accepted by the Fortnox /articles write endpoints.
 export type FortnoxArticleType = 'STOCK' | 'SERVICE';
 
-// The subset of an article we let admins create/edit from the app. Mirrors the
-// fields we cache in fortnox_articles_cache (plus an optional ArticleNumber on
-// create – Fortnox auto-assigns one when omitted). ArticleNumber cannot change
-// on update; it is the document key.
+// The subset of an article we let admins create/edit from the app (plus an
+// optional ArticleNumber on create – Fortnox auto-assigns one when omitted).
+// ArticleNumber cannot change on update; it is the document key. Sales prices are
+// NOT here – they are set per price list (see FortnoxArticlePriceInput).
 export type FortnoxArticleInput = {
   ArticleNumber?: string | null;
   Description: string;
-  SalesPrice: number | null;
   PurchasePrice: number | null;
   Unit: string | null;
   Type: FortnoxArticleType;
   Active: boolean;
+  VAT: number | null;
+  EAN: string | null;
+  Manufacturer: string | null;
+  ManufacturerArticleNumber: string | null;
+  Note: string | null;
+};
+
+// A sales price for one price list. price === null means "no price on this list"
+// (clear it). FromQuantity 0 (the base tier) is implied.
+export type FortnoxArticlePriceInput = {
+  priceList: string;
+  price: number | null;
+};
+
+// A price list with the article's current base price (null when unset). Used to
+// render the per-price-list editor on the article form.
+export type FortnoxArticlePriceRow = {
+  code: string;
+  description: string;
+  price: number | null;
 };
 
 export type FortnoxArticleListResponse = {
