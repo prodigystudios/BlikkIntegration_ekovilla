@@ -8,6 +8,7 @@ import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
 import { crm, customerStageLabel, customerStageClass, syncStatusLabel, syncStatusClass, opportunityStatusLabel } from '@/app/crm/lib/crmTokens';
 import { formatSwedishIdNumber, isValidSwedishOrgNumber, vatFromOrgNumber } from './customerNumbers';
+import { PhoneLink, EmailLink, AddressLink } from '@/app/crm/components/ContactLinks';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -136,70 +137,14 @@ function InfoField({ label, value }: { label: string; value?: React.ReactNode })
   );
 }
 
-// Strip everything but digits and a leading + so the dialer gets a clean number
-// while the displayed value keeps its human formatting (spaces, dashes).
-function telHref(phone: string): string {
-  return `tel:${phone.replace(/[^\d+]/g, '')}`;
-}
-
-function PhoneGlyph() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden className="shrink-0 opacity-80">
-      <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function MailGlyph() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden className="shrink-0 opacity-80">
-      <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M22 6 12 13 2 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-// Clickable contact value: tap-to-call / tap-to-mail. Inherits the surrounding
-// font size; only sets the accent colour + icon so it reads as actionable.
-function PhoneLink({ value, className }: { value: string; className?: string }) {
-  return (
-    <a href={telHref(value)} className={cn('inline-flex items-center gap-1.5 font-medium text-emerald-700 transition hover:text-emerald-800 hover:underline', className)}>
-      <PhoneGlyph /> {value}
-    </a>
-  );
-}
-
-function EmailLink({ value, className }: { value: string; className?: string }) {
-  return (
-    <a href={`mailto:${value}`} className={cn('inline-flex items-center gap-1.5 font-medium text-emerald-700 transition hover:text-emerald-800 hover:underline', className)}>
-      <MailGlyph /> <span className="break-all">{value}</span>
-    </a>
-  );
-}
-
-function PinGlyph() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden className="mt-0.5 shrink-0 opacity-80">
-      <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-      <circle cx="12" cy="10" r="3" stroke="currentColor" strokeWidth="2" />
-    </svg>
-  );
-}
-
-// Address as a tap-to-navigate link. Uses the universal Google Maps URL so it
-// opens the OS map app (and offers navigation) on mobile, a maps tab on desktop.
-// Falls back to a plain dash when no address parts are set.
+// Address value with the customer card's empty-state: falls back to a plain dash when
+// no address parts are set, otherwise renders the shared tap-to-navigate AddressLink.
 function AddressValue({ addr }: { addr: CustomerAddress }) {
   const text = formatAddress(addr);
   if (!addr || text === '–') {
     return <p className="text-sm leading-relaxed text-slate-700">–</p>;
   }
-  const href = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(text)}`;
-  return (
-    <a href={href} target="_blank" rel="noopener noreferrer" className="inline-flex items-start gap-1.5 text-sm font-medium leading-relaxed text-emerald-700 transition hover:text-emerald-800 hover:underline">
-      <PinGlyph /> <span>{text}</span>
-    </a>
-  );
+  return <AddressLink value={text} className="text-sm" />;
 }
 
 function Card({ children, className }: { children: React.ReactNode; className?: string }) {
