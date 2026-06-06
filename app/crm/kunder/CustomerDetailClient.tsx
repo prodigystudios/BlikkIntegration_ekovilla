@@ -522,12 +522,12 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
         ) : (
           <div className="grid gap-1.5">
             {opportunities.map((opp) => (
-              <div key={opp.id} className="flex items-center justify-between gap-2 rounded-xl border border-slate-100 bg-white px-3 py-2">
+              <a key={opp.id} href={`/crm/affarsmojligheter?opportunity_id=${opp.id}`} className="flex items-center justify-between gap-2 rounded-xl border border-slate-100 bg-white px-3 py-2 transition hover:border-violet-200 hover:bg-violet-50/50">
                 <span className="min-w-0 truncate text-sm text-slate-800">{opp.title}</span>
                 <span className="shrink-0 rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700">
                   {opportunityStatusLabel[opp.status] || opp.status}
                 </span>
-              </div>
+              </a>
             ))}
           </div>
         )}
@@ -546,7 +546,7 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
         ) : (
           <div className="grid gap-1.5">
             {quotes.map((quote) => (
-              <div key={quote.id} className="rounded-xl border border-slate-100 bg-white px-3 py-2">
+              <a key={quote.id} href={`/crm/offerter?quote_id=${quote.id}`} className="block rounded-xl border border-slate-100 bg-white px-3 py-2 transition hover:border-amber-200 hover:bg-amber-50/50">
                 <div className="flex items-center justify-between gap-2">
                   <span className="min-w-0 truncate text-sm text-slate-800">{quote.project_name}</span>
                   <span className="shrink-0 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-800">
@@ -554,7 +554,7 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
                   </span>
                 </div>
                 <p className="mt-0.5 text-xs text-slate-400">{formatCurrency(quote.amount, quote.currency_code)} · {formatDate(quote.quote_date)}</p>
-              </div>
+              </a>
             ))}
           </div>
         )}
@@ -573,7 +573,7 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
         ) : (
           <div className="grid gap-1.5">
             {workOrders.map((wo) => (
-              <div key={wo.id} className="rounded-xl border border-slate-100 bg-white px-3 py-2">
+              <a key={wo.id} href={`/crm/arbetsorder?work_order_id=${wo.id}`} className="block rounded-xl border border-slate-100 bg-white px-3 py-2 transition hover:border-slate-300 hover:bg-slate-50">
                 <div className="flex items-center justify-between gap-2">
                   <span className="min-w-0 truncate text-sm text-slate-800">{wo.project_name}</span>
                   <span className="shrink-0 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-600">
@@ -581,7 +581,7 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
                   </span>
                 </div>
                 <p className="mt-0.5 text-xs text-slate-400">#{wo.order_number}{wo.desired_installation_date ? ` · ${formatDate(wo.desired_installation_date)}` : ''}</p>
-              </div>
+              </a>
             ))}
           </div>
         )}

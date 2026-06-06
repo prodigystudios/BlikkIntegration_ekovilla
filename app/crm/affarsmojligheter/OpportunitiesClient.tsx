@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import MetricCard from '../components/MetricCard';
 import Input from '../../../components/ui/Input';
 import Textarea from '../../../components/ui/Textarea';
@@ -151,6 +152,9 @@ function compareByUpdated(a: OpportunityItem, b: OpportunityItem) {
 
 export default function OpportunitiesClient() {
   const toast = useToast();
+  const searchParams = useSearchParams();
+  const presetOpportunityId = searchParams.get('opportunity_id') || '';
+  const [hasHandledPreset, setHasHandledPreset] = useState(false);
   const [items, setItems] = useState<OpportunityItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -207,6 +211,19 @@ export default function OpportunitiesClient() {
     load();
     return () => { active = false; };
   }, [search]);
+
+  // Deep-link: open a specific opportunity's detail when arriving with
+  // ?opportunity_id= (e.g. from a customer's related list). Handled once the
+  // matching item is loaded so a manual close isn't re-triggered.
+  useEffect(() => { setHasHandledPreset(false); }, [presetOpportunityId]);
+
+  useEffect(() => {
+    if (!presetOpportunityId || hasHandledPreset || loading) return;
+    if (!items.some((item) => item.id === presetOpportunityId)) return;
+    setSelectedId(presetOpportunityId);
+    setDetailOpen(true);
+    setHasHandledPreset(true);
+  }, [presetOpportunityId, hasHandledPreset, loading, items]);
 
   useEffect(() => {
     async function loadOptions() {
