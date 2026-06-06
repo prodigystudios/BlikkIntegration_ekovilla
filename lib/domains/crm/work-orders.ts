@@ -291,3 +291,50 @@ export async function listCrmWorkOrderComments(supabase: SupabaseClient, workOrd
 export async function createCrmWorkOrderComment(supabase: SupabaseClient, input: CreateWorkOrderCommentInput) {
   return supabase.from('crm_work_order_comments').insert(input).select(crmWorkOrderCommentSelect).single();
 }
+
+// Edit/delete are owner-scoped (user_id / created_by) so a person can only change their
+// own time rows and comments. A non-owner's id simply matches no row.
+export async function updateCrmWorkOrderTimeEntry(
+  supabase: SupabaseClient,
+  id: string,
+  userId: string,
+  input: { work_date: string; hours: number; note: string | null },
+) {
+  return supabase
+    .from('crm_work_order_time_entries')
+    .update(input)
+    .eq('id', id)
+    .eq('user_id', userId)
+    .select(crmWorkOrderTimeEntrySelect)
+    .maybeSingle();
+}
+
+export async function deleteCrmWorkOrderTimeEntry(supabase: SupabaseClient, id: string, userId: string) {
+  return supabase
+    .from('crm_work_order_time_entries')
+    .delete()
+    .eq('id', id)
+    .eq('user_id', userId)
+    .select('id')
+    .maybeSingle();
+}
+
+export async function updateCrmWorkOrderComment(supabase: SupabaseClient, id: string, userId: string, body: string) {
+  return supabase
+    .from('crm_work_order_comments')
+    .update({ body })
+    .eq('id', id)
+    .eq('created_by', userId)
+    .select(crmWorkOrderCommentSelect)
+    .maybeSingle();
+}
+
+export async function deleteCrmWorkOrderComment(supabase: SupabaseClient, id: string, userId: string) {
+  return supabase
+    .from('crm_work_order_comments')
+    .delete()
+    .eq('id', id)
+    .eq('created_by', userId)
+    .select('id')
+    .maybeSingle();
+}

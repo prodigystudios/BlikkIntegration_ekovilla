@@ -12,6 +12,8 @@ import { PhoneLink, EmailLink, AddressLink } from '@/app/crm/components/ContactL
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
 import { inferMaterialFromArticle, sacksFor } from '@/lib/domains/crm/materials';
 import { parseDecimal } from '@/lib/shared/number';
+import WorkOrderTimeTab, { type TimeEntryItem, type TimeDraft } from './WorkOrderTimeTab';
+import WorkOrderCommentsTab, { type CommentItem } from './WorkOrderCommentsTab';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -83,15 +85,6 @@ type WorkOrderDraft = {
   notes: string;
 };
 
-type TimeEntryItem = {
-  id: string; work_order_id: string; user_id: string; work_date: string;
-  hours: number; note: string | null; created_at: string; updated_at: string;
-  user?: { full_name?: string | null } | null;
-};
-type CommentItem = {
-  id: string; work_order_id: string; created_by: string; body: string;
-  created_at: string; author?: { full_name?: string | null } | null;
-};
 type AssignableUser = { id: string; full_name: string | null; role?: string | null };
 
 // ─── Meta / helpers ───────────────────────────────────────────────────────────
@@ -157,7 +150,7 @@ function StatField({ label, value }: { label: string; value: React.ReactNode }) 
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
-export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected }: { workOrderId: string; fortnoxConnected: boolean }) {
+export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, currentUserId }: { workOrderId: string; fortnoxConnected: boolean; currentUserId: string | null }) {
   const router = useRouter();
   const toast = useToast();
 
@@ -175,10 +168,6 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected }:
   const [timeEntriesLoading, setTimeEntriesLoading] = useState(false);
   const [comments, setComments] = useState<CommentItem[]>([]);
   const [commentsLoading, setCommentsLoading] = useState(false);
-  const [loggingTime, setLoggingTime] = useState(false);
-  const [postingComment, setPostingComment] = useState(false);
-  const [timeDraft, setTimeDraft] = useState({ work_date: new Date().toISOString().slice(0, 10), hours: '', note: '' });
-  const [commentDraft, setCommentDraft] = useState('');
 
   // Load work order
   useEffect(() => {
@@ -336,39 +325,92 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected }:
     finally { setPushingFortnox(false); }
   }
 
-  async function createTimeEntry() {
-    if (!workOrder) return;
-    if (!timeDraft.work_date || !timeDraft.hours.trim()) { toast.error('Datum och timmar krävs'); return; }
-    setLoggingTime(true);
+  // ── Time entries (create / update / delete) ──
+  async function createTimeEntry(data: TimeDraft): Promise<boolean> {
+    if (!workOrder) return false;
+    if (!data.work_date || !data.hours.trim()) { toast.error('Datum och timmar krävs'); return false; }
     try {
       const res = await fetch(`/api/crm/work-orders/${workOrder.id}/time-entries`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ work_date: timeDraft.work_date, hours: Number(timeDraft.hours.replace(',', '.')), note: timeDraft.note }),
+        body: JSON.stringify({ work_date: data.work_date, hours: Number(data.hours.replace(',', '.')), note: data.note }),
       });
       const json = await res.json().catch(() => ({}));
-      if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte logga tid'); return; }
+      if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte logga tid'); return false; }
       if (json.data?.item) setTimeEntries((c) => [json.data.item, ...c]);
-      setTimeDraft({ work_date: new Date().toISOString().slice(0, 10), hours: '', note: '' });
       toast.success('Tid loggad');
-    } catch { toast.error('Kunde inte logga tid'); }
-    finally { setLoggingTime(false); }
+      return true;
+    } catch { toast.error('Kunde inte logga tid'); return false; }
   }
 
-  async function createComment() {
-    if (!workOrder || !commentDraft.trim()) { toast.error('Kommentar krävs'); return; }
-    setPostingComment(true);
+  async function updateTimeEntry(id: string, data: TimeDraft): Promise<boolean> {
+    if (!workOrder) return false;
+    if (!data.work_date || !data.hours.trim()) { toast.error('Datum och timmar krävs'); return false; }
+    try {
+      const res = await fetch(`/api/crm/work-orders/${workOrder.id}/time-entries/${id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ work_date: data.work_date, hours: Number(data.hours.replace(',', '.')), note: data.note }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte uppdatera tidrad'); return false; }
+      if (json.data?.item) setTimeEntries((c) => c.map((e) => (e.id === id ? json.data.item : e)));
+      toast.success('Tidrad uppdaterad');
+      return true;
+    } catch { toast.error('Kunde inte uppdatera tidrad'); return false; }
+  }
+
+  async function deleteTimeEntry(id: string): Promise<boolean> {
+    if (!workOrder) return false;
+    try {
+      const res = await fetch(`/api/crm/work-orders/${workOrder.id}/time-entries/${id}`, { method: 'DELETE' });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte ta bort tidrad'); return false; }
+      setTimeEntries((c) => c.filter((e) => e.id !== id));
+      toast.success('Tidrad borttagen');
+      return true;
+    } catch { toast.error('Kunde inte ta bort tidrad'); return false; }
+  }
+
+  // ── Comments (create / update / delete) ──
+  async function createComment(body: string): Promise<boolean> {
+    if (!workOrder || !body.trim()) { toast.error('Kommentar krävs'); return false; }
     try {
       const res = await fetch(`/api/crm/work-orders/${workOrder.id}/comments`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ body: commentDraft }),
+        body: JSON.stringify({ body }),
       });
       const json = await res.json().catch(() => ({}));
-      if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte spara kommentar'); return; }
+      if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte spara kommentar'); return false; }
       if (json.data?.item) setComments((c) => [json.data.item, ...c]);
-      setCommentDraft('');
       toast.success('Kommentar sparad');
-    } catch { toast.error('Kunde inte spara kommentar'); }
-    finally { setPostingComment(false); }
+      return true;
+    } catch { toast.error('Kunde inte spara kommentar'); return false; }
+  }
+
+  async function updateComment(id: string, body: string): Promise<boolean> {
+    if (!workOrder || !body.trim()) { toast.error('Kommentar krävs'); return false; }
+    try {
+      const res = await fetch(`/api/crm/work-orders/${workOrder.id}/comments/${id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ body }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte uppdatera kommentar'); return false; }
+      if (json.data?.item) setComments((c) => c.map((e) => (e.id === id ? json.data.item : e)));
+      toast.success('Kommentar uppdaterad');
+      return true;
+    } catch { toast.error('Kunde inte uppdatera kommentar'); return false; }
+  }
+
+  async function deleteComment(id: string): Promise<boolean> {
+    if (!workOrder) return false;
+    try {
+      const res = await fetch(`/api/crm/work-orders/${workOrder.id}/comments/${id}`, { method: 'DELETE' });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte ta bort kommentar'); return false; }
+      setComments((c) => c.filter((e) => e.id !== id));
+      toast.success('Kommentar borttagen');
+      return true;
+    } catch { toast.error('Kunde inte ta bort kommentar'); return false; }
   }
 
   // ─── Loading / error ──────────────────────────────────────────────────────
@@ -684,75 +726,27 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected }:
 
       {/* ─── Time ─── */}
       {activeTab === 'time' ? (
-        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start">
-          <Card className="grid gap-3">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <p className={crm.sectionTitle}>Tidrapporter</p>
-              <span className={cn(crm.badge, 'border-emerald-200 bg-emerald-50 text-emerald-700')}>{totalLoggedHours.toFixed(1)} h totalt</span>
-            </div>
-            {timeEntriesLoading ? <div className="text-sm text-slate-500">Laddar tid…</div> : null}
-            {!timeEntriesLoading && timeEntries.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-[#cfdcc9] bg-[#f1f5ee] px-4 py-6 text-sm text-slate-500">Ingen tid rapporterad ännu.</div>
-            ) : null}
-            {!timeEntriesLoading ? timeEntries.map((item) => (
-              <div key={item.id} className="grid gap-1 rounded-xl border border-[#e0e8dc] bg-[#f1f5ee] px-3 py-3 text-sm">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <strong className="text-slate-900">{item.user?.full_name || 'Medarbetare'}</strong>
-                  <span className="text-slate-500">{item.hours} h · {formatDate(item.work_date)}</span>
-                </div>
-                {item.note ? <div className="text-slate-600">{item.note}</div> : null}
-                <div className="text-xs text-slate-400">Registrerad {formatDateTime(item.created_at)}</div>
-              </div>
-            )) : null}
-          </Card>
-          <Card className="grid gap-3 lg:content-start">
-            <p className={crm.sectionTitle}>Ny tidrad</p>
-            <label className="grid gap-1 text-sm text-slate-600">
-              <span className={crm.sectionTitle}>Datum</span>
-              <Input value={timeDraft.work_date} onChange={(e) => setTimeDraft((c) => ({ ...c, work_date: e.target.value }))} type="date" />
-            </label>
-            <label className="grid gap-1 text-sm text-slate-600">
-              <span className={crm.sectionTitle}>Timmar</span>
-              <Input value={timeDraft.hours} onChange={(e) => setTimeDraft((c) => ({ ...c, hours: e.target.value }))} inputMode="decimal" placeholder="8" />
-            </label>
-            <label className="grid gap-1 text-sm text-slate-600">
-              <span className={crm.sectionTitle}>Kommentar</span>
-              <Textarea value={timeDraft.note} onChange={(e) => setTimeDraft((c) => ({ ...c, note: e.target.value }))} rows={4} placeholder="Vad gjordes?" />
-            </label>
-            <button type="button" onClick={createTimeEntry} disabled={loggingTime} className={crm.saveButton}>
-              {loggingTime ? 'Sparar tid…' : 'Rapportera tid'}
-            </button>
-          </Card>
-        </div>
+        <WorkOrderTimeTab
+          entries={timeEntries}
+          loading={timeEntriesLoading}
+          totalHours={totalLoggedHours}
+          currentUserId={currentUserId}
+          onCreate={createTimeEntry}
+          onUpdate={updateTimeEntry}
+          onDelete={deleteTimeEntry}
+        />
       ) : null}
 
       {/* ─── Comments ─── */}
       {activeTab === 'comments' ? (
-        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start">
-          <Card className="grid gap-3">
-            <p className={crm.sectionTitle}>Projektkommentarer</p>
-            {commentsLoading ? <div className="text-sm text-slate-500">Laddar kommentarer…</div> : null}
-            {!commentsLoading && comments.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-[#cfdcc9] bg-[#f1f5ee] px-4 py-6 text-sm text-slate-500">Inga kommentarer ännu.</div>
-            ) : null}
-            {!commentsLoading ? comments.map((item) => (
-              <div key={item.id} className="grid gap-1 rounded-xl border border-[#e0e8dc] bg-[#f1f5ee] px-3 py-3 text-sm">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <strong className="text-slate-900">{item.author?.full_name || 'Kommentar'}</strong>
-                  <span className="text-xs text-slate-400">{formatDateTime(item.created_at)}</span>
-                </div>
-                <div className="text-slate-600">{item.body}</div>
-              </div>
-            )) : null}
-          </Card>
-          <Card className="grid gap-3 lg:content-start">
-            <p className={crm.sectionTitle}>Ny kommentar</p>
-            <Textarea value={commentDraft} onChange={(e) => setCommentDraft(e.target.value)} rows={8} placeholder="Skriv en kommentar om projektet" />
-            <button type="button" onClick={createComment} disabled={postingComment} className={crm.saveButton}>
-              {postingComment ? 'Sparar kommentar…' : 'Spara kommentar'}
-            </button>
-          </Card>
-        </div>
+        <WorkOrderCommentsTab
+          comments={comments}
+          loading={commentsLoading}
+          currentUserId={currentUserId}
+          onCreate={createComment}
+          onUpdate={updateComment}
+          onDelete={deleteComment}
+        />
       ) : null}
     </div>
   );
