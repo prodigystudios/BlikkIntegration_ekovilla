@@ -382,7 +382,7 @@ export default function CoachClient({ userName }: { userName: string | null }) {
       </div>
 
       {/* Metrics */}
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="hidden gap-4 sm:grid sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard label="Läge" value={activeModeLabel} helper="Nuvarande coachspår" />
         <MetricCard label="Kontext" value={selectedContext?.label || 'Ingen vald'} helper="Situationsdata till coachen" />
         <MetricCard label="Svar i tråd" value={thread.length} helper="Coachade steg sparade i vyn" />

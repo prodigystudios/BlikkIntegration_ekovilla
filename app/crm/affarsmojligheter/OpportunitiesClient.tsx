@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import MetricCard from '../components/MetricCard';
+import CrmModal from '../components/CrmModal';
 import Input from '../../../components/ui/Input';
 import Textarea from '../../../components/ui/Textarea';
 import { useToast } from '@/lib/Toast';
@@ -526,7 +527,7 @@ export default function OpportunitiesClient() {
         </button>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="hidden gap-4 sm:grid sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard label="Aktiva affärer" value={stats.open} helper="Kvalificerade och i offertläge" />
         <MetricCard label="Kvalificerade" value={stats.qualified} helper="Köpintresse bekräftat" />
         <MetricCard label="I offertläge" value={stats.quoted} helper="Offert ute eller på väg" />
@@ -632,32 +633,31 @@ export default function OpportunitiesClient() {
 
       {/* Skapa-panel */}
       {createPanelOpen ? (
-        <div className="fixed inset-0 z-[2800] flex items-end justify-center bg-slate-950/45 p-3 [backdrop-filter:blur(4px)] sm:items-center sm:p-4" onClick={() => setCreatePanelOpen(false)}>
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-label="Skapa affärsmöjlighet"
-            onClick={(e) => e.stopPropagation()}
-            className="grid w-full max-w-[660px] gap-4 rounded-[28px] border border-white/70 bg-[linear-gradient(180deg,#ffffff_0%,#f5faf8_100%)] p-4 shadow-[0_30px_80px_rgba(15,23,42,0.28)] sm:max-h-[88vh] sm:overflow-y-auto sm:p-5"
-          >
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div className="grid gap-1">
-                <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Ny affärsmöjlighet</span>
-                <strong className="text-[1.5rem] font-bold tracking-[-0.05em] text-slate-950">Registrera affären</strong>
-                <p className="m-0 text-sm leading-6 text-slate-600">
-                  Koppla till ett prospekt, befintlig kund eller registrera direkt.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setCreatePanelOpen(false)}
-                className="inline-flex min-h-10 items-center justify-center rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 shadow-[0_10px_18px_rgba(15,23,42,0.04)] hover:border-slate-300 hover:text-slate-900"
-              >
-                Stäng
+        <CrmModal
+          onClose={() => setCreatePanelOpen(false)}
+          ariaLabel="Skapa affärsmöjlighet"
+          maxWidth="sm:max-w-[660px]"
+          header={
+            <>
+              <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Ny affärsmöjlighet</span>
+              <strong className="mt-0.5 block text-lg font-bold tracking-tight text-slate-950">Registrera affären</strong>
+              <p className="m-0 mt-0.5 text-sm leading-6 text-slate-600">
+                Koppla till ett prospekt, befintlig kund eller registrera direkt.
+              </p>
+            </>
+          }
+          footer={
+            <>
+              <button type="button" onClick={() => setCreatePanelOpen(false)} className="flex-1 rounded-xl border border-slate-200 bg-white py-2.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 sm:flex-none sm:px-5">
+                Avbryt
               </button>
-            </div>
-
-            <div className="grid gap-3 rounded-[24px] border border-white/80 bg-white/92 p-4 shadow-[0_20px_44px_rgba(15,23,42,0.06)]">
+              <button type="button" onClick={createOpportunity} disabled={creating} className="flex-1 rounded-xl py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60 sm:ml-auto sm:flex-none sm:px-5" style={{ backgroundColor: 'var(--crm-primary)' }}>
+                {creating ? 'Sparar…' : 'Skapa affärsmöjlighet'}
+              </button>
+            </>
+          }
+        >
+            <div className="grid gap-3">
               <Input
                 value={draft.title}
                 onChange={(e) => setDraft((c) => ({ ...c, title: e.target.value }))}
@@ -762,75 +762,60 @@ export default function OpportunitiesClient() {
                 placeholder="Anteckningar om affären"
                 className="min-h-[100px]"
               />
-              <div className="flex flex-wrap items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setCreatePanelOpen(false)}
-                  className="inline-flex min-h-11 items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-600 shadow-[0_10px_18px_rgba(15,23,42,0.04)] hover:border-slate-300 hover:text-slate-900"
-                >
-                  Avbryt
-                </button>
-                <button
-                  type="button"
-                  onClick={createOpportunity}
-                  disabled={creating}
-                  className="inline-flex min-h-12 items-center justify-center rounded-2xl border border-emerald-600 bg-[linear-gradient(180deg,#14b87a_0%,#0f9f6c_100%)] px-4 py-3 text-sm font-semibold text-white shadow-[0_20px_34px_rgba(16,185,129,0.22)] transition hover:brightness-[0.97] disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {creating ? 'Sparar…' : 'Skapa affärsmöjlighet'}
-                </button>
-              </div>
             </div>
-          </div>
-        </div>
+        </CrmModal>
       ) : null}
 
       {/* Detaljpanel */}
       {detailOpen && selected ? (
-        <div className="fixed inset-0 z-[2800] flex items-end justify-center bg-slate-950/45 p-3 [backdrop-filter:blur(4px)] sm:items-center sm:p-4" onClick={() => setDetailOpen(false)}>
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-label={`Affärsmöjlighet ${selected.title}`}
-            onClick={(e) => e.stopPropagation()}
-            className="grid w-full max-w-[760px] gap-4 rounded-[28px] border border-white/70 bg-[linear-gradient(180deg,#ffffff_0%,#f6faf8_100%)] p-4 shadow-[0_30px_80px_rgba(15,23,42,0.28)] sm:max-h-[88vh] sm:overflow-y-auto sm:p-5"
-          >
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div className="grid gap-1">
-                <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Affärsmöjlighet</span>
-                <strong className="text-[1.4rem] font-bold tracking-[-0.05em] text-slate-950">{selected.title}</strong>
-                {selected.prospect ? (
-                  <p className="m-0 text-sm text-slate-500">{selected.prospect.company_name}{selected.prospect.contact_name ? ` · ${selected.prospect.contact_name}` : ''}</p>
-                ) : null}
-              </div>
+        <CrmModal
+          onClose={() => setDetailOpen(false)}
+          ariaLabel={`Affärsmöjlighet ${selected.title}`}
+          maxWidth="sm:max-w-[760px]"
+          header={
+            <>
               <div className="flex flex-wrap items-center gap-2">
-                <span className={cn('rounded-full border px-2.5 py-1 text-xs font-semibold', statusClass[selected.status])}>
+                <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Affärsmöjlighet</span>
+                <span className={cn('rounded-full border px-2 py-0.5 text-[11px] font-semibold', statusClass[selected.status])}>
                   {statusLabel[selected.status]}
                 </span>
+              </div>
+              <strong className="mt-0.5 block truncate text-lg font-bold tracking-tight text-slate-950">{selected.title}</strong>
+              {selected.prospect ? (
+                <p className="m-0 mt-0.5 truncate text-sm text-slate-500">{selected.prospect.company_name}{selected.prospect.contact_name ? ` · ${selected.prospect.contact_name}` : ''}</p>
+              ) : null}
+            </>
+          }
+          footer={
+            detailEditing ? (
+              <>
                 <button
                   type="button"
-                  onClick={() => setDetailEditing((c) => !c)}
-                  className="inline-flex min-h-10 items-center justify-center rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 shadow-[0_10px_18px_rgba(15,23,42,0.04)] hover:border-slate-300 hover:text-slate-900"
+                  onClick={() => { setDetailEditing(false); setDetailDraft({ title: selected.title, status: selected.status, notes: selected.notes || '', customer_type: selected.customer_type || 'business', customer_name: selected.customer_name || '', contact_name: selected.contact_name || '' }); }}
+                  className="flex-1 rounded-xl border border-slate-200 bg-white py-2.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 sm:flex-none sm:px-5"
                 >
-                  {detailEditing ? 'Avsluta redigering' : 'Redigera'}
+                  Avbryt
                 </button>
-                <a
-                  href={`/crm/offerter?opportunity_id=${selected.id}&new=1`}
-                  className="inline-flex min-h-10 items-center justify-center rounded-full border border-amber-500 bg-[linear-gradient(180deg,#f59e0b_0%,#d97706_100%)] px-3 py-2 text-sm font-semibold text-white transition hover:brightness-[0.97]"
-                >
+                <button type="button" onClick={saveDetail} disabled={savingDetail} className="flex-1 rounded-xl py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-95 disabled:opacity-60 sm:ml-auto sm:flex-none sm:px-5" style={{ backgroundColor: 'var(--crm-primary)' }}>
+                  {savingDetail ? 'Sparar…' : 'Spara ändringar'}
+                </button>
+              </>
+            ) : (
+              <div className="flex w-full flex-wrap items-center justify-end gap-2">
+                <button type="button" onClick={() => setDetailEditing(true)} className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300">
+                  Redigera
+                </button>
+                <a href={`/crm/offerter?opportunity_id=${selected.id}&new=1`} className="rounded-xl border border-amber-500 bg-amber-500 px-4 py-2.5 text-sm font-semibold text-white transition hover:brightness-95">
                   Skapa offert
                 </a>
-                <button
-                  type="button"
-                  onClick={() => setDetailOpen(false)}
-                  className="inline-flex min-h-10 items-center justify-center rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 shadow-[0_10px_18px_rgba(15,23,42,0.04)] hover:border-slate-300 hover:text-slate-900"
-                >
-                  Stäng
-                </button>
               </div>
-            </div>
+            )
+          }
+        >
+          <div className="grid gap-4">
 
             {detailEditing ? (
-              <div className="grid gap-3 rounded-[20px] border border-white/80 bg-white/90 p-3 shadow-[0_12px_24px_rgba(15,23,42,0.04)]">
+              <div className="grid gap-3">
                 <Input
                   value={detailDraft.title}
                   onChange={(e) => setDetailDraft((c) => ({ ...c, title: e.target.value }))}
@@ -854,26 +839,9 @@ export default function OpportunitiesClient() {
                   placeholder="Anteckningar"
                   className="min-h-[100px]"
                 />
-                <div className="flex flex-wrap justify-end gap-2">
-                  <button
-                    type="button"
-                    onClick={() => { setDetailEditing(false); setDetailDraft({ title: selected.title, status: selected.status, notes: selected.notes || '', customer_type: selected.customer_type || 'business', customer_name: selected.customer_name || '', contact_name: selected.contact_name || '' }); }}
-                    className="inline-flex min-h-11 items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-600 hover:border-slate-300"
-                  >
-                    Avbryt
-                  </button>
-                  <button
-                    type="button"
-                    onClick={saveDetail}
-                    disabled={savingDetail}
-                    className="inline-flex min-h-11 items-center justify-center rounded-full border border-emerald-600 bg-[linear-gradient(180deg,#14b87a_0%,#0f9f6c_100%)] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_20px_34px_rgba(16,185,129,0.22)] transition hover:brightness-[0.97] disabled:opacity-60"
-                  >
-                    {savingDetail ? 'Sparar…' : 'Spara ändringar'}
-                  </button>
-                </div>
               </div>
             ) : (
-              <div className="grid gap-3 rounded-[20px] border border-slate-200/80 bg-white px-4 py-3 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
+              <div className="grid gap-3 rounded-xl border border-[#e3e9df] bg-[#f6f9f3] px-4 py-3">
                 <div className="grid gap-0.5">
                   <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Anteckningar</span>
                   <p className="m-0 whitespace-pre-wrap break-words text-sm leading-6 text-slate-700">
@@ -888,7 +856,7 @@ export default function OpportunitiesClient() {
             )}
 
             {(selected.prospect || selected.customer || selected.customer_name) ? (
-              <div className="grid gap-2 rounded-[20px] border border-slate-200/80 bg-white px-4 py-3 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
+              <div className="grid gap-2 rounded-xl border border-[#e3e9df] bg-[#f6f9f3] px-4 py-3">
                 <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
                   {selected.prospect ? 'Kopplat prospekt' : selected.customer ? 'Kopplad kund' : 'Kund'}
                 </span>
@@ -911,7 +879,7 @@ export default function OpportunitiesClient() {
               </div>
             ) : null}
 
-            <div className="grid gap-3 rounded-[20px] border border-amber-200/70 bg-[linear-gradient(180deg,#ffffff_0%,#fffaf2_100%)] px-4 py-4 shadow-[0_14px_26px_rgba(15,23,42,0.04)]">
+            <div className="grid gap-3 rounded-xl border border-amber-200 bg-amber-50/50 px-4 py-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="grid gap-0.5">
                   <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-amber-700/70">Offerter</span>
@@ -927,20 +895,20 @@ export default function OpportunitiesClient() {
               {relatedQuotesLoading ? (
                 <div className="grid gap-2">
                   {Array.from({ length: 2 }).map((_, i) => (
-                    <div key={i} className="grid gap-2 rounded-[18px] border border-slate-200 bg-slate-50 px-4 py-4">
+                    <div key={i} className="grid gap-2 rounded-lg border border-[#e3e9df] bg-[#f6f9f3] px-4 py-4">
                       <div className="h-3 w-32 rounded-full bg-slate-200" />
                       <div className="h-3 w-48 rounded-full bg-slate-200" />
                     </div>
                   ))}
                 </div>
               ) : relatedQuotes.length === 0 ? (
-                <div className="rounded-[18px] border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-sm text-slate-600">
+                <div className="rounded-lg border border-dashed border-[#cfdcc9] bg-[#f6f9f3] px-4 py-4 text-sm text-slate-600">
                   Ingen offert registrerad ännu för den här affärsmöjligheten.
                 </div>
               ) : (
                 <div className="grid gap-2">
                   {relatedQuotes.map((quote) => (
-                    <div key={quote.id} className="grid gap-2 rounded-[18px] border border-slate-200 bg-white px-4 py-4 shadow-[0_8px_18px_rgba(15,23,42,0.04)]">
+                    <div key={quote.id} className="grid gap-2 rounded-lg border border-[#e3e9df] bg-white px-4 py-4">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <strong className="text-sm font-semibold text-slate-900">{quote.project_name}</strong>
                         <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-800">
@@ -958,7 +926,7 @@ export default function OpportunitiesClient() {
               )}
             </div>
           </div>
-        </div>
+        </CrmModal>
       ) : null}
     </div>
   );

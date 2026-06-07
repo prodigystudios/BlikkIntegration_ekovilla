@@ -152,6 +152,7 @@ export default function RingListsClient({ adminName }: { adminName: string | nul
   const [search, setSearch] = useState('');
   const [assignmentFilter, setAssignmentFilter] = useState<AssignmentFilter>('unassigned');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('new');
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState('');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [importRows, setImportRows] = useState<ImportRow[]>([]);
@@ -252,6 +253,9 @@ export default function RingListsClient({ adminName }: { adminName: string | nul
     all: prospects.filter((item) => statusFilter === 'all' || item.status === statusFilter).length,
     assigned: prospects.filter((item) => Boolean(item.assigned_to) && (statusFilter === 'all' || item.status === statusFilter)).length,
   }), [prospects, statusFilter]);
+
+  // Active filter count — shown as a badge on the mobile filter toggle.
+  const activeFilterCount = (assignmentFilter !== 'all' ? 1 : 0) + (statusFilter !== 'all' ? 1 : 0);
 
   useEffect(() => {
     setSelectedIds((current) => current.filter((id) => visibleProspects.some((item) => item.id === id)));
@@ -502,7 +506,7 @@ export default function RingListsClient({ adminName }: { adminName: string | nul
       </div>
 
       {/* Metrics */}
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="hidden gap-4 sm:grid sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard label="I kö just nu" value={visibleProspects.length} helper="Poster i nuvarande vy" />
         <MetricCard label="Ej tilldelade" value={stats.unassigned} helper="Leads utan ägare" />
         <MetricCard label="Nya" value={stats.new} helper="Första kontakt kvar" />
@@ -512,8 +516,36 @@ export default function RingListsClient({ adminName }: { adminName: string | nul
       {/* Main list card */}
       <div className={crm.card}>
         {/* Toolbar */}
-        <div className="border-b border-slate-100 px-5 py-3">
-          <div className="flex flex-wrap items-center gap-3">
+        <div className="grid gap-3 border-b border-slate-100 px-5 py-3">
+          {/* Search + mobile filter toggle */}
+          <div className="flex items-center gap-2">
+            <Input
+              value={search}
+              onChange={(event: ChangeEvent<HTMLInputElement>) => setSearch(event.target.value)}
+              placeholder="Sök på företag, kontakt eller ort"
+              className="flex-1 sm:w-64 sm:flex-none"
+            />
+            <button
+              type="button"
+              onClick={() => setFiltersOpen((o) => !o)}
+              aria-expanded={filtersOpen}
+              aria-label="Filter"
+              className={cn(
+                'relative inline-flex h-[2.6rem] w-[2.6rem] shrink-0 items-center justify-center !rounded-lg !border !p-0 transition sm:hidden',
+                filtersOpen || activeFilterCount > 0 ? '!border-emerald-500 !bg-emerald-50 text-emerald-700' : '!border-[#dce4d8] !bg-white text-slate-600',
+              )}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M4 6h16M7 12h10M10 18h4" />
+              </svg>
+              {activeFilterCount > 0 ? (
+                <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-emerald-600 px-1 text-[10px] font-bold text-white">{activeFilterCount}</span>
+              ) : null}
+            </button>
+          </div>
+
+          {/* Filters — collapsible on mobile, inline on desktop */}
+          <div className={cn('flex-col gap-3 sm:flex sm:flex-row sm:flex-wrap sm:items-center', filtersOpen ? 'flex' : 'hidden')}>
             {/* Assignment filter pills */}
             <div className="flex flex-wrap gap-2">
               {(Object.keys(assignmentFilterMeta) as AssignmentFilter[]).map((value) => (
@@ -549,17 +581,7 @@ export default function RingListsClient({ adminName }: { adminName: string | nul
               ))}
             </select>
 
-            {/* Search */}
-            <div className="ml-auto">
-              <Input
-                value={search}
-                onChange={(event: ChangeEvent<HTMLInputElement>) => setSearch(event.target.value)}
-                placeholder="Sök på företag, kontakt eller ort"
-                className="w-64"
-              />
-            </div>
-
-            <span className="text-xs text-slate-400">{visibleProspects.length} i vy</span>
+            <span className="text-xs text-slate-400 sm:ml-auto">{visibleProspects.length} i vy</span>
           </div>
         </div>
 
@@ -633,10 +655,10 @@ export default function RingListsClient({ adminName }: { adminName: string | nul
         ) : null}
 
         {/* Prospect list */}
-        <div className="divide-y divide-slate-100">
+        <div className="grid gap-2 p-4">
           {loading ? (
             Array.from({ length: 3 }).map((_, index) => (
-              <div key={index} className="flex gap-3 px-5 py-4">
+              <div key={index} className="flex gap-3 rounded-lg border border-[#e3e9df] bg-[#f6f9f3] px-4 py-4">
                 <div className="h-9 w-9 animate-pulse rounded-full bg-[#dfe6da]" />
                 <div className="flex-1 grid gap-2">
                   <div className="h-3 w-40 animate-pulse rounded-full bg-[#dfe6da]" />
@@ -658,12 +680,12 @@ export default function RingListsClient({ adminName }: { adminName: string | nul
                 <div
                   key={prospect.id}
                   className={cn(
-                    'relative flex items-center gap-3 px-5 py-3.5 transition',
-                    selected ? 'bg-emerald-50/40' : 'hover:bg-slate-50/60',
+                    'relative flex items-center gap-3 overflow-hidden rounded-lg border px-4 py-3.5 shadow-[0_1px_2px_rgba(15,23,42,0.05)] transition',
+                    selected ? 'border-emerald-300 bg-emerald-50/40' : 'border-[#e3e9df] bg-white hover:border-[#cfdcc9]',
                   )}
                 >
                   {/* Left color strip */}
-                  <span className={cn('absolute inset-y-0 left-0 w-1', stripClass[prospect.status])} />
+                  <span className={cn('absolute inset-y-0 left-0 w-1.5', stripClass[prospect.status])} />
 
                   {/* Checkbox */}
                   <label className="flex shrink-0 items-center justify-center pl-2">
@@ -695,9 +717,9 @@ export default function RingListsClient({ adminName }: { adminName: string | nul
                     <div className="mt-0.5 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-xs text-slate-400">
                       {prospect.contact_name ? <span>{prospect.contact_name}</span> : null}
                       {prospect.phone ? <span>{prospect.phone}</span> : null}
-                      {prospect.email ? <span className="max-w-[200px] truncate">{prospect.email}</span> : null}
+                      {prospect.email ? <span className="hidden max-w-[200px] truncate sm:inline">{prospect.email}</span> : null}
                       {prospect.city ? <span>{prospect.city}</span> : null}
-                      {prospect.source ? <span>Källa: {prospect.source}</span> : null}
+                      {prospect.source ? <span className="hidden sm:inline">Källa: {prospect.source}</span> : null}
                     </div>
                     <div className="mt-1 flex flex-wrap items-center gap-1.5">
                       <span className={cn(

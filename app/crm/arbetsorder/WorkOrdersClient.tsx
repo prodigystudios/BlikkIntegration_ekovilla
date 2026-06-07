@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Input from '../../../components/ui/Input';
 import { cn } from '@/lib/shared/cn';
-import { crm, syncStatusLabel, syncStatusClass, workOrderStatusLabel, workOrderStatusClass } from '@/app/crm/lib/crmTokens';
+import { crm, syncStatusLabel, syncStatusClass, workOrderStatusLabel, workOrderStatusClass, workOrderStatusAccent } from '@/app/crm/lib/crmTokens';
 import { formatDate, formatCurrency, isWorkOrderOverdue } from '@/app/crm/lib/format';
 import AssigneeFilter, { matchesAssignee, type AssigneeFilterValue, type AssigneeOption } from '@/app/crm/components/AssigneeFilter';
 
@@ -44,6 +44,14 @@ function matchesFilter(item: WorkOrderItem, filter: WorkOrderFilter) {
   return item.status === 'in_progress';
 }
 
+function initialsOf(name: string | null | undefined) {
+  if (!name) return '–';
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '–';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
 
 export default function WorkOrdersClient({ currentUserId }: { currentUserId: string | null }) {
   const router = useRouter();
@@ -53,7 +61,8 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<WorkOrderFilter>('all');
-  const [assigneeFilter, setAssigneeFilter] = useState<AssigneeFilterValue>('all');
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [assigneeFilter, setAssigneeFilter] = useState<AssigneeFilterValue>([]);
   const [assignees, setAssignees] = useState<AssigneeOption[]>([]);
 
   useEffect(() => {
@@ -102,6 +111,9 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
     [filter, workOrders, assigneeFilter, currentUserId],
   );
 
+  // Count of active filters (status + assignee) — shown as a badge on the mobile toggle.
+  const activeFilterCount = (filter !== 'all' ? 1 : 0) + (assigneeFilter.length > 0 ? 1 : 0);
+
   return (
     <div className="grid grid-cols-1 gap-6">
       {/* Page header */}
@@ -127,26 +139,51 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
       {/* List card */}
       <div className={crm.card}>
         {/* Toolbar */}
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#e0e8dc] px-5 py-3">
-          <div className="flex flex-wrap gap-2">
-            {FILTERS.map(([value, label]) => (
-              <button
-                key={value}
-                type="button"
-                onClick={() => setFilter(value)}
-                className={cn(
-                  'rounded-full border px-3 py-1.5 text-sm font-semibold transition',
-                  filter === value ? 'text-white' : 'border-[#e0e8dc] bg-[#f9fbf7] text-slate-600 hover:border-[#cfdcc9]',
-                )}
-                style={filter === value ? { backgroundColor: 'var(--crm-primary)', borderColor: 'var(--crm-primary)' } : undefined}
-              >
-                {label} <span className={cn('ml-0.5', filter === value ? 'text-white/70' : 'text-slate-400')}>{filterCounts[value]}</span>
-              </button>
-            ))}
-          </div>
-          <div className="flex items-center gap-3">
-            <AssigneeFilter value={assigneeFilter} onChange={setAssigneeFilter} users={assignees} />
+        <div className="grid gap-3 border-b border-[#e0e8dc] px-5 py-3">
+          {/* Mobile filter toggle */}
+          <div className="flex items-center justify-between gap-3 sm:hidden">
+            <button
+              type="button"
+              onClick={() => setFiltersOpen((o) => !o)}
+              aria-expanded={filtersOpen}
+              className={cn(
+                'relative inline-flex items-center gap-2 !rounded-lg !border px-3 py-2 text-sm font-semibold transition',
+                filtersOpen || activeFilterCount > 0 ? '!border-emerald-500 !bg-emerald-50 text-emerald-700' : '!border-[#dce4d8] !bg-white text-slate-600',
+              )}
+            >
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M4 6h16M7 12h10M10 18h4" />
+              </svg>
+              Filter
+              {activeFilterCount > 0 ? (
+                <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-emerald-600 px-1 text-[10px] font-bold text-white">{activeFilterCount}</span>
+              ) : null}
+            </button>
             <span className="whitespace-nowrap text-xs text-slate-400">{workOrders.length} i registret</span>
+          </div>
+
+          {/* Filters — collapsible on mobile, inline on desktop */}
+          <div className={cn('flex-col gap-3 sm:flex sm:flex-row sm:flex-wrap sm:items-center sm:justify-between', filtersOpen ? 'flex' : 'hidden')}>
+            <div className="flex flex-wrap gap-2">
+              {FILTERS.map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setFilter(value)}
+                  className={cn(
+                    'rounded-full border px-3 py-1.5 text-sm font-semibold transition',
+                    filter === value ? 'text-white' : 'border-[#e0e8dc] bg-[#f9fbf7] text-slate-600 hover:border-[#cfdcc9]',
+                  )}
+                  style={filter === value ? { backgroundColor: 'var(--crm-primary)', borderColor: 'var(--crm-primary)' } : undefined}
+                >
+                  {label} <span className={cn('ml-0.5', filter === value ? 'text-white/70' : 'text-slate-400')}>{filterCounts[value]}</span>
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-3">
+              <AssigneeFilter value={assigneeFilter} onChange={setAssigneeFilter} users={assignees} className="w-full sm:w-[200px]" />
+              <span className="hidden whitespace-nowrap text-xs text-slate-400 sm:inline">{workOrders.length} i registret</span>
+            </div>
           </div>
         </div>
 
@@ -160,46 +197,82 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
           ) : null}
 
           {!loading && visibleWorkOrders.length > 0 ? (
-            <div className="grid gap-3 xl:grid-cols-2">
+            <div className="grid gap-2">
               {visibleWorkOrders.map((item) => {
                 const overdue = isWorkOrderOverdue(item.desired_installation_date, item.status);
+                const sellerName = item.assignee?.full_name || null;
                 return (
                   <button
                     key={item.id}
                     type="button"
                     onClick={() => router.push(`/crm/arbetsorder/${item.id}`)}
-                    className="block w-full rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] p-4 text-left shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)] transition hover:border-[#cfdcc9] hover:shadow-[0_8px_24px_-8px_rgba(20,44,27,0.20)]"
+                    className={cn(
+                      'group relative flex items-stretch overflow-hidden rounded-lg border bg-white text-left shadow-[0_1px_2px_rgba(15,23,42,0.05)] transition hover:border-[#cfdcc9] hover:shadow-[0_8px_20px_-10px_rgba(20,44,27,0.30)]',
+                      overdue ? 'border-rose-200' : 'border-[#e3e9df]',
+                    )}
                   >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="grid min-w-0 gap-2">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className={cn(crm.badge, workOrderStatusClass[item.status])}>{workOrderStatusLabel[item.status]}</span>
-                          {overdue ? <span className={cn(crm.badge, 'border-rose-200 bg-rose-50 text-rose-700')}>Försenad</span> : null}
-                          <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">{item.order_number}</span>
+                    {/* Status accent rail */}
+                    <span className={cn('w-1.5 shrink-0', workOrderStatusAccent[item.status])} aria-hidden="true" />
+
+                    <div className="grid flex-1 grid-cols-[minmax(0,1fr)_auto] items-start gap-3 p-3.5 sm:grid-cols-[minmax(0,1fr)_170px_140px_auto] sm:items-center sm:gap-4">
+                      {/* Identity + chips */}
+                      <div className="grid min-w-0 gap-1">
+                        <div className="flex min-w-0 items-baseline gap-2">
+                          <strong className="truncate text-sm font-bold text-slate-900">{item.project_name}</strong>
+                          <span className="hidden shrink-0 text-[11px] font-semibold tabular-nums text-slate-400 sm:inline">{item.order_number}</span>
                         </div>
-                        <div className="grid gap-0.5">
-                          <strong className="truncate text-base font-semibold text-slate-900">{item.project_name}</strong>
-                          <span className="text-sm text-slate-500">{item.client_name}</span>
-                        </div>
-                        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-slate-400">
-                          <span className={overdue ? 'font-semibold text-rose-600' : undefined}>Planerad {formatDate(item.desired_installation_date)}</span>
-                          <span>·</span>
-                          <span>{formatCurrency(item.pricing_summary?.total ?? item.amount, item.currency_code)}</span>
-                          <span>·</span>
-                          <span>{(item.line_items || []).length} rader</span>
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2 pt-0.5">
-                          <span className="rounded-full border border-[#e0e8dc] bg-[#f1f5ee] px-2 py-0.5 text-[11px] font-medium text-slate-600">
-                            {item.assignee?.full_name || 'Ej tilldelad'}
+                        <span className="truncate text-xs text-slate-500">{item.client_name}</span>
+                        <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                          <span className={cn('inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-semibold', workOrderStatusClass[item.status])}>
+                            {workOrderStatusLabel[item.status]}
                           </span>
-                          <span className={cn('rounded-full border px-2 py-0.5 text-[11px] font-semibold', syncStatusClass[item.fortnox_order_sync_status])}>
+                          {overdue ? (
+                            <span className="inline-flex items-center rounded-md border border-rose-200 bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold text-rose-700">
+                              Försenad
+                            </span>
+                          ) : null}
+                          <span className="inline-flex items-center rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">
+                            {(item.line_items || []).length} rader
+                          </span>
+                          <span className={cn('inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-semibold', syncStatusClass[item.fortnox_order_sync_status])}>
                             Fortnox: {syncStatusLabel[item.fortnox_order_sync_status]}
                           </span>
                         </div>
                       </div>
-                      <svg className="mt-1 shrink-0 text-slate-300" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <path d="M9 18l6-6-6-6" />
-                      </svg>
+
+                      {/* Responsible installer/seller */}
+                      <div className="hidden items-center gap-2 sm:flex">
+                        <span className={cn(
+                          'flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[10px] font-bold',
+                          sellerName ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-400',
+                        )}>
+                          {initialsOf(sellerName)}
+                        </span>
+                        <div className="grid min-w-0">
+                          <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Ansvarig</span>
+                          <span className={cn('truncate text-xs font-semibold', sellerName ? 'text-slate-700' : 'text-slate-400')}>
+                            {sellerName ?? 'Ej tilldelad'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Date */}
+                      <div className="hidden flex-col gap-0.5 sm:flex">
+                        <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Planerad</span>
+                        <span className={cn('text-xs font-medium', overdue ? 'text-rose-600' : 'text-slate-600')}>
+                          {overdue ? '⚠ ' : ''}{formatDate(item.desired_installation_date)}
+                        </span>
+                      </div>
+
+                      {/* Amount + chevron (amount hidden on mobile — name takes priority) */}
+                      <div className="flex items-center justify-end gap-3">
+                        <span className="hidden whitespace-nowrap text-sm font-bold tabular-nums text-slate-900 sm:inline sm:text-base">
+                          {formatCurrency(item.pricing_summary?.total ?? item.amount, item.currency_code)}
+                        </span>
+                        <svg className="shrink-0 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-slate-400" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <path d="M9 18l6-6-6-6" />
+                        </svg>
+                      </div>
                     </div>
                   </button>
                 );

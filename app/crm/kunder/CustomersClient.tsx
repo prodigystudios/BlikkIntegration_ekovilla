@@ -60,6 +60,7 @@ export default function CustomersClient() {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<StageFilter>('alla');
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -98,6 +99,9 @@ export default function CustomersClient() {
     fortnox_customer: items.filter((i) => i.customer_stage === 'fortnox_customer').length,
   }), [items]);
 
+  // Active filter count — shown as a badge on the mobile filter toggle.
+  const activeFilterCount = filter !== 'alla' ? 1 : 0;
+
   const stats = useMemo(() => ({
     total: items.length,
     prospects: items.filter((i) => i.customer_stage === 'prospect').length,
@@ -125,7 +129,7 @@ export default function CustomersClient() {
       </div>
 
       {/* ── Metrics ── */}
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="hidden gap-4 sm:grid sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard label="Totalt" value={stats.total} helper="Alla i registret" />
         <MetricCard label="Prospekt" value={stats.prospects} helper="Potentiella kunder" />
         <MetricCard label="Kunder" value={stats.customers} helper="Aktiva kundrelationer" />
@@ -136,14 +140,36 @@ export default function CustomersClient() {
       <div className={crm.card}>
 
         {/* Toolbar */}
-        <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 px-5 py-3">
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Sök kund…"
-            className="w-full sm:w-64"
-          />
-          <div className="flex min-w-0 flex-1 gap-1.5 overflow-x-auto [-webkit-overflow-scrolling:touch]">
+        <div className="grid gap-3 border-b border-slate-100 px-5 py-3">
+          {/* Search + mobile filter toggle */}
+          <div className="flex items-center gap-2">
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Sök kund…"
+              className="flex-1 sm:w-64 sm:flex-none"
+            />
+            <button
+              type="button"
+              onClick={() => setFiltersOpen((o) => !o)}
+              aria-expanded={filtersOpen}
+              aria-label="Filter"
+              className={cn(
+                'relative inline-flex h-[2.6rem] w-[2.6rem] shrink-0 items-center justify-center !rounded-lg !border !p-0 transition sm:hidden',
+                filtersOpen || activeFilterCount > 0 ? '!border-emerald-500 !bg-emerald-50 text-emerald-700' : '!border-[#dce4d8] !bg-white text-slate-600',
+              )}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M4 6h16M7 12h10M10 18h4" />
+              </svg>
+              {activeFilterCount > 0 ? (
+                <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-emerald-600 px-1 text-[10px] font-bold text-white">{activeFilterCount}</span>
+              ) : null}
+            </button>
+          </div>
+
+          {/* Stage filters — collapsible on mobile, inline on desktop */}
+          <div className={cn('flex-wrap gap-1.5 sm:flex', filtersOpen ? 'flex' : 'hidden')}>
             {(Object.keys(filterMeta) as StageFilter[]).map((value) => {
               const isActive = filter === value;
               return (

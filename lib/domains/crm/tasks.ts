@@ -20,8 +20,13 @@ export const crmTaskSelect = `
 type CrmTaskStatus = 'open' | 'done' | 'cancelled';
 type CrmTaskPriority = 'low' | 'normal' | 'high';
 
+// A task can be linked to one CRM entity via the polymorphic related_type/related_id.
+export type CrmRelatedType = 'crm_prospect' | 'crm_customer' | 'crm_quote';
+
 type CreateCrmTaskInput = {
-  prospect_id: string | null;
+  related_type: CrmRelatedType | null;
+  related_id: string | null;
+  related_label: string | null;
   user_id: string;
   title: string;
   details: string | null;
@@ -65,10 +70,21 @@ function getTaskPriority(value: unknown): CrmTaskPriority {
 export function mapCrmTaskRow(row: RawCrmTaskRow) {
   const metadata = row.metadata && typeof row.metadata === 'object' ? row.metadata : {};
   const source = typeof metadata.source === 'string' ? metadata.source : null;
+  const relatedLabel = typeof (metadata as Record<string, unknown>).related_label === 'string'
+    ? ((metadata as Record<string, unknown>).related_label as string)
+    : null;
+  const relatedType: CrmRelatedType | null =
+    row.related_type === 'crm_prospect' || row.related_type === 'crm_customer' || row.related_type === 'crm_quote'
+      ? row.related_type
+      : null;
 
   return {
     id: row.id,
-    prospect_id: row.related_type === 'crm_prospect' ? row.related_id : null,
+    related_type: relatedType,
+    related_id: relatedType ? row.related_id : null,
+    related_label: relatedType ? relatedLabel : null,
+    // Back-compat: keep prospect_id populated when the relation is a prospect.
+    prospect_id: relatedType === 'crm_prospect' ? row.related_id : null,
     user_id: row.user_id,
     title: row.title,
     details: row.body,
@@ -115,11 +131,12 @@ export async function createCrmTask(supabase: SupabaseClient, input: CreateCrmTa
     status: input.status === 'done' ? 'done' : input.status === 'cancelled' ? 'cancelled' : 'active',
     due_at: input.due_date ? `${input.due_date}T12:00:00.000Z` : null,
     remind_at: input.remind_at,
-    related_type: input.prospect_id ? 'crm_prospect' : null,
-    related_id: input.prospect_id,
+    related_type: input.related_id ? input.related_type : null,
+    related_id: input.related_id,
     metadata: {
       priority: input.priority,
       source: input.source,
+      related_label: input.related_id ? input.related_label : null,
       crm: true,
     },
     completed_at: input.completed_at,
@@ -138,11 +155,12 @@ export async function updateCrmTask(supabase: SupabaseClient, id: string, input:
     status: input.status === 'done' ? 'done' : input.status === 'cancelled' ? 'cancelled' : 'active',
     due_at: input.due_date ? `${input.due_date}T12:00:00.000Z` : null,
     remind_at: input.remind_at,
-    related_type: input.prospect_id ? 'crm_prospect' : null,
-    related_id: input.prospect_id,
+    related_type: input.related_id ? input.related_type : null,
+    related_id: input.related_id,
     metadata: {
       priority: input.priority,
       source: input.source,
+      related_label: input.related_id ? input.related_label : null,
       crm: true,
     },
     completed_at: input.completed_at,

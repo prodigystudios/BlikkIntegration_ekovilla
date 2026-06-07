@@ -452,7 +452,7 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
       </div>
 
       {/* Metric cards */}
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="hidden gap-4 sm:grid sm:grid-cols-2 xl:grid-cols-4">
         {loading ? (
           <>
             {Array.from({ length: 4 }).map((_, i) => (

@@ -2,22 +2,38 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Input from '../../../components/ui/Input';
+import Select from '../../../components/ui/Select';
 import Textarea from '../../../components/ui/Textarea';
 import MetricCard from '../components/MetricCard';
+import CrmModal from '../components/CrmModal';
+import EntityCombobox, { type EntityResult } from '../components/EntityCombobox';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 
-type ProspectItem = {
+type QuoteLite = {
   id: string;
-  company_name: string;
-  contact_name: string | null;
-  city: string | null;
-  status: 'new' | 'contacted' | 'qualified' | 'quoted' | 'won' | 'lost';
+  project_name: string;
+  quote_number: string | null;
+};
+
+function quoteLabel(q: QuoteLite): string {
+  return q.quote_number ? `${q.project_name} (#${q.quote_number})` : q.project_name;
+}
+
+type CrmRelatedType = 'crm_prospect' | 'crm_customer' | 'crm_quote';
+
+const relatedTypeLabel: Record<CrmRelatedType, string> = {
+  crm_prospect: 'Prospekt',
+  crm_customer: 'Kund',
+  crm_quote: 'Offert',
 };
 
 type TaskItem = {
   id: string;
+  related_type: CrmRelatedType | null;
+  related_id: string | null;
+  related_label: string | null;
   prospect_id: string | null;
   user_id: string;
   title: string;
@@ -33,7 +49,9 @@ type TaskItem = {
 };
 
 type TaskDraft = {
-  prospect_id: string;
+  related_type: '' | CrmRelatedType;
+  related_id: string;
+  related_label: string;
   title: string;
   details: string;
   priority: TaskItem['priority'];
@@ -60,7 +78,9 @@ const stripClass: Record<string, string> = {
 };
 
 const initialDraft: TaskDraft = {
-  prospect_id: '',
+  related_type: '',
+  related_id: '',
+  related_label: '',
   title: '',
   details: '',
   priority: 'normal',
@@ -112,19 +132,53 @@ function isOverdue(task: TaskItem) {
 
 export default function TasksClient() {
   const toast = useToast();
-  const [prospects, setProspects] = useState<ProspectItem[]>([]);
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [updatingTaskIds, setUpdatingTaskIds] = useState<string[]>([]);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<TaskFilter>('all');
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [draft, setDraft] = useState<TaskDraft>(initialDraft);
 
-  const prospectsById = useMemo(() => new Map(prospects.map((item) => [item.id, item])), [prospects]);
+  // Debounced server-side search for the relation picker — scales to any table size
+  // (vs. preloading every customer/quote into a <select>).
+  async function searchRelated(query: string): Promise<EntityResult[]> {
+    if (draft.related_type === 'crm_customer') {
+      const res = await fetch(`/api/crm/customers/search?q=${encodeURIComponent(query)}`, { cache: 'no-store' });
+      const json = await res.json().catch(() => ({}));
+      const items = json?.ok && Array.isArray(json?.data?.items) ? json.data.items : [];
+      return items.map((c: { id: string; display_name: string; organization_number: string | null; city: string | null }) => ({
+        id: c.id,
+        label: c.display_name || 'Okänd kund',
+        sublabel: [c.organization_number, c.city].filter(Boolean).join(' · ') || undefined,
+      }));
+    }
+    if (draft.related_type === 'crm_quote') {
+      const res = await fetch(`/api/crm/quotes?q=${encodeURIComponent(query)}`, { cache: 'no-store' });
+      const json = await res.json().catch(() => ({}));
+      const items = json?.ok && Array.isArray(json?.data?.items) ? json.data.items : [];
+      return items.map((q: QuoteLite & { customer_name: string | null }) => ({
+        id: q.id,
+        label: quoteLabel(q),
+        sublabel: q.customer_name || undefined,
+      }));
+    }
+    if (draft.related_type === 'crm_prospect') {
+      const res = await fetch(`/api/crm/prospects?q=${encodeURIComponent(query)}`, { cache: 'no-store' });
+      const json = await res.json().catch(() => ({}));
+      const items = json?.ok && Array.isArray(json?.data?.items) ? json.data.items : [];
+      return items.map((p: { id: string; company_name: string; contact_name: string | null; city: string | null }) => ({
+        id: p.id,
+        label: p.company_name,
+        sublabel: [p.contact_name, p.city].filter(Boolean).join(' · ') || undefined,
+      }));
+    }
+    return [];
+  }
 
   useEffect(() => {
     let active = true;
@@ -137,38 +191,23 @@ export default function TasksClient() {
         const query = new URLSearchParams();
         if (search.trim()) query.set('q', search.trim());
 
-        const [prospectsRes, tasksRes] = await Promise.all([
-          fetch('/api/crm/prospects', { cache: 'no-store' }),
-          fetch(`/api/crm/tasks${query.size > 0 ? `?${query.toString()}` : ''}`, { cache: 'no-store' }),
-        ]);
-
-        const [prospectsJson, tasksJson] = await Promise.all([
-          prospectsRes.json().catch(() => ({})),
-          tasksRes.json().catch(() => ({})),
-        ]);
+        // Linked entities (customer/quote/prospect) are searched on demand in the
+        // modal via EntityCombobox, so the list view only needs the tasks themselves.
+        const tasksRes = await fetch(`/api/crm/tasks${query.size > 0 ? `?${query.toString()}` : ''}`, { cache: 'no-store' });
+        const tasksJson = await tasksRes.json().catch(() => ({}));
 
         if (!active) return;
-
-        if (!prospectsRes.ok || !prospectsJson.ok) {
-          setError(prospectsJson?.error || 'Kunde inte ladda prospekt för uppgifter.');
-          setProspects([]);
-          setTasks([]);
-          return;
-        }
 
         if (!tasksRes.ok || !tasksJson.ok) {
           setError(tasksJson?.error || 'Kunde inte ladda uppgifter.');
-          setProspects(Array.isArray(prospectsJson?.data?.items) ? prospectsJson.data.items : []);
           setTasks([]);
           return;
         }
 
-        setProspects(Array.isArray(prospectsJson?.data?.items) ? prospectsJson.data.items : []);
         setTasks(Array.isArray(tasksJson?.data?.items) ? tasksJson.data.items : []);
       } catch {
         if (!active) return;
-        setError('Kunde inte ladda uppgiftsytan.');
-        setProspects([]);
+        setError('Kunde inte ladda uppgifter.');
         setTasks([]);
       } finally {
         if (active) setLoading(false);
@@ -211,6 +250,9 @@ export default function TasksClient() {
     done: tasks.filter((task) => task.status === 'done').length,
   }), [tasks]);
 
+  // Active filter count — shown as a badge on the mobile filter toggle.
+  const activeFilterCount = filter !== 'all' ? 1 : 0;
+
   function openCreateModal() {
     setEditingTaskId(null);
     setDraft(initialDraft);
@@ -220,7 +262,9 @@ export default function TasksClient() {
   function openEditModal(task: TaskItem) {
     setEditingTaskId(task.id);
     setDraft({
-      prospect_id: task.prospect_id || '',
+      related_type: task.related_type || '',
+      related_id: task.related_id || '',
+      related_label: task.related_label || '',
       title: task.title,
       details: task.details || '',
       priority: task.priority,
@@ -284,7 +328,9 @@ export default function TasksClient() {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          prospect_id: task.prospect_id,
+          related_type: task.related_type,
+          related_id: task.related_id,
+          related_label: task.related_label,
           title: task.title,
           details: task.details,
           priority: task.priority,
@@ -342,7 +388,7 @@ export default function TasksClient() {
       </div>
 
       {/* ── Metrics ── */}
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="hidden gap-4 sm:grid sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard label="Öppna" value={stats.open} helper="Aktiva uppgifter att jobba med" />
         <MetricCard label="Förfallna" value={stats.overdue} helper="Behöver åtgärdas först" />
         <MetricCard label="Klara" value={stats.done} helper="Färdiga uppföljningar" />
@@ -353,14 +399,36 @@ export default function TasksClient() {
       <div className={crm.card}>
 
         {/* Toolbar */}
-        <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 px-5 py-3">
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Sök på titel, prospekt eller källa…"
-            className="w-full sm:w-64"
-          />
-          <div className="flex min-w-0 flex-1 gap-1.5 overflow-x-auto [-webkit-overflow-scrolling:touch]">
+        <div className="grid gap-3 border-b border-slate-100 px-5 py-3">
+          {/* Search + mobile filter toggle */}
+          <div className="flex items-center gap-2">
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Sök på titel, prospekt eller källa…"
+              className="flex-1 sm:w-64 sm:flex-none"
+            />
+            <button
+              type="button"
+              onClick={() => setFiltersOpen((o) => !o)}
+              aria-expanded={filtersOpen}
+              aria-label="Filter"
+              className={cn(
+                'relative inline-flex h-[2.6rem] w-[2.6rem] shrink-0 items-center justify-center !rounded-lg !border !p-0 transition sm:hidden',
+                filtersOpen || activeFilterCount > 0 ? '!border-emerald-500 !bg-emerald-50 text-emerald-700' : '!border-[#dce4d8] !bg-white text-slate-600',
+              )}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M4 6h16M7 12h10M10 18h4" />
+              </svg>
+              {activeFilterCount > 0 ? (
+                <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-emerald-600 px-1 text-[10px] font-bold text-white">{activeFilterCount}</span>
+              ) : null}
+            </button>
+          </div>
+
+          {/* Filter chips — collapsible on mobile, inline on desktop */}
+          <div className={cn('flex-wrap gap-1.5 sm:flex', filtersOpen ? 'flex' : 'hidden')}>
             {([
               ['all', 'Alla'],
               ['open', 'Öppna'],
@@ -401,7 +469,7 @@ export default function TasksClient() {
           ) : loading ? (
             <div className="grid gap-3">
               {Array.from({ length: 3 }).map((_, i) => (
-                <div key={i} className="h-20 animate-pulse rounded-2xl border border-slate-100 bg-[#dfe6da]" />
+                <div key={i} className="h-20 animate-pulse rounded-lg border border-[#e3e9df] bg-[#dfe6da]" />
               ))}
             </div>
           ) : visibleTasks.length === 0 ? (
@@ -412,7 +480,7 @@ export default function TasksClient() {
           ) : (
             <div className="grid gap-2.5">
               {visibleTasks.map((task) => {
-                const prospect = task.prospect_id ? prospectsById.get(task.prospect_id) || null : null;
+                const linkLabel = task.related_label;
                 const overdue = isOverdue(task);
                 const updating = updatingTaskIds.includes(task.id);
 
@@ -420,16 +488,16 @@ export default function TasksClient() {
                   <div
                     key={task.id}
                     className={cn(
-                      'relative grid gap-3 overflow-hidden rounded-2xl border px-4 py-3.5 transition md:grid-cols-[1fr_auto] md:items-center',
+                      'relative grid gap-3 overflow-hidden rounded-lg border px-4 py-3.5 shadow-[0_1px_2px_rgba(15,23,42,0.05)] transition md:grid-cols-[1fr_auto] md:items-center',
                       overdue
                         ? 'border-amber-200 bg-amber-50/40'
-                        : 'border-slate-200 bg-white hover:border-slate-300',
+                        : 'border-[#e3e9df] bg-white hover:border-[#cfdcc9]',
                       task.status === 'done' && 'opacity-60',
                     )}
                   >
                     {/* Priority / status strip */}
                     <span className={cn(
-                      'absolute inset-y-0 left-0 w-1 rounded-l-2xl',
+                      'absolute inset-y-0 left-0 w-1.5',
                       task.status === 'done' ? stripClass.done
                         : overdue ? stripClass.overdue
                         : stripClass[task.priority],
@@ -457,7 +525,7 @@ export default function TasksClient() {
                       <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-500">
                         <span>Deadline: {formatDate(task.due_date)}</span>
                         {task.remind_at && <span>Påminnelse: {formatDateTime(task.remind_at)}</span>}
-                        {prospect?.company_name && <span>Prospekt: {prospect.company_name}</span>}
+                        {linkLabel && task.related_type && <span>{relatedTypeLabel[task.related_type]}: {linkLabel}</span>}
                         {task.source && <span>Källa: {task.source}</span>}
                       </div>
 
@@ -500,34 +568,39 @@ export default function TasksClient() {
 
       {/* ── Modal ── */}
       {modalOpen && (
-        <div
-          className="fixed inset-0 z-[2800] flex items-end justify-center bg-slate-950/45 p-3 [backdrop-filter:blur(4px)] sm:items-center sm:p-4"
-          onClick={closeModal}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-label={editingTaskId ? 'Redigera uppgift' : 'Ny uppgift'}
-            onClick={(e) => e.stopPropagation()}
-            className="grid w-full max-w-[720px] gap-5 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_30px_80px_rgba(15,23,42,0.24)] sm:max-h-[88vh]"
-          >
-            {/* Modal header */}
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h2 className="text-lg font-bold text-slate-900">
-                  {editingTaskId ? 'Redigera uppgift' : 'Ny uppgift'}
-                </h2>
-                <p className={cn('mt-0.5', crm.pageSubtitle)}>
-                  Fånga uppföljningar utan att lämna CRM-flödet.
-                </p>
-              </div>
-              <button type="button" onClick={closeModal} className={crm.ghostButton}>
-                Stäng
+        <CrmModal
+          onClose={closeModal}
+          ariaLabel={editingTaskId ? 'Redigera uppgift' : 'Ny uppgift'}
+          maxWidth="sm:max-w-[720px]"
+          header={
+            <>
+              <h2 className="text-lg font-bold text-slate-900">{editingTaskId ? 'Redigera uppgift' : 'Ny uppgift'}</h2>
+              <p className={cn('mt-0.5', crm.pageSubtitle)}>Fånga uppföljningar utan att lämna CRM-flödet.</p>
+            </>
+          }
+          footer={
+            <>
+              <button
+                type="button"
+                onClick={closeModal}
+                className="flex-1 rounded-xl border border-slate-200 bg-white py-2.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 sm:flex-none sm:px-5"
+              >
+                Avbryt
               </button>
-            </div>
-
-            {/* Form fields */}
-            <div className="grid gap-4">
+              <button
+                type="button"
+                onClick={saveTask}
+                disabled={submitting}
+                className="flex-1 rounded-xl py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-95 disabled:opacity-60 sm:ml-auto sm:flex-none sm:px-5"
+                style={{ backgroundColor: 'var(--crm-primary)' }}
+              >
+                {submitting ? 'Sparar…' : editingTaskId ? 'Spara ändringar' : 'Skapa uppgift'}
+              </button>
+            </>
+          }
+        >
+          {/* Form fields */}
+          <div className="grid gap-4">
               <div>
                 <p className={cn('mb-1.5', crm.sectionTitle)}>Titel</p>
                 <Input
@@ -539,44 +612,56 @@ export default function TasksClient() {
 
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
-                  <p className={cn('mb-1.5', crm.sectionTitle)}>Prospekt</p>
-                  <select
-                    value={draft.prospect_id}
-                    onChange={(e) => setDraft((c) => ({ ...c, prospect_id: e.target.value }))}
-                    className="min-h-11 w-full rounded-lg border border-[#dce4d8] bg-white px-3 py-2 text-sm text-slate-900 transition-colors focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                  <p className={cn('mb-1.5', crm.sectionTitle)}>Koppling</p>
+                  <Select
+                    value={draft.related_type}
+                    onChange={(e) => setDraft((c) => ({ ...c, related_type: e.target.value as TaskDraft['related_type'], related_id: '', related_label: '' }))}
                   >
-                    <option value="">Inget prospekt valt</option>
-                    {prospects.map((p) => (
-                      <option key={p.id} value={p.id}>{p.company_name}</option>
-                    ))}
-                  </select>
+                    <option value="">Ingen koppling</option>
+                    <option value="crm_customer">Kund</option>
+                    <option value="crm_quote">Offert</option>
+                    <option value="crm_prospect">Prospekt</option>
+                  </Select>
                 </div>
 
                 <div>
-                  <p className={cn('mb-1.5', crm.sectionTitle)}>Status</p>
-                  <select
-                    value={draft.status}
-                    onChange={(e) => setDraft((c) => ({ ...c, status: e.target.value as TaskItem['status'] }))}
-                    className="min-h-11 w-full rounded-lg border border-[#dce4d8] bg-white px-3 py-2 text-sm text-slate-900 transition-colors focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
-                  >
-                    <option value="open">Öppen</option>
-                    <option value="done">Klar</option>
-                  </select>
+                  <p className={cn('mb-1.5', crm.sectionTitle)}>
+                    {draft.related_type ? relatedTypeLabel[draft.related_type] : 'Post'}
+                  </p>
+                  <EntityCombobox
+                    value={draft.related_id}
+                    valueLabel={draft.related_label}
+                    onChange={(id, label) => setDraft((c) => ({ ...c, related_id: id, related_label: label }))}
+                    onClear={() => setDraft((c) => ({ ...c, related_id: '', related_label: '' }))}
+                    search={searchRelated}
+                    disabled={!draft.related_type}
+                    placeholder={draft.related_type ? `Sök ${relatedTypeLabel[draft.related_type].toLowerCase()}…` : 'Välj koppling först'}
+                  />
                 </div>
               </div>
 
-              <div className="grid gap-4 rounded-2xl border border-slate-100 bg-slate-50/60 p-4 sm:grid-cols-3">
+              <div>
+                <p className={cn('mb-1.5', crm.sectionTitle)}>Status</p>
+                <Select
+                  value={draft.status}
+                  onChange={(e) => setDraft((c) => ({ ...c, status: e.target.value as TaskItem['status'] }))}
+                >
+                  <option value="open">Öppen</option>
+                  <option value="done">Klar</option>
+                </Select>
+              </div>
+
+              <div className="grid gap-4 rounded-xl border border-[#e3e9df] bg-[#f6f9f3] p-4 sm:grid-cols-3">
                 <div>
                   <p className={cn('mb-1.5', crm.sectionTitle)}>Prioritet</p>
-                  <select
+                  <Select
                     value={draft.priority}
                     onChange={(e) => setDraft((c) => ({ ...c, priority: e.target.value as TaskItem['priority'] }))}
-                    className="min-h-11 w-full rounded-lg border border-[#dce4d8] bg-white px-3 py-2 text-sm text-slate-900 transition-colors focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
                   >
                     <option value="low">Låg</option>
                     <option value="normal">Normal</option>
                     <option value="high">Hög</option>
-                  </select>
+                  </Select>
                 </div>
                 <div>
                   <p className={cn('mb-1.5', crm.sectionTitle)}>Deadline</p>
@@ -613,24 +698,8 @@ export default function TasksClient() {
                   className="min-h-[120px]"
                 />
               </div>
-            </div>
-
-            {/* Modal actions */}
-            <div className="flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 pt-4">
-              <button type="button" onClick={closeModal} className={crm.ghostButton}>
-                Avbryt
-              </button>
-              <button
-                type="button"
-                onClick={saveTask}
-                disabled={submitting}
-                className={cn(crm.saveButton, 'h-9 w-auto px-5')}
-              >
-                {submitting ? 'Sparar…' : editingTaskId ? 'Spara ändringar' : 'Skapa uppgift'}
-              </button>
-            </div>
           </div>
-        </div>
+        </CrmModal>
       )}
     </div>
   );
