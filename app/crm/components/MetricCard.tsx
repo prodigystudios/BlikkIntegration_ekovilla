@@ -11,29 +11,36 @@ type MetricCardProps = {
   className?: string;
 };
 
-export default function MetricCard({ label, value, helper, icon, iconBg = 'bg-emerald-100', trend, className }: MetricCardProps) {
+// Minimal CRM KPI card: label kicker + prominent value, nothing else.
+// The label already says what the number means, so no helper line — kept as
+// low-profile as possible so a row of four reads as a quick summary band.
+// `helper` stays in the props for call-site compatibility but is not rendered.
+export default function MetricCard({ label, value, icon, iconBg = 'bg-emerald-100', trend, className }: MetricCardProps) {
   const trendUp = trend != null && trend.value >= 0;
 
   return (
-    <div className={cn('rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] p-4 shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)]', className)}>
-      <div className="flex items-start justify-between gap-2">
+    <div
+      className={cn(
+        'rounded-xl border border-[#e3e9df] bg-[#f9fbf7] px-3.5 py-2.5 shadow-[0_1px_2px_rgba(20,44,27,0.05)] transition hover:border-[#d6e1d0]',
+        className,
+      )}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="truncate text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">{label}</span>
         {icon ? (
-          <div className={cn('flex h-10 w-10 items-center justify-center rounded-xl', iconBg)}>
-            {icon}
-          </div>
+          <div className={cn('flex h-7 w-7 shrink-0 items-center justify-center rounded-lg', iconBg)}>{icon}</div>
         ) : null}
+      </div>
+
+      <div className="mt-1 flex items-baseline gap-2">
+        <span className="text-2xl font-bold leading-none tracking-tight text-slate-900 tabular-nums">{value}</span>
         {trend != null ? (
-          <span className={cn('ml-auto flex items-center gap-0.5 text-xs font-semibold', trendUp ? 'text-emerald-600' : 'text-rose-500')}>
+          <span className={cn('flex items-center gap-0.5 text-[11px] font-semibold', trendUp ? 'text-emerald-600' : 'text-rose-500')}>
             <TrendArrow up={trendUp} />
             {trendUp ? '+' : ''}{trend.value}%
           </span>
         ) : null}
       </div>
-      <div className={cn('text-[2rem] font-bold tracking-tight text-slate-900', icon ? 'mt-3' : trend ? 'mt-6' : 'mt-0')}>
-        {value}
-      </div>
-      <div className="mt-0.5 text-sm text-slate-500">{label}</div>
-      {helper ? <div className="mt-1 text-xs text-slate-400">{helper}</div> : null}
     </div>
   );
 }
