@@ -1,7 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import MetricCard from '../components/MetricCard';
 import Input from '../../../components/ui/Input';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
@@ -272,13 +271,6 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
     return map;
   }, [assignees]);
 
-  const stats = useMemo(() => ({
-    total: assigneeScopedQuotes.length,
-    active: assigneeScopedQuotes.filter((q) => q.status === 'draft' || q.status === 'sent' || q.status === 'follow_up').length,
-    followUp: assigneeScopedQuotes.filter((q) => q.status === 'follow_up').length,
-    won: assigneeScopedQuotes.filter((q) => q.status === 'won').length,
-  }), [assigneeScopedQuotes]);
-
   const filterCounts = useMemo<Record<QuoteFilter, number>>(() => ({
     all: assigneeScopedQuotes.length,
     active: assigneeScopedQuotes.filter((q) => q.status === 'draft' || q.status === 'sent' || q.status === 'follow_up').length,
@@ -473,14 +465,6 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
         >
           + Skapa offert
         </button>
-      </div>
-
-      {/* Metric cards */}
-      <div className="hidden gap-4 sm:grid sm:grid-cols-2 xl:grid-cols-4">
-        <MetricCard label="Alla offerter" value={stats.total} helper="Hela offertregistret oavsett utfall" />
-        <MetricCard label="Aktiva offerter" value={stats.active} helper="Utkast, skickade och uppföljning" />
-        <MetricCard label="Kräver uppföljning" value={stats.followUp} helper="Behöver nästa offertsteg" />
-        <MetricCard label="Vunna offerter" value={stats.won} helper="Offerter som landat i affär" />
       </div>
 
       {/* Quote list */}

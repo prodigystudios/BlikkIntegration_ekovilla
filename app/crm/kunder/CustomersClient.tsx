@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Input from '../../../components/ui/Input';
-import MetricCard from '../components/MetricCard';
 import { cn } from '@/lib/shared/cn';
 import { crm, customerStageLabel, customerStageClass, syncStatusLabel, syncStatusClass } from '@/app/crm/lib/crmTokens';
 
@@ -102,13 +101,6 @@ export default function CustomersClient() {
   // Active filter count — shown as a badge on the mobile filter toggle.
   const activeFilterCount = filter !== 'alla' ? 1 : 0;
 
-  const stats = useMemo(() => ({
-    total: items.length,
-    prospects: items.filter((i) => i.customer_stage === 'prospect').length,
-    customers: items.filter((i) => i.customer_stage === 'customer').length,
-    fortnox: items.filter((i) => i.customer_stage === 'fortnox_customer').length,
-  }), [items]);
-
   return (
     <div className="grid grid-cols-1 gap-6">
 
@@ -126,14 +118,6 @@ export default function CustomersClient() {
         >
           <span aria-hidden>+</span> Ny kund
         </button>
-      </div>
-
-      {/* ── Metrics ── */}
-      <div className="hidden gap-4 sm:grid sm:grid-cols-2 xl:grid-cols-4">
-        <MetricCard label="Totalt" value={stats.total} helper="Alla i registret" />
-        <MetricCard label="Prospekt" value={stats.prospects} helper="Potentiella kunder" />
-        <MetricCard label="Kunder" value={stats.customers} helper="Aktiva kundrelationer" />
-        <MetricCard label="Fortnox-kunder" value={stats.fortnox} helper="Fortnox-koppling aktiv" />
       </div>
 
       {/* ── List card ── */}

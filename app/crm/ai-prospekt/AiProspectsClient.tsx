@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Input from '../../../components/ui/Input';
-import MetricCard from '../components/MetricCard';
 import Textarea from '../../../components/ui/Textarea';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
@@ -154,12 +153,6 @@ export default function AiProspectsClient({ userName }: { userName: string | nul
   }, [search, status]);
 
   const selected = useMemo(() => items.find((item) => item.id === selectedId) || null, [items, selectedId]);
-  const stats = useMemo(() => ({
-    pending: items.filter((item) => item.status === 'pending').length,
-    approved: items.filter((item) => item.status === 'approved').length,
-    rejected: items.filter((item) => item.status === 'rejected').length,
-  }), [items]);
-
   const filterCounts = useMemo(() => ({
     all: items.length,
     pending: items.filter((item) => item.status === 'pending').length,
@@ -278,13 +271,6 @@ export default function AiProspectsClient({ userName }: { userName: string | nul
         ) : null}
       </div>
 
-      {/* Metrics */}
-      <div className="hidden gap-4 sm:grid sm:grid-cols-2 xl:grid-cols-4">
-        <MetricCard label="Väntar granskning" value={stats.pending} helper="Redo för mänsklig review" />
-        <MetricCard label="Godkända" value={stats.approved} helper="Har blivit riktiga prospekt" />
-        <MetricCard label="Avvisade" value={stats.rejected} helper="Behålls för spårbarhet" />
-        <MetricCard label="Totalt" value={items.length} helper="Alla förslag i kön" />
-      </div>
 
       {/* Filter + search toolbar */}
       <div className={crm.card}>
