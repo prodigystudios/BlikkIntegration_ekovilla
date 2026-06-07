@@ -2,23 +2,38 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Input from '../../../components/ui/Input';
+import Select from '../../../components/ui/Select';
 import Textarea from '../../../components/ui/Textarea';
 import MetricCard from '../components/MetricCard';
 import CrmModal from '../components/CrmModal';
+import EntityCombobox, { type EntityResult } from '../components/EntityCombobox';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 
-type ProspectItem = {
+type QuoteLite = {
   id: string;
-  company_name: string;
-  contact_name: string | null;
-  city: string | null;
-  status: 'new' | 'contacted' | 'qualified' | 'quoted' | 'won' | 'lost';
+  project_name: string;
+  quote_number: string | null;
+};
+
+function quoteLabel(q: QuoteLite): string {
+  return q.quote_number ? `${q.project_name} (#${q.quote_number})` : q.project_name;
+}
+
+type CrmRelatedType = 'crm_prospect' | 'crm_customer' | 'crm_quote';
+
+const relatedTypeLabel: Record<CrmRelatedType, string> = {
+  crm_prospect: 'Prospekt',
+  crm_customer: 'Kund',
+  crm_quote: 'Offert',
 };
 
 type TaskItem = {
   id: string;
+  related_type: CrmRelatedType | null;
+  related_id: string | null;
+  related_label: string | null;
   prospect_id: string | null;
   user_id: string;
   title: string;
@@ -34,7 +49,9 @@ type TaskItem = {
 };
 
 type TaskDraft = {
-  prospect_id: string;
+  related_type: '' | CrmRelatedType;
+  related_id: string;
+  related_label: string;
   title: string;
   details: string;
   priority: TaskItem['priority'];
@@ -61,7 +78,9 @@ const stripClass: Record<string, string> = {
 };
 
 const initialDraft: TaskDraft = {
-  prospect_id: '',
+  related_type: '',
+  related_id: '',
+  related_label: '',
   title: '',
   details: '',
   priority: 'normal',
@@ -113,7 +132,6 @@ function isOverdue(task: TaskItem) {
 
 export default function TasksClient() {
   const toast = useToast();
-  const [prospects, setProspects] = useState<ProspectItem[]>([]);
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -126,7 +144,41 @@ export default function TasksClient() {
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [draft, setDraft] = useState<TaskDraft>(initialDraft);
 
-  const prospectsById = useMemo(() => new Map(prospects.map((item) => [item.id, item])), [prospects]);
+  // Debounced server-side search for the relation picker — scales to any table size
+  // (vs. preloading every customer/quote into a <select>).
+  async function searchRelated(query: string): Promise<EntityResult[]> {
+    if (draft.related_type === 'crm_customer') {
+      const res = await fetch(`/api/crm/customers/search?q=${encodeURIComponent(query)}`, { cache: 'no-store' });
+      const json = await res.json().catch(() => ({}));
+      const items = json?.ok && Array.isArray(json?.data?.items) ? json.data.items : [];
+      return items.map((c: { id: string; display_name: string; organization_number: string | null; city: string | null }) => ({
+        id: c.id,
+        label: c.display_name || 'Okänd kund',
+        sublabel: [c.organization_number, c.city].filter(Boolean).join(' · ') || undefined,
+      }));
+    }
+    if (draft.related_type === 'crm_quote') {
+      const res = await fetch(`/api/crm/quotes?q=${encodeURIComponent(query)}`, { cache: 'no-store' });
+      const json = await res.json().catch(() => ({}));
+      const items = json?.ok && Array.isArray(json?.data?.items) ? json.data.items : [];
+      return items.map((q: QuoteLite & { customer_name: string | null }) => ({
+        id: q.id,
+        label: quoteLabel(q),
+        sublabel: q.customer_name || undefined,
+      }));
+    }
+    if (draft.related_type === 'crm_prospect') {
+      const res = await fetch(`/api/crm/prospects?q=${encodeURIComponent(query)}`, { cache: 'no-store' });
+      const json = await res.json().catch(() => ({}));
+      const items = json?.ok && Array.isArray(json?.data?.items) ? json.data.items : [];
+      return items.map((p: { id: string; company_name: string; contact_name: string | null; city: string | null }) => ({
+        id: p.id,
+        label: p.company_name,
+        sublabel: [p.contact_name, p.city].filter(Boolean).join(' · ') || undefined,
+      }));
+    }
+    return [];
+  }
 
   useEffect(() => {
     let active = true;
@@ -139,38 +191,23 @@ export default function TasksClient() {
         const query = new URLSearchParams();
         if (search.trim()) query.set('q', search.trim());
 
-        const [prospectsRes, tasksRes] = await Promise.all([
-          fetch('/api/crm/prospects', { cache: 'no-store' }),
-          fetch(`/api/crm/tasks${query.size > 0 ? `?${query.toString()}` : ''}`, { cache: 'no-store' }),
-        ]);
-
-        const [prospectsJson, tasksJson] = await Promise.all([
-          prospectsRes.json().catch(() => ({})),
-          tasksRes.json().catch(() => ({})),
-        ]);
+        // Linked entities (customer/quote/prospect) are searched on demand in the
+        // modal via EntityCombobox, so the list view only needs the tasks themselves.
+        const tasksRes = await fetch(`/api/crm/tasks${query.size > 0 ? `?${query.toString()}` : ''}`, { cache: 'no-store' });
+        const tasksJson = await tasksRes.json().catch(() => ({}));
 
         if (!active) return;
-
-        if (!prospectsRes.ok || !prospectsJson.ok) {
-          setError(prospectsJson?.error || 'Kunde inte ladda prospekt för uppgifter.');
-          setProspects([]);
-          setTasks([]);
-          return;
-        }
 
         if (!tasksRes.ok || !tasksJson.ok) {
           setError(tasksJson?.error || 'Kunde inte ladda uppgifter.');
-          setProspects(Array.isArray(prospectsJson?.data?.items) ? prospectsJson.data.items : []);
           setTasks([]);
           return;
         }
 
-        setProspects(Array.isArray(prospectsJson?.data?.items) ? prospectsJson.data.items : []);
         setTasks(Array.isArray(tasksJson?.data?.items) ? tasksJson.data.items : []);
       } catch {
         if (!active) return;
-        setError('Kunde inte ladda uppgiftsytan.');
-        setProspects([]);
+        setError('Kunde inte ladda uppgifter.');
         setTasks([]);
       } finally {
         if (active) setLoading(false);
@@ -225,7 +262,9 @@ export default function TasksClient() {
   function openEditModal(task: TaskItem) {
     setEditingTaskId(task.id);
     setDraft({
-      prospect_id: task.prospect_id || '',
+      related_type: task.related_type || '',
+      related_id: task.related_id || '',
+      related_label: task.related_label || '',
       title: task.title,
       details: task.details || '',
       priority: task.priority,
@@ -289,7 +328,9 @@ export default function TasksClient() {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          prospect_id: task.prospect_id,
+          related_type: task.related_type,
+          related_id: task.related_id,
+          related_label: task.related_label,
           title: task.title,
           details: task.details,
           priority: task.priority,
@@ -439,7 +480,7 @@ export default function TasksClient() {
           ) : (
             <div className="grid gap-2.5">
               {visibleTasks.map((task) => {
-                const prospect = task.prospect_id ? prospectsById.get(task.prospect_id) || null : null;
+                const linkLabel = task.related_label;
                 const overdue = isOverdue(task);
                 const updating = updatingTaskIds.includes(task.id);
 
@@ -484,7 +525,7 @@ export default function TasksClient() {
                       <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-500">
                         <span>Deadline: {formatDate(task.due_date)}</span>
                         {task.remind_at && <span>Påminnelse: {formatDateTime(task.remind_at)}</span>}
-                        {prospect?.company_name && <span>Prospekt: {prospect.company_name}</span>}
+                        {linkLabel && task.related_type && <span>{relatedTypeLabel[task.related_type]}: {linkLabel}</span>}
                         {task.source && <span>Källa: {task.source}</span>}
                       </div>
 
@@ -571,44 +612,56 @@ export default function TasksClient() {
 
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
-                  <p className={cn('mb-1.5', crm.sectionTitle)}>Prospekt</p>
-                  <select
-                    value={draft.prospect_id}
-                    onChange={(e) => setDraft((c) => ({ ...c, prospect_id: e.target.value }))}
-                    className="min-h-11 w-full rounded-lg border border-[#dce4d8] bg-white px-3 py-2 text-sm text-slate-900 transition-colors focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                  <p className={cn('mb-1.5', crm.sectionTitle)}>Koppling</p>
+                  <Select
+                    value={draft.related_type}
+                    onChange={(e) => setDraft((c) => ({ ...c, related_type: e.target.value as TaskDraft['related_type'], related_id: '', related_label: '' }))}
                   >
-                    <option value="">Inget prospekt valt</option>
-                    {prospects.map((p) => (
-                      <option key={p.id} value={p.id}>{p.company_name}</option>
-                    ))}
-                  </select>
+                    <option value="">Ingen koppling</option>
+                    <option value="crm_customer">Kund</option>
+                    <option value="crm_quote">Offert</option>
+                    <option value="crm_prospect">Prospekt</option>
+                  </Select>
                 </div>
 
                 <div>
-                  <p className={cn('mb-1.5', crm.sectionTitle)}>Status</p>
-                  <select
-                    value={draft.status}
-                    onChange={(e) => setDraft((c) => ({ ...c, status: e.target.value as TaskItem['status'] }))}
-                    className="min-h-11 w-full rounded-lg border border-[#dce4d8] bg-white px-3 py-2 text-sm text-slate-900 transition-colors focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
-                  >
-                    <option value="open">Öppen</option>
-                    <option value="done">Klar</option>
-                  </select>
+                  <p className={cn('mb-1.5', crm.sectionTitle)}>
+                    {draft.related_type ? relatedTypeLabel[draft.related_type] : 'Post'}
+                  </p>
+                  <EntityCombobox
+                    value={draft.related_id}
+                    valueLabel={draft.related_label}
+                    onChange={(id, label) => setDraft((c) => ({ ...c, related_id: id, related_label: label }))}
+                    onClear={() => setDraft((c) => ({ ...c, related_id: '', related_label: '' }))}
+                    search={searchRelated}
+                    disabled={!draft.related_type}
+                    placeholder={draft.related_type ? `Sök ${relatedTypeLabel[draft.related_type].toLowerCase()}…` : 'Välj koppling först'}
+                  />
                 </div>
+              </div>
+
+              <div>
+                <p className={cn('mb-1.5', crm.sectionTitle)}>Status</p>
+                <Select
+                  value={draft.status}
+                  onChange={(e) => setDraft((c) => ({ ...c, status: e.target.value as TaskItem['status'] }))}
+                >
+                  <option value="open">Öppen</option>
+                  <option value="done">Klar</option>
+                </Select>
               </div>
 
               <div className="grid gap-4 rounded-xl border border-[#e3e9df] bg-[#f6f9f3] p-4 sm:grid-cols-3">
                 <div>
                   <p className={cn('mb-1.5', crm.sectionTitle)}>Prioritet</p>
-                  <select
+                  <Select
                     value={draft.priority}
                     onChange={(e) => setDraft((c) => ({ ...c, priority: e.target.value as TaskItem['priority'] }))}
-                    className="min-h-11 w-full rounded-lg border border-[#dce4d8] bg-white px-3 py-2 text-sm text-slate-900 transition-colors focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
                   >
                     <option value="low">Låg</option>
                     <option value="normal">Normal</option>
                     <option value="high">Hög</option>
-                  </select>
+                  </Select>
                 </div>
                 <div>
                   <p className={cn('mb-1.5', crm.sectionTitle)}>Deadline</p>
