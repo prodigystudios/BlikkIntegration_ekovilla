@@ -25,6 +25,22 @@ describe('buildOfferRows', () => {
     expect(row.Price).toBe(700);
   });
 
+  it('adds a separate text row for measurements (m² + thickness)', () => {
+    const rows = buildOfferRows([{ pricing_mode: 'm3', article_name: 'Lösull', m2: '100', thickness_mm: '200', unit_price: '700' }], 25, false);
+    expect(rows).toHaveLength(2);
+    expect(rows[0].Description).toBe('Lösull');
+    expect(rows[1].Description).toBe('Yta: 100 m², Tjocklek: 200 mm');
+    // Text-only row carries no amounts.
+    expect(rows[1].Quantity).toBeUndefined();
+    expect(rows[1].Price).toBeUndefined();
+    expect(rows[1].ArticleNumber).toBeUndefined();
+  });
+
+  it('omits the measurement row when there are no measurements', () => {
+    const rows = buildOfferRows([{ unit_price: '100', quantity: '1' }], 25, false);
+    expect(rows).toHaveLength(1);
+  });
+
   it('falls back to article_price when unit_price is empty', () => {
     const [row] = buildOfferRows([{ pricing_mode: 'item', unit_price: '', article_price: 900, quantity: '5' }], 25, false);
     expect(row.Price).toBe(900);

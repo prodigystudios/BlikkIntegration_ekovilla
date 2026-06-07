@@ -1,7 +1,7 @@
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { parseDecimal } from '@/lib/shared/number';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
-import { fortnoxPost, fortnoxPut, FortnoxNotConnectedError } from './client';
+import { fortnoxPost, fortnoxPut, fortnoxGet, fortnoxGetBinary, FortnoxApiError, FortnoxNotConnectedError } from './client';
 import { resolveOurReference } from './helpers';
 import { buildFortnoxCustomerPayload, createFortnoxCustomer, splitSwedishName, buildFortnoxAddress, type FortnoxCustomerSource } from './customers';
 import { DEFAULT_ROT_HOUSE_WORK_TYPE } from './types';
@@ -66,14 +66,27 @@ type QuoteRow = {
 type FortnoxOfferRow = {
   ArticleNumber?: string;
   Description: string;
-  Quantity: number;
-  Price: number;
+  // Quantity/Price are omitted for text-only rows (e.g. the measurement line) so
+  // Fortnox renders them as a comment row without amounts.
+  Quantity?: number;
+  Price?: number;
   Unit?: string;
   Discount?: number;
   VAT?: number;
   HouseWork?: boolean;
   HouseWorkType?: string;
 };
+
+// Free-text description of a line item's measurements (m² + thickness), shown as its
+// own row on the Fortnox offer. Returns null when the item has no measurements.
+function buildMeasurementText(item: QuoteLineItem): string | null {
+  const m2 = item.m2?.trim();
+  const thickness = item.thickness_mm?.trim();
+  const parts: string[] = [];
+  if (m2) parts.push(`Yta: ${m2} m²`);
+  if (thickness) parts.push(`Tjocklek: ${thickness} mm`);
+  return parts.length ? parts.join(', ') : null;
+}
 
 export type PushOfferResult = {
   fortnox_offer_number: string;
@@ -87,7 +100,7 @@ export function buildOfferRows(
 ): FortnoxOfferRow[] {
   if (!lineItems.length) return [];
 
-  return lineItems.map((item) => {
+  return lineItems.flatMap((item) => {
     // parseDecimal handles Swedish comma input ("1,5") that plain parseFloat truncates.
     const price = item.unit_price ? parseDecimal(item.unit_price) : (item.article_price ?? 0);
     // For m³ rows the quantity is the computed volume, not the (empty) quantity field.
@@ -111,7 +124,13 @@ export function buildOfferRows(
       row.HouseWorkType = item.house_work_type || DEFAULT_ROT_HOUSE_WORK_TYPE;
     }
 
-    return row;
+    // Measurements (m² + thickness) get their own text row so they appear on the
+    // offer PDF below the article. Text rows carry only a Description (no amounts).
+    const measurement = buildMeasurementText(item);
+    if (measurement) {
+      return [row, { Description: measurement } as FortnoxOfferRow];
+    }
+    return [row];
   });
 }
 
@@ -406,4 +425,46 @@ export async function pushQuoteToFortnox(quoteId: string): Promise<PushOfferResu
       .eq('id', quoteId);
     throw e;
   }
+}
+
+// Resolve a quote's synced Fortnox offer number, or throw a 409 telling the caller
+// to push the offer to Fortnox first.
+async function requireOfferNumber(quoteId: string): Promise<string> {
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from('crm_quotes')
+    .select('fortnox_offer_number')
+    .eq('id', quoteId)
+    .maybeSingle();
+
+  if (error) throw new FortnoxApiError(500, `Kunde inte läsa offerten: ${error.message}`, undefined, 'Kunde inte läsa offerten. Försök igen.');
+  const offerNumber = data?.fortnox_offer_number;
+  if (!offerNumber) throw new FortnoxApiError(409, 'Skicka offerten till Fortnox först.', undefined, 'Skicka offerten till Fortnox först.');
+  return String(offerNumber);
+}
+
+// Fetch the offer as a PDF (GET /offers/{n}/preview). We use `/preview`, not `/print`:
+// preview renders the same layout as Fortnox's own "Förhandsgranska" (which correctly
+// shows the ROT/skattereduktion breakdown) and has no side effects (doesn't mark the
+// offer as printed). NB: Fortnox validates the Accept header against its JSON allow-list
+// and rejects `application/pdf` with error 1000030 "Invalid response type" — you must
+// keep `Accept: application/json` and Fortnox still returns the PDF binary. See
+// FORTNOX_INTEGRATION.md.
+export async function getFortnoxOfferPdf(quoteId: string): Promise<{ bytes: Uint8Array; contentType: string; offerNumber: string }> {
+  const offerNumber = await requireOfferNumber(quoteId);
+  const { bytes, contentType } = await fortnoxGetBinary(`/offers/${offerNumber}/preview`, 'application/json');
+  if (contentType.includes('application/json')) {
+    // Fortnox returned a JSON body instead of a PDF (e.g. an error wrapper).
+    const text = new TextDecoder().decode(bytes).slice(0, 500);
+    throw new FortnoxApiError(502, `Fortnox returnerade inte en PDF för offert ${offerNumber}: ${text}`, undefined, 'Fortnox kunde inte skapa en PDF av offerten. Försök igen om en stund.');
+  }
+  return { bytes, contentType, offerNumber };
+}
+
+// Ask Fortnox to e-mail the offer to the customer (GET /offers/{n}/email). Uses the
+// offer's EmailInformation in Fortnox; returns the offer number on success.
+export async function emailFortnoxOffer(quoteId: string): Promise<{ offerNumber: string }> {
+  const offerNumber = await requireOfferNumber(quoteId);
+  await fortnoxGet(`/offers/${offerNumber}/email`);
+  return { offerNumber };
 }

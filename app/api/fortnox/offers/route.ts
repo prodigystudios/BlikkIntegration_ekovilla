@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { requireCrmUser, ok, routeError, validationError } from '../_shared';
+import { requireCrmUser, ok, validationError, fortnoxWriteError } from '../_shared';
 import { pushQuoteToFortnox } from '@/lib/domains/fortnox/offers';
 
 const bodySchema = z.object({
@@ -16,7 +16,7 @@ export async function POST(req: Request) {
 
     const result = await pushQuoteToFortnox(parsed.data.quote_id);
     return ok(result);
-  } catch (e: any) {
-    return routeError(500, 'fortnox_offer_push_failed', e?.message || 'Offert-push till Fortnox misslyckades');
+  } catch (e: unknown) {
+    return fortnoxWriteError(e, 'fortnox_offer_push_failed', 'Offert-push till Fortnox misslyckades');
   }
 }

@@ -2,7 +2,7 @@ import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { createCrmWorkOrderFromQuote } from '@/lib/domains/crm/work-orders';
 import { pushWorkOrderToFortnox } from '@/lib/domains/fortnox/orders';
-import { FortnoxNotConnectedError } from '@/lib/domains/fortnox/client';
+import { FortnoxNotConnectedError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
 import { ok, requireCrmUser, routeError } from '../../_lib';
 
 type RouteContext = {
@@ -38,8 +38,8 @@ export async function POST(_req: Request, context: RouteContext) {
       await pushWorkOrderToFortnox(result.data.workOrder.id);
     } catch (e) {
       if (!(e instanceof FortnoxNotConnectedError)) {
-        fortnoxError = (e as any)?.message || 'Fortnox-synk misslyckades';
-        console.error('[fortnox] Auto-push arbetsorder misslyckades:', fortnoxError);
+        console.error('[fortnox] Auto-push arbetsorder misslyckades:', (e as Error)?.message);
+        fortnoxError = friendlyFortnoxMessage(e);
       }
     }
 

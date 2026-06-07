@@ -25,10 +25,60 @@ export class FortnoxApiError extends Error {
   constructor(
     public readonly status: number,
     message: string,
+    // Fortnox's own error code + message (parsed from the response body) so callers
+    // can translate them to user-friendly text. `message` keeps the full technical
+    // string for logs.
+    public readonly fortnoxCode?: number,
+    public readonly fortnoxMessage?: string,
   ) {
     super(message);
     this.name = 'FortnoxApiError';
   }
+}
+
+// Fortnox error bodies look like { "ErrorInformation": { "code": 2001243, "message": "..." } }.
+function parseFortnoxError(text: string): { code?: number; message?: string } {
+  try {
+    const info = (JSON.parse(text) as { ErrorInformation?: { code?: unknown; message?: unknown } })?.ErrorInformation;
+    if (!info) return {};
+    const code = typeof info.code === 'number' ? info.code : Number(info.code) || undefined;
+    const message = typeof info.message === 'string' ? info.message : undefined;
+    return { code, message };
+  } catch {
+    return {};
+  }
+}
+
+function buildFortnoxError(status: number, method: string, path: string, text: string): FortnoxApiError {
+  const { code, message } = parseFortnoxError(text);
+  return new FortnoxApiError(status, `Fortnox ${method} ${path} misslyckades (${status}): ${text}`, code, message);
+}
+
+// Known Fortnox error codes → plain-language Swedish a salesperson understands.
+// Add codes here as we hit them; unknown codes fall back to Fortnox's own message.
+const FRIENDLY_FORTNOX_MESSAGES: Record<number, string> = {
+  2001243: 'Offerten är låst eftersom en arbetsorder redan har skapats från den. Den går inte att ändra i efterhand.',
+  2000499: 'Det finns redan en order kopplad till den här offerten.',
+  2000310: 'Posten används redan i Fortnox och kan inte ändras eller tas bort.',
+  2000204: 'En obligatorisk uppgift saknas i Fortnox. Komplettera kund-/offertuppgifterna och försök igen.',
+  1000030: 'Kunde inte hämta dokumentet från Fortnox. Försök igen om en stund.',
+};
+
+// Turn any thrown Fortnox error into a message safe to show a non-technical user.
+export function friendlyFortnoxMessage(e: unknown): string {
+  if (e instanceof FortnoxNotConnectedError) {
+    return 'Fortnox är inte kopplat. Be en administratör ansluta Fortnox i CRM-inställningarna.';
+  }
+  if (e instanceof FortnoxApiError) {
+    if (e.fortnoxCode && FRIENDLY_FORTNOX_MESSAGES[e.fortnoxCode]) {
+      return FRIENDLY_FORTNOX_MESSAGES[e.fortnoxCode];
+    }
+    // Fortnox's own message is Swedish and usually readable — far better than the raw
+    // "Fortnox PUT ... (400): {json}" technical string.
+    if (e.fortnoxMessage) return e.fortnoxMessage;
+    return 'Något gick fel mot Fortnox. Försök igen, eller kontakta support om det kvarstår.';
+  }
+  return 'Något gick fel. Försök igen.';
 }
 
 function getClientCredentials() {
@@ -162,10 +212,36 @@ export async function fortnoxGet<T>(
 
   if (!res.ok) {
     const text = await res.text();
-    throw new FortnoxApiError(res.status, `Fortnox GET ${path} misslyckades (${res.status}): ${text}`);
+    throw buildFortnoxError(res.status, 'GET', path, text);
   }
 
   return res.json() as Promise<T>;
+}
+
+// Perform a GET that returns a binary document (e.g. an offer/order/invoice PDF
+// from the `/print` endpoints). Unlike fortnoxGet this requests a non-JSON body and
+// returns the raw bytes + content type.
+export async function fortnoxGetBinary(
+  path: string,
+  accept = 'application/pdf',
+): Promise<{ bytes: Uint8Array; contentType: string }> {
+  const token = await getValidAccessToken();
+
+  const res = await fetch(`${FORTNOX_API_BASE}${path}`, {
+    cache: 'no-store',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: accept,
+    },
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw buildFortnoxError(res.status, 'GET', path, text);
+  }
+
+  const buf = await res.arrayBuffer();
+  return { bytes: new Uint8Array(buf), contentType: res.headers.get('content-type') || accept };
 }
 
 // Perform a PUT request to the Fortnox API (e.g. offer → order conversion).
@@ -185,7 +261,7 @@ export async function fortnoxPut<T>(path: string, body?: unknown): Promise<T> {
 
   if (!res.ok) {
     const text = await res.text();
-    throw new FortnoxApiError(res.status, `Fortnox PUT ${path} misslyckades (${res.status}): ${text}`);
+    throw buildFortnoxError(res.status, 'PUT', path, text);
   }
 
   return res.json() as Promise<T>;
@@ -208,7 +284,7 @@ export async function fortnoxPost<T>(path: string, body: unknown): Promise<T> {
 
   if (!res.ok) {
     const text = await res.text();
-    throw new FortnoxApiError(res.status, `Fortnox POST ${path} misslyckades (${res.status}): ${text}`);
+    throw buildFortnoxError(res.status, 'POST', path, text);
   }
 
   return res.json() as Promise<T>;
@@ -230,6 +306,6 @@ export async function fortnoxDelete(path: string): Promise<void> {
 
   if (!res.ok) {
     const text = await res.text();
-    throw new FortnoxApiError(res.status, `Fortnox DELETE ${path} misslyckades (${res.status}): ${text}`);
+    throw buildFortnoxError(res.status, 'DELETE', path, text);
   }
 }

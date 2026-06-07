@@ -175,6 +175,8 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
   const [movingQuoteId, setMovingQuoteId] = useState<string | null>(null);
   const [creatingWorkOrderId, setCreatingWorkOrderId] = useState<string | null>(null);
   const [pushingFortnoxId, setPushingFortnoxId] = useState<string | null>(null);
+  const [pdfLoadingId, setPdfLoadingId] = useState<string | null>(null);
+  const [emailingId, setEmailingId] = useState<string | null>(null);
   const [detailPanelOpen, setDetailPanelOpen] = useState(false);
   const [detailQuoteId, setDetailQuoteId] = useState<string | null>(null);
   const [hasHandledPreset, setHasHandledPreset] = useState(false);
@@ -386,6 +388,51 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
       toast.error('Kunde inte skicka till Fortnox');
     } finally {
       setPushingFortnoxId(null);
+    }
+  }
+
+  // Fetch the Fortnox-rendered offer PDF and open it in a new tab. We open the tab
+  // synchronously (before the await) so it isn't blocked as a non-gesture popup.
+  async function openFortnoxPdf(quoteId: string) {
+    const win = window.open('', '_blank');
+    setPdfLoadingId(quoteId);
+    try {
+      const res = await fetch(`/api/fortnox/offers/${quoteId}/pdf`, { cache: 'no-store' });
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        win?.close();
+        toast.error(json?.error || 'Kunde inte hämta PDF');
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      if (win) win.location.href = url;
+      else window.open(url, '_blank');
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch {
+      win?.close();
+      toast.error('Kunde inte hämta PDF');
+    } finally {
+      setPdfLoadingId(null);
+    }
+  }
+
+  // Ask Fortnox to e-mail the offer to the customer. Outward-facing → confirm first.
+  async function sendFortnoxEmail(quoteId: string) {
+    if (!window.confirm('Mejla offerten till kunden via Fortnox?')) return;
+    setEmailingId(quoteId);
+    try {
+      const res = await fetch(`/api/fortnox/offers/${quoteId}/email`, { method: 'POST' });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.ok) {
+        toast.error(json?.error || 'Kunde inte mejla offerten');
+        return;
+      }
+      toast.success('Offerten mejlad till kunden via Fortnox');
+    } catch {
+      toast.error('Kunde inte mejla offerten');
+    } finally {
+      setEmailingId(null);
     }
   }
 
@@ -741,31 +788,78 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
                         </svg>
                       </span>
                       <div className="grid min-w-0 gap-0.5">
-                        <span className="text-sm font-semibold text-slate-800">Fortnox</span>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="text-sm font-semibold text-slate-800">Fortnox</span>
+                          {detailQuote.work_order_id ? (
+                            <span className="inline-flex items-center gap-1 rounded-md border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">
+                              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                <rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 018 0v4" />
+                              </svg>
+                              Låst
+                            </span>
+                          ) : null}
+                        </div>
                         <span className="text-xs leading-5 text-slate-500">
                           {detailQuote.fortnox_offer_number
                             ? `Offert #${detailQuote.fortnox_offer_number} skapad.`
                             : 'Skicka offerten till Fortnox.'}
                         </span>
-                        {detailQuote.fortnox_sync_status === 'failed' ? (
+                        {detailQuote.fortnox_sync_status === 'failed' && !detailQuote.work_order_id ? (
                           <span className="text-xs font-semibold text-rose-600">Senaste synk misslyckades.</span>
                         ) : null}
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => void pushToFortnox(detailQuote.id)}
-                      disabled={pushingFortnoxId === detailQuote.id || detailQuote.fortnox_sync_status === 'pending'}
-                      className={cn(
-                        'shrink-0 rounded-lg border px-3 py-1.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50',
-                        detailQuote.fortnox_offer_number
-                          ? 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
-                          : 'border-indigo-600 bg-indigo-600 text-white hover:bg-indigo-700',
-                      )}
-                    >
-                      {pushingFortnoxId === detailQuote.id ? 'Skickar…' : detailQuote.fortnox_offer_number ? 'Skicka igen' : 'Skicka'}
-                    </button>
+                    <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                      {detailQuote.fortnox_offer_number ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => void openFortnoxPdf(detailQuote.id)}
+                            disabled={pdfLoadingId === detailQuote.id}
+                            className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {pdfLoadingId === detailQuote.id ? 'Hämtar…' : 'Hämta PDF'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void sendFortnoxEmail(detailQuote.id)}
+                            disabled={emailingId === detailQuote.id}
+                            className="rounded-lg border border-indigo-600 bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {emailingId === detailQuote.id ? 'Mejlar…' : 'Mejla offert'}
+                          </button>
+                        </>
+                      ) : null}
+                      {/* Sync/re-sync hidden once a work order locks the offer in Fortnox */}
+                      {!detailQuote.work_order_id ? (
+                        <button
+                          type="button"
+                          onClick={() => void pushToFortnox(detailQuote.id)}
+                          disabled={pushingFortnoxId === detailQuote.id || detailQuote.fortnox_sync_status === 'pending'}
+                          className={cn(
+                            'rounded-lg border px-3 py-1.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50',
+                            detailQuote.fortnox_offer_number
+                              ? 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
+                              : 'border-indigo-600 bg-indigo-600 text-white hover:bg-indigo-700',
+                          )}
+                        >
+                          {pushingFortnoxId === detailQuote.id ? 'Skickar…' : detailQuote.fortnox_offer_number ? 'Skicka igen' : 'Skicka'}
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
+
+                  {/* Locked explanation — offer can no longer be edited/re-synced */}
+                  {detailQuote.work_order_id ? (
+                    <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2.5 text-xs leading-5 text-amber-900">
+                      <svg className="mt-0.5 shrink-0" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 018 0v4" />
+                      </svg>
+                      <span>
+                        Offerten är <strong>låst</strong>{detailQuote.work_order_number ? ` – arbetsorder ${detailQuote.work_order_number} är skapad` : ' – en arbetsorder har skapats'}, så den kan inte längre ändras eller synkas om i Fortnox. Du kan fortfarande hämta PDF:en och mejla den till kunden.
+                      </span>
+                    </div>
+                  ) : null}
                 </div>
               </div>
             </div>
