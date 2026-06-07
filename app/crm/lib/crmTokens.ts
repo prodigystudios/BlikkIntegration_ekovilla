@@ -59,6 +59,39 @@ export const opportunityStatusClass: Record<OpportunityStatus, string> = {
   lost: 'border-rose-200 bg-rose-50 text-rose-700',
 };
 
+// ── Work Order Status ─────────────────────────────────────────────────────────
+// DB enum values are internal keys; these are display-only labels (intentionally
+// differ, e.g. completed = "Fakturera"). `ready` is retired (migrated to scheduled);
+// `invoiced` = "Avslutad" is the terminal state set after invoicing.
+
+export type WorkOrderStatus = 'draft' | 'scheduled' | 'ready' | 'in_progress' | 'completed' | 'invoiced' | 'cancelled';
+
+export const workOrderStatusLabel: Record<WorkOrderStatus, string> = {
+  draft: 'Ej planerad',
+  scheduled: 'Planerad',
+  ready: 'Planerad', // retired status — shown as Planerad for any legacy rows
+  in_progress: 'Pågående',
+  completed: 'Fakturera',
+  invoiced: 'Avslutad',
+  cancelled: 'Avbruten',
+};
+
+export const workOrderStatusClass: Record<WorkOrderStatus, string> = {
+  draft: 'border-slate-200 bg-slate-50 text-slate-600',
+  scheduled: 'border-sky-200 bg-sky-50 text-sky-700',
+  ready: 'border-sky-200 bg-sky-50 text-sky-700',
+  in_progress: 'border-violet-200 bg-violet-50 text-violet-700',
+  completed: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  invoiced: 'border-teal-200 bg-teal-50 text-teal-700',
+  cancelled: 'border-rose-200 bg-rose-50 text-rose-700',
+};
+
+// The forward flow shown as a stepper (ready retired; cancelled is off-flow).
+export const WORK_ORDER_STATUS_FLOW: WorkOrderStatus[] = ['draft', 'scheduled', 'in_progress', 'completed', 'invoiced'];
+
+// Statuses offered in the editable status picker (flow + cancelled, no retired 'ready').
+export const WORK_ORDER_STATUS_OPTIONS: WorkOrderStatus[] = ['draft', 'scheduled', 'in_progress', 'completed', 'invoiced', 'cancelled'];
+
 // ── Design Tokens ───────────────────────────────────────────────────────────
 
 export const crm = {

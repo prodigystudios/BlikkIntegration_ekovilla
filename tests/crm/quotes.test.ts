@@ -401,6 +401,29 @@ describe('PATCH /api/crm/quotes/[id]', () => {
       expect.objectContaining({ status: 'sent' })
     );
   });
+
+  // Regression: a partial PATCH (e.g. the list's status-change quick action) must not
+  // overwrite untouched columns with schema-injected defaults. Only the fields actually
+  // present in the request body may reach updateCrmQuote.
+  it('skriver inte fält som inte skickades (partial PATCH nollar inte offerten)', async () => {
+    mockGetUser.mockResolvedValue(salesUser);
+    mockUpdate.mockResolvedValue({ data: { id: 'q1' }, error: null } as any);
+
+    // Speglar status-bytet i listan: en delmängd skickas, UTAN
+    // internal_handoff / line_items / rot_details / customer_id.
+    await PATCH(
+      req('/api/crm/quotes/q1', { method: 'PATCH', body: JSON.stringify({ ...validQuoteBase, status: 'sent' }) }),
+      ctx
+    );
+
+    const passedInput = mockUpdate.mock.calls[0][2];
+    expect(passedInput).not.toHaveProperty('internal_handoff');
+    expect(passedInput).not.toHaveProperty('line_items');
+    expect(passedInput).not.toHaveProperty('rot_details');
+    expect(passedInput).not.toHaveProperty('customer_id');
+    expect(passedInput).toHaveProperty('status', 'sent');
+    expect(passedInput).toHaveProperty('project_name');
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -69,7 +69,7 @@ const internalHandoffSchema = z.object({
   work_scope: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
 });
 
-const quoteLineItemSchema = z.object({
+export const quoteLineItemSchema = z.object({
   id: z.string().min(1, 'Rad-id krävs'),
   construction: lineItemConstructionSchema.optional().default(''),
   m2: z.preprocess((value) => normalizeOptionalText(value) ?? '', z.string()).optional().default(''),
@@ -186,4 +186,9 @@ export const createCrmQuoteSchema = z.object({
 });
 
 export const updateCrmQuoteSchema = createCrmQuoteSchema;
+
+// Persist only fields the client actually sent (shared helper, also used by work orders).
+// Prevents a partial PATCH — status change, "clear articles" save — from wiping untouched
+// columns (line_items, internal_handoff, rot_details, customer_id) with schema defaults.
+export { pickProvidedFields as pickProvidedQuoteFields } from '../_shared';
 

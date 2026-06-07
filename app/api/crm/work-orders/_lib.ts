@@ -1,5 +1,11 @@
 import { z } from 'zod';
-export { ok, routeError, validationError, requireCrmUser, requireSignedInUser } from '../_shared';
+import { quoteLineItemSchema } from '../quotes/_lib';
+export { ok, routeError, validationError, requireCrmUser, requireSignedInUser, pickProvidedFields } from '../_shared';
+
+// Reuses the quote line-item schema so work order article edits validate identically.
+export const updateWorkOrderLineItemsSchema = z.object({
+  line_items: z.array(quoteLineItemSchema).default([]),
+});
 
 function normalizeOptionalText(value: unknown) {
   if (value == null) return null;
@@ -7,7 +13,10 @@ function normalizeOptionalText(value: unknown) {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-const workOrderStatusSchema = z.enum(['draft', 'scheduled', 'ready', 'in_progress', 'completed', 'cancelled']);
+// 'ready' is retired (migration 20260607 dropped it from the DB CHECK + migrated rows to
+// 'scheduled'), so it's not accepted on write. It stays in the display label/class maps
+// (crmTokens) only as a fallback for any un-migrated legacy row.
+const workOrderStatusSchema = z.enum(['draft', 'scheduled', 'in_progress', 'completed', 'invoiced', 'cancelled']);
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Ogiltigt datum');
 
 export const createWorkOrderTimeEntrySchema = z.object({
@@ -29,6 +38,7 @@ export const listCrmWorkOrdersQuerySchema = z.object({
 
 export const updateCrmWorkOrderSchema = z.object({
   status: workOrderStatusSchema,
+  assigned_to: z.preprocess((value) => normalizeOptionalText(value), z.string().uuid('Ogiltig användare').nullable()).optional(),
   desired_installation_date: z.preprocess((value) => normalizeOptionalText(value), dateSchema.nullable()).optional().default(null),
   notes: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
   internal_handoff: z.object({

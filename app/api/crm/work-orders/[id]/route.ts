@@ -1,7 +1,7 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { updateCrmWorkOrder } from '@/lib/domains/crm/work-orders';
-import { ok, requireCrmUser, routeError, updateCrmWorkOrderSchema, validationError } from '../_lib';
+import { getCrmWorkOrder, updateCrmWorkOrder } from '@/lib/domains/crm/work-orders';
+import { ok, pickProvidedFields, requireCrmUser, requireSignedInUser, routeError, updateCrmWorkOrderSchema, validationError } from '../_lib';
 
 type RouteContext = {
   params: {
@@ -9,16 +9,38 @@ type RouteContext = {
   };
 };
 
+export async function GET(_req: Request, context: RouteContext) {
+  try {
+    // Read is open to any signed-in employee (installers/member read the field view);
+    // editing (PATCH below) stays restricted to CRM roles.
+    const currentUser = await requireSignedInUser();
+    if (currentUser.response) return currentUser.response;
+
+    const supabase = createRouteHandlerClient({ cookies });
+    const { data, error } = await getCrmWorkOrder(supabase, context.params.id);
+
+    if (error) return routeError(404, 'crm_work_order_not_found', error.message);
+
+    return ok({ item: data });
+  } catch (e: any) {
+    return routeError(500, 'crm_work_order_fetch_unexpected', e?.message || 'Failed to fetch work order');
+  }
+}
+
 export async function PATCH(req: Request, context: RouteContext) {
   try {
     const crmUser = await requireCrmUser();
     if (crmUser.response || !crmUser.currentUser) return crmUser.response;
 
-    const parsedBody = updateCrmWorkOrderSchema.safeParse(await req.json().catch(() => null));
+    const rawBody = await req.json().catch(() => null);
+    const parsedBody = updateCrmWorkOrderSchema.safeParse(rawBody);
     if (!parsedBody.success) return validationError(parsedBody.error);
 
     const supabase = createRouteHandlerClient({ cookies });
-    const { data, error } = await updateCrmWorkOrder(supabase, context.params.id, parsedBody.data);
+    // Persist only fields the client actually sent, so a partial PATCH (e.g. a status-only
+    // change) doesn't wipe untouched columns (internal_handoff, work_address) with defaults.
+    const updateInput = pickProvidedFields(parsedBody.data, rawBody);
+    const { data, error } = await updateCrmWorkOrder(supabase, context.params.id, updateInput);
 
     if (error) {
       return routeError(500, 'crm_work_order_update_failed', error.message);

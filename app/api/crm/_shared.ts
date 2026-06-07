@@ -33,6 +33,15 @@ export function validationError(parsedError: z.ZodError) {
   return routeError(400, 'validation_error', getFirstValidationMessage(parsedError), parsedError.flatten());
 }
 
+// Keep only the fields the client actually sent. Zod schemas inject defaults for absent
+// fields; persisting those on a partial PATCH would overwrite untouched columns with
+// empties. The schema still validates the full (defaulted) object — we just write the
+// sent subset. Shared by quote + work-order PATCH routes.
+export function pickProvidedFields<T extends Record<string, unknown>>(parsed: T, rawBody: unknown): Partial<T> {
+  const sentKeys = rawBody && typeof rawBody === 'object' && !Array.isArray(rawBody) ? Object.keys(rawBody as object) : [];
+  return Object.fromEntries(Object.entries(parsed).filter(([key]) => sentKeys.includes(key))) as Partial<T>;
+}
+
 export async function requireCrmUser() {
   const currentUser = await getCurrentUser();
 
@@ -40,7 +49,8 @@ export async function requireCrmUser() {
     return { currentUser: null, response: routeError(401, 'unauthorized', 'Unauthorized') };
   }
 
-  if (!(currentUser.role === 'sales' || currentUser.role === 'admin')) {
+  // konsult has the same CRM rights as sales (external sellers working for us) — see lib/roles.ts.
+  if (!(currentUser.role === 'sales' || currentUser.role === 'admin' || currentUser.role === 'konsult')) {
     return { currentUser: null, response: routeError(403, 'forbidden', 'Forbidden') };
   }
 

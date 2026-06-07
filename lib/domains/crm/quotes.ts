@@ -137,7 +137,7 @@ type CreateCrmQuoteInput = {
   assigned_to: string;
 };
 
-type UpdateCrmQuoteInput = Omit<CreateCrmQuoteInput, 'created_by' | 'assigned_to'>;
+export type UpdateCrmQuoteInput = Omit<CreateCrmQuoteInput, 'created_by' | 'assigned_to'>;
 
 type ListCrmQuotesOptions = {
   search?: string;
@@ -201,7 +201,7 @@ export async function createCrmQuote(supabase: SupabaseClient, input: CreateCrmQ
   return supabase.from('crm_quotes').insert(input).select(crmQuoteSelect).single();
 }
 
-export async function updateCrmQuote(supabase: SupabaseClient, id: string, input: UpdateCrmQuoteInput) {
+export async function updateCrmQuote(supabase: SupabaseClient, id: string, input: Partial<UpdateCrmQuoteInput>) {
   return supabase.from('crm_quotes').update(input).eq('id', id).select(crmQuoteSelect).single();
 }
 
@@ -221,7 +221,7 @@ export async function markCrmQuoteWon(
   quoteId: string,
   assignedTo: string,
   createdBy: string,
-  updateInput: UpdateCrmQuoteInput
+  updateInput: Partial<UpdateCrmQuoteInput>
 ): Promise<WonResult> {
   const { data: current, error: fetchError } = await getCrmQuoteStatus(supabase, quoteId);
   if (fetchError || !current) {
@@ -247,7 +247,9 @@ export async function markCrmQuoteWon(
     return { data: null, error: { code: 'crm_customer_conversion_failed', message: conversionError ?? 'Konvertering misslyckades' } };
   }
 
-  const { data, error: updateError } = await updateCrmQuote(supabase, quoteId, updateInput);
+  // Link the quote to the freshly-created customer — otherwise customer_id stays null and
+  // the work order created from this quote (and its installer contact) has no customer.
+  const { data, error: updateError } = await updateCrmQuote(supabase, quoteId, { ...updateInput, customer_id: customerId });
   if (updateError) {
     // Conversion succeeded but quote update failed — partial state, needs manual reconciliation
     console.error(
