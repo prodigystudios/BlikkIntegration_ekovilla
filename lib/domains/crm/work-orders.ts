@@ -117,9 +117,88 @@ type QuoteSource = {
   work_order_number: string | null;
 };
 
-function buildWorkOrderNumber(quoteId: string) {
+function buildWorkOrderNumber(seed: string) {
   const datePart = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-  return `AO-${datePart}-${quoteId.slice(0, 6).toUpperCase()}`;
+  return `AO-${datePart}-${seed.replace(/-/g, '').slice(0, 6).toUpperCase()}`;
+}
+
+type StandaloneWorkOrderInput = {
+  customerId: string;
+  projectName: string;
+  desiredInstallationDate: string | null;
+  actorUserId: string;
+};
+
+// Create a work order WITHOUT an originating quote (standalone order). Pulls identity
+// (name, snapshot, address) from the linked customer card; articles/notes are added
+// afterwards on the work order detail page. quote_id is left null.
+export async function createStandaloneCrmWorkOrder(supabase: SupabaseClient, input: StandaloneWorkOrderInput) {
+  const { data: customer, error: custErr } = await supabase
+    .from('crm_customers')
+    .select('id, customer_type, company_name, organization_number, first_name, last_name, personal_number, email, phone, visit_address, delivery_address, invoice_address, contacts:crm_customer_contacts(name, is_primary)')
+    .eq('id', input.customerId)
+    .maybeSingle();
+
+  if (custErr) return { data: null, error: custErr, reason: 'customer_fetch_failed' as const };
+  if (!customer) return { data: null, error: { message: 'Kunden hittades inte' }, reason: 'customer_not_found' as const };
+
+  const isBusiness = customer.customer_type === 'business';
+  const clientName = isBusiness
+    ? (customer.company_name || 'Okänd kund')
+    : ([customer.first_name, customer.last_name].filter(Boolean).join(' ') || 'Okänd kund');
+  const contacts = Array.isArray(customer.contacts) ? customer.contacts : [];
+  const primaryContact = contacts.find((c: { is_primary?: boolean }) => c.is_primary) || contacts[0] || null;
+  const visit = (customer.visit_address || {}) as Record<string, string | null>;
+
+  const customerSnapshot = {
+    customer_name: clientName,
+    company_name: isBusiness ? (customer.company_name || null) : null,
+    organization_number: isBusiness ? (customer.organization_number || null) : null,
+    personal_number: !isBusiness ? (customer.personal_number || null) : null,
+    contact_name: (primaryContact as { name?: string | null } | null)?.name || null,
+    email: customer.email || null,
+    phone: customer.phone || null,
+    street_address: visit.street || visit.street_address || null,
+    postal_code: visit.postal_code || null,
+    city: visit.city || null,
+    delivery_address: null,
+    invoice_address: null,
+  };
+
+  const createResult = await supabase
+    .from('crm_work_orders')
+    .insert({
+      quote_id: null,
+      customer_id: customer.id,
+      order_number: buildWorkOrderNumber(globalThis.crypto.randomUUID()),
+      project_name: input.projectName,
+      client_name: clientName,
+      quote_type: customer.customer_type,
+      customer_snapshot: customerSnapshot,
+      work_address: {
+        street_address: customerSnapshot.street_address,
+        postal_code: customerSnapshot.postal_code,
+        city: customerSnapshot.city,
+        delivery_address: null,
+        invoice_address: null,
+      },
+      pricing_summary: {},
+      line_items: [],
+      rot_details: {},
+      internal_handoff: {},
+      currency_code: 'SEK',
+      amount: 0,
+      vat_percent: 25,
+      desired_installation_date: input.desiredInstallationDate,
+      status: 'draft',
+      notes: null,
+      created_by: input.actorUserId,
+      assigned_to: input.actorUserId,
+    })
+    .select(crmWorkOrderSelect)
+    .single();
+
+  return { data: createResult.data, error: createResult.error, reason: createResult.error ? ('create_failed' as const) : null };
 }
 
 function getClientName(source: QuoteSource) {

@@ -42,7 +42,7 @@ type LineItem = {
 
 type WorkOrderItem = {
   id: string;
-  quote_id: string;
+  quote_id: string | null;
   customer_id: string | null;
   order_number: string;
   project_name: string;
@@ -624,7 +624,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                 {totalSacks > 0 ? <StatField label="Säckar (beräknat)" value={`${totalSacks} st`} /> : null}
                 <StatField label="Loggade timmar" value={`${totalLoggedHours.toFixed(1)} h`} />
                 <StatField label="Kommentarer" value={comments.length} />
-                <StatField label="Källa" value={`Offert ${workOrder.quote_id.slice(0, 8)}…`} />
+                <StatField label="Källa" value={workOrder.quote_id ? `Offert ${workOrder.quote_id.slice(0, 8)}…` : 'Skapad direkt (utan offert)'} />
               </div>
             </Card>
           </div>

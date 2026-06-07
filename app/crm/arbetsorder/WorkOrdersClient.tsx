@@ -8,6 +8,9 @@ import { crm, syncStatusLabel, syncStatusClass, workOrderStatusLabel, workOrderS
 import { formatDate, formatCurrency, isWorkOrderOverdue, documentRef } from '@/app/crm/lib/format';
 import AssigneeFilter, { matchesAssignee, type AssigneeFilterValue, type AssigneeOption } from '@/app/crm/components/AssigneeFilter';
 import DocumentNumberBadge from '@/app/crm/components/DocumentNumberBadge';
+import CrmModal from '@/app/crm/components/CrmModal';
+import EntityCombobox, { type EntityResult } from '@/app/crm/components/EntityCombobox';
+import { useToast } from '@/lib/Toast';
 
 type WorkOrderStatus = 'draft' | 'scheduled' | 'ready' | 'in_progress' | 'completed' | 'invoiced' | 'cancelled';
 type FortnoxSyncStatus = 'not_synced' | 'pending' | 'synced' | 'failed';
@@ -57,6 +60,7 @@ function initialsOf(name: string | null | undefined) {
 
 export default function WorkOrdersClient({ currentUserId }: { currentUserId: string | null }) {
   const router = useRouter();
+  const toast = useToast();
   const searchParams = useSearchParams();
   const [workOrders, setWorkOrders] = useState<WorkOrderItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -66,6 +70,60 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [assigneeFilter, setAssigneeFilter] = useState<AssigneeFilterValue>([]);
   const [assignees, setAssignees] = useState<AssigneeOption[]>([]);
+
+  // "Ny order" (standalone, no quote) — requires a linked customer.
+  const [newOrderOpen, setNewOrderOpen] = useState(false);
+  const [newOrderCustomerId, setNewOrderCustomerId] = useState('');
+  const [newOrderCustomerLabel, setNewOrderCustomerLabel] = useState('');
+  const [newOrderName, setNewOrderName] = useState('');
+  const [newOrderDate, setNewOrderDate] = useState('');
+  const [creatingOrder, setCreatingOrder] = useState(false);
+
+  async function searchCustomers(query: string): Promise<EntityResult[]> {
+    const res = await fetch(`/api/crm/customers/search?q=${encodeURIComponent(query)}`, { cache: 'no-store' });
+    const json = await res.json().catch(() => ({}));
+    const items = json?.ok && Array.isArray(json?.data?.items) ? json.data.items : [];
+    return items.map((c: { id: string; display_name: string; organization_number: string | null; city: string | null }) => ({
+      id: c.id,
+      label: c.display_name || 'Okänd kund',
+      sublabel: [c.organization_number, c.city].filter(Boolean).join(' · ') || undefined,
+    }));
+  }
+
+  function resetNewOrder() {
+    setNewOrderOpen(false);
+    setNewOrderCustomerId('');
+    setNewOrderCustomerLabel('');
+    setNewOrderName('');
+    setNewOrderDate('');
+  }
+
+  async function createOrder() {
+    if (!newOrderCustomerId) { toast.error('Välj en kund'); return; }
+    if (!newOrderName.trim()) { toast.error('Ange ett ordernamn'); return; }
+    setCreatingOrder(true);
+    try {
+      const res = await fetch('/api/crm/work-orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customer_id: newOrderCustomerId,
+          project_name: newOrderName.trim(),
+          desired_installation_date: newOrderDate || null,
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte skapa order'); return; }
+      const item = json?.data?.item as { id?: string; order_number?: string } | undefined;
+      toast.success(item?.order_number ? `Order skapad: ${item.order_number}` : 'Order skapad');
+      resetNewOrder();
+      if (item?.id) router.push(`/crm/arbetsorder/${item.id}`);
+    } catch {
+      toast.error('Kunde inte skapa order');
+    } finally {
+      setCreatingOrder(false);
+    }
+  }
 
   useEffect(() => {
     let active = true;
@@ -126,12 +184,14 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
             Öppna en arbetsorder för arbetsytan med översikt, ekonomi, artiklar, tid och kommentarer.
           </p>
         </div>
-        <Input
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          placeholder="Sök på ordernummer, projekt eller kund"
-          className="max-w-sm"
-        />
+        <button
+          type="button"
+          onClick={() => setNewOrderOpen(true)}
+          className="inline-flex items-center rounded-xl px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90"
+          style={{ backgroundColor: 'var(--crm-primary)' }}
+        >
+          + Ny order
+        </button>
       </div>
 
       {error ? (
@@ -139,59 +199,61 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
       ) : null}
 
       {/* List card */}
-      <div className={crm.card}>
-        {/* Toolbar */}
-        <div className="grid gap-3 border-b border-[#e0e8dc] px-5 py-3">
-          {/* Mobile filter toggle */}
-          <div className="flex items-center justify-between gap-3 sm:hidden">
-            <button
-              type="button"
-              onClick={() => setFiltersOpen((o) => !o)}
-              aria-expanded={filtersOpen}
-              className={cn(
-                'relative inline-flex items-center gap-2 !rounded-lg !border px-3 py-2 text-sm font-semibold transition',
-                filtersOpen || activeFilterCount > 0 ? '!border-emerald-500 !bg-emerald-50 text-emerald-700' : '!border-[#dce4d8] !bg-white text-slate-600',
-              )}
-            >
-              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M4 6h16M7 12h10M10 18h4" />
-              </svg>
-              Filter
-              {activeFilterCount > 0 ? (
-                <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-emerald-600 px-1 text-[10px] font-bold text-white">{activeFilterCount}</span>
-              ) : null}
-            </button>
-            <span className="whitespace-nowrap text-xs text-slate-400">{workOrders.length} i registret</span>
-          </div>
+      <div className="grid gap-3 rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] p-4 shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)] md:p-5">
+        {/* Search + mobile filter toggle */}
+        <div className="flex items-center gap-2">
+          <Input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Sök på ordernummer, projekt eller kund"
+            className="flex-1 sm:max-w-xs"
+          />
+          <button
+            type="button"
+            onClick={() => setFiltersOpen((o) => !o)}
+            aria-expanded={filtersOpen}
+            aria-label="Filter"
+            className={cn(
+              'relative inline-flex h-[2.6rem] w-[2.6rem] shrink-0 items-center justify-center !rounded-lg !border !p-0 transition sm:hidden',
+              filtersOpen || activeFilterCount > 0
+                ? '!border-emerald-500 !bg-emerald-50 text-emerald-700'
+                : '!border-[#dce4d8] !bg-white text-slate-600',
+            )}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M4 6h16M7 12h10M10 18h4" />
+            </svg>
+            {activeFilterCount > 0 ? (
+              <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-emerald-600 px-1 text-[10px] font-bold text-white">
+                {activeFilterCount}
+              </span>
+            ) : null}
+          </button>
+        </div>
 
-          {/* Filters — collapsible on mobile, inline on desktop */}
-          <div className={cn('flex-col gap-3 sm:flex sm:flex-row sm:flex-wrap sm:items-center sm:justify-between', filtersOpen ? 'flex' : 'hidden')}>
-            <div className="flex flex-wrap gap-2">
-              {FILTERS.map(([value, label]) => (
-                <button
-                  key={value}
-                  type="button"
-                  onClick={() => setFilter(value)}
-                  className={cn(
-                    'rounded-full border px-3 py-1.5 text-sm font-semibold transition',
-                    filter === value ? 'text-white' : 'border-[#e0e8dc] bg-[#f9fbf7] text-slate-600 hover:border-[#cfdcc9]',
-                  )}
-                  style={filter === value ? { backgroundColor: 'var(--crm-primary)', borderColor: 'var(--crm-primary)' } : undefined}
-                >
-                  {label} <span className={cn('ml-0.5', filter === value ? 'text-white/70' : 'text-slate-400')}>{filterCounts[value]}</span>
-                </button>
-              ))}
-            </div>
-            <div className="flex items-center gap-3">
-              <AssigneeFilter value={assigneeFilter} onChange={setAssigneeFilter} users={assignees} className="w-full sm:w-[200px]" />
-              <span className="hidden whitespace-nowrap text-xs text-slate-400 sm:inline">{workOrders.length} i registret</span>
-            </div>
+        {/* Filters — collapsible on mobile, inline on desktop */}
+        <div className={cn('flex-col gap-3 sm:flex sm:flex-row sm:flex-wrap sm:items-center', filtersOpen ? 'flex' : 'hidden')}>
+          <div className="flex flex-wrap gap-2">
+            {FILTERS.map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setFilter(value)}
+                className={cn(
+                  'rounded-full border px-3 py-1.5 text-sm font-semibold transition',
+                  filter === value ? 'text-white' : 'border-[#e0e8dc] bg-[#f9fbf7] text-slate-600 hover:border-[#cfdcc9]',
+                )}
+                style={filter === value ? { backgroundColor: 'var(--crm-primary)', borderColor: 'var(--crm-primary)' } : undefined}
+              >
+                {label} <span className={cn('ml-0.5', filter === value ? 'text-white/70' : 'text-slate-400')}>{filterCounts[value]}</span>
+              </button>
+            ))}
           </div>
+          <AssigneeFilter value={assigneeFilter} onChange={setAssigneeFilter} users={assignees} className="w-full sm:ml-auto sm:w-[200px]" />
         </div>
 
         {/* List */}
-        <div className="p-4">
-          {loading ? <div className="py-4 text-sm text-slate-500">Laddar arbetsorder…</div> : null}
+        {loading ? <div className="py-4 text-sm text-slate-500">Laddar arbetsorder…</div> : null}
           {!loading && visibleWorkOrders.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-[#cfdcc9] bg-[#f1f5ee] px-4 py-8 text-center text-sm text-slate-500">
               Inga arbetsorder matchar just nu.
@@ -281,8 +343,64 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
               })}
             </div>
           ) : null}
-        </div>
       </div>
+
+      {/* ── Ny order (standalone) ── */}
+      {newOrderOpen ? (
+        <CrmModal
+          onClose={resetNewOrder}
+          ariaLabel="Ny order"
+          maxWidth="sm:max-w-[520px]"
+          header={
+            <>
+              <h2 className="text-lg font-bold text-slate-900">Ny order</h2>
+              <p className="m-0 mt-0.5 text-sm text-slate-500">Skapa en order utan offert. Lägg till artiklar efteråt på ordern.</p>
+            </>
+          }
+          footer={
+            <>
+              <button
+                type="button"
+                onClick={resetNewOrder}
+                className="flex-1 rounded-xl border border-slate-200 bg-white py-2.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 sm:flex-none sm:px-5"
+              >
+                Avbryt
+              </button>
+              <button
+                type="button"
+                onClick={() => void createOrder()}
+                disabled={creatingOrder || !newOrderCustomerId || !newOrderName.trim()}
+                className="flex-1 rounded-xl py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60 sm:ml-auto sm:flex-none sm:px-5"
+                style={{ backgroundColor: 'var(--crm-primary)' }}
+              >
+                {creatingOrder ? 'Skapar…' : 'Skapa order'}
+              </button>
+            </>
+          }
+        >
+          <div className="grid gap-4">
+            <div>
+              <p className={cn('mb-1.5', crm.sectionTitle)}>Kund</p>
+              <EntityCombobox
+                value={newOrderCustomerId}
+                valueLabel={newOrderCustomerLabel}
+                onChange={(id, label) => { setNewOrderCustomerId(id); setNewOrderCustomerLabel(label); }}
+                onClear={() => { setNewOrderCustomerId(''); setNewOrderCustomerLabel(''); }}
+                search={searchCustomers}
+                placeholder="Sök kund…"
+              />
+            </div>
+            <div>
+              <p className={cn('mb-1.5', crm.sectionTitle)}>Ordernamn / projekt</p>
+              <Input value={newOrderName} onChange={(e) => setNewOrderName(e.target.value)} placeholder="Ex. Lösull vind, Lindberg" />
+            </div>
+            <div>
+              <p className={cn('mb-1.5', crm.sectionTitle)}>Önskat installationsdatum (valfritt)</p>
+              <Input value={newOrderDate} onChange={(e) => setNewOrderDate(e.target.value)} type="date" lang="sv-SE" />
+            </div>
+          </div>
+        </CrmModal>
+      ) : null}
     </div>
   );
 }

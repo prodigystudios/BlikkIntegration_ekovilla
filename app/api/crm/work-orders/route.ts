@@ -1,7 +1,7 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { listCrmWorkOrdersWithFilters } from '@/lib/domains/crm/work-orders';
-import { listCrmWorkOrdersQuerySchema, ok, requireCrmUser, routeError, validationError } from './_lib';
+import { listCrmWorkOrdersWithFilters, createStandaloneCrmWorkOrder } from '@/lib/domains/crm/work-orders';
+import { createStandaloneWorkOrderSchema, listCrmWorkOrdersQuerySchema, ok, requireCrmUser, routeError, validationError } from './_lib';
 
 export async function GET(req: Request) {
   try {
@@ -34,5 +34,33 @@ export async function GET(req: Request) {
     return ok({ items: data || [] });
   } catch (e: any) {
     return routeError(500, 'crm_work_orders_unexpected', e?.message || 'Failed to list work orders');
+  }
+}
+
+// Create a standalone work order (no quote). Articles are added afterwards on the detail.
+export async function POST(req: Request) {
+  try {
+    const crmUser = await requireCrmUser();
+    if (crmUser.response || !crmUser.currentUser) return crmUser.response;
+
+    const parsed = createStandaloneWorkOrderSchema.safeParse(await req.json().catch(() => null));
+    if (!parsed.success) return validationError(parsed.error);
+
+    const supabase = createRouteHandlerClient({ cookies });
+    const result = await createStandaloneCrmWorkOrder(supabase, {
+      customerId: parsed.data.customer_id,
+      projectName: parsed.data.project_name,
+      desiredInstallationDate: parsed.data.desired_installation_date,
+      actorUserId: crmUser.currentUser.id,
+    });
+
+    if (result.error) {
+      const status = result.reason === 'customer_not_found' ? 404 : 500;
+      return routeError(status, `crm_work_order_${result.reason}`, result.error.message || 'Kunde inte skapa order');
+    }
+
+    return ok({ item: result.data }, 201);
+  } catch (e: any) {
+    return routeError(500, 'crm_work_order_create_unexpected', e?.message || 'Failed to create work order');
   }
 }

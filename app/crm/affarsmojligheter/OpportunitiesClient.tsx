@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import MetricCard from '../components/MetricCard';
 import CrmModal from '../components/CrmModal';
 import Input from '../../../components/ui/Input';
 import Textarea from '../../../components/ui/Textarea';
@@ -330,13 +329,6 @@ export default function OpportunitiesClient() {
     lost: items.filter((i) => i.status === 'lost').length,
   }), [items]);
 
-  const stats = useMemo(() => ({
-    open: items.filter((i) => i.status === 'qualified' || i.status === 'quoted').length,
-    qualified: items.filter((i) => i.status === 'qualified').length,
-    quoted: items.filter((i) => i.status === 'quoted').length,
-    won: items.filter((i) => i.status === 'won').length,
-  }), [items]);
-
   async function createOpportunity() {
     if (!draft.title.trim()) { toast.error('Titel krävs'); return; }
     if (draft.identity_mode === 'new' && !draft.customer_name.trim()) { toast.error('Namn eller företag krävs'); return; }
@@ -527,12 +519,6 @@ export default function OpportunitiesClient() {
         </button>
       </div>
 
-      <div className="hidden gap-4 sm:grid sm:grid-cols-2 xl:grid-cols-4">
-        <MetricCard label="Aktiva affärer" value={stats.open} helper="Kvalificerade och i offertläge" />
-        <MetricCard label="Kvalificerade" value={stats.qualified} helper="Köpintresse bekräftat" />
-        <MetricCard label="I offertläge" value={stats.quoted} helper="Offert ute eller på väg" />
-        <MetricCard label="Vunna" value={stats.won} helper="Klara att lämna vidare mot order" />
-      </div>
 
       <div className="rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] p-4 shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)]">
         <div className="mb-4">

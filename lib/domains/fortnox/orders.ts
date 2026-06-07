@@ -8,6 +8,14 @@ import { DEFAULT_ROT_HOUSE_WORK_TYPE } from './types';
 type WorkOrderRow = {
   id: string;
   quote_id: string | null;
+  customer_id: string | null;
+  assigned_to: string | null;
+  customer_snapshot: {
+    contact_name?: string | null;
+    delivery_address?: string | null;
+    postal_code?: string | null;
+    city?: string | null;
+  } | null;
   project_name: string;
   client_name: string | null;
   amount: number;
@@ -78,15 +86,24 @@ async function resolveCustomerNumberFromQuote(
   }
 
   if (linkedQuote.customer_id) {
-    const { data: customer } = await supabase
-      .from('crm_customers')
-      .select('fortnox_customer_id')
-      .eq('id', linkedQuote.customer_id)
-      .maybeSingle();
-    if (customer?.fortnox_customer_id) return customer.fortnox_customer_id;
+    return resolveFortnoxCustomerNumberById(linkedQuote.customer_id, supabase);
   }
 
   return null;
+}
+
+// Look up a customer's Fortnox number directly (used for standalone orders whose customer
+// lives on the work order, not on a quote).
+async function resolveFortnoxCustomerNumberById(
+  customerId: string,
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+): Promise<string | null> {
+  const { data } = await supabase
+    .from('crm_customers')
+    .select('fortnox_customer_id')
+    .eq('id', customerId)
+    .maybeSingle();
+  return (data as { fortnox_customer_id?: string | null } | null)?.fortnox_customer_id ?? null;
 }
 
 // Push a CRM work order to Fortnox as an order.
@@ -103,7 +120,7 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
   try {
     const { data: workOrder, error } = await supabase
       .from('crm_work_orders')
-      .select('id, quote_id, project_name, client_name, amount, vat_percent, currency_code, line_items, fortnox_order_number')
+      .select('id, quote_id, customer_id, assigned_to, customer_snapshot, project_name, client_name, amount, vat_percent, currency_code, line_items, fortnox_order_number')
       .eq('id', workOrderId)
       .single<WorkOrderRow>();
 
@@ -179,16 +196,20 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
       fortnoxOrderNumber = resolved;
     } else {
       // No Fortnox offer exists – create a standalone order with full reference data.
-      const customerNumber = await resolveCustomerNumberFromQuote(linkedQuote, supabase);
+      // Resolve the customer from the linked quote, or — for a truly standalone order
+      // (no quote) — from the work order's own customer.
+      const customerNumber =
+        (await resolveCustomerNumberFromQuote(linkedQuote, supabase)) ??
+        (workOrder.customer_id ? await resolveFortnoxCustomerNumberById(workOrder.customer_id, supabase) : null);
       if (!customerNumber) {
         throw new Error(
           'Ingen Fortnox-kundkoppling hittades. Kunden måste vara synkad till Fortnox.',
         );
       }
 
-      const ourReference = await resolveOurReference(linkedQuote?.assigned_to ?? null, supabase);
+      const ourReference = await resolveOurReference(linkedQuote?.assigned_to ?? workOrder.assigned_to ?? null, supabase);
 
-      const snapshot = linkedQuote?.customer_snapshot;
+      const snapshot = linkedQuote?.customer_snapshot ?? workOrder.customer_snapshot;
       const deliveryAddress = snapshot?.delivery_address;
 
       const vatPercent = typeof workOrder.vat_percent === 'number' ? workOrder.vat_percent : 25;

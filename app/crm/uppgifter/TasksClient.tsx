@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from 'react';
 import Input from '../../../components/ui/Input';
 import Select from '../../../components/ui/Select';
 import Textarea from '../../../components/ui/Textarea';
-import MetricCard from '../components/MetricCard';
 import CrmModal from '../components/CrmModal';
 import EntityCombobox, { type EntityResult } from '../components/EntityCombobox';
 import { useToast } from '@/lib/Toast';
@@ -237,12 +236,6 @@ export default function TasksClient() {
     return tasks.filter((task) => task.status === 'open');
   }, [filter, tasks]);
 
-  const stats = useMemo(() => ({
-    open: tasks.filter((task) => task.status === 'open').length,
-    overdue: tasks.filter((task) => isOverdue(task)).length,
-    done: tasks.filter((task) => task.status === 'done').length,
-  }), [tasks]);
-
   const filterCounts = useMemo(() => ({
     all: tasks.length,
     open: tasks.filter((task) => task.status === 'open').length,
@@ -387,13 +380,6 @@ export default function TasksClient() {
         </button>
       </div>
 
-      {/* ── Metrics ── */}
-      <div className="hidden gap-4 sm:grid sm:grid-cols-2 xl:grid-cols-4">
-        <MetricCard label="Öppna" value={stats.open} helper="Aktiva uppgifter att jobba med" />
-        <MetricCard label="Förfallna" value={stats.overdue} helper="Behöver åtgärdas först" />
-        <MetricCard label="Klara" value={stats.done} helper="Färdiga uppföljningar" />
-        <MetricCard label="I vy" value={visibleTasks.length} helper="Matchar sök och filter" />
-      </div>
 
       {/* ── List card ── */}
       <div className={crm.card}>
