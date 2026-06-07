@@ -17,7 +17,7 @@ import WorkOrderCommentsTab from './WorkOrderCommentsTab';
 import WorkOrderArticlesTab, { type ArticleLineItem } from './WorkOrderArticlesTab';
 import { useWorkOrderActivity } from './useWorkOrderActivity';
 import { useCustomerContact } from './useCustomerContact';
-import { formatDate, formatDateTime, formatCurrency, joinAddress, isWorkOrderOverdue } from '@/app/crm/lib/format';
+import { formatDate, formatDateTime, formatCurrency, joinAddress, isWorkOrderOverdue, documentRef } from '@/app/crm/lib/format';
 import { openFortnoxPdf, postFortnoxEmail } from '@/app/crm/lib/fortnoxDoc';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -366,14 +366,13 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
           <div className="grid min-w-0 gap-1.5">
             <div className="flex flex-wrap items-center gap-2">
               <span className={cn(crm.badge, workOrderStatusClass[workOrder.status])}>{workOrderStatusLabel[workOrder.status]}</span>
-              <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">{workOrder.order_number}</span>
+              <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">{documentRef(workOrder.fortnox_order_number, workOrder.order_number)}</span>
               {overdue ? (
                 <span className={cn(crm.badge, 'border-rose-200 bg-rose-50 text-rose-700')}>Försenad</span>
               ) : null}
               {fortnoxConnected ? (
                 <span className={cn(crm.badge, syncStatusClass[workOrder.fortnox_order_sync_status])}>
                   Fortnox: {syncStatusLabel[workOrder.fortnox_order_sync_status]}
-                  {workOrder.fortnox_order_number ? ` · #${workOrder.fortnox_order_number}` : ''}
                 </span>
               ) : null}
             </div>

@@ -5,8 +5,9 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Input from '../../../components/ui/Input';
 import { cn } from '@/lib/shared/cn';
 import { crm, syncStatusLabel, syncStatusClass, workOrderStatusLabel, workOrderStatusClass, workOrderStatusAccent } from '@/app/crm/lib/crmTokens';
-import { formatDate, formatCurrency, isWorkOrderOverdue } from '@/app/crm/lib/format';
+import { formatDate, formatCurrency, isWorkOrderOverdue, documentRef } from '@/app/crm/lib/format';
 import AssigneeFilter, { matchesAssignee, type AssigneeFilterValue, type AssigneeOption } from '@/app/crm/components/AssigneeFilter';
+import DocumentNumberBadge from '@/app/crm/components/DocumentNumberBadge';
 
 type WorkOrderStatus = 'draft' | 'scheduled' | 'ready' | 'in_progress' | 'completed' | 'invoiced' | 'cancelled';
 type FortnoxSyncStatus = 'not_synced' | 'pending' | 'synced' | 'failed';
@@ -24,6 +25,7 @@ type WorkOrderItem = {
   status: WorkOrderStatus;
   assigned_to: string | null;
   assignee: { id: string; full_name: string | null } | null;
+  fortnox_order_number: string | null;
   fortnox_order_sync_status: FortnoxSyncStatus;
 };
 
@@ -215,28 +217,28 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
                     <span className={cn('w-1.5 shrink-0', workOrderStatusAccent[item.status])} aria-hidden="true" />
 
                     <div className="grid flex-1 grid-cols-[minmax(0,1fr)_auto] items-start gap-3 p-3.5 sm:grid-cols-[minmax(0,1fr)_170px_140px_auto] sm:items-center sm:gap-4">
-                      {/* Identity + chips */}
-                      <div className="grid min-w-0 gap-1">
-                        <div className="flex min-w-0 items-baseline gap-2">
+                      {/* Number badge + identity + chips */}
+                      <div className="flex min-w-0 items-center gap-3">
+                        <DocumentNumberBadge label="Order" value={documentRef(item.fortnox_order_number, item.order_number)} />
+                        <div className="grid min-w-0 gap-1">
                           <strong className="truncate text-sm font-bold text-slate-900">{item.project_name}</strong>
-                          <span className="hidden shrink-0 text-[11px] font-semibold tabular-nums text-slate-400 sm:inline">{item.order_number}</span>
-                        </div>
-                        <span className="truncate text-xs text-slate-500">{item.client_name}</span>
-                        <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
-                          <span className={cn('inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-semibold', workOrderStatusClass[item.status])}>
-                            {workOrderStatusLabel[item.status]}
-                          </span>
-                          {overdue ? (
-                            <span className="inline-flex items-center rounded-md border border-rose-200 bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold text-rose-700">
-                              Försenad
+                          <span className="truncate text-xs text-slate-500">{item.client_name}</span>
+                          <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                            <span className={cn('inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-semibold', workOrderStatusClass[item.status])}>
+                              {workOrderStatusLabel[item.status]}
                             </span>
-                          ) : null}
-                          <span className="inline-flex items-center rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">
-                            {(item.line_items || []).length} rader
-                          </span>
-                          <span className={cn('inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-semibold', syncStatusClass[item.fortnox_order_sync_status])}>
-                            Fortnox: {syncStatusLabel[item.fortnox_order_sync_status]}
-                          </span>
+                            {overdue ? (
+                              <span className="inline-flex items-center rounded-md border border-rose-200 bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold text-rose-700">
+                                Försenad
+                              </span>
+                            ) : null}
+                            <span className="inline-flex items-center rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">
+                              {(item.line_items || []).length} rader
+                            </span>
+                            <span className={cn('inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-semibold', syncStatusClass[item.fortnox_order_sync_status])}>
+                              Fortnox: {syncStatusLabel[item.fortnox_order_sync_status]}
+                            </span>
+                          </div>
                         </div>
                       </div>
 

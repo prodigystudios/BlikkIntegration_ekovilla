@@ -7,6 +7,8 @@ import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
 import AssigneeFilter, { matchesAssignee, type AssigneeFilterValue, type AssigneeOption } from '@/app/crm/components/AssigneeFilter';
 import { openFortnoxPdf, postFortnoxEmail } from '@/app/crm/lib/fortnoxDoc';
+import { documentRef } from '@/app/crm/lib/format';
+import DocumentNumberBadge from '@/app/crm/components/DocumentNumberBadge';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -180,6 +182,11 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
   const [emailingId, setEmailingId] = useState<string | null>(null);
   const [orderPdfId, setOrderPdfId] = useState<string | null>(null);
   const [orderEmailingId, setOrderEmailingId] = useState<string | null>(null);
+  // Map of work_order_id → its Fortnox order number, so the offer list AO-chip and the
+  // modal's work-order reference can lead with the Fortnox number (the quote row itself
+  // doesn't carry it). Fetched once from the work-orders list (one request, no per-row
+  // fetch, no DB join needed).
+  const [workOrderFortnoxById, setWorkOrderFortnoxById] = useState<Map<string, string | null>>(new Map());
   const [detailPanelOpen, setDetailPanelOpen] = useState(false);
   const [detailQuoteId, setDetailQuoteId] = useState<string | null>(null);
   const [hasHandledPreset, setHasHandledPreset] = useState(false);
@@ -289,6 +296,20 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
   // order exists) AND its sync didn't fail. If the sync failed we must NOT show "Låst"
   // / hide re-sync — the salesperson still needs to recover.
   const offerLocked = Boolean(detailQuote?.work_order_id) && detailQuote?.fortnox_sync_status !== 'failed';
+
+  // Load the work-orders list once and index Fortnox order numbers by work_order_id.
+  useEffect(() => {
+    let active = true;
+    fetch('/api/crm/work-orders', { cache: 'no-store' })
+      .then((r) => r.json().catch(() => ({})))
+      .then((j) => {
+        if (!active) return;
+        const items: Array<{ id: string; fortnox_order_number: string | null }> = j?.ok && Array.isArray(j?.data?.items) ? j.data.items : [];
+        setWorkOrderFortnoxById(new Map(items.map((w) => [w.id, w.fortnox_order_number ?? null])));
+      })
+      .catch(() => { if (active) setWorkOrderFortnoxById(new Map()); });
+    return () => { active = false; };
+  }, []);
 
   async function moveQuoteToStatus(quoteId: string, nextStatus: QuoteItem['status']) {
     const currentItem = quotes.find((q) => q.id === quoteId);
@@ -552,32 +573,25 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
                   <span className={cn('w-1.5 shrink-0', statusMeta.accent)} aria-hidden="true" />
 
                   <div className="grid flex-1 grid-cols-[minmax(0,1fr)_auto] items-start gap-3 p-3.5 sm:grid-cols-[minmax(0,1fr)_170px_140px_auto] sm:items-center sm:gap-4">
-                    {/* Identity + chips */}
-                    <div className="grid min-w-0 gap-1">
-                      <div className="flex min-w-0 items-baseline gap-2">
+                    {/* Number badge + identity + chips */}
+                    <div className="flex min-w-0 items-center gap-3">
+                      <DocumentNumberBadge label="Offert" value={documentRef(item.fortnox_offer_number, item.quote_number)} />
+                      <div className="grid min-w-0 gap-1">
                         <strong className="truncate text-sm font-bold text-slate-900">{item.project_name}</strong>
-                        {item.quote_number ? (
-                          <span className="hidden shrink-0 text-[11px] font-semibold tabular-nums text-slate-400 sm:inline">#{item.quote_number}</span>
-                        ) : null}
-                      </div>
-                      <span className="truncate text-xs text-slate-500">{getQuoteCustomerName(item)}</span>
-                      <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
-                        <span className={cn('inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-semibold', statusMeta.className)}>
-                          {statusMeta.label}
-                        </span>
-                        <span className="inline-flex items-center rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">
-                          {item.quote_type === 'private' ? 'Privat' : 'Företag'}
-                        </span>
-                        {item.work_order_number ? (
-                          <span className="inline-flex items-center rounded-md border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">
-                            {item.work_order_number}
+                        <span className="truncate text-xs text-slate-500">{getQuoteCustomerName(item)}</span>
+                        <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                          <span className={cn('inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-semibold', statusMeta.className)}>
+                            {statusMeta.label}
                           </span>
-                        ) : null}
-                        {item.fortnox_offer_number ? (
-                          <span className="inline-flex items-center rounded-md border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700">
-                            Fortnox #{item.fortnox_offer_number}
+                          <span className="inline-flex items-center rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">
+                            {item.quote_type === 'private' ? 'Privat' : 'Företag'}
                           </span>
-                        ) : null}
+                          {item.work_order_id ? (
+                            <span className="inline-flex items-center rounded-md border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">
+                              Order {documentRef(workOrderFortnoxById.get(item.work_order_id) ?? null, item.work_order_number)}
+                            </span>
+                          ) : null}
+                        </div>
                       </div>
                     </div>
 
@@ -647,7 +661,7 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
                     {quoteStatusMeta[detailQuote.status].label}
                   </span>
                   {detailQuote.quote_number ? (
-                    <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">#{detailQuote.quote_number}</span>
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">{documentRef(detailQuote.fortnox_offer_number, detailQuote.quote_number)}</span>
                   ) : null}
                 </div>
                 <strong className="truncate text-lg font-bold tracking-tight text-slate-950">{detailQuote.project_name}</strong>
@@ -744,8 +758,8 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
                       <div className="grid min-w-0 gap-0.5">
                         <span className="text-sm font-semibold text-slate-800">Arbetsorder</span>
                         <span className="text-xs leading-5 text-slate-500">
-                          {detailQuote.work_order_number
-                            ? `${detailQuote.work_order_number} är skapad.`
+                          {detailQuote.work_order_id
+                            ? `${documentRef(workOrderFortnoxById.get(detailQuote.work_order_id) ?? null, detailQuote.work_order_number)} är skapad.`
                             : detailQuote.status === 'won'
                               ? 'Klar att bli en intern arbetsorder.'
                               : 'Sätt offerten till vunnen för att skapa.'}

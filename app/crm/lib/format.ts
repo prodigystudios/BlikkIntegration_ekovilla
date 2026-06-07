@@ -23,6 +23,18 @@ export function joinAddress(parts: Array<string | null | undefined>): string {
   return parts.filter((p) => p && p.trim()).join(', ');
 }
 
+// Reference number to show for an offer/work order. Once synced to Fortnox we lead with
+// the Fortnox DocumentNumber (short, e.g. "#5232", and what the customer sees on the PDF)
+// — fall back to our internal OFF-/AO- number for unsynced/offline documents. The internal
+// number (generated from the row UUID) and the UUID itself remain the stable join keys.
+export function documentRef(
+  fortnoxNumber: string | null | undefined,
+  internalNumber: string | null | undefined,
+): string {
+  if (fortnoxNumber) return `#${fortnoxNumber}`;
+  return internalNumber || '–';
+}
+
 // A work order is overdue when its desired date has passed and it isn't done/closed.
 export function isWorkOrderOverdue(date: string | null | undefined, status: string): boolean {
   if (!date || status === 'completed' || status === 'invoiced' || status === 'cancelled') return false;

@@ -10,7 +10,7 @@ import WorkOrderCommentsTab from '@/app/crm/arbetsorder/WorkOrderCommentsTab';
 import WorkOrderArticlesTab, { type ArticleLineItem } from '@/app/crm/arbetsorder/WorkOrderArticlesTab';
 import { useWorkOrderActivity } from '@/app/crm/arbetsorder/useWorkOrderActivity';
 import { useCustomerContact } from '@/app/crm/arbetsorder/useCustomerContact';
-import { formatDate, joinAddress } from '@/app/crm/lib/format';
+import { formatDate, joinAddress, documentRef } from '@/app/crm/lib/format';
 
 const CRM_PRIMARY = '#1a3f26'; // brand green; --crm-primary is scoped to /crm so hardcode here
 
@@ -19,6 +19,7 @@ type WorkOrderStatus = 'draft' | 'scheduled' | 'ready' | 'in_progress' | 'comple
 type InstallerWorkOrder = {
   id: string;
   order_number: string;
+  fortnox_order_number: string | null;
   project_name: string;
   client_name: string;
   quote_type: 'private' | 'business';
@@ -101,7 +102,7 @@ export default function WorkOrderInstallerClient({ workOrderId, currentUserId }:
         <button type="button" onClick={() => router.back()} className="mb-2 inline-flex w-fit items-center gap-1.5 text-sm text-slate-500 transition hover:text-slate-800">← Tillbaka</button>
         <div className="flex flex-wrap items-center gap-2">
           <span className={cn(crm.badge, workOrderStatusClass[workOrder.status])}>{workOrderStatusLabel[workOrder.status]}</span>
-          <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">{workOrder.order_number}</span>
+          <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">{documentRef(workOrder.fortnox_order_number, workOrder.order_number)}</span>
         </div>
         <h1 className="m-0 mt-1 text-xl font-bold tracking-tight text-slate-900">{workOrder.project_name}</h1>
         <p className="m-0 text-sm text-slate-500">{workOrder.client_name} · Planerad {formatDate(workOrder.desired_installation_date)}</p>
