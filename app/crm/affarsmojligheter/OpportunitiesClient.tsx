@@ -526,7 +526,7 @@ export default function OpportunitiesClient() {
         </button>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="hidden gap-4 sm:grid sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard label="Aktiva affärer" value={stats.open} helper="Kvalificerade och i offertläge" />
         <MetricCard label="Kvalificerade" value={stats.qualified} helper="Köpintresse bekräftat" />
         <MetricCard label="I offertläge" value={stats.quoted} helper="Offert ute eller på väg" />

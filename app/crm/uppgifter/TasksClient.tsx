@@ -342,7 +342,7 @@ export default function TasksClient() {
       </div>
 
       {/* ── Metrics ── */}
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="hidden gap-4 sm:grid sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard label="Öppna" value={stats.open} helper="Aktiva uppgifter att jobba med" />
         <MetricCard label="Förfallna" value={stats.overdue} helper="Behöver åtgärdas först" />
         <MetricCard label="Klara" value={stats.done} helper="Färdiga uppföljningar" />

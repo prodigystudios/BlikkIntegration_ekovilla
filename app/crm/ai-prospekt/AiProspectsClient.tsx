@@ -275,7 +275,7 @@ export default function AiProspectsClient({ userName }: { userName: string | nul
       </div>
 
       {/* Metrics */}
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="hidden gap-4 sm:grid sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard label="Väntar granskning" value={stats.pending} helper="Redo för mänsklig review" />
         <MetricCard label="Godkända" value={stats.approved} helper="Har blivit riktiga prospekt" />
         <MetricCard label="Avvisade" value={stats.rejected} helper="Behålls för spårbarhet" />

@@ -447,7 +447,7 @@ export default function CallsClient() {
         </button>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="hidden gap-4 sm:grid sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard label="Loggade samtal" value={stats.logged} helper="Senaste samtalen i historiken" />
         <MetricCard label="Kräver uppföljning" value={stats.followUp} helper="Utfall som kräver nytt steg" />
         <MetricCard label="Fristående kontakter" value={stats.standalone} helper="Kan lyftas till prospekt" />

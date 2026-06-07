@@ -185,12 +185,12 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
                     {/* Status accent rail */}
                     <span className={cn('w-1.5 shrink-0', workOrderStatusAccent[item.status])} aria-hidden="true" />
 
-                    <div className="grid flex-1 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 p-3.5 sm:grid-cols-[minmax(0,1fr)_170px_140px_auto] sm:gap-4">
+                    <div className="grid flex-1 grid-cols-[minmax(0,1fr)_auto] items-start gap-3 p-3.5 sm:grid-cols-[minmax(0,1fr)_170px_140px_auto] sm:items-center sm:gap-4">
                       {/* Identity + chips */}
                       <div className="grid min-w-0 gap-1">
-                        <div className="flex items-baseline gap-2">
+                        <div className="flex min-w-0 items-baseline gap-2">
                           <strong className="truncate text-sm font-bold text-slate-900">{item.project_name}</strong>
-                          <span className="shrink-0 text-[11px] font-semibold tabular-nums text-slate-400">{item.order_number}</span>
+                          <span className="hidden shrink-0 text-[11px] font-semibold tabular-nums text-slate-400 sm:inline">{item.order_number}</span>
                         </div>
                         <span className="truncate text-xs text-slate-500">{item.client_name}</span>
                         <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
@@ -235,9 +235,9 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
                         </span>
                       </div>
 
-                      {/* Amount + chevron */}
+                      {/* Amount + chevron (amount hidden on mobile — name takes priority) */}
                       <div className="flex items-center justify-end gap-3">
-                        <span className="whitespace-nowrap text-sm font-bold tabular-nums text-slate-900 sm:text-base">
+                        <span className="hidden whitespace-nowrap text-sm font-bold tabular-nums text-slate-900 sm:inline sm:text-base">
                           {formatCurrency(item.pricing_summary?.total ?? item.amount, item.currency_code)}
                         </span>
                         <svg className="shrink-0 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-slate-400" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

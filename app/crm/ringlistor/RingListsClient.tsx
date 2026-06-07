@@ -502,7 +502,7 @@ export default function RingListsClient({ adminName }: { adminName: string | nul
       </div>
 
       {/* Metrics */}
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="hidden gap-4 sm:grid sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard label="I kö just nu" value={visibleProspects.length} helper="Poster i nuvarande vy" />
         <MetricCard label="Ej tilldelade" value={stats.unassigned} helper="Leads utan ägare" />
         <MetricCard label="Nya" value={stats.new} helper="Första kontakt kvar" />

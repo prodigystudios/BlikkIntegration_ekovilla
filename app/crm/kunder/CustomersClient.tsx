@@ -125,7 +125,7 @@ export default function CustomersClient() {
       </div>
 
       {/* ── Metrics ── */}
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="hidden gap-4 sm:grid sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard label="Totalt" value={stats.total} helper="Alla i registret" />
         <MetricCard label="Prospekt" value={stats.prospects} helper="Potentiella kunder" />
         <MetricCard label="Kunder" value={stats.customers} helper="Aktiva kundrelationer" />

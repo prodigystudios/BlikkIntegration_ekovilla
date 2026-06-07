@@ -408,7 +408,7 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
       </div>
 
       {/* Metric cards */}
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="hidden gap-4 sm:grid sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard label="Alla offerter" value={stats.total} helper="Hela offertregistret oavsett utfall" />
         <MetricCard label="Aktiva offerter" value={stats.active} helper="Utkast, skickade och uppföljning" />
         <MetricCard label="Kräver uppföljning" value={stats.followUp} helper="Behöver nästa offertsteg" />
@@ -478,13 +478,13 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
                   {/* Status accent rail */}
                   <span className={cn('w-1.5 shrink-0', statusMeta.accent)} aria-hidden="true" />
 
-                  <div className="grid flex-1 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 p-3.5 sm:grid-cols-[minmax(0,1fr)_170px_140px_auto] sm:gap-4">
+                  <div className="grid flex-1 grid-cols-[minmax(0,1fr)_auto] items-start gap-3 p-3.5 sm:grid-cols-[minmax(0,1fr)_170px_140px_auto] sm:items-center sm:gap-4">
                     {/* Identity + chips */}
                     <div className="grid min-w-0 gap-1">
-                      <div className="flex items-baseline gap-2">
+                      <div className="flex min-w-0 items-baseline gap-2">
                         <strong className="truncate text-sm font-bold text-slate-900">{item.project_name}</strong>
                         {item.quote_number ? (
-                          <span className="shrink-0 text-[11px] font-semibold tabular-nums text-slate-400">#{item.quote_number}</span>
+                          <span className="hidden shrink-0 text-[11px] font-semibold tabular-nums text-slate-400 sm:inline">#{item.quote_number}</span>
                         ) : null}
                       </div>
                       <span className="truncate text-xs text-slate-500">{getQuoteCustomerName(item)}</span>
@@ -497,7 +497,7 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
                         </span>
                         {item.work_order_number ? (
                           <span className="inline-flex items-center rounded-md border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">
-                            AO {item.work_order_number}
+                            {item.work_order_number}
                           </span>
                         ) : null}
                         {item.fortnox_offer_number ? (
@@ -536,9 +536,9 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
                       )}
                     </div>
 
-                    {/* Amount + chevron */}
+                    {/* Amount + chevron (amount hidden on mobile — name takes priority) */}
                     <div className="flex items-center justify-end gap-3">
-                      <span className="whitespace-nowrap text-sm font-bold tabular-nums text-slate-900 sm:text-base">
+                      <span className="hidden whitespace-nowrap text-sm font-bold tabular-nums text-slate-900 sm:inline sm:text-base">
                         {formatCurrency(item.amount, item.currency_code)}
                       </span>
                       <svg className="shrink-0 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-slate-400" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -556,7 +556,7 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
       {/* ── Detail panel ── */}
       {detailPanelOpen && detailQuote ? (
         <div
-          className="fixed inset-0 z-[2800] flex items-end justify-center bg-slate-950/40 p-3 [backdrop-filter:blur(4px)] sm:items-center sm:p-4"
+          className="fixed inset-0 z-[2800] flex items-end justify-center bg-slate-950/50 [backdrop-filter:blur(4px)] sm:items-center sm:p-4"
           onClick={() => setDetailPanelOpen(false)}
         >
           <div
@@ -564,164 +564,198 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
             aria-modal="true"
             aria-label={`Offert ${detailQuote.project_name}`}
             onClick={(e) => e.stopPropagation()}
-            className="grid w-full max-w-[720px] gap-5 rounded-[28px] border border-slate-200 bg-white p-6 shadow-[0_30px_80px_rgba(15,23,42,0.22)] sm:max-h-[88vh] sm:overflow-y-auto"
+            className="flex h-[100dvh] max-h-[100dvh] w-full max-w-[600px] flex-col overflow-hidden rounded-none bg-white shadow-[0_-12px_50px_rgba(15,23,42,0.30)] sm:h-auto sm:max-h-[88vh] sm:rounded-2xl sm:shadow-[0_30px_80px_rgba(15,23,42,0.28)]"
           >
-            {/* Header */}
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div className="grid gap-1">
-                {detailQuote.quote_number ? (
-                  <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">#{detailQuote.quote_number}</span>
-                ) : null}
-                <strong className="text-[1.3rem] font-bold tracking-tight text-slate-950">{detailQuote.project_name}</strong>
-                <p className="m-0 text-sm text-slate-500">{getQuoteCustomerName(detailQuote)}</p>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <span className={cn('rounded-full border px-2.5 py-1 text-xs font-semibold', quoteStatusMeta[detailQuote.status].className)}>
-                  {quoteStatusMeta[detailQuote.status].label}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => { setDetailPanelOpen(false); router.push(`/crm/offerter/${detailQuote.id}/redigera`); }}
-                  className="inline-flex min-h-9 items-center justify-center rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 hover:border-slate-300 transition-colors"
-                >
-                  Redigera
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setDetailPanelOpen(false)}
-                  className="inline-flex min-h-9 items-center justify-center rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-500 hover:border-slate-300 transition-colors"
-                >
-                  Stäng
-                </button>
-              </div>
-            </div>
-
-            {/* Key info */}
-            <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-              <div className="grid gap-0.5">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Belopp</span>
-                <span className="text-sm font-bold text-slate-900">{formatCurrency(detailQuote.amount, detailQuote.currency_code)}</span>
-              </div>
-              <div className="grid gap-0.5">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Offertdatum</span>
-                <span className="text-sm text-slate-700">{formatDate(detailQuote.quote_date)}</span>
-              </div>
-              <div className="grid gap-0.5">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Följ upp</span>
-                <span className="text-sm text-slate-700">{formatDate(detailQuote.follow_up_date)}</span>
-              </div>
-              <div className="grid gap-0.5">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Giltig till</span>
-                <span className="text-sm text-slate-700">{formatDate(detailQuote.valid_until)}</span>
-              </div>
-              {detailQuote.description ? (
-                <div className="col-span-2 grid gap-0.5 sm:col-span-4">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Beskrivning</span>
-                  <p className="m-0 text-sm leading-5 text-slate-700">{detailQuote.description}</p>
+            {/* Sticky header */}
+            <div className="flex items-start justify-between gap-3 border-b border-slate-100 px-5 pb-4 [padding-top:calc(1rem+env(safe-area-inset-top))] sm:pt-4">
+              <div className="grid min-w-0 gap-1.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={cn('rounded-full border px-2.5 py-0.5 text-[11px] font-semibold', quoteStatusMeta[detailQuote.status].className)}>
+                    {quoteStatusMeta[detailQuote.status].label}
+                  </span>
+                  {detailQuote.quote_number ? (
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">#{detailQuote.quote_number}</span>
+                  ) : null}
                 </div>
-              ) : null}
-            </div>
-
-            <hr className="border-slate-100" />
-
-            {/* Status changer */}
-            <div className="grid gap-2">
-              <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Byt status</span>
-              <div className="flex flex-wrap gap-2">
-                {(Object.entries(quoteStatusMeta) as Array<[QuoteItem['status'], typeof quoteStatusMeta[QuoteItem['status']]]>).map(([s, meta]) => (
-                  <button
-                    key={s}
-                    type="button"
-                    disabled={movingQuoteId === detailQuote.id || detailQuote.status === s}
-                    onClick={() => void moveQuoteToStatus(detailQuote.id, s)}
-                    className={cn(
-                      'rounded-full border px-3 py-1.5 text-xs font-semibold transition',
-                      detailQuote.status === s
-                        ? cn(meta.className, 'cursor-default')
-                        : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50 disabled:opacity-50',
-                    )}
-                  >
-                    {meta.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Notes */}
-            {detailQuote.notes ? (
-              <>
-                <hr className="border-slate-100" />
-                <div className="grid gap-1.5">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Anteckningar</span>
-                  <p className="m-0 whitespace-pre-wrap text-sm leading-6 text-slate-700">{detailQuote.notes}</p>
-                </div>
-              </>
-            ) : null}
-
-            {/* Work order */}
-            <hr className="border-slate-100" />
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="grid gap-0.5">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Arbetsorder</span>
-                <span className="text-sm text-slate-700">
-                  {detailQuote.work_order_number
-                    ? `Arbetsorder ${detailQuote.work_order_number} är skapad.`
-                    : detailQuote.status === 'won'
-                      ? 'Klar att bli en intern arbetsorder.'
-                      : 'Sätt offerten till vunnen för att skapa arbetsorder.'}
-                </span>
-              </div>
-              <div className="flex gap-2">
-                {detailQuote.work_order_id ? (
-                  <button
-                    type="button"
-                    onClick={() => router.push(`/crm/arbetsorder/${detailQuote.work_order_id}`)}
-                    className="rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300"
-                  >
-                    Öppna
-                  </button>
-                ) : null}
-                <button
-                  type="button"
-                  onClick={() => void createWorkOrder(detailQuote.id)}
-                  disabled={detailQuote.status !== 'won' || Boolean(detailQuote.work_order_id) || creatingWorkOrderId === detailQuote.id}
-                  className="rounded-lg border border-slate-900 bg-slate-900 px-3.5 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-white disabled:text-slate-400"
-                >
-                  {creatingWorkOrderId === detailQuote.id ? 'Skapar…' : detailQuote.work_order_number ? 'Skapad' : 'Skapa arbetsorder'}
-                </button>
-              </div>
-            </div>
-
-            {/* Fortnox */}
-            <hr className="border-slate-100" />
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="grid gap-0.5">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Fortnox</span>
-                <span className="text-sm text-slate-700">
-                  {detailQuote.fortnox_offer_number
-                    ? `Fortnox-offert #${detailQuote.fortnox_offer_number} skapad.`
-                    : 'Skicka offerten till Fortnox som en offert.'}
-                </span>
-                {detailQuote.fortnox_sync_status === 'failed' && (
-                  <span className="text-xs font-semibold text-rose-600">Senaste synk misslyckades – försök igen.</span>
-                )}
+                <strong className="truncate text-lg font-bold tracking-tight text-slate-950">{detailQuote.project_name}</strong>
+                <p className="m-0 truncate text-sm text-slate-500">{getQuoteCustomerName(detailQuote)}</p>
               </div>
               <button
                 type="button"
-                onClick={() => void pushToFortnox(detailQuote.id)}
-                disabled={pushingFortnoxId === detailQuote.id || detailQuote.fortnox_sync_status === 'pending'}
-                className={cn(
-                  'rounded-lg border px-3.5 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50',
-                  detailQuote.fortnox_sync_status === 'synced'
-                    ? 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
-                    : 'border-emerald-700 bg-emerald-700 text-white hover:bg-emerald-800',
-                )}
+                aria-label="Stäng"
+                onClick={() => setDetailPanelOpen(false)}
+                className="!h-9 !w-9 shrink-0 !rounded-full !border !border-slate-200 !bg-white !p-0 text-slate-500 transition hover:!border-slate-300 hover:text-slate-700"
               >
-                {pushingFortnoxId === detailQuote.id
-                  ? 'Skickar…'
-                  : detailQuote.fortnox_offer_number
-                    ? 'Skicka igen'
-                    : 'Skicka till Fortnox'}
+                <svg className="mx-auto" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M18 6L6 18M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Scrollable body */}
+            <div className="grid flex-1 gap-5 overflow-y-auto px-5 py-5">
+              {/* Hero: amount + key dates */}
+              <div className="rounded-xl border border-[#e3e9df] bg-[#f6f9f3] p-4">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Belopp</div>
+                <div className="mt-0.5 text-[1.75rem] font-bold leading-none tracking-tight text-slate-900 tabular-nums">
+                  {formatCurrency(detailQuote.amount, detailQuote.currency_code)}
+                </div>
+                <div className="mt-4 grid grid-cols-3 gap-3 border-t border-[#dce6d6] pt-3">
+                  {([
+                    ['Offertdatum', formatDate(detailQuote.quote_date), false],
+                    ['Följ upp', formatDate(detailQuote.follow_up_date), isOverdue(detailQuote)],
+                    ['Giltig till', formatDate(detailQuote.valid_until), false],
+                  ] as Array<[string, string, boolean]>).map(([lbl, val, warn]) => (
+                    <div key={lbl} className="grid gap-0.5">
+                      <span className="text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-400">{lbl}</span>
+                      <span className={cn('text-sm font-medium', warn ? 'text-amber-700' : 'text-slate-700')}>{warn ? '⚠ ' : ''}{val}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Description */}
+              {detailQuote.description ? (
+                <div className="grid gap-1.5">
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Beskrivning</span>
+                  <p className="m-0 text-sm leading-6 text-slate-700">{detailQuote.description}</p>
+                </div>
+              ) : null}
+
+              {/* Status changer */}
+              <div className="grid gap-2">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Byt status</span>
+                <div className="flex flex-wrap gap-2">
+                  {(Object.entries(quoteStatusMeta) as Array<[QuoteItem['status'], typeof quoteStatusMeta[QuoteItem['status']]]>).map(([s, meta]) => {
+                    const isCurrent = detailQuote.status === s;
+                    return (
+                      <button
+                        key={s}
+                        type="button"
+                        disabled={movingQuoteId === detailQuote.id || isCurrent}
+                        onClick={() => void moveQuoteToStatus(detailQuote.id, s)}
+                        className={cn(
+                          'inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition',
+                          isCurrent
+                            ? cn(meta.className, 'cursor-default')
+                            : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50 disabled:opacity-50',
+                        )}
+                      >
+                        {isCurrent ? <span className={cn('h-1.5 w-1.5 rounded-full', meta.accent)} /> : null}
+                        {meta.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Notes */}
+              {detailQuote.notes ? (
+                <div className="grid gap-1.5 rounded-xl border border-amber-100 bg-amber-50/60 p-3.5">
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-700/80">Anteckningar</span>
+                  <p className="m-0 whitespace-pre-wrap text-sm leading-6 text-slate-700">{detailQuote.notes}</p>
+                </div>
+              ) : null}
+
+              {/* Action cards */}
+              <div className="grid gap-3">
+                {/* Work order */}
+                <div className="rounded-xl border border-[#e3e9df] bg-[#f9fbf7] p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="flex min-w-0 items-start gap-3">
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-100 text-emerald-700">
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <rect x="5" y="4" width="14" height="17" rx="2" /><path d="M9 4V2.5h6V4M9 11h6M9 15h4" />
+                        </svg>
+                      </span>
+                      <div className="grid min-w-0 gap-0.5">
+                        <span className="text-sm font-semibold text-slate-800">Arbetsorder</span>
+                        <span className="text-xs leading-5 text-slate-500">
+                          {detailQuote.work_order_number
+                            ? `${detailQuote.work_order_number} är skapad.`
+                            : detailQuote.status === 'won'
+                              ? 'Klar att bli en intern arbetsorder.'
+                              : 'Sätt offerten till vunnen för att skapa.'}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 gap-2">
+                      {detailQuote.work_order_id ? (
+                        <button
+                          type="button"
+                          onClick={() => router.push(`/crm/arbetsorder/${detailQuote.work_order_id}`)}
+                          className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:border-slate-300"
+                        >
+                          Öppna
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => void createWorkOrder(detailQuote.id)}
+                        disabled={detailQuote.status !== 'won' || Boolean(detailQuote.work_order_id) || creatingWorkOrderId === detailQuote.id}
+                        className="rounded-lg border border-emerald-700 bg-emerald-700 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-white disabled:text-slate-400"
+                      >
+                        {creatingWorkOrderId === detailQuote.id ? 'Skapar…' : detailQuote.work_order_number ? 'Skapad' : 'Skapa'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Fortnox */}
+                <div className="rounded-xl border border-[#e3e9df] bg-[#f9fbf7] p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="flex min-w-0 items-start gap-3">
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-100 text-indigo-700">
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <path d="M12 16V4M8 8l4-4 4 4M5 20h14" />
+                        </svg>
+                      </span>
+                      <div className="grid min-w-0 gap-0.5">
+                        <span className="text-sm font-semibold text-slate-800">Fortnox</span>
+                        <span className="text-xs leading-5 text-slate-500">
+                          {detailQuote.fortnox_offer_number
+                            ? `Offert #${detailQuote.fortnox_offer_number} skapad.`
+                            : 'Skicka offerten till Fortnox.'}
+                        </span>
+                        {detailQuote.fortnox_sync_status === 'failed' ? (
+                          <span className="text-xs font-semibold text-rose-600">Senaste synk misslyckades.</span>
+                        ) : null}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void pushToFortnox(detailQuote.id)}
+                      disabled={pushingFortnoxId === detailQuote.id || detailQuote.fortnox_sync_status === 'pending'}
+                      className={cn(
+                        'shrink-0 rounded-lg border px-3 py-1.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50',
+                        detailQuote.fortnox_offer_number
+                          ? 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
+                          : 'border-indigo-600 bg-indigo-600 text-white hover:bg-indigo-700',
+                      )}
+                    >
+                      {pushingFortnoxId === detailQuote.id ? 'Skickar…' : detailQuote.fortnox_offer_number ? 'Skicka igen' : 'Skicka'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Sticky footer */}
+            <div className="flex items-center gap-2 border-t border-slate-100 px-5 py-3 [padding-bottom:calc(0.75rem+env(safe-area-inset-bottom))] sm:[padding-bottom:0.75rem]">
+              <button
+                type="button"
+                onClick={() => setDetailPanelOpen(false)}
+                className="flex-1 rounded-xl border border-slate-200 bg-white py-2.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 sm:flex-none sm:px-5"
+              >
+                Stäng
+              </button>
+              <button
+                type="button"
+                onClick={() => { setDetailPanelOpen(false); router.push(`/crm/offerter/${detailQuote.id}/redigera`); }}
+                className="flex-1 rounded-xl py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-95 sm:ml-auto sm:flex-none sm:px-5"
+                style={{ backgroundColor: 'var(--crm-primary)' }}
+              >
+                Redigera offert
               </button>
             </div>
           </div>
