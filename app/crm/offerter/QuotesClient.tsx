@@ -5,6 +5,7 @@ import MetricCard from '../components/MetricCard';
 import Input from '../../../components/ui/Input';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
+import AssigneeFilter, { matchesAssignee, type AssigneeFilterValue, type AssigneeOption } from '@/app/crm/components/AssigneeFilter';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -14,6 +15,7 @@ type QuoteItem = {
   prospect_id: string | null;
   opportunity_id: string | null;
   customer_id: string | null;
+  assigned_to: string | null;
   customer_name: string | null;
   quote_type: 'private' | 'business';
   customer_source: { kind?: string | null } | null;
@@ -135,7 +137,7 @@ function compareQuotes(a: QuoteItem, b: QuoteItem) {
 
 // ─── QuotesClient ─────────────────────────────────────────────────────────────
 
-export default function QuotesClient() {
+export default function QuotesClient({ currentUserId }: { currentUserId: string | null }) {
   const toast = useToast();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -145,6 +147,17 @@ export default function QuotesClient() {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<QuoteFilter>('all');
+  const [assigneeFilter, setAssigneeFilter] = useState<AssigneeFilterValue>('all');
+  const [assignees, setAssignees] = useState<AssigneeOption[]>([]);
+
+  useEffect(() => {
+    let active = true;
+    fetch('/api/crm/work-orders/assignees', { cache: 'no-store' })
+      .then((r) => r.json().catch(() => ({})))
+      .then((json) => { if (active) setAssignees(json?.ok ? json.data?.items || [] : []); })
+      .catch(() => { if (active) setAssignees([]); });
+    return () => { active = false; };
+  }, []);
   const [movingQuoteId, setMovingQuoteId] = useState<string | null>(null);
   const [creatingWorkOrderId, setCreatingWorkOrderId] = useState<string | null>(null);
   const [pushingFortnoxId, setPushingFortnoxId] = useState<string | null>(null);
@@ -208,30 +221,36 @@ export default function QuotesClient() {
     setHasHandledQuotePreset(true);
   }, [presetQuoteId, hasHandledQuotePreset, loading, quotes]);
 
+  // Scope the whole page (list, stats, chip counts) to the chosen "Ansvarig" filter.
+  const assigneeScopedQuotes = useMemo(
+    () => quotes.filter((q) => matchesAssignee(q.assigned_to, assigneeFilter, currentUserId)),
+    [quotes, assigneeFilter, currentUserId],
+  );
+
   const visibleQuotes = useMemo(() => {
-    if (filter === 'all') return quotes;
-    if (filter === 'active') return quotes.filter((q) => q.status === 'draft' || q.status === 'sent' || q.status === 'follow_up');
-    if (filter === 'follow_up') return quotes.filter((q) => q.status === 'follow_up');
-    if (filter === 'won') return quotes.filter((q) => q.status === 'won');
-    return quotes.filter((q) => q.status === 'lost');
-  }, [filter, quotes]);
+    if (filter === 'all') return assigneeScopedQuotes;
+    if (filter === 'active') return assigneeScopedQuotes.filter((q) => q.status === 'draft' || q.status === 'sent' || q.status === 'follow_up');
+    if (filter === 'follow_up') return assigneeScopedQuotes.filter((q) => q.status === 'follow_up');
+    if (filter === 'won') return assigneeScopedQuotes.filter((q) => q.status === 'won');
+    return assigneeScopedQuotes.filter((q) => q.status === 'lost');
+  }, [filter, assigneeScopedQuotes]);
 
   const sortedVisibleQuotes = useMemo(() => [...visibleQuotes].sort(compareQuotes), [visibleQuotes]);
 
   const stats = useMemo(() => ({
-    total: quotes.length,
-    active: quotes.filter((q) => q.status === 'draft' || q.status === 'sent' || q.status === 'follow_up').length,
-    followUp: quotes.filter((q) => q.status === 'follow_up').length,
-    won: quotes.filter((q) => q.status === 'won').length,
-  }), [quotes]);
+    total: assigneeScopedQuotes.length,
+    active: assigneeScopedQuotes.filter((q) => q.status === 'draft' || q.status === 'sent' || q.status === 'follow_up').length,
+    followUp: assigneeScopedQuotes.filter((q) => q.status === 'follow_up').length,
+    won: assigneeScopedQuotes.filter((q) => q.status === 'won').length,
+  }), [assigneeScopedQuotes]);
 
   const filterCounts = useMemo<Record<QuoteFilter, number>>(() => ({
-    all: quotes.length,
-    active: quotes.filter((q) => q.status === 'draft' || q.status === 'sent' || q.status === 'follow_up').length,
-    follow_up: quotes.filter((q) => q.status === 'follow_up').length,
-    won: quotes.filter((q) => q.status === 'won').length,
-    lost: quotes.filter((q) => q.status === 'lost').length,
-  }), [quotes]);
+    all: assigneeScopedQuotes.length,
+    active: assigneeScopedQuotes.filter((q) => q.status === 'draft' || q.status === 'sent' || q.status === 'follow_up').length,
+    follow_up: assigneeScopedQuotes.filter((q) => q.status === 'follow_up').length,
+    won: assigneeScopedQuotes.filter((q) => q.status === 'won').length,
+    lost: assigneeScopedQuotes.filter((q) => q.status === 'lost').length,
+  }), [assigneeScopedQuotes]);
 
   const detailQuote = useMemo(
     () => (detailQuoteId ? quotes.find((q) => q.id === detailQuoteId) || null : null),
@@ -408,6 +427,7 @@ export default function QuotesClient() {
               );
             })}
           </div>
+          <AssigneeFilter value={assigneeFilter} onChange={setAssigneeFilter} users={assignees} className="ml-auto max-w-[190px]" />
         </div>
 
         {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}

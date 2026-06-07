@@ -6,6 +6,7 @@ import Input from '../../../components/ui/Input';
 import { cn } from '@/lib/shared/cn';
 import { crm, syncStatusLabel, syncStatusClass, workOrderStatusLabel, workOrderStatusClass } from '@/app/crm/lib/crmTokens';
 import { formatDate, formatCurrency, isWorkOrderOverdue } from '@/app/crm/lib/format';
+import AssigneeFilter, { matchesAssignee, type AssigneeFilterValue, type AssigneeOption } from '@/app/crm/components/AssigneeFilter';
 
 type WorkOrderStatus = 'draft' | 'scheduled' | 'ready' | 'in_progress' | 'completed' | 'invoiced' | 'cancelled';
 type FortnoxSyncStatus = 'not_synced' | 'pending' | 'synced' | 'failed';
@@ -21,6 +22,7 @@ type WorkOrderItem = {
   currency_code: string;
   desired_installation_date: string | null;
   status: WorkOrderStatus;
+  assigned_to: string | null;
   assignee: { id: string; full_name: string | null } | null;
   fortnox_order_sync_status: FortnoxSyncStatus;
 };
@@ -43,7 +45,7 @@ function matchesFilter(item: WorkOrderItem, filter: WorkOrderFilter) {
 }
 
 
-export default function WorkOrdersClient() {
+export default function WorkOrdersClient({ currentUserId }: { currentUserId: string | null }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [workOrders, setWorkOrders] = useState<WorkOrderItem[]>([]);
@@ -51,6 +53,17 @@ export default function WorkOrdersClient() {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<WorkOrderFilter>('all');
+  const [assigneeFilter, setAssigneeFilter] = useState<AssigneeFilterValue>('all');
+  const [assignees, setAssignees] = useState<AssigneeOption[]>([]);
+
+  useEffect(() => {
+    let active = true;
+    fetch('/api/crm/work-orders/assignees', { cache: 'no-store' })
+      .then((r) => r.json().catch(() => ({})))
+      .then((json) => { if (active) setAssignees(json?.ok ? json.data?.items || [] : []); })
+      .catch(() => { if (active) setAssignees([]); });
+    return () => { active = false; };
+  }, []);
 
   // Legacy deep-link: /crm/arbetsorder?work_order_id=X now lives at its own page.
   const deepLinkId = searchParams.get('work_order_id') || '';
@@ -79,11 +92,15 @@ export default function WorkOrdersClient() {
 
   const filterCounts = useMemo(() => {
     const counts = {} as Record<WorkOrderFilter, number>;
-    for (const [value] of FILTERS) counts[value] = workOrders.filter((item) => matchesFilter(item, value)).length;
+    const scoped = workOrders.filter((item) => matchesAssignee(item.assigned_to, assigneeFilter, currentUserId));
+    for (const [value] of FILTERS) counts[value] = scoped.filter((item) => matchesFilter(item, value)).length;
     return counts;
-  }, [workOrders]);
+  }, [workOrders, assigneeFilter, currentUserId]);
 
-  const visibleWorkOrders = useMemo(() => workOrders.filter((item) => matchesFilter(item, filter)), [filter, workOrders]);
+  const visibleWorkOrders = useMemo(
+    () => workOrders.filter((item) => matchesFilter(item, filter) && matchesAssignee(item.assigned_to, assigneeFilter, currentUserId)),
+    [filter, workOrders, assigneeFilter, currentUserId],
+  );
 
   return (
     <div className="grid grid-cols-1 gap-6">
@@ -127,7 +144,10 @@ export default function WorkOrdersClient() {
               </button>
             ))}
           </div>
-          <span className="text-xs text-slate-400">{workOrders.length} i registret</span>
+          <div className="flex items-center gap-3">
+            <AssigneeFilter value={assigneeFilter} onChange={setAssigneeFilter} users={assignees} />
+            <span className="whitespace-nowrap text-xs text-slate-400">{workOrders.length} i registret</span>
+          </div>
         </div>
 
         {/* List */}
