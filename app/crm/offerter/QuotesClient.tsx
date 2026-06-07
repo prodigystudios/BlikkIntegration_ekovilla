@@ -50,36 +50,41 @@ type QuoteFilter = 'all' | 'active' | 'follow_up' | 'won' | 'lost';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-const quoteStatusMeta: Record<QuoteItem['status'], { label: string; className: string; cardClass: string; amountClass: string }> = {
+const quoteStatusMeta: Record<QuoteItem['status'], { label: string; className: string; cardClass: string; amountClass: string; accent: string }> = {
   draft: {
     label: 'Utkast',
     className: 'border-slate-200 bg-slate-50 text-slate-700',
     cardClass: 'border-slate-200/90 bg-white',
     amountClass: 'border-slate-200 bg-white text-slate-800',
+    accent: 'bg-slate-300',
   },
   sent: {
     label: 'Skickad',
     className: 'border-sky-200 bg-sky-50 text-sky-800',
     cardClass: 'border-sky-100 bg-white',
     amountClass: 'border-sky-200 bg-white text-sky-900',
+    accent: 'bg-sky-400',
   },
   follow_up: {
     label: 'Följ upp',
     className: 'border-amber-200 bg-amber-50 text-amber-900',
     cardClass: 'border-amber-100 bg-white ring-1 ring-amber-50',
     amountClass: 'border-amber-200 bg-white text-amber-900',
+    accent: 'bg-amber-400',
   },
   won: {
     label: 'Vunnen',
     className: 'border-emerald-200 bg-emerald-50 text-emerald-900',
     cardClass: 'border-emerald-100 bg-white',
     amountClass: 'border-emerald-200 bg-white text-emerald-900',
+    accent: 'bg-emerald-500',
   },
   lost: {
     label: 'Förlorad',
     className: 'border-rose-200 bg-rose-50 text-rose-800',
     cardClass: 'border-rose-100 bg-white',
     amountClass: 'border-rose-200 bg-white text-rose-900',
+    accent: 'bg-rose-400',
   },
 };
 
@@ -107,6 +112,14 @@ function formatDate(value: string | null | undefined) {
 function getProspectFromQuote(item: QuoteItem) {
   if (Array.isArray(item.prospect)) return item.prospect[0] || null;
   return item.prospect || null;
+}
+
+function initialsOf(name: string | null | undefined) {
+  if (!name) return '–';
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '–';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
 function getQuoteCustomerName(item: QuoteItem) {
@@ -147,7 +160,7 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<QuoteFilter>('all');
-  const [assigneeFilter, setAssigneeFilter] = useState<AssigneeFilterValue>('all');
+  const [assigneeFilter, setAssigneeFilter] = useState<AssigneeFilterValue>([]);
   const [assignees, setAssignees] = useState<AssigneeOption[]>([]);
 
   useEffect(() => {
@@ -236,6 +249,12 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
   }, [filter, assigneeScopedQuotes]);
 
   const sortedVisibleQuotes = useMemo(() => [...visibleQuotes].sort(compareQuotes), [visibleQuotes]);
+
+  const assigneeNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const a of assignees) if (a.full_name) map.set(a.id, a.full_name);
+    return map;
+  }, [assignees]);
 
   const stats = useMemo(() => ({
     total: assigneeScopedQuotes.length,
@@ -427,7 +446,7 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
               );
             })}
           </div>
-          <AssigneeFilter value={assigneeFilter} onChange={setAssigneeFilter} users={assignees} className="ml-auto max-w-[190px]" />
+          <AssigneeFilter value={assigneeFilter} onChange={setAssigneeFilter} users={assignees} className="ml-auto w-[200px]" />
         </div>
 
         {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
@@ -443,7 +462,7 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
             {sortedVisibleQuotes.map((item) => {
               const overdue = isOverdue(item);
               const statusMeta = quoteStatusMeta[item.status];
-              const statusDot = item.status === 'won' ? 'bg-emerald-400' : item.status === 'follow_up' ? 'bg-amber-400' : item.status === 'sent' ? 'bg-sky-400' : item.status === 'lost' ? 'bg-rose-300' : 'bg-slate-300';
+              const sellerName = item.assigned_to ? (assigneeNameById.get(item.assigned_to) || 'Okänd') : null;
 
               return (
                 <button
@@ -451,36 +470,81 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
                   type="button"
                   onClick={() => { setDetailQuoteId(item.id); setDetailPanelOpen(true); }}
                   className={cn(
-                    'grid grid-cols-[auto_1fr_auto] items-center gap-3 rounded-[18px] border bg-white px-4 py-3 text-left shadow-[0_2px_8px_rgba(15,23,42,0.04)] transition hover:-translate-y-0.5 hover:shadow-[0_8px_20px_rgba(15,23,42,0.08)] sm:grid-cols-[auto_1fr_auto_auto_auto]',
-                    overdue ? 'border-amber-200' : 'border-slate-200',
+                    'group relative flex items-stretch overflow-hidden rounded-lg border bg-white text-left shadow-[0_1px_2px_rgba(15,23,42,0.05)] transition hover:border-[#cfdcc9] hover:shadow-[0_8px_20px_-10px_rgba(20,44,27,0.30)]',
+                    overdue ? 'border-amber-200' : 'border-[#e3e9df]',
                     movingQuoteId === item.id ? 'opacity-60' : null,
                   )}
                 >
-                  <span className={cn('h-2 w-2 shrink-0 rounded-full', statusDot)} />
+                  {/* Status accent rail */}
+                  <span className={cn('w-1.5 shrink-0', statusMeta.accent)} aria-hidden="true" />
 
-                  <div className="grid min-w-0 gap-0.5">
-                    <strong className="truncate text-sm font-bold text-slate-900">{item.project_name}</strong>
-                    <span className="truncate text-xs text-slate-500">{getQuoteCustomerName(item)}</span>
-                  </div>
+                  <div className="grid flex-1 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 p-3.5 sm:grid-cols-[minmax(0,1fr)_170px_140px_auto] sm:gap-4">
+                    {/* Identity + chips */}
+                    <div className="grid min-w-0 gap-1">
+                      <div className="flex items-baseline gap-2">
+                        <strong className="truncate text-sm font-bold text-slate-900">{item.project_name}</strong>
+                        {item.quote_number ? (
+                          <span className="shrink-0 text-[11px] font-semibold tabular-nums text-slate-400">#{item.quote_number}</span>
+                        ) : null}
+                      </div>
+                      <span className="truncate text-xs text-slate-500">{getQuoteCustomerName(item)}</span>
+                      <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                        <span className={cn('inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-semibold', statusMeta.className)}>
+                          {statusMeta.label}
+                        </span>
+                        <span className="inline-flex items-center rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">
+                          {item.quote_type === 'private' ? 'Privat' : 'Företag'}
+                        </span>
+                        {item.work_order_number ? (
+                          <span className="inline-flex items-center rounded-md border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">
+                            AO {item.work_order_number}
+                          </span>
+                        ) : null}
+                        {item.fortnox_offer_number ? (
+                          <span className="inline-flex items-center rounded-md border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700">
+                            Fortnox #{item.fortnox_offer_number}
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
 
-                  <span className={cn('hidden rounded-full border px-2.5 py-1 text-[11px] font-semibold sm:inline-flex', statusMeta.className)}>
-                    {statusMeta.label}
-                  </span>
-
-                  <span className={cn('hidden rounded-full border px-2.5 py-1 text-sm font-bold sm:inline-flex', statusMeta.amountClass)}>
-                    {formatCurrency(item.amount, item.currency_code)}
-                  </span>
-
-                  <div className="grid gap-0.5 text-right">
-                    <span className="text-xs text-slate-500">{formatDate(item.quote_date)}</span>
-                    {item.follow_up_date ? (
-                      <span className={cn('text-[11px] font-semibold', overdue ? 'text-amber-700' : 'text-slate-400')}>
-                        {overdue ? '⚠ ' : ''}Följ upp {formatDate(item.follow_up_date)}
+                    {/* Responsible seller */}
+                    <div className="hidden items-center gap-2 sm:flex">
+                      <span className={cn(
+                        'flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[10px] font-bold',
+                        sellerName ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-400',
+                      )}>
+                        {initialsOf(sellerName)}
                       </span>
-                    ) : null}
-                    {item.work_order_number ? (
-                      <span className="text-[11px] font-semibold text-emerald-700">AO {item.work_order_number}</span>
-                    ) : null}
+                      <div className="grid min-w-0">
+                        <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Ansvarig</span>
+                        <span className={cn('truncate text-xs font-semibold', sellerName ? 'text-slate-700' : 'text-slate-400')}>
+                          {sellerName ?? 'Ej tilldelad'}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Dates */}
+                    <div className="hidden flex-col gap-0.5 sm:flex">
+                      <span className="text-xs font-medium text-slate-600">{formatDate(item.quote_date)}</span>
+                      {item.follow_up_date ? (
+                        <span className={cn('text-[11px] font-semibold', overdue ? 'text-amber-700' : 'text-slate-400')}>
+                          {overdue ? '⚠ ' : ''}Följ upp {formatDate(item.follow_up_date)}
+                        </span>
+                      ) : (
+                        <span className="text-[11px] text-slate-300">Ingen uppföljning</span>
+                      )}
+                    </div>
+
+                    {/* Amount + chevron */}
+                    <div className="flex items-center justify-end gap-3">
+                      <span className="whitespace-nowrap text-sm font-bold tabular-nums text-slate-900 sm:text-base">
+                        {formatCurrency(item.amount, item.currency_code)}
+                      </span>
+                      <svg className="shrink-0 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-slate-400" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M9 18l6-6-6-6" />
+                      </svg>
+                    </div>
                   </div>
                 </button>
               );

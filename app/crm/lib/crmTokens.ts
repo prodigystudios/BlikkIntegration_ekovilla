@@ -86,6 +86,17 @@ export const workOrderStatusClass: Record<WorkOrderStatus, string> = {
   cancelled: 'border-rose-200 bg-rose-50 text-rose-700',
 };
 
+// Solid accent colour per status — used as a left rail on list rows for quick scanning.
+export const workOrderStatusAccent: Record<WorkOrderStatus, string> = {
+  draft: 'bg-slate-300',
+  scheduled: 'bg-sky-400',
+  ready: 'bg-sky-400',
+  in_progress: 'bg-violet-400',
+  completed: 'bg-emerald-500',
+  invoiced: 'bg-teal-500',
+  cancelled: 'bg-rose-400',
+};
+
 // The forward flow shown as a stepper (ready retired; cancelled is off-flow).
 export const WORK_ORDER_STATUS_FLOW: WorkOrderStatus[] = ['draft', 'scheduled', 'in_progress', 'completed', 'invoiced'];
 
