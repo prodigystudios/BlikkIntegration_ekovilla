@@ -247,7 +247,9 @@ export async function markCrmQuoteWon(
     return { data: null, error: { code: 'crm_customer_conversion_failed', message: conversionError ?? 'Konvertering misslyckades' } };
   }
 
-  const { data, error: updateError } = await updateCrmQuote(supabase, quoteId, updateInput);
+  // Link the quote to the freshly-created customer — otherwise customer_id stays null and
+  // the work order created from this quote (and its installer contact) has no customer.
+  const { data, error: updateError } = await updateCrmQuote(supabase, quoteId, { ...updateInput, customer_id: customerId });
   if (updateError) {
     // Conversion succeeded but quote update failed — partial state, needs manual reconciliation
     console.error(

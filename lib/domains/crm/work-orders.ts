@@ -259,12 +259,42 @@ export async function listCrmWorkOrdersWithFilters(
   return query;
 }
 
-export async function updateCrmWorkOrder(supabase: SupabaseClient, id: string, input: WorkOrderUpdateInput) {
+export async function updateCrmWorkOrder(supabase: SupabaseClient, id: string, input: Partial<WorkOrderUpdateInput>) {
   return supabase.from('crm_work_orders').update(input).eq('id', id).select(crmWorkOrderSelect).single();
 }
 
 export async function getCrmWorkOrder(supabase: SupabaseClient, id: string) {
   return supabase.from('crm_work_orders').select(crmWorkOrderSelect).eq('id', id).single();
+}
+
+// Resolve just the customer contact (name/phone/email) for a work order. Pass an ADMIN
+// client: the field view (installers/member) needs to know who to call but has no CRM
+// read access to the full customer record — this exposes only the three contact fields.
+// Returns { data: null } when the work order has no linked customer.
+export async function getWorkOrderCustomerContact(supabase: SupabaseClient, workOrderId: string) {
+  const { data: wo, error: woError } = await supabase
+    .from('crm_work_orders').select('customer_id').eq('id', workOrderId).maybeSingle();
+  if (woError) return { data: null, error: woError };
+  if (!wo?.customer_id) return { data: null, error: null };
+
+  const { data: c, error } = await supabase
+    .from('crm_customers')
+    .select('phone, mobile, email, contacts:crm_customer_contacts(name, phone, email, is_primary)')
+    .eq('id', wo.customer_id)
+    .maybeSingle();
+  if (error) return { data: null, error };
+  if (!c) return { data: null, error: null };
+
+  const contacts = ((c as any).contacts || []) as Array<{ name?: string | null; phone?: string | null; email?: string | null; is_primary?: boolean }>;
+  const primary = contacts.find((x) => x.is_primary) || contacts[0] || null;
+  return {
+    data: {
+      contactName: primary?.name || null,
+      phone: (c as any).phone || (c as any).mobile || primary?.phone || null,
+      email: (c as any).email || primary?.email || null,
+    },
+    error: null,
+  };
 }
 
 // Replace the work order's article rows + recomputed totals. Pricing is computed by the

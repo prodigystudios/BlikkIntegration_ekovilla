@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Input from '../../../components/ui/Input';
 import { cn } from '@/lib/shared/cn';
 import { crm, syncStatusLabel, syncStatusClass, workOrderStatusLabel, workOrderStatusClass } from '@/app/crm/lib/crmTokens';
+import { formatDate, formatCurrency, isWorkOrderOverdue } from '@/app/crm/lib/format';
 
 type WorkOrderStatus = 'draft' | 'scheduled' | 'ready' | 'in_progress' | 'completed' | 'invoiced' | 'cancelled';
 type FortnoxSyncStatus = 'not_synced' | 'pending' | 'synced' | 'failed';
@@ -41,21 +42,6 @@ function matchesFilter(item: WorkOrderItem, filter: WorkOrderFilter) {
   return item.status === 'in_progress';
 }
 
-function formatDate(value: string | null | undefined) {
-  if (!value) return '–';
-  const date = new Date(`${value}T12:00:00`);
-  return Number.isNaN(date.getTime()) ? '–' : new Intl.DateTimeFormat('sv-SE', { dateStyle: 'medium' }).format(date);
-}
-function formatCurrency(value: number | string | null | undefined, currencyCode: string) {
-  const numeric = typeof value === 'number' ? value : Number(String(value || '0'));
-  if (!Number.isFinite(numeric)) return '–';
-  return new Intl.NumberFormat('sv-SE', { style: 'currency', currency: currencyCode || 'SEK', maximumFractionDigits: 0 }).format(numeric);
-}
-function isOverdue(date: string | null, status: WorkOrderStatus) {
-  if (!date || status === 'completed' || status === 'cancelled') return false;
-  const d = new Date(`${date}T23:59:59`);
-  return !Number.isNaN(d.getTime()) && d.getTime() < Date.now();
-}
 
 export default function WorkOrdersClient() {
   const router = useRouter();
@@ -156,7 +142,7 @@ export default function WorkOrdersClient() {
           {!loading && visibleWorkOrders.length > 0 ? (
             <div className="grid gap-3 xl:grid-cols-2">
               {visibleWorkOrders.map((item) => {
-                const overdue = isOverdue(item.desired_installation_date, item.status);
+                const overdue = isWorkOrderOverdue(item.desired_installation_date, item.status);
                 return (
                   <button
                     key={item.id}

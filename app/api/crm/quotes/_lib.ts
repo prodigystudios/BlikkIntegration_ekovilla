@@ -187,13 +187,8 @@ export const createCrmQuoteSchema = z.object({
 
 export const updateCrmQuoteSchema = createCrmQuoteSchema;
 
-// Keep only the fields the client actually sent. updateCrmQuoteSchema injects defaults
-// for absent fields, so a partial PATCH (a status change, a "clear articles" save)
-// would otherwise overwrite untouched columns — line_items, internal_handoff
-// (arbetsbeskrivning), rot_details, customer_id — with those empty defaults. The
-// schema still validates the full (defaulted) object; we just persist the sent subset.
-export function pickProvidedQuoteFields<T extends Record<string, unknown>>(parsed: T, rawBody: unknown): Partial<T> {
-  const sentKeys = rawBody && typeof rawBody === 'object' && !Array.isArray(rawBody) ? Object.keys(rawBody as object) : [];
-  return Object.fromEntries(Object.entries(parsed).filter(([key]) => sentKeys.includes(key))) as Partial<T>;
-}
+// Persist only fields the client actually sent (shared helper, also used by work orders).
+// Prevents a partial PATCH — status change, "clear articles" save — from wiping untouched
+// columns (line_items, internal_handoff, rot_details, customer_id) with schema defaults.
+export { pickProvidedFields as pickProvidedQuoteFields } from '../_shared';
 

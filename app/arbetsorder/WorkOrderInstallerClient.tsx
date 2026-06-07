@@ -9,6 +9,8 @@ import WorkOrderTimeTab from '@/app/crm/arbetsorder/WorkOrderTimeTab';
 import WorkOrderCommentsTab from '@/app/crm/arbetsorder/WorkOrderCommentsTab';
 import WorkOrderArticlesTab, { type ArticleLineItem } from '@/app/crm/arbetsorder/WorkOrderArticlesTab';
 import { useWorkOrderActivity } from '@/app/crm/arbetsorder/useWorkOrderActivity';
+import { useCustomerContact } from '@/app/crm/arbetsorder/useCustomerContact';
+import { formatDate, joinAddress } from '@/app/crm/lib/format';
 
 const CRM_PRIMARY = '#1a3f26'; // brand green; --crm-primary is scoped to /crm so hardcode here
 
@@ -34,22 +36,13 @@ type InstallerWorkOrder = {
 
 type InstallerTab = 'info' | 'articles' | 'time' | 'comments';
 
-function formatDate(value: string | null | undefined) {
-  if (!value) return '–';
-  const d = new Date(`${value}T12:00:00`);
-  return Number.isNaN(d.getTime()) ? '–' : new Intl.DateTimeFormat('sv-SE', { dateStyle: 'medium' }).format(d);
-}
-function joinAddress(parts: Array<string | null | undefined>) {
-  return parts.filter((p) => p && p.trim()).join(', ');
-}
-
 export default function WorkOrderInstallerClient({ workOrderId, currentUserId }: { workOrderId: string; currentUserId: string | null }) {
   const router = useRouter();
   const [workOrder, setWorkOrder] = useState<InstallerWorkOrder | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<InstallerTab>('info');
-  const [customerInfo, setCustomerInfo] = useState<{ contactName: string | null; phone: string | null; email: string | null } | null>(null);
+  const customerInfo = useCustomerContact(workOrderId);
 
   const activity = useWorkOrderActivity(workOrderId);
   const totalHours = useMemo(() => activity.timeEntries.reduce((s, e) => s + Number(e.hours || 0), 0), [activity.timeEntries]);
@@ -70,23 +63,6 @@ export default function WorkOrderInstallerClient({ workOrderId, currentUserId }:
     load();
     return () => { active = false; };
   }, [workOrderId]);
-
-  useEffect(() => {
-    const customerId = workOrder?.customer_id;
-    if (!customerId) { setCustomerInfo(null); return; }
-    let active = true;
-    fetch(`/api/crm/customers/${customerId}`, { cache: 'no-store' })
-      .then((r) => r.json().catch(() => ({})))
-      .then((json) => {
-        if (!active) return;
-        const c = json?.data?.item;
-        if (!c) { setCustomerInfo(null); return; }
-        const primary = (c.contacts || []).find((x: any) => x.is_primary) || (c.contacts || [])[0] || null;
-        setCustomerInfo({ contactName: primary?.name || null, phone: c.phone || c.mobile || primary?.phone || null, email: c.email || primary?.email || null });
-      })
-      .catch(() => { if (active) setCustomerInfo(null); });
-    return () => { active = false; };
-  }, [workOrder?.customer_id]);
 
   if (loading) {
     return (

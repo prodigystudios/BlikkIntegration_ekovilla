@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
+import { formatDateTime } from '@/app/crm/lib/format';
 import MentionTextarea, { type MentionUser } from '@/app/crm/components/MentionTextarea';
 
 export type CommentItem = {
@@ -13,12 +14,6 @@ export type CommentItem = {
   created_at: string;
   author?: { full_name?: string | null } | null;
 };
-
-function formatDateTime(value: string | null | undefined) {
-  if (!value) return '–';
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? '–' : new Intl.DateTimeFormat('sv-SE', { dateStyle: 'medium', timeStyle: 'short' }).format(date);
-}
 
 type Props = {
   comments: CommentItem[];

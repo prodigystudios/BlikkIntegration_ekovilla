@@ -5,6 +5,7 @@ import Input from '../../../components/ui/Input';
 import Textarea from '../../../components/ui/Textarea';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
+import { formatDate, formatDateTime } from '@/app/crm/lib/format';
 
 export type TimeEntryItem = {
   id: string;
@@ -20,16 +21,6 @@ export type TimeEntryItem = {
 
 export type TimeDraft = { work_date: string; hours: string; note: string };
 
-function formatDate(value: string | null | undefined) {
-  if (!value) return '–';
-  const date = new Date(`${value}T12:00:00`);
-  return Number.isNaN(date.getTime()) ? '–' : new Intl.DateTimeFormat('sv-SE', { dateStyle: 'medium' }).format(date);
-}
-function formatDateTime(value: string | null | undefined) {
-  if (!value) return '–';
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? '–' : new Intl.DateTimeFormat('sv-SE', { dateStyle: 'medium', timeStyle: 'short' }).format(date);
-}
 function todayIso() {
   return new Date().toISOString().slice(0, 10);
 }

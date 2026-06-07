@@ -16,6 +16,8 @@ import WorkOrderTimeTab from './WorkOrderTimeTab';
 import WorkOrderCommentsTab from './WorkOrderCommentsTab';
 import WorkOrderArticlesTab, { type ArticleLineItem } from './WorkOrderArticlesTab';
 import { useWorkOrderActivity } from './useWorkOrderActivity';
+import { useCustomerContact } from './useCustomerContact';
+import { formatDate, formatDateTime, formatCurrency, joinAddress, isWorkOrderOverdue } from '@/app/crm/lib/format';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -90,31 +92,7 @@ type WorkOrderDraft = {
 type AssignableUser = { id: string; full_name: string | null; role?: string | null };
 
 // ─── Meta / helpers ───────────────────────────────────────────────────────────
-// Status labels/classes/flow are centralised in crmTokens (shared with the list + card).
-
-function formatDate(value: string | null | undefined) {
-  if (!value) return '–';
-  const date = new Date(`${value}T12:00:00`);
-  return Number.isNaN(date.getTime()) ? '–' : new Intl.DateTimeFormat('sv-SE', { dateStyle: 'medium' }).format(date);
-}
-function formatDateTime(value: string | null | undefined) {
-  if (!value) return '–';
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? '–' : new Intl.DateTimeFormat('sv-SE', { dateStyle: 'medium', timeStyle: 'short' }).format(date);
-}
-function formatCurrency(value: number | string | null | undefined, currencyCode: string) {
-  const numeric = typeof value === 'number' ? value : Number(String(value || '0'));
-  if (!Number.isFinite(numeric)) return '–';
-  return new Intl.NumberFormat('sv-SE', { style: 'currency', currency: currencyCode || 'SEK', maximumFractionDigits: 0 }).format(numeric);
-}
-function isOverdue(date: string | null, status: WorkOrderStatus) {
-  if (!date || status === 'completed' || status === 'cancelled') return false;
-  const d = new Date(`${date}T23:59:59`);
-  return !Number.isNaN(d.getTime()) && d.getTime() < Date.now();
-}
-function joinAddress(parts: Array<string | null | undefined>) {
-  return parts.filter((p) => p && p.trim()).join(', ');
-}
+// Status labels/classes/flow are centralised in crmTokens; formatters in crm/lib/format.
 
 // ─── Small UI ───────────────────────────────────────────────────────────────
 
@@ -156,7 +134,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   const [draft, setDraft] = useState<WorkOrderDraft | null>(null);
 
   const [assignees, setAssignees] = useState<AssignableUser[]>([]);
-  const [customerInfo, setCustomerInfo] = useState<{ contactName: string | null; phone: string | null; email: string | null } | null>(null);
+  const customerInfo = useCustomerContact(workOrderId);
 
   // Time entries, comments and @-mention targets + their CRUD live in a shared hook
   // (also used by the installer field view) so the write logic isn't duplicated.
@@ -194,30 +172,6 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
       .catch(() => { if (active) setAssignees([]); });
     return () => { active = false; };
   }, [workOrder?.id]);
-
-  // Load the linked customer for reliable contact info. The quote snapshot only carries
-  // the primary contact person's details, which private customers usually lack — so we
-  // read the customer's own phone/mobile/email straight from the customer card.
-  useEffect(() => {
-    const customerId = workOrder?.customer_id;
-    if (!customerId) { setCustomerInfo(null); return; }
-    let active = true;
-    fetch(`/api/crm/customers/${customerId}`, { cache: 'no-store' })
-      .then((r) => r.json().catch(() => ({})))
-      .then((json) => {
-        if (!active) return;
-        const c = json?.data?.item;
-        if (!c) { setCustomerInfo(null); return; }
-        const primary = (c.contacts || []).find((x: any) => x.is_primary) || (c.contacts || [])[0] || null;
-        setCustomerInfo({
-          contactName: primary?.name || null,
-          phone: c.phone || c.mobile || primary?.phone || null,
-          email: c.email || primary?.email || null,
-        });
-      })
-      .catch(() => { if (active) setCustomerInfo(null); });
-    return () => { active = false; };
-  }, [workOrder?.customer_id]);
 
   function applyWorkOrder(item: WorkOrderItem) {
     setWorkOrder(item);
@@ -359,7 +313,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
     );
   }
 
-  const overdue = isOverdue(workOrder.desired_installation_date, workOrder.status);
+  const overdue = isWorkOrderOverdue(workOrder.desired_installation_date, workOrder.status);
   const snapshot = workOrder.customer_snapshot || {};
   // Prefer the live customer record; fall back to the quote snapshot.
   const customerPhone: string | null = customerInfo?.phone ?? (snapshot.phone || null);

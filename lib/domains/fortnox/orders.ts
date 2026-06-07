@@ -45,7 +45,9 @@ export function buildOrderRows(lineItems: WorkOrderRow['line_items'], vatPercent
     const price = item.unit_price ? parseDecimal(item.unit_price) : (item.article_price ?? 0);
     // For m³ rows the quantity is the computed volume, not the (empty) quantity field.
     const quantity = lineItemQuantity(item);
-    const discount = item.discount_percent ? parseDecimal(item.discount_percent) : 0;
+    // Clamp to [0,100] to match the CRM pricing (lib/domains/crm/pricing.ts); otherwise a
+    // discount > 100 makes the Fortnox row total diverge from the stored CRM total.
+    const discount = Math.min(100, Math.max(0, item.discount_percent ? parseDecimal(item.discount_percent) : 0));
     return {
       ...(item.article_number ? { ArticleNumber: item.article_number } : {}),
       Description: item.article_name || item.line_note || 'Artikel',

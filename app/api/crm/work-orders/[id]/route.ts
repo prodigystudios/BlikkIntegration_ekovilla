@@ -1,7 +1,7 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { getCrmWorkOrder, updateCrmWorkOrder } from '@/lib/domains/crm/work-orders';
-import { ok, requireCrmUser, requireSignedInUser, routeError, updateCrmWorkOrderSchema, validationError } from '../_lib';
+import { ok, pickProvidedFields, requireCrmUser, requireSignedInUser, routeError, updateCrmWorkOrderSchema, validationError } from '../_lib';
 
 type RouteContext = {
   params: {
@@ -32,11 +32,15 @@ export async function PATCH(req: Request, context: RouteContext) {
     const crmUser = await requireCrmUser();
     if (crmUser.response || !crmUser.currentUser) return crmUser.response;
 
-    const parsedBody = updateCrmWorkOrderSchema.safeParse(await req.json().catch(() => null));
+    const rawBody = await req.json().catch(() => null);
+    const parsedBody = updateCrmWorkOrderSchema.safeParse(rawBody);
     if (!parsedBody.success) return validationError(parsedBody.error);
 
     const supabase = createRouteHandlerClient({ cookies });
-    const { data, error } = await updateCrmWorkOrder(supabase, context.params.id, parsedBody.data);
+    // Persist only fields the client actually sent, so a partial PATCH (e.g. a status-only
+    // change) doesn't wipe untouched columns (internal_handoff, work_address) with defaults.
+    const updateInput = pickProvidedFields(parsedBody.data, rawBody);
+    const { data, error } = await updateCrmWorkOrder(supabase, context.params.id, updateInput);
 
     if (error) {
       return routeError(500, 'crm_work_order_update_failed', error.message);

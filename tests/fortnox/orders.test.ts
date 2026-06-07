@@ -29,6 +29,13 @@ describe('buildOrderRows', () => {
     expect((row as any).DeliveredQuantity).toBe(20);
   });
 
+  it('clamps discount to [0,100] so the Fortnox row matches the CRM pricing', () => {
+    const [over] = buildOrderRows([{ pricing_mode: 'item', unit_price: '100', quantity: '1', discount_percent: '150' }], 25, false);
+    expect((over as any).Discount).toBe(100);
+    const [normal] = buildOrderRows([{ pricing_mode: 'item', unit_price: '100', quantity: '1', discount_percent: '25' }], 25, false);
+    expect((normal as any).Discount).toBe(25);
+  });
+
   it('marks HouseWork only when ROT is enabled and the row is rot work', () => {
     const [withRot] = buildOrderRows([{ pricing_mode: 'item', unit_price: '100', quantity: '1', is_rot_work: true }], 25, true);
     expect((withRot as any).HouseWork).toBe(true);

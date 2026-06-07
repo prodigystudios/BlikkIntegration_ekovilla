@@ -1,7 +1,7 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { getCrmWorkOrder } from '@/lib/domains/crm/work-orders';
-import { pushWorkOrderToFortnox } from '@/lib/domains/fortnox/orders';
+import { updateWorkOrderInFortnox } from '@/lib/domains/fortnox/orders';
 import { FortnoxNotConnectedError } from '@/lib/domains/fortnox/client';
 import { ok, requireCrmUser, routeError } from '../../_lib';
 
@@ -11,9 +11,9 @@ type RouteContext = {
   };
 };
 
-// Manual (re)push of a work order to Fortnox as an order. Used to retry a failed
-// auto-push or to push an order that was never synced. pushWorkOrderToFortnox sets
-// fortnox_order_sync_status itself; we re-fetch so the client gets the new state.
+// Manual (re)push of a work order to Fortnox. Uses updateWorkOrderInFortnox so it does a
+// REAL re-sync when an order already exists (PUT the current rows) — "Synka om" / "Försök
+// igen" must actually re-send, not short-circuit. If no order exists yet it creates one.
 export async function POST(_req: Request, context: RouteContext) {
   try {
     const crmUser = await requireCrmUser();
@@ -21,7 +21,7 @@ export async function POST(_req: Request, context: RouteContext) {
 
     let fortnoxError: string | null = null;
     try {
-      await pushWorkOrderToFortnox(context.params.id);
+      await updateWorkOrderInFortnox(context.params.id);
     } catch (e) {
       if (e instanceof FortnoxNotConnectedError) {
         return routeError(409, 'fortnox_not_connected', 'Fortnox är inte anslutet');

@@ -8,6 +8,7 @@ import { computePricing, lineItemRowTotal, type PricingLineItem } from '@/lib/do
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
 import { inferMaterialFromArticle, sacksFor } from '@/lib/domains/crm/materials';
 import { parseDecimal } from '@/lib/shared/number';
+import { formatCurrency } from '@/app/crm/lib/format';
 
 export type ArticleLineItem = {
   id: string;
@@ -29,9 +30,6 @@ export type ArticleLineItem = {
 
 type FortnoxArticle = { article_number: string; description: string | null; sales_price: number | null; unit: string | null };
 
-function formatCurrency(value: number, currencyCode: string) {
-  return new Intl.NumberFormat('sv-SE', { style: 'currency', currency: currencyCode || 'SEK', maximumFractionDigits: 0 }).format(value || 0);
-}
 function newId() {
   try { return crypto.randomUUID(); } catch { return `row-${Date.now()}-${Math.round(Math.random() * 1e6)}`; }
 }
