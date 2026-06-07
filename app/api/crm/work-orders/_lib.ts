@@ -19,6 +19,14 @@ function normalizeOptionalText(value: unknown) {
 const workOrderStatusSchema = z.enum(['draft', 'scheduled', 'in_progress', 'completed', 'invoiced', 'cancelled']);
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Ogiltigt datum');
 
+// Create a standalone work order (no originating quote). Customer is required; identity
+// (name/snapshot/address) is derived from the customer card server-side.
+export const createStandaloneWorkOrderSchema = z.object({
+  customer_id: z.string().uuid('Välj en kund'),
+  project_name: z.string().trim().min(1, 'Ordernamn krävs'),
+  desired_installation_date: z.preprocess((value) => normalizeOptionalText(value), dateSchema.nullable()).optional().default(null),
+});
+
 export const createWorkOrderTimeEntrySchema = z.object({
   work_date: dateSchema,
   hours: z.coerce.number().positive('Timmar måste vara större än 0').max(24, 'Timmar får inte överstiga 24'),

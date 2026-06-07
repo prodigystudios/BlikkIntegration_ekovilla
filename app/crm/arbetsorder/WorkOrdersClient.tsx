@@ -8,6 +8,9 @@ import { crm, syncStatusLabel, syncStatusClass, workOrderStatusLabel, workOrderS
 import { formatDate, formatCurrency, isWorkOrderOverdue, documentRef } from '@/app/crm/lib/format';
 import AssigneeFilter, { matchesAssignee, type AssigneeFilterValue, type AssigneeOption } from '@/app/crm/components/AssigneeFilter';
 import DocumentNumberBadge from '@/app/crm/components/DocumentNumberBadge';
+import CrmModal from '@/app/crm/components/CrmModal';
+import EntityCombobox, { type EntityResult } from '@/app/crm/components/EntityCombobox';
+import { useToast } from '@/lib/Toast';
 
 type WorkOrderStatus = 'draft' | 'scheduled' | 'ready' | 'in_progress' | 'completed' | 'invoiced' | 'cancelled';
 type FortnoxSyncStatus = 'not_synced' | 'pending' | 'synced' | 'failed';
@@ -57,6 +60,7 @@ function initialsOf(name: string | null | undefined) {
 
 export default function WorkOrdersClient({ currentUserId }: { currentUserId: string | null }) {
   const router = useRouter();
+  const toast = useToast();
   const searchParams = useSearchParams();
   const [workOrders, setWorkOrders] = useState<WorkOrderItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -66,6 +70,60 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [assigneeFilter, setAssigneeFilter] = useState<AssigneeFilterValue>([]);
   const [assignees, setAssignees] = useState<AssigneeOption[]>([]);
+
+  // "Ny order" (standalone, no quote) — requires a linked customer.
+  const [newOrderOpen, setNewOrderOpen] = useState(false);
+  const [newOrderCustomerId, setNewOrderCustomerId] = useState('');
+  const [newOrderCustomerLabel, setNewOrderCustomerLabel] = useState('');
+  const [newOrderName, setNewOrderName] = useState('');
+  const [newOrderDate, setNewOrderDate] = useState('');
+  const [creatingOrder, setCreatingOrder] = useState(false);
+
+  async function searchCustomers(query: string): Promise<EntityResult[]> {
+    const res = await fetch(`/api/crm/customers/search?q=${encodeURIComponent(query)}`, { cache: 'no-store' });
+    const json = await res.json().catch(() => ({}));
+    const items = json?.ok && Array.isArray(json?.data?.items) ? json.data.items : [];
+    return items.map((c: { id: string; display_name: string; organization_number: string | null; city: string | null }) => ({
+      id: c.id,
+      label: c.display_name || 'Okänd kund',
+      sublabel: [c.organization_number, c.city].filter(Boolean).join(' · ') || undefined,
+    }));
+  }
+
+  function resetNewOrder() {
+    setNewOrderOpen(false);
+    setNewOrderCustomerId('');
+    setNewOrderCustomerLabel('');
+    setNewOrderName('');
+    setNewOrderDate('');
+  }
+
+  async function createOrder() {
+    if (!newOrderCustomerId) { toast.error('Välj en kund'); return; }
+    if (!newOrderName.trim()) { toast.error('Ange ett ordernamn'); return; }
+    setCreatingOrder(true);
+    try {
+      const res = await fetch('/api/crm/work-orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customer_id: newOrderCustomerId,
+          project_name: newOrderName.trim(),
+          desired_installation_date: newOrderDate || null,
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte skapa order'); return; }
+      const item = json?.data?.item as { id?: string; order_number?: string } | undefined;
+      toast.success(item?.order_number ? `Order skapad: ${item.order_number}` : 'Order skapad');
+      resetNewOrder();
+      if (item?.id) router.push(`/crm/arbetsorder/${item.id}`);
+    } catch {
+      toast.error('Kunde inte skapa order');
+    } finally {
+      setCreatingOrder(false);
+    }
+  }
 
   useEffect(() => {
     let active = true;
@@ -126,12 +184,22 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
             Öppna en arbetsorder för arbetsytan med översikt, ekonomi, artiklar, tid och kommentarer.
           </p>
         </div>
-        <Input
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          placeholder="Sök på ordernummer, projekt eller kund"
-          className="max-w-sm"
-        />
+        <div className="flex flex-wrap items-center gap-3">
+          <Input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Sök på ordernummer, projekt eller kund"
+            className="max-w-sm"
+          />
+          <button
+            type="button"
+            onClick={() => setNewOrderOpen(true)}
+            className={crm.primaryButton}
+            style={{ backgroundColor: 'var(--crm-primary)' }}
+          >
+            <span aria-hidden>+</span> Ny order
+          </button>
+        </div>
       </div>
 
       {error ? (
@@ -283,6 +351,63 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
           ) : null}
         </div>
       </div>
+
+      {/* ── Ny order (standalone) ── */}
+      {newOrderOpen ? (
+        <CrmModal
+          onClose={resetNewOrder}
+          ariaLabel="Ny order"
+          maxWidth="sm:max-w-[520px]"
+          header={
+            <>
+              <h2 className="text-lg font-bold text-slate-900">Ny order</h2>
+              <p className="m-0 mt-0.5 text-sm text-slate-500">Skapa en order utan offert. Lägg till artiklar efteråt på ordern.</p>
+            </>
+          }
+          footer={
+            <>
+              <button
+                type="button"
+                onClick={resetNewOrder}
+                className="flex-1 rounded-xl border border-slate-200 bg-white py-2.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 sm:flex-none sm:px-5"
+              >
+                Avbryt
+              </button>
+              <button
+                type="button"
+                onClick={() => void createOrder()}
+                disabled={creatingOrder || !newOrderCustomerId || !newOrderName.trim()}
+                className="flex-1 rounded-xl py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60 sm:ml-auto sm:flex-none sm:px-5"
+                style={{ backgroundColor: 'var(--crm-primary)' }}
+              >
+                {creatingOrder ? 'Skapar…' : 'Skapa order'}
+              </button>
+            </>
+          }
+        >
+          <div className="grid gap-4">
+            <div>
+              <p className={cn('mb-1.5', crm.sectionTitle)}>Kund</p>
+              <EntityCombobox
+                value={newOrderCustomerId}
+                valueLabel={newOrderCustomerLabel}
+                onChange={(id, label) => { setNewOrderCustomerId(id); setNewOrderCustomerLabel(label); }}
+                onClear={() => { setNewOrderCustomerId(''); setNewOrderCustomerLabel(''); }}
+                search={searchCustomers}
+                placeholder="Sök kund…"
+              />
+            </div>
+            <div>
+              <p className={cn('mb-1.5', crm.sectionTitle)}>Ordernamn / projekt</p>
+              <Input value={newOrderName} onChange={(e) => setNewOrderName(e.target.value)} placeholder="Ex. Lösull vind, Lindberg" />
+            </div>
+            <div>
+              <p className={cn('mb-1.5', crm.sectionTitle)}>Önskat installationsdatum (valfritt)</p>
+              <Input value={newOrderDate} onChange={(e) => setNewOrderDate(e.target.value)} type="date" lang="sv-SE" />
+            </div>
+          </div>
+        </CrmModal>
+      ) : null}
     </div>
   );
 }
