@@ -61,6 +61,7 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<WorkOrderFilter>('all');
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [assigneeFilter, setAssigneeFilter] = useState<AssigneeFilterValue>([]);
   const [assignees, setAssignees] = useState<AssigneeOption[]>([]);
 
@@ -110,6 +111,9 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
     [filter, workOrders, assigneeFilter, currentUserId],
   );
 
+  // Count of active filters (status + assignee) — shown as a badge on the mobile toggle.
+  const activeFilterCount = (filter !== 'all' ? 1 : 0) + (assigneeFilter.length > 0 ? 1 : 0);
+
   return (
     <div className="grid grid-cols-1 gap-6">
       {/* Page header */}
@@ -135,26 +139,51 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
       {/* List card */}
       <div className={crm.card}>
         {/* Toolbar */}
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#e0e8dc] px-5 py-3">
-          <div className="flex flex-wrap gap-2">
-            {FILTERS.map(([value, label]) => (
-              <button
-                key={value}
-                type="button"
-                onClick={() => setFilter(value)}
-                className={cn(
-                  'rounded-full border px-3 py-1.5 text-sm font-semibold transition',
-                  filter === value ? 'text-white' : 'border-[#e0e8dc] bg-[#f9fbf7] text-slate-600 hover:border-[#cfdcc9]',
-                )}
-                style={filter === value ? { backgroundColor: 'var(--crm-primary)', borderColor: 'var(--crm-primary)' } : undefined}
-              >
-                {label} <span className={cn('ml-0.5', filter === value ? 'text-white/70' : 'text-slate-400')}>{filterCounts[value]}</span>
-              </button>
-            ))}
-          </div>
-          <div className="flex items-center gap-3">
-            <AssigneeFilter value={assigneeFilter} onChange={setAssigneeFilter} users={assignees} />
+        <div className="grid gap-3 border-b border-[#e0e8dc] px-5 py-3">
+          {/* Mobile filter toggle */}
+          <div className="flex items-center justify-between gap-3 sm:hidden">
+            <button
+              type="button"
+              onClick={() => setFiltersOpen((o) => !o)}
+              aria-expanded={filtersOpen}
+              className={cn(
+                'relative inline-flex items-center gap-2 !rounded-lg !border px-3 py-2 text-sm font-semibold transition',
+                filtersOpen || activeFilterCount > 0 ? '!border-emerald-500 !bg-emerald-50 text-emerald-700' : '!border-[#dce4d8] !bg-white text-slate-600',
+              )}
+            >
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M4 6h16M7 12h10M10 18h4" />
+              </svg>
+              Filter
+              {activeFilterCount > 0 ? (
+                <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-emerald-600 px-1 text-[10px] font-bold text-white">{activeFilterCount}</span>
+              ) : null}
+            </button>
             <span className="whitespace-nowrap text-xs text-slate-400">{workOrders.length} i registret</span>
+          </div>
+
+          {/* Filters — collapsible on mobile, inline on desktop */}
+          <div className={cn('flex-col gap-3 sm:flex sm:flex-row sm:flex-wrap sm:items-center sm:justify-between', filtersOpen ? 'flex' : 'hidden')}>
+            <div className="flex flex-wrap gap-2">
+              {FILTERS.map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setFilter(value)}
+                  className={cn(
+                    'rounded-full border px-3 py-1.5 text-sm font-semibold transition',
+                    filter === value ? 'text-white' : 'border-[#e0e8dc] bg-[#f9fbf7] text-slate-600 hover:border-[#cfdcc9]',
+                  )}
+                  style={filter === value ? { backgroundColor: 'var(--crm-primary)', borderColor: 'var(--crm-primary)' } : undefined}
+                >
+                  {label} <span className={cn('ml-0.5', filter === value ? 'text-white/70' : 'text-slate-400')}>{filterCounts[value]}</span>
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-3">
+              <AssigneeFilter value={assigneeFilter} onChange={setAssigneeFilter} users={assignees} className="w-full sm:w-[200px]" />
+              <span className="hidden whitespace-nowrap text-xs text-slate-400 sm:inline">{workOrders.length} i registret</span>
+            </div>
           </div>
         </div>
 

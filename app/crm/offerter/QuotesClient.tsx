@@ -160,6 +160,7 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<QuoteFilter>('all');
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [assigneeFilter, setAssigneeFilter] = useState<AssigneeFilterValue>([]);
   const [assignees, setAssignees] = useState<AssigneeOption[]>([]);
 
@@ -233,6 +234,9 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
     setDetailPanelOpen(true);
     setHasHandledQuotePreset(true);
   }, [presetQuoteId, hasHandledQuotePreset, loading, quotes]);
+
+  // Count of active filters (status + assignee) — shown as a badge on the mobile toggle.
+  const activeFilterCount = (filter !== 'all' ? 1 : 0) + (assigneeFilter.length > 0 ? 1 : 0);
 
   // Scope the whole page (list, stats, chip counts) to the chosen "Ansvarig" filter.
   const assigneeScopedQuotes = useMemo(
@@ -417,13 +421,39 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
 
       {/* Quote list */}
       <div className="grid gap-3 rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] p-4 shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)] md:p-5">
-        <div className="flex flex-wrap items-center gap-3">
+        {/* Search + mobile filter toggle */}
+        <div className="flex items-center gap-2">
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Sök på offert, kund eller anteckning"
-            className="max-w-xs"
+            className="flex-1 sm:max-w-xs"
           />
+          <button
+            type="button"
+            onClick={() => setFiltersOpen((o) => !o)}
+            aria-expanded={filtersOpen}
+            aria-label="Filter"
+            className={cn(
+              'relative inline-flex h-[2.6rem] w-[2.6rem] shrink-0 items-center justify-center !rounded-lg !border !p-0 transition sm:hidden',
+              filtersOpen || activeFilterCount > 0
+                ? '!border-emerald-500 !bg-emerald-50 text-emerald-700'
+                : '!border-[#dce4d8] !bg-white text-slate-600',
+            )}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M4 6h16M7 12h10M10 18h4" />
+            </svg>
+            {activeFilterCount > 0 ? (
+              <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-emerald-600 px-1 text-[10px] font-bold text-white">
+                {activeFilterCount}
+              </span>
+            ) : null}
+          </button>
+        </div>
+
+        {/* Filters — collapsible on mobile, inline on desktop */}
+        <div className={cn('flex-col gap-3 sm:flex sm:flex-row sm:flex-wrap sm:items-center', filtersOpen ? 'flex' : 'hidden')}>
           <div className="flex flex-wrap gap-1.5">
             {((['all', 'active', 'follow_up', 'won', 'lost']) as const).map((value) => {
               const active = filter === value;
@@ -446,7 +476,7 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
               );
             })}
           </div>
-          <AssigneeFilter value={assigneeFilter} onChange={setAssigneeFilter} users={assignees} className="ml-auto w-[200px]" />
+          <AssigneeFilter value={assigneeFilter} onChange={setAssigneeFilter} users={assignees} className="w-full sm:ml-auto sm:w-[200px]" />
         </div>
 
         {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
