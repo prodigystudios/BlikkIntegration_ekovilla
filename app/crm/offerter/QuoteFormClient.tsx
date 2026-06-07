@@ -1356,6 +1356,16 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
             <Field fieldId="field-project-name" label="Offertnamn / projekt" className="md:col-span-2" error={fieldErrors.project_name}>
               <Input value={draft.project_name} onChange={(e) => setDraft((d) => ({ ...d, project_name: e.target.value }))} placeholder="Ex. Takisolering villa Norrköping" />
             </Field>
+            <Field label="Er referens (kontaktperson)" className="md:col-span-2">
+              <Input
+                value={draft.contact_name}
+                onChange={(e) => setDraft((d) => ({ ...d, contact_name: e.target.value }))}
+                placeholder="Ex. Birgitta Ling"
+              />
+              <p className="mt-1 text-[11px] leading-snug text-slate-400">
+                Personen hos kunden som offerten gäller. Förifylls från kundkortet men kan ändras per offert – visas som ”Er referens” på Fortnox-offerten.
+              </p>
+            </Field>
             <Field label="Beskrivning" className="md:col-span-2">
               <Textarea value={draft.description} onChange={(e) => setDraft((d) => ({ ...d, description: e.target.value }))} rows={3} placeholder="Kort om omfattning eller vad som offereras" />
             </Field>
