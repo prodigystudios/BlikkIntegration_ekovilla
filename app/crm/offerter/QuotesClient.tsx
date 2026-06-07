@@ -6,6 +6,7 @@ import Input from '../../../components/ui/Input';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
 import AssigneeFilter, { matchesAssignee, type AssigneeFilterValue, type AssigneeOption } from '@/app/crm/components/AssigneeFilter';
+import { openFortnoxPdf, postFortnoxEmail } from '@/app/crm/lib/fortnoxDoc';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -284,6 +285,11 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
     [detailQuoteId, quotes],
   );
 
+  // The offer is locked in Fortnox only once it's been converted to an order (a work
+  // order exists) AND its sync didn't fail. If the sync failed we must NOT show "Låst"
+  // / hide re-sync — the salesperson still needs to recover.
+  const offerLocked = Boolean(detailQuote?.work_order_id) && detailQuote?.fortnox_sync_status !== 'failed';
+
   async function moveQuoteToStatus(quoteId: string, nextStatus: QuoteItem['status']) {
     const currentItem = quotes.find((q) => q.id === quoteId);
     if (!currentItem || currentItem.status === nextStatus) return;
@@ -394,94 +400,36 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
     }
   }
 
-  // Fetch the Fortnox-rendered offer PDF and open it in a new tab. We open the tab
-  // synchronously (before the await) so it isn't blocked as a non-gesture popup.
-  async function openFortnoxPdf(quoteId: string) {
-    const win = window.open('', '_blank');
+  // Offer PDF + email, and order-confirmation PDF + email (for the work order created
+  // from this quote). Shared fetch/popup/email logic lives in lib/fortnoxDoc.
+  async function openOfferPdf(quoteId: string) {
     setPdfLoadingId(quoteId);
-    try {
-      const res = await fetch(`/api/fortnox/offers/${quoteId}/pdf`, { cache: 'no-store' });
-      if (!res.ok) {
-        const json = await res.json().catch(() => ({}));
-        win?.close();
-        toast.error(json?.error || 'Kunde inte hämta PDF');
-        return;
-      }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      if (win) win.location.href = url;
-      else window.open(url, '_blank');
-      setTimeout(() => URL.revokeObjectURL(url), 60_000);
-    } catch {
-      win?.close();
-      toast.error('Kunde inte hämta PDF');
-    } finally {
-      setPdfLoadingId(null);
-    }
+    await openFortnoxPdf(`/api/fortnox/offers/${quoteId}/pdf`, toast.error);
+    setPdfLoadingId(null);
   }
 
-  // Ask Fortnox to e-mail the offer to the customer. Outward-facing → confirm first.
-  async function sendFortnoxEmail(quoteId: string) {
+  async function sendOfferEmail(quoteId: string) {
     if (!window.confirm('Mejla offerten till kunden via Fortnox?')) return;
     setEmailingId(quoteId);
-    try {
-      const res = await fetch(`/api/fortnox/offers/${quoteId}/email`, { method: 'POST' });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok || !json.ok) {
-        toast.error(json?.error || 'Kunde inte mejla offerten');
-        return;
-      }
+    if (await postFortnoxEmail(`/api/fortnox/offers/${quoteId}/email`, toast.error)) {
       toast.success('Offerten mejlad till kunden via Fortnox');
-    } catch {
-      toast.error('Kunde inte mejla offerten');
-    } finally {
-      setEmailingId(null);
     }
+    setEmailingId(null);
   }
 
-  // Order confirmation (orderbekräftelse) for the work order created from this quote.
-  // Reuses the work-order Fortnox order endpoints; surfaces a friendly 409 if the
-  // work order isn't synced to Fortnox yet.
   async function openOrderPdf(workOrderId: string) {
-    const win = window.open('', '_blank');
     setOrderPdfId(workOrderId);
-    try {
-      const res = await fetch(`/api/crm/work-orders/${workOrderId}/fortnox/pdf`, { cache: 'no-store' });
-      if (!res.ok) {
-        const json = await res.json().catch(() => ({}));
-        win?.close();
-        toast.error(json?.error || 'Kunde inte hämta orderbekräftelsen');
-        return;
-      }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      if (win) win.location.href = url;
-      else window.open(url, '_blank');
-      setTimeout(() => URL.revokeObjectURL(url), 60_000);
-    } catch {
-      win?.close();
-      toast.error('Kunde inte hämta orderbekräftelsen');
-    } finally {
-      setOrderPdfId(null);
-    }
+    await openFortnoxPdf(`/api/crm/work-orders/${workOrderId}/fortnox/pdf`, toast.error);
+    setOrderPdfId(null);
   }
 
   async function sendOrderEmail(workOrderId: string) {
     if (!window.confirm('Mejla orderbekräftelsen till kunden via Fortnox?')) return;
     setOrderEmailingId(workOrderId);
-    try {
-      const res = await fetch(`/api/crm/work-orders/${workOrderId}/fortnox/email`, { method: 'POST' });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok || !json.ok) {
-        toast.error(json?.error || 'Kunde inte mejla orderbekräftelsen');
-        return;
-      }
+    if (await postFortnoxEmail(`/api/crm/work-orders/${workOrderId}/fortnox/email`, toast.error)) {
       toast.success('Orderbekräftelsen mejlad till kunden via Fortnox');
-    } catch {
-      toast.error('Kunde inte mejla orderbekräftelsen');
-    } finally {
-      setOrderEmailingId(null);
     }
+    setOrderEmailingId(null);
   }
 
   return (
@@ -862,7 +810,7 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
                       <div className="grid min-w-0 gap-0.5">
                         <div className="flex flex-wrap items-center gap-1.5">
                           <span className="text-sm font-semibold text-slate-800">Fortnox</span>
-                          {detailQuote.work_order_id ? (
+                          {offerLocked ? (
                             <span className="inline-flex items-center gap-1 rounded-md border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">
                               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                                 <rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 018 0v4" />
@@ -876,7 +824,7 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
                             ? `Offert #${detailQuote.fortnox_offer_number} skapad.`
                             : 'Skicka offerten till Fortnox.'}
                         </span>
-                        {detailQuote.fortnox_sync_status === 'failed' && !detailQuote.work_order_id ? (
+                        {detailQuote.fortnox_sync_status === 'failed' ? (
                           <span className="text-xs font-semibold text-rose-600">Senaste synk misslyckades.</span>
                         ) : null}
                       </div>
@@ -886,7 +834,7 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
                         <>
                           <button
                             type="button"
-                            onClick={() => void openFortnoxPdf(detailQuote.id)}
+                            onClick={() => void openOfferPdf(detailQuote.id)}
                             disabled={pdfLoadingId === detailQuote.id}
                             className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
                           >
@@ -894,7 +842,7 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
                           </button>
                           <button
                             type="button"
-                            onClick={() => void sendFortnoxEmail(detailQuote.id)}
+                            onClick={() => void sendOfferEmail(detailQuote.id)}
                             disabled={emailingId === detailQuote.id}
                             className="rounded-lg border border-indigo-600 bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
                           >
@@ -902,8 +850,9 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
                           </button>
                         </>
                       ) : null}
-                      {/* Sync/re-sync hidden once a work order locks the offer in Fortnox */}
-                      {!detailQuote.work_order_id ? (
+                      {/* Sync/re-sync hidden once a work order locks the offer in Fortnox
+                          (but still shown if the sync failed, so the user can recover) */}
+                      {!offerLocked ? (
                         <button
                           type="button"
                           onClick={() => void pushToFortnox(detailQuote.id)}
@@ -922,7 +871,7 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
                   </div>
 
                   {/* Locked explanation — offer can no longer be edited/re-synced */}
-                  {detailQuote.work_order_id ? (
+                  {offerLocked ? (
                     <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2.5 text-xs leading-5 text-amber-900">
                       <svg className="mt-0.5 shrink-0" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                         <rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 018 0v4" />

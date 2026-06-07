@@ -241,7 +241,10 @@ export async function fortnoxGetBinary(
   }
 
   const buf = await res.arrayBuffer();
-  return { bytes: new Uint8Array(buf), contentType: res.headers.get('content-type') || accept };
+  // Fall back to application/pdf (the actual document type), NOT `accept` — callers pass
+  // accept='application/json' as a Fortnox workaround, so using it as the fallback would
+  // mislabel a valid PDF that arrives without a Content-Type header.
+  return { bytes: new Uint8Array(buf), contentType: res.headers.get('content-type') || 'application/pdf' };
 }
 
 // Perform a PUT request to the Fortnox API (e.g. offer → order conversion).

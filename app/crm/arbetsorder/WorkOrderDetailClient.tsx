@@ -18,6 +18,7 @@ import WorkOrderArticlesTab, { type ArticleLineItem } from './WorkOrderArticlesT
 import { useWorkOrderActivity } from './useWorkOrderActivity';
 import { useCustomerContact } from './useCustomerContact';
 import { formatDate, formatDateTime, formatCurrency, joinAddress, isWorkOrderOverdue } from '@/app/crm/lib/format';
+import { openFortnoxPdf, postFortnoxEmail } from '@/app/crm/lib/fortnoxDoc';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -289,48 +290,22 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
     finally { setPushingFortnox(false); }
   }
 
-  // Fetch the Fortnox order confirmation PDF and open it in a new tab. Open the tab
-  // synchronously (before the await) so it isn't blocked as a non-gesture popup.
+  // Order confirmation PDF + email. Shared fetch/popup/email logic in lib/fortnoxDoc.
   async function openOrderPdf() {
     if (!workOrder) return;
-    const win = window.open('', '_blank');
     setOrderPdfLoading(true);
-    try {
-      const res = await fetch(`/api/crm/work-orders/${workOrder.id}/fortnox/pdf`, { cache: 'no-store' });
-      if (!res.ok) {
-        const json = await res.json().catch(() => ({}));
-        win?.close();
-        toast.error(json?.error || 'Kunde inte hämta orderbekräftelsen');
-        return;
-      }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      if (win) win.location.href = url;
-      else window.open(url, '_blank');
-      setTimeout(() => URL.revokeObjectURL(url), 60_000);
-    } catch {
-      win?.close();
-      toast.error('Kunde inte hämta orderbekräftelsen');
-    } finally {
-      setOrderPdfLoading(false);
-    }
+    await openFortnoxPdf(`/api/crm/work-orders/${workOrder.id}/fortnox/pdf`, toast.error);
+    setOrderPdfLoading(false);
   }
 
-  // Ask Fortnox to e-mail the order confirmation to the customer. Outward-facing → confirm.
   async function sendOrderEmail() {
     if (!workOrder) return;
     if (!window.confirm('Mejla orderbekräftelsen till kunden via Fortnox?')) return;
     setOrderEmailing(true);
-    try {
-      const res = await fetch(`/api/crm/work-orders/${workOrder.id}/fortnox/email`, { method: 'POST' });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte mejla orderbekräftelsen'); return; }
+    if (await postFortnoxEmail(`/api/crm/work-orders/${workOrder.id}/fortnox/email`, toast.error)) {
       toast.success('Orderbekräftelsen mejlad till kunden via Fortnox');
-    } catch {
-      toast.error('Kunde inte mejla orderbekräftelsen');
-    } finally {
-      setOrderEmailing(false);
     }
+    setOrderEmailing(false);
   }
 
   // ─── Loading / error ──────────────────────────────────────────────────────
