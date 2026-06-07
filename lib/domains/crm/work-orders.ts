@@ -60,7 +60,7 @@ export const crmWorkOrderCommentSelect = `
   )
 `;
 
-export type CrmWorkOrderStatus = 'draft' | 'scheduled' | 'ready' | 'in_progress' | 'completed' | 'cancelled';
+export type CrmWorkOrderStatus = 'draft' | 'scheduled' | 'ready' | 'in_progress' | 'completed' | 'invoiced' | 'cancelled';
 
 type WorkOrderAddress = {
   street_address?: string | null;
@@ -265,6 +265,26 @@ export async function updateCrmWorkOrder(supabase: SupabaseClient, id: string, i
 
 export async function getCrmWorkOrder(supabase: SupabaseClient, id: string) {
   return supabase.from('crm_work_orders').select(crmWorkOrderSelect).eq('id', id).single();
+}
+
+// Replace the work order's article rows + recomputed totals. Pricing is computed by the
+// caller (shared computePricing) so DB, UI and the Fortnox order stay consistent.
+export async function updateCrmWorkOrderLineItems(
+  supabase: SupabaseClient,
+  id: string,
+  lineItems: Array<Record<string, any>>,
+  pricing: { subtotal: number; vat: number; total: number },
+) {
+  return supabase
+    .from('crm_work_orders')
+    .update({
+      line_items: lineItems,
+      pricing_summary: { subtotal: pricing.subtotal, vat: pricing.vat, total: pricing.total },
+      amount: pricing.total,
+    })
+    .eq('id', id)
+    .select(crmWorkOrderSelect)
+    .single();
 }
 
 export async function listCrmWorkOrderTimeEntries(supabase: SupabaseClient, workOrderId: string) {

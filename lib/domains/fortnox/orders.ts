@@ -35,7 +35,10 @@ export type PushOrderResult = {
   fortnox_order_number: string;
 };
 
-function buildOrderRows(lineItems: WorkOrderRow['line_items'], vatPercent: number, rotEnabled: boolean) {
+// Exported for tests. NOTE: Fortnox order rows use `OrderedQuantity` (offer rows use
+// `Quantity`, invoice rows use `DeliveredQuantity`) — sending `Quantity` to /orders
+// returns 400 "Felaktigt fältnamn (Quantity)".
+export function buildOrderRows(lineItems: WorkOrderRow['line_items'], vatPercent: number, rotEnabled: boolean) {
   if (!lineItems?.length) return [];
   return lineItems.map((item) => {
     // parseDecimal handles Swedish comma input ("1,5") that plain parseFloat truncates.
@@ -46,7 +49,11 @@ function buildOrderRows(lineItems: WorkOrderRow['line_items'], vatPercent: numbe
     return {
       ...(item.article_number ? { ArticleNumber: item.article_number } : {}),
       Description: item.article_name || item.line_note || 'Artikel',
-      Quantity: quantity,
+      // Fortnox invoices the DELIVERED quantity. A work order is the basis for invoicing
+      // the full completed job, so delivered = ordered (otherwise the row sum stays 0 /
+      // stale on new or edited rows).
+      OrderedQuantity: quantity,
+      DeliveredQuantity: quantity,
       Price: price,
       VAT: vatPercent,
       ...(item.article_unit_name ? { Unit: item.article_unit_name } : {}),
@@ -223,6 +230,56 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
       .from('crm_work_orders')
       .update({ fortnox_order_sync_status: syncStatus })
       .eq('id', workOrderId);
+    throw e;
+  }
+}
+
+// Push edited article rows to an already-synced Fortnox order (PUT replaces all rows).
+// If the order was never synced, falls back to the create path. Used after the work
+// order's line_items are edited so Fortnox reflects the corrected areas/articles before
+// invoicing. Fortnox rejects edits to an invoiced/cancelled order — that surfaces as the
+// thrown error and the sync status flips to 'failed'.
+export async function updateWorkOrderInFortnox(workOrderId: string): Promise<PushOrderResult> {
+  const supabase = getSupabaseAdmin();
+
+  const { data: workOrder, error } = await supabase
+    .from('crm_work_orders')
+    .select('id, quote_id, vat_percent, fortnox_order_number, line_items')
+    .eq('id', workOrderId)
+    .single<WorkOrderRow>();
+
+  if (error || !workOrder) throw new Error(`Arbetsorder ${workOrderId} hittades inte`);
+
+  // Not yet in Fortnox → create it (which also stores the number + synced state).
+  if (!workOrder.fortnox_order_number) {
+    return pushWorkOrderToFortnox(workOrderId);
+  }
+
+  await supabase
+    .from('crm_work_orders')
+    .update({ fortnox_order_sync_status: 'pending' })
+    .eq('id', workOrderId);
+
+  try {
+    const { data: linkedQuote } = workOrder.quote_id
+      ? await supabase.from('crm_quotes').select('rot_details').eq('id', workOrder.quote_id).maybeSingle()
+      : { data: null as { rot_details: { enabled?: boolean | null } | null } | null };
+
+    const vatPercent = typeof workOrder.vat_percent === 'number' ? workOrder.vat_percent : 25;
+    const rotEnabled = (linkedQuote as any)?.rot_details?.enabled === true;
+    const orderRows = buildOrderRows(workOrder.line_items, vatPercent, rotEnabled);
+
+    await fortnoxPut(`/orders/${workOrder.fortnox_order_number}`, { Order: { OrderRows: orderRows } });
+
+    await supabase
+      .from('crm_work_orders')
+      .update({ fortnox_order_sync_status: 'synced', fortnox_order_synced_at: new Date().toISOString() })
+      .eq('id', workOrderId);
+
+    return { fortnox_order_number: workOrder.fortnox_order_number };
+  } catch (e) {
+    const syncStatus = e instanceof FortnoxNotConnectedError ? 'not_synced' : 'failed';
+    await supabase.from('crm_work_orders').update({ fortnox_order_sync_status: syncStatus }).eq('id', workOrderId);
     throw e;
   }
 }

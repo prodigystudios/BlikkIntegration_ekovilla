@@ -4,9 +4,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Input from '../../../components/ui/Input';
 import { cn } from '@/lib/shared/cn';
-import { crm, syncStatusLabel, syncStatusClass } from '@/app/crm/lib/crmTokens';
+import { crm, syncStatusLabel, syncStatusClass, workOrderStatusLabel, workOrderStatusClass } from '@/app/crm/lib/crmTokens';
 
-type WorkOrderStatus = 'draft' | 'scheduled' | 'ready' | 'in_progress' | 'completed' | 'cancelled';
+type WorkOrderStatus = 'draft' | 'scheduled' | 'ready' | 'in_progress' | 'completed' | 'invoiced' | 'cancelled';
 type FortnoxSyncStatus = 'not_synced' | 'pending' | 'synced' | 'failed';
 
 type WorkOrderItem = {
@@ -24,19 +24,12 @@ type WorkOrderItem = {
   fortnox_order_sync_status: FortnoxSyncStatus;
 };
 
-type WorkOrderFilter = 'all' | 'draft' | 'scheduled' | 'active' | 'completed';
+type WorkOrderFilter = 'all' | 'draft' | 'scheduled' | 'active' | 'completed' | 'invoiced';
 
-const workOrderStatusMeta: Record<WorkOrderStatus, { label: string; className: string }> = {
-  draft:       { label: 'Utkast',   className: 'border-slate-200 bg-slate-50 text-slate-600' },
-  scheduled:   { label: 'Planerad', className: 'border-sky-200 bg-sky-50 text-sky-700' },
-  ready:       { label: 'Redo',     className: 'border-amber-200 bg-amber-50 text-amber-700' },
-  in_progress: { label: 'Pågår',    className: 'border-violet-200 bg-violet-50 text-violet-700' },
-  completed:   { label: 'Klar',     className: 'border-emerald-200 bg-emerald-50 text-emerald-700' },
-  cancelled:   { label: 'Avbruten', className: 'border-rose-200 bg-rose-50 text-rose-700' },
-};
+// Status labels/classes are centralised in crmTokens (shared with detail + card).
 
 const FILTERS: Array<[WorkOrderFilter, string]> = [
-  ['all', 'Alla'], ['draft', 'Utkast'], ['scheduled', 'Planerade'], ['active', 'Pågående'], ['completed', 'Klara'],
+  ['all', 'Alla'], ['draft', 'Ej planerade'], ['scheduled', 'Planerade'], ['active', 'Pågående'], ['completed', 'Fakturera'], ['invoiced', 'Avslutade'],
 ];
 
 function matchesFilter(item: WorkOrderItem, filter: WorkOrderFilter) {
@@ -44,6 +37,7 @@ function matchesFilter(item: WorkOrderItem, filter: WorkOrderFilter) {
   if (filter === 'draft') return item.status === 'draft';
   if (filter === 'scheduled') return item.status === 'scheduled' || item.status === 'ready';
   if (filter === 'completed') return item.status === 'completed';
+  if (filter === 'invoiced') return item.status === 'invoiced';
   return item.status === 'in_progress';
 }
 
@@ -162,7 +156,6 @@ export default function WorkOrdersClient() {
           {!loading && visibleWorkOrders.length > 0 ? (
             <div className="grid gap-3 xl:grid-cols-2">
               {visibleWorkOrders.map((item) => {
-                const meta = workOrderStatusMeta[item.status];
                 const overdue = isOverdue(item.desired_installation_date, item.status);
                 return (
                   <button
@@ -174,7 +167,7 @@ export default function WorkOrdersClient() {
                     <div className="flex items-start justify-between gap-3">
                       <div className="grid min-w-0 gap-2">
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className={cn(crm.badge, meta.className)}>{meta.label}</span>
+                          <span className={cn(crm.badge, workOrderStatusClass[item.status])}>{workOrderStatusLabel[item.status]}</span>
                           {overdue ? <span className={cn(crm.badge, 'border-rose-200 bg-rose-50 text-rose-700')}>Försenad</span> : null}
                           <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">{item.order_number}</span>
                         </div>

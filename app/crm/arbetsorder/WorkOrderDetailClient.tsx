@@ -7,18 +7,19 @@ import Select from '../../../components/ui/Select';
 import Textarea from '../../../components/ui/Textarea';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
-import { crm, syncStatusLabel, syncStatusClass } from '@/app/crm/lib/crmTokens';
+import { crm, syncStatusLabel, syncStatusClass, workOrderStatusLabel, workOrderStatusClass, WORK_ORDER_STATUS_FLOW, WORK_ORDER_STATUS_OPTIONS } from '@/app/crm/lib/crmTokens';
 import { PhoneLink, EmailLink, AddressLink } from '@/app/crm/components/ContactLinks';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
 import { inferMaterialFromArticle, sacksFor } from '@/lib/domains/crm/materials';
 import { parseDecimal } from '@/lib/shared/number';
-import WorkOrderTimeTab, { type TimeEntryItem, type TimeDraft } from './WorkOrderTimeTab';
-import WorkOrderCommentsTab, { type CommentItem } from './WorkOrderCommentsTab';
-import { type MentionUser } from '@/app/crm/components/MentionTextarea';
+import WorkOrderTimeTab from './WorkOrderTimeTab';
+import WorkOrderCommentsTab from './WorkOrderCommentsTab';
+import WorkOrderArticlesTab, { type ArticleLineItem } from './WorkOrderArticlesTab';
+import { useWorkOrderActivity } from './useWorkOrderActivity';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-type WorkOrderStatus = 'draft' | 'scheduled' | 'ready' | 'in_progress' | 'completed' | 'cancelled';
+type WorkOrderStatus = 'draft' | 'scheduled' | 'ready' | 'in_progress' | 'completed' | 'invoiced' | 'cancelled';
 type WorkOrderTab = 'overview' | 'economy' | 'articles' | 'time' | 'comments';
 type FortnoxSyncStatus = 'not_synced' | 'pending' | 'synced' | 'failed';
 
@@ -89,18 +90,7 @@ type WorkOrderDraft = {
 type AssignableUser = { id: string; full_name: string | null; role?: string | null };
 
 // ─── Meta / helpers ───────────────────────────────────────────────────────────
-
-const workOrderStatusMeta: Record<WorkOrderStatus, { label: string; className: string }> = {
-  draft:       { label: 'Utkast',   className: 'border-slate-200 bg-slate-50 text-slate-600' },
-  scheduled:   { label: 'Planerad', className: 'border-sky-200 bg-sky-50 text-sky-700' },
-  ready:       { label: 'Redo',     className: 'border-amber-200 bg-amber-50 text-amber-700' },
-  in_progress: { label: 'Pågår',    className: 'border-violet-200 bg-violet-50 text-violet-700' },
-  completed:   { label: 'Klar',     className: 'border-emerald-200 bg-emerald-50 text-emerald-700' },
-  cancelled:   { label: 'Avbruten', className: 'border-rose-200 bg-rose-50 text-rose-700' },
-};
-
-// The normal forward flow shown as a stepper. `cancelled` is off-flow.
-const STATUS_FLOW: WorkOrderStatus[] = ['draft', 'scheduled', 'ready', 'in_progress', 'completed'];
+// Status labels/classes/flow are centralised in crmTokens (shared with the list + card).
 
 function formatDate(value: string | null | undefined) {
   if (!value) return '–';
@@ -159,17 +149,21 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [savingArticles, setSavingArticles] = useState(false);
   const [pushingFortnox, setPushingFortnox] = useState(false);
+  const [editingOverview, setEditingOverview] = useState(false); // overview fields locked until unlocked
   const [activeTab, setActiveTab] = useState<WorkOrderTab>('overview');
   const [draft, setDraft] = useState<WorkOrderDraft | null>(null);
 
   const [assignees, setAssignees] = useState<AssignableUser[]>([]);
-  const [mentionUsers, setMentionUsers] = useState<MentionUser[]>([]);
   const [customerInfo, setCustomerInfo] = useState<{ contactName: string | null; phone: string | null; email: string | null } | null>(null);
-  const [timeEntries, setTimeEntries] = useState<TimeEntryItem[]>([]);
-  const [timeEntriesLoading, setTimeEntriesLoading] = useState(false);
-  const [comments, setComments] = useState<CommentItem[]>([]);
-  const [commentsLoading, setCommentsLoading] = useState(false);
+
+  // Time entries, comments and @-mention targets + their CRUD live in a shared hook
+  // (also used by the installer field view) so the write logic isn't duplicated.
+  const {
+    timeEntries, comments, mentionUsers, timeEntriesLoading, commentsLoading,
+    createTimeEntry, updateTimeEntry, deleteTimeEntry, createComment, updateComment, deleteComment,
+  } = useWorkOrderActivity(workOrderId);
 
   // Load work order
   useEffect(() => {
@@ -190,33 +184,15 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workOrderId]);
 
-  // Load assignees + related lists once the work order is loaded
+  // Load assignees (edit-only register) once the work order is loaded.
   useEffect(() => {
     if (!workOrder) return;
     let active = true;
-    async function loadRelated() {
-      setTimeEntriesLoading(true); setCommentsLoading(true);
-      try {
-        const [assigneeRes, timeRes, commentRes, mentionRes] = await Promise.all([
-          fetch('/api/crm/work-orders/assignees', { cache: 'no-store' }),
-          fetch(`/api/crm/work-orders/${workOrderId}/time-entries`, { cache: 'no-store' }),
-          fetch(`/api/crm/work-orders/${workOrderId}/comments`, { cache: 'no-store' }),
-          fetch('/api/crm/work-orders/mention-users', { cache: 'no-store' }),
-        ]);
-        const [assigneeJson, timeJson, commentJson, mentionJson] = await Promise.all([
-          assigneeRes.json().catch(() => ({})), timeRes.json().catch(() => ({})), commentRes.json().catch(() => ({})), mentionRes.json().catch(() => ({})),
-        ]);
-        if (!active) return;
-        setAssignees(assigneeRes.ok && assigneeJson.ok ? assigneeJson.data?.items || [] : []);
-        setTimeEntries(timeRes.ok && timeJson.ok ? timeJson.data?.items || [] : []);
-        setComments(commentRes.ok && commentJson.ok ? commentJson.data?.items || [] : []);
-        setMentionUsers(mentionRes.ok && mentionJson.ok ? mentionJson.data?.items || [] : []);
-      } catch { /* non-fatal */ }
-      finally { if (active) { setTimeEntriesLoading(false); setCommentsLoading(false); } }
-    }
-    loadRelated();
+    fetch('/api/crm/work-orders/assignees', { cache: 'no-store' })
+      .then((r) => r.json().catch(() => ({})))
+      .then((json) => { if (active) setAssignees(json?.ok ? json.data?.items || [] : []); })
+      .catch(() => { if (active) setAssignees([]); });
     return () => { active = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workOrder?.id]);
 
   // Load the linked customer for reliable contact info. The quote snapshot only carries
@@ -310,9 +286,37 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte spara arbetsorder'); return; }
       if (json.data?.item) applyWorkOrder(json.data.item as WorkOrderItem);
+      setEditingOverview(false);
       toast.success('Arbetsorder sparad');
     } catch { toast.error('Kunde inte spara arbetsorder'); }
     finally { setSaving(false); }
+  }
+
+  // Discard unsaved overview edits and relock.
+  function cancelOverview() {
+    if (workOrder) applyWorkOrder(workOrder);
+    setEditingOverview(false);
+  }
+
+  async function saveArticles(lineItems: ArticleLineItem[]): Promise<boolean> {
+    if (!workOrder) return false;
+    setSavingArticles(true);
+    try {
+      const res = await fetch(`/api/crm/work-orders/${workOrder.id}/line-items`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ line_items: lineItems }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte spara artiklar'); return false; }
+      if (json.data?.item) applyWorkOrder(json.data.item as WorkOrderItem);
+      if (json.data?.fortnox_error) {
+        toast.error(`Artiklar sparade men Fortnox-synk misslyckades: ${json.data.fortnox_error}`);
+      } else {
+        toast.success('Artiklar sparade');
+      }
+      return true;
+    } catch { toast.error('Kunde inte spara artiklar'); return false; }
+    finally { setSavingArticles(false); }
   }
 
   async function pushToFortnox() {
@@ -327,94 +331,6 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
       else toast.success('Arbetsorder synkad med Fortnox');
     } catch { toast.error('Fel vid Fortnox-synk'); }
     finally { setPushingFortnox(false); }
-  }
-
-  // ── Time entries (create / update / delete) ──
-  async function createTimeEntry(data: TimeDraft): Promise<boolean> {
-    if (!workOrder) return false;
-    if (!data.work_date || !data.hours.trim()) { toast.error('Datum och timmar krävs'); return false; }
-    try {
-      const res = await fetch(`/api/crm/work-orders/${workOrder.id}/time-entries`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ work_date: data.work_date, hours: Number(data.hours.replace(',', '.')), note: data.note }),
-      });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte logga tid'); return false; }
-      if (json.data?.item) setTimeEntries((c) => [json.data.item, ...c]);
-      toast.success('Tid loggad');
-      return true;
-    } catch { toast.error('Kunde inte logga tid'); return false; }
-  }
-
-  async function updateTimeEntry(id: string, data: TimeDraft): Promise<boolean> {
-    if (!workOrder) return false;
-    if (!data.work_date || !data.hours.trim()) { toast.error('Datum och timmar krävs'); return false; }
-    try {
-      const res = await fetch(`/api/crm/work-orders/${workOrder.id}/time-entries/${id}`, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ work_date: data.work_date, hours: Number(data.hours.replace(',', '.')), note: data.note }),
-      });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte uppdatera tidrad'); return false; }
-      if (json.data?.item) setTimeEntries((c) => c.map((e) => (e.id === id ? json.data.item : e)));
-      toast.success('Tidrad uppdaterad');
-      return true;
-    } catch { toast.error('Kunde inte uppdatera tidrad'); return false; }
-  }
-
-  async function deleteTimeEntry(id: string): Promise<boolean> {
-    if (!workOrder) return false;
-    try {
-      const res = await fetch(`/api/crm/work-orders/${workOrder.id}/time-entries/${id}`, { method: 'DELETE' });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte ta bort tidrad'); return false; }
-      setTimeEntries((c) => c.filter((e) => e.id !== id));
-      toast.success('Tidrad borttagen');
-      return true;
-    } catch { toast.error('Kunde inte ta bort tidrad'); return false; }
-  }
-
-  // ── Comments (create / update / delete) ──
-  async function createComment(body: string): Promise<boolean> {
-    if (!workOrder || !body.trim()) { toast.error('Kommentar krävs'); return false; }
-    try {
-      const res = await fetch(`/api/crm/work-orders/${workOrder.id}/comments`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ body }),
-      });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte spara kommentar'); return false; }
-      if (json.data?.item) setComments((c) => [json.data.item, ...c]);
-      toast.success('Kommentar sparad');
-      return true;
-    } catch { toast.error('Kunde inte spara kommentar'); return false; }
-  }
-
-  async function updateComment(id: string, body: string): Promise<boolean> {
-    if (!workOrder || !body.trim()) { toast.error('Kommentar krävs'); return false; }
-    try {
-      const res = await fetch(`/api/crm/work-orders/${workOrder.id}/comments/${id}`, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ body }),
-      });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte uppdatera kommentar'); return false; }
-      if (json.data?.item) setComments((c) => c.map((e) => (e.id === id ? json.data.item : e)));
-      toast.success('Kommentar uppdaterad');
-      return true;
-    } catch { toast.error('Kunde inte uppdatera kommentar'); return false; }
-  }
-
-  async function deleteComment(id: string): Promise<boolean> {
-    if (!workOrder) return false;
-    try {
-      const res = await fetch(`/api/crm/work-orders/${workOrder.id}/comments/${id}`, { method: 'DELETE' });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte ta bort kommentar'); return false; }
-      setComments((c) => c.filter((e) => e.id !== id));
-      toast.success('Kommentar borttagen');
-      return true;
-    } catch { toast.error('Kunde inte ta bort kommentar'); return false; }
   }
 
   // ─── Loading / error ──────────────────────────────────────────────────────
@@ -443,7 +359,6 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
     );
   }
 
-  const meta = workOrderStatusMeta[workOrder.status];
   const overdue = isOverdue(workOrder.desired_installation_date, workOrder.status);
   const snapshot = workOrder.customer_snapshot || {};
   // Prefer the live customer record; fall back to the quote snapshot.
@@ -456,6 +371,14 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
     ['overview', 'Översikt'], ['economy', 'Ekonomi'], ['articles', 'Artiklar'], ['time', 'Tid'], ['comments', 'Kommentarer'],
   ];
 
+  // Read-only field display used when the overview is locked.
+  const readField = (label: string, value: React.ReactNode, full = false) => (
+    <div className={cn('grid gap-0.5', full ? 'md:col-span-2' : undefined)}>
+      <span className={crm.sectionTitle}>{label}</span>
+      <span className="text-sm text-slate-800">{value || '–'}</span>
+    </div>
+  );
+
   return (
     <div className="grid grid-cols-1 gap-6 pb-10">
 
@@ -467,7 +390,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="grid min-w-0 gap-1.5">
             <div className="flex flex-wrap items-center gap-2">
-              <span className={cn(crm.badge, meta.className)}>{meta.label}</span>
+              <span className={cn(crm.badge, workOrderStatusClass[workOrder.status])}>{workOrderStatusLabel[workOrder.status]}</span>
               <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">{workOrder.order_number}</span>
               {overdue ? (
                 <span className={cn(crm.badge, 'border-rose-200 bg-rose-50 text-rose-700')}>Försenad</span>
@@ -489,9 +412,18 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
               ) : null}
             </div>
           </div>
-          <button type="button" onClick={saveWorkOrder} disabled={saving} className={cn(crm.saveButton, 'h-10 w-auto px-5')}>
-            {saving ? 'Sparar…' : 'Spara arbetsorder'}
-          </button>
+          {activeTab === 'overview' ? (
+            editingOverview ? (
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={cancelOverview} disabled={saving} className={crm.ghostButton}>Avbryt</button>
+                <button type="button" onClick={saveWorkOrder} disabled={saving} className={cn(crm.saveButton, 'h-9 w-auto px-5')}>
+                  {saving ? 'Sparar…' : 'Spara'}
+                </button>
+              </div>
+            ) : (
+              <button type="button" onClick={() => setEditingOverview(true)} className={cn(crm.ghostButton)}>Redigera</button>
+            )
+          ) : null}
         </div>
       </div>
 
@@ -499,8 +431,8 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
       <Card className="grid gap-3">
         <p className={crm.sectionTitle}>Förlopp</p>
         <div className="flex flex-wrap items-center gap-1.5">
-          {STATUS_FLOW.map((step, i) => {
-            const currentIndex = STATUS_FLOW.indexOf(workOrder.status);
+          {WORK_ORDER_STATUS_FLOW.map((step, i) => {
+            const currentIndex = WORK_ORDER_STATUS_FLOW.indexOf(workOrder.status);
             const done = currentIndex >= 0 && i <= currentIndex;
             const isCurrent = workOrder.status === step;
             return (
@@ -509,14 +441,14 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                   'rounded-full border px-3 py-1 text-xs font-semibold transition',
                   isCurrent ? 'text-white' : done ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-[#e0e8dc] bg-[#f1f5ee] text-slate-400',
                 )} style={isCurrent ? { backgroundColor: 'var(--crm-primary)', borderColor: 'var(--crm-primary)' } : undefined}>
-                  {workOrderStatusMeta[step].label}
+                  {workOrderStatusLabel[step]}
                 </span>
-                {i < STATUS_FLOW.length - 1 ? <span className={cn('h-px w-4', done ? 'bg-emerald-300' : 'bg-[#d4ddcd]')} /> : null}
+                {i < WORK_ORDER_STATUS_FLOW.length - 1 ? <span className={cn('h-px w-4', done ? 'bg-emerald-300' : 'bg-[#d4ddcd]')} /> : null}
               </div>
             );
           })}
           {workOrder.status === 'cancelled' ? (
-            <span className={cn(crm.badge, 'ml-1', workOrderStatusMeta.cancelled.className)}>Avbruten</span>
+            <span className={cn(crm.badge, 'ml-1', workOrderStatusClass.cancelled)}>Avbruten</span>
           ) : null}
         </div>
       </Card>
@@ -545,23 +477,33 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
           <div className="grid gap-5">
 
             <Card className="grid gap-4 md:grid-cols-2">
-              <label className="grid gap-1 text-sm text-slate-600">
-                <span className={crm.sectionTitle}>Status</span>
-                <Select value={draft.status} onChange={(e) => setField('status', e.target.value as WorkOrderStatus)}>
-                  {Object.entries(workOrderStatusMeta).map(([value, m]) => <option key={value} value={value}>{m.label}</option>)}
-                </Select>
-              </label>
-              <label className="grid gap-1 text-sm text-slate-600">
-                <span className={crm.sectionTitle}>Ansvarig</span>
-                <Select value={draft.assigned_to} onChange={(e) => setField('assigned_to', e.target.value)}>
-                  <option value="">Ej tilldelad</option>
-                  {assignees.map((u) => <option key={u.id} value={u.id}>{u.full_name || 'Namnlös'}</option>)}
-                </Select>
-              </label>
-              <label className="grid gap-1 text-sm text-slate-600 md:col-span-2">
-                <span className={crm.sectionTitle}>Önskat installationsdatum</span>
-                <Input value={draft.desired_installation_date} onChange={(e) => setField('desired_installation_date', e.target.value)} type="date" />
-              </label>
+              {editingOverview ? (
+                <>
+                  <label className="grid gap-1 text-sm text-slate-600">
+                    <span className={crm.sectionTitle}>Status</span>
+                    <Select value={draft.status} onChange={(e) => setField('status', e.target.value as WorkOrderStatus)}>
+                      {WORK_ORDER_STATUS_OPTIONS.map((value) => <option key={value} value={value}>{workOrderStatusLabel[value]}</option>)}
+                    </Select>
+                  </label>
+                  <label className="grid gap-1 text-sm text-slate-600">
+                    <span className={crm.sectionTitle}>Ansvarig</span>
+                    <Select value={draft.assigned_to} onChange={(e) => setField('assigned_to', e.target.value)}>
+                      <option value="">Ej tilldelad</option>
+                      {assignees.map((u) => <option key={u.id} value={u.id}>{u.full_name || 'Namnlös'}</option>)}
+                    </Select>
+                  </label>
+                  <label className="grid gap-1 text-sm text-slate-600 md:col-span-2">
+                    <span className={crm.sectionTitle}>Önskat installationsdatum</span>
+                    <Input value={draft.desired_installation_date} onChange={(e) => setField('desired_installation_date', e.target.value)} type="date" />
+                  </label>
+                </>
+              ) : (
+                <>
+                  {readField('Status', workOrderStatusLabel[workOrder.status])}
+                  {readField('Ansvarig', workOrder.assignee?.full_name || 'Ej tilldelad')}
+                  {readField('Önskat installationsdatum', formatDate(workOrder.desired_installation_date), true)}
+                </>
+              )}
             </Card>
 
             <Card className="grid gap-4">
@@ -569,44 +511,70 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                 <p className={crm.sectionTitle}>Arbetsadress</p>
                 {workAddressText ? <AddressLink value={workAddressText} className="text-xs" /> : null}
               </div>
-              <label className="grid gap-1 text-sm text-slate-600">
-                <span className={crm.sectionTitle}>Gatuadress</span>
-                <Input value={draft.street_address} onChange={(e) => setField('street_address', e.target.value)} placeholder="Gatuadress" />
-              </label>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <label className="grid gap-1 text-sm text-slate-600">
-                  <span className={crm.sectionTitle}>Postnummer</span>
-                  <Input value={draft.postal_code} onChange={(e) => setField('postal_code', e.target.value)} placeholder="123 45" />
-                </label>
-                <label className="grid gap-1 text-sm text-slate-600">
-                  <span className={crm.sectionTitle}>Ort</span>
-                  <Input value={draft.city} onChange={(e) => setField('city', e.target.value)} placeholder="Ort" />
-                </label>
-              </div>
-              <label className="grid gap-1 text-sm text-slate-600">
-                <span className={crm.sectionTitle}>Leveransadress</span>
-                <Input value={draft.delivery_address} onChange={(e) => setField('delivery_address', e.target.value)} placeholder="Leveransadress" />
-              </label>
-              <label className="grid gap-1 text-sm text-slate-600">
-                <span className={crm.sectionTitle}>Fakturaadress</span>
-                <Input value={draft.invoice_address} onChange={(e) => setField('invoice_address', e.target.value)} placeholder="Fakturaadress" />
-              </label>
+              {editingOverview ? (
+                <>
+                  <label className="grid gap-1 text-sm text-slate-600">
+                    <span className={crm.sectionTitle}>Gatuadress</span>
+                    <Input value={draft.street_address} onChange={(e) => setField('street_address', e.target.value)} placeholder="Gatuadress" />
+                  </label>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <label className="grid gap-1 text-sm text-slate-600">
+                      <span className={crm.sectionTitle}>Postnummer</span>
+                      <Input value={draft.postal_code} onChange={(e) => setField('postal_code', e.target.value)} placeholder="123 45" />
+                    </label>
+                    <label className="grid gap-1 text-sm text-slate-600">
+                      <span className={crm.sectionTitle}>Ort</span>
+                      <Input value={draft.city} onChange={(e) => setField('city', e.target.value)} placeholder="Ort" />
+                    </label>
+                  </div>
+                  <label className="grid gap-1 text-sm text-slate-600">
+                    <span className={crm.sectionTitle}>Leveransadress</span>
+                    <Input value={draft.delivery_address} onChange={(e) => setField('delivery_address', e.target.value)} placeholder="Leveransadress" />
+                  </label>
+                  <label className="grid gap-1 text-sm text-slate-600">
+                    <span className={crm.sectionTitle}>Fakturaadress</span>
+                    <Input value={draft.invoice_address} onChange={(e) => setField('invoice_address', e.target.value)} placeholder="Fakturaadress" />
+                  </label>
+                </>
+              ) : (
+                <div className="grid gap-3">
+                  {readField('Gatuadress', joinAddress([workOrder.work_address?.street_address, joinAddress([workOrder.work_address?.postal_code, workOrder.work_address?.city])]))}
+                  {readField('Leveransadress', workOrder.work_address?.delivery_address)}
+                  {readField('Fakturaadress', workOrder.work_address?.invoice_address)}
+                </div>
+              )}
             </Card>
 
             <Card className="grid gap-4">
               <p className={crm.sectionTitle}>Intern handoff</p>
-              <label className="grid gap-1 text-sm text-slate-600">
-                <span className={crm.sectionTitle}>Arbetets scope</span>
-                <Input value={draft.work_scope} onChange={(e) => setField('work_scope', e.target.value)} placeholder="Kort operativ scope" />
-              </label>
-              <label className="grid gap-1 text-sm text-slate-600">
-                <span className={crm.sectionTitle}>Överlämningsnotering</span>
-                <Textarea value={draft.handoff_notes} onChange={(e) => setField('handoff_notes', e.target.value)} rows={4} placeholder="Detaljer till teamet" />
-              </label>
-              <label className="grid gap-1 text-sm text-slate-600">
-                <span className={crm.sectionTitle}>Interna anteckningar</span>
-                <Textarea value={draft.notes} onChange={(e) => setField('notes', e.target.value)} rows={4} placeholder="Internt orderunderlag" />
-              </label>
+              {editingOverview ? (
+                <>
+                  <label className="grid gap-1 text-sm text-slate-600">
+                    <span className={crm.sectionTitle}>Arbetets scope</span>
+                    <Input value={draft.work_scope} onChange={(e) => setField('work_scope', e.target.value)} placeholder="Kort operativ scope" />
+                  </label>
+                  <label className="grid gap-1 text-sm text-slate-600">
+                    <span className={crm.sectionTitle}>Överlämningsnotering</span>
+                    <Textarea value={draft.handoff_notes} onChange={(e) => setField('handoff_notes', e.target.value)} rows={4} placeholder="Detaljer till teamet" />
+                  </label>
+                  <label className="grid gap-1 text-sm text-slate-600">
+                    <span className={crm.sectionTitle}>Interna anteckningar</span>
+                    <Textarea value={draft.notes} onChange={(e) => setField('notes', e.target.value)} rows={4} placeholder="Internt orderunderlag" />
+                  </label>
+                </>
+              ) : (
+                <div className="grid gap-3">
+                  {readField('Arbetets scope', workOrder.internal_handoff?.work_scope)}
+                  <div className="grid gap-0.5">
+                    <span className={crm.sectionTitle}>Överlämningsnotering</span>
+                    <span className="whitespace-pre-wrap text-sm leading-relaxed text-slate-800">{workOrder.internal_handoff?.handoff_notes || '–'}</span>
+                  </div>
+                  <div className="grid gap-0.5">
+                    <span className={crm.sectionTitle}>Interna anteckningar</span>
+                    <span className="whitespace-pre-wrap text-sm leading-relaxed text-slate-800">{workOrder.notes || '–'}</span>
+                  </div>
+                </div>
+              )}
             </Card>
           </div>
 
@@ -698,34 +666,16 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
 
       {/* ─── Articles ─── */}
       {activeTab === 'articles' ? (
-        <Card className="grid gap-3">
-          <div className="flex items-center justify-between gap-2">
-            <p className={crm.sectionTitle}>Artiklar</p>
-            {totalSacks > 0 ? <span className={cn(crm.badge, 'border-emerald-200 bg-emerald-50 text-emerald-700')}>{totalSacks} säckar totalt</span> : null}
-          </div>
-          <div className="grid gap-2">
-            {(workOrder.line_items || []).map((item) => {
-              const sack = sackRows.find((s) => s.id === item.id);
-              return (
-                <div key={item.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#e0e8dc] bg-[#f1f5ee] px-3 py-2.5 text-sm">
-                  <div className="grid gap-0.5">
-                    <strong className="text-slate-900">{item.article_name || 'Offert-rad'}</strong>
-                    <span className="text-xs text-slate-500">
-                      {item.article_number || 'Utan artikelnummer'}{item.thickness_mm ? ` · ${item.thickness_mm} mm` : ''}
-                      {sack && sack.material ? ` · ${sack.material.short}` : ''}
-                    </span>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                    {sack && sack.sacks > 0 ? (
-                      <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700">{sack.sacks} säck</span>
-                    ) : null}
-                    <span>{item.pricing_mode === 'm3' ? `m² ${item.m2 || '0'}` : `Antal ${item.quantity || '0'}`} · A-pris {formatCurrency(item.unit_price || 0, workOrder.currency_code)}</span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </Card>
+        <WorkOrderArticlesTab
+          items={(workOrder.line_items || []) as ArticleLineItem[]}
+          currencyCode={workOrder.currency_code}
+          vatPercent={workOrder.vat_percent}
+          quoteType={workOrder.quote_type}
+          rotDetails={workOrder.rot_details}
+          saving={savingArticles}
+          fortnoxConnected={fortnoxConnected}
+          onSave={saveArticles}
+        />
       ) : null}
 
       {/* ─── Time ─── */}

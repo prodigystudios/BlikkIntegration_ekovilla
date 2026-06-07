@@ -1,5 +1,11 @@
 import { z } from 'zod';
+import { quoteLineItemSchema } from '../quotes/_lib';
 export { ok, routeError, validationError, requireCrmUser, requireSignedInUser } from '../_shared';
+
+// Reuses the quote line-item schema so work order article edits validate identically.
+export const updateWorkOrderLineItemsSchema = z.object({
+  line_items: z.array(quoteLineItemSchema).default([]),
+});
 
 function normalizeOptionalText(value: unknown) {
   if (value == null) return null;
@@ -7,7 +13,7 @@ function normalizeOptionalText(value: unknown) {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-const workOrderStatusSchema = z.enum(['draft', 'scheduled', 'ready', 'in_progress', 'completed', 'cancelled']);
+const workOrderStatusSchema = z.enum(['draft', 'scheduled', 'ready', 'in_progress', 'completed', 'invoiced', 'cancelled']);
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Ogiltigt datum');
 
 export const createWorkOrderTimeEntrySchema = z.object({

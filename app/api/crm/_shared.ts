@@ -40,7 +40,8 @@ export async function requireCrmUser() {
     return { currentUser: null, response: routeError(401, 'unauthorized', 'Unauthorized') };
   }
 
-  if (!(currentUser.role === 'sales' || currentUser.role === 'admin')) {
+  // konsult has the same CRM rights as sales (external sellers working for us) — see lib/roles.ts.
+  if (!(currentUser.role === 'sales' || currentUser.role === 'admin' || currentUser.role === 'konsult')) {
     return { currentUser: null, response: routeError(403, 'forbidden', 'Forbidden') };
   }
 

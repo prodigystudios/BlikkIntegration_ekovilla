@@ -2,12 +2,13 @@
 // which session-scoped RLS would restrict to the requesting user's own profile.
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { listMentionableProfiles } from '@/lib/domains/crm/work-orders';
-import { ok, requireCrmUser, routeError } from '../_lib';
+import { ok, requireSignedInUser, routeError } from '../_lib';
 
 export async function GET() {
   try {
-    const crmUser = await requireCrmUser();
-    if (crmUser.response) return crmUser.response;
+    // Any signed-in employee (incl. installers writing comments) can list mention targets.
+    const currentUser = await requireSignedInUser();
+    if (currentUser.response) return currentUser.response;
 
     const supabase = getSupabaseAdmin();
     const { data, error } = await listMentionableProfiles(supabase);

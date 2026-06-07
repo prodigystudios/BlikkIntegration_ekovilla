@@ -1,7 +1,7 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { getCrmWorkOrder, updateCrmWorkOrder } from '@/lib/domains/crm/work-orders';
-import { ok, requireCrmUser, routeError, updateCrmWorkOrderSchema, validationError } from '../_lib';
+import { ok, requireCrmUser, requireSignedInUser, routeError, updateCrmWorkOrderSchema, validationError } from '../_lib';
 
 type RouteContext = {
   params: {
@@ -11,8 +11,10 @@ type RouteContext = {
 
 export async function GET(_req: Request, context: RouteContext) {
   try {
-    const crmUser = await requireCrmUser();
-    if (crmUser.response) return crmUser.response;
+    // Read is open to any signed-in employee (installers/member read the field view);
+    // editing (PATCH below) stays restricted to CRM roles.
+    const currentUser = await requireSignedInUser();
+    if (currentUser.response) return currentUser.response;
 
     const supabase = createRouteHandlerClient({ cookies });
     const { data, error } = await getCrmWorkOrder(supabase, context.params.id);

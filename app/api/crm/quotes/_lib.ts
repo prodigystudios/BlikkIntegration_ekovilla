@@ -69,7 +69,7 @@ const internalHandoffSchema = z.object({
   work_scope: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
 });
 
-const quoteLineItemSchema = z.object({
+export const quoteLineItemSchema = z.object({
   id: z.string().min(1, 'Rad-id krävs'),
   construction: lineItemConstructionSchema.optional().default(''),
   m2: z.preprocess((value) => normalizeOptionalText(value) ?? '', z.string()).optional().default(''),

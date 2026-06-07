@@ -6,7 +6,7 @@ import Input from '../../../components/ui/Input';
 import FortnoxCodeSelect from './FortnoxCodeSelect';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
-import { crm, customerStageLabel, customerStageClass, syncStatusLabel, syncStatusClass, opportunityStatusLabel } from '@/app/crm/lib/crmTokens';
+import { crm, customerStageLabel, customerStageClass, syncStatusLabel, syncStatusClass, opportunityStatusLabel, workOrderStatusLabel } from '@/app/crm/lib/crmTokens';
 import { formatSwedishIdNumber, isValidSwedishOrgNumber, vatFromOrgNumber } from './customerNumbers';
 import { PhoneLink, EmailLink, AddressLink } from '@/app/crm/components/ContactLinks';
 
@@ -73,9 +73,6 @@ type ContactDraft = { name: string; role: string; phone: string; email: string; 
 
 const quoteStatusLabel: Record<string, string> = {
   draft: 'Utkast', sent: 'Skickad', follow_up: 'Följ upp', won: 'Vunnen', lost: 'Förlorad',
-};
-const workOrderStatusLabel: Record<string, string> = {
-  draft: 'Utkast', scheduled: 'Planerad', ready: 'Redo', in_progress: 'Pågående', completed: 'Klar', cancelled: 'Avbruten',
 };
 
 function getDisplayName(c: Customer): string {
@@ -522,7 +519,7 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
                 <div className="flex items-center justify-between gap-2">
                   <span className="min-w-0 truncate text-sm text-slate-800">{wo.project_name}</span>
                   <span className="shrink-0 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-600">
-                    {workOrderStatusLabel[wo.status] || wo.status}
+                    {(workOrderStatusLabel as Record<string, string>)[wo.status] || wo.status}
                   </span>
                 </div>
                 <p className="mt-0.5 text-xs text-slate-400">#{wo.order_number}{wo.desired_installation_date ? ` · ${formatDate(wo.desired_installation_date)}` : ''}</p>
