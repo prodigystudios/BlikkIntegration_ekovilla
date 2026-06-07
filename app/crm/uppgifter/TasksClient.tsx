@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import Input from '../../../components/ui/Input';
 import Textarea from '../../../components/ui/Textarea';
 import MetricCard from '../components/MetricCard';
+import CrmModal from '../components/CrmModal';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
@@ -500,34 +501,39 @@ export default function TasksClient() {
 
       {/* ── Modal ── */}
       {modalOpen && (
-        <div
-          className="fixed inset-0 z-[2800] flex items-end justify-center bg-slate-950/45 p-3 [backdrop-filter:blur(4px)] sm:items-center sm:p-4"
-          onClick={closeModal}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-label={editingTaskId ? 'Redigera uppgift' : 'Ny uppgift'}
-            onClick={(e) => e.stopPropagation()}
-            className="grid w-full max-w-[720px] gap-5 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_30px_80px_rgba(15,23,42,0.24)] sm:max-h-[88vh]"
-          >
-            {/* Modal header */}
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h2 className="text-lg font-bold text-slate-900">
-                  {editingTaskId ? 'Redigera uppgift' : 'Ny uppgift'}
-                </h2>
-                <p className={cn('mt-0.5', crm.pageSubtitle)}>
-                  Fånga uppföljningar utan att lämna CRM-flödet.
-                </p>
-              </div>
-              <button type="button" onClick={closeModal} className={crm.ghostButton}>
-                Stäng
+        <CrmModal
+          onClose={closeModal}
+          ariaLabel={editingTaskId ? 'Redigera uppgift' : 'Ny uppgift'}
+          maxWidth="sm:max-w-[720px]"
+          header={
+            <>
+              <h2 className="text-lg font-bold text-slate-900">{editingTaskId ? 'Redigera uppgift' : 'Ny uppgift'}</h2>
+              <p className={cn('mt-0.5', crm.pageSubtitle)}>Fånga uppföljningar utan att lämna CRM-flödet.</p>
+            </>
+          }
+          footer={
+            <>
+              <button
+                type="button"
+                onClick={closeModal}
+                className="flex-1 rounded-xl border border-slate-200 bg-white py-2.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 sm:flex-none sm:px-5"
+              >
+                Avbryt
               </button>
-            </div>
-
-            {/* Form fields */}
-            <div className="grid gap-4">
+              <button
+                type="button"
+                onClick={saveTask}
+                disabled={submitting}
+                className="flex-1 rounded-xl py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-95 disabled:opacity-60 sm:ml-auto sm:flex-none sm:px-5"
+                style={{ backgroundColor: 'var(--crm-primary)' }}
+              >
+                {submitting ? 'Sparar…' : editingTaskId ? 'Spara ändringar' : 'Skapa uppgift'}
+              </button>
+            </>
+          }
+        >
+          {/* Form fields */}
+          <div className="grid gap-4">
               <div>
                 <p className={cn('mb-1.5', crm.sectionTitle)}>Titel</p>
                 <Input
@@ -565,7 +571,7 @@ export default function TasksClient() {
                 </div>
               </div>
 
-              <div className="grid gap-4 rounded-2xl border border-slate-100 bg-slate-50/60 p-4 sm:grid-cols-3">
+              <div className="grid gap-4 rounded-xl border border-[#e3e9df] bg-[#f6f9f3] p-4 sm:grid-cols-3">
                 <div>
                   <p className={cn('mb-1.5', crm.sectionTitle)}>Prioritet</p>
                   <select
@@ -613,24 +619,8 @@ export default function TasksClient() {
                   className="min-h-[120px]"
                 />
               </div>
-            </div>
-
-            {/* Modal actions */}
-            <div className="flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 pt-4">
-              <button type="button" onClick={closeModal} className={crm.ghostButton}>
-                Avbryt
-              </button>
-              <button
-                type="button"
-                onClick={saveTask}
-                disabled={submitting}
-                className={cn(crm.saveButton, 'h-9 w-auto px-5')}
-              >
-                {submitting ? 'Sparar…' : editingTaskId ? 'Spara ändringar' : 'Skapa uppgift'}
-              </button>
-            </div>
           </div>
-        </div>
+        </CrmModal>
       )}
     </div>
   );

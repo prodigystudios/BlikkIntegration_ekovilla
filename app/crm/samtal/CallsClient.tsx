@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Input from '../../../components/ui/Input';
 import MetricCard from '../components/MetricCard';
+import CrmModal from '../components/CrmModal';
 import Textarea from '../../../components/ui/Textarea';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
@@ -586,33 +587,42 @@ export default function CallsClient() {
       </div>
 
       {logOpen ? (
-        <div className="fixed inset-0 z-[2800] flex items-end justify-center bg-slate-950/45 p-3 [backdrop-filter:blur(4px)] sm:items-center sm:p-4" onClick={() => setLogOpen(false)}>
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-label="Logga samtal"
-            onClick={(e) => e.stopPropagation()}
-            className="grid w-full max-w-[760px] gap-4 rounded-2xl border border-white/70 bg-white p-5 shadow-[0_30px_80px_rgba(15,23,42,0.28)] sm:max-h-[88vh] sm:overflow-y-auto"
-          >
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div className="grid gap-0.5">
-                <strong className="text-xl font-bold tracking-tight text-slate-900">
-                  {selectedEntity?.display_name || draft.company_name || 'Nytt samtal'}
-                </strong>
-                <p className="m-0 text-sm text-slate-500">
-                  {editingCallId ? 'Justera uppgifter eller utfall.' : 'Registrera utfallet direkt efter samtalet.'}
-                </p>
-              </div>
+        <CrmModal
+          onClose={() => { setLogOpen(false); setEditingCallId(null); setDraft(initialDraft); setSelectedEntity(null); setEntityQuery(''); }}
+          ariaLabel="Logga samtal"
+          maxWidth="sm:max-w-[760px]"
+          header={
+            <>
+              <strong className="block truncate text-lg font-bold tracking-tight text-slate-900">
+                {selectedEntity?.display_name || draft.company_name || 'Nytt samtal'}
+              </strong>
+              <p className="m-0 mt-0.5 text-sm text-slate-500">
+                {editingCallId ? 'Justera uppgifter eller utfall.' : 'Registrera utfallet direkt efter samtalet.'}
+              </p>
+            </>
+          }
+          footer={
+            <>
               <button
                 type="button"
-                onClick={() => { setLogOpen(false); setSelectedEntity(null); setEntityQuery(''); }}
-                className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 hover:border-slate-300"
+                onClick={() => { setLogOpen(false); setEditingCallId(null); setDraft(initialDraft); setSelectedEntity(null); setEntityQuery(''); }}
+                className="flex-1 rounded-xl border border-slate-200 bg-white py-2.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 sm:flex-none sm:px-5"
               >
-                Stäng
+                Avbryt
               </button>
-            </div>
-
-            <div className="grid gap-4 rounded-2xl border border-slate-100 bg-slate-50/50 p-4">
+              <button
+                type="button"
+                onClick={submitCall}
+                disabled={submitting}
+                className="flex-1 rounded-xl py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60 sm:ml-auto sm:flex-none sm:px-5"
+                style={{ backgroundColor: 'var(--crm-primary)' }}
+              >
+                {submitting ? 'Sparar…' : editingCallId ? 'Spara ändringar' : 'Logga samtal'}
+              </button>
+            </>
+          }
+        >
+            <div className="grid gap-4">
               {/* Entity search */}
               <div className="grid gap-2">
                 <span className={crm.sectionTitle}>Kund eller prospekt</span>
@@ -689,7 +699,7 @@ export default function CallsClient() {
 
               {/* Manuell inmatning — visas om ingen kund/prospekt är vald */}
               {!draft.customer_id ? (
-                <div className="grid gap-3 rounded-[24px] border border-slate-200 bg-slate-50/80 p-4">
+                <div className="grid gap-3 rounded-xl border border-[#e3e9df] bg-[#f6f9f3] p-4">
                   <div className="grid gap-1">
                     <span className={crm.sectionTitle}>Ny kontakt</span>
                     <p className="m-0 text-sm leading-6 text-slate-600">
@@ -747,28 +757,8 @@ export default function CallsClient() {
                 onChange={(e) => setDraft((c) => ({ ...c, next_step: e.target.value }))}
                 placeholder="Nästa steg, t.ex. ring igen torsdag eller skicka offert"
               />
-
-              <div className="flex flex-wrap items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => { setLogOpen(false); setEditingCallId(null); setDraft(initialDraft); setSelectedEntity(null); setEntityQuery(''); }}
-                  className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
-                >
-                  Avbryt
-                </button>
-                <button
-                  type="button"
-                  onClick={submitCall}
-                  disabled={submitting}
-                  className="inline-flex items-center justify-center rounded-xl px-4 py-2.5 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-60"
-                  style={{ backgroundColor: 'var(--crm-primary)' }}
-                >
-                  {submitting ? 'Sparar…' : editingCallId ? 'Spara ändringar' : 'Logga samtal'}
-                </button>
-              </div>
             </div>
-          </div>
-        </div>
+        </CrmModal>
       ) : null}
     </div>
   );
