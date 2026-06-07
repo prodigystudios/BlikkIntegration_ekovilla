@@ -1,7 +1,7 @@
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { parseDecimal } from '@/lib/shared/number';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
-import { fortnoxGet, fortnoxPost, fortnoxPut, FortnoxNotConnectedError } from './client';
+import { fortnoxGet, fortnoxGetBinary, fortnoxPost, fortnoxPut, FortnoxApiError, FortnoxNotConnectedError } from './client';
 import { resolveOurReference } from './helpers';
 import { DEFAULT_ROT_HOUSE_WORK_TYPE } from './types';
 
@@ -284,4 +284,40 @@ export async function updateWorkOrderInFortnox(workOrderId: string): Promise<Pus
     await supabase.from('crm_work_orders').update({ fortnox_order_sync_status: syncStatus }).eq('id', workOrderId);
     throw e;
   }
+}
+
+// Resolve a work order's synced Fortnox order number, or throw a 409 telling the
+// caller to sync the work order to Fortnox first.
+async function requireOrderNumber(workOrderId: string): Promise<string> {
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from('crm_work_orders')
+    .select('fortnox_order_number')
+    .eq('id', workOrderId)
+    .maybeSingle();
+
+  if (error) throw new FortnoxApiError(500, `Kunde inte läsa arbetsordern: ${error.message}`, undefined, 'Kunde inte läsa arbetsordern. Försök igen.');
+  const orderNumber = data?.fortnox_order_number;
+  if (!orderNumber) throw new FortnoxApiError(409, 'Synka arbetsordern till Fortnox först.', undefined, 'Synka arbetsordern till Fortnox först.');
+  return String(orderNumber);
+}
+
+// Fetch the order confirmation as a PDF (GET /orders/{n}/preview). Same as offers:
+// use `/preview` (matches Fortnox's own förhandsgranskning, incl. ROT) and keep
+// `Accept: application/json` (Fortnox rejects application/pdf, code 1000030).
+export async function getFortnoxOrderPdf(workOrderId: string): Promise<{ bytes: Uint8Array; contentType: string; orderNumber: string }> {
+  const orderNumber = await requireOrderNumber(workOrderId);
+  const { bytes, contentType } = await fortnoxGetBinary(`/orders/${orderNumber}/preview`, 'application/json');
+  if (contentType.includes('application/json')) {
+    const text = new TextDecoder().decode(bytes).slice(0, 500);
+    throw new FortnoxApiError(502, `Fortnox returnerade inte en PDF för order ${orderNumber}: ${text}`, undefined, 'Fortnox kunde inte skapa en orderbekräftelse. Försök igen om en stund.');
+  }
+  return { bytes, contentType, orderNumber };
+}
+
+// Ask Fortnox to e-mail the order confirmation to the customer (GET /orders/{n}/email).
+export async function emailFortnoxOrder(workOrderId: string): Promise<{ orderNumber: string }> {
+  const orderNumber = await requireOrderNumber(workOrderId);
+  await fortnoxGet(`/orders/${orderNumber}/email`);
+  return { orderNumber };
 }

@@ -129,6 +129,8 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   const [saving, setSaving] = useState(false);
   const [savingArticles, setSavingArticles] = useState(false);
   const [pushingFortnox, setPushingFortnox] = useState(false);
+  const [orderPdfLoading, setOrderPdfLoading] = useState(false);
+  const [orderEmailing, setOrderEmailing] = useState(false);
   const [editingOverview, setEditingOverview] = useState(false); // overview fields locked until unlocked
   const [activeTab, setActiveTab] = useState<WorkOrderTab>('overview');
   const [draft, setDraft] = useState<WorkOrderDraft | null>(null);
@@ -285,6 +287,50 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
       else toast.success('Arbetsorder synkad med Fortnox');
     } catch { toast.error('Fel vid Fortnox-synk'); }
     finally { setPushingFortnox(false); }
+  }
+
+  // Fetch the Fortnox order confirmation PDF and open it in a new tab. Open the tab
+  // synchronously (before the await) so it isn't blocked as a non-gesture popup.
+  async function openOrderPdf() {
+    if (!workOrder) return;
+    const win = window.open('', '_blank');
+    setOrderPdfLoading(true);
+    try {
+      const res = await fetch(`/api/crm/work-orders/${workOrder.id}/fortnox/pdf`, { cache: 'no-store' });
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        win?.close();
+        toast.error(json?.error || 'Kunde inte hämta orderbekräftelsen');
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      if (win) win.location.href = url;
+      else window.open(url, '_blank');
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch {
+      win?.close();
+      toast.error('Kunde inte hämta orderbekräftelsen');
+    } finally {
+      setOrderPdfLoading(false);
+    }
+  }
+
+  // Ask Fortnox to e-mail the order confirmation to the customer. Outward-facing → confirm.
+  async function sendOrderEmail() {
+    if (!workOrder) return;
+    if (!window.confirm('Mejla orderbekräftelsen till kunden via Fortnox?')) return;
+    setOrderEmailing(true);
+    try {
+      const res = await fetch(`/api/crm/work-orders/${workOrder.id}/fortnox/email`, { method: 'POST' });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte mejla orderbekräftelsen'); return; }
+      toast.success('Orderbekräftelsen mejlad till kunden via Fortnox');
+    } catch {
+      toast.error('Kunde inte mejla orderbekräftelsen');
+    } finally {
+      setOrderEmailing(false);
+    }
   }
 
   // ─── Loading / error ──────────────────────────────────────────────────────
@@ -569,6 +615,29 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                     {pushingFortnox ? 'Skickar…' : 'Synka om'}
                   </button>
                 )}
+
+                {/* Order confirmation PDF/email — available once the order exists in Fortnox */}
+                {workOrder.fortnox_order_number ? (
+                  <div className="grid grid-cols-2 gap-2 border-t border-[#e0e8dc] pt-3">
+                    <button
+                      type="button"
+                      onClick={openOrderPdf}
+                      disabled={orderPdfLoading}
+                      className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {orderPdfLoading ? 'Hämtar…' : 'Hämta PDF'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={sendOrderEmail}
+                      disabled={orderEmailing}
+                      className="rounded-lg border border-indigo-600 bg-indigo-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {orderEmailing ? 'Mejlar…' : 'Mejla order'}
+                    </button>
+                    <p className="col-span-2 text-[11px] leading-4 text-slate-400">Orderbekräftelse från Fortnox.</p>
+                  </div>
+                ) : null}
               </Card>
             ) : null}
 

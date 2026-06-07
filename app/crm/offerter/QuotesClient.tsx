@@ -177,6 +177,8 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
   const [pushingFortnoxId, setPushingFortnoxId] = useState<string | null>(null);
   const [pdfLoadingId, setPdfLoadingId] = useState<string | null>(null);
   const [emailingId, setEmailingId] = useState<string | null>(null);
+  const [orderPdfId, setOrderPdfId] = useState<string | null>(null);
+  const [orderEmailingId, setOrderEmailingId] = useState<string | null>(null);
   const [detailPanelOpen, setDetailPanelOpen] = useState(false);
   const [detailQuoteId, setDetailQuoteId] = useState<string | null>(null);
   const [hasHandledPreset, setHasHandledPreset] = useState(false);
@@ -347,7 +349,8 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
       } else {
         toast.success(workOrder?.order_number ? `Arbetsorder skapad: ${workOrder.order_number}` : 'Arbetsorder skapad');
       }
-      if (workOrder?.id) router.push(`/crm/arbetsorder/${workOrder.id}`);
+      // Don't auto-navigate — the button flips to "Gå till arbetsorder" so the user
+      // can choose to go there when ready.
     } catch { toast.error('Kunde inte skapa arbetsorder'); } finally { setCreatingWorkOrderId(null); }
   }
 
@@ -433,6 +436,51 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
       toast.error('Kunde inte mejla offerten');
     } finally {
       setEmailingId(null);
+    }
+  }
+
+  // Order confirmation (orderbekräftelse) for the work order created from this quote.
+  // Reuses the work-order Fortnox order endpoints; surfaces a friendly 409 if the
+  // work order isn't synced to Fortnox yet.
+  async function openOrderPdf(workOrderId: string) {
+    const win = window.open('', '_blank');
+    setOrderPdfId(workOrderId);
+    try {
+      const res = await fetch(`/api/crm/work-orders/${workOrderId}/fortnox/pdf`, { cache: 'no-store' });
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        win?.close();
+        toast.error(json?.error || 'Kunde inte hämta orderbekräftelsen');
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      if (win) win.location.href = url;
+      else window.open(url, '_blank');
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch {
+      win?.close();
+      toast.error('Kunde inte hämta orderbekräftelsen');
+    } finally {
+      setOrderPdfId(null);
+    }
+  }
+
+  async function sendOrderEmail(workOrderId: string) {
+    if (!window.confirm('Mejla orderbekräftelsen till kunden via Fortnox?')) return;
+    setOrderEmailingId(workOrderId);
+    try {
+      const res = await fetch(`/api/crm/work-orders/${workOrderId}/fortnox/email`, { method: 'POST' });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.ok) {
+        toast.error(json?.error || 'Kunde inte mejla orderbekräftelsen');
+        return;
+      }
+      toast.success('Orderbekräftelsen mejlad till kunden via Fortnox');
+    } catch {
+      toast.error('Kunde inte mejla orderbekräftelsen');
+    } finally {
+      setOrderEmailingId(null);
     }
   }
 
@@ -761,21 +809,45 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
                         <button
                           type="button"
                           onClick={() => router.push(`/crm/arbetsorder/${detailQuote.work_order_id}`)}
-                          className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:border-slate-300"
+                          className="rounded-lg border border-emerald-700 bg-emerald-700 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-emerald-800"
                         >
-                          Öppna
+                          Gå till arbetsorder
                         </button>
-                      ) : null}
-                      <button
-                        type="button"
-                        onClick={() => void createWorkOrder(detailQuote.id)}
-                        disabled={detailQuote.status !== 'won' || Boolean(detailQuote.work_order_id) || creatingWorkOrderId === detailQuote.id}
-                        className="rounded-lg border border-emerald-700 bg-emerald-700 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-white disabled:text-slate-400"
-                      >
-                        {creatingWorkOrderId === detailQuote.id ? 'Skapar…' : detailQuote.work_order_number ? 'Skapad' : 'Skapa'}
-                      </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => void createWorkOrder(detailQuote.id)}
+                          disabled={detailQuote.status !== 'won' || creatingWorkOrderId === detailQuote.id}
+                          className="rounded-lg border border-emerald-700 bg-emerald-700 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-white disabled:text-slate-400"
+                        >
+                          {creatingWorkOrderId === detailQuote.id ? 'Skapar…' : 'Skapa arbetsorder'}
+                        </button>
+                      )}
                     </div>
                   </div>
+
+                  {/* Order confirmation — once a work order (Fortnox order) exists */}
+                  {detailQuote.work_order_id ? (
+                    <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[#e3e9df] pt-3">
+                      <span className="mr-auto text-xs font-medium text-slate-500">Orderbekräftelse</span>
+                      <button
+                        type="button"
+                        onClick={() => void openOrderPdf(detailQuote.work_order_id!)}
+                        disabled={orderPdfId === detailQuote.work_order_id}
+                        className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {orderPdfId === detailQuote.work_order_id ? 'Hämtar…' : 'Hämta PDF'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void sendOrderEmail(detailQuote.work_order_id!)}
+                        disabled={orderEmailingId === detailQuote.work_order_id}
+                        className="rounded-lg border border-indigo-600 bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {orderEmailingId === detailQuote.work_order_id ? 'Mejlar…' : 'Mejla order'}
+                      </button>
+                    </div>
+                  ) : null}
                 </div>
 
                 {/* Fortnox */}

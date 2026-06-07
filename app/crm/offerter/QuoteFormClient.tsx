@@ -1186,7 +1186,12 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
       }
 
       clearPersistedDraft();
-      toast.success(isEditing ? 'Offert uppdaterad' : 'Offert skapad');
+      const fortnoxError = json?.data?.fortnox_error as string | undefined;
+      if (fortnoxError) {
+        toast.error(`Offerten sparades, men kunde inte synkas till Fortnox: ${fortnoxError}`);
+      } else {
+        toast.success(isEditing ? 'Offert uppdaterad' : 'Offert skapad');
+      }
       router.push('/crm/offerter');
     } catch {
       toast.error('Fel vid sparande av offert');
