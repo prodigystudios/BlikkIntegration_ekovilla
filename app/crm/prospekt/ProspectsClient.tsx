@@ -239,14 +239,14 @@ export default function ProspectsClient() {
         {loading ? (
           <div className="grid gap-3">
             {Array.from({ length: 5 }).map((_, i) => (
-              <div key={i} className="grid gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                <div className="h-3 w-40 rounded-full bg-slate-200" />
-                <div className="h-3 w-24 rounded-full bg-slate-200" />
+              <div key={i} className="grid gap-2 rounded-lg border border-[#e3e9df] bg-[#f6f9f3] px-4 py-4">
+                <div className="h-3 w-40 rounded-full bg-[#dfe6da]" />
+                <div className="h-3 w-24 rounded-full bg-[#dfe6da]" />
               </div>
             ))}
           </div>
         ) : items.length === 0 ? (
-          <div className="grid gap-2 rounded-[24px] border border-dashed border-slate-300 bg-slate-50 px-5 py-8 text-center">
+          <div className="grid gap-2 rounded-xl border border-dashed border-[#cfdcc9] bg-[#f6f9f3] px-5 py-8 text-center">
             <strong className="text-base font-bold text-slate-900">Inga prospekt registrerade</strong>
             <p className="m-0 text-sm leading-6 text-slate-600">
               Lägg till ditt första prospekt för att komma igång.
@@ -260,11 +260,11 @@ export default function ProspectsClient() {
                 type="button"
                 onClick={() => { setSelectedId(item.id); setDetailOpen(true); }}
                 className={cn(
-                  'grid grid-cols-[auto_1fr_auto] items-center gap-4 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left shadow-[0_4px_12px_rgba(15,23,42,0.04)] transition hover:border-slate-300 hover:shadow-[0_8px_20px_rgba(15,23,42,0.07)]',
+                  'group grid grid-cols-[auto_1fr_auto] items-center gap-3 rounded-lg border border-[#e3e9df] bg-white px-4 py-3 text-left shadow-[0_1px_2px_rgba(15,23,42,0.05)] transition hover:border-[#cfdcc9] hover:shadow-[0_8px_20px_-10px_rgba(20,44,27,0.30)]',
                   selectedId === item.id ? 'ring-1 ring-emerald-300' : null,
                 )}
               >
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-xs font-bold tracking-[0.06em] text-slate-700">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-[#e3e9df] bg-[#f1f5ee] text-xs font-bold tracking-[0.06em] text-slate-600">
                   {getInitials(item.company_name) || 'P'}
                 </div>
                 <div className="min-w-0 grid gap-0.5">
@@ -273,8 +273,11 @@ export default function ProspectsClient() {
                     {[item.contact_name, item.city, item.source].filter(Boolean).join(' · ') || 'Ingen ytterligare information'}
                   </span>
                 </div>
-                <div className="shrink-0 text-right">
-                  <span className="text-xs text-slate-400">{formatDateTime(item.updated_at)}</span>
+                <div className="flex shrink-0 items-center gap-2">
+                  <span className="hidden text-xs text-slate-400 sm:inline">{formatDateTime(item.updated_at)}</span>
+                  <svg className="shrink-0 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-slate-400" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M9 18l6-6-6-6" />
+                  </svg>
                 </div>
               </button>
             ))}

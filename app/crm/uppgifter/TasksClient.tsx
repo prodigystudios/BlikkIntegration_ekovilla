@@ -120,6 +120,7 @@ export default function TasksClient() {
   const [updatingTaskIds, setUpdatingTaskIds] = useState<string[]>([]);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<TaskFilter>('all');
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
@@ -211,6 +212,9 @@ export default function TasksClient() {
     overdue: tasks.filter((task) => isOverdue(task)).length,
     done: tasks.filter((task) => task.status === 'done').length,
   }), [tasks]);
+
+  // Active filter count — shown as a badge on the mobile filter toggle.
+  const activeFilterCount = filter !== 'all' ? 1 : 0;
 
   function openCreateModal() {
     setEditingTaskId(null);
@@ -354,14 +358,36 @@ export default function TasksClient() {
       <div className={crm.card}>
 
         {/* Toolbar */}
-        <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 px-5 py-3">
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Sök på titel, prospekt eller källa…"
-            className="w-full sm:w-64"
-          />
-          <div className="flex min-w-0 flex-1 gap-1.5 overflow-x-auto [-webkit-overflow-scrolling:touch]">
+        <div className="grid gap-3 border-b border-slate-100 px-5 py-3">
+          {/* Search + mobile filter toggle */}
+          <div className="flex items-center gap-2">
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Sök på titel, prospekt eller källa…"
+              className="flex-1 sm:w-64 sm:flex-none"
+            />
+            <button
+              type="button"
+              onClick={() => setFiltersOpen((o) => !o)}
+              aria-expanded={filtersOpen}
+              aria-label="Filter"
+              className={cn(
+                'relative inline-flex h-[2.6rem] w-[2.6rem] shrink-0 items-center justify-center !rounded-lg !border !p-0 transition sm:hidden',
+                filtersOpen || activeFilterCount > 0 ? '!border-emerald-500 !bg-emerald-50 text-emerald-700' : '!border-[#dce4d8] !bg-white text-slate-600',
+              )}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M4 6h16M7 12h10M10 18h4" />
+              </svg>
+              {activeFilterCount > 0 ? (
+                <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-emerald-600 px-1 text-[10px] font-bold text-white">{activeFilterCount}</span>
+              ) : null}
+            </button>
+          </div>
+
+          {/* Filter chips — collapsible on mobile, inline on desktop */}
+          <div className={cn('flex-wrap gap-1.5 sm:flex', filtersOpen ? 'flex' : 'hidden')}>
             {([
               ['all', 'Alla'],
               ['open', 'Öppna'],
@@ -402,7 +428,7 @@ export default function TasksClient() {
           ) : loading ? (
             <div className="grid gap-3">
               {Array.from({ length: 3 }).map((_, i) => (
-                <div key={i} className="h-20 animate-pulse rounded-2xl border border-slate-100 bg-[#dfe6da]" />
+                <div key={i} className="h-20 animate-pulse rounded-lg border border-[#e3e9df] bg-[#dfe6da]" />
               ))}
             </div>
           ) : visibleTasks.length === 0 ? (
@@ -421,16 +447,16 @@ export default function TasksClient() {
                   <div
                     key={task.id}
                     className={cn(
-                      'relative grid gap-3 overflow-hidden rounded-2xl border px-4 py-3.5 transition md:grid-cols-[1fr_auto] md:items-center',
+                      'relative grid gap-3 overflow-hidden rounded-lg border px-4 py-3.5 shadow-[0_1px_2px_rgba(15,23,42,0.05)] transition md:grid-cols-[1fr_auto] md:items-center',
                       overdue
                         ? 'border-amber-200 bg-amber-50/40'
-                        : 'border-slate-200 bg-white hover:border-slate-300',
+                        : 'border-[#e3e9df] bg-white hover:border-[#cfdcc9]',
                       task.status === 'done' && 'opacity-60',
                     )}
                   >
                     {/* Priority / status strip */}
                     <span className={cn(
-                      'absolute inset-y-0 left-0 w-1 rounded-l-2xl',
+                      'absolute inset-y-0 left-0 w-1.5',
                       task.status === 'done' ? stripClass.done
                         : overdue ? stripClass.overdue
                         : stripClass[task.priority],

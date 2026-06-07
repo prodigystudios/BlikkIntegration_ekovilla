@@ -105,6 +105,7 @@ export default function AiProspectsClient({ userName }: { userName: string | nul
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<'all' | SuggestionStatus>('pending');
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draft, setDraft] = useState<DraftState>(initialDraft);
   const [reviewNote, setReviewNote] = useState('');
@@ -165,6 +166,9 @@ export default function AiProspectsClient({ userName }: { userName: string | nul
     approved: items.filter((item) => item.status === 'approved').length,
     rejected: items.filter((item) => item.status === 'rejected').length,
   }), [items]);
+
+  // Active filter count — shown as a badge on the mobile filter toggle.
+  const activeFilterCount = status !== 'all' ? 1 : 0;
 
   useEffect(() => {
     setReviewNote(selected?.review_note || '');
@@ -284,8 +288,36 @@ export default function AiProspectsClient({ userName }: { userName: string | nul
 
       {/* Filter + search toolbar */}
       <div className={crm.card}>
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-3">
-          <div className="flex flex-wrap gap-2">
+        <div className="grid gap-3 border-b border-slate-100 px-5 py-3">
+          {/* Search + mobile filter toggle */}
+          <div className="flex items-center gap-2">
+            <Input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Sök på företag, kontakt, ort eller webb"
+              className="flex-1 sm:w-64 sm:flex-none"
+            />
+            <button
+              type="button"
+              onClick={() => setFiltersOpen((o) => !o)}
+              aria-expanded={filtersOpen}
+              aria-label="Filter"
+              className={cn(
+                'relative inline-flex h-[2.6rem] w-[2.6rem] shrink-0 items-center justify-center !rounded-lg !border !p-0 transition sm:hidden',
+                filtersOpen || activeFilterCount > 0 ? '!border-emerald-500 !bg-emerald-50 text-emerald-700' : '!border-[#dce4d8] !bg-white text-slate-600',
+              )}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M4 6h16M7 12h10M10 18h4" />
+              </svg>
+              {activeFilterCount > 0 ? (
+                <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-emerald-600 px-1 text-[10px] font-bold text-white">{activeFilterCount}</span>
+              ) : null}
+            </button>
+          </div>
+
+          {/* Filter chips — collapsible on mobile, inline on desktop */}
+          <div className={cn('flex-wrap gap-2 sm:flex', filtersOpen ? 'flex' : 'hidden')}>
             {(['pending', 'approved', 'rejected', 'all'] as const).map((value) => (
               <button
                 key={value}
@@ -306,12 +338,6 @@ export default function AiProspectsClient({ userName }: { userName: string | nul
               </button>
             ))}
           </div>
-          <Input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Sök på företag, kontakt, ort eller webb"
-            className="max-w-xs"
-          />
         </div>
       </div>
 
@@ -329,11 +355,11 @@ export default function AiProspectsClient({ userName }: { userName: string | nul
 
           <div className="p-4">
             {loading ? (
-              <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-5 py-8 text-center text-sm text-slate-500">
+              <div className="rounded-lg border border-dashed border-[#cfdcc9] bg-[#f6f9f3] px-5 py-8 text-center text-sm text-slate-500">
                 Laddar AI Prospekt…
               </div>
             ) : items.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-5 py-8 text-center text-sm text-slate-500">
+              <div className="rounded-lg border border-dashed border-[#cfdcc9] bg-[#f6f9f3] px-5 py-8 text-center text-sm text-slate-500">
                 Inga förslag matchar filtret ännu.
               </div>
             ) : (
@@ -346,15 +372,15 @@ export default function AiProspectsClient({ userName }: { userName: string | nul
                       type="button"
                       onClick={() => setSelectedId(item.id)}
                       className={cn(
-                        'relative block w-full rounded-2xl border px-4 py-3 text-left transition',
+                        'relative block w-full overflow-hidden rounded-lg border px-4 py-3 text-left shadow-[0_1px_2px_rgba(15,23,42,0.05)] transition',
                         active
-                          ? 'border-slate-300 bg-slate-50 shadow-[0_2px_8px_rgba(0,0,0,0.06)]'
-                          : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50/60',
+                          ? 'border-emerald-300 bg-emerald-50/40'
+                          : 'border-[#e3e9df] bg-white hover:border-[#cfdcc9]',
                       )}
                     >
                       <span className={cn(
-                        'absolute inset-y-0 left-0 w-1 rounded-l-2xl',
-                        item.status === 'approved' ? 'bg-emerald-400' : item.status === 'rejected' ? 'bg-rose-300' : 'bg-amber-400',
+                        'absolute inset-y-0 left-0 w-1.5',
+                        item.status === 'approved' ? 'bg-emerald-500' : item.status === 'rejected' ? 'bg-rose-400' : 'bg-amber-400',
                       )} />
                       <div className="flex flex-wrap items-center justify-between gap-2 pl-2">
                         <strong className="text-sm font-semibold text-slate-900">{item.company_name}</strong>

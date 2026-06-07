@@ -92,6 +92,14 @@ const outcomeMeta: Record<CallItem['outcome'], { label: string; className: strin
   },
 };
 
+// Solid accent per outcome — used as a left rail on list rows for quick scanning.
+const outcomeAccent: Record<CallItem['outcome'], string> = {
+  no_answer: 'bg-slate-300',
+  follow_up: 'bg-amber-400',
+  positive: 'bg-emerald-500',
+  negative: 'bg-rose-400',
+};
+
 
 const initialDraft: CallDraft = {
   customer_id: null,
@@ -478,10 +486,10 @@ export default function CallsClient() {
           </div>
         </div>
 
-        <div className="divide-y divide-slate-100">
+        <div className="grid gap-2 p-4">
           {loading ? (
             Array.from({ length: 3 }).map((_, i) => (
-              <div key={i} className="flex gap-3 px-5 py-4">
+              <div key={i} className="flex gap-3 rounded-lg border border-[#e3e9df] bg-[#f6f9f3] px-4 py-4">
                 <div className="h-9 w-9 animate-pulse rounded-full bg-[#dfe6da]" />
                 <div className="flex-1 grid gap-2">
                   <div className="h-3 w-40 animate-pulse rounded-full bg-[#dfe6da]" />
@@ -501,8 +509,9 @@ export default function CallsClient() {
               const promoted = promotedCallIds.includes(call.id);
               const linked = getLinkedEntityFromCall(call);
               return (
-                <article key={call.id} className="grid gap-3 px-5 py-4 md:grid-cols-[minmax(0,1fr)_200px] md:items-start">
-                  <div className="grid min-w-0 gap-1.5">
+                <article key={call.id} className="relative grid gap-3 overflow-hidden rounded-lg border border-[#e3e9df] bg-white px-4 py-3.5 shadow-[0_1px_2px_rgba(15,23,42,0.05)] transition hover:border-[#cfdcc9] md:grid-cols-[minmax(0,1fr)_200px] md:items-start">
+                  <span className={cn('absolute inset-y-0 left-0 w-1.5', outcomeAccent[call.outcome])} aria-hidden="true" />
+                  <div className="grid min-w-0 gap-1.5 pl-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-100">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#059669" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
