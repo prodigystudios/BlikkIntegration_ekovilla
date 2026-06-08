@@ -360,7 +360,7 @@ export default function TasksClient() {
   }
 
   return (
-    <div className="grid grid-cols-1 gap-6">
+    <div className="grid grid-cols-1 gap-4">
 
       {/* ── Header ── */}
       <div className="flex flex-wrap items-center justify-between gap-4">
@@ -385,7 +385,7 @@ export default function TasksClient() {
       <div className={crm.card}>
 
         {/* Toolbar */}
-        <div className="grid gap-3 border-b border-slate-100 px-5 py-3">
+        <div className="grid gap-3 border-b border-slate-100 px-4 py-2.5">
           {/* Search + mobile filter toggle */}
           <div className="flex items-center gap-2">
             <Input
@@ -428,7 +428,7 @@ export default function TasksClient() {
                   type="button"
                   onClick={() => setFilter(value)}
                   className={cn(
-                    'inline-flex shrink-0 items-center gap-1.5 rounded-xl border px-3 py-1.5 text-sm font-semibold transition',
+                    'inline-flex shrink-0 items-center gap-1.5 rounded-xl border px-2.5 py-1 text-[13px] font-semibold transition',
                     isActive
                       ? 'border-transparent text-white'
                       : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300',
@@ -449,11 +449,11 @@ export default function TasksClient() {
         </div>
 
         {/* Content */}
-        <div className="p-4">
+        <div className="p-2.5">
           {error ? (
             <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
           ) : loading ? (
-            <div className="grid gap-3">
+            <div className="grid gap-2">
               {Array.from({ length: 3 }).map((_, i) => (
                 <div key={i} className="h-20 animate-pulse rounded-lg border border-[#e3e9df] bg-[#dfe6da]" />
               ))}
@@ -464,7 +464,7 @@ export default function TasksClient() {
               <p className="mt-1 text-sm text-slate-500">Skapa en ny uppgift med knappen ovan eller byt filter.</p>
             </div>
           ) : (
-            <div className="grid gap-2.5">
+            <div className="grid gap-1.5">
               {visibleTasks.map((task) => {
                 const linkLabel = task.related_label;
                 const overdue = isOverdue(task);
@@ -474,7 +474,7 @@ export default function TasksClient() {
                   <div
                     key={task.id}
                     className={cn(
-                      'relative grid gap-3 overflow-hidden rounded-lg border px-4 py-3.5 shadow-[0_1px_2px_rgba(15,23,42,0.05)] transition md:grid-cols-[1fr_auto] md:items-center',
+                      'relative grid gap-2 overflow-hidden rounded-lg border px-2.5 py-2 shadow-[0_1px_2px_rgba(15,23,42,0.05)] transition md:grid-cols-[1fr_auto] md:items-center',
                       overdue
                         ? 'border-amber-200 bg-amber-50/40'
                         : 'border-[#e3e9df] bg-white hover:border-[#cfdcc9]',
@@ -492,7 +492,7 @@ export default function TasksClient() {
                     {/* Main content */}
                     <div className="min-w-0 pl-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <strong className="text-sm font-semibold text-slate-900">{task.title}</strong>
+                        <strong className="text-[13px] font-semibold text-slate-900">{task.title}</strong>
                         <span className={cn(crm.badge, priorityMeta[task.priority].className)}>
                           {priorityMeta[task.priority].label}
                         </span>
@@ -508,7 +508,7 @@ export default function TasksClient() {
                         )}
                       </div>
 
-                      <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-500">
+                      <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-slate-500">
                         <span>Deadline: {formatDate(task.due_date)}</span>
                         {task.remind_at && <span>Påminnelse: {formatDateTime(task.remind_at)}</span>}
                         {linkLabel && task.related_type && <span>{relatedTypeLabel[task.related_type]}: {linkLabel}</span>}

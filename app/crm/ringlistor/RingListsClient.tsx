@@ -474,7 +474,7 @@ export default function RingListsClient({ adminName }: { adminName: string | nul
   const visibleAllSelected = visibleProspects.length > 0 && visibleProspects.every((item) => selectedIds.includes(item.id));
 
   return (
-    <div className="grid grid-cols-1 gap-6">
+    <div className="grid grid-cols-1 gap-4">
       {/* Page header */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
@@ -516,7 +516,7 @@ export default function RingListsClient({ adminName }: { adminName: string | nul
       {/* Main list card */}
       <div className={crm.card}>
         {/* Toolbar */}
-        <div className="grid gap-3 border-b border-slate-100 px-5 py-3">
+        <div className="grid gap-3 border-b border-slate-100 px-4 py-2.5">
           {/* Search + mobile filter toggle */}
           <div className="flex items-center gap-2">
             <Input
@@ -554,7 +554,7 @@ export default function RingListsClient({ adminName }: { adminName: string | nul
                   type="button"
                   onClick={() => setAssignmentFilter(value)}
                   className={cn(
-                    'rounded-full border px-3 py-1.5 text-sm font-semibold transition',
+                    'rounded-full border px-2.5 py-1 text-[13px] font-semibold transition',
                     assignmentFilter === value
                       ? 'text-white'
                       : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50',
@@ -586,7 +586,7 @@ export default function RingListsClient({ adminName }: { adminName: string | nul
         </div>
 
         {/* Assignment controls */}
-        <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 bg-slate-50/60 px-5 py-3">
+        <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 bg-slate-50/60 px-4 py-2.5">
           <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
             <input type="checkbox" checked={visibleAllSelected} onChange={toggleSelectAll} className="h-4 w-4 rounded border-slate-300" />
             Markera alla i vyn
@@ -624,7 +624,7 @@ export default function RingListsClient({ adminName }: { adminName: string | nul
 
         {/* Import county selector — shown when file is loaded */}
         {importRows.length > 0 ? (
-          <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 bg-amber-50/40 px-5 py-3">
+          <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 bg-amber-50/40 px-4 py-2.5">
             <span className={crm.sectionTitle}>Vilket län gäller denna import?</span>
             <select
               value={importCounty}
@@ -655,11 +655,11 @@ export default function RingListsClient({ adminName }: { adminName: string | nul
         ) : null}
 
         {/* Prospect list */}
-        <div className="grid gap-2 p-4">
+        <div className="grid gap-1.5 p-2.5">
           {loading ? (
             Array.from({ length: 3 }).map((_, index) => (
               <div key={index} className="flex gap-3 rounded-lg border border-[#e3e9df] bg-[#f6f9f3] px-4 py-4">
-                <div className="h-9 w-9 animate-pulse rounded-full bg-[#dfe6da]" />
+                <div className="h-7 w-7 animate-pulse rounded-full bg-[#dfe6da]" />
                 <div className="flex-1 grid gap-2">
                   <div className="h-3 w-40 animate-pulse rounded-full bg-[#dfe6da]" />
                   <div className="h-3 w-24 animate-pulse rounded-full bg-[#dfe6da]" />
@@ -680,7 +680,7 @@ export default function RingListsClient({ adminName }: { adminName: string | nul
                 <div
                   key={prospect.id}
                   className={cn(
-                    'relative flex items-center gap-3 overflow-hidden rounded-lg border px-4 py-3.5 shadow-[0_1px_2px_rgba(15,23,42,0.05)] transition',
+                    'relative flex items-center gap-2 overflow-hidden rounded-lg border px-2.5 py-2 shadow-[0_1px_2px_rgba(15,23,42,0.05)] transition',
                     selected ? 'border-emerald-300 bg-emerald-50/40' : 'border-[#e3e9df] bg-white hover:border-[#cfdcc9]',
                   )}
                 >
@@ -700,7 +700,7 @@ export default function RingListsClient({ adminName }: { adminName: string | nul
 
                   {/* Initials */}
                   <div className={cn(
-                    'flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold',
+                    'flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold',
                     selected ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-500',
                   )}>
                     {getInitials(prospect.company_name) || 'P'}
@@ -709,12 +709,12 @@ export default function RingListsClient({ adminName }: { adminName: string | nul
                   {/* Info */}
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <strong className="truncate text-sm font-semibold text-slate-900">{prospect.company_name}</strong>
+                      <strong className="truncate text-[13px] font-semibold text-slate-900">{prospect.company_name}</strong>
                       <span className={cn(crm.badge, statusClass[prospect.status])}>
                         {statusLabel[prospect.status]}
                       </span>
                     </div>
-                    <div className="mt-0.5 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-xs text-slate-400">
+                    <div className="mt-0.5 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[11px] text-slate-400">
                       {prospect.contact_name ? <span>{prospect.contact_name}</span> : null}
                       {prospect.phone ? <span>{prospect.phone}</span> : null}
                       {prospect.email ? <span className="hidden max-w-[200px] truncate sm:inline">{prospect.email}</span> : null}

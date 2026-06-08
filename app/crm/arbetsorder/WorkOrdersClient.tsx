@@ -175,7 +175,7 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
   const activeFilterCount = (filter !== 'all' ? 1 : 0) + (assigneeFilter.length > 0 ? 1 : 0);
 
   return (
-    <div className="grid grid-cols-1 gap-6">
+    <div className="grid grid-cols-1 gap-4">
       {/* Page header */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
@@ -187,7 +187,7 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
         <button
           type="button"
           onClick={() => setNewOrderOpen(true)}
-          className="inline-flex items-center rounded-xl px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90"
+          className="inline-flex items-center rounded-xl px-3 py-1.5 text-sm font-semibold text-white transition hover:opacity-90"
           style={{ backgroundColor: 'var(--crm-primary)' }}
         >
           + Ny order
@@ -199,7 +199,7 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
       ) : null}
 
       {/* List card */}
-      <div className="grid gap-3 rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] p-4 shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)] md:p-5">
+      <div className="grid gap-2 rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] p-2.5 shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)] md:p-3">
         {/* Search + mobile filter toggle */}
         <div className="flex items-center gap-2">
           <Input
@@ -240,7 +240,7 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
                 type="button"
                 onClick={() => setFilter(value)}
                 className={cn(
-                  'rounded-full border px-3 py-1.5 text-sm font-semibold transition',
+                  'rounded-full border px-2.5 py-1 text-[13px] font-semibold transition',
                   filter === value ? 'text-white' : 'border-[#e0e8dc] bg-[#f9fbf7] text-slate-600 hover:border-[#cfdcc9]',
                 )}
                 style={filter === value ? { backgroundColor: 'var(--crm-primary)', borderColor: 'var(--crm-primary)' } : undefined}
@@ -261,7 +261,7 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
           ) : null}
 
           {!loading && visibleWorkOrders.length > 0 ? (
-            <div className="grid gap-2">
+            <div className="grid gap-1">
               {visibleWorkOrders.map((item) => {
                 const overdue = isWorkOrderOverdue(item.desired_installation_date, item.status);
                 const sellerName = item.assignee?.full_name || null;
@@ -278,14 +278,14 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
                     {/* Status accent rail */}
                     <span className={cn('w-1.5 shrink-0', workOrderStatusAccent[item.status])} aria-hidden="true" />
 
-                    <div className="grid flex-1 grid-cols-[minmax(0,1fr)_auto] items-start gap-3 p-3.5 sm:grid-cols-[minmax(0,1fr)_170px_140px_auto] sm:items-center sm:gap-4">
+                    <div className="grid flex-1 grid-cols-[minmax(0,1fr)_auto] items-start gap-2 px-2.5 py-1.5 sm:grid-cols-[minmax(0,1fr)_170px_140px_auto] sm:items-center sm:gap-3">
                       {/* Number badge + identity + chips */}
-                      <div className="flex min-w-0 items-center gap-3">
+                      <div className="flex min-w-0 items-center gap-2">
                         <DocumentNumberBadge label="Order" value={documentRef(item.fortnox_order_number, item.order_number)} />
-                        <div className="grid min-w-0 gap-1">
-                          <strong className="truncate text-sm font-bold text-slate-900">{item.project_name}</strong>
-                          <span className="truncate text-xs text-slate-500">{item.client_name}</span>
-                          <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                        <div className="grid min-w-0 gap-0.5">
+                          <strong className="truncate text-[13px] font-bold text-slate-900">{item.project_name}</strong>
+                          <span className="truncate text-[11px] text-slate-500">{item.client_name}</span>
+                          <div className="flex flex-wrap items-center gap-1 pt-0.5">
                             <span className={cn('inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-semibold', workOrderStatusClass[item.status])}>
                               {workOrderStatusLabel[item.status]}
                             </span>
@@ -307,14 +307,14 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
                       {/* Responsible installer/seller */}
                       <div className="hidden items-center gap-2 sm:flex">
                         <span className={cn(
-                          'flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[10px] font-bold',
+                          'flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-bold',
                           sellerName ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-400',
                         )}>
                           {initialsOf(sellerName)}
                         </span>
                         <div className="grid min-w-0">
                           <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Ansvarig</span>
-                          <span className={cn('truncate text-xs font-semibold', sellerName ? 'text-slate-700' : 'text-slate-400')}>
+                          <span className={cn('truncate text-[11px] font-semibold', sellerName ? 'text-slate-700' : 'text-slate-400')}>
                             {sellerName ?? 'Ej tilldelad'}
                           </span>
                         </div>
@@ -323,14 +323,14 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
                       {/* Date */}
                       <div className="hidden flex-col gap-0.5 sm:flex">
                         <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Planerad</span>
-                        <span className={cn('text-xs font-medium', overdue ? 'text-rose-600' : 'text-slate-600')}>
+                        <span className={cn('text-[11px] font-medium', overdue ? 'text-rose-600' : 'text-slate-600')}>
                           {overdue ? '⚠ ' : ''}{formatDate(item.desired_installation_date)}
                         </span>
                       </div>
 
                       {/* Amount + chevron (amount hidden on mobile — name takes priority) */}
-                      <div className="flex items-center justify-end gap-3">
-                        <span className="hidden whitespace-nowrap text-sm font-bold tabular-nums text-slate-900 sm:inline sm:text-base">
+                      <div className="flex items-center justify-end gap-2">
+                        <span className="hidden whitespace-nowrap text-[13px] font-bold tabular-nums text-slate-900 sm:inline sm:text-sm">
                           {formatCurrency(item.pricing_summary?.total ?? item.amount, item.currency_code)}
                         </span>
                         <svg className="shrink-0 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-slate-400" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

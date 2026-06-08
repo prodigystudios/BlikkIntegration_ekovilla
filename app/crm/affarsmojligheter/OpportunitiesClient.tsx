@@ -503,16 +503,16 @@ export default function OpportunitiesClient() {
   }
 
   return (
-    <div className="grid grid-cols-1 gap-6">
+    <div className="grid grid-cols-1 gap-4">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="m-0 text-2xl font-bold tracking-tight text-slate-900">Affärsmöjligheter</h1>
+          <h1 className="m-0 text-lg font-bold tracking-tight text-slate-900">Affärsmöjligheter</h1>
           <p className="m-0 mt-1 text-sm text-slate-500">Aktiva affärer med bekräftat köpintresse</p>
         </div>
         <button
           type="button"
           onClick={() => setCreatePanelOpen(true)}
-          className="inline-flex items-center rounded-xl px-4 py-2 text-sm font-semibold text-white transition"
+          className="inline-flex items-center rounded-xl px-3 py-1.5 text-sm font-semibold text-white transition"
           style={{ backgroundColor: 'var(--crm-primary)' }}
         >
           + Ny affärsmöjlighet
@@ -540,7 +540,7 @@ export default function OpportunitiesClient() {
                   type="button"
                   onClick={() => setFilter(value)}
                   className={cn(
-                    'inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-sm font-semibold transition',
+                    'inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1 text-[13px] font-semibold transition',
                     active ? 'border-transparent text-white' : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300',
                   )}
                   style={active ? { backgroundColor: 'var(--crm-primary)' } : undefined}

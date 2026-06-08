@@ -102,7 +102,7 @@ export default function CustomersClient() {
   const activeFilterCount = filter !== 'alla' ? 1 : 0;
 
   return (
-    <div className="grid grid-cols-1 gap-6">
+    <div className="grid grid-cols-1 gap-4">
 
       {/* ── Header ── */}
       <div className="flex flex-wrap items-center justify-between gap-4">
@@ -124,7 +124,7 @@ export default function CustomersClient() {
       <div className={crm.card}>
 
         {/* Toolbar */}
-        <div className="grid gap-3 border-b border-slate-100 px-5 py-3">
+        <div className="grid gap-3 border-b border-slate-100 px-4 py-2.5">
           {/* Search + mobile filter toggle */}
           <div className="flex items-center gap-2">
             <Input
@@ -162,7 +162,7 @@ export default function CustomersClient() {
                   type="button"
                   onClick={() => setFilter(value)}
                   className={cn(
-                    'inline-flex shrink-0 items-center gap-1.5 rounded-xl border px-3 py-1.5 text-sm font-semibold transition',
+                    'inline-flex shrink-0 items-center gap-1.5 rounded-xl border px-2.5 py-1 text-[13px] font-semibold transition',
                     isActive ? 'border-transparent text-white' : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300',
                   )}
                   style={isActive ? { backgroundColor: 'var(--crm-primary)' } : undefined}
@@ -182,7 +182,7 @@ export default function CustomersClient() {
 
         {/* List header */}
         {!loading && !error && visibleItems.length > 0 && (
-          <div className="flex items-center border-b border-slate-100 px-5 py-2">
+          <div className="flex items-center border-b border-slate-100 px-4 py-1.5">
             <div className="mr-4 w-9 shrink-0" />
             <span className="flex-1 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">Kund</span>
             <span className="hidden text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400 sm:block">Status</span>
@@ -199,8 +199,8 @@ export default function CustomersClient() {
           ) : loading ? (
             <>
               {Array.from({ length: 6 }).map((_, i) => (
-                <div key={i} className="flex items-center gap-4 px-5 py-4">
-                  <div className="h-9 w-9 shrink-0 animate-pulse rounded-full bg-slate-100" />
+                <div key={i} className="flex items-center gap-3 px-4 py-2.5">
+                  <div className="h-7 w-7 shrink-0 animate-pulse rounded-full bg-slate-100" />
                   <div className="flex-1 space-y-1.5">
                     <div className="h-3.5 w-36 animate-pulse rounded bg-slate-100" />
                     <div className="h-3 w-24 animate-pulse rounded bg-slate-100" />
@@ -225,22 +225,22 @@ export default function CustomersClient() {
                 type="button"
                 onClick={() => router.push(`/crm/kunder/${item.id}`)}
                 className={cn(
-                  'block w-full px-5 text-left transition hover:bg-slate-50/80 active:bg-slate-100/60',
+                  'block w-full px-4 text-left transition hover:bg-slate-50/80 active:bg-slate-100/60',
                   item.status === 'churned' && 'opacity-60',
                 )}
               >
-                <div className="flex items-center gap-4 py-3.5">
+                <div className="flex items-center gap-3 py-2.5">
                   {/* Initials circle */}
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-100 text-xs font-bold text-slate-500">
+                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-100 text-xs font-bold text-slate-500">
                     {getInitials(item)}
                   </div>
 
                   {/* Name + secondary info */}
                   <div className="min-w-0 flex-1">
-                    <strong className="block truncate text-sm font-semibold text-slate-900">
+                    <strong className="block truncate text-[13px] font-semibold text-slate-900">
                       {getDisplayName(item)}
                     </strong>
-                    <div className="mt-0.5 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-xs text-slate-400">
+                    <div className="mt-0.5 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[11px] text-slate-400">
                       {item.organization_number && (
                         <span>{item.organization_number}</span>
                       )}
