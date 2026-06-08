@@ -12,7 +12,12 @@ export class TicNotConfiguredError extends Error {
 }
 
 export class TicApiError extends Error {
-  constructor(public readonly status: number, message: string) {
+  constructor(
+    public readonly status: number,
+    message: string,
+    // The raw tic.io response body, kept for server-side logging/diagnosis.
+    public readonly body?: string,
+  ) {
     super(message);
     this.name = 'TicApiError';
   }
@@ -27,11 +32,13 @@ export function friendlyTicMessage(e: unknown): string {
     if (e.status === 401) {
       return 'Uppslagstjänsten avvisade förfrågan. Kontrollera att API-nyckeln är giltig.';
     }
-    // tic.io returns 403 when the endpoint isn't included in your subscription plan
-    // (e.g. person search requires the Enterprise+ tier) — the key is valid, the plan
-    // simply lacks the feature, so don't blame the API key here.
+    // 403 = tic.io accepted the key but denied access to this endpoint. Causes:
+    // the key's plan/tier lacks the feature, an IP allow-list that excludes the
+    // server, or a key restriction. NOTE: this is generic — do not assume person
+    // search here (company search is the only live lookup), and the same 403 can
+    // come from a proxy/WAF in front of the API. The real reason is in the logs.
     if (e.status === 403) {
-      return 'Det här uppslaget ingår inte i din tic.io-licens. Personsök kräver en högre licensnivå (Enterprise+).';
+      return 'Uppslagstjänsten nekade förfrågan – API-nyckeln saknar behörighet för uppslaget. Kontrollera licensnivå och eventuell IP-begränsning på nyckeln.';
     }
     if (e.status === 429) {
       return 'För många sökningar mot uppslagstjänsten just nu. Försök igen om en stund.';
@@ -55,7 +62,9 @@ export function ticRouteErrorInfo(e: unknown): { status: number; code: string; m
 
 // Perform a GET request to the tic.io LENS API.
 export async function ticGet<T>(path: string, params?: Record<string, string>): Promise<T> {
-  const apiKey = process.env.TIC_API_KEY;
+  // Trim defensively: a stray newline/space in the prod env value (common when keys are
+  // pasted into a dashboard) would otherwise be sent in the header and rejected with 403/401.
+  const apiKey = process.env.TIC_API_KEY?.trim();
   if (!apiKey) throw new TicNotConfiguredError();
 
   const url = new URL(`${TIC_API_BASE}${path}`);
@@ -74,7 +83,10 @@ export async function ticGet<T>(path: string, params?: Record<string, string>): 
 
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    throw new TicApiError(res.status, `tic.io GET ${path} misslyckades (${res.status}): ${text}`);
+    // Log the real status + body so production failures (tier/IP/key) are diagnosable —
+    // friendlyTicMessage only returns a generic user-facing string.
+    console.error(`[tic.io] GET ${path} → ${res.status} (base ${TIC_API_BASE}): ${text.slice(0, 500)}`);
+    throw new TicApiError(res.status, `tic.io GET ${path} misslyckades (${res.status}): ${text}`, text);
   }
 
   return res.json() as Promise<T>;
