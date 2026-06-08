@@ -1,7 +1,7 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { getCrmWorkOrder, updateCrmWorkOrder } from '@/lib/domains/crm/work-orders';
-import { ok, pickProvidedFields, requireCrmUser, requireCrmWriter, requireSignedInUser, routeError, updateCrmWorkOrderSchema, validationError } from '../_lib';
+import { ok, pickProvidedFields, requireCrmUser, requirePermission, requireSignedInUser, routeError, updateCrmWorkOrderSchema, validationError } from '../_lib';
 
 type RouteContext = {
   params: {
@@ -29,7 +29,7 @@ export async function GET(_req: Request, context: RouteContext) {
 
 export async function PATCH(req: Request, context: RouteContext) {
   try {
-    const crmUser = await requireCrmWriter();
+    const crmUser = await requirePermission('crm.workorder.write');
     if (crmUser.response || !crmUser.currentUser) return crmUser.response;
 
     const rawBody = await req.json().catch(() => null);

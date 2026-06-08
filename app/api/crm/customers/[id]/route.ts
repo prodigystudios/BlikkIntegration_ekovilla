@@ -2,7 +2,7 @@ import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { getCrmCustomer, updateCrmCustomer } from '@/lib/domains/crm/customers';
 import { updateFortnoxCustomer, fortnoxCustomerFieldsChanged } from '@/lib/domains/fortnox/customers';
-import { ok, requireCrmUser, requireCrmWriter, routeError, updateCrmCustomerSchema, validationError } from '../_lib';
+import { ok, requireCrmUser, requirePermission, routeError, updateCrmCustomerSchema, validationError } from '../_lib';
 
 type RouteContext = { params: { id: string } };
 
@@ -26,7 +26,7 @@ export async function GET(_req: Request, context: RouteContext) {
 
 export async function PATCH(req: Request, context: RouteContext) {
   try {
-    const crmUser = await requireCrmWriter();
+    const crmUser = await requirePermission('crm.customer.write');
     if (crmUser.response || !crmUser.currentUser) return crmUser.response;
 
     const parsedBody = updateCrmCustomerSchema.safeParse(await req.json().catch(() => null));

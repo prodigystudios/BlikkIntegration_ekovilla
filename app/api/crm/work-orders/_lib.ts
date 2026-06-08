@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { quoteLineItemSchema } from '../quotes/_lib';
-export { ok, routeError, validationError, invalidUuidParam, requireCrmUser, requireCrmWriter, requireSignedInUser, pickProvidedFields } from '../_shared';
+export { ok, routeError, validationError, invalidUuidParam, requireCrmUser, requireCrmWriter, requirePermission, requireSignedInUser, pickProvidedFields } from '../_shared';
 
 // Reuses the quote line-item schema so work order article edits validate identically.
 export const updateWorkOrderLineItemsSchema = z.object({

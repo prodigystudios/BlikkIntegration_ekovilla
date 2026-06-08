@@ -3,7 +3,7 @@ import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { getCrmWorkOrder } from '@/lib/domains/crm/work-orders';
 import { createInvoiceFromWorkOrder } from '@/lib/domains/fortnox/orders';
 import { FortnoxNotConnectedError, FortnoxPushInProgressError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
-import { ok, requireCrmWriter, routeError, invalidUuidParam } from '../../_lib';
+import { ok, requirePermission, routeError, invalidUuidParam } from '../../_lib';
 
 type RouteContext = { params: { id: string } };
 
@@ -12,7 +12,7 @@ type RouteContext = { params: { id: string } };
 // order moves to `invoiced` ("Avslutad"); the actual invoicing happens inside Fortnox.
 export async function POST(_req: Request, context: RouteContext) {
   try {
-    const crmUser = await requireCrmWriter();
+    const crmUser = await requirePermission('fortnox.invoice.create');
     if (crmUser.response || !crmUser.currentUser) return crmUser.response;
 
     const badId = invalidUuidParam(context.params.id);

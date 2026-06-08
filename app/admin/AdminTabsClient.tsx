@@ -10,11 +10,13 @@ import { TabsList, TabsTrigger } from '../../components/ui/Tabs';
 const AdminContacts = dynamic(() => import('./contacts/AdminContacts'), { ssr: false });
 const AdminDepotUsage = dynamic(() => import('./depots/AdminDepotUsage'), { ssr: false });
 const AdminNews = dynamic(() => import('./news/AdminNews'), { ssr: false });
+const AdminPermissions = dynamic(() => import('./permissions/AdminPermissions'), { ssr: false });
 
-type AdminTab = 'users'|'contacts'|'depots'|'blikk'|'news';
+type AdminTab = 'users'|'permissions'|'contacts'|'depots'|'blikk'|'news';
 
 const tabs: Array<{ id: AdminTab; label: string; summary: string }> = [
   { id: 'users', label: 'Användare', summary: 'Konton, roller och taggar' },
+  { id: 'permissions', label: 'Behörigheter', summary: 'Roller och per-användar-behörigheter' },
   { id: 'contacts', label: 'Kontakter', summary: 'Kategorier, personer och adresser' },
   { id: 'depots', label: 'Depå-uttag', summary: 'Förbrukning och senaste uttag' },
   { id: 'blikk', label: 'Blikk-koppling', summary: 'Matchning mellan profiler och Blikk' },
@@ -100,6 +102,7 @@ export default function AdminTabsClient() {
 
       <section className="rounded-[30px] border border-slate-200 bg-[linear-gradient(180deg,#f8fbff_0%,#ffffff_100%)] shadow-[0_18px_44px_rgba(15,23,42,0.04)]">
         {tab==='users' && <AdminUsers />}
+        {tab==='permissions' && <AdminPermissions />}
         {tab==='contacts' && <AdminContacts />}
         {tab==='depots' && <AdminDepotUsage />}
         {tab==='blikk' && <AdminBlikkUsersMapping />}

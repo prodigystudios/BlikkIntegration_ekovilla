@@ -3,7 +3,7 @@ import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { getCrmWorkOrder } from '@/lib/domains/crm/work-orders';
 import { updateWorkOrderInFortnox } from '@/lib/domains/fortnox/orders';
 import { FortnoxNotConnectedError, FortnoxPushInProgressError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
-import { ok, requireCrmWriter, routeError, invalidUuidParam } from '../../_lib';
+import { ok, requirePermission, routeError, invalidUuidParam } from '../../_lib';
 
 type RouteContext = {
   params: {
@@ -16,7 +16,7 @@ type RouteContext = {
 // igen" must actually re-send, not short-circuit. If no order exists yet it creates one.
 export async function POST(_req: Request, context: RouteContext) {
   try {
-    const crmUser = await requireCrmWriter();
+    const crmUser = await requirePermission('fortnox.workorder.push');
     if (crmUser.response || !crmUser.currentUser) return crmUser.response;
 
     const badId = invalidUuidParam(context.params.id);
