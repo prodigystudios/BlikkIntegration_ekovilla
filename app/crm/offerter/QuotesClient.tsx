@@ -880,23 +880,29 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
               </div>
             </div>
 
-            {/* Sticky footer */}
+            {/* Sticky footer — a locked offer (work order created) can't be edited or
+                re-synced, so the edit action is hidden and "Stäng" fills the row. */}
             <div className="flex items-center gap-2 border-t border-slate-100 px-5 py-3 [padding-bottom:calc(0.75rem+env(safe-area-inset-bottom))] sm:[padding-bottom:0.75rem]">
               <button
                 type="button"
                 onClick={() => setDetailPanelOpen(false)}
-                className="flex-1 rounded-xl border border-slate-200 bg-white py-2.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 sm:flex-none sm:px-5"
+                className={cn(
+                  'flex-1 rounded-xl border border-slate-200 bg-white py-2.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300',
+                  !offerLocked && 'sm:flex-none sm:px-5',
+                )}
               >
                 Stäng
               </button>
-              <button
-                type="button"
-                onClick={() => { setDetailPanelOpen(false); router.push(`/crm/offerter/${detailQuote.id}/redigera`); }}
-                className="flex-1 rounded-xl py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-95 sm:ml-auto sm:flex-none sm:px-5"
-                style={{ backgroundColor: 'var(--crm-primary)' }}
-              >
-                Redigera offert
-              </button>
+              {!offerLocked ? (
+                <button
+                  type="button"
+                  onClick={() => { setDetailPanelOpen(false); router.push(`/crm/offerter/${detailQuote.id}/redigera`); }}
+                  className="flex-1 rounded-xl py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-95 sm:ml-auto sm:flex-none sm:px-5"
+                  style={{ backgroundColor: 'var(--crm-primary)' }}
+                >
+                  Redigera offert
+                </button>
+              ) : null}
             </div>
           </div>
         </div>
