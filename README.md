@@ -184,6 +184,23 @@ Environment variables required (set locally and in Vercel):
 - `SUPABASE_SERVICE_ROLE_KEY`
 - (optional) `SUPABASE_ANON_KEY` if you plan to use client-side auth later
 
+## tic.io kunduppslag
+
+Kundregistreringen kan slå upp företag mot tic.io. Se `TIC_INTEGRATION.md` för detaljer.
+
+Miljövariabler (lokalt och i Vercel):
+
+- `TIC_API_KEY` — API-nyckel mot tic.io (skickas som `x-api-key`).
+- (valfri) `TIC_API_BASE` — defaultar till `https://lens-api.tic.io`, behöver normalt inte sättas.
+
+⚠️ **Geo-restriktion:** tic.io blockerar anrop från vissa länder (`403 Forbidden country`). Vercel kör
+annars funktioner i en US-region, så uppslaget fungerar lokalt men 403:ar i prod. Därför är
+`vercel.json` satt till `"regions": ["arn1"]` (Stockholm) så de utgående anropen sker från Sverige.
+Ändra inte detta utan att läsa `TIC_INTEGRATION.md`.
+
+Kör även migrationerna `supabase/sql/20260608_crm_customers_financials.sql` och
+`supabase/sql/20260608_crm_customers_company_info.sql` i Supabase (inkl. prod).
+
 ## DashboardNotes påminnelser
 
 DashboardNotes push-påminnelser kan köras automatiskt i Vercel utan att någon trycker på knappen i UI:t.

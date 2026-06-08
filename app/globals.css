@@ -36,8 +36,12 @@
 
 /* Global input sizing to prevent iOS zoom and ensure consistent widths */
 input, select, textarea { font-size: 16px; }
+/* iOS Safari auto-zooms (and never zooms back out, pushing fields off-screen) when a
+   focused form control is < 16px. Our shared Input uses Tailwind `text-sm` (14px), whose
+   class specificity beats the element rule above, so force 16px on iOS with !important.
+   Scoped to iOS via @supports so desktop/Android keep the compact 14px controls. */
 @supports (-webkit-touch-callout: none) {
-  input, select, textarea, button { font-size: 16px; }
+  input:not([type='checkbox']):not([type='radio']), select, textarea { font-size: 16px !important; }
 }
 /* Make text-like form controls fill their container and be consistent */
 input:not([type='checkbox']):not([type='radio']), select, textarea {
