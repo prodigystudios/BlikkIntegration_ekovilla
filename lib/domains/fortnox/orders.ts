@@ -214,11 +214,11 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
       const ourReference = await resolveOurReference(linkedQuote?.assigned_to ?? workOrder.assigned_to ?? null, supabase);
 
       const snapshot = linkedQuote?.customer_snapshot ?? workOrder.customer_snapshot;
-      // Work/job address (Fortnox delivery): structured street + own postal/city,
-      // falling back to the main address's postal/city when absent.
+      // Work/job address (Fortnox delivery): street is the anchor; postal/city sent as
+      // entered, not borrowed from the customer address. Matches the work order's address.
       const deliveryAddress = snapshot?.delivery_address;
-      const deliveryZip = snapshot?.delivery_postal_code ?? snapshot?.postal_code;
-      const deliveryCity = snapshot?.delivery_city ?? snapshot?.city;
+      const deliveryZip = snapshot?.delivery_postal_code;
+      const deliveryCity = snapshot?.delivery_city;
 
       const vatPercent = typeof workOrder.vat_percent === 'number' ? workOrder.vat_percent : 25;
       const rotEnabled = linkedQuote?.rot_details?.enabled === true;

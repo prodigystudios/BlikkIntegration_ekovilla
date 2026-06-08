@@ -210,11 +210,12 @@ function getClientName(source: QuoteSource) {
 
 function getWorkAddress(source: QuoteSource) {
   const s = source.customer_snapshot;
-  // A separate work address (job site) is stored on the snapshot only when it differs
-  // from the customer address (buildCustomerSnapshot enforces this). When present it IS
-  // the primary address installers navigate to; otherwise fall back to the customer
-  // address, preserving the previous behaviour for old quotes and the private case.
-  const hasWorkAddress = Boolean(s?.delivery_address || s?.delivery_city);
+  // A separate work address (job site) is stored on the snapshot only when a street is set
+  // and it differs from the customer address (buildCustomerSnapshot enforces this). The
+  // street is the anchor: when present it IS the primary address installers navigate to
+  // (postal/city taken as entered, blank if the seller left them); otherwise the whole
+  // address falls back to the customer address (old quotes + the private case unchanged).
+  const hasWorkAddress = Boolean(s?.delivery_address);
   return {
     street_address: (hasWorkAddress ? s?.delivery_address : (s?.visit_address || s?.street_address)) || null,
     postal_code: (hasWorkAddress ? s?.delivery_postal_code : s?.postal_code) || null,

@@ -395,27 +395,31 @@ function ArticlePicker({ value, articleNumber, price, unit, onSelect, onClear }:
     setLoading(true);
     setError(null);
     const q = query.trim();
-    const url = q.length >= 1
-      ? `/api/fortnox/articles?q=${encodeURIComponent(q)}&limit=20`
-      : `/api/fortnox/articles?limit=20`;
-    fetch(url, { cache: 'no-store' })
-      .then((r) => r.json().catch(() => ({})))
-      .then((json) => {
-        if (!cancelled) {
-          const raw: Array<{ article_number: string; description: string | null; sales_price: number | null; unit: string | null }> =
-            Array.isArray(json?.data?.items) ? json.data.items : [];
-          setItems(raw.map((a) => ({
-            id: a.article_number,
-            name: a.description ?? undefined,
-            articleNumber: a.article_number,
-            price: a.sales_price,
-            unit: a.unit ?? undefined,
-          })));
-        }
-      })
-      .catch(() => { if (!cancelled) { setError('Kunde inte hämta artiklar'); setItems([]); } })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
+    // Debounce typed queries so a fast typist doesn't fire a cache query per keystroke;
+    // the initial open (empty query) loads immediately.
+    const timer = setTimeout(() => {
+      const url = q.length >= 1
+        ? `/api/fortnox/articles?q=${encodeURIComponent(q)}&limit=20`
+        : `/api/fortnox/articles?limit=20`;
+      fetch(url, { cache: 'no-store' })
+        .then((r) => r.json().catch(() => ({})))
+        .then((json) => {
+          if (!cancelled) {
+            const raw: Array<{ article_number: string; description: string | null; sales_price: number | null; unit: string | null }> =
+              Array.isArray(json?.data?.items) ? json.data.items : [];
+            setItems(raw.map((a) => ({
+              id: a.article_number,
+              name: a.description ?? undefined,
+              articleNumber: a.article_number,
+              price: a.sales_price,
+              unit: a.unit ?? undefined,
+            })));
+          }
+        })
+        .catch(() => { if (!cancelled) { setError('Kunde inte hämta artiklar'); setItems([]); } })
+        .finally(() => { if (!cancelled) setLoading(false); });
+    }, q.length >= 1 ? 250 : 0);
+    return () => { cancelled = true; clearTimeout(timer); };
   }, [open, query]);
 
   // Solid "selected article" card — makes a chosen article unmistakable (vs the old
@@ -909,6 +913,14 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
         if (!active) return;
         const item = json?.data?.item as QuoteItem | undefined;
         if (!item) { toast.error('Kunde inte ladda offert'); router.push('/crm/offerter'); return; }
+        // Locked: once a work order exists the offer is converted (and locked in Fortnox);
+        // editing it would diverge the CRM quote from the created order. Bounce back — this
+        // closes the direct-URL hole the detail card's hidden "Redigera" button left open.
+        if (item.work_order_id || item.work_order_number) {
+          toast.info('Offerten är låst – en arbetsorder har skapats, så den kan inte längre redigeras.');
+          router.replace('/crm/offerter');
+          return;
+        }
         setLoadedQuote(item);
         setDraft({
           customer_id: item.customer_id || null,

@@ -166,9 +166,10 @@ export function snapshotToFortnoxSource(quote: QuoteRow): FortnoxCustomerSource 
   const isCompany = Boolean(s?.company_name);
   const name = splitSwedishName(s?.customer_name ?? quote.customer_name);
   const mainAddress = buildFortnoxAddress(s?.street_address, s?.postal_code, s?.city);
-  // Work/job address is structured (own postal/city); fall back to the main ones if absent.
+  // Work/job address is structured (own postal/city). Use it as entered — don't borrow the
+  // customer's postal/city, which belong to a different place when the job is elsewhere.
   const deliveryAddress = s?.delivery_address
-    ? buildFortnoxAddress(s.delivery_address, s?.delivery_postal_code ?? s?.postal_code, s?.delivery_city ?? s?.city)
+    ? buildFortnoxAddress(s.delivery_address, s?.delivery_postal_code, s?.delivery_city)
     : null;
 
   return {
@@ -356,11 +357,12 @@ export async function pushQuoteToFortnox(quoteId: string): Promise<PushOfferResu
     const ourReference = await resolveOurReference(quote.assigned_to, supabase);
 
     const snapshot = quote.customer_snapshot;
-    // Work/job address (where the service is delivered). Structured: street +
-    // its own postal/city, falling back to the main address's postal/city if absent.
+    // Work/job address (where the service is delivered). Street is the anchor; postal/city
+    // are sent as entered (not borrowed from the customer address — that would attach the
+    // wrong postcode to a job in another locality). Matches the work order's address.
     const deliveryAddress = snapshot?.delivery_address;
-    const deliveryZip = snapshot?.delivery_postal_code ?? snapshot?.postal_code;
-    const deliveryCity = snapshot?.delivery_city ?? snapshot?.city;
+    const deliveryZip = snapshot?.delivery_postal_code;
+    const deliveryCity = snapshot?.delivery_city;
 
     // Build Remarks: description first, then ROT property designation / BRF org number
     // on their own lines (Fortnox offers have no structured field for these).

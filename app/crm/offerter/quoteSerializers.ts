@@ -53,14 +53,17 @@ export function getEffectiveCustomerName(
 export function buildCustomerSnapshot(d: QuoteCustomerFields) {
   const effectiveCustomerName = getEffectiveCustomerName(d);
 
-  // Work address: only stored when it actually differs from the customer/invoice address.
-  // Identical → null everywhere, so downstream (work order, Fortnox) falls back to the
-  // customer address and the private case behaves exactly as before.
+  // Work address: anchored on the STREET line — only stored when a street is entered AND
+  // the address differs from the customer address. Identical (or no street) → null
+  // everywhere, so downstream (work order, Fortnox) falls back to the customer address and
+  // the private case behaves exactly as before. The street anchor keeps the snapshot, the
+  // toggle (keyed on delivery_address), the work order, and Fortnox all in agreement —
+  // never a half-populated city-only work address.
   const workMatchesCustomer =
     sameAddressPart(d.delivery_address, d.street_address) &&
     sameAddressPart(d.delivery_postal_code, d.postal_code) &&
     sameAddressPart(d.delivery_city, d.city);
-  const hasWorkAddress = !workMatchesCustomer && Boolean(d.delivery_address.trim() || d.delivery_city.trim());
+  const hasWorkAddress = !workMatchesCustomer && Boolean(d.delivery_address.trim());
 
   return {
     customer_name: d.quote_type === 'private' ? d.customer_name || null : effectiveCustomerName || null,

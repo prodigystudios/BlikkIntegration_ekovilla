@@ -107,6 +107,16 @@ describe('buildCustomerSnapshot', () => {
     expect(snap.delivery_city).toBe('Södertälje');
   });
 
+  it('gata är ankaret: ifylld ort men ingen gata → ingen separat arbetsadress lagras', () => {
+    const snap = buildCustomerSnapshot(customer({
+      street_address: 'Gatan 1', postal_code: '11122', city: 'Stockholm',
+      delivery_address: '', delivery_postal_code: '', delivery_city: 'Göteborg',
+    }));
+    expect(snap.delivery_address).toBeNull();
+    expect(snap.delivery_postal_code).toBeNull();
+    expect(snap.delivery_city).toBeNull();
+  });
+
   it('tomma strängar blir null', () => {
     const snap = buildCustomerSnapshot(customer({ email: '', phone: '', city: '' }));
     expect(snap.email).toBeNull();
