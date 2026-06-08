@@ -5,10 +5,13 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Input from '../../../components/ui/Input';
 import Select from '../../../components/ui/Select';
 import FortnoxCodeSelect from './FortnoxCodeSelect';
+import TicLookupInput from '@/app/crm/components/TicLookupInput';
 import { useToast } from '@/lib/Toast';
 import { crm } from '@/app/crm/lib/crmTokens';
 import { cn } from '@/lib/shared/cn';
 import { formatSwedishIdNumber, isValidSwedishOrgNumber, vatFromOrgNumber } from './customerNumbers';
+import { riskTypeLabel } from '@/lib/domains/tic/mappers';
+import type { TicLookupResult, TicRiskIndicator } from '@/lib/domains/tic/types';
 
 type CustomerType = 'business' | 'private';
 
@@ -37,6 +40,18 @@ type Draft = {
   discount: string;
   vat_number: string;
   reverse_vat: boolean;
+  annual_revenue: string;
+  number_of_employees: string;
+  legal_entity_type: string;
+  sni_code: string;
+  sni_name: string;
+  operating_profit: string;
+  profit_after_financial_items: string;
+  total_assets: string;
+  operating_margin: string;
+  equity_ratio: string;
+  financial_year: string;
+  risk_indicators: TicRiskIndicator[];
 };
 
 const initial: Draft = {
@@ -64,6 +79,18 @@ const initial: Draft = {
   discount: '',
   vat_number: '',
   reverse_vat: false,
+  annual_revenue: '',
+  number_of_employees: '',
+  legal_entity_type: '',
+  sni_code: '',
+  sni_name: '',
+  operating_profit: '',
+  profit_after_financial_items: '',
+  total_assets: '',
+  operating_margin: '',
+  equity_ratio: '',
+  financial_year: '',
+  risk_indicators: [],
 };
 
 function buildAddress(street: string, postalCode: string, city: string) {
@@ -86,6 +113,34 @@ function CardSection({ title, children }: { title: string; children: React.React
       <p className={cn('mb-4', crm.sectionTitle)}>{title}</p>
       {children}
     </div>
+  );
+}
+
+// Same card chrome as CardSection but collapsible (native <details>). Collapsed by
+// default; the summary row carries the title + an optional hint and a chevron.
+function CollapsibleCardSection({
+  title, hint, children,
+}: {
+  title: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <details className={cn(crm.cardInner, 'group')}>
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-2">
+        <span className="flex items-center gap-2">
+          <span className={crm.sectionTitle}>{title}</span>
+          {hint ? <span className="text-xs text-slate-400">{hint}</span> : null}
+        </span>
+        <svg
+          width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden
+          className="shrink-0 text-slate-400 transition-transform group-open:rotate-180"
+        >
+          <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </summary>
+      <div className="mt-4">{children}</div>
+    </details>
   );
 }
 
@@ -156,6 +211,54 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
     });
   }
 
+  // Pre-fill the form from a tic.io lookup hit. Only writes into empty fields so a
+  // lookup never clobbers something the user already typed (same principle as the
+  // VAT derivation above). Org/personal numbers are run through the same formatter.
+  function applyLookup(r: TicLookupResult) {
+    setDraft((c) => {
+      const next = { ...c };
+      if (r.kind === 'company') {
+        if (r.company_name && !c.company_name.trim()) next.company_name = r.company_name;
+        if (r.organization_number && !c.organization_number.trim()) {
+          const formatted = formatSwedishIdNumber(r.organization_number);
+          next.organization_number = formatted;
+          if (!c.vat_number.trim()) {
+            const derived = vatFromOrgNumber(formatted);
+            if (derived) next.vat_number = derived;
+          }
+        }
+        if (r.annual_revenue != null && !c.annual_revenue.trim()) next.annual_revenue = String(r.annual_revenue);
+        if (r.number_of_employees != null && !c.number_of_employees.trim()) next.number_of_employees = String(r.number_of_employees);
+        // Extra company info → "Övrig information" section. Fill only empty fields.
+        if (r.legal_entity_type && !c.legal_entity_type.trim()) next.legal_entity_type = r.legal_entity_type;
+        if (r.sni_code && !c.sni_code.trim()) next.sni_code = r.sni_code;
+        if (r.sni_name && !c.sni_name.trim()) next.sni_name = r.sni_name;
+        if (r.operating_profit != null && !c.operating_profit.trim()) next.operating_profit = String(r.operating_profit);
+        if (r.profit_after_financial_items != null && !c.profit_after_financial_items.trim()) next.profit_after_financial_items = String(r.profit_after_financial_items);
+        if (r.total_assets != null && !c.total_assets.trim()) next.total_assets = String(r.total_assets);
+        if (r.operating_margin != null && !c.operating_margin.trim()) next.operating_margin = String(r.operating_margin);
+        if (r.equity_ratio != null && !c.equity_ratio.trim()) next.equity_ratio = String(r.equity_ratio);
+        if (r.financial_year != null && !c.financial_year.trim()) next.financial_year = String(r.financial_year);
+        if (r.risk_indicators && r.risk_indicators.length > 0 && c.risk_indicators.length === 0) {
+          next.risk_indicators = r.risk_indicators;
+        }
+      } else {
+        if (r.first_name && !c.first_name.trim()) next.first_name = r.first_name;
+        if (r.last_name && !c.last_name.trim()) next.last_name = r.last_name;
+        if (r.personal_number && !c.personal_number.trim()) next.personal_number = formatSwedishIdNumber(r.personal_number);
+      }
+      if (r.email && !c.email.trim()) next.email = r.email;
+      if (r.phone && !c.phone.trim()) next.phone = r.phone;
+      if (r.address) {
+        if (r.address.street && !c.visit_street.trim()) next.visit_street = r.address.street;
+        if (r.address.postal_code && !c.visit_postal_code.trim()) next.visit_postal_code = r.address.postal_code;
+        if (r.address.city && !c.visit_city.trim()) next.visit_city = r.address.city;
+      }
+      return next;
+    });
+    toast.success('Uppgifter hämtade från uppslaget');
+  }
+
   async function handleSubmit() {
     const isB2B = draft.customer_type === 'business';
     if (isB2B && !draft.company_name.trim()) { toast.error('Företagsnamn krävs'); return; }
@@ -179,6 +282,18 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
         discount: draft.discount.trim() ? Number(draft.discount) : null,
         vat_number: draft.vat_number.trim() || null,
         reverse_vat: draft.reverse_vat,
+        annual_revenue: draft.annual_revenue.trim() ? Number(draft.annual_revenue) : null,
+        number_of_employees: draft.number_of_employees.trim() ? Number(draft.number_of_employees) : null,
+        legal_entity_type: draft.legal_entity_type.trim() || null,
+        sni_code: draft.sni_code.trim() || null,
+        sni_name: draft.sni_name.trim() || null,
+        operating_profit: draft.operating_profit.trim() ? Number(draft.operating_profit) : null,
+        profit_after_financial_items: draft.profit_after_financial_items.trim() ? Number(draft.profit_after_financial_items) : null,
+        total_assets: draft.total_assets.trim() ? Number(draft.total_assets) : null,
+        operating_margin: draft.operating_margin.trim() ? Number(draft.operating_margin) : null,
+        equity_ratio: draft.equity_ratio.trim() ? Number(draft.equity_ratio) : null,
+        financial_year: draft.financial_year.trim() ? Number(draft.financial_year) : null,
+        risk_indicators: draft.risk_indicators.length > 0 ? draft.risk_indicators : null,
       };
       if (isB2B) {
         body.company_name = draft.company_name.trim();
@@ -265,6 +380,16 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
                   </Select>
                 </div>
 
+                {/* Lookup is company-only: tic.io person search requires the Enterprise+
+                    tier, which we don't have, so it's hidden for private customers. */}
+                {isB2B ? (
+                  <div>
+                    <FieldLabel>Slå upp företag</FieldLabel>
+                    <TicLookupInput mode="company" onSelect={applyLookup} />
+                    <p className="mt-1 text-xs text-slate-400">Sök via tic.io för att fylla i uppgifterna automatiskt.</p>
+                  </div>
+                ) : null}
+
                 {isB2B ? (
                   <>
                     <div>
@@ -277,6 +402,16 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
                       {draft.organization_number.replace(/\D/g, '').length === 10 && !isValidSwedishOrgNumber(draft.organization_number) ? (
                         <p className="mt-1 text-xs text-amber-600">Ogiltigt organisationsnummer – kontrollsiffran stämmer inte.</p>
                       ) : null}
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <FieldLabel>Omsättning (SEK)</FieldLabel>
+                        <Input value={draft.annual_revenue} onChange={(e) => set('annual_revenue', e.target.value)} placeholder="0" type="number" min="0" step="1" />
+                      </div>
+                      <div>
+                        <FieldLabel>Antal anställda</FieldLabel>
+                        <Input value={draft.number_of_employees} onChange={(e) => set('number_of_employees', e.target.value)} placeholder="0" type="number" min="0" step="1" />
+                      </div>
                     </div>
                   </>
                 ) : (
@@ -390,6 +525,82 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
               ) : null}
             </div>
           </CardSection>
+
+          {/* Row 4: Övrig information (företag) – collapsible, mostly filled by the lookup */}
+          {isB2B ? (
+            <CollapsibleCardSection title="Övrig information" hint="ekonomi, bransch & risk">
+              <div className="grid gap-5">
+
+                {/* Bransch & bolagsform */}
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <div>
+                    <FieldLabel>Bolagsform</FieldLabel>
+                    <Input value={draft.legal_entity_type} onChange={(e) => set('legal_entity_type', e.target.value)} placeholder="Aktiebolag" />
+                  </div>
+                  <div>
+                    <FieldLabel>SNI-kod</FieldLabel>
+                    <Input value={draft.sni_code} onChange={(e) => set('sni_code', e.target.value)} placeholder="43990" />
+                  </div>
+                  <div>
+                    <FieldLabel>Bransch</FieldLabel>
+                    <Input value={draft.sni_name} onChange={(e) => set('sni_name', e.target.value)} placeholder="Specialiserad bygg- och anläggningsverksamhet" />
+                  </div>
+                </div>
+
+                {/* Ekonomi & nyckeltal */}
+                <div>
+                  <p className={cn('mb-2', crm.label)}>Ekonomi & nyckeltal</p>
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    <div>
+                      <FieldLabel>Rörelseresultat (SEK)</FieldLabel>
+                      <Input value={draft.operating_profit} onChange={(e) => set('operating_profit', e.target.value)} placeholder="0" type="number" step="1" />
+                    </div>
+                    <div>
+                      <FieldLabel>Resultat e. fin. poster (SEK)</FieldLabel>
+                      <Input value={draft.profit_after_financial_items} onChange={(e) => set('profit_after_financial_items', e.target.value)} placeholder="0" type="number" step="1" />
+                    </div>
+                    <div>
+                      <FieldLabel>Totala tillgångar (SEK)</FieldLabel>
+                      <Input value={draft.total_assets} onChange={(e) => set('total_assets', e.target.value)} placeholder="0" type="number" step="1" />
+                    </div>
+                    <div>
+                      <FieldLabel>Rörelsemarginal (%)</FieldLabel>
+                      <Input value={draft.operating_margin} onChange={(e) => set('operating_margin', e.target.value)} placeholder="0" type="number" step="0.1" />
+                    </div>
+                    <div>
+                      <FieldLabel>Soliditet (%)</FieldLabel>
+                      <Input value={draft.equity_ratio} onChange={(e) => set('equity_ratio', e.target.value)} placeholder="0" type="number" step="0.1" />
+                    </div>
+                    <div>
+                      <FieldLabel>Räkenskapsår</FieldLabel>
+                      <Input value={draft.financial_year} onChange={(e) => set('financial_year', e.target.value)} placeholder="2024" type="number" step="1" />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Riskindikatorer (read-only, från uppslaget) */}
+                <div>
+                  <p className={cn('mb-2', crm.label)}>Riskindikatorer</p>
+                  {draft.risk_indicators.length > 0 ? (
+                    <ul className="grid gap-1.5">
+                      {draft.risk_indicators.map((r, i) => (
+                        <li key={`${r.type}-${i}`} className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                          <span className="mt-0.5 shrink-0">⚠</span>
+                          <span>
+                            <span className="font-semibold">{riskTypeLabel(r.type)}</span>
+                            {r.notes ? <span className="text-amber-700"> – {r.notes}</span> : null}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-xs text-slate-400">Inga riskindikatorer hämtade.</p>
+                  )}
+                </div>
+
+              </div>
+            </CollapsibleCardSection>
+          ) : null}
 
         </div>
 
