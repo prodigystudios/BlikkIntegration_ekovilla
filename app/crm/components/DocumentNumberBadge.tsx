@@ -14,12 +14,12 @@ export default function DocumentNumberBadge({
   return (
     <div
       className={cn(
-        'flex min-w-[56px] shrink-0 flex-col items-center justify-center rounded-lg border border-[#dce4d8] bg-[#f6f9f3] px-2.5 py-1 text-center leading-none shadow-[0_1px_2px_rgba(15,23,42,0.05)]',
+        'flex min-w-[44px] shrink-0 flex-col items-center justify-center rounded-lg border border-[#dce4d8] bg-[#f6f9f3] px-2 py-0.5 text-center leading-none shadow-[0_1px_2px_rgba(15,23,42,0.05)]',
         className,
       )}
     >
       <span className="text-[8px] font-bold uppercase tracking-[0.14em] text-slate-400">{label}</span>
-      <span className="mt-0.5 text-sm font-bold tabular-nums tracking-tight text-slate-800">{value}</span>
+      <span className="mt-0.5 text-xs font-bold tabular-nums tracking-tight text-slate-800">{value}</span>
     </div>
   );
 }

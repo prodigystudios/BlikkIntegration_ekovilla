@@ -255,7 +255,7 @@ export default function AiProspectsClient({ userName }: { userName: string | nul
   }
 
   return (
-    <div className="grid grid-cols-1 gap-6">
+    <div className="grid grid-cols-1 gap-4">
       {/* Page header */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
@@ -274,7 +274,7 @@ export default function AiProspectsClient({ userName }: { userName: string | nul
 
       {/* Filter + search toolbar */}
       <div className={crm.card}>
-        <div className="grid gap-3 border-b border-slate-100 px-5 py-3">
+        <div className="grid gap-2 border-b border-slate-100 px-4 py-2.5">
           {/* Search + mobile filter toggle */}
           <div className="flex items-center gap-2">
             <Input
@@ -310,7 +310,7 @@ export default function AiProspectsClient({ userName }: { userName: string | nul
                 type="button"
                 onClick={() => setStatus(value)}
                 className={cn(
-                  'rounded-full border px-3 py-1.5 text-sm font-semibold transition',
+                  'rounded-full border px-2.5 py-1 text-[13px] font-semibold transition',
                   status === value
                     ? 'text-white'
                     : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50',
@@ -334,12 +334,12 @@ export default function AiProspectsClient({ userName }: { userName: string | nul
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_420px] xl:items-start">
         {/* Suggestion queue */}
         <div className={crm.card}>
-          <div className="border-b border-slate-100 px-5 py-4">
+          <div className="border-b border-slate-100 px-4 py-2.5">
             <h2 className="m-0 text-base font-bold text-slate-900">Förslagskö</h2>
             <p className="m-0 mt-0.5 text-xs text-slate-500">Granska inkomna prospektförslag innan de blir en del av ordinarie CRM-flöde.</p>
           </div>
 
-          <div className="p-4">
+          <div className="p-2.5">
             {loading ? (
               <div className="rounded-lg border border-dashed border-[#cfdcc9] bg-[#f6f9f3] px-5 py-8 text-center text-sm text-slate-500">
                 Laddar AI Prospekt…
@@ -349,7 +349,7 @@ export default function AiProspectsClient({ userName }: { userName: string | nul
                 Inga förslag matchar filtret ännu.
               </div>
             ) : (
-              <div className="grid gap-3">
+              <div className="grid gap-1.5">
                 {items.map((item) => {
                   const active = item.id === selectedId;
                   return (
@@ -358,7 +358,7 @@ export default function AiProspectsClient({ userName }: { userName: string | nul
                       type="button"
                       onClick={() => setSelectedId(item.id)}
                       className={cn(
-                        'relative block w-full overflow-hidden rounded-lg border px-4 py-3 text-left shadow-[0_1px_2px_rgba(15,23,42,0.05)] transition',
+                        'relative block w-full overflow-hidden rounded-lg border px-2.5 py-2 text-left shadow-[0_1px_2px_rgba(15,23,42,0.05)] transition',
                         active
                           ? 'border-emerald-300 bg-emerald-50/40'
                           : 'border-[#e3e9df] bg-white hover:border-[#cfdcc9]',
@@ -369,16 +369,16 @@ export default function AiProspectsClient({ userName }: { userName: string | nul
                         item.status === 'approved' ? 'bg-emerald-500' : item.status === 'rejected' ? 'bg-rose-400' : 'bg-amber-400',
                       )} />
                       <div className="flex flex-wrap items-center justify-between gap-2 pl-2">
-                        <strong className="text-sm font-semibold text-slate-900">{item.company_name}</strong>
+                        <strong className="text-[13px] font-semibold text-slate-900">{item.company_name}</strong>
                         <span className={cn(crm.badge, active ? 'border-slate-200 bg-white text-slate-700' : statusClass[item.status])}>
                           {statusLabel[item.status]}
                         </span>
                       </div>
-                      <div className="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 pl-2 text-xs text-slate-400">
+                      <div className="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 pl-2 text-[11px] text-slate-400">
                         {buildMeta(item).map((entry) => <span key={entry}>{entry}</span>)}
                       </div>
                       {item.rationale ? (
-                        <p className="m-0 mt-1.5 pl-2 text-sm leading-5 text-slate-600">{item.rationale}</p>
+                        <p className="m-0 mt-1.5 pl-2 text-[13px] leading-5 text-slate-600">{item.rationale}</p>
                       ) : null}
                     </button>
                   );

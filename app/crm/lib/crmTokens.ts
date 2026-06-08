@@ -107,10 +107,10 @@ export const WORK_ORDER_STATUS_OPTIONS: WorkOrderStatus[] = ['draft', 'scheduled
 
 export const crm = {
   // Typography
-  pageTitle: 'text-2xl font-bold tracking-tight text-slate-900',
+  pageTitle: 'text-lg font-bold tracking-tight text-slate-900',
   pageSubtitle: 'text-sm text-slate-500',
   sectionTitle: 'text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400',
-  label: 'mb-1.5 text-xs font-semibold text-slate-500',
+  label: 'mb-1 text-xs font-semibold text-slate-500',
   fieldValue: 'text-sm text-slate-900',
   emptyValue: 'text-sm italic text-slate-400',
 
@@ -118,7 +118,7 @@ export const crm = {
   // Use `card` for list-cards (no padding — content controls its own padding).
   // Use `cardInner` for detail/form cards that have their own internal padding.
   card: 'rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)]',
-  cardInner: 'rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] p-5 shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)]',
+  cardInner: 'rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] p-3.5 shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)]',
 
   // Badge base — combine with a stage/status color class:
   //   cn(crm.badge, customerStageClass[item.customer_stage])
@@ -127,13 +127,13 @@ export const crm = {
   // Primary CRM action button (+ Ny kund, + Ny offert, etc.)
   // Pair with: style={{ backgroundColor: 'var(--crm-primary)' }}
   primaryButton:
-    'inline-flex items-center gap-1.5 rounded-xl px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-[0.96] active:scale-[0.98]',
+    'inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-[0.96] active:scale-[0.98]',
 
   // Save / confirm button used inside forms and sidebars
   saveButton:
-    'inline-flex h-11 w-full items-center justify-center rounded-xl border border-emerald-600 bg-gradient-to-b from-emerald-500 to-emerald-600 text-sm font-semibold text-white shadow-[0_4px_12px_rgba(16,185,129,0.28)] transition hover:brightness-[0.97] disabled:cursor-not-allowed disabled:opacity-60',
+    'inline-flex h-9 w-full items-center justify-center rounded-xl border border-emerald-600 bg-gradient-to-b from-emerald-500 to-emerald-600 text-sm font-semibold text-white shadow-[0_4px_12px_rgba(16,185,129,0.28)] transition hover:brightness-[0.97] disabled:cursor-not-allowed disabled:opacity-60',
 
   // Destructive / secondary button (cancel, delete)
   ghostButton:
-    'inline-flex h-9 items-center justify-center rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-800 disabled:opacity-50',
+    'inline-flex h-8 items-center justify-center rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-800 disabled:opacity-50',
 } as const;

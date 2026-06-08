@@ -440,16 +440,16 @@ export default function CallsClient() {
   }
 
   return (
-    <div className="grid grid-cols-1 gap-6">
+    <div className="grid grid-cols-1 gap-4">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="m-0 text-2xl font-bold tracking-tight text-slate-900">Samtal</h1>
+          <h1 className="m-0 text-lg font-bold tracking-tight text-slate-900">Samtal</h1>
           <p className="m-0 mt-1 text-sm text-slate-500">Här kan du boka in och följa upp samtalsaktiviteter med dina prospekt och kunder</p>
         </div>
         <button
           type="button"
           onClick={() => openLogModal()}
-          className="inline-flex items-center rounded-xl px-4 py-2 text-sm font-semibold text-white transition"
+          className="inline-flex items-center rounded-xl px-3 py-1.5 text-sm font-semibold text-white transition"
           style={{ backgroundColor: 'var(--crm-primary)' }}
         >
           + Logga samtal
@@ -468,8 +468,8 @@ export default function CallsClient() {
       ) : null}
 
       <div className="rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)]">
-        <div className="border-b border-slate-100 px-5 py-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="border-b border-slate-100 px-4 py-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <h2 className="m-0 text-base font-bold text-slate-900">Samtalsaktiviteter</h2>
               <p className="m-0 mt-0.5 text-xs text-slate-500">Alla loggade samtal och uppföljningar</p>
@@ -486,11 +486,11 @@ export default function CallsClient() {
           </div>
         </div>
 
-        <div className="grid gap-2 p-4">
+        <div className="grid gap-1.5 p-2.5">
           {loading ? (
             Array.from({ length: 3 }).map((_, i) => (
               <div key={i} className="flex gap-3 rounded-lg border border-[#e3e9df] bg-[#f6f9f3] px-4 py-4">
-                <div className="h-9 w-9 animate-pulse rounded-full bg-[#dfe6da]" />
+                <div className="h-7 w-7 animate-pulse rounded-full bg-[#dfe6da]" />
                 <div className="flex-1 grid gap-2">
                   <div className="h-3 w-40 animate-pulse rounded-full bg-[#dfe6da]" />
                   <div className="h-3 w-24 animate-pulse rounded-full bg-[#dfe6da]" />
@@ -509,19 +509,19 @@ export default function CallsClient() {
               const promoted = promotedCallIds.includes(call.id);
               const linked = getLinkedEntityFromCall(call);
               return (
-                <article key={call.id} className="relative grid gap-3 overflow-hidden rounded-lg border border-[#e3e9df] bg-white px-4 py-3.5 shadow-[0_1px_2px_rgba(15,23,42,0.05)] transition hover:border-[#cfdcc9] md:grid-cols-[minmax(0,1fr)_200px] md:items-start">
+                <article key={call.id} className="relative grid gap-2 overflow-hidden rounded-lg border border-[#e3e9df] bg-white px-2.5 py-2 shadow-[0_1px_2px_rgba(15,23,42,0.05)] transition hover:border-[#cfdcc9] md:grid-cols-[minmax(0,1fr)_200px] md:items-start">
                   <span className={cn('absolute inset-y-0 left-0 w-1.5', outcomeAccent[call.outcome])} aria-hidden="true" />
                   <div className="grid min-w-0 gap-1.5 pl-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-100">
+                      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-emerald-100">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#059669" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                           <path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6A19.79 19.79 0 012.12 4.18 2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z" />
                         </svg>
                       </div>
                       <div className="grid gap-0">
-                        <strong className="text-sm font-semibold text-slate-900">{getCallCompanyName(call)}</strong>
+                        <strong className="text-[13px] font-semibold text-slate-900">{getCallCompanyName(call)}</strong>
                         {linked?.contact_name || call.contact_name ? (
-                          <span className="text-xs text-slate-500">{linked?.contact_name || call.contact_name}</span>
+                          <span className="text-[11px] text-slate-500">{linked?.contact_name || call.contact_name}</span>
                         ) : null}
                       </div>
                       {standalone ? <span className={cn(crm.badge, 'border-sky-200 bg-sky-50 text-sky-700')}>Lead</span> : null}
@@ -534,11 +534,11 @@ export default function CallsClient() {
                         {outcomeMeta[call.outcome].label}
                       </span>
                     </div>
-                    <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                    <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
                       <span>{formatDateTime(call.call_at)}</span>
                       {call.next_step ? <span>· Nästa steg: {call.next_step}</span> : null}
                     </div>
-                    {call.summary ? <p className="m-0 text-sm leading-5 text-slate-700">{call.summary}</p> : null}
+                    {call.summary ? <p className="m-0 text-[13px] leading-5 text-slate-700">{call.summary}</p> : null}
                     {meta.length > 0 ? (
                       <div className="flex flex-wrap gap-1.5">
                         {meta.map((m) => (

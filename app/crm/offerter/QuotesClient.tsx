@@ -446,12 +446,12 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
   }
 
   return (
-    <div className="grid grid-cols-1 gap-6">
+    <div className="grid grid-cols-1 gap-4">
 
       {/* Page header */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="m-0 text-2xl font-bold tracking-tight text-slate-900">Offerter</h1>
+          <h1 className="m-0 text-lg font-bold tracking-tight text-slate-900">Offerter</h1>
           <p className="m-0 mt-1 text-sm text-slate-500">
             Skapa och följ upp offerter
             {presetProspectId ? <span className="ml-2 rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-600">Filtrerad på prospekt</span> : null}
@@ -460,7 +460,7 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
         <button
           type="button"
           onClick={() => router.push('/crm/offerter/ny')}
-          className="inline-flex items-center rounded-xl px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90"
+          className="inline-flex items-center rounded-xl px-3 py-1.5 text-sm font-semibold text-white transition hover:opacity-90"
           style={{ backgroundColor: 'var(--crm-primary)' }}
         >
           + Skapa offert
@@ -468,7 +468,7 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
       </div>
 
       {/* Quote list */}
-      <div className="grid gap-3 rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] p-4 shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)] md:p-5">
+      <div className="grid gap-2 rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] p-2.5 shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)] md:p-3">
         {/* Search + mobile filter toggle */}
         <div className="flex items-center gap-2">
           <Input
@@ -511,7 +511,7 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
                   type="button"
                   onClick={() => setFilter(value)}
                   className={cn(
-                    'inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-sm font-semibold transition',
+                    'inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1 text-[13px] font-semibold transition',
                     active ? 'border-transparent text-white' : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300',
                   )}
                   style={active ? { backgroundColor: 'var(--crm-primary)' } : undefined}
@@ -536,7 +536,7 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
         ) : null}
 
         {!loading && visibleQuotes.length > 0 ? (
-          <div className="grid gap-2">
+          <div className="grid gap-1">
             {sortedVisibleQuotes.map((item) => {
               const overdue = isOverdue(item);
               const statusMeta = quoteStatusMeta[item.status];
@@ -556,14 +556,14 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
                   {/* Status accent rail */}
                   <span className={cn('w-1.5 shrink-0', statusMeta.accent)} aria-hidden="true" />
 
-                  <div className="grid flex-1 grid-cols-[minmax(0,1fr)_auto] items-start gap-3 p-3.5 sm:grid-cols-[minmax(0,1fr)_170px_140px_auto] sm:items-center sm:gap-4">
+                  <div className="grid flex-1 grid-cols-[minmax(0,1fr)_auto] items-start gap-2 px-2.5 py-1.5 sm:grid-cols-[minmax(0,1fr)_48px_140px_128px] sm:items-center sm:gap-3">
                     {/* Number badge + identity + chips */}
-                    <div className="flex min-w-0 items-center gap-3">
+                    <div className="flex min-w-0 items-center gap-2">
                       <DocumentNumberBadge label="Offert" value={documentRef(item.fortnox_offer_number, item.quote_number)} />
-                      <div className="grid min-w-0 gap-1">
-                        <strong className="truncate text-sm font-bold text-slate-900">{item.project_name}</strong>
-                        <span className="truncate text-xs text-slate-500">{getQuoteCustomerName(item)}</span>
-                        <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                      <div className="grid min-w-0 gap-0.5">
+                        <strong className="truncate text-[13px] font-bold text-slate-900">{item.project_name}</strong>
+                        <span className="truncate text-[11px] text-slate-500">{getQuoteCustomerName(item)}</span>
+                        <div className="flex flex-wrap items-center gap-1 pt-0.5">
                           <span className={cn('inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-semibold', statusMeta.className)}>
                             {statusMeta.label}
                           </span>
@@ -579,25 +579,22 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
                       </div>
                     </div>
 
-                    {/* Responsible seller */}
-                    <div className="hidden items-center gap-2 sm:flex">
-                      <span className={cn(
-                        'flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[10px] font-bold',
-                        sellerName ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-400',
-                      )}>
+                    {/* Responsible seller — avatar pill only, in a fixed slot so it never drifts */}
+                    <div className="hidden items-center justify-center sm:flex">
+                      <span
+                        title={sellerName ?? 'Ej tilldelad'}
+                        className={cn(
+                          'flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold',
+                          sellerName ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-400',
+                        )}
+                      >
                         {initialsOf(sellerName)}
                       </span>
-                      <div className="grid min-w-0">
-                        <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Ansvarig</span>
-                        <span className={cn('truncate text-xs font-semibold', sellerName ? 'text-slate-700' : 'text-slate-400')}>
-                          {sellerName ?? 'Ej tilldelad'}
-                        </span>
-                      </div>
                     </div>
 
                     {/* Dates */}
                     <div className="hidden flex-col gap-0.5 sm:flex">
-                      <span className="text-xs font-medium text-slate-600">{formatDate(item.quote_date)}</span>
+                      <span className="text-[11px] font-medium text-slate-600">{formatDate(item.quote_date)}</span>
                       {item.follow_up_date ? (
                         <span className={cn('text-[11px] font-semibold', overdue ? 'text-amber-700' : 'text-slate-400')}>
                           {overdue ? '⚠ ' : ''}Följ upp {formatDate(item.follow_up_date)}
@@ -608,8 +605,8 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
                     </div>
 
                     {/* Amount + chevron (amount hidden on mobile — name takes priority) */}
-                    <div className="flex items-center justify-end gap-3">
-                      <span className="hidden whitespace-nowrap text-sm font-bold tabular-nums text-slate-900 sm:inline sm:text-base">
+                    <div className="flex items-center justify-end gap-2">
+                      <span className="hidden whitespace-nowrap text-[13px] font-bold tabular-nums text-slate-900 sm:inline sm:text-sm">
                         {formatCurrency(item.amount, item.currency_code)}
                       </span>
                       <svg className="shrink-0 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-slate-400" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
