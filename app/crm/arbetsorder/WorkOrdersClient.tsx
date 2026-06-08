@@ -278,7 +278,7 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
                     {/* Status accent rail */}
                     <span className={cn('w-1.5 shrink-0', workOrderStatusAccent[item.status])} aria-hidden="true" />
 
-                    <div className="grid flex-1 grid-cols-[minmax(0,1fr)_auto] items-start gap-2 px-2.5 py-1.5 sm:grid-cols-[minmax(0,1fr)_170px_140px_auto] sm:items-center sm:gap-3">
+                    <div className="grid flex-1 grid-cols-[minmax(0,1fr)_auto] items-start gap-2 px-2.5 py-1.5 sm:grid-cols-[minmax(0,1fr)_48px_140px_128px] sm:items-center sm:gap-3">
                       {/* Number badge + identity + chips */}
                       <div className="flex min-w-0 items-center gap-2">
                         <DocumentNumberBadge label="Order" value={documentRef(item.fortnox_order_number, item.order_number)} />
@@ -304,20 +304,17 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
                         </div>
                       </div>
 
-                      {/* Responsible installer/seller */}
-                      <div className="hidden items-center gap-2 sm:flex">
-                        <span className={cn(
-                          'flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-bold',
-                          sellerName ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-400',
-                        )}>
+                      {/* Responsible installer/seller — avatar pill only, in a fixed slot so it never drifts */}
+                      <div className="hidden items-center justify-center sm:flex">
+                        <span
+                          title={sellerName ?? 'Ej tilldelad'}
+                          className={cn(
+                            'flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold',
+                            sellerName ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-400',
+                          )}
+                        >
                           {initialsOf(sellerName)}
                         </span>
-                        <div className="grid min-w-0">
-                          <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Ansvarig</span>
-                          <span className={cn('truncate text-[11px] font-semibold', sellerName ? 'text-slate-700' : 'text-slate-400')}>
-                            {sellerName ?? 'Ej tilldelad'}
-                          </span>
-                        </div>
                       </div>
 
                       {/* Date */}
