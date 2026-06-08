@@ -245,7 +245,7 @@ export default function AdminPermissions() {
                             <button
                               key={mode}
                               type="button"
-                              disabled={busy}
+                              disabled={busy || (mode === 'revoke' && entry.key === 'crm.admin' && userState.role === 'admin')}
                               onClick={() => setUserOverride(entry.key, mode === 'inherit' ? null : mode)}
                               className={
                                 'px-2.5 py-1 text-[11px] font-semibold ' +
