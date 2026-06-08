@@ -44,6 +44,8 @@ const customerSnapshotSchema = z.object({
   city: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
   visit_address: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
   delivery_address: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
+  delivery_postal_code: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
+  delivery_city: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
   invoice_address: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
 });
 

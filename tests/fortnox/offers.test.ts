@@ -136,4 +136,21 @@ describe('snapshotToFortnoxSource → buildFortnoxCustomerPayload', () => {
     expect(payload.DeliveryZipCode).toBe('11122');
     expect(payload.DeliveryCity).toBe('Stockholm');
   });
+
+  it('uses the structured work/delivery postal+city when present (company job at a different site)', () => {
+    const payload = buildFortnoxCustomerPayload(
+      snapshotToFortnoxSource(quote({
+        company_name: 'Acme AB',
+        street_address: 'Gatan 1', postal_code: '11122', city: 'Stockholm',
+        delivery_address: 'Industrivägen 4', delivery_postal_code: '15242', delivery_city: 'Södertälje',
+      })),
+    );
+    // Invoice/main address stays the office; delivery carries the job site, fully structured.
+    expect(payload.Address1).toBe('Gatan 1');
+    expect(payload.ZipCode).toBe('11122');
+    expect(payload.City).toBe('Stockholm');
+    expect(payload.DeliveryAddress1).toBe('Industrivägen 4');
+    expect(payload.DeliveryZipCode).toBe('15242');
+    expect(payload.DeliveryCity).toBe('Södertälje');
+  });
 });

@@ -13,6 +13,8 @@ type WorkOrderRow = {
   customer_snapshot: {
     contact_name?: string | null;
     delivery_address?: string | null;
+    delivery_postal_code?: string | null;
+    delivery_city?: string | null;
     postal_code?: string | null;
     city?: string | null;
   } | null;
@@ -149,6 +151,8 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
       customer_snapshot: {
         contact_name?: string | null;
         delivery_address?: string | null;
+        delivery_postal_code?: string | null;
+        delivery_city?: string | null;
         postal_code?: string | null;
         city?: string | null;
       } | null;
@@ -210,7 +214,11 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
       const ourReference = await resolveOurReference(linkedQuote?.assigned_to ?? workOrder.assigned_to ?? null, supabase);
 
       const snapshot = linkedQuote?.customer_snapshot ?? workOrder.customer_snapshot;
+      // Work/job address (Fortnox delivery): structured street + own postal/city,
+      // falling back to the main address's postal/city when absent.
       const deliveryAddress = snapshot?.delivery_address;
+      const deliveryZip = snapshot?.delivery_postal_code ?? snapshot?.postal_code;
+      const deliveryCity = snapshot?.delivery_city ?? snapshot?.city;
 
       const vatPercent = typeof workOrder.vat_percent === 'number' ? workOrder.vat_percent : 25;
       const rotEnabled = linkedQuote?.rot_details?.enabled === true;
@@ -226,8 +234,8 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
           ...(deliveryAddress
             ? {
                 DeliveryAddress1: deliveryAddress,
-                ...(snapshot?.postal_code ? { DeliveryZipCode: snapshot.postal_code } : {}),
-                ...(snapshot?.city ? { DeliveryCity: snapshot.city } : {}),
+                ...(deliveryZip ? { DeliveryZipCode: deliveryZip } : {}),
+                ...(deliveryCity ? { DeliveryCity: deliveryCity } : {}),
               }
             : {}),
           OrderRows: orderRows,

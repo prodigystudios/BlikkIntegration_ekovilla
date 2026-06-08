@@ -209,12 +209,20 @@ function getClientName(source: QuoteSource) {
 }
 
 function getWorkAddress(source: QuoteSource) {
+  const s = source.customer_snapshot;
+  // A separate work address (job site) is stored on the snapshot only when it differs
+  // from the customer address (buildCustomerSnapshot enforces this). When present it IS
+  // the primary address installers navigate to; otherwise fall back to the customer
+  // address, preserving the previous behaviour for old quotes and the private case.
+  const hasWorkAddress = Boolean(s?.delivery_address || s?.delivery_city);
   return {
-    street_address: source.customer_snapshot?.visit_address || source.customer_snapshot?.street_address || null,
-    postal_code: source.customer_snapshot?.postal_code || null,
-    city: source.customer_snapshot?.city || null,
-    delivery_address: source.customer_snapshot?.delivery_address || null,
-    invoice_address: source.customer_snapshot?.invoice_address || null,
+    street_address: (hasWorkAddress ? s?.delivery_address : (s?.visit_address || s?.street_address)) || null,
+    postal_code: (hasWorkAddress ? s?.delivery_postal_code : s?.postal_code) || null,
+    city: (hasWorkAddress ? s?.delivery_city : s?.city) || null,
+    // Primary already holds the job site when one exists, so don't duplicate it as a
+    // separate "Leverans:" line. Kept null here; the work-order detail page can still set one.
+    delivery_address: null,
+    invoice_address: s?.invoice_address || null,
   };
 }
 

@@ -47,6 +47,8 @@ type QuoteRow = {
     phone?: string | null;
     street_address?: string | null;
     delivery_address?: string | null;
+    delivery_postal_code?: string | null;
+    delivery_city?: string | null;
     postal_code?: string | null;
     city?: string | null;
   } | null;
@@ -164,9 +166,9 @@ export function snapshotToFortnoxSource(quote: QuoteRow): FortnoxCustomerSource 
   const isCompany = Boolean(s?.company_name);
   const name = splitSwedishName(s?.customer_name ?? quote.customer_name);
   const mainAddress = buildFortnoxAddress(s?.street_address, s?.postal_code, s?.city);
-  // Snapshot has no separate delivery postal/city – reuse the main ones, as before.
+  // Work/job address is structured (own postal/city); fall back to the main ones if absent.
   const deliveryAddress = s?.delivery_address
-    ? buildFortnoxAddress(s.delivery_address, s?.postal_code, s?.city)
+    ? buildFortnoxAddress(s.delivery_address, s?.delivery_postal_code ?? s?.postal_code, s?.delivery_city ?? s?.city)
     : null;
 
   return {
@@ -354,7 +356,11 @@ export async function pushQuoteToFortnox(quoteId: string): Promise<PushOfferResu
     const ourReference = await resolveOurReference(quote.assigned_to, supabase);
 
     const snapshot = quote.customer_snapshot;
+    // Work/job address (where the service is delivered). Structured: street +
+    // its own postal/city, falling back to the main address's postal/city if absent.
     const deliveryAddress = snapshot?.delivery_address;
+    const deliveryZip = snapshot?.delivery_postal_code ?? snapshot?.postal_code;
+    const deliveryCity = snapshot?.delivery_city ?? snapshot?.city;
 
     // Build Remarks: description first, then ROT property designation / BRF org number
     // on their own lines (Fortnox offers have no structured field for these).
@@ -378,8 +384,8 @@ export async function pushQuoteToFortnox(quoteId: string): Promise<PushOfferResu
         ...(deliveryAddress
           ? {
               DeliveryAddress1: deliveryAddress,
-              ...(snapshot?.postal_code ? { DeliveryZipCode: snapshot.postal_code } : {}),
-              ...(snapshot?.city ? { DeliveryCity: snapshot.city } : {}),
+              ...(deliveryZip ? { DeliveryZipCode: deliveryZip } : {}),
+              ...(deliveryCity ? { DeliveryCity: deliveryCity } : {}),
             }
           : {}),
         OfferRows: offerRows,

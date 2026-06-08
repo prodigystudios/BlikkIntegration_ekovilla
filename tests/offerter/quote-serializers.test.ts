@@ -25,6 +25,8 @@ function customer(overrides: Partial<QuoteCustomerFields> = {}): QuoteCustomerFi
     city: 'Stockholm',
     visit_address: 'Besök 2',
     delivery_address: 'Leverans 3',
+    delivery_postal_code: '22233',
+    delivery_city: 'Göteborg',
     invoice_address: 'Faktura 4',
     ...overrides,
   };
@@ -77,7 +79,32 @@ describe('buildCustomerSnapshot', () => {
     expect(snap.city).toBe('Stockholm');
     expect(snap.visit_address).toBe('Besök 2');
     expect(snap.delivery_address).toBe('Leverans 3');
+    expect(snap.delivery_postal_code).toBe('22233');
+    expect(snap.delivery_city).toBe('Göteborg');
     expect(snap.invoice_address).toBe('Faktura 4');
+  });
+
+  // Work/job address (arbetsadress) — only stored when it differs from the customer address.
+  it('arbetsadress identisk med kundadressen → delivery_* nollas (trim/case-okänsligt)', () => {
+    const snap = buildCustomerSnapshot(customer({
+      street_address: 'Gatan 1', postal_code: '11122', city: 'Stockholm',
+      delivery_address: 'gatan 1', delivery_postal_code: ' 11122 ', delivery_city: 'STOCKHOLM',
+    }));
+    expect(snap.delivery_address).toBeNull();
+    expect(snap.delivery_postal_code).toBeNull();
+    expect(snap.delivery_city).toBeNull();
+    // Customer address itself is untouched.
+    expect(snap.street_address).toBe('Gatan 1');
+  });
+
+  it('arbetsadress som skiljer sig → delivery_* behålls', () => {
+    const snap = buildCustomerSnapshot(customer({
+      street_address: 'Gatan 1', postal_code: '11122', city: 'Stockholm',
+      delivery_address: 'Industrivägen 4', delivery_postal_code: '15242', delivery_city: 'Södertälje',
+    }));
+    expect(snap.delivery_address).toBe('Industrivägen 4');
+    expect(snap.delivery_postal_code).toBe('15242');
+    expect(snap.delivery_city).toBe('Södertälje');
   });
 
   it('tomma strängar blir null', () => {
@@ -92,6 +119,7 @@ describe('buildCustomerSnapshot', () => {
     expect(Object.keys(snap).sort()).toEqual(
       [
         'city', 'company_name', 'contact_name', 'customer_name', 'delivery_address',
+        'delivery_city', 'delivery_postal_code',
         'email', 'invoice_address', 'organization_number', 'personal_number', 'phone',
         'postal_code', 'street_address', 'visit_address',
       ].sort(),

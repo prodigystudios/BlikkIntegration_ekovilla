@@ -22,9 +22,21 @@ export type QuoteCustomerFields = {
   postal_code: string;
   city: string;
   visit_address: string;
+  // Arbetsadress (where the job is performed). `delivery_address` is its STREET line;
+  // postal/city are structured so it works for company jobs whose card address (street_address)
+  // is the office. Kept under the `delivery_*` name = Fortnox "delivery address".
   delivery_address: string;
+  delivery_postal_code: string;
+  delivery_city: string;
   invoice_address: string;
 };
+
+// Two address strings are "the same place" if their trimmed, case-folded forms match.
+// Used to drop a work address that equals the customer/invoice address so the common
+// (private) case stores no separate delivery address and stays exactly as before.
+function sameAddressPart(a: string, b: string): boolean {
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
 
 // The customer name used on the quote: company name for business (falling back to
 // the contact name), otherwise the person's name.
@@ -40,6 +52,16 @@ export function getEffectiveCustomerName(
 // of whether the customer is a saved record. Empty strings become null.
 export function buildCustomerSnapshot(d: QuoteCustomerFields) {
   const effectiveCustomerName = getEffectiveCustomerName(d);
+
+  // Work address: only stored when it actually differs from the customer/invoice address.
+  // Identical → null everywhere, so downstream (work order, Fortnox) falls back to the
+  // customer address and the private case behaves exactly as before.
+  const workMatchesCustomer =
+    sameAddressPart(d.delivery_address, d.street_address) &&
+    sameAddressPart(d.delivery_postal_code, d.postal_code) &&
+    sameAddressPart(d.delivery_city, d.city);
+  const hasWorkAddress = !workMatchesCustomer && Boolean(d.delivery_address.trim() || d.delivery_city.trim());
+
   return {
     customer_name: d.quote_type === 'private' ? d.customer_name || null : effectiveCustomerName || null,
     company_name: d.quote_type === 'business' ? d.company_name || null : null,
@@ -52,7 +74,9 @@ export function buildCustomerSnapshot(d: QuoteCustomerFields) {
     postal_code: d.postal_code || null,
     city: d.city || null,
     visit_address: d.visit_address || null,
-    delivery_address: d.delivery_address || null,
+    delivery_address: hasWorkAddress ? d.delivery_address || null : null,
+    delivery_postal_code: hasWorkAddress ? d.delivery_postal_code || null : null,
+    delivery_city: hasWorkAddress ? d.delivery_city || null : null,
     invoice_address: d.invoice_address || null,
   };
 }

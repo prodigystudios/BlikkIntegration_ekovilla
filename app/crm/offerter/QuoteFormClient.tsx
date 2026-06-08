@@ -85,6 +85,8 @@ type QuoteItem = {
     city?: string | null;
     visit_address?: string | null;
     delivery_address?: string | null;
+    delivery_postal_code?: string | null;
+    delivery_city?: string | null;
     invoice_address?: string | null;
   } | null;
   pricing_summary: { subtotal?: number; vat?: number; total?: number } | null;
@@ -141,6 +143,8 @@ type QuoteDraft = {
   city: string;
   visit_address: string;
   delivery_address: string;
+  delivery_postal_code: string;
+  delivery_city: string;
   invoice_address: string;
   items: QuoteLineItem[];
   project_name: string;
@@ -191,6 +195,7 @@ type CrmCustomerLite = {
   personal_number: string | null;
   fortnox_customer_id: string | null;
   visit_address: { street: string | null; postal_code: string | null; city: string | null } | null;
+  delivery_address: { street: string | null; postal_code: string | null; city: string | null } | null;
   contacts: Array<{ id: string; name: string; role: string | null; phone: string | null; email: string | null; is_primary: boolean }>;
 };
 
@@ -339,6 +344,8 @@ const initialDraft: QuoteDraft = {
   city: '',
   visit_address: '',
   delivery_address: '',
+  delivery_postal_code: '',
+  delivery_city: '',
   invoice_address: '',
   items: [createEmptyLineItem()],
   project_name: '',
@@ -765,6 +772,11 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   const [draft, setDraft] = useState<QuoteDraft>(initialDraft);
   const [loadedQuote, setLoadedQuote] = useState<QuoteItem | null>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<CrmCustomerLite | null>(null);
+  // Whether the job is performed at a different address than the customer's. Off → the
+  // order inherits the customer address; on → the work-address fields are shown and must
+  // be filled. A deliberate toggle (vs silent prefill) so a wrong company address can't
+  // slip through unnoticed.
+  const [customWorkAddress, setCustomWorkAddress] = useState(false);
   const restoredRef = useRef(false);
 
   const presetProspectId = searchParams.get('prospect_id') || '';
@@ -796,6 +808,18 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   function applySelectedCustomer(customer: CrmCustomerLite) {
     setSelectedCustomer(customer);
     const primary = customer.contacts.find((c) => c.is_primary) || customer.contacts[0] || null;
+    // Smart default: if the card already carries a delivery address that differs from the
+    // visit address, turn the toggle on and prefill it. Otherwise off (= same as customer).
+    const del = customer.delivery_address;
+    const vis = customer.visit_address;
+    const deliveryDiffers = Boolean(
+      del && (
+        (del.street || '') !== (vis?.street || '') ||
+        (del.postal_code || '') !== (vis?.postal_code || '') ||
+        (del.city || '') !== (vis?.city || '')
+      ),
+    );
+    setCustomWorkAddress(deliveryDiffers);
     setDraft((current) => ({
       ...current,
       customer_id: customer.id,
@@ -811,6 +835,11 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
       street_address: customer.visit_address?.street || '',
       postal_code: customer.visit_address?.postal_code || '',
       city: customer.visit_address?.city || '',
+      // Only carry a work address when the card has a distinct one; otherwise leave the
+      // fields empty so an enabled toggle visibly demands input (never a silent default).
+      delivery_address: deliveryDiffers ? del?.street || '' : '',
+      delivery_postal_code: deliveryDiffers ? del?.postal_code || '' : '',
+      delivery_city: deliveryDiffers ? del?.city || '' : '',
     }));
   }
 
@@ -844,7 +873,11 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           postal_code: item.customer_snapshot?.postal_code || '',
           city: item.customer_snapshot?.city || '',
           visit_address: item.customer_snapshot?.visit_address || '',
+          // A separate work address is stored only when it differs from the customer address,
+          // so its presence directly drives the toggle (set just below).
           delivery_address: item.customer_snapshot?.delivery_address || '',
+          delivery_postal_code: item.customer_snapshot?.delivery_postal_code || '',
+          delivery_city: item.customer_snapshot?.delivery_city || '',
           invoice_address: item.customer_snapshot?.invoice_address || '',
           items: item.line_items?.length
             ? item.line_items.map((line) => ({ ...line, line_note: line.line_note || '', is_rot_work: line.is_rot_work ?? false, house_work_type: line.house_work_type || 'CONSTRUCTION', density: line.density || '' }))
@@ -868,6 +901,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           notes: item.notes || '',
           create_follow_up_task: false,
         });
+        setCustomWorkAddress(Boolean(item.customer_snapshot?.delivery_address));
 
         // Show the linked customer in the picker so editing doesn't look like no
         // customer is selected. Fetch the live row (silently ignored if it 404s).
@@ -888,6 +922,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
                 personal_number: c.personal_number ?? null,
                 fortnox_customer_id: c.fortnox_customer_id ?? null,
                 visit_address: c.visit_address ?? null,
+                delivery_address: c.delivery_address ?? null,
                 contacts: c.contacts ?? [],
               });
             })
@@ -960,6 +995,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
             && Date.now() - envelope.savedAt < DRAFT_TTL_MS && envelope.draft;
           if (fresh) {
             setDraft(envelope.draft);
+            setCustomWorkAddress(Boolean(envelope.draft?.delivery_address));
           }
         }
       } catch { /* ignore malformed draft */ }
@@ -1315,12 +1351,14 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
               onSelect={applySelectedCustomer}
               onClear={() => {
                 setSelectedCustomer(null);
+                setCustomWorkAddress(false);
                 setDraft((current) => ({
                   ...current, customer_id: null,
                   customer_source: buildCustomerSource(null),
                   company_name: '', customer_name: '', organization_number: '',
                   personal_number: '', contact_name: '', phone: '', email: '',
                   street_address: '', postal_code: '', city: '',
+                  delivery_address: '', delivery_postal_code: '', delivery_city: '',
                 }));
               }}
               onCreateNew={() => goToCustomerPage('/crm/kunder/ny')}
@@ -1337,6 +1375,62 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
             ) : (
               <p className="text-xs text-slate-400">Sök fram en befintlig kund eller skapa en ny. Kunduppgifterna hämtas från kundkortet.</p>
             )}
+
+            {/* Arbetsadress — explicit toggle istället för tyst autoifyllning, så en
+                avvikande jobbplats (t.ex. företagskund vars kortadress är kontoret) inte
+                glöms bort. Av = arbetsorder/Fortnox använder kundadressen. */}
+            <div className="grid gap-3">
+              <label className="flex cursor-pointer select-none items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50/60 px-3.5 py-2.5">
+                <span className="grid min-w-0 gap-0.5">
+                  <span className="text-sm font-medium text-slate-700">Annan arbetsadress än kundens</span>
+                  <span className="text-[11px] text-slate-400">Jobbet utförs på en annan plats än kundadressen</span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={customWorkAddress}
+                  onChange={(e) => {
+                    const on = e.target.checked;
+                    setCustomWorkAddress(on);
+                    // Turning off → clear (snapshot uses the customer address). Turning on →
+                    // leave the fields empty so the seller must enter the actual job site.
+                    if (!on) setDraft((d) => ({ ...d, delivery_address: '', delivery_postal_code: '', delivery_city: '' }));
+                  }}
+                  className="h-4 w-4 shrink-0 rounded border-slate-300 accent-emerald-600"
+                />
+              </label>
+
+              {customWorkAddress ? (
+                <div className="grid gap-3 rounded-xl border border-[#e0e8dc] bg-white/60 p-3">
+                  <p className={crm.sectionTitle}>Arbetsadress (där jobbet utförs)</p>
+                  <Field label="Gatuadress">
+                    <Input
+                      value={draft.delivery_address}
+                      onChange={(e) => setDraft((d) => ({ ...d, delivery_address: e.target.value }))}
+                      placeholder="Ex. Industrivägen 4"
+                    />
+                  </Field>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Field label="Postnummer">
+                      <Input
+                        value={draft.delivery_postal_code}
+                        onChange={(e) => setDraft((d) => ({ ...d, delivery_postal_code: e.target.value }))}
+                        placeholder="152 42"
+                      />
+                    </Field>
+                    <Field label="Ort">
+                      <Input
+                        value={draft.delivery_city}
+                        onChange={(e) => setDraft((d) => ({ ...d, delivery_city: e.target.value }))}
+                        placeholder="Södertälje"
+                      />
+                    </Field>
+                  </div>
+                  <p className="text-[11px] leading-snug text-slate-400">
+                    Blir arbetsorderns adress och Fortnox leveransadress. Kundadressen ligger kvar som fakturaadress.
+                  </p>
+                </div>
+              ) : null}
+            </div>
           </div>
           </div>
 
