@@ -44,6 +44,7 @@ type ListCrmTasksOptions = {
   search?: string;
   status?: CrmTaskStatus;
   prospectId?: string;
+  customerId?: string;
 };
 
 type RawCrmTaskRow = {
@@ -117,6 +118,10 @@ export async function listCrmTasks(supabase: SupabaseClient, options: ListCrmTas
 
   if (options.prospectId) {
     query = query.eq('related_type', 'crm_prospect').eq('related_id', options.prospectId);
+  }
+
+  if (options.customerId) {
+    query = query.eq('related_type', 'crm_customer').eq('related_id', options.customerId);
   }
 
   return query;

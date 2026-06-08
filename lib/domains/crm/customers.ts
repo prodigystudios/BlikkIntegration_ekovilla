@@ -11,6 +11,14 @@ export type CrmAddress = {
   city: string | null;
 };
 
+// Risk/intelligence flags sourced from the tic.io lookup, stored as JSONB.
+export type CrmRiskIndicator = {
+  type: string;
+  subtype?: string;
+  notes?: string;
+  score?: number | null;
+};
+
 export const crmCustomerSelect = `
   id,
   customer_type,
@@ -32,6 +40,18 @@ export const crmCustomerSelect = `
   discount,
   vat_number,
   reverse_vat,
+  annual_revenue,
+  number_of_employees,
+  legal_entity_type,
+  sni_code,
+  sni_name,
+  operating_profit,
+  profit_after_financial_items,
+  total_assets,
+  operating_margin,
+  equity_ratio,
+  financial_year,
+  risk_indicators,
   fortnox_customer_id,
   sync_status,
   last_synced_at,
@@ -84,6 +104,18 @@ export type CreateCrmCustomerInput = {
   discount?: number | null;
   vat_number?: string | null;
   reverse_vat?: boolean;
+  annual_revenue?: number | null;
+  number_of_employees?: number | null;
+  legal_entity_type?: string | null;
+  sni_code?: string | null;
+  sni_name?: string | null;
+  operating_profit?: number | null;
+  profit_after_financial_items?: number | null;
+  total_assets?: number | null;
+  operating_margin?: number | null;
+  equity_ratio?: number | null;
+  financial_year?: number | null;
+  risk_indicators?: CrmRiskIndicator[] | null;
   fortnox_customer_id?: string | null;
   sync_status?: CrmCustomerSyncStatus;
   source?: string | null;
@@ -112,6 +144,18 @@ export type UpdateCrmCustomerInput = {
   discount?: number | null;
   vat_number?: string | null;
   reverse_vat?: boolean;
+  annual_revenue?: number | null;
+  number_of_employees?: number | null;
+  legal_entity_type?: string | null;
+  sni_code?: string | null;
+  sni_name?: string | null;
+  operating_profit?: number | null;
+  profit_after_financial_items?: number | null;
+  total_assets?: number | null;
+  operating_margin?: number | null;
+  equity_ratio?: number | null;
+  financial_year?: number | null;
+  risk_indicators?: CrmRiskIndicator[] | null;
   fortnox_customer_id?: string | null;
   sync_status?: CrmCustomerSyncStatus;
   last_synced_at?: string | null;

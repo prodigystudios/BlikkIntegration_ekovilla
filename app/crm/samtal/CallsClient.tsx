@@ -215,6 +215,20 @@ export default function CallsClient() {
     return () => { active = false; };
   }, [historySearch]);
 
+  // Deep-link: open a specific call's edit modal when arriving with ?call_id=
+  // (e.g. from a customer's related list). Handled once the call is loaded.
+  const presetCallId = searchParams.get('call_id') || '';
+  const [hasHandledCallPreset, setHasHandledCallPreset] = useState(false);
+  useEffect(() => { setHasHandledCallPreset(false); }, [presetCallId]);
+  useEffect(() => {
+    if (!presetCallId || hasHandledCallPreset || loading) return;
+    const call = calls.find((c) => c.id === presetCallId);
+    if (!call) return;
+    openEditCallModal(call);
+    setHasHandledCallPreset(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [presetCallId, hasHandledCallPreset, loading, calls]);
+
   useEffect(() => {
     if (!logOpen) return;
     const prev = document.body.style.overflow;

@@ -14,6 +14,14 @@ const customerTypeSchema = z.enum(['business', 'private']);
 const customerStatusSchema = z.enum(['active', 'inactive', 'churned']);
 const customerStageSchema = z.enum(['prospect', 'customer', 'fortnox_customer']);
 
+// Risk/intelligence flags from tic.io, stored as a JSONB list on the customer.
+const riskIndicatorSchema = z.object({
+  type: z.string(),
+  subtype: z.string().optional(),
+  notes: z.string().optional(),
+  score: z.number().nullable().optional(),
+});
+
 const addressSchema = z
   .object({
     street: z.string().trim().nullable().optional().default(null),
@@ -56,6 +64,18 @@ export const createCrmCustomerSchema = z
     discount: z.coerce.number().min(0).max(100).nullable().optional().default(null),
     vat_number: z.string().trim().nullable().optional().default(null),
     reverse_vat: z.boolean().optional().default(false),
+    annual_revenue: z.coerce.number().min(0).nullable().optional().default(null),
+    number_of_employees: z.coerce.number().int().min(0).nullable().optional().default(null),
+    legal_entity_type: z.string().trim().nullable().optional().default(null),
+    sni_code: z.string().trim().nullable().optional().default(null),
+    sni_name: z.string().trim().nullable().optional().default(null),
+    operating_profit: z.coerce.number().nullable().optional().default(null),
+    profit_after_financial_items: z.coerce.number().nullable().optional().default(null),
+    total_assets: z.coerce.number().nullable().optional().default(null),
+    operating_margin: z.coerce.number().nullable().optional().default(null),
+    equity_ratio: z.coerce.number().nullable().optional().default(null),
+    financial_year: z.coerce.number().int().nullable().optional().default(null),
+    risk_indicators: z.array(riskIndicatorSchema).nullable().optional().default(null),
     fortnox_customer_id: z.string().trim().nullable().optional().default(null),
     source: z.string().trim().nullable().optional().default(null),
     notes: z.string().trim().nullable().optional().default(null),
@@ -94,6 +114,18 @@ export const updateCrmCustomerSchema = z
     discount: z.coerce.number().min(0).max(100).nullable().optional(),
     vat_number: z.string().trim().nullable().optional(),
     reverse_vat: z.boolean().optional(),
+    annual_revenue: z.coerce.number().min(0).nullable().optional(),
+    number_of_employees: z.coerce.number().int().min(0).nullable().optional(),
+    legal_entity_type: z.string().trim().nullable().optional(),
+    sni_code: z.string().trim().nullable().optional(),
+    sni_name: z.string().trim().nullable().optional(),
+    operating_profit: z.coerce.number().nullable().optional(),
+    profit_after_financial_items: z.coerce.number().nullable().optional(),
+    total_assets: z.coerce.number().nullable().optional(),
+    operating_margin: z.coerce.number().nullable().optional(),
+    equity_ratio: z.coerce.number().nullable().optional(),
+    financial_year: z.coerce.number().int().nullable().optional(),
+    risk_indicators: z.array(riskIndicatorSchema).nullable().optional(),
     fortnox_customer_id: z.string().trim().nullable().optional(),
     status: customerStatusSchema.optional(),
     source: z.string().trim().nullable().optional(),

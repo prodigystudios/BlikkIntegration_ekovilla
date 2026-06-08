@@ -19,6 +19,7 @@ export async function GET(req: Request) {
     const parsedQuery = listCrmCallsQuerySchema.safeParse({
       q: url.searchParams.get('q') || undefined,
       prospect_id: url.searchParams.get('prospect_id') || undefined,
+      customer_id: url.searchParams.get('customer_id') || undefined,
     });
 
     if (!parsedQuery.success) return validationError(parsedQuery.error);
@@ -27,6 +28,7 @@ export async function GET(req: Request) {
     const query = await listCrmCallsWithFilters(supabase, {
       search: parsedQuery.data.q,
       prospectId: parsedQuery.data.prospect_id,
+      customerId: parsedQuery.data.customer_id,
     });
     const { data, error } = await query;
 

@@ -12,6 +12,7 @@ const outcomeSchema = z.enum(['no_answer', 'follow_up', 'positive', 'negative'])
 export const listCrmCallsQuerySchema = z.object({
   q: z.string().trim().optional(),
   prospect_id: z.string().uuid('Ogiltigt prospekt').optional(),
+  customer_id: z.string().uuid('Ogiltig kund').optional(),
 });
 
 export const createCrmCallSchema = z.object({
