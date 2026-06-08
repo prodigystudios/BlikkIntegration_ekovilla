@@ -8,6 +8,7 @@ import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
 import { crm, customerStageLabel, customerStageClass, syncStatusLabel, syncStatusClass, opportunityStatusLabel, workOrderStatusLabel } from '@/app/crm/lib/crmTokens';
 import { formatSwedishIdNumber, isValidSwedishOrgNumber, vatFromOrgNumber } from './customerNumbers';
+import { riskTypeLabel } from '@/lib/domains/tic/mappers';
 import { PhoneLink, EmailLink, AddressLink } from '@/app/crm/components/ContactLinks';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -20,6 +21,8 @@ type CustomerAddress = { street: string | null; postal_code: string | null; city
 type CustomerContact = {
   id: string; name: string; role: string | null; phone: string | null; email: string | null; is_primary: boolean;
 };
+
+type RiskIndicator = { type: string; subtype?: string; notes?: string; score?: number | null };
 
 type Customer = {
   id: string;
@@ -43,6 +46,18 @@ type Customer = {
   discount: number | null;
   vat_number: string | null;
   reverse_vat: boolean;
+  annual_revenue: number | null;
+  number_of_employees: number | null;
+  legal_entity_type: string | null;
+  sni_code: string | null;
+  sni_name: string | null;
+  operating_profit: number | null;
+  profit_after_financial_items: number | null;
+  total_assets: number | null;
+  operating_margin: number | null;
+  equity_ratio: number | null;
+  financial_year: number | null;
+  risk_indicators: RiskIndicator[] | null;
   fortnox_customer_id: string | null;
   sync_status: 'not_synced' | 'pending' | 'synced' | 'failed';
   created_at: string;
@@ -54,6 +69,8 @@ import type { OpportunityStatus } from '@/app/crm/lib/crmTokens';
 type RelatedOpportunity = { id: string; title: string; status: OpportunityStatus };
 type RelatedQuote = { id: string; project_name: string; amount: number; currency_code: string; status: string; quote_date: string };
 type RelatedWorkOrder = { id: string; order_number: string; project_name: string; status: string; desired_installation_date: string | null };
+type RelatedCall = { id: string; outcome: 'no_answer' | 'follow_up' | 'positive' | 'negative'; summary: string; call_at: string; contact_name: string | null };
+type RelatedTask = { id: string; title: string; status: 'open' | 'done' | 'cancelled'; due_date: string | null; priority: 'low' | 'normal' | 'high' };
 
 type EditDraft = {
   customer_type: CustomerType;
@@ -65,6 +82,10 @@ type EditDraft = {
   invoice_street: string; invoice_postal_code: string; invoice_city: string;
   invoice_email: string; payment_terms: string; price_list: string;
   discount: string; vat_number: string; reverse_vat: boolean;
+  annual_revenue: string; number_of_employees: string;
+  legal_entity_type: string; sni_code: string; sni_name: string;
+  operating_profit: string; profit_after_financial_items: string; total_assets: string;
+  operating_margin: string; equity_ratio: string; financial_year: string;
 };
 
 type ContactDraft = { name: string; role: string; phone: string; email: string; is_primary: boolean };
@@ -73,6 +94,14 @@ type ContactDraft = { name: string; role: string; phone: string; email: string; 
 
 const quoteStatusLabel: Record<string, string> = {
   draft: 'Utkast', sent: 'Skickad', follow_up: 'Följ upp', won: 'Vunnen', lost: 'Förlorad',
+};
+
+const callOutcomeLabel: Record<string, string> = {
+  no_answer: 'Inget svar', follow_up: 'Följ upp', positive: 'Positiv', negative: 'Negativ',
+};
+
+const taskStatusLabel: Record<string, string> = {
+  open: 'Öppen', done: 'Klar', cancelled: 'Avbruten',
 };
 
 function getDisplayName(c: Customer): string {
@@ -100,6 +129,16 @@ function formatDateTime(v: string | null | undefined) {
 
 function formatCurrency(value: number, code: string) {
   return new Intl.NumberFormat('sv-SE', { style: 'currency', currency: code || 'SEK', maximumFractionDigits: 0 }).format(value);
+}
+
+function formatSek(value: number | null | undefined): string | null {
+  if (value == null) return null;
+  return `${new Intl.NumberFormat('sv-SE', { maximumFractionDigits: 0 }).format(value)} kr`;
+}
+
+function formatPercent(value: number | null | undefined): string | null {
+  if (value == null) return null;
+  return `${new Intl.NumberFormat('sv-SE', { maximumFractionDigits: 1 }).format(value)} %`;
 }
 
 function buildAddress(street: string, postalCode: string, city: string) {
@@ -207,6 +246,8 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
   const [opportunities, setOpportunities] = useState<RelatedOpportunity[]>([]);
   const [quotes, setQuotes] = useState<RelatedQuote[]>([]);
   const [workOrders, setWorkOrders] = useState<RelatedWorkOrder[]>([]);
+  const [calls, setCalls] = useState<RelatedCall[]>([]);
+  const [tasks, setTasks] = useState<RelatedTask[]>([]);
   const [relatedLoading, setRelatedLoading] = useState(false);
 
   useEffect(() => {
@@ -233,19 +274,24 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
     async function load() {
       setRelatedLoading(true);
       try {
-        const [oppRes, quoteRes, woRes] = await Promise.all([
+        const [oppRes, quoteRes, woRes, callRes, taskRes] = await Promise.all([
           fetch(`/api/crm/opportunities?customer_id=${customerId}`, { cache: 'no-store' }),
           fetch(`/api/crm/quotes?customer_id=${customerId}`, { cache: 'no-store' }),
           fetch(`/api/crm/work-orders?customer_id=${customerId}`, { cache: 'no-store' }),
+          fetch(`/api/crm/calls?customer_id=${customerId}`, { cache: 'no-store' }),
+          fetch(`/api/crm/tasks?customer_id=${customerId}`, { cache: 'no-store' }),
         ]);
-        const [oppJson, quoteJson, woJson] = await Promise.all([
+        const [oppJson, quoteJson, woJson, callJson, taskJson] = await Promise.all([
           oppRes.json().catch(() => ({})), quoteRes.json().catch(() => ({})), woRes.json().catch(() => ({})),
+          callRes.json().catch(() => ({})), taskRes.json().catch(() => ({})),
         ]);
         if (!active) return;
         setOpportunities(oppRes.ok && oppJson.ok ? oppJson.data?.items || [] : []);
         setQuotes(quoteRes.ok && quoteJson.ok ? quoteJson.data?.items || [] : []);
         setWorkOrders(woRes.ok && woJson.ok ? woJson.data?.items || [] : []);
-      } catch { if (active) { setOpportunities([]); setQuotes([]); setWorkOrders([]); } }
+        setCalls(callRes.ok && callJson.ok ? callJson.data?.items || [] : []);
+        setTasks(taskRes.ok && taskJson.ok ? taskJson.data?.items || [] : []);
+      } catch { if (active) { setOpportunities([]); setQuotes([]); setWorkOrders([]); setCalls([]); setTasks([]); } }
       finally { if (active) setRelatedLoading(false); }
     }
     load();
@@ -279,6 +325,17 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
       discount: customer.discount != null ? String(customer.discount) : '',
       vat_number: customer.vat_number || '',
       reverse_vat: customer.reverse_vat ?? false,
+      annual_revenue: customer.annual_revenue != null ? String(customer.annual_revenue) : '',
+      number_of_employees: customer.number_of_employees != null ? String(customer.number_of_employees) : '',
+      legal_entity_type: customer.legal_entity_type || '',
+      sni_code: customer.sni_code || '',
+      sni_name: customer.sni_name || '',
+      operating_profit: customer.operating_profit != null ? String(customer.operating_profit) : '',
+      profit_after_financial_items: customer.profit_after_financial_items != null ? String(customer.profit_after_financial_items) : '',
+      total_assets: customer.total_assets != null ? String(customer.total_assets) : '',
+      operating_margin: customer.operating_margin != null ? String(customer.operating_margin) : '',
+      equity_ratio: customer.equity_ratio != null ? String(customer.equity_ratio) : '',
+      financial_year: customer.financial_year != null ? String(customer.financial_year) : '',
     });
     setEditing(true);
   }
@@ -328,6 +385,17 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
         discount: editDraft.discount.trim() ? Number(editDraft.discount) : null,
         vat_number: editDraft.vat_number.trim() || null,
         reverse_vat: editDraft.reverse_vat,
+        annual_revenue: editDraft.annual_revenue.trim() ? Number(editDraft.annual_revenue) : null,
+        number_of_employees: editDraft.number_of_employees.trim() ? Number(editDraft.number_of_employees) : null,
+        legal_entity_type: editDraft.legal_entity_type.trim() || null,
+        sni_code: editDraft.sni_code.trim() || null,
+        sni_name: editDraft.sni_name.trim() || null,
+        operating_profit: editDraft.operating_profit.trim() ? Number(editDraft.operating_profit) : null,
+        profit_after_financial_items: editDraft.profit_after_financial_items.trim() ? Number(editDraft.profit_after_financial_items) : null,
+        total_assets: editDraft.total_assets.trim() ? Number(editDraft.total_assets) : null,
+        operating_margin: editDraft.operating_margin.trim() ? Number(editDraft.operating_margin) : null,
+        equity_ratio: editDraft.equity_ratio.trim() ? Number(editDraft.equity_ratio) : null,
+        financial_year: editDraft.financial_year.trim() ? Number(editDraft.financial_year) : null,
       };
       const res = await fetch(`/api/crm/customers/${customer.id}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
@@ -529,6 +597,60 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
         )}
       </Card>
 
+      {/* Samtal */}
+      <div className="rounded-2xl border border-sky-100 bg-gradient-to-b from-[#f9fbf7] to-sky-50/40 p-5 shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)]">
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-sky-600">Samtal</p>
+          <a href="/crm/samtal" className="text-xs font-semibold text-slate-400 hover:text-slate-600 transition">Samtal →</a>
+        </div>
+        {relatedLoading ? (
+          <div className="h-8 animate-pulse rounded-lg bg-[#dfe6da]" />
+        ) : calls.length === 0 ? (
+          <p className="text-xs text-slate-400">Inga kopplade.</p>
+        ) : (
+          <div className="grid gap-1.5">
+            {calls.map((call) => (
+              <a key={call.id} href={`/crm/samtal?call_id=${call.id}`} className="block rounded-xl border border-slate-100 bg-white px-3 py-2 transition hover:border-sky-200 hover:bg-sky-50/50">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="min-w-0 truncate text-sm text-slate-800">{call.summary || call.contact_name || 'Samtal'}</span>
+                  <span className="shrink-0 rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-semibold text-sky-700">
+                    {callOutcomeLabel[call.outcome] || call.outcome}
+                  </span>
+                </div>
+                <p className="mt-0.5 text-xs text-slate-400">{formatDateTime(call.call_at)}</p>
+              </a>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Uppgifter */}
+      <div className="rounded-2xl border border-rose-100 bg-gradient-to-b from-[#f9fbf7] to-rose-50/40 p-5 shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)]">
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-rose-500">Uppgifter</p>
+          <a href="/crm/uppgifter" className="text-xs font-semibold text-slate-400 hover:text-slate-600 transition">Uppgifter →</a>
+        </div>
+        {relatedLoading ? (
+          <div className="h-8 animate-pulse rounded-lg bg-[#dfe6da]" />
+        ) : tasks.length === 0 ? (
+          <p className="text-xs text-slate-400">Inga kopplade.</p>
+        ) : (
+          <div className="grid gap-1.5">
+            {tasks.map((task) => (
+              <a key={task.id} href={`/crm/uppgifter?task_id=${task.id}`} className="block rounded-xl border border-slate-100 bg-white px-3 py-2 transition hover:border-rose-200 hover:bg-rose-50/50">
+                <div className="flex items-center justify-between gap-2">
+                  <span className={cn('min-w-0 truncate text-sm', task.status === 'done' ? 'text-slate-400 line-through' : 'text-slate-800')}>{task.title}</span>
+                  <span className="shrink-0 rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-[11px] font-semibold text-rose-700">
+                    {taskStatusLabel[task.status] || task.status}
+                  </span>
+                </div>
+                {task.due_date ? <p className="mt-0.5 text-xs text-slate-400">Förfaller {formatDate(task.due_date)}</p> : null}
+              </a>
+            ))}
+          </div>
+        )}
+      </div>
+
     </div>
   );
 
@@ -649,6 +771,30 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
               </div>
             </Card>
 
+            {/* Företagsinformation (företag) */}
+            {isB2B ? (
+              <Card>
+                <SectionTitle>Företagsinformation</SectionTitle>
+                <div className="grid gap-5">
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <div><FieldLabel>Bolagsform</FieldLabel><Input value={editDraft.legal_entity_type} onChange={(e) => setField('legal_entity_type', e.target.value)} placeholder="Aktiebolag" /></div>
+                    <div><FieldLabel>SNI-kod</FieldLabel><Input value={editDraft.sni_code} onChange={(e) => setField('sni_code', e.target.value)} placeholder="43990" /></div>
+                    <div><FieldLabel>Bransch</FieldLabel><Input value={editDraft.sni_name} onChange={(e) => setField('sni_name', e.target.value)} placeholder="Bygg- och anläggning" /></div>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    <div><FieldLabel>Omsättning (SEK)</FieldLabel><Input value={editDraft.annual_revenue} onChange={(e) => setField('annual_revenue', e.target.value)} placeholder="0" type="number" step="1" /></div>
+                    <div><FieldLabel>Antal anställda</FieldLabel><Input value={editDraft.number_of_employees} onChange={(e) => setField('number_of_employees', e.target.value)} placeholder="0" type="number" step="1" /></div>
+                    <div><FieldLabel>Rörelseresultat (SEK)</FieldLabel><Input value={editDraft.operating_profit} onChange={(e) => setField('operating_profit', e.target.value)} placeholder="0" type="number" step="1" /></div>
+                    <div><FieldLabel>Resultat e. fin. poster (SEK)</FieldLabel><Input value={editDraft.profit_after_financial_items} onChange={(e) => setField('profit_after_financial_items', e.target.value)} placeholder="0" type="number" step="1" /></div>
+                    <div><FieldLabel>Totala tillgångar (SEK)</FieldLabel><Input value={editDraft.total_assets} onChange={(e) => setField('total_assets', e.target.value)} placeholder="0" type="number" step="1" /></div>
+                    <div><FieldLabel>Rörelsemarginal (%)</FieldLabel><Input value={editDraft.operating_margin} onChange={(e) => setField('operating_margin', e.target.value)} placeholder="0" type="number" step="0.1" /></div>
+                    <div><FieldLabel>Soliditet (%)</FieldLabel><Input value={editDraft.equity_ratio} onChange={(e) => setField('equity_ratio', e.target.value)} placeholder="0" type="number" step="0.1" /></div>
+                    <div><FieldLabel>Räkenskapsår</FieldLabel><Input value={editDraft.financial_year} onChange={(e) => setField('financial_year', e.target.value)} placeholder="2024" type="number" step="1" /></div>
+                  </div>
+                </div>
+              </Card>
+            ) : null}
+
           </div>
 
           {/* Right sidebar: save + history */}
@@ -764,6 +910,71 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
                     Omvänd skattskyldighet
                   </span>
                 ) : null}
+              </div>
+            </Card>
+          ) : null}
+
+          {/* Företagsinformation (företag, från tic.io-uppslaget) */}
+          {isB2B && (
+            customer.legal_entity_type || customer.sni_code || customer.sni_name ||
+            customer.annual_revenue != null || customer.number_of_employees != null ||
+            customer.operating_profit != null || customer.profit_after_financial_items != null ||
+            customer.total_assets != null || customer.operating_margin != null ||
+            customer.equity_ratio != null || customer.financial_year != null ||
+            (customer.risk_indicators && customer.risk_indicators.length > 0)
+          ) ? (
+            <Card>
+              <SectionTitle>
+                Företagsinformation
+                {customer.financial_year != null ? (
+                  <span className="ml-2 text-xs font-normal normal-case tracking-normal text-slate-400">räkenskapsår {customer.financial_year}</span>
+                ) : null}
+              </SectionTitle>
+              <div className="grid gap-5">
+
+                {/* Bransch & bolagsform */}
+                {(customer.legal_entity_type || customer.sni_code || customer.sni_name) ? (
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    {customer.legal_entity_type ? <InfoField label="Bolagsform" value={customer.legal_entity_type} /> : null}
+                    {customer.sni_code ? <InfoField label="SNI-kod" value={customer.sni_code} /> : null}
+                    {customer.sni_name ? <InfoField label="Bransch" value={customer.sni_name} /> : null}
+                  </div>
+                ) : null}
+
+                {/* Ekonomi & nyckeltal */}
+                {(customer.annual_revenue != null || customer.number_of_employees != null ||
+                  customer.operating_profit != null || customer.profit_after_financial_items != null ||
+                  customer.total_assets != null || customer.operating_margin != null ||
+                  customer.equity_ratio != null) ? (
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    {customer.annual_revenue != null ? <InfoField label="Omsättning" value={formatSek(customer.annual_revenue)} /> : null}
+                    {customer.number_of_employees != null ? <InfoField label="Antal anställda" value={String(customer.number_of_employees)} /> : null}
+                    {customer.operating_profit != null ? <InfoField label="Rörelseresultat" value={formatSek(customer.operating_profit)} /> : null}
+                    {customer.profit_after_financial_items != null ? <InfoField label="Resultat e. fin. poster" value={formatSek(customer.profit_after_financial_items)} /> : null}
+                    {customer.total_assets != null ? <InfoField label="Totala tillgångar" value={formatSek(customer.total_assets)} /> : null}
+                    {customer.operating_margin != null ? <InfoField label="Rörelsemarginal" value={formatPercent(customer.operating_margin)} /> : null}
+                    {customer.equity_ratio != null ? <InfoField label="Soliditet" value={formatPercent(customer.equity_ratio)} /> : null}
+                  </div>
+                ) : null}
+
+                {/* Riskindikatorer */}
+                {customer.risk_indicators && customer.risk_indicators.length > 0 ? (
+                  <div className="grid gap-2">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">Riskindikatorer</p>
+                    <ul className="grid gap-1.5">
+                      {customer.risk_indicators.map((r, i) => (
+                        <li key={`${r.type}-${i}`} className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                          <span className="mt-0.5 shrink-0">⚠</span>
+                          <span>
+                            <span className="font-semibold">{riskTypeLabel(r.type)}</span>
+                            {r.notes ? <span className="text-amber-700"> – {r.notes}</span> : null}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+
               </div>
             </Card>
           ) : null}

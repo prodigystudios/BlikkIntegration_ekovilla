@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import Input from '../../../components/ui/Input';
 import Select from '../../../components/ui/Select';
 import Textarea from '../../../components/ui/Textarea';
@@ -131,6 +132,7 @@ function isOverdue(task: TaskItem) {
 
 export default function TasksClient() {
   const toast = useToast();
+  const searchParams = useSearchParams();
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -219,6 +221,20 @@ export default function TasksClient() {
       active = false;
     };
   }, [search]);
+
+  // Deep-link: open a specific task's edit modal when arriving with ?task_id=
+  // (e.g. from a customer's related list). Handled once the task is loaded.
+  const presetTaskId = searchParams.get('task_id') || '';
+  const [hasHandledTaskPreset, setHasHandledTaskPreset] = useState(false);
+  useEffect(() => { setHasHandledTaskPreset(false); }, [presetTaskId]);
+  useEffect(() => {
+    if (!presetTaskId || hasHandledTaskPreset || loading) return;
+    const task = tasks.find((t) => t.id === presetTaskId);
+    if (!task) return;
+    openEditModal(task);
+    setHasHandledTaskPreset(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [presetTaskId, hasHandledTaskPreset, loading, tasks]);
 
   useEffect(() => {
     if (!modalOpen) return;

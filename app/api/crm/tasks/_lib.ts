@@ -16,6 +16,7 @@ export const listCrmTasksQuerySchema = z.object({
   q: z.string().trim().optional(),
   status: statusSchema.optional(),
   prospect_id: z.string().uuid('Ogiltigt prospekt').optional(),
+  customer_id: z.string().uuid('Ogiltig kund').optional(),
 });
 
 export const createCrmTaskSchema = z.object({
