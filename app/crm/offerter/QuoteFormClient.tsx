@@ -371,12 +371,22 @@ const initialDraft: QuoteDraft = {
 
 // ─── ArticlePicker ────────────────────────────────────────────────────────────
 
-function ArticlePicker({ value, onSelect, onClear }: { value: string; onSelect: (article: ArticleLite) => void; onClear: () => void }) {
+function ArticlePicker({ value, articleNumber, price, unit, onSelect, onClear }: {
+  value: string;
+  articleNumber?: string | null;
+  price?: number | null;
+  unit?: string | null;
+  onSelect: (article: ArticleLite) => void;
+  onClear: () => void;
+}) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [items, setItems] = useState<ArticleLite[]>([]);
   const [error, setError] = useState<string | null>(null);
+  // When an article is picked we show a solid "selected" card instead of the search box.
+  // "Byt" flips into search mode; selecting or cancelling returns to the card.
+  const [searching, setSearching] = useState(false);
 
   useEffect(() => {
     // Open with no query → default list (recent articles); typed query → search.
@@ -408,6 +418,41 @@ function ArticlePicker({ value, onSelect, onClear }: { value: string; onSelect: 
     return () => { cancelled = true; };
   }, [open, query]);
 
+  // Solid "selected article" card — makes a chosen article unmistakable (vs the old
+  // faded-placeholder look). "Byt" reopens the search; "Rensa" empties the row's article.
+  if (value && !searching) {
+    const meta = [
+      articleNumber || 'Utan artikelnummer',
+      typeof price === 'number' ? `${price.toFixed(2)} kr` : null,
+      getArticleUnitName(unit) || null,
+    ].filter(Boolean).join(' · ');
+    return (
+      <div className="flex items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5">
+        <div className="grid min-w-0 gap-0.5">
+          <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-600">Vald artikel</span>
+          <span className="truncate text-sm font-semibold text-slate-900">{value}</span>
+          {meta ? <span className="truncate text-xs text-slate-500">{meta}</span> : null}
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={() => { setSearching(true); setQuery(''); setOpen(true); }}
+            className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition-colors hover:border-slate-300"
+          >
+            Byt
+          </button>
+          <button
+            type="button"
+            onClick={onClear}
+            className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-500 transition-colors hover:border-rose-300 hover:text-rose-600"
+          >
+            Rensa
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="relative">
       <div className="flex gap-2">
@@ -415,12 +460,13 @@ function ArticlePicker({ value, onSelect, onClear }: { value: string; onSelect: 
           value={query}
           onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
           onFocus={() => setOpen(true)}
-          onBlur={() => setTimeout(() => setOpen(false), 150)}
-          placeholder={value || 'Sök eller välj artikel…'}
+          onBlur={() => setTimeout(() => { setOpen(false); setSearching(false); }, 150)}
+          placeholder="Sök eller välj artikel…"
+          autoFocus={searching}
         />
         {value ? (
-          <button type="button" onClick={onClear} className="shrink-0 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-500 hover:border-slate-300 transition-colors">
-            Rensa
+          <button type="button" onClick={() => setSearching(false)} className="shrink-0 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-500 transition-colors hover:border-slate-300">
+            Avbryt
           </button>
         ) : null}
       </div>
@@ -436,7 +482,7 @@ function ArticlePicker({ value, onSelect, onClear }: { value: string; onSelect: 
             <button
               key={item.id || item.articleNumber || item.name}
               type="button"
-              onClick={() => { onSelect(item); setOpen(false); setQuery(''); }}
+              onClick={() => { onSelect(item); setOpen(false); setQuery(''); setSearching(false); }}
               className="flex w-full flex-col items-start gap-0.5 border-b border-slate-100 px-4 py-2.5 text-left transition last:border-b-0 hover:bg-slate-50"
             >
               <span className="text-sm font-medium text-slate-900">{item.name || 'Artikel'}</span>
@@ -703,7 +749,14 @@ function LineItemRow({
         </div>
       </div>
 
-      <ArticlePicker value={row.article_name || ''} onSelect={onSelectArticle} onClear={onClearArticle} />
+      <ArticlePicker
+        value={row.article_name || ''}
+        articleNumber={row.article_number}
+        price={row.article_price}
+        unit={row.article_unit_name}
+        onSelect={onSelectArticle}
+        onClear={onClearArticle}
+      />
 
       <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
         {isM3 ? (
