@@ -1,5 +1,6 @@
 import { vi } from 'vitest';
 import type { CurrentUser } from '@/lib/auth/route';
+import { PERMISSION_KEYS, type PermissionKey } from '@/lib/auth/permissions';
 
 /**
  * Builds a chainable Supabase query mock.
@@ -51,3 +52,31 @@ export function makeSupabaseMock(result: { data: unknown; error: unknown }) {
 export const salesUser: CurrentUser = { id: 'user-sales-1', role: 'sales' };
 export const adminUser: CurrentUser = { id: 'user-admin-1', role: 'admin' };
 export const memberUser: CurrentUser = { id: 'user-member-1', role: 'member' };
+export const konsultUser: CurrentUser = { id: 'user-konsult-1', role: 'konsult' };
+
+// Mirrors the role seed in supabase/sql/20260608_permissions_model.sql. Route guards now
+// resolve effective permissions instead of reading the role directly, so route tests mock
+// getEffectivePermissions with this to reproduce the same allow/deny outcomes per role.
+const SALES_KEYS: PermissionKey[] = [
+  'crm.prospect.read', 'crm.prospect.write', 'crm.call.read', 'crm.call.write',
+  'crm.customer.read', 'crm.customer.write', 'crm.contact.read', 'crm.contact.write',
+  'crm.opportunity.read', 'crm.opportunity.write', 'crm.offer.read', 'crm.offer.write',
+  'crm.workorder.read', 'crm.workorder.write', 'crm.task.read', 'crm.task.write',
+  'crm.report.read', 'crm.coach.read', 'crm.goal.read', 'crm.routingrule.read',
+  'fortnox.offer.push', 'fortnox.workorder.push', 'fortnox.invoice.create', 'fortnox.customer.sync', 'fortnox.read',
+  'crm.access', 'crm.write',
+];
+const KONSULT_KEYS: PermissionKey[] = [
+  'crm.prospect.read', 'crm.call.read', 'crm.customer.read', 'crm.contact.read',
+  'crm.opportunity.read', 'crm.offer.read', 'crm.workorder.read', 'crm.task.read',
+  'crm.report.read', 'crm.coach.read', 'crm.goal.read', 'fortnox.read', 'crm.access',
+];
+
+export function effectivePermissionsForRole(role: string | undefined | null): Set<PermissionKey> {
+  switch (role) {
+    case 'admin': return new Set(PERMISSION_KEYS);
+    case 'sales': return new Set(SALES_KEYS);
+    case 'konsult': return new Set(KONSULT_KEYS);
+    default: return new Set();
+  }
+}

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { salesUser, adminUser, memberUser } from './helpers/supabase';
+import { salesUser, adminUser, memberUser, effectivePermissionsForRole } from './helpers/supabase';
 
 // ---------------------------------------------------------------------------
 // Mockar måste deklareras INNAN modulimporter
@@ -28,7 +28,13 @@ vi.mock('next/headers', () => ({
 // Importer (efter mock-deklarationer)
 // ---------------------------------------------------------------------------
 
+vi.mock('@/lib/auth/permissions', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/auth/permissions')>();
+  return { ...actual, getEffectivePermissions: vi.fn() };
+});
+
 import { getCurrentUser } from '@/lib/auth/route';
+import { getEffectivePermissions } from '@/lib/auth/permissions';
 import {
   listCrmCustomers,
   createCrmCustomer,
@@ -46,7 +52,11 @@ const mockCreate = vi.mocked(createCrmCustomer);
 const mockGet = vi.mocked(getCrmCustomer);
 const mockUpdate = vi.mocked(updateCrmCustomer);
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.mocked(getEffectivePermissions).mockImplementation(async () =>
+    effectivePermissionsForRole((await vi.mocked(getCurrentUser)())?.role));
+});
 
 // ---------------------------------------------------------------------------
 // Hjälpare
