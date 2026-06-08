@@ -731,6 +731,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
           rotDetails={workOrder.rot_details}
           saving={savingArticles}
           fortnoxConnected={fortnoxConnected}
+          canEdit={workOrder.status !== 'invoiced' && !workOrder.fortnox_invoice_number}
           onSave={saveArticles}
         />
       ) : null}

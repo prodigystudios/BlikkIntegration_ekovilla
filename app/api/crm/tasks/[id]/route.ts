@@ -3,7 +3,7 @@ import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { updateCrmTask } from '@/lib/domains/crm/tasks';
 import {
   ok,
-  requireCrmUser,
+  requireCrmWriter,
   routeError,
   updateCrmTaskSchema,
   validationError,
@@ -17,7 +17,7 @@ type RouteContext = {
 
 export async function PATCH(req: Request, context: RouteContext) {
   try {
-    const crmUser = await requireCrmUser();
+    const crmUser = await requireCrmWriter();
     if (crmUser.response || !crmUser.currentUser) return crmUser.response;
 
     const parsedBody = updateCrmTaskSchema.safeParse(await req.json().catch(() => null));

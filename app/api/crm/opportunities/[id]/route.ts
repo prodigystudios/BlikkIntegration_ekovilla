@@ -4,6 +4,7 @@ import { getCrmOpportunity, updateCrmOpportunity } from '@/lib/domains/crm/oppor
 import {
   ok,
   requireCrmUser,
+  requireCrmWriter,
   routeError,
   updateCrmOpportunitySchema,
   validationError,
@@ -35,7 +36,7 @@ export async function GET(_req: Request, context: RouteContext) {
 
 export async function PATCH(req: Request, context: RouteContext) {
   try {
-    const crmUser = await requireCrmUser();
+    const crmUser = await requireCrmWriter();
     if (crmUser.response || !crmUser.currentUser) return crmUser.response;
 
     const parsedBody = updateCrmOpportunitySchema.safeParse(await req.json().catch(() => null));

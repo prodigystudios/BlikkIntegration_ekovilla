@@ -8,6 +8,7 @@ import {
   listCrmQuotesQuerySchema,
   ok,
   requireCrmUser,
+  requireCrmWriter,
   routeError,
   validationError,
 } from './_lib';
@@ -50,7 +51,7 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   try {
-    const crmUser = await requireCrmUser();
+    const crmUser = await requireCrmWriter();
     if (crmUser.response || !crmUser.currentUser) return crmUser.response;
 
     const parsedBody = createCrmQuoteSchema.safeParse(await req.json().catch(() => null));

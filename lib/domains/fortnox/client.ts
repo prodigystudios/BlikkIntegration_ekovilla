@@ -21,6 +21,15 @@ export class FortnoxNotConnectedError extends Error {
   }
 }
 
+// Thrown when a concurrent push to the same document is already in flight (a fresh claim is
+// held). Lets routes return 409 instead of creating a duplicate Fortnox document.
+export class FortnoxPushInProgressError extends Error {
+  constructor() {
+    super('En synk mot Fortnox pågår redan för den här posten. Försök igen om en liten stund.');
+    this.name = 'FortnoxPushInProgressError';
+  }
+}
+
 export class FortnoxApiError extends Error {
   constructor(
     public readonly status: number,
@@ -68,6 +77,9 @@ const FRIENDLY_FORTNOX_MESSAGES: Record<number, string> = {
 export function friendlyFortnoxMessage(e: unknown): string {
   if (e instanceof FortnoxNotConnectedError) {
     return 'Fortnox är inte kopplat. Be en administratör ansluta Fortnox i CRM-inställningarna.';
+  }
+  if (e instanceof FortnoxPushInProgressError) {
+    return e.message;
   }
   if (e instanceof FortnoxApiError) {
     if (e.fortnoxCode && FRIENDLY_FORTNOX_MESSAGES[e.fortnoxCode]) {

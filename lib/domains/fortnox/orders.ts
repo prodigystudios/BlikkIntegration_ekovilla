@@ -1,8 +1,8 @@
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { parseDecimal } from '@/lib/shared/number';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
-import { fortnoxGet, fortnoxGetBinary, fortnoxPost, fortnoxPut, FortnoxApiError, FortnoxNotConnectedError } from './client';
-import { resolveOurReference } from './helpers';
+import { fortnoxGet, fortnoxGetBinary, fortnoxPost, fortnoxPut, FortnoxApiError, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
+import { claimFortnoxPush, resolveOurReference } from './helpers';
 import { DEFAULT_ROT_HOUSE_WORK_TYPE } from './types';
 
 type WorkOrderRow = {
@@ -73,7 +73,9 @@ export function buildOrderRows(lineItems: WorkOrderRow['line_items'], vatPercent
       Price: price,
       VAT: vatPercent,
       ...(item.article_unit_name ? { Unit: item.article_unit_name } : {}),
-      ...(discount > 0 ? { Discount: discount } : {}),
+      // DiscountType:'PERCENT' is required — Fortnox defaults to AMOUNT (kronor), which would
+      // book discount_percent as a kronor discount and diverge from the CRM total.
+      ...(discount > 0 ? { Discount: discount, DiscountType: 'PERCENT' as const } : {}),
       ...(rotEnabled && item.is_rot_work ? { HouseWork: true, HouseWorkType: item.house_work_type || DEFAULT_ROT_HOUSE_WORK_TYPE } : {}),
     };
   });
@@ -118,31 +120,34 @@ async function resolveFortnoxCustomerNumberById(
 export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushOrderResult> {
   const supabase = getSupabaseAdmin();
 
-  await supabase
+  const { data: workOrder, error } = await supabase
     .from('crm_work_orders')
-    .update({ fortnox_order_sync_status: 'pending' })
-    .eq('id', workOrderId);
+    .select('id, quote_id, customer_id, assigned_to, customer_snapshot, project_name, client_name, amount, vat_percent, currency_code, line_items, fortnox_order_number')
+    .eq('id', workOrderId)
+    .single<WorkOrderRow>();
+
+  if (error || !workOrder) throw new Error(`Arbetsorder ${workOrderId} hittades inte`);
+
+  // Idempotency: if this work order is already linked to a Fortnox order, don't try
+  // to create another one — Fortnox rejects a second createorder on the same offer
+  // (error 2000499). Just confirm the synced state and return the existing number.
+  if (workOrder.fortnox_order_number) {
+    await supabase
+      .from('crm_work_orders')
+      .update({ fortnox_order_sync_status: 'synced', fortnox_order_synced_at: new Date().toISOString() })
+      .eq('id', workOrderId);
+    return { fortnox_order_number: workOrder.fortnox_order_number };
+  }
+
+  // Atomically claim the push so a concurrent request can't create a SECOND Fortnox order
+  // for this work order (the create branch below has no Fortnox-side dedup for standalone
+  // POST /orders). If we lose the claim, a fresh push is already in flight.
+  const claimed = await claimFortnoxPush(
+    supabase, 'crm_work_orders', workOrderId, 'fortnox_order_sync_status', 'fortnox_order_claimed_at',
+  );
+  if (!claimed) throw new FortnoxPushInProgressError();
 
   try {
-    const { data: workOrder, error } = await supabase
-      .from('crm_work_orders')
-      .select('id, quote_id, customer_id, assigned_to, customer_snapshot, project_name, client_name, amount, vat_percent, currency_code, line_items, fortnox_order_number')
-      .eq('id', workOrderId)
-      .single<WorkOrderRow>();
-
-    if (error || !workOrder) throw new Error(`Arbetsorder ${workOrderId} hittades inte`);
-
-    // Idempotency: if this work order is already linked to a Fortnox order, don't try
-    // to create another one — Fortnox rejects a second createorder on the same offer
-    // (error 2000499). Just confirm the synced state and return the existing number.
-    if (workOrder.fortnox_order_number) {
-      await supabase
-        .from('crm_work_orders')
-        .update({ fortnox_order_sync_status: 'synced', fortnox_order_synced_at: new Date().toISOString() })
-        .eq('id', workOrderId);
-      return { fortnox_order_number: workOrder.fortnox_order_number };
-    }
-
     let fortnoxOrderNumber: string;
 
     // Fetch linked quote data in one query – used for offer number, customer resolution,
@@ -295,10 +300,12 @@ export async function createInvoiceFromWorkOrder(workOrderId: string): Promise<C
     return { fortnox_invoice_number: workOrder.fortnox_invoice_number };
   }
 
-  await supabase
-    .from('crm_work_orders')
-    .update({ fortnox_invoice_sync_status: 'pending' })
-    .eq('id', workOrderId);
+  // Atomically claim the invoice push so a double-click / retry can't create TWO draft
+  // invoices (Fortnox's createinvoice can succeed before the order shows as invoiced).
+  const claimed = await claimFortnoxPush(
+    supabase, 'crm_work_orders', workOrderId, 'fortnox_invoice_sync_status', 'fortnox_invoice_claimed_at',
+  );
+  if (!claimed) throw new FortnoxPushInProgressError();
 
   try {
     // The invoice is created FROM the Fortnox order, so the order must exist there first.

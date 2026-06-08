@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { ROT_HOUSE_WORK_TYPES } from '@/lib/domains/fortnox/types';
-export { ok, routeError, validationError, requireCrmUser } from '../_shared';
+export { ok, routeError, validationError, requireCrmUser, requireCrmWriter } from '../_shared';
 
 function normalizeOptionalText(value: unknown) {
   if (value == null) return null;

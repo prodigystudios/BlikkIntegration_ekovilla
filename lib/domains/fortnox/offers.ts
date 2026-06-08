@@ -1,8 +1,8 @@
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { parseDecimal } from '@/lib/shared/number';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
-import { fortnoxPost, fortnoxPut, fortnoxGet, fortnoxGetBinary, FortnoxApiError, FortnoxNotConnectedError } from './client';
-import { resolveOurReference } from './helpers';
+import { fortnoxPost, fortnoxPut, fortnoxGet, fortnoxGetBinary, FortnoxApiError, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
+import { claimFortnoxPush, resolveOurReference } from './helpers';
 import { buildFortnoxCustomerPayload, createFortnoxCustomer, splitSwedishName, buildFortnoxAddress, type FortnoxCustomerSource } from './customers';
 import { DEFAULT_ROT_HOUSE_WORK_TYPE } from './types';
 
@@ -74,6 +74,10 @@ type FortnoxOfferRow = {
   Price?: number;
   Unit?: string;
   Discount?: number;
+  // Fortnox defaults DiscountType to AMOUNT (kronor). The CRM stores discount_percent as a
+  // PERCENT, so we MUST send DiscountType:'PERCENT' alongside Discount — otherwise a 25%
+  // discount is booked as 25 kr off the row and the Fortnox total diverges from the quote.
+  DiscountType?: 'PERCENT' | 'AMOUNT';
   VAT?: number;
   HouseWork?: boolean;
   HouseWorkType?: string;
@@ -120,7 +124,10 @@ export function buildOfferRows(
 
     if (item.article_number) row.ArticleNumber = item.article_number;
     if (item.article_unit_name) row.Unit = item.article_unit_name;
-    if (discount > 0) row.Discount = discount;
+    if (discount > 0) {
+      row.Discount = discount;
+      row.DiscountType = 'PERCENT';
+    }
     if (rotEnabled && item.is_rot_work) {
       row.HouseWork = true;
       row.HouseWorkType = item.house_work_type || DEFAULT_ROT_HOUSE_WORK_TYPE;
@@ -304,14 +311,8 @@ async function createCustomerInFortnox(quote: QuoteRow): Promise<string> {
 export async function pushQuoteToFortnox(quoteId: string): Promise<PushOfferResult> {
   const supabase = getSupabaseAdmin();
 
-  // Mark as pending before we start
-  await supabase
-    .from('crm_quotes')
-    .update({ fortnox_sync_status: 'pending' })
-    .eq('id', quoteId);
-
   let quote: QuoteRow;
-  try {
+  {
     const { data, error } = await supabase
       .from('crm_quotes')
       .select(`
@@ -337,13 +338,15 @@ export async function pushQuoteToFortnox(quoteId: string): Promise<PushOfferResu
 
     if (error || !data) throw new Error(`Offert ${quoteId} hittades inte`);
     quote = data as QuoteRow;
-  } catch (e) {
-    await supabase
-      .from('crm_quotes')
-      .update({ fortnox_sync_status: 'failed' })
-      .eq('id', quoteId);
-    throw e;
   }
+
+  // Atomically claim the push so two concurrent first-time pushes can't each POST /offers
+  // and create a DUPLICATE Fortnox offer. (Re-pushes of an existing offer PUT the same
+  // number and are idempotent — the claim just serialises them.)
+  const claimed = await claimFortnoxPush(
+    supabase, 'crm_quotes', quoteId, 'fortnox_sync_status', 'fortnox_offer_claimed_at',
+  );
+  if (!claimed) throw new FortnoxPushInProgressError();
 
   try {
     const fortnoxCustomerNumber =

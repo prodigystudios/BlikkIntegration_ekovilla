@@ -3,7 +3,7 @@ import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { createCrmWorkOrderFromQuote } from '@/lib/domains/crm/work-orders';
 import { pushWorkOrderToFortnox } from '@/lib/domains/fortnox/orders';
 import { FortnoxNotConnectedError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
-import { ok, requireCrmUser, routeError } from '../../_lib';
+import { ok, requireCrmWriter, routeError } from '../../_lib';
 
 type RouteContext = {
   params: {
@@ -13,7 +13,7 @@ type RouteContext = {
 
 export async function POST(_req: Request, context: RouteContext) {
   try {
-    const crmUser = await requireCrmUser();
+    const crmUser = await requireCrmWriter();
     if (crmUser.response || !crmUser.currentUser) return crmUser.response;
 
     const supabase = createRouteHandlerClient({ cookies });

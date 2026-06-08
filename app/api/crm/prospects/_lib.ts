@@ -1,6 +1,6 @@
 import { domainToASCII } from 'node:url';
 import { z } from 'zod';
-export { ok, routeError, validationError, requireCrmUser } from '../_shared';
+export { ok, routeError, validationError, requireCrmUser, requireCrmWriter } from '../_shared';
 
 function normalizeOptionalText(value: unknown) {
   if (value == null) return null;

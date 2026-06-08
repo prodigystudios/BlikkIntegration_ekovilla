@@ -2,8 +2,8 @@ import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { getCrmWorkOrder } from '@/lib/domains/crm/work-orders';
 import { updateWorkOrderInFortnox } from '@/lib/domains/fortnox/orders';
-import { FortnoxNotConnectedError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
-import { ok, requireCrmUser, routeError } from '../../_lib';
+import { FortnoxNotConnectedError, FortnoxPushInProgressError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
+import { ok, requireCrmWriter, routeError, invalidUuidParam } from '../../_lib';
 
 type RouteContext = {
   params: {
@@ -16,8 +16,11 @@ type RouteContext = {
 // igen" must actually re-send, not short-circuit. If no order exists yet it creates one.
 export async function POST(_req: Request, context: RouteContext) {
   try {
-    const crmUser = await requireCrmUser();
+    const crmUser = await requireCrmWriter();
     if (crmUser.response || !crmUser.currentUser) return crmUser.response;
+
+    const badId = invalidUuidParam(context.params.id);
+    if (badId) return badId;
 
     let fortnoxError: string | null = null;
     try {
@@ -25,6 +28,9 @@ export async function POST(_req: Request, context: RouteContext) {
     } catch (e) {
       if (e instanceof FortnoxNotConnectedError) {
         return routeError(409, 'fortnox_not_connected', friendlyFortnoxMessage(e));
+      }
+      if (e instanceof FortnoxPushInProgressError) {
+        return routeError(409, 'fortnox_push_in_progress', friendlyFortnoxMessage(e));
       }
       console.error('[Fortnox] work order push:', (e as Error)?.message);
       fortnoxError = friendlyFortnoxMessage(e);
