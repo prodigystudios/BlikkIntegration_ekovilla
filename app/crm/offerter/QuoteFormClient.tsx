@@ -9,6 +9,7 @@ import { cn } from '@/lib/shared/cn';
 import { parseDecimal } from '@/lib/shared/number';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
 import { crm } from '@/app/crm/lib/crmTokens';
+import AddressAutocompleteInput from '@/app/crm/components/AddressAutocompleteInput';
 import {
   getEffectiveCustomerName,
   buildCustomerSnapshot,
@@ -1403,10 +1404,16 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
                 <div className="grid gap-3 rounded-xl border border-[#e0e8dc] bg-white/60 p-3">
                   <p className={crm.sectionTitle}>Arbetsadress (där jobbet utförs)</p>
                   <Field label="Gatuadress">
-                    <Input
+                    <AddressAutocompleteInput
                       value={draft.delivery_address}
-                      onChange={(e) => setDraft((d) => ({ ...d, delivery_address: e.target.value }))}
-                      placeholder="Ex. Industrivägen 4"
+                      onChange={(street) => setDraft((d) => ({ ...d, delivery_address: street }))}
+                      onSelect={(s) => setDraft((d) => ({
+                        ...d,
+                        delivery_address: s.street || d.delivery_address,
+                        delivery_postal_code: s.postal_code || d.delivery_postal_code,
+                        delivery_city: s.city || d.delivery_city,
+                      }))}
+                      placeholder="Sök adress, t.ex. Industrivägen 4 Södertälje"
                     />
                   </Field>
                   <div className="grid grid-cols-2 gap-3">
