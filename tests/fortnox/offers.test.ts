@@ -120,7 +120,7 @@ describe('snapshotToFortnoxSource → buildFortnoxCustomerPayload', () => {
     expect(payload.OrganisationNumber).toBe('900101-1234');
   });
 
-  it('maps the main address to Address1/ZipCode/City and the delivery string to Delivery*', () => {
+  it('maps the main address to Address1/ZipCode/City; a delivery street with no own postal/city does NOT borrow the main ones', () => {
     const payload = buildFortnoxCustomerPayload(
       snapshotToFortnoxSource(quote({
         company_name: 'Acme AB',
@@ -132,8 +132,26 @@ describe('snapshotToFortnoxSource → buildFortnoxCustomerPayload', () => {
     expect(payload.ZipCode).toBe('11122');
     expect(payload.City).toBe('Stockholm');
     expect(payload.DeliveryAddress1).toBe('Lagervägen 2');
-    // No separate delivery postal/city on the snapshot – reuse the main ones.
-    expect(payload.DeliveryZipCode).toBe('11122');
-    expect(payload.DeliveryCity).toBe('Stockholm');
+    // The job may be in another locality — borrowing the customer's postcode/city would be
+    // wrong, so they're omitted (and the work order omits them too, keeping the two in sync).
+    expect(payload.DeliveryZipCode).toBeUndefined();
+    expect(payload.DeliveryCity).toBeUndefined();
+  });
+
+  it('uses the structured work/delivery postal+city when present (company job at a different site)', () => {
+    const payload = buildFortnoxCustomerPayload(
+      snapshotToFortnoxSource(quote({
+        company_name: 'Acme AB',
+        street_address: 'Gatan 1', postal_code: '11122', city: 'Stockholm',
+        delivery_address: 'Industrivägen 4', delivery_postal_code: '15242', delivery_city: 'Södertälje',
+      })),
+    );
+    // Invoice/main address stays the office; delivery carries the job site, fully structured.
+    expect(payload.Address1).toBe('Gatan 1');
+    expect(payload.ZipCode).toBe('11122');
+    expect(payload.City).toBe('Stockholm');
+    expect(payload.DeliveryAddress1).toBe('Industrivägen 4');
+    expect(payload.DeliveryZipCode).toBe('15242');
+    expect(payload.DeliveryCity).toBe('Södertälje');
   });
 });

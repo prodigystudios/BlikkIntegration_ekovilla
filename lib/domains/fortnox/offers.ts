@@ -47,6 +47,8 @@ type QuoteRow = {
     phone?: string | null;
     street_address?: string | null;
     delivery_address?: string | null;
+    delivery_postal_code?: string | null;
+    delivery_city?: string | null;
     postal_code?: string | null;
     city?: string | null;
   } | null;
@@ -164,9 +166,10 @@ export function snapshotToFortnoxSource(quote: QuoteRow): FortnoxCustomerSource 
   const isCompany = Boolean(s?.company_name);
   const name = splitSwedishName(s?.customer_name ?? quote.customer_name);
   const mainAddress = buildFortnoxAddress(s?.street_address, s?.postal_code, s?.city);
-  // Snapshot has no separate delivery postal/city – reuse the main ones, as before.
+  // Work/job address is structured (own postal/city). Use it as entered — don't borrow the
+  // customer's postal/city, which belong to a different place when the job is elsewhere.
   const deliveryAddress = s?.delivery_address
-    ? buildFortnoxAddress(s.delivery_address, s?.postal_code, s?.city)
+    ? buildFortnoxAddress(s.delivery_address, s?.delivery_postal_code, s?.delivery_city)
     : null;
 
   return {
@@ -354,7 +357,12 @@ export async function pushQuoteToFortnox(quoteId: string): Promise<PushOfferResu
     const ourReference = await resolveOurReference(quote.assigned_to, supabase);
 
     const snapshot = quote.customer_snapshot;
+    // Work/job address (where the service is delivered). Street is the anchor; postal/city
+    // are sent as entered (not borrowed from the customer address — that would attach the
+    // wrong postcode to a job in another locality). Matches the work order's address.
     const deliveryAddress = snapshot?.delivery_address;
+    const deliveryZip = snapshot?.delivery_postal_code;
+    const deliveryCity = snapshot?.delivery_city;
 
     // Build Remarks: description first, then ROT property designation / BRF org number
     // on their own lines (Fortnox offers have no structured field for these).
@@ -378,8 +386,8 @@ export async function pushQuoteToFortnox(quoteId: string): Promise<PushOfferResu
         ...(deliveryAddress
           ? {
               DeliveryAddress1: deliveryAddress,
-              ...(snapshot?.postal_code ? { DeliveryZipCode: snapshot.postal_code } : {}),
-              ...(snapshot?.city ? { DeliveryCity: snapshot.city } : {}),
+              ...(deliveryZip ? { DeliveryZipCode: deliveryZip } : {}),
+              ...(deliveryCity ? { DeliveryCity: deliveryCity } : {}),
             }
           : {}),
         OfferRows: offerRows,

@@ -69,7 +69,11 @@ type CustomerSnapshot = {
   postal_code?: string | null;
   city?: string | null;
   visit_address?: string | null;
+  // Work address (where the job is performed): delivery_address = street line,
+  // plus structured postal/city. Only set when it differs from the customer address.
   delivery_address?: string | null;
+  delivery_postal_code?: string | null;
+  delivery_city?: string | null;
   invoice_address?: string | null;
 };
 

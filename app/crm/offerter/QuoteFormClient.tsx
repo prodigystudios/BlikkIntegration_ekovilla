@@ -9,6 +9,7 @@ import { cn } from '@/lib/shared/cn';
 import { parseDecimal } from '@/lib/shared/number';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
 import { crm } from '@/app/crm/lib/crmTokens';
+import AddressAutocompleteInput from '@/app/crm/components/AddressAutocompleteInput';
 import {
   getEffectiveCustomerName,
   buildCustomerSnapshot,
@@ -85,6 +86,8 @@ type QuoteItem = {
     city?: string | null;
     visit_address?: string | null;
     delivery_address?: string | null;
+    delivery_postal_code?: string | null;
+    delivery_city?: string | null;
     invoice_address?: string | null;
   } | null;
   pricing_summary: { subtotal?: number; vat?: number; total?: number } | null;
@@ -141,6 +144,8 @@ type QuoteDraft = {
   city: string;
   visit_address: string;
   delivery_address: string;
+  delivery_postal_code: string;
+  delivery_city: string;
   invoice_address: string;
   items: QuoteLineItem[];
   project_name: string;
@@ -191,6 +196,7 @@ type CrmCustomerLite = {
   personal_number: string | null;
   fortnox_customer_id: string | null;
   visit_address: { street: string | null; postal_code: string | null; city: string | null } | null;
+  delivery_address: { street: string | null; postal_code: string | null; city: string | null } | null;
   contacts: Array<{ id: string; name: string; role: string | null; phone: string | null; email: string | null; is_primary: boolean }>;
 };
 
@@ -339,6 +345,8 @@ const initialDraft: QuoteDraft = {
   city: '',
   visit_address: '',
   delivery_address: '',
+  delivery_postal_code: '',
+  delivery_city: '',
   invoice_address: '',
   items: [createEmptyLineItem()],
   project_name: '',
@@ -363,12 +371,22 @@ const initialDraft: QuoteDraft = {
 
 // ─── ArticlePicker ────────────────────────────────────────────────────────────
 
-function ArticlePicker({ value, onSelect, onClear }: { value: string; onSelect: (article: ArticleLite) => void; onClear: () => void }) {
+function ArticlePicker({ value, articleNumber, price, unit, onSelect, onClear }: {
+  value: string;
+  articleNumber?: string | null;
+  price?: number | null;
+  unit?: string | null;
+  onSelect: (article: ArticleLite) => void;
+  onClear: () => void;
+}) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [items, setItems] = useState<ArticleLite[]>([]);
   const [error, setError] = useState<string | null>(null);
+  // When an article is picked we show a solid "selected" card instead of the search box.
+  // "Byt" flips into search mode; selecting or cancelling returns to the card.
+  const [searching, setSearching] = useState(false);
 
   useEffect(() => {
     // Open with no query → default list (recent articles); typed query → search.
@@ -377,28 +395,67 @@ function ArticlePicker({ value, onSelect, onClear }: { value: string; onSelect: 
     setLoading(true);
     setError(null);
     const q = query.trim();
-    const url = q.length >= 1
-      ? `/api/fortnox/articles?q=${encodeURIComponent(q)}&limit=20`
-      : `/api/fortnox/articles?limit=20`;
-    fetch(url, { cache: 'no-store' })
-      .then((r) => r.json().catch(() => ({})))
-      .then((json) => {
-        if (!cancelled) {
-          const raw: Array<{ article_number: string; description: string | null; sales_price: number | null; unit: string | null }> =
-            Array.isArray(json?.data?.items) ? json.data.items : [];
-          setItems(raw.map((a) => ({
-            id: a.article_number,
-            name: a.description ?? undefined,
-            articleNumber: a.article_number,
-            price: a.sales_price,
-            unit: a.unit ?? undefined,
-          })));
-        }
-      })
-      .catch(() => { if (!cancelled) { setError('Kunde inte hämta artiklar'); setItems([]); } })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
+    // Debounce typed queries so a fast typist doesn't fire a cache query per keystroke;
+    // the initial open (empty query) loads immediately.
+    const timer = setTimeout(() => {
+      const url = q.length >= 1
+        ? `/api/fortnox/articles?q=${encodeURIComponent(q)}&limit=20`
+        : `/api/fortnox/articles?limit=20`;
+      fetch(url, { cache: 'no-store' })
+        .then((r) => r.json().catch(() => ({})))
+        .then((json) => {
+          if (!cancelled) {
+            const raw: Array<{ article_number: string; description: string | null; sales_price: number | null; unit: string | null }> =
+              Array.isArray(json?.data?.items) ? json.data.items : [];
+            setItems(raw.map((a) => ({
+              id: a.article_number,
+              name: a.description ?? undefined,
+              articleNumber: a.article_number,
+              price: a.sales_price,
+              unit: a.unit ?? undefined,
+            })));
+          }
+        })
+        .catch(() => { if (!cancelled) { setError('Kunde inte hämta artiklar'); setItems([]); } })
+        .finally(() => { if (!cancelled) setLoading(false); });
+    }, q.length >= 1 ? 250 : 0);
+    return () => { cancelled = true; clearTimeout(timer); };
   }, [open, query]);
+
+  // Solid "selected article" card — makes a chosen article unmistakable (vs the old
+  // faded-placeholder look). "Byt" reopens the search; "Rensa" empties the row's article.
+  if (value && !searching) {
+    const meta = [
+      articleNumber || 'Utan artikelnummer',
+      typeof price === 'number' ? `${price.toFixed(2)} kr` : null,
+      getArticleUnitName(unit) || null,
+    ].filter(Boolean).join(' · ');
+    return (
+      <div className="flex items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5">
+        <div className="grid min-w-0 gap-0.5">
+          <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-600">Vald artikel</span>
+          <span className="truncate text-sm font-semibold text-slate-900">{value}</span>
+          {meta ? <span className="truncate text-xs text-slate-500">{meta}</span> : null}
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={() => { setSearching(true); setQuery(''); setOpen(true); }}
+            className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition-colors hover:border-slate-300"
+          >
+            Byt
+          </button>
+          <button
+            type="button"
+            onClick={onClear}
+            className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-500 transition-colors hover:border-rose-300 hover:text-rose-600"
+          >
+            Rensa
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="relative">
@@ -407,12 +464,13 @@ function ArticlePicker({ value, onSelect, onClear }: { value: string; onSelect: 
           value={query}
           onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
           onFocus={() => setOpen(true)}
-          onBlur={() => setTimeout(() => setOpen(false), 150)}
-          placeholder={value || 'Sök eller välj artikel…'}
+          onBlur={() => setTimeout(() => { setOpen(false); setSearching(false); }, 150)}
+          placeholder="Sök eller välj artikel…"
+          autoFocus={searching}
         />
         {value ? (
-          <button type="button" onClick={onClear} className="shrink-0 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-500 hover:border-slate-300 transition-colors">
-            Rensa
+          <button type="button" onClick={() => setSearching(false)} className="shrink-0 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-500 transition-colors hover:border-slate-300">
+            Avbryt
           </button>
         ) : null}
       </div>
@@ -428,7 +486,7 @@ function ArticlePicker({ value, onSelect, onClear }: { value: string; onSelect: 
             <button
               key={item.id || item.articleNumber || item.name}
               type="button"
-              onClick={() => { onSelect(item); setOpen(false); setQuery(''); }}
+              onClick={() => { onSelect(item); setOpen(false); setQuery(''); setSearching(false); }}
               className="flex w-full flex-col items-start gap-0.5 border-b border-slate-100 px-4 py-2.5 text-left transition last:border-b-0 hover:bg-slate-50"
             >
               <span className="text-sm font-medium text-slate-900">{item.name || 'Artikel'}</span>
@@ -695,7 +753,14 @@ function LineItemRow({
         </div>
       </div>
 
-      <ArticlePicker value={row.article_name || ''} onSelect={onSelectArticle} onClear={onClearArticle} />
+      <ArticlePicker
+        value={row.article_name || ''}
+        articleNumber={row.article_number}
+        price={row.article_price}
+        unit={row.article_unit_name}
+        onSelect={onSelectArticle}
+        onClear={onClearArticle}
+      />
 
       <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
         {isM3 ? (
@@ -765,6 +830,11 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   const [draft, setDraft] = useState<QuoteDraft>(initialDraft);
   const [loadedQuote, setLoadedQuote] = useState<QuoteItem | null>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<CrmCustomerLite | null>(null);
+  // Whether the job is performed at a different address than the customer's. Off → the
+  // order inherits the customer address; on → the work-address fields are shown and must
+  // be filled. A deliberate toggle (vs silent prefill) so a wrong company address can't
+  // slip through unnoticed.
+  const [customWorkAddress, setCustomWorkAddress] = useState(false);
   const restoredRef = useRef(false);
 
   const presetProspectId = searchParams.get('prospect_id') || '';
@@ -796,6 +866,18 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   function applySelectedCustomer(customer: CrmCustomerLite) {
     setSelectedCustomer(customer);
     const primary = customer.contacts.find((c) => c.is_primary) || customer.contacts[0] || null;
+    // Smart default: if the card already carries a delivery address that differs from the
+    // visit address, turn the toggle on and prefill it. Otherwise off (= same as customer).
+    const del = customer.delivery_address;
+    const vis = customer.visit_address;
+    const deliveryDiffers = Boolean(
+      del && (
+        (del.street || '') !== (vis?.street || '') ||
+        (del.postal_code || '') !== (vis?.postal_code || '') ||
+        (del.city || '') !== (vis?.city || '')
+      ),
+    );
+    setCustomWorkAddress(deliveryDiffers);
     setDraft((current) => ({
       ...current,
       customer_id: customer.id,
@@ -811,6 +893,11 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
       street_address: customer.visit_address?.street || '',
       postal_code: customer.visit_address?.postal_code || '',
       city: customer.visit_address?.city || '',
+      // Only carry a work address when the card has a distinct one; otherwise leave the
+      // fields empty so an enabled toggle visibly demands input (never a silent default).
+      delivery_address: deliveryDiffers ? del?.street || '' : '',
+      delivery_postal_code: deliveryDiffers ? del?.postal_code || '' : '',
+      delivery_city: deliveryDiffers ? del?.city || '' : '',
     }));
   }
 
@@ -826,6 +913,14 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
         if (!active) return;
         const item = json?.data?.item as QuoteItem | undefined;
         if (!item) { toast.error('Kunde inte ladda offert'); router.push('/crm/offerter'); return; }
+        // Locked: once a work order exists the offer is converted (and locked in Fortnox);
+        // editing it would diverge the CRM quote from the created order. Bounce back — this
+        // closes the direct-URL hole the detail card's hidden "Redigera" button left open.
+        if (item.work_order_id || item.work_order_number) {
+          toast.info('Offerten är låst – en arbetsorder har skapats, så den kan inte längre redigeras.');
+          router.replace('/crm/offerter');
+          return;
+        }
         setLoadedQuote(item);
         setDraft({
           customer_id: item.customer_id || null,
@@ -844,7 +939,11 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           postal_code: item.customer_snapshot?.postal_code || '',
           city: item.customer_snapshot?.city || '',
           visit_address: item.customer_snapshot?.visit_address || '',
+          // A separate work address is stored only when it differs from the customer address,
+          // so its presence directly drives the toggle (set just below).
           delivery_address: item.customer_snapshot?.delivery_address || '',
+          delivery_postal_code: item.customer_snapshot?.delivery_postal_code || '',
+          delivery_city: item.customer_snapshot?.delivery_city || '',
           invoice_address: item.customer_snapshot?.invoice_address || '',
           items: item.line_items?.length
             ? item.line_items.map((line) => ({ ...line, line_note: line.line_note || '', is_rot_work: line.is_rot_work ?? false, house_work_type: line.house_work_type || 'CONSTRUCTION', density: line.density || '' }))
@@ -868,6 +967,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           notes: item.notes || '',
           create_follow_up_task: false,
         });
+        setCustomWorkAddress(Boolean(item.customer_snapshot?.delivery_address));
 
         // Show the linked customer in the picker so editing doesn't look like no
         // customer is selected. Fetch the live row (silently ignored if it 404s).
@@ -888,6 +988,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
                 personal_number: c.personal_number ?? null,
                 fortnox_customer_id: c.fortnox_customer_id ?? null,
                 visit_address: c.visit_address ?? null,
+                delivery_address: c.delivery_address ?? null,
                 contacts: c.contacts ?? [],
               });
             })
@@ -960,6 +1061,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
             && Date.now() - envelope.savedAt < DRAFT_TTL_MS && envelope.draft;
           if (fresh) {
             setDraft(envelope.draft);
+            setCustomWorkAddress(Boolean(envelope.draft?.delivery_address));
           }
         }
       } catch { /* ignore malformed draft */ }
@@ -1315,12 +1417,14 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
               onSelect={applySelectedCustomer}
               onClear={() => {
                 setSelectedCustomer(null);
+                setCustomWorkAddress(false);
                 setDraft((current) => ({
                   ...current, customer_id: null,
                   customer_source: buildCustomerSource(null),
                   company_name: '', customer_name: '', organization_number: '',
                   personal_number: '', contact_name: '', phone: '', email: '',
                   street_address: '', postal_code: '', city: '',
+                  delivery_address: '', delivery_postal_code: '', delivery_city: '',
                 }));
               }}
               onCreateNew={() => goToCustomerPage('/crm/kunder/ny')}
@@ -1337,6 +1441,68 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
             ) : (
               <p className="text-xs text-slate-400">Sök fram en befintlig kund eller skapa en ny. Kunduppgifterna hämtas från kundkortet.</p>
             )}
+
+            {/* Arbetsadress — explicit toggle istället för tyst autoifyllning, så en
+                avvikande jobbplats (t.ex. företagskund vars kortadress är kontoret) inte
+                glöms bort. Av = arbetsorder/Fortnox använder kundadressen. */}
+            <div className="grid gap-3">
+              <label className="flex cursor-pointer select-none items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50/60 px-3.5 py-2.5">
+                <span className="grid min-w-0 gap-0.5">
+                  <span className="text-sm font-medium text-slate-700">Annan arbetsadress än kundens</span>
+                  <span className="text-[11px] text-slate-400">Jobbet utförs på en annan plats än kundadressen</span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={customWorkAddress}
+                  onChange={(e) => {
+                    const on = e.target.checked;
+                    setCustomWorkAddress(on);
+                    // Turning off → clear (snapshot uses the customer address). Turning on →
+                    // leave the fields empty so the seller must enter the actual job site.
+                    if (!on) setDraft((d) => ({ ...d, delivery_address: '', delivery_postal_code: '', delivery_city: '' }));
+                  }}
+                  className="h-4 w-4 shrink-0 rounded border-slate-300 accent-emerald-600"
+                />
+              </label>
+
+              {customWorkAddress ? (
+                <div className="grid gap-3 rounded-xl border border-[#e0e8dc] bg-white/60 p-3">
+                  <p className={crm.sectionTitle}>Arbetsadress (där jobbet utförs)</p>
+                  <Field label="Gatuadress">
+                    <AddressAutocompleteInput
+                      value={draft.delivery_address}
+                      onChange={(street) => setDraft((d) => ({ ...d, delivery_address: street }))}
+                      onSelect={(s) => setDraft((d) => ({
+                        ...d,
+                        delivery_address: s.street || d.delivery_address,
+                        delivery_postal_code: s.postal_code || d.delivery_postal_code,
+                        delivery_city: s.city || d.delivery_city,
+                      }))}
+                      placeholder="Sök adress, t.ex. Industrivägen 4 Södertälje"
+                    />
+                  </Field>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Field label="Postnummer">
+                      <Input
+                        value={draft.delivery_postal_code}
+                        onChange={(e) => setDraft((d) => ({ ...d, delivery_postal_code: e.target.value }))}
+                        placeholder="152 42"
+                      />
+                    </Field>
+                    <Field label="Ort">
+                      <Input
+                        value={draft.delivery_city}
+                        onChange={(e) => setDraft((d) => ({ ...d, delivery_city: e.target.value }))}
+                        placeholder="Södertälje"
+                      />
+                    </Field>
+                  </div>
+                  <p className="text-[11px] leading-snug text-slate-400">
+                    Blir arbetsorderns adress och Fortnox leveransadress. Kundadressen ligger kvar som fakturaadress.
+                  </p>
+                </div>
+              ) : null}
+            </div>
           </div>
           </div>
 

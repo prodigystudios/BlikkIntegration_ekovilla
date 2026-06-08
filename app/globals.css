@@ -45,8 +45,9 @@ input:not([type='checkbox']):not([type='radio']), select, textarea {
   max-width: 100%;
   box-sizing: border-box;
 }
-/* Ensure labels expand to container so child inputs at width:100% can fill */
-label { display: block; width: 100%; }
+/* Ensure labels expand to container so child inputs at width:100% can fill.
+   border-box so a padded full-width label (e.g. toggle rows) doesn't overflow by its padding. */
+label { display: block; width: 100%; box-sizing: border-box; }
 
 /* Consistent button look across iOS/Android */
 button,
