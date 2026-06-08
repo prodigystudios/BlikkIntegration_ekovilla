@@ -32,8 +32,8 @@ create policy "crm_quotes_insert_sales_or_admin"
     and (
       prospect_id is null
       or exists (
-        select 1 from public.crm_prospects prospect
-        where prospect.id = prospect_id and prospect.assigned_to = auth.uid()
+        select 1 from public.crm_customers c
+        where c.id = prospect_id and c.assigned_to = auth.uid()
       )
     )
   );

@@ -4,7 +4,7 @@
 --   uses_has_permission   — true once swapped
 --   still_references_role  — true if it STILL checks public.profiles.role directly (a miss)
 -- Expectation: still_references_role = false for ALL rows. (The crm_calls/crm_quotes prospect
--- joins reference crm_prospects.assigned_to, not profiles.role, so they don't trip the flag.)
+-- joins reference crm_customers.assigned_to, not profiles.role, so they don't trip the flag.)
 
 select
   tablename,
@@ -15,7 +15,7 @@ select
 from pg_policies
 where schemaname = 'public'
   and tablename in (
-    'crm_prospects', 'crm_calls', 'crm_customers', 'crm_customer_contacts',
+    'crm_calls', 'crm_customers', 'crm_customer_contacts',
     'crm_opportunities', 'crm_quotes', 'crm_work_orders', 'crm_goals',
     'crm_routing_rules', 'crm_ai_prospect_suggestions'
   )

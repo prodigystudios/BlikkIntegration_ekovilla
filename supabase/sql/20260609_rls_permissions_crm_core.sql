@@ -2,69 +2,19 @@
 -- tables' RLS to has_permission(). Behavior-preserving by construction — each role branch is
 -- replaced by a permission key whose seed (20260608_permissions_model.sql) admits exactly the
 -- same roles the old predicate did. Ownership branches (auth.uid() = assigned_to /
--- customer-ownership joins) are left UNTOUCHED.
+-- user_id = auth.uid() / customer-ownership joins) are left UNTOUCHED.
 --
 -- Mapping used here:
 --   role = 'admin'  (see-all / manage / update-any / delete-any)  → has_permission('crm.admin')
 --   role in (sales,admin) (write-self insert)                     → has_permission('crm.<res>.write')
 --
--- Tables: crm_prospects, crm_calls, crm_customers, crm_customer_contacts, crm_opportunities.
+-- Tables: crm_calls, crm_customers, crm_customer_contacts, crm_opportunities.
+-- NOTE: crm_prospects was dropped (20260604_crm_remove_legacy_prospects.sql) — prospects are
+-- now crm_customers with customer_stage='prospect', so crm_calls/quotes reference crm_customers
+-- via prospect_id. Reproduces the CURRENT (post-remove-legacy) policies.
 -- Run AFTER 20260608_permissions_model.sql. Idempotent (drop+create).
 
--- ── crm_prospects ────────────────────────────────────────────────────────────
-drop policy if exists "crm_prospects_select_visible" on public.crm_prospects;
-create policy "crm_prospects_select_visible"
-  on public.crm_prospects
-  for select
-  using (
-    auth.uid() = assigned_to
-    or public.has_permission('crm.admin')
-  );
-
-drop policy if exists "crm_prospects_insert_sales_or_admin" on public.crm_prospects;
-create policy "crm_prospects_insert_sales_or_admin"
-  on public.crm_prospects
-  for insert
-  to authenticated
-  with check (
-    created_by = auth.uid()
-    and assigned_to = auth.uid()
-    and public.has_permission('crm.prospect.write')
-  );
-
-drop policy if exists "crm_prospects_insert_admin_manage" on public.crm_prospects;
-create policy "crm_prospects_insert_admin_manage"
-  on public.crm_prospects
-  for insert
-  to authenticated
-  with check (
-    created_by = auth.uid()
-    and public.has_permission('crm.admin')
-  );
-
-drop policy if exists "crm_prospects_update_visible" on public.crm_prospects;
-create policy "crm_prospects_update_visible"
-  on public.crm_prospects
-  for update
-  using (
-    auth.uid() = assigned_to
-    or public.has_permission('crm.admin')
-  )
-  with check (
-    auth.uid() = assigned_to
-    or public.has_permission('crm.admin')
-  );
-
-drop policy if exists "crm_prospects_delete_assigned_or_admin" on public.crm_prospects;
-create policy "crm_prospects_delete_assigned_or_admin"
-  on public.crm_prospects
-  for delete
-  using (
-    auth.uid() = assigned_to
-    or public.has_permission('crm.admin')
-  );
-
--- ── crm_calls ────────────────────────────────────────────────────────────────
+-- ── crm_calls (prospect_id now references crm_customers) ─────────────────────
 drop policy if exists "crm_calls_select_visible" on public.crm_calls;
 create policy "crm_calls_select_visible"
   on public.crm_calls
@@ -72,8 +22,8 @@ create policy "crm_calls_select_visible"
   using (
     user_id = auth.uid()
     or exists (
-      select 1 from public.crm_prospects p
-      where p.id = prospect_id and p.assigned_to = auth.uid()
+      select 1 from public.crm_customers c
+      where c.id = prospect_id and c.assigned_to = auth.uid()
     )
     or public.has_permission('crm.admin')
   );
@@ -90,8 +40,8 @@ create policy "crm_calls_insert_visible"
       and (
         prospect_id is null
         or exists (
-          select 1 from public.crm_prospects p
-          where p.id = prospect_id and p.assigned_to = auth.uid()
+          select 1 from public.crm_customers c
+          where c.id = prospect_id and c.assigned_to = auth.uid()
         )
       )
     )
@@ -113,8 +63,8 @@ create policy "crm_calls_update_visible"
       and (
         prospect_id is null
         or exists (
-          select 1 from public.crm_prospects p
-          where p.id = prospect_id and p.assigned_to = auth.uid()
+          select 1 from public.crm_customers c
+          where c.id = prospect_id and c.assigned_to = auth.uid()
         )
       )
     )
