@@ -45,6 +45,10 @@ export type PushOrderResult = {
   fortnox_order_number: string;
 };
 
+export type CreateInvoiceResult = {
+  fortnox_invoice_number: string;
+};
+
 // Exported for tests. NOTE: Fortnox order rows use `OrderedQuantity` (offer rows use
 // `Quantity`, invoice rows use `DeliveredQuantity`) — sending `Quantity` to /orders
 // returns 400 "Felaktigt fältnamn (Quantity)".
@@ -260,6 +264,90 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
     await supabase
       .from('crm_work_orders')
       .update({ fortnox_order_sync_status: syncStatus })
+      .eq('id', workOrderId);
+    throw e;
+  }
+}
+
+// Create a DRAFT invoice in Fortnox from the work order's Fortnox order
+// (PUT /orders/{n}/createinvoice). Fortnox carries the customer, rows, delivered
+// quantities, ROT and references from the order automatically — we only create the
+// draft; bookkeeping/sending is done by finance inside Fortnox. Idempotent: a work order
+// that already has an invoice number returns it without creating a second invoice. On
+// success the work order is moved to status `invoiced` ("Avslutad").
+export async function createInvoiceFromWorkOrder(workOrderId: string): Promise<CreateInvoiceResult> {
+  const supabase = getSupabaseAdmin();
+
+  const { data: workOrder, error } = await supabase
+    .from('crm_work_orders')
+    .select('id, fortnox_order_number, fortnox_invoice_number')
+    .eq('id', workOrderId)
+    .single<{ id: string; fortnox_order_number: string | null; fortnox_invoice_number: string | null }>();
+
+  if (error || !workOrder) throw new Error(`Arbetsorder ${workOrderId} hittades inte`);
+
+  // Idempotency: already invoiced → confirm synced and return the existing number.
+  if (workOrder.fortnox_invoice_number) {
+    await supabase
+      .from('crm_work_orders')
+      .update({ fortnox_invoice_sync_status: 'synced' })
+      .eq('id', workOrderId);
+    return { fortnox_invoice_number: workOrder.fortnox_invoice_number };
+  }
+
+  await supabase
+    .from('crm_work_orders')
+    .update({ fortnox_invoice_sync_status: 'pending' })
+    .eq('id', workOrderId);
+
+  try {
+    // The invoice is created FROM the Fortnox order, so the order must exist there first.
+    // Ensure it's synced (creates it if missing; idempotent if already synced).
+    let orderNumber = workOrder.fortnox_order_number;
+    if (!orderNumber) {
+      const pushed = await pushWorkOrderToFortnox(workOrderId);
+      orderNumber = pushed.fortnox_order_number;
+    }
+
+    let invoiceNumber = '';
+    try {
+      const response = await fortnoxPut<{ Invoice?: { DocumentNumber?: string | number } }>(
+        `/orders/${orderNumber}/createinvoice`,
+      );
+      if (response.Invoice?.DocumentNumber != null) invoiceNumber = String(response.Invoice.DocumentNumber);
+    } catch (createErr) {
+      // createinvoice fails if the order was already (fully) invoiced. Recover the existing
+      // invoice via the order's InvoiceReference; if there's none, the failure is real.
+      const order = await fortnoxGet<{ Order?: { InvoiceReference?: number | string | null } }>(`/orders/${orderNumber}`).catch(() => null);
+      const existing = order?.Order?.InvoiceReference;
+      if (!existing) throw createErr;
+      invoiceNumber = String(existing);
+    }
+
+    // Response without a number but no error — resolve from the order's InvoiceReference.
+    if (!invoiceNumber) {
+      const order = await fortnoxGet<{ Order?: { InvoiceReference?: number | string | null } }>(`/orders/${orderNumber}`);
+      const existing = order.Order?.InvoiceReference;
+      if (!existing) throw new Error('Fortnox returnerade inget fakturanummer');
+      invoiceNumber = String(existing);
+    }
+
+    await supabase
+      .from('crm_work_orders')
+      .update({
+        fortnox_invoice_number: invoiceNumber,
+        fortnox_invoice_sync_status: 'synced',
+        fortnox_invoiced_at: new Date().toISOString(),
+        status: 'invoiced',
+      })
+      .eq('id', workOrderId);
+
+    return { fortnox_invoice_number: invoiceNumber };
+  } catch (e) {
+    const syncStatus = e instanceof FortnoxNotConnectedError ? 'not_synced' : 'failed';
+    await supabase
+      .from('crm_work_orders')
+      .update({ fortnox_invoice_sync_status: syncStatus })
       .eq('id', workOrderId);
     throw e;
   }

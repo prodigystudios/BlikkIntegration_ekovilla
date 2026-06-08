@@ -72,6 +72,9 @@ type WorkOrderItem = {
   fortnox_order_number: string | null;
   fortnox_order_sync_status: FortnoxSyncStatus;
   fortnox_order_synced_at: string | null;
+  fortnox_invoice_number: string | null;
+  fortnox_invoice_sync_status: FortnoxSyncStatus;
+  fortnox_invoiced_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -130,6 +133,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   const [saving, setSaving] = useState(false);
   const [savingArticles, setSavingArticles] = useState(false);
   const [pushingFortnox, setPushingFortnox] = useState(false);
+  const [creatingInvoice, setCreatingInvoice] = useState(false);
   const [orderPdfLoading, setOrderPdfLoading] = useState(false);
   const [orderEmailing, setOrderEmailing] = useState(false);
   const [editingOverview, setEditingOverview] = useState(false); // overview fields locked until unlocked
@@ -138,6 +142,15 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
 
   const [assignees, setAssignees] = useState<AssignableUser[]>([]);
   const customerInfo = useCustomerContact(workOrderId);
+
+  // Resolve the responsible user's name from the admin-sourced assignees list — the
+  // joined `assignee` profile is null for colleagues' orders (session-client profiles RLS
+  // only returns the current user's own profile). Same fix as the work-order list.
+  const assigneeNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const a of assignees) if (a.full_name) map.set(a.id, a.full_name);
+    return map;
+  }, [assignees]);
 
   // Time entries, comments and @-mention targets + their CRUD live in a shared hook
   // (also used by the installer field view) so the write logic isn't duplicated.
@@ -288,6 +301,24 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
       else toast.success('Arbetsorder synkad med Fortnox');
     } catch { toast.error('Fel vid Fortnox-synk'); }
     finally { setPushingFortnox(false); }
+  }
+
+  // Create a draft invoice in Fortnox from this order. Only the draft is created here —
+  // bookkeeping/sending is done by finance inside Fortnox. On success the order is marked
+  // "Avslutad" (status invoiced) and the returned work order reflects that.
+  async function createInvoice() {
+    if (!workOrder) return;
+    if (!window.confirm('Skapa ett fakturautkast i Fortnox från den här ordern? Själva faktureringen görs sedan i Fortnox.')) return;
+    setCreatingInvoice(true);
+    try {
+      const res = await fetch(`/api/crm/work-orders/${workOrder.id}/invoice`, { method: 'POST' });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte skapa faktura i Fortnox'); return; }
+      if (json.data?.item) applyWorkOrder(json.data.item as WorkOrderItem);
+      const number = (json.data?.item as WorkOrderItem | undefined)?.fortnox_invoice_number;
+      toast.success(number ? `Faktura skapad i Fortnox (#${number})` : 'Faktura skapad i Fortnox');
+    } catch { toast.error('Fel vid skapande av faktura'); }
+    finally { setCreatingInvoice(false); }
   }
 
   // Order confirmation PDF + email. Shared fetch/popup/email logic in lib/fortnoxDoc.
@@ -474,7 +505,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
               ) : (
                 <>
                   {readField('Status', workOrderStatusLabel[workOrder.status])}
-                  {readField('Ansvarig', workOrder.assignee?.full_name || 'Ej tilldelad')}
+                  {readField('Ansvarig', (workOrder.assigned_to ? (assigneeNameById.get(workOrder.assigned_to) || workOrder.assignee?.full_name) : null) || 'Ej tilldelad')}
                   {readField('Önskat installationsdatum', formatDate(workOrder.desired_installation_date), true)}
                 </>
               )}
@@ -612,6 +643,35 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                     <p className="col-span-2 text-[11px] leading-4 text-slate-400">Orderbekräftelse från Fortnox.</p>
                   </div>
                 ) : null}
+              </Card>
+            ) : null}
+
+            {/* Fortnox faktura */}
+            {fortnoxConnected ? (
+              <Card className="grid gap-3">
+                <div className="flex items-center justify-between gap-2">
+                  <p className={crm.sectionTitle}>Fortnox faktura</p>
+                  <span className={cn(crm.badge, syncStatusClass[workOrder.fortnox_invoice_sync_status])}>{syncStatusLabel[workOrder.fortnox_invoice_sync_status]}</span>
+                </div>
+
+                {workOrder.fortnox_invoice_number ? (
+                  <>
+                    <StatField label="Fakturanummer" value={`#${workOrder.fortnox_invoice_number}`} />
+                    {workOrder.fortnox_invoiced_at ? (
+                      <p className="text-xs text-slate-400">Skapad {formatDateTime(workOrder.fortnox_invoiced_at)}</p>
+                    ) : null}
+                    <p className="text-[11px] leading-4 text-slate-400">Fakturautkast finns i Fortnox. Slutför faktureringen där.</p>
+                  </>
+                ) : workOrder.status === 'completed' ? (
+                  <>
+                    <button type="button" onClick={createInvoice} disabled={creatingInvoice} className={cn(crm.saveButton, 'h-10 w-full')}>
+                      {creatingInvoice ? 'Skapar…' : 'Skapa faktura i Fortnox'}
+                    </button>
+                    <p className="text-[11px] leading-4 text-slate-400">Skapar ett fakturautkast i Fortnox. Bokföring och utskick görs sedan i Fortnox.</p>
+                  </>
+                ) : (
+                  <p className="text-[11px] leading-4 text-slate-400">Sätt arbetsordern till “Fakturera” för att skapa en faktura i Fortnox.</p>
+                )}
               </Card>
             ) : null}
 

@@ -171,6 +171,16 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
     [filter, workOrders, assigneeFilter, currentUserId],
   );
 
+  // Resolve the responsible user's name from the admin-sourced assignees list. The
+  // work-order list is read with the session client, whose profiles RLS only returns the
+  // current user's own profile — so `item.assignee` (the joined profile) is null for
+  // colleagues' orders. Map by assigned_to instead (same approach as the quotes list).
+  const assigneeNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const a of assignees) if (a.full_name) map.set(a.id, a.full_name);
+    return map;
+  }, [assignees]);
+
   // Count of active filters (status + assignee) — shown as a badge on the mobile toggle.
   const activeFilterCount = (filter !== 'all' ? 1 : 0) + (assigneeFilter.length > 0 ? 1 : 0);
 
@@ -264,7 +274,9 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
             <div className="grid gap-1">
               {visibleWorkOrders.map((item) => {
                 const overdue = isWorkOrderOverdue(item.desired_installation_date, item.status);
-                const sellerName = item.assignee?.full_name || null;
+                const sellerName = item.assigned_to
+                  ? (assigneeNameById.get(item.assigned_to) || item.assignee?.full_name || 'Okänd')
+                  : null;
                 return (
                   <button
                     key={item.id}
