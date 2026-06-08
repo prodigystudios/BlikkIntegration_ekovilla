@@ -1,13 +1,13 @@
 import { emailFortnoxOrder } from '@/lib/domains/fortnox/orders';
 import { FortnoxApiError, FortnoxNotConnectedError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
-import { ok, requireCrmUser, routeError } from '../../../_lib';
+import { ok, requireCrmWriter, routeError } from '../../../_lib';
 
 type RouteContext = { params: { id: string } };
 
 // Asks Fortnox to e-mail the order confirmation to the customer.
 export async function POST(_req: Request, { params }: RouteContext) {
   try {
-    const crmUser = await requireCrmUser();
+    const crmUser = await requireCrmWriter();
     if (crmUser.response) return crmUser.response;
 
     const result = await emailFortnoxOrder(params.id);

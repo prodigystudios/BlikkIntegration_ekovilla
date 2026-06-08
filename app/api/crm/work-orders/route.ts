@@ -1,7 +1,7 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { listCrmWorkOrdersWithFilters, createStandaloneCrmWorkOrder } from '@/lib/domains/crm/work-orders';
-import { createStandaloneWorkOrderSchema, listCrmWorkOrdersQuerySchema, ok, requireCrmUser, routeError, validationError } from './_lib';
+import { createStandaloneWorkOrderSchema, listCrmWorkOrdersQuerySchema, ok, requireCrmUser, requireCrmWriter, routeError, validationError } from './_lib';
 
 export async function GET(req: Request) {
   try {
@@ -40,7 +40,7 @@ export async function GET(req: Request) {
 // Create a standalone work order (no quote). Articles are added afterwards on the detail.
 export async function POST(req: Request) {
   try {
-    const crmUser = await requireCrmUser();
+    const crmUser = await requireCrmWriter();
     if (crmUser.response || !crmUser.currentUser) return crmUser.response;
 
     const parsed = createStandaloneWorkOrderSchema.safeParse(await req.json().catch(() => null));

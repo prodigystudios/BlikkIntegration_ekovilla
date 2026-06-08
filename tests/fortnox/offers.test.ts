@@ -66,6 +66,17 @@ describe('buildOfferRows', () => {
     expect(noDiscount.Discount).toBeUndefined();
   });
 
+  // Regression: discount_percent is a PERCENT. Fortnox defaults DiscountType to AMOUNT (kr),
+  // so without DiscountType:'PERCENT' a 25% discount is booked as 25 kr off and the offer
+  // total diverges from the quote. A row with no discount must not carry DiscountType.
+  it('sends DiscountType PERCENT alongside a discount, and none when there is no discount', () => {
+    const [withDiscount] = buildOfferRows([{ unit_price: '100', quantity: '1', discount_percent: '25' }], 25, false);
+    expect(withDiscount.Discount).toBe(25);
+    expect(withDiscount.DiscountType).toBe('PERCENT');
+    const [noDiscount] = buildOfferRows([{ unit_price: '100', quantity: '1', discount_percent: '0' }], 25, false);
+    expect(noDiscount.DiscountType).toBeUndefined();
+  });
+
   it('sets HouseWork only when ROT is enabled and the row is ROT work', () => {
     const [rotRow] = buildOfferRows([{ unit_price: '100', quantity: '1', is_rot_work: true }], 25, true);
     expect(rotRow.HouseWork).toBe(true);

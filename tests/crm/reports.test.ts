@@ -19,9 +19,9 @@ const quotes: ReportQuoteRow[] = [
 ];
 
 const orders: ReportOrderRow[] = [
-  { amount: 1000, status: 'invoiced', created_at: '2026-01-18T10:00:00Z', assigned_to: 'u1', client_name: 'Kund A' },
-  { amount: 3000, status: 'in_progress', created_at: '2026-02-10T10:00:00Z', assigned_to: 'u2', client_name: 'Kund B' },
-  { amount: 1500, status: 'invoiced', created_at: '2026-02-12T10:00:00Z', assigned_to: 'u1', client_name: 'Kund A' },
+  { amount: 1000, status: 'invoiced', created_at: '2026-01-18T10:00:00Z', fortnox_invoiced_at: null, assigned_to: 'u1', client_name: 'Kund A' },
+  { amount: 3000, status: 'in_progress', created_at: '2026-02-10T10:00:00Z', fortnox_invoiced_at: null, assigned_to: 'u2', client_name: 'Kund B' },
+  { amount: 1500, status: 'invoiced', created_at: '2026-02-12T10:00:00Z', fortnox_invoiced_at: null, assigned_to: 'u1', client_name: 'Kund A' },
 ];
 
 const calls: ReportCallRow[] = [
@@ -50,6 +50,20 @@ describe('buildSalesOverTime', () => {
     expect(result).toEqual([
       { period: '2026-01', quoteValue: 3000, orderValue: 1000, invoicedValue: 1000 },
       { period: '2026-02', quoteValue: 500, orderValue: 4500, invoicedValue: 1500 },
+    ]);
+  });
+
+  // Regression: invoiced revenue is bucketed by the INVOICE date, not the order's creation
+  // month. An order created in January but invoiced in February counts toward February's
+  // invoiced value (its order value still belongs to January).
+  it('buckets invoiced value by fortnox_invoiced_at, not created_at', () => {
+    const crossMonth: ReportOrderRow[] = [
+      { amount: 2000, status: 'invoiced', created_at: '2026-01-30T10:00:00Z', fortnox_invoiced_at: '2026-02-04T08:00:00Z', assigned_to: 'u1', client_name: 'Kund A' },
+    ];
+    const result = buildSalesOverTime([], crossMonth, ['2026-01', '2026-02']);
+    expect(result).toEqual([
+      { period: '2026-01', quoteValue: 0, orderValue: 2000, invoicedValue: 0 },
+      { period: '2026-02', quoteValue: 0, orderValue: 0, invoicedValue: 2000 },
     ]);
   });
 });
@@ -86,7 +100,7 @@ describe('buildPerCustomer', () => {
     expect(rows[1]).toEqual({ customer: 'Kund A', orderValue: 2500, invoicedValue: 2500, orderCount: 2 });
   });
   it('falls back to a placeholder for missing client names', () => {
-    const rows = buildPerCustomer([{ amount: 100, status: 'draft', created_at: '2026-01-01T00:00:00Z', assigned_to: null, client_name: null }]);
+    const rows = buildPerCustomer([{ amount: 100, status: 'draft', created_at: '2026-01-01T00:00:00Z', fortnox_invoiced_at: null, assigned_to: null, client_name: null }]);
     expect(rows[0].customer).toBe('Okänd kund');
   });
 });

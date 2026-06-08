@@ -4,7 +4,7 @@ import { getCrmWorkOrder, updateCrmWorkOrderLineItems } from '@/lib/domains/crm/
 import { computePricing, type PricingLineItem } from '@/lib/domains/crm/pricing';
 import { updateWorkOrderInFortnox } from '@/lib/domains/fortnox/orders';
 import { FortnoxNotConnectedError } from '@/lib/domains/fortnox/client';
-import { ok, requireCrmUser, routeError, updateWorkOrderLineItemsSchema, validationError } from '../../_lib';
+import { ok, requireCrmWriter, routeError, updateWorkOrderLineItemsSchema, validationError, invalidUuidParam } from '../../_lib';
 
 type RouteContext = {
   params: {
@@ -17,8 +17,11 @@ type RouteContext = {
 // sync is non-fatal — the save succeeds and the reason is returned so the UI can show it.
 export async function PATCH(req: Request, context: RouteContext) {
   try {
-    const crmUser = await requireCrmUser();
+    const crmUser = await requireCrmWriter();
     if (crmUser.response || !crmUser.currentUser) return crmUser.response;
+
+    const badId = invalidUuidParam(context.params.id);
+    if (badId) return badId;
 
     const parsedBody = updateWorkOrderLineItemsSchema.safeParse(await req.json().catch(() => null));
     if (!parsedBody.success) return validationError(parsedBody.error);
@@ -29,6 +32,15 @@ export async function PATCH(req: Request, context: RouteContext) {
     if (current.error || !current.data) return routeError(404, 'crm_work_order_not_found', current.error?.message || 'Arbetsordern hittades inte');
 
     const wo = current.data as any;
+
+    // Lock: once a work order is invoiced (a Fortnox draft invoice exists) its articles must
+    // not change — the rows would silently diverge from the already-issued invoice and the
+    // reports' invoiced value would no longer match what was billed. The UI also hides the
+    // editor for invoiced orders; this is the server-side guarantee.
+    if (wo.status === 'invoiced' || wo.fortnox_invoice_number) {
+      return routeError(409, 'work_order_locked', 'Arbetsordern är fakturerad och kan inte ändras.');
+    }
+
     const pricing = computePricing(parsedBody.data.line_items as PricingLineItem[], wo.vat_percent, {
       isPrivate: wo.quote_type === 'private',
       rot: wo.rot_details ?? null,

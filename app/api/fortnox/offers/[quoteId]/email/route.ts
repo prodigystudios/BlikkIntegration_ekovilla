@@ -1,4 +1,4 @@
-import { requireCrmUser, ok, routeError } from '../../../_shared';
+import { requireCrmWriter, ok, routeError } from '../../../_shared';
 import { emailFortnoxOffer } from '@/lib/domains/fortnox/offers';
 import { FortnoxApiError, FortnoxNotConnectedError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
 
@@ -7,7 +7,7 @@ type RouteContext = { params: { quoteId: string } };
 // Asks Fortnox to e-mail the offer to the customer (uses the offer's EmailInformation).
 export async function POST(_req: Request, { params }: RouteContext) {
   try {
-    const crmUser = await requireCrmUser();
+    const crmUser = await requireCrmWriter();
     if (crmUser.response) return crmUser.response;
 
     const result = await emailFortnoxOffer(params.quoteId);

@@ -106,8 +106,10 @@ export function buildRotDetails(d: QuoteRotFields) {
     applicant_name: enabled ? d.customer_name || null : null,
     personal_number: enabled ? d.personal_number || null : null,
     property_designation: enabled ? d.rot_property_designation || null : null,
-    rot_percent: enabled ? Number(d.rot_percent || '30') : 30,
-    max_deduction: enabled ? Number(d.rot_max_deduction || '50000') : 50000,
+    // parseDecimal handles Swedish comma/space input ("33,5", "50 000"); raw Number() would
+    // turn those into NaN and the server schema would reject the whole quote save.
+    rot_percent: enabled ? parseDecimal(d.rot_percent, 30) : 30,
+    max_deduction: enabled ? parseDecimal(d.rot_max_deduction, 50000) : 50000,
     brf_org_number: enabled ? d.rot_brf_org_number || null : null,
   };
 }

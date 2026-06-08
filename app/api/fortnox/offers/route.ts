@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { requireCrmUser, ok, validationError, fortnoxWriteError } from '../_shared';
+import { requireCrmWriter, ok, validationError, fortnoxWriteError } from '../_shared';
 import { pushQuoteToFortnox } from '@/lib/domains/fortnox/offers';
 
 const bodySchema = z.object({
@@ -8,7 +8,7 @@ const bodySchema = z.object({
 
 export async function POST(req: Request) {
   try {
-    const crmUser = await requireCrmUser();
+    const crmUser = await requireCrmWriter();
     if (crmUser.response) return crmUser.response;
 
     const parsed = bodySchema.safeParse(await req.json().catch(() => null));

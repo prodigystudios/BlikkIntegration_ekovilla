@@ -300,7 +300,9 @@ export default function WorkOrderArticlesTab({ items, currencyCode, vatPercent, 
           <button type="button" onClick={() => setEditing(true)} className={cn(crm.ghostButton, 'w-full justify-center')}>
             Redigera artiklar
           </button>
-        ) : null}
+        ) : (
+          <p className="text-xs text-slate-400">Arbetsordern är fakturerad och kan inte ändras.</p>
+        )}
       </div>
     </div>
   );

@@ -184,6 +184,14 @@ describe('buildRotDetails', () => {
     expect(buildRotDetails(rot({ rot_percent: '' })).rot_percent).toBe(30);
   });
 
+  // Regression: Swedish comma/space decimals must parse (raw Number() → NaN would make the
+  // server schema reject the whole quote save with a misleading error).
+  it('komma/mellanslag i procent och maxavdrag parsas (inte NaN)', () => {
+    const r = buildRotDetails(rot({ rot_percent: '33,5', rot_max_deduction: '50 000' }));
+    expect(r.rot_percent).toBe(33.5);
+    expect(r.max_deduction).toBe(50000);
+  });
+
   it('buildMeasurementLines: m³-rader med mått → "Label – m² × mm", övriga ignoreras', () => {
     const lines = buildMeasurementLines([
       { pricing_mode: 'm3', construction: 'vagg', m2: '100', thickness_mm: '200' },

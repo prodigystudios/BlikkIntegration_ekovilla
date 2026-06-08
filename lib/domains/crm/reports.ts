@@ -20,6 +20,7 @@ export type ReportOrderRow = {
   amount: number | string | null;
   status: string | null;
   created_at: string;
+  fortnox_invoiced_at: string | null;
   assigned_to: string | null;
   client_name: string | null;
 };
@@ -77,9 +78,15 @@ export function buildSalesOverTime(quotes: ReportQuoteRow[], orders: ReportOrder
   }
   for (const o of orders) {
     const key = monthKey(o.created_at);
-    if (!key) continue;
-    orderByMonth.set(key, (orderByMonth.get(key) || 0) + num(o.amount));
-    if (o.status === 'invoiced') invoicedByMonth.set(key, (invoicedByMonth.get(key) || 0) + num(o.amount));
+    if (key) orderByMonth.set(key, (orderByMonth.get(key) || 0) + num(o.amount));
+    if (o.status === 'invoiced') {
+      // Invoiced revenue belongs to the month it was INVOICED, not when the order was
+      // created (those can differ by months). Fall back to the creation month for older
+      // rows that predate fortnox_invoiced_at. NOTE: orders are fetched by created_at, so an
+      // order invoiced in-range but created before the range isn't included here.
+      const invoicedKey = monthKey(o.fortnox_invoiced_at) || key;
+      if (invoicedKey) invoicedByMonth.set(invoicedKey, (invoicedByMonth.get(invoicedKey) || 0) + num(o.amount));
+    }
   }
 
   return months.map((period) => ({
@@ -195,7 +202,7 @@ export async function fetchReportData(admin: SupabaseClient, range: ReportRange)
   const toEnd = `${range.to}T23:59:59.999Z`;
   const [quotesRes, ordersRes, callsRes, sellersRes] = await Promise.all([
     admin.from('crm_quotes').select('amount, status, quote_date, assigned_to, customer_name').gte('quote_date', range.from).lte('quote_date', range.to),
-    admin.from('crm_work_orders').select('amount, status, created_at, assigned_to, client_name').gte('created_at', range.from).lte('created_at', toEnd),
+    admin.from('crm_work_orders').select('amount, status, created_at, fortnox_invoiced_at, assigned_to, client_name').gte('created_at', range.from).lte('created_at', toEnd),
     admin.from('crm_calls').select('user_id, call_at').gte('call_at', range.from).lte('call_at', toEnd),
     admin.from('profiles').select('id, full_name, role').in('role', ['sales', 'admin', 'konsult']),
   ]);

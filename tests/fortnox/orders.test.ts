@@ -36,6 +36,16 @@ describe('buildOrderRows', () => {
     expect((normal as any).Discount).toBe(25);
   });
 
+  // Regression: a CRM percentage discount must be sent with DiscountType:'PERCENT', else
+  // Fortnox treats Discount as kronor (its AMOUNT default) and the order/invoice total drifts.
+  it('sends DiscountType PERCENT with a discount, and omits it when there is no discount', () => {
+    const [withDiscount] = buildOrderRows([{ pricing_mode: 'item', unit_price: '100', quantity: '1', discount_percent: '25' }], 25, false);
+    expect((withDiscount as any).Discount).toBe(25);
+    expect((withDiscount as any).DiscountType).toBe('PERCENT');
+    const [noDiscount] = buildOrderRows([{ pricing_mode: 'item', unit_price: '100', quantity: '1' }], 25, false);
+    expect((noDiscount as any).DiscountType).toBeUndefined();
+  });
+
   it('marks HouseWork only when ROT is enabled and the row is rot work', () => {
     const [withRot] = buildOrderRows([{ pricing_mode: 'item', unit_price: '100', quantity: '1', is_rot_work: true }], 25, true);
     expect((withRot as any).HouseWork).toBe(true);
