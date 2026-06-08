@@ -81,12 +81,22 @@ type QuoteItem = {
   prospect: QuoteProspect | QuoteProspect[] | null;
 };
 
+type WorkOrderItem = {
+  id: string;
+  amount: number | string;
+  currency_code: string;
+  status: string;
+  assigned_to: string;
+  created_at: string;
+};
+
 type LoadState = {
   prospects: ProspectItem[];
   calls: CallItem[];
   tasks: TaskItem[];
   quotes: QuoteItem[];
   goals: GoalItem[];
+  workOrders: WorkOrderItem[];
 };
 
 type GoalUser = {
@@ -259,7 +269,7 @@ function buildOverviewActions(args: { overdueTasks: number; followUpCalls: numbe
 
 export default function CrmOverview({ role }: { role: UserRole | null }) {
   const items = getVisibleCrmNavItems(role).filter((item) => item.href !== '/crm');
-  const [state, setState] = useState<LoadState>({ prospects: [], calls: [], tasks: [], quotes: [], goals: [] });
+  const [state, setState] = useState<LoadState>({ prospects: [], calls: [], tasks: [], quotes: [], goals: [], workOrders: [] });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -271,20 +281,22 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
       setError(null);
 
       try {
-        const [prospectsRes, callsRes, tasksRes, quotesRes, goalsRes] = await Promise.all([
+        const [prospectsRes, callsRes, tasksRes, quotesRes, goalsRes, workOrdersRes] = await Promise.all([
           fetch('/api/crm/prospects', { cache: 'no-store' }),
           fetch('/api/crm/calls', { cache: 'no-store' }),
           fetch('/api/crm/tasks', { cache: 'no-store' }),
           fetch('/api/crm/quotes', { cache: 'no-store' }),
           fetch('/api/crm/goals?period_type=week', { cache: 'no-store' }),
+          fetch('/api/crm/work-orders', { cache: 'no-store' }),
         ]);
 
-        const [prospectsJson, callsJson, tasksJson, quotesJson, goalsJson] = await Promise.all([
+        const [prospectsJson, callsJson, tasksJson, quotesJson, goalsJson, workOrdersJson] = await Promise.all([
           prospectsRes.json().catch(() => ({})),
           callsRes.json().catch(() => ({})),
           tasksRes.json().catch(() => ({})),
           quotesRes.json().catch(() => ({})),
           goalsRes.json().catch(() => ({})),
+          workOrdersRes.json().catch(() => ({})),
         ]);
 
         if (!prospectsRes.ok) throw new Error(prospectsJson?.error || 'Kunde inte läsa prospekt.');
@@ -292,6 +304,8 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
         if (!tasksRes.ok) throw new Error(tasksJson?.error || 'Kunde inte läsa uppgifter.');
         if (!quotesRes.ok) throw new Error(quotesJson?.error || 'Kunde inte läsa offerter.');
         if (!goalsRes.ok) throw new Error(goalsJson?.error || 'Kunde inte läsa mål.');
+        // Work orders feed the leaderboard's order-value rows; a failure there shouldn't
+        // blank the whole overview, so we tolerate it and fall back to an empty list.
 
         if (!active) return;
 
@@ -301,11 +315,12 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
           tasks: Array.isArray(tasksJson?.data?.items) ? tasksJson.data.items : [],
           quotes: Array.isArray(quotesJson?.data?.items) ? quotesJson.data.items : [],
           goals: Array.isArray(goalsJson?.data?.items) ? goalsJson.data.items : [],
+          workOrders: workOrdersRes.ok && Array.isArray(workOrdersJson?.data?.items) ? workOrdersJson.data.items : [],
         });
       } catch (loadError: any) {
         if (!active) return;
         setError(loadError?.message || 'Kunde inte ladda CRM-översikten.');
-        setState({ prospects: [], calls: [], tasks: [], quotes: [], goals: [] });
+        setState({ prospects: [], calls: [], tasks: [], quotes: [], goals: [], workOrders: [] });
       } finally {
         if (active) setLoading(false);
       }
@@ -375,6 +390,8 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
     const callsByUser = new Map<string, number>();
     const quotesByUser = new Map<string, number>();
     const quoteValueByUser = new Map<string, number>();
+    const orderValueByUser = new Map<string, number>();
+    const invoicedValueByUser = new Map<string, number>();
 
     for (const call of state.calls) {
       callsByUser.set(call.user_id, (callsByUser.get(call.user_id) || 0) + 1);
@@ -389,6 +406,16 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
       );
     }
 
+    for (const workOrder of state.workOrders) {
+      const numericAmount = typeof workOrder.amount === 'number' ? workOrder.amount : Number(String(workOrder.amount));
+      const amount = Number.isFinite(numericAmount) ? numericAmount : 0;
+      orderValueByUser.set(workOrder.assigned_to, (orderValueByUser.get(workOrder.assigned_to) || 0) + amount);
+      // "Fakturerat" = order reached the terminal invoiced state (see work-order status flow).
+      if (workOrder.status === 'invoiced') {
+        invoicedValueByUser.set(workOrder.assigned_to, (invoicedValueByUser.get(workOrder.assigned_to) || 0) + amount);
+      }
+    }
+
     return state.goals
       .filter(hasActiveGoalTarget)
       .map((goal) => {
@@ -396,6 +423,8 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
         const callsDone = callsByUser.get(goal.user_id) || 0;
         const quotesDone = quotesByUser.get(goal.user_id) || 0;
         const quoteValueDone = quoteValueByUser.get(goal.user_id) || 0;
+        const orderValueDone = orderValueByUser.get(goal.user_id) || 0;
+        const invoicedValueDone = invoicedValueByUser.get(goal.user_id) || 0;
         const progressValues = [
           goal.calls_target > 0 ? callsDone / goal.calls_target : null,
           goal.quotes_target > 0 ? quotesDone / goal.quotes_target : null,
@@ -416,6 +445,8 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
           quotesTarget: goal.quotes_target,
           quoteValueDone,
           quoteValueTarget: Number(goal.quote_value_target) || 0,
+          orderValueDone,
+          invoicedValueDone,
           progressScore,
         };
       })
@@ -424,7 +455,7 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
         if (right.callsDone !== left.callsDone) return right.callsDone - left.callsDone;
         return left.userName.localeCompare(right.userName, 'sv');
       });
-  }, [state.calls, state.goals, state.quotes]);
+  }, [state.calls, state.goals, state.quotes, state.workOrders]);
 
   return (
     <div className="grid grid-cols-1 gap-6">
@@ -720,6 +751,8 @@ function LeaderboardPanel({
     quotesTarget: number;
     quoteValueDone: number;
     quoteValueTarget: number;
+    orderValueDone: number;
+    invoicedValueDone: number;
     progressScore: number;
   }>;
 }) {
@@ -755,6 +788,8 @@ function LeaderboardPanel({
                 <TeamProgressRow label="Samtal" value={entry.callsDone} target={entry.callsTarget} tone="sky" />
                 <TeamProgressRow label="Offerter" value={entry.quotesDone} target={entry.quotesTarget} tone="emerald" />
                 <TeamProgressRow label="Offertvärde" value={entry.quoteValueDone} target={entry.quoteValueTarget} tone="teal" currency />
+                <TeamProgressRow label="Ordervärde" value={entry.orderValueDone} tone="amber" currency />
+                <TeamProgressRow label="Fakturerat ordervärde" value={entry.invoicedValueDone} tone="violet" currency />
               </div>
             </div>
           ))}
@@ -764,27 +799,32 @@ function LeaderboardPanel({
   );
 }
 
-function TeamProgressRow({ label, value, target, tone, currency = false }: { label: string; value: number; target: number; tone: 'sky' | 'emerald' | 'teal'; currency?: boolean }) {
+function TeamProgressRow({ label, value, target, tone, currency = false }: { label: string; value: number; target?: number; tone: 'sky' | 'emerald' | 'teal' | 'amber' | 'violet'; currency?: boolean }) {
   const toneClass = {
     sky: 'bg-sky-500',
     emerald: 'bg-emerald-500',
     teal: 'bg-teal-500',
+    amber: 'bg-amber-500',
+    violet: 'bg-violet-500',
   }[tone];
 
-  const width = target > 0
-    ? value <= 0 ? 0 : Math.min(100, (value / target) * 100)
-    : 0;
+  // Some rows (e.g. order value) are follow-up figures without a weekly target — show the
+  // value alone and fill the bar relative to the value itself for a subtle visual.
+  const hasTarget = target != null && target > 0;
+  const width = hasTarget
+    ? value <= 0 ? 0 : Math.min(100, (value / target!) * 100)
+    : value > 0 ? 100 : 0;
   const displayValue = currency ? formatCurrency(value, 'SEK') : value;
-  const displayTarget = currency ? formatCurrency(target, 'SEK') : target;
+  const displayTarget = hasTarget ? (currency ? formatCurrency(target!, 'SEK') : target) : null;
 
   return (
     <div className="grid gap-0.5">
       <div className="flex items-center justify-between gap-2 text-[11px] text-slate-500">
         <span>{label}</span>
-        <strong className="text-slate-700">{displayValue} / {displayTarget}</strong>
+        <strong className="text-slate-700">{displayTarget != null ? `${displayValue} / ${displayTarget}` : displayValue}</strong>
       </div>
       <div className="h-1 rounded-full bg-slate-100">
-        <div className={`h-1 rounded-full ${toneClass}`} style={{ width: `${width}%` }} />
+        <div className={`h-1 rounded-full ${toneClass} ${hasTarget ? '' : 'opacity-40'}`} style={{ width: `${width}%` }} />
       </div>
     </div>
   );
