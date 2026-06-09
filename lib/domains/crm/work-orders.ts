@@ -279,7 +279,11 @@ export async function createCrmWorkOrderFromQuote(supabase: SupabaseClient, quot
       desired_installation_date: quote.internal_handoff?.desired_installation_date || null,
       source_status: quote.status,
       status: 'draft',
-      notes: quote.internal_handoff?.handoff_notes || quote.notes || quote.description || null,
+      // Orderns notes = "Interna anteckningar". Seedas från offertens egna notes (annars
+      // description) — ALDRIG från handoff_notes: det blocket bor redan i internal_handoff
+      // (rad ovan) och skulle annars dubbleras i både "Överlämningsnotering" och "Interna
+      // anteckningar" i ordervyn.
+      notes: quote.notes || quote.description || null,
       created_by: actorUserId,
       assigned_to: quote.assigned_to,
     })

@@ -149,6 +149,19 @@ export const createCrmQuoteSchema = z.object({
     });
   }
 
+  // Er referens (kontaktperson) becomes YourReference on the Fortnox offer and carries
+  // through offer → order → invoice. Required on a real quote save — guarded by line_items
+  // so a status-only PATCH (which omits rows, e.g. marking a quote won/lost from the list)
+  // can't be blocked on a legacy quote whose snapshot predates this rule. The quote form
+  // always sends at least one row, so every genuine save is covered.
+  if (value.line_items.length > 0 && !value.customer_snapshot.contact_name) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['customer_snapshot', 'contact_name'],
+      message: 'Er referens (kontaktperson) krävs',
+    });
+  }
+
   if (value.quote_type === 'business' && value.rot_details.enabled) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,

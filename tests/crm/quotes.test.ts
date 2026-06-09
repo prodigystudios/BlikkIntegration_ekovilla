@@ -131,6 +131,35 @@ describe('createCrmQuoteSchema', () => {
     ).toBe(false);
   });
 
+  // Er referens (contact_name) → Fortnox YourReference, krävs på en riktig offert-sparning.
+  it('kräver Er referens (contact_name) när offerten har rader', () => {
+    const result = createCrmQuoteSchema.safeParse({
+      ...validQuoteBase,
+      line_items: [{ id: 'r1', article_name: 'Lösull', m2: '100' }],
+      customer_snapshot: { company_name: 'Test AB' }, // saknar contact_name
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('godkänner offert med rader när Er referens (contact_name) finns', () => {
+    const result = createCrmQuoteSchema.safeParse({
+      ...validQuoteBase,
+      line_items: [{ id: 'r1', article_name: 'Lösull', m2: '100' }],
+      customer_snapshot: { company_name: 'Test AB', contact_name: 'Birgitta Ling' },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  // Regression: en status-PATCH (listans won/lost) skickar snapshot utan contact_name och
+  // UTAN rader — den får inte blockeras av Er referens-kravet (legacy-offerter).
+  it('kräver INTE Er referens vid statusflipp utan rader', () => {
+    const result = createCrmQuoteSchema.safeParse({
+      ...validQuoteBase,
+      customer_snapshot: { company_name: 'Test AB' },
+    });
+    expect(result.success).toBe(true);
+  });
+
   it('misslyckas med ROT aktiverat för företagskund', () => {
     expect(
       createCrmQuoteSchema.safeParse({

@@ -311,6 +311,10 @@ function getValidationIssues(draft: QuoteDraft, effectiveRows: EffectiveRow[]) {
   if (draft.customer_source.kind === 'fortnox' && !draft.customer_source.fortnox_customer_name.trim()) issues.push('Fortnox-kund behöver kundreferens');
   if (draft.quote_type === 'private' && !draft.personal_number.trim()) issues.push('Personnummer krävs');
   if (draft.quote_type === 'business' && !draft.company_name.trim() && !draft.customer_name.trim()) issues.push('Företagsnamn krävs');
+  // Er referens (kontaktperson) is required: it becomes YourReference on the Fortnox
+  // offer and carries through offer → order → invoice. Enforced here so no quote leaves
+  // without it.
+  if (!draft.contact_name.trim()) issues.push('Er referens krävs');
   if (draft.quote_type === 'business' && draft.rot_enabled) issues.push('ROT är bara tillåtet för privatkund');
   // The ROT applicant is the customer – their personal number is already required for
   // every private customer above. Here we only need the property designation.
@@ -1169,6 +1173,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     if (draft.quote_type === 'private' && !draft.personal_number.trim()) {
       errs.personal_number = 'Personnummer krävs';
     }
+    if (!draft.contact_name.trim()) errs.contact_name = 'Er referens krävs';
     if (!draft.amount.trim() && !hasAnyRows) errs.amount = 'Ange belopp eller lägg till rader';
     if (draft.quote_type === 'private' && draft.rot_enabled && !draft.rot_property_designation.trim()) {
       errs.rot_property_designation = 'ROT kräver fastighetsbeteckning';
@@ -1181,6 +1186,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     'Kund måste anges': 'section-kund',
     'Företagsnamn krävs': 'section-kund',
     'Personnummer krävs': 'section-kund',
+    'Er referens krävs': 'field-contact-name',
     'Offertnamn saknas': 'field-project-name',
     'Ange belopp eller lägg till rader': 'field-amount',
     'ROT kräver fastighetsbeteckning': 'field-rot-property',
@@ -1522,14 +1528,14 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
             <Field fieldId="field-project-name" label="Offertnamn / projekt" className="md:col-span-2" error={fieldErrors.project_name}>
               <Input value={draft.project_name} onChange={(e) => setDraft((d) => ({ ...d, project_name: e.target.value }))} placeholder="Ex. Takisolering villa Norrköping" />
             </Field>
-            <Field label="Er referens (kontaktperson)" className="md:col-span-2">
+            <Field fieldId="field-contact-name" label="Er referens (kontaktperson) *" className="md:col-span-2" error={fieldErrors.contact_name}>
               <Input
                 value={draft.contact_name}
                 onChange={(e) => setDraft((d) => ({ ...d, contact_name: e.target.value }))}
                 placeholder="Ex. Birgitta Ling"
               />
               <p className="mt-1 text-[11px] leading-snug text-slate-400">
-                Personen hos kunden som offerten gäller. Förifylls från kundkortet men kan ändras per offert – visas som ”Er referens” på Fortnox-offerten.
+                Obligatoriskt. Personen hos kunden som offerten gäller. Förifylls från kundkortet men kan ändras per offert – visas som ”Er referens” på Fortnox-offerten och följer med till order och faktura.
               </p>
             </Field>
             <Field label="Beskrivning" className="md:col-span-2">
@@ -1946,7 +1952,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
             <button
               type="button"
               onClick={saveQuote}
-              disabled={submitting}
+              disabled={submitting || !isReady}
               className={crm.saveButton}
             >
               {submitting ? 'Sparar…' : isEditing ? 'Spara offert' : 'Skapa offert'}
@@ -1976,7 +1982,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
         <button
           type="button"
           onClick={saveQuote}
-          disabled={submitting}
+          disabled={submitting || !isReady}
           className={cn(crm.saveButton, 'ml-auto w-auto px-6')}
         >
           {submitting ? 'Sparar…' : isEditing ? 'Spara' : 'Skapa'}
