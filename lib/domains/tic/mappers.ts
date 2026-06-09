@@ -95,12 +95,18 @@ export function riskTypeLabel(type: string): string {
   return RISK_TYPE_LABELS[type] ?? type;
 }
 
-// tic.io's `names` entries vary (legalName / commonName / tradingName / nameOrIdentifier).
-// Take the first entry that yields a usable string, preferring the legal name.
+// Each tic.io `names` entry holds the string in `nameOrIdentifier` and its kind in
+// `companyNamingType` (legalName / commonName / tradingName / …). Prefer the registered
+// legal name; otherwise fall back to the first usable name of any type.
 function pickCompanyName(names?: Array<Record<string, unknown>>): string | undefined {
   if (!Array.isArray(names)) return undefined;
+  const legal = names.find((n) => n.companyNamingType === 'legalName');
+  if (legal) {
+    const s = firstString(legal.nameOrIdentifier);
+    if (s) return s;
+  }
   for (const n of names) {
-    const s = firstString(n.legalName, n.commonName, n.tradingName, n.nameOrIdentifier, n.name);
+    const s = firstString(n.nameOrIdentifier);
     if (s) return s;
   }
   return undefined;
@@ -143,7 +149,7 @@ export function mapTicCompany(doc: TicRawCompany): TicLookupResult {
     organization_number: org,
     email: firstString(doc.emailAddresses?.[0]?.emailAddress),
     phone: firstString(doc.phoneNumbers?.[0]?.e164PhoneNumber, doc.phoneNumbers?.[0]?.phoneNumber),
-    address: buildAddress(addr?.street, addr?.postalCode, addr?.city),
+    address: buildAddress(addr?.streetAddress, addr?.postalCode, addr?.city),
     annual_revenue: thousandsToSek(fin?.rs_NetSalesK),
     number_of_employees: employees != null ? Math.round(employees) : null,
     inactive,

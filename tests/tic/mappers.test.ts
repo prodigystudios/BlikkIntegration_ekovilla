@@ -7,11 +7,18 @@ describe('mapTicCompany', () => {
     const doc: TicRawCompany = {
       companyId: 1893055,
       registrationNumber: '5560000001',
-      names: [{ legalName: 'Bahnhof AB' }, { commonName: 'Bahnhof' }],
+      // Real tic.io shape: each entry is { nameOrIdentifier, companyNamingType }.
+      // Trading name listed first to prove we still prefer the registered legal name.
+      names: [
+        { nameOrIdentifier: 'Bahnhof', companyNamingType: 'tradingName' },
+        { nameOrIdentifier: 'Bahnhof AB', companyNamingType: 'legalName' },
+      ],
       legalEntityType: 'Aktiebolag',
       isCeased: false,
       activityStatus: 'isActive',
-      mostRecentRegisteredAddress: { street: 'Tunnelgatan 2', postalCode: '111 37', city: 'Stockholm' },
+      // tic.io names the street line `streetAddress` (NOT `street`) — see CompanyAddressGeopoint
+      // in the LENS swagger. Reading the wrong key dropped the street on every lookup.
+      mostRecentRegisteredAddress: { streetAddress: 'Tunnelgatan 2', postalCode: '111 37', city: 'Stockholm' },
       phoneNumbers: [{ e164PhoneNumber: '+46101234567' }],
       emailAddresses: [{ emailAddress: 'info@bahnhof.se' }],
       mostRecentFinancialSummary: { rs_NetSalesK: 1730000, fn_NumberOfEmployees: 290 },

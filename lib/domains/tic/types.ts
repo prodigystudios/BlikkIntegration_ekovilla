@@ -15,7 +15,9 @@ export type TicRawCompany = {
   isCeased?: boolean;
   activityStatus?: string;
   mostRecentRegisteredAddress?: {
-    street?: string;
+    // tic.io names the street line `streetAddress` (not `street`); the house number is
+    // already included in it. Postal/city match our field names.
+    streetAddress?: string;
     postalCode?: string;
     city?: string;
   };

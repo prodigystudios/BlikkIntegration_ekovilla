@@ -147,22 +147,28 @@ function CollapsibleCardSection({
 function AddressColumn({
   label, street, postalCode, city, email,
   onStreet, onPostal, onCity, onEmail,
+  disabled, headerControl,
 }: {
   label: string;
   street: string; postalCode: string; city: string; email?: string;
   onStreet: (v: string) => void; onPostal: (v: string) => void; onCity: (v: string) => void;
   onEmail?: (v: string) => void;
+  disabled?: boolean;
+  headerControl?: React.ReactNode;
 }) {
   return (
     <div className="grid gap-2">
-      <p className={crm.sectionTitle}>{label}</p>
-      <Input value={street} onChange={(e) => onStreet(e.target.value)} placeholder="Gatuadress" />
+      <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+        <p className={crm.sectionTitle}>{label}</p>
+        {headerControl}
+      </div>
+      <Input value={street} onChange={(e) => onStreet(e.target.value)} placeholder="Gatuadress" disabled={disabled} />
       <div className="grid grid-cols-2 gap-2">
-        <Input value={postalCode} onChange={(e) => onPostal(e.target.value)} placeholder="Postnr" />
-        <Input value={city} onChange={(e) => onCity(e.target.value)} placeholder="Stad" />
+        <Input value={postalCode} onChange={(e) => onPostal(e.target.value)} placeholder="Postnr" disabled={disabled} />
+        <Input value={city} onChange={(e) => onCity(e.target.value)} placeholder="Stad" disabled={disabled} />
       </div>
       {onEmail !== undefined && email !== undefined ? (
-        <Input value={email} onChange={(e) => onEmail(e.target.value)} placeholder="Faktura-epost" type="email" />
+        <Input value={email} onChange={(e) => onEmail(e.target.value)} placeholder="Faktura-epost" type="email" disabled={disabled} />
       ) : null}
     </div>
   );
@@ -181,9 +187,28 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
   const [draft, setDraft] = useState<Draft>(initial);
   const [createInFortnox, setCreateInFortnox] = useState(false);
   const [saving, setSaving] = useState(false);
+  // The invoice address defaults to the visit address + contact email so the common
+  // "same address" case needs no typing. While this is on, the invoice fields mirror
+  // the visit address and stay locked; unchecking seeds + unlocks them for editing.
+  const [invoiceSameAsVisit, setInvoiceSameAsVisit] = useState(true);
 
   function set<K extends keyof Draft>(key: K, value: Draft[K]) {
     setDraft((c) => ({ ...c, [key]: value }));
+  }
+
+  function toggleInvoiceSame(same: boolean) {
+    // When unchecking, seed the now-editable invoice fields from the visit address +
+    // contact email so the user starts from populated fields, not blank ones.
+    if (!same) {
+      setDraft((c) => ({
+        ...c,
+        invoice_street: c.visit_street,
+        invoice_postal_code: c.visit_postal_code,
+        invoice_city: c.visit_city,
+        invoice_email: c.email,
+      }));
+    }
+    setInvoiceSameAsVisit(same);
   }
 
   // Switching customer type clears the fields that belong to the other type, so a
@@ -265,6 +290,13 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
     if (!isB2B && (!draft.first_name.trim() || !draft.last_name.trim())) { toast.error('För- och efternamn krävs'); return; }
     if (!isB2B && !draft.personal_number.trim()) { toast.error('Personnummer krävs för privatkund'); return; }
 
+    // When "same as visit address" is on, the invoice address + email follow the visit
+    // address / contact email rather than the (locked, possibly stale) invoice fields.
+    const invoiceStreet = invoiceSameAsVisit ? draft.visit_street : draft.invoice_street;
+    const invoicePostal = invoiceSameAsVisit ? draft.visit_postal_code : draft.invoice_postal_code;
+    const invoiceCity = invoiceSameAsVisit ? draft.visit_city : draft.invoice_city;
+    const invoiceEmail = invoiceSameAsVisit ? draft.email : draft.invoice_email;
+
     setSaving(true);
     try {
       const body: Record<string, unknown> = {
@@ -275,8 +307,8 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
         mobile: draft.mobile.trim() || null,
         visit_address: buildAddress(draft.visit_street, draft.visit_postal_code, draft.visit_city),
         delivery_address: buildAddress(draft.delivery_street, draft.delivery_postal_code, draft.delivery_city),
-        invoice_address: buildAddress(draft.invoice_street, draft.invoice_postal_code, draft.invoice_city),
-        invoice_email: draft.invoice_email.trim() || null,
+        invoice_address: buildAddress(invoiceStreet, invoicePostal, invoiceCity),
+        invoice_email: invoiceEmail.trim() || null,
         payment_terms: draft.payment_terms.trim() || null,
         price_list: draft.price_list.trim() || null,
         discount: draft.discount.trim() ? Number(draft.discount) : null,
@@ -337,6 +369,13 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
   }
 
   const isB2B = draft.customer_type === 'business';
+
+  // While "same as visit address" is on, the invoice column shows the visit address +
+  // contact email live (locked); otherwise it shows the customer's own invoice fields.
+  const invoiceStreet = invoiceSameAsVisit ? draft.visit_street : draft.invoice_street;
+  const invoicePostal = invoiceSameAsVisit ? draft.visit_postal_code : draft.invoice_postal_code;
+  const invoiceCity = invoiceSameAsVisit ? draft.visit_city : draft.invoice_city;
+  const invoiceEmail = invoiceSameAsVisit ? draft.email : draft.invoice_email;
 
   return (
     <div className="grid grid-cols-1 gap-6">
@@ -469,10 +508,22 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
               />
               <AddressColumn
                 label="Fakturaadress"
-                street={draft.invoice_street} postalCode={draft.invoice_postal_code} city={draft.invoice_city}
-                email={draft.invoice_email}
+                street={invoiceStreet} postalCode={invoicePostal} city={invoiceCity}
+                email={invoiceEmail}
                 onStreet={(v) => set('invoice_street', v)} onPostal={(v) => set('invoice_postal_code', v)} onCity={(v) => set('invoice_city', v)}
                 onEmail={(v) => set('invoice_email', v)}
+                disabled={invoiceSameAsVisit}
+                headerControl={
+                  <label className="flex cursor-pointer select-none items-center gap-1.5 text-xs text-slate-500">
+                    <input
+                      type="checkbox"
+                      checked={invoiceSameAsVisit}
+                      onChange={(e) => toggleInvoiceSame(e.target.checked)}
+                      className="h-3.5 w-3.5 rounded border-slate-300 accent-emerald-600"
+                    />
+                    Samma som besöksadress
+                  </label>
+                }
               />
             </div>
           </CardSection>
@@ -652,7 +703,7 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
               {[
                 'Fält med * krävs.',
                 'Leveransadressen används vid ordrar om den avviker från besöksadressen.',
-                'Fakturaadressen och faktura-epost används vid fakturering.',
+                'Fakturaadressen följer besöksadressen som standard – avmarkera rutan för att ange en annan.',
               ].map((tip) => (
                 <li key={tip} className="flex items-start gap-2 text-xs text-slate-500 leading-relaxed">
                   <span className="mt-0.5 shrink-0 text-slate-300">–</span>
