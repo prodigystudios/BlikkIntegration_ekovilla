@@ -1,5 +1,5 @@
 import { z } from 'zod';
-export { ok, routeError, validationError, requireCrmUser, requireCrmWriter } from '../_shared';
+export { ok, routeError, validationError, requireCrmUser, requireCrmWriter, requirePermission } from '../_shared';
 
 const opportunityStatusSchema = z.enum(['qualified', 'quoted', 'won', 'lost']);
 const customerTypeSchema = z.enum(['business', 'private']);

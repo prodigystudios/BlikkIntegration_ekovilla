@@ -4,7 +4,7 @@ import { getCrmWorkOrder, updateCrmWorkOrderLineItems } from '@/lib/domains/crm/
 import { computePricing, type PricingLineItem } from '@/lib/domains/crm/pricing';
 import { updateWorkOrderInFortnox } from '@/lib/domains/fortnox/orders';
 import { FortnoxNotConnectedError } from '@/lib/domains/fortnox/client';
-import { ok, requireCrmWriter, routeError, updateWorkOrderLineItemsSchema, validationError, invalidUuidParam } from '../../_lib';
+import { ok, requirePermission, routeError, updateWorkOrderLineItemsSchema, validationError, invalidUuidParam } from '../../_lib';
 
 type RouteContext = {
   params: {
@@ -17,7 +17,7 @@ type RouteContext = {
 // sync is non-fatal — the save succeeds and the reason is returned so the UI can show it.
 export async function PATCH(req: Request, context: RouteContext) {
   try {
-    const crmUser = await requireCrmWriter();
+    const crmUser = await requirePermission('crm.workorder.write');
     if (crmUser.response || !crmUser.currentUser) return crmUser.response;
 
     const badId = invalidUuidParam(context.params.id);

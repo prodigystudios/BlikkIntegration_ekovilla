@@ -2,7 +2,7 @@ import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { getCrmCustomer } from '@/lib/domains/crm/customers';
 import { createFortnoxCustomer, updateFortnoxCustomer } from '@/lib/domains/fortnox/customers';
-import { ok, requireCrmWriter, routeError } from '../../_lib';
+import { ok, requirePermission, routeError } from '../../_lib';
 
 type RouteContext = { params: { id: string } };
 
@@ -10,7 +10,7 @@ type RouteContext = { params: { id: string } };
 // Fortnox if it isn't linked yet, otherwise re-syncs the existing record.
 export async function POST(_req: Request, context: RouteContext) {
   try {
-    const crmUser = await requireCrmWriter();
+    const crmUser = await requirePermission('fortnox.customer.sync');
     if (crmUser.response) return crmUser.response;
 
     const supabase = createRouteHandlerClient({ cookies });

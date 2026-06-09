@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getCurrentUser } from '@/lib/auth/route';
+import { can, getEffectivePermissions, type PermissionKey } from '@/lib/auth/permissions';
 
 export function ok<T>(data: T, status = 200) {
   return NextResponse.json({ ok: true, data }, { status, headers: { 'Cache-Control': 'no-store' } });
@@ -52,52 +53,40 @@ export function pickProvidedFields<T extends Record<string, unknown>>(parsed: T,
   return Object.fromEntries(Object.entries(parsed).filter(([key]) => sentKeys.includes(key))) as Partial<T>;
 }
 
-export async function requireCrmUser() {
+// Permission-based gate. Resolves the user, then checks the effective permission set
+// (role bundle ± per-user overrides) from the DB. Returns the same { currentUser, response }
+// shape every CRM guard uses. This is the single primitive the role guards below wrap, and
+// the one new per-resource routes should call directly (e.g. requirePermission('crm.offer.write')).
+export async function requirePermission(key: PermissionKey) {
   const currentUser = await getCurrentUser();
 
   if (!currentUser) {
     return { currentUser: null, response: routeError(401, 'unauthorized', 'Unauthorized') };
   }
 
-  // konsult has the same CRM rights as sales (external sellers working for us) — see lib/roles.ts.
-  if (!(currentUser.role === 'sales' || currentUser.role === 'admin' || currentUser.role === 'konsult')) {
+  const perms = await getEffectivePermissions();
+  if (!can(perms, key)) {
     return { currentUser: null, response: routeError(403, 'forbidden', 'Forbidden') };
   }
 
   return { currentUser, response: null };
 }
 
-// CRM WRITE access. konsult is a read-only role (the admin user-management UI stores a
-// "readonly" choice as konsult, isReadonlyRole treats it as readonly, and planning blocks it
-// from writes), so it must NOT create/edit CRM data or trigger Fortnox bookkeeping pushes —
-// only sales/admin may. Use this on every CRM mutation (POST/PATCH/PUT/DELETE); use
-// requireCrmUser for reads (where konsult may view).
-export async function requireCrmWriter() {
-  const currentUser = await getCurrentUser();
-
-  if (!currentUser) {
-    return { currentUser: null, response: routeError(401, 'unauthorized', 'Unauthorized') };
-  }
-
-  if (!(currentUser.role === 'sales' || currentUser.role === 'admin')) {
-    return { currentUser: null, response: routeError(403, 'forbidden', 'Forbidden') };
-  }
-
-  return { currentUser, response: null };
+// Legacy coarse guards, now thin wrappers over the permission layer. The seed in
+// 20260608_permissions_model.sql gives crm.access to sales/konsult/admin, crm.write to
+// sales/admin and crm.admin to admin — reproducing the old role checks exactly, so the ~170
+// call sites are unchanged. Migrate hot routes to explicit per-resource keys over time.
+export function requireCrmUser() {
+  return requirePermission('crm.access');
 }
 
-export async function requireCrmAdmin() {
-  const currentUser = await getCurrentUser();
+// CRM WRITE access (sales/admin). konsult is read-only. Used on every CRM mutation.
+export function requireCrmWriter() {
+  return requirePermission('crm.write');
+}
 
-  if (!currentUser) {
-    return { currentUser: null, response: routeError(401, 'unauthorized', 'Unauthorized') };
-  }
-
-  if (currentUser.role !== 'admin') {
-    return { currentUser: null, response: routeError(403, 'forbidden', 'Forbidden') };
-  }
-
-  return { currentUser, response: null };
+export function requireCrmAdmin() {
+  return requirePermission('crm.admin');
 }
 
 export async function requireSignedInUser() {

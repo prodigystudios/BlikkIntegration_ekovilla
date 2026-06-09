@@ -7,7 +7,7 @@ import {
   ok,
   pickProvidedQuoteFields,
   requireCrmUser,
-  requireCrmWriter,
+  requirePermission,
   routeError,
   updateCrmQuoteSchema,
   validationError,
@@ -37,7 +37,7 @@ export async function GET(_req: Request, context: RouteContext) {
 
 export async function PATCH(req: Request, context: RouteContext) {
   try {
-    const crmUser = await requireCrmWriter();
+    const crmUser = await requirePermission('crm.offer.write');
     if (crmUser.response || !crmUser.currentUser) return crmUser.response;
 
     const rawBody = await req.json().catch(() => null);

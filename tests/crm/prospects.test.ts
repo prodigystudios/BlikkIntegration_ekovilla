@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { salesUser, adminUser, memberUser } from './helpers/supabase';
+import { salesUser, adminUser, memberUser, effectivePermissionsForRole } from './helpers/supabase';
 
 // ---------------------------------------------------------------------------
 // Mockar
@@ -23,7 +23,13 @@ vi.mock('next/headers', () => ({ cookies: vi.fn() }));
 // Importer
 // ---------------------------------------------------------------------------
 
+vi.mock('@/lib/auth/permissions', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/auth/permissions')>();
+  return { ...actual, getEffectivePermissions: vi.fn() };
+});
+
 import { getCurrentUser } from '@/lib/auth/route';
+import { getEffectivePermissions } from '@/lib/auth/permissions';
 import {
   listCrmProspects,
   createCrmProspect,
@@ -43,7 +49,11 @@ const mockList = vi.mocked(listCrmProspects);
 const mockCreate = vi.mocked(createCrmProspect);
 const mockUpdate = vi.mocked(updateCrmProspect);
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.mocked(getEffectivePermissions).mockImplementation(async () =>
+    effectivePermissionsForRole((await vi.mocked(getCurrentUser)())?.role));
+});
 
 function req(url: string, init?: RequestInit) {
   return new Request(`http://localhost${url}`, init);

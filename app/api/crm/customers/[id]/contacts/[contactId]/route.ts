@@ -1,13 +1,13 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { deleteCrmCustomerContact, updateCrmCustomerContact } from '@/lib/domains/crm/customers';
-import { ok, requireCrmWriter, routeError, updateCrmCustomerContactSchema, validationError } from '../../../_lib';
+import { ok, requirePermission, routeError, updateCrmCustomerContactSchema, validationError } from '../../../_lib';
 
 type RouteContext = { params: { id: string; contactId: string } };
 
 export async function PATCH(req: Request, context: RouteContext) {
   try {
-    const crmUser = await requireCrmWriter();
+    const crmUser = await requirePermission('crm.customer.write');
     if (crmUser.response || !crmUser.currentUser) return crmUser.response;
 
     const parsedBody = updateCrmCustomerContactSchema.safeParse(await req.json().catch(() => null));
@@ -28,7 +28,7 @@ export async function PATCH(req: Request, context: RouteContext) {
 
 export async function DELETE(_req: Request, context: RouteContext) {
   try {
-    const crmUser = await requireCrmWriter();
+    const crmUser = await requirePermission('crm.customer.write');
     if (crmUser.response || !crmUser.currentUser) return crmUser.response;
 
     const supabase = createRouteHandlerClient({ cookies });

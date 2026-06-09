@@ -1,7 +1,7 @@
 import { routeError } from '../crm/_shared';
 import { FortnoxApiError, FortnoxNotConnectedError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
 
-export { ok, routeError, validationError, requireCrmAdmin, requireCrmUser, requireCrmWriter } from '../crm/_shared';
+export { ok, routeError, validationError, requireCrmAdmin, requireCrmUser, requireCrmWriter, requirePermission } from '../crm/_shared';
 
 // Translate a thrown error from a Fortnox write into a deliberate route response.
 // FortnoxNotConnectedError → 400 (admin must connect first); FortnoxApiError keeps

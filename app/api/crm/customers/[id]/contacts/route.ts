@@ -1,13 +1,13 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { createCrmCustomerContact } from '@/lib/domains/crm/customers';
-import { createCrmCustomerContactSchema, ok, requireCrmWriter, routeError, validationError } from '../../_lib';
+import { createCrmCustomerContactSchema, ok, requirePermission, routeError, validationError } from '../../_lib';
 
 type RouteContext = { params: { id: string } };
 
 export async function POST(req: Request, context: RouteContext) {
   try {
-    const crmUser = await requireCrmWriter();
+    const crmUser = await requirePermission('crm.customer.write');
     if (crmUser.response || !crmUser.currentUser) return crmUser.response;
 
     const parsedBody = createCrmCustomerContactSchema.safeParse(await req.json().catch(() => null));
