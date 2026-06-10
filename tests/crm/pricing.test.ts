@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { lineItemRowTotal, computePricing } from '@/lib/domains/crm/pricing';
+import { lineItemRowTotal, computePricing, resolveQuoteVatBreakdown, quoteAmountDisplay } from '@/lib/domains/crm/pricing';
 
 describe('lineItemRowTotal', () => {
   it('item mode: quantity × unit_price', () => {
@@ -72,5 +72,52 @@ describe('computePricing', () => {
       { isPrivate: true, rot: { enabled: true, rot_percent: 30 } },
     );
     expect(p.rotDeduction).toBe(393);
+  });
+});
+
+describe('resolveQuoteVatBreakdown', () => {
+  it('prefers the stored pricing_summary (subtotal ex moms, total incl moms)', () => {
+    const b = resolveQuoteVatBreakdown({
+      pricing_summary: { subtotal: 100_000, vat: 25_000, total: 125_000 },
+      amount: 999, // ignored when pricing_summary is present
+      vat_percent: 25,
+    });
+    expect(b).toEqual({ subtotal: 100_000, vat: 25_000, total: 125_000, vatPercent: 25 });
+  });
+
+  it('derives a missing vat from total − subtotal', () => {
+    const b = resolveQuoteVatBreakdown({ pricing_summary: { subtotal: 80_000, total: 100_000 }, vat_percent: 25 });
+    expect(b.vat).toBe(20_000);
+  });
+
+  it('legacy fallback: treats the scalar amount as the incl-moms total', () => {
+    const b = resolveQuoteVatBreakdown({ pricing_summary: null, amount: 125_000, vat_percent: 25 });
+    expect(b.total).toBe(125_000);
+    expect(b.subtotal).toBe(100_000);
+    expect(b.vat).toBe(25_000);
+  });
+
+  it('handles 0% vat without dividing oddly', () => {
+    const b = resolveQuoteVatBreakdown({ pricing_summary: null, amount: 5_000, vat_percent: 0 });
+    expect(b).toEqual({ subtotal: 5_000, vat: 0, total: 5_000, vatPercent: 0 });
+  });
+});
+
+describe('quoteAmountDisplay', () => {
+  const breakdown = { subtotal: 100_000, vat: 25_000, total: 125_000, vatPercent: 25 };
+
+  it('private → headline is the incl-moms total', () => {
+    const d = quoteAmountDisplay('private', breakdown);
+    expect(d.primary).toBe(125_000);
+    expect(d.basisSuffix).toBe('inkl. moms');
+    expect(d.primaryLabel).toBe('Att betala inkl. moms');
+  });
+
+  it('business → headline is ex moms, moms still exposed for the breakdown', () => {
+    const d = quoteAmountDisplay('business', breakdown);
+    expect(d.primary).toBe(100_000);
+    expect(d.basisSuffix).toBe('ex moms');
+    expect(d.vat).toBe(25_000);
+    expect(d.vatPercent).toBe(25);
   });
 });

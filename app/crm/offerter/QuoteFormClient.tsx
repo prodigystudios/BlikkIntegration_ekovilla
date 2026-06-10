@@ -195,6 +195,8 @@ type CrmCustomerLite = {
   organization_number: string | null;
   personal_number: string | null;
   fortnox_customer_id: string | null;
+  // Omvänd skattskyldighet (reverse charge). Business-only; drives the offer's moms to 0 %.
+  reverse_vat: boolean | null;
   visit_address: { street: string | null; postal_code: string | null; city: string | null } | null;
   delivery_address: { street: string | null; postal_code: string | null; city: string | null } | null;
   contacts: Array<{ id: string; name: string; role: string | null; phone: string | null; email: string | null; is_primary: boolean }>;
@@ -886,6 +888,9 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
       ...current,
       customer_id: customer.id,
       quote_type: customer.customer_type,
+      // Reverse charge (omvänd skattskyldighet) → 0 % moms; otherwise the standard 25 %.
+      // Follows the customer's setting (kept in sync with Fortnox VATType); still editable.
+      vat_percent: customer.reverse_vat ? '0' : '25',
       customer_source: buildCustomerSource(customer),
       company_name: customer.company_name || '',
       customer_name: customer.company_name || `${customer.first_name || ''} ${customer.last_name || ''}`.trim(),
@@ -991,6 +996,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
                 organization_number: c.organization_number ?? null,
                 personal_number: c.personal_number ?? null,
                 fortnox_customer_id: c.fortnox_customer_id ?? null,
+                reverse_vat: c.reverse_vat ?? null,
                 visit_address: c.visit_address ?? null,
                 delivery_address: c.delivery_address ?? null,
                 contacts: c.contacts ?? [],
@@ -1341,9 +1347,22 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   const sidebarDisplayName = draft.quote_type === 'business'
     ? (draft.company_name || draft.customer_name)
     : draft.customer_name;
-  const sidebarTotal = hasAnyLineItemInput
-    ? totals.total
-    : (draft.amount ? parseDecimal(draft.amount) : null);
+  // Unified amount breakdown for the summary UI — mirrors the save payload's
+  // pricing_summary exactly (line-item path uses `totals`; manual path treats the
+  // entered Grundbelopp as ex moms and adds moms on top).
+  const vatPct = parseDecimal(draft.vat_percent, 25);
+  const isPrivateQuote = draft.quote_type === 'private';
+  const summarySubtotal = hasAnyLineItemInput ? totals.subtotal : (draft.amount ? parseDecimal(draft.amount) : null);
+  const summaryVat = summarySubtotal == null ? null : (hasAnyLineItemInput ? totals.vat : summarySubtotal * (vatPct / 100));
+  const summaryTotal = summarySubtotal == null ? null : (hasAnyLineItemInput ? totals.total : summarySubtotal + (summaryVat ?? 0));
+  // VAT display convention (agreed with finance): private leads with the price to pay
+  // INCL moms; business leads with the EX-moms figure, the moms shown in the breakdown.
+  const headlineLabel = isPrivateQuote
+    ? (totals.rotDeduction > 0 ? 'Att betala' : 'Total inkl. moms')
+    : 'Belopp ex moms';
+  const headlineAmount = isPrivateQuote
+    ? (totals.rotDeduction > 0 ? totals.toPay : summaryTotal)
+    : summarySubtotal;
 
   // Single source of truth for the visible sections (in order). Drives both the
   // section header numbers and the sidebar nav so they can never drift apart.
@@ -1546,6 +1565,11 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
             </Field>
             <Field label="Moms %">
               <Input value={draft.vat_percent} onChange={(e) => setDraft((d) => ({ ...d, vat_percent: e.target.value }))} inputMode="decimal" placeholder="25" />
+              {selectedCustomer?.reverse_vat ? (
+                <p className="mt-1 text-[11px] leading-snug text-amber-700">
+                  Kunden har <strong>omvänd skattskyldighet</strong> – moms sätts till 0 %. Köparen redovisar momsen själv.
+                </p>
+              ) : null}
             </Field>
             <Field label="Offertdatum">
               <Input value={draft.quote_date} onChange={(e) => setDraft((d) => ({ ...d, quote_date: e.target.value }))} type="date" lang="sv-SE" />
@@ -1580,7 +1604,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
                 <span className="text-sm font-semibold text-slate-900">{formatCurrency(totals.subtotal, 'SEK')}</span>
               </div>
               <div className="grid gap-0.5">
-                <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Moms</span>
+                <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Moms ({vatPct} %)</span>
                 <span className="text-sm font-semibold text-slate-900">{formatCurrency(totals.vat, 'SEK')}</span>
               </div>
               <div className="grid gap-0.5">
@@ -1595,13 +1619,15 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
               ) : null}
               <div className="ml-auto grid gap-0.5 text-right">
                 <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">
-                  {totals.rotDeduction > 0 ? 'Att betala' : 'Total'}
+                  {headlineLabel}
                 </span>
                 <span className="text-base font-bold text-slate-950">
-                  {formatCurrency(totals.rotDeduction > 0 ? totals.toPay : totals.total, 'SEK')}
+                  {formatCurrency(headlineAmount ?? totals.total, 'SEK')}
                 </span>
-                {totals.rotDeduction > 0 ? (
-                  <span className="text-[11px] text-slate-400">Total {formatCurrency(totals.total, 'SEK')}</span>
+                {isPrivateQuote && totals.rotDeduction > 0 ? (
+                  <span className="text-[11px] text-slate-400">Total inkl. moms {formatCurrency(totals.total, 'SEK')}</span>
+                ) : !isPrivateQuote ? (
+                  <span className="text-[11px] text-slate-400">Inkl. moms {formatCurrency(totals.total, 'SEK')}</span>
                 ) : null}
               </div>
             </div>
@@ -1839,7 +1865,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
                       <span className="tabular-nums">{formatCurrency(totals.subtotal, 'SEK')}</span>
                     </div>
                     <div className="flex items-center justify-between text-xs text-slate-500">
-                      <span>Moms</span>
+                      <span>Moms ({vatPct} %)</span>
                       <span className="tabular-nums">{formatCurrency(totals.vat, 'SEK')}</span>
                     </div>
                     <div className="flex items-center justify-between border-t border-slate-200/70 pt-1.5 text-xs font-medium text-slate-600">
@@ -1854,21 +1880,28 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
                     ) : null}
                     <div className="mt-1 flex items-end justify-between border-t border-slate-200/70 pt-2">
                       <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">
-                        {totals.rotDeduction > 0 ? 'Att betala' : 'Totalt inkl. moms'}
+                        {headlineLabel}
                       </span>
                       <span className="text-2xl font-bold tracking-tight text-slate-950 tabular-nums">
-                        {formatCurrency(totals.rotDeduction > 0 ? totals.toPay : totals.total, 'SEK')}
+                        {formatCurrency(headlineAmount ?? totals.total, 'SEK')}
                       </span>
                     </div>
                   </div>
                 ) : (
                   <>
-                    <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Totalt inkl. moms</span>
+                    <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">{headlineLabel}</span>
                     <p className="mt-1 text-2xl font-bold tracking-tight text-slate-950">
-                      {sidebarTotal != null && Number.isFinite(sidebarTotal)
-                        ? formatCurrency(sidebarTotal, 'SEK')
+                      {headlineAmount != null && Number.isFinite(headlineAmount)
+                        ? formatCurrency(headlineAmount, 'SEK')
                         : <span className="text-xl text-slate-300">—</span>}
                     </p>
+                    {headlineAmount != null && Number.isFinite(headlineAmount) && summaryVat != null && summaryTotal != null ? (
+                      <p className="mt-1 text-[11px] text-slate-400">
+                        {isPrivateQuote
+                          ? `Varav moms (${vatPct} %) ${formatCurrency(summaryVat, 'SEK')}`
+                          : `Inkl. moms ${formatCurrency(summaryTotal, 'SEK')} (moms ${vatPct} %)`}
+                      </p>
+                    ) : null}
                   </>
                 )}
               </div>
@@ -1974,9 +2007,9 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
       {/* ── Mobile sticky action bar (sidebar handles this on lg+) ── */}
       <div className="fixed inset-x-0 bottom-0 z-30 flex items-center gap-3 border-t border-slate-200 bg-white/95 px-4 py-3 backdrop-blur lg:hidden">
         <div className="min-w-0">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Totalt inkl. moms</p>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">{headlineLabel}</p>
           <p className="truncate text-base font-bold text-slate-950">
-            {sidebarTotal != null && Number.isFinite(sidebarTotal) ? formatCurrency(sidebarTotal, 'SEK') : '—'}
+            {headlineAmount != null && Number.isFinite(headlineAmount) ? formatCurrency(headlineAmount, 'SEK') : '—'}
           </p>
         </div>
         <button

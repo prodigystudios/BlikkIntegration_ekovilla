@@ -69,3 +69,57 @@ export function computePricing(
 
   return { subtotal, vat, total, vatPercent, rotDeduction, toPay: total - rotDeduction };
 }
+
+// ─── VAT display convention (agreed with finance) ──────────────────────────────
+// How a quote's amount is presented to the seller / customer differs by customer type:
+//   • private customer  → lead with the price to pay INCL moms (what they actually pay)
+//   • business customer → lead with the price EX moms, with the moms shown alongside
+// The figures themselves come from the stored pricing_summary, which is always
+// {subtotal: ex moms, vat, total: incl moms} in both the line-item and manual-amount
+// save paths — so display is unambiguous even though the scalar `amount` is not.
+
+export type QuoteVatBreakdown = { subtotal: number; vat: number; total: number; vatPercent: number };
+
+// Resolve a quote's VAT breakdown for display. Prefers the stored pricing_summary;
+// for legacy rows that predate it, derives from the scalar amount + vat%, treating
+// `amount` as the incl-moms total (the line-item path's meaning, the common case).
+export function resolveQuoteVatBreakdown(input: {
+  pricing_summary?: { subtotal?: number; vat?: number; total?: number } | null;
+  amount?: number | string | null;
+  vat_percent?: number | string | null;
+}): QuoteVatBreakdown {
+  const vatPercent = parseDecimal(input.vat_percent, 25);
+  const ps = input.pricing_summary;
+  const isNum = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
+  if (ps && isNum(ps.subtotal) && isNum(ps.total)) {
+    const vat = isNum(ps.vat) ? ps.vat : ps.total - ps.subtotal;
+    return { subtotal: ps.subtotal, vat, total: ps.total, vatPercent };
+  }
+  // Legacy fallback: treat the scalar amount as the incl-moms total and split out moms.
+  const total = parseDecimal(input.amount, 0);
+  const subtotal = vatPercent > 0 ? total / (1 + vatPercent / 100) : total;
+  return { subtotal, vat: total - subtotal, total, vatPercent };
+}
+
+export type QuoteAmountDisplay = {
+  isPrivate: boolean;
+  primary: number;      // the headline figure for this customer type
+  primaryLabel: string; // label for the headline ('Att betala inkl. moms' | 'Belopp ex moms')
+  basisSuffix: string;  // compact basis tag for list rows ('inkl. moms' | 'ex moms')
+} & QuoteVatBreakdown;
+
+// Apply the display convention to a resolved breakdown. Pure — the caller formats the
+// numbers (locale/currency) so this stays unit-testable and UI-agnostic.
+export function quoteAmountDisplay(
+  quoteType: 'private' | 'business',
+  breakdown: QuoteVatBreakdown,
+): QuoteAmountDisplay {
+  const isPrivate = quoteType === 'private';
+  return {
+    ...breakdown,
+    isPrivate,
+    primary: isPrivate ? breakdown.total : breakdown.subtotal,
+    primaryLabel: isPrivate ? 'Att betala inkl. moms' : 'Belopp ex moms',
+    basisSuffix: isPrivate ? 'inkl. moms' : 'ex moms',
+  };
+}

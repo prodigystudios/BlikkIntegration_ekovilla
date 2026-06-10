@@ -8,6 +8,7 @@ import AssigneeFilter, { matchesAssignee, type AssigneeFilterValue, type Assigne
 import { openFortnoxPdf, postFortnoxEmail } from '@/app/crm/lib/fortnoxDoc';
 import { documentRef } from '@/app/crm/lib/format';
 import DocumentNumberBadge from '@/app/crm/components/DocumentNumberBadge';
+import { resolveQuoteVatBreakdown, quoteAmountDisplay } from '@/lib/domains/crm/pricing';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -289,6 +290,9 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
   // / hide re-sync — the salesperson still needs to recover.
   const offerLocked = Boolean(detailQuote?.work_order_id) && detailQuote?.fortnox_sync_status !== 'failed';
 
+  // Amount display for the detail hero follows the same convention as the list rows.
+  const detailDisplay = detailQuote ? quoteAmountDisplay(detailQuote.quote_type, resolveQuoteVatBreakdown(detailQuote)) : null;
+
   // Load the work-orders list once and index Fortnox order numbers by work_order_id.
   useEffect(() => {
     let active = true;
@@ -541,6 +545,8 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
               const overdue = isOverdue(item);
               const statusMeta = quoteStatusMeta[item.status];
               const sellerName = item.assigned_to ? (assigneeNameById.get(item.assigned_to) || 'Okänd') : null;
+              // Private → show price incl moms; business → show ex moms (with the basis tagged).
+              const amountDisplay = quoteAmountDisplay(item.quote_type, resolveQuoteVatBreakdown(item));
 
               return (
                 <button
@@ -606,8 +612,11 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
 
                     {/* Amount + chevron (amount hidden on mobile — name takes priority) */}
                     <div className="flex items-center justify-end gap-2">
-                      <span className="hidden whitespace-nowrap text-[13px] font-bold tabular-nums text-slate-900 sm:inline sm:text-sm">
-                        {formatCurrency(item.amount, item.currency_code)}
+                      <span className="hidden flex-col items-end leading-tight sm:flex">
+                        <span className="whitespace-nowrap text-[13px] font-bold tabular-nums text-slate-900 sm:text-sm">
+                          {formatCurrency(amountDisplay.primary, item.currency_code)}
+                        </span>
+                        <span className="text-[10px] font-medium text-slate-400">{amountDisplay.basisSuffix}</span>
                       </span>
                       <svg className="shrink-0 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-slate-400" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                         <path d="M9 18l6-6-6-6" />
@@ -664,10 +673,17 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
             <div className="grid flex-1 gap-5 overflow-y-auto px-5 py-5">
               {/* Hero: amount + key dates */}
               <div className="rounded-xl border border-[#e3e9df] bg-[#f6f9f3] p-4">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Belopp</div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">{detailDisplay?.primaryLabel ?? 'Belopp'}</div>
                 <div className="mt-0.5 text-[1.75rem] font-bold leading-none tracking-tight text-slate-900 tabular-nums">
-                  {formatCurrency(detailQuote.amount, detailQuote.currency_code)}
+                  {formatCurrency(detailDisplay?.primary ?? detailQuote.amount, detailQuote.currency_code)}
                 </div>
+                {detailDisplay ? (
+                  <div className="mt-2 flex flex-wrap gap-x-4 gap-y-0.5 text-[11px] text-slate-500">
+                    <span>Ex moms <span className="font-medium text-slate-600 tabular-nums">{formatCurrency(detailDisplay.subtotal, detailQuote.currency_code)}</span></span>
+                    <span>Moms ({detailDisplay.vatPercent} %) <span className="font-medium text-slate-600 tabular-nums">{formatCurrency(detailDisplay.vat, detailQuote.currency_code)}</span></span>
+                    <span>Inkl. moms <span className="font-medium text-slate-600 tabular-nums">{formatCurrency(detailDisplay.total, detailQuote.currency_code)}</span></span>
+                  </div>
+                ) : null}
                 <div className="mt-4 grid grid-cols-3 gap-3 border-t border-[#dce6d6] pt-3">
                   {([
                     ['Offertdatum', formatDate(detailQuote.quote_date), false],
