@@ -690,59 +690,6 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
               </Card>
             ) : null}
 
-            {/* Fortnox faktura */}
-            {fortnoxConnected ? (
-              <Card className="grid gap-3">
-                <div className="flex items-center justify-between gap-2">
-                  <p className={crm.sectionTitle}>Fortnox faktura</p>
-                  <span className={cn(crm.badge, syncStatusClass[workOrder.fortnox_invoice_sync_status])}>{syncStatusLabel[workOrder.fortnox_invoice_sync_status]}</span>
-                </div>
-
-                {/* Delfakturering history — one row per invoice round (empty for one-shot invoices). */}
-                {invoiceRounds.length > 0 ? (
-                  <div className="grid gap-1.5">
-                    {invoiceRounds.map((r) => (
-                      <div key={r.id} className="flex items-center justify-between gap-2 rounded-lg border border-[#e0e8dc] bg-[#f1f5ee] px-2.5 py-1.5">
-                        <div className="min-w-0">
-                          <p className="text-xs font-semibold text-slate-700">
-                            Delfaktura {r.round_number}{r.fortnox_invoice_number ? ` · #${r.fortnox_invoice_number}` : ''}
-                          </p>
-                          <p className="text-[11px] text-slate-400">{formatDateTime(r.created_at)}</p>
-                        </div>
-                        <span className="shrink-0 text-xs tabular-nums text-slate-600">{formatCurrency(r.amount, workOrder.currency_code)}</span>
-                      </div>
-                    ))}
-                  </div>
-                ) : null}
-
-                {workOrder.status === 'invoiced' && workOrder.fortnox_invoice_number ? (
-                  <>
-                    <StatField label="Fakturanummer" value={`#${workOrder.fortnox_invoice_number}`} />
-                    {workOrder.fortnox_invoiced_at ? (
-                      <p className="text-xs text-slate-400">Skapad {formatDateTime(workOrder.fortnox_invoiced_at)}</p>
-                    ) : null}
-                    <p className="text-[11px] leading-4 text-slate-400">
-                      {invoiceRounds.length > 1 ? 'Alla delfakturor finns i Fortnox. Slutför faktureringen där.' : 'Fakturautkast finns i Fortnox. Slutför faktureringen där.'}
-                    </p>
-                  </>
-                ) : workOrder.status === 'completed' || workOrder.status === 'partially_invoiced' ? (
-                  <>
-                    <div className="grid gap-2">
-                      <button type="button" onClick={createInvoice} disabled={creatingInvoice || submittingPartial} className={cn(crm.saveButton, 'h-10 w-full')}>
-                        {creatingInvoice ? 'Skapar…' : workOrder.status === 'partially_invoiced' ? 'Fakturera resten' : 'Fakturera allt'}
-                      </button>
-                      <button type="button" onClick={() => setShowPartialModal(true)} disabled={creatingInvoice || submittingPartial} className={cn(crm.ghostButton, 'h-10 w-full')}>
-                        Delfakturera…
-                      </button>
-                    </div>
-                    <p className="text-[11px] leading-4 text-slate-400">Skapar fakturautkast i Fortnox. Bokföring och utskick görs sedan i Fortnox.</p>
-                  </>
-                ) : (
-                  <p className="text-[11px] leading-4 text-slate-400">Sätt arbetsordern till “Fakturera” för att skapa en faktura i Fortnox.</p>
-                )}
-              </Card>
-            ) : null}
-
             {/* Snapshot */}
             <Card className="grid gap-3">
               <p className={crm.sectionTitle}>Snabböversikt</p>
@@ -761,6 +708,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
 
       {/* ─── Economy ─── */}
       {activeTab === 'economy' ? (
+        <div className="grid gap-4">
         <Card className="grid gap-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className={crm.sectionTitle}>Ekonomi</p>
@@ -787,6 +735,60 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
             </div>
           ) : null}
         </Card>
+
+        {/* Fortnox faktura — invoicing lives under Ekonomi (moved from the overview sidebar). */}
+        {fortnoxConnected ? (
+          <Card className="grid gap-3">
+            <div className="flex items-center justify-between gap-2">
+              <p className={crm.sectionTitle}>Fortnox faktura</p>
+              <span className={cn(crm.badge, syncStatusClass[workOrder.fortnox_invoice_sync_status])}>{syncStatusLabel[workOrder.fortnox_invoice_sync_status]}</span>
+            </div>
+
+            {/* Delfakturering history — one row per invoice round (empty for one-shot invoices). */}
+            {invoiceRounds.length > 0 ? (
+              <div className="grid gap-1.5">
+                {invoiceRounds.map((r) => (
+                  <div key={r.id} className="flex items-center justify-between gap-2 rounded-lg border border-[#e0e8dc] bg-[#f1f5ee] px-2.5 py-1.5">
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold text-slate-700">
+                        Delfaktura {r.round_number}{r.fortnox_invoice_number ? ` · #${r.fortnox_invoice_number}` : ''}
+                      </p>
+                      <p className="text-[11px] text-slate-400">{formatDateTime(r.created_at)}</p>
+                    </div>
+                    <span className="shrink-0 text-xs tabular-nums text-slate-600">{formatCurrency(r.amount, workOrder.currency_code)}</span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
+            {workOrder.status === 'invoiced' && workOrder.fortnox_invoice_number ? (
+              <>
+                <StatField label="Fakturanummer" value={`#${workOrder.fortnox_invoice_number}`} />
+                {workOrder.fortnox_invoiced_at ? (
+                  <p className="text-xs text-slate-400">Skapad {formatDateTime(workOrder.fortnox_invoiced_at)}</p>
+                ) : null}
+                <p className="text-[11px] leading-4 text-slate-400">
+                  {invoiceRounds.length > 1 ? 'Alla delfakturor finns i Fortnox. Slutför faktureringen där.' : 'Fakturautkast finns i Fortnox. Slutför faktureringen där.'}
+                </p>
+              </>
+            ) : workOrder.status === 'completed' || workOrder.status === 'partially_invoiced' ? (
+              <>
+                <div className="grid gap-2">
+                  <button type="button" onClick={createInvoice} disabled={creatingInvoice || submittingPartial} className={cn(crm.saveButton, 'h-10 w-full')}>
+                    {creatingInvoice ? 'Skapar…' : workOrder.status === 'partially_invoiced' ? 'Fakturera resten' : 'Fakturera allt'}
+                  </button>
+                  <button type="button" onClick={() => setShowPartialModal(true)} disabled={creatingInvoice || submittingPartial} className={cn(crm.ghostButton, 'h-10 w-full')}>
+                    Delfakturera…
+                  </button>
+                </div>
+                <p className="text-[11px] leading-4 text-slate-400">Skapar fakturautkast i Fortnox. Bokföring och utskick görs sedan i Fortnox.</p>
+              </>
+            ) : (
+              <p className="text-[11px] leading-4 text-slate-400">Sätt arbetsordern till “Fakturera” för att skapa en faktura i Fortnox.</p>
+            )}
+          </Card>
+        ) : null}
+        </div>
       ) : null}
 
       {/* ─── Articles ─── */}
