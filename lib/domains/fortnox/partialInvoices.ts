@@ -1,7 +1,7 @@
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { parseDecimal } from '@/lib/shared/number';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
-import { fortnoxGet, fortnoxPost, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
+import { fortnoxGet, fortnoxPost, fortnoxPut, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
 import { claimFortnoxPush, resolveReverseVat } from './helpers';
 import { pushWorkOrderToFortnox } from './orders';
 import { DEFAULT_ROT_HOUSE_WORK_TYPE } from './types';
@@ -203,10 +203,10 @@ export async function createPartialInvoice(
   // Validate BEFORE claiming so a bad request doesn't flip the sync status to pending.
   const { data: priorRoundsData } = await supabase
     .from('crm_work_order_invoices')
-    .select('round_number, line_quantities')
+    .select('round_number, line_quantities, fortnox_invoice_number')
     .eq('work_order_id', workOrderId)
     .order('round_number', { ascending: true });
-  const priorRounds = (priorRoundsData ?? []) as Array<{ round_number: number; line_quantities: PartialRequestLine[] | null }>;
+  const priorRounds = (priorRoundsData ?? []) as Array<{ round_number: number; line_quantities: PartialRequestLine[] | null; fortnox_invoice_number: string | null }>;
   const roundNumber = (priorRounds.length ? Math.max(...priorRounds.map((r) => r.round_number)) : 0) + 1;
 
   const state = computeInvoiceState(basis, priorRounds);
@@ -298,6 +298,19 @@ export async function createPartialInvoice(
         ...(isFinalRound ? { fortnox_invoice_number: invoiceNumber, fortnox_invoiced_at: nowIso } : {}),
       })
       .eq('id', workOrderId);
+
+    // Annotate the Fortnox order's internal Comments so finance can see it's been (part-)invoiced
+    // via standalone invoices — the order keeps no native InvoiceReference in this flow. Uses
+    // Comments (internal), NOT Remarks (printed on the customer's order confirmation). Non-fatal:
+    // the invoice is already created, so a failed annotation must not fail the round.
+    try {
+      const invoiceNumbers = [...priorRounds.map((r) => r.fortnox_invoice_number).filter(Boolean), invoiceNumber];
+      const statusLabel = isFinalRound ? 'Fulldelfakturerad (avslutad)' : 'Delfakturerad';
+      const comment = `${statusLabel} i CRM – fakturor: ${invoiceNumbers.join(', ')}`;
+      await fortnoxPut(`/orders/${orderNumber}`, { Order: { Comments: comment } });
+    } catch (annotateErr) {
+      console.error('[Fortnox] kunde inte annotera order vid delfaktura:', (annotateErr as Error)?.message);
+    }
 
     return { fortnox_invoice_number: invoiceNumber, round_number: roundNumber, status };
   } catch (e) {
