@@ -152,6 +152,7 @@ export function roundSubtotal(lineItems: PartialInvoiceLineItem[] | null, reques
 type WorkOrderRow = {
   id: string;
   status: string;
+  project_name: string | null;
   vat_percent: number | null;
   customer_id: string | null;
   customer_snapshot: { reverse_vat?: boolean | null } | null;
@@ -185,7 +186,7 @@ export async function createPartialInvoice(
 
   const { data: workOrder, error } = await supabase
     .from('crm_work_orders')
-    .select('id, status, vat_percent, customer_id, customer_snapshot, line_items, line_items_invoicing_snapshot, partial_invoicing_started_at, fortnox_order_number, rot_details')
+    .select('id, status, project_name, vat_percent, customer_id, customer_snapshot, line_items, line_items_invoicing_snapshot, partial_invoicing_started_at, fortnox_order_number, rot_details')
     .eq('id', workOrderId)
     .single<WorkOrderRow>();
 
@@ -206,6 +207,7 @@ export async function createPartialInvoice(
     .eq('work_order_id', workOrderId)
     .order('round_number', { ascending: true });
   const priorRounds = (priorRoundsData ?? []) as Array<{ round_number: number; line_quantities: PartialRequestLine[] | null }>;
+  const roundNumber = (priorRounds.length ? Math.max(...priorRounds.map((r) => r.round_number)) : 0) + 1;
 
   const state = computeInvoiceState(basis, priorRounds);
   const { requestByIndex, isFinalRound } = validatePartialRequest(state, request);
@@ -236,10 +238,19 @@ export async function createPartialInvoice(
     const invoiceRows = buildInvoiceRows(basis, requestByIndex, vatPercent, rotEnabled, reverseVat);
     if (!invoiceRows.length) throw new PartialInvoiceError('Inget antal att fakturera angavs.');
 
+    // A partial invoice is a STANDALONE Fortnox invoice (it can't use the order's createinvoice,
+    // which would lock the order after one round), so it lacks the native order↔invoice link.
+    // Stamp a human-readable reference into Remarks ("Övrigt") + YourOrderNumber so whoever handles
+    // invoicing in Fortnox — who may not have the CRM — can see which order this invoice belongs to.
+    const projectName = workOrder.project_name?.trim();
+    const remarks = `Delfaktura ${roundNumber} – avser order ${orderNumber}${projectName ? ` – ${projectName}` : ''}`;
+
     const response = await fortnoxPost<{ Invoice?: { DocumentNumber?: string | number } }>('/invoices', {
       Invoice: {
         CustomerNumber: String(header.CustomerNumber),
         InvoiceDate: new Date().toISOString().slice(0, 10),
+        Remarks: remarks,
+        YourOrderNumber: String(orderNumber),
         ...(header.OurReference ? { OurReference: header.OurReference } : {}),
         ...(header.YourReference ? { YourReference: header.YourReference } : {}),
         // No VATType on the payload (kept consistent with offers/orders): the customer card drives
@@ -260,7 +271,6 @@ export async function createPartialInvoice(
     const invoiceNumber = response.Invoice?.DocumentNumber != null ? String(response.Invoice.DocumentNumber) : '';
     if (!invoiceNumber) throw new Error('Fortnox returnerade inget fakturanummer');
 
-    const roundNumber = (priorRounds.length ? Math.max(...priorRounds.map((r) => r.round_number)) : 0) + 1;
     const lineQuantities = [...requestByIndex.entries()].map(([index, quantity]) => ({ index, quantity }));
 
     await supabase.from('crm_work_order_invoices').insert({
