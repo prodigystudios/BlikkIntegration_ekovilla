@@ -448,6 +448,13 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   const customerContact: string | null = customerInfo?.contactName ?? (snapshot.contact_name || null);
   const workAddressText = joinAddress([workOrder.work_address?.street_address, workOrder.work_address?.postal_code, workOrder.work_address?.city]);
   const rot = workOrder.rot_details || {};
+  // Reverse charge (omvänd skattskyldighet / byggmoms): a business order whose VAT is 0. Detected
+  // from the computed VAT (robust even if the work order's vat_percent column drifted to 25 — the
+  // pricing/Fortnox document are still 0), so the economy card reads "Omvänd skattskyldighet"
+  // instead of a misleading "Moms 0 kr / Moms % 25".
+  const ecoSubtotal = Number(workOrder.pricing_summary?.subtotal ?? 0);
+  const ecoVat = Number(workOrder.pricing_summary?.vat ?? 0);
+  const reverseCharge = workOrder.quote_type === 'business' && ecoVat === 0 && ecoSubtotal > 0;
   const tabs: Array<[WorkOrderTab, string]> = [
     ['overview', 'Översikt'], ['economy', 'Ekonomi'], ['articles', 'Artiklar'], ['time', 'Tid'], ['comments', 'Kommentarer'],
   ];
@@ -833,13 +840,17 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
             <p className={crm.sectionTitle}>Ekonomi</p>
             <div className="flex flex-wrap gap-2">
               <span className={cn(crm.badge, 'border-slate-200 bg-slate-50 text-slate-600')}>Delsumma {formatCurrency(workOrder.pricing_summary?.subtotal ?? 0, workOrder.currency_code)}</span>
-              <span className={cn(crm.badge, 'border-slate-200 bg-slate-50 text-slate-600')}>Moms {formatCurrency(workOrder.pricing_summary?.vat ?? 0, workOrder.currency_code)}</span>
+              {reverseCharge ? (
+                <span className={cn(crm.badge, 'border-amber-200 bg-amber-50 text-amber-700')}>Omvänd skattskyldighet</span>
+              ) : (
+                <span className={cn(crm.badge, 'border-slate-200 bg-slate-50 text-slate-600')}>Moms {formatCurrency(workOrder.pricing_summary?.vat ?? 0, workOrder.currency_code)}</span>
+              )}
               <span className={cn(crm.badge, 'border-emerald-200 bg-emerald-50 text-emerald-700')}>Total {formatCurrency(workOrder.pricing_summary?.total ?? workOrder.amount, workOrder.currency_code)}</span>
             </div>
           </div>
           <div className="grid gap-3 md:grid-cols-3">
             <StatField label="Valuta" value={workOrder.currency_code} />
-            <StatField label="Moms %" value={String(workOrder.vat_percent)} />
+            <StatField label="Moms" value={reverseCharge ? 'Omvänd skattsk.' : `${workOrder.vat_percent} %`} />
             <StatField label="ROT" value={rot.enabled ? 'Aktivt' : 'Ej aktivt'} />
           </div>
           {rot.enabled ? (

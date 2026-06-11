@@ -281,7 +281,9 @@ export async function createCrmWorkOrderFromQuote(supabase: SupabaseClient, quot
       internal_handoff: quote.internal_handoff || {},
       currency_code: quote.currency_code || 'SEK',
       amount: quote.amount || 0,
-      vat_percent: quote.vat_percent || 25,
+      // ?? not || — a reverse-charge (byggmoms) quote has vat_percent 0, and `0 || 25` would
+      // wrongly store 25 on the work order (the document/pricing stay 0, only the column drifts).
+      vat_percent: quote.vat_percent ?? 25,
       desired_installation_date: quote.internal_handoff?.desired_installation_date || null,
       source_status: quote.status,
       status: 'draft',
