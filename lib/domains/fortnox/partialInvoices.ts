@@ -1,6 +1,6 @@
 import { getSupabaseAdmin } from '@/lib/supabase/server';
-import { parseDecimal } from '@/lib/shared/number';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
+import { lineItemUnitPrice, lineItemDiscountPercent, lineItemEffectiveUnitPrice } from '@/lib/domains/crm/pricing';
 import { fortnoxGet, fortnoxPost, fortnoxPut, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
 import { claimFortnoxPush, resolveReverseVat } from './helpers';
 import { pushWorkOrderToFortnox } from './orders';
@@ -99,12 +99,6 @@ export function validatePartialRequest(
   return { requestByIndex: byIndex, isFinalRound };
 }
 
-const rowUnitPrice = (item: PartialInvoiceLineItem) =>
-  item.unit_price ? parseDecimal(item.unit_price) : (item.article_price ?? 0);
-
-const rowDiscount = (item: PartialInvoiceLineItem) =>
-  Math.min(100, Math.max(0, item.discount_percent ? parseDecimal(item.discount_percent) : 0));
-
 // Build Fortnox INVOICE rows for this round. NOTE: invoice rows use `DeliveredQuantity` (order
 // rows use OrderedQuantity, offer rows use Quantity). Quantity is this round's per-line amount;
 // only lines with a positive quantity produce a row. Discount/ROT mapping mirrors buildOrderRows.
@@ -119,12 +113,12 @@ export function buildInvoiceRows(
   (lineItems ?? []).forEach((item, index) => {
     const qty = requestByIndex.get(index) ?? 0;
     if (qty <= 0) return;
-    const discount = rowDiscount(item);
+    const discount = lineItemDiscountPercent(item);
     rows.push({
       ...(item.article_number ? { ArticleNumber: item.article_number } : {}),
       Description: item.article_name || item.line_note || 'Artikel',
       DeliveredQuantity: qty,
-      Price: rowUnitPrice(item),
+      Price: lineItemUnitPrice(item),
       // Reverse charge (byggmoms) → 0 % VAT; the invoice's VAT regime comes from the customer
       // card (synced from reverse_vat), so we match the row VAT to keep the document consistent.
       VAT: reverseVat ? 0 : vatPercent,
@@ -144,7 +138,7 @@ export function roundSubtotal(lineItems: PartialInvoiceLineItem[] | null, reques
   (lineItems ?? []).forEach((item, index) => {
     const qty = requestByIndex.get(index) ?? 0;
     if (qty <= 0) return;
-    sum += qty * Math.max(0, rowUnitPrice(item) * (1 - rowDiscount(item) / 100));
+    sum += qty * lineItemEffectiveUnitPrice(item);
   });
   return roundMoney(sum);
 }

@@ -6,6 +6,7 @@ import Input from '../../../components/ui/Input';
 import { crm } from '@/app/crm/lib/crmTokens';
 import { cn } from '@/lib/shared/cn';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
+import { lineItemEffectiveUnitPrice } from '@/lib/domains/crm/pricing';
 import { parseDecimal } from '@/lib/shared/number';
 import { formatCurrency } from '@/app/crm/lib/format';
 
@@ -29,16 +30,6 @@ type InvoiceRound = { line_quantities: PartialInvoiceLine[] | null };
 
 const roundQty = (n: number) => Math.round(n * 1e6) / 1e6;
 const fmtQty = (n: number) => String(Math.round(n * 1000) / 1000);
-
-function unitPrice(item: LineItem) {
-  return item.unit_price ? parseDecimal(item.unit_price) : (item.article_price ?? 0);
-}
-function discountPct(item: LineItem) {
-  return Math.min(100, Math.max(0, item.discount_percent ? parseDecimal(item.discount_percent) : 0));
-}
-function effectiveUnit(item: LineItem) {
-  return Math.max(0, unitPrice(item) * (1 - discountPct(item) / 100));
-}
 
 // Per-article delfakturering: enter how much of each line to invoice now. Defaults each line to
 // its remaining quantity, clamps input to [0, remaining], shows a live subtotal, and submits only
@@ -80,7 +71,7 @@ export default function WorkOrderPartialInvoiceModal({
   const billed = state.map((s) => {
     const requested = Math.max(0, parseDecimal(inputs[s.index] ?? '0'));
     const quantity = Math.min(s.remaining, roundQty(requested));
-    return { ...s, quantity, amount: quantity * effectiveUnit(s.item) };
+    return { ...s, quantity, amount: quantity * lineItemEffectiveUnitPrice(s.item) };
   });
 
   const grandTotal = billed.reduce((sum, b) => sum + b.amount, 0);

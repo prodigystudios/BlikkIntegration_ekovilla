@@ -10,6 +10,7 @@ import { cn } from '@/lib/shared/cn';
 import { crm, syncStatusLabel, syncStatusClass, workOrderStatusLabel, workOrderStatusClass, WORK_ORDER_STATUS_FLOW, WORK_ORDER_STATUS_OPTIONS } from '@/app/crm/lib/crmTokens';
 import { PhoneLink, EmailLink, AddressLink } from '@/app/crm/components/ContactLinks';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
+import { lineItemEffectiveUnitPrice } from '@/lib/domains/crm/pricing';
 import { inferMaterialFromArticle, sacksFor } from '@/lib/domains/crm/materials';
 import { parseDecimal } from '@/lib/shared/number';
 import WorkOrderTimeTab from './WorkOrderTimeTab';
@@ -143,14 +144,12 @@ function roundLineBreakdown(
 ) {
   return (lineQuantities ?? []).map((lq) => {
     const item = (lineItems[lq.index] ?? {}) as Record<string, any>;
-    const unitPrice = item.unit_price ? parseDecimal(item.unit_price) : (item.article_price ?? 0);
-    const discount = Math.min(100, Math.max(0, item.discount_percent ? parseDecimal(item.discount_percent) : 0));
     return {
       key: lq.index,
       name: item.article_name || item.line_note || 'Artikel',
       unit: item.article_unit_name || '',
       quantity: lq.quantity,
-      amount: lq.quantity * Math.max(0, unitPrice * (1 - discount / 100)),
+      amount: lq.quantity * lineItemEffectiveUnitPrice(item),
     };
   });
 }

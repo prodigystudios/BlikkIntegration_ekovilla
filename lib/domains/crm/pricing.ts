@@ -34,17 +34,29 @@ export type PricingSummary = {
   toPay: number;
 };
 
-function unitPrice(item: PricingLineItem): number {
+// Raw per-unit price: the explicit override when set, else the article's catalogue price.
+export function lineItemUnitPrice(item: Pick<PricingLineItem, 'unit_price' | 'article_price'>): number {
   const explicit = item.unit_price != null && String(item.unit_price).trim() !== '';
   return explicit ? parseDecimal(item.unit_price) : (item.article_price ?? 0);
 }
 
-// Row total = effective quantity (m³ volume or entered amount) × unit price × (1 − discount).
+// Discount percentage, clamped to [0,100].
+export function lineItemDiscountPercent(item: Pick<PricingLineItem, 'discount_percent'>): number {
+  return Math.min(100, Math.max(0, parseDecimal(item.discount_percent)));
+}
+
+// Unit price after discount (never negative). The SINGLE source of truth for every per-row money
+// calculation — line totals, recorded invoice-round amounts, the Fortnox row price basis, and the
+// UI breakdowns all derive from this, so the figure can never drift between them.
+export function lineItemEffectiveUnitPrice(
+  item: Pick<PricingLineItem, 'unit_price' | 'article_price' | 'discount_percent'>,
+): number {
+  return Math.max(0, lineItemUnitPrice(item) * (1 - lineItemDiscountPercent(item) / 100));
+}
+
+// Row total = effective quantity (m³ volume or entered amount) × discounted unit price.
 export function lineItemRowTotal(item: PricingLineItem): number {
-  const quantity = lineItemQuantity(item);
-  const discount = Math.min(100, Math.max(0, parseDecimal(item.discount_percent)));
-  const effectiveUnit = Math.max(0, unitPrice(item) * (1 - discount / 100));
-  return Math.max(0, quantity * effectiveUnit);
+  return Math.max(0, lineItemQuantity(item) * lineItemEffectiveUnitPrice(item));
 }
 
 export function computePricing(
