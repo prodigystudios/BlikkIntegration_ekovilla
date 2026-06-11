@@ -7,6 +7,7 @@ import {
 } from '@/app/crm/lib/crmTokens';
 import type { JobDisplay } from '@/lib/domains/planning/display';
 import { sacksRemaining } from '@/lib/domains/planning/reports';
+import { resolveJobType } from '@/lib/domains/planning/jobTypes';
 
 // Status label + colors for a job, reusing the CRM work-order tokens so the planning board reads
 // identically to the rest of the CRM.
@@ -61,6 +62,19 @@ export function MaterialChip({ material }: { material: string | null }) {
     <span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-[#e0e8dc] bg-[#f3f6f1] px-2 py-px text-[10px] font-semibold text-slate-600">
       <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
       {material}
+    </span>
+  );
+}
+
+// The explicit planner-set job type (with its colour) when present; otherwise the material
+// inferred from the work order.
+export function JobTypeOrMaterial({ jobType, material }: { jobType: string | null; material: string | null }) {
+  const jt = resolveJobType(jobType);
+  if (!jt) return <MaterialChip material={material} />;
+  return (
+    <span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-[#e0e8dc] bg-[#f3f6f1] px-2 py-px text-[10px] font-semibold text-slate-600">
+      <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: jt.color }} />
+      {jt.label}
     </span>
   );
 }

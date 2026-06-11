@@ -3,7 +3,8 @@ import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 import type { OpsSegment, OpsTruck } from '@/lib/domains/planning/types';
 import { parseISO, type WeekDay } from './planningDates';
-import { statusMeta, StatusPill, SackProgress, MaterialChip, JobRef } from './jobCard';
+import { JOB_TYPES } from '@/lib/domains/planning/jobTypes';
+import { statusMeta, StatusPill, SackProgress, JobTypeOrMaterial, JobRef } from './jobCard';
 
 type WeekBoardProps = {
   weekDays: WeekDay[];
@@ -16,6 +17,7 @@ type WeekBoardProps = {
   onCellDrop: (e: React.DragEvent, truckId: string, dayISO: string) => void;
   onSegDragStart: (e: React.DragEvent, seg: OpsSegment) => void;
   onSegClick: (seg: OpsSegment) => void;
+  onSetJobType: (seg: OpsSegment, jobType: string | null) => void;
 };
 
 // Which day column (0–6) a pointer x lands in, within a 7-column lane.
@@ -26,7 +28,7 @@ function dayIndexFromX(e: React.MouseEvent | React.DragEvent): number {
 }
 
 export default function WeekBoard({
-  weekDays, trucks, segments, todayISO, canWrite, placing, onCellClick, onCellDrop, onSegDragStart, onSegClick,
+  weekDays, trucks, segments, todayISO, canWrite, placing, onCellClick, onCellDrop, onSegDragStart, onSegClick, onSetJobType,
 }: WeekBoardProps) {
   const weekStart = weekDays[0].iso;
   const weekEnd = weekDays[6].iso;
@@ -131,9 +133,26 @@ export default function WeekBoard({
                               <div className="text-[11px] text-slate-500">{job.client_name}</div>
                               {job.address && <div className="mt-0.5 text-[10.5px] text-slate-400">{job.address}</div>}
                               <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                                <MaterialChip material={job.material} />
+                                <JobTypeOrMaterial jobType={seg.job_type} material={job.material} />
                                 <SackProgress planned={job.total_sacks} reported={seg.sacks_reported} />
                               </div>
+                              {canWrite && (
+                                <select
+                                  value={seg.job_type ?? ''}
+                                  onClick={(ev) => ev.stopPropagation()}
+                                  onMouseDown={(ev) => ev.stopPropagation()}
+                                  onChange={(ev) => {
+                                    ev.stopPropagation();
+                                    onSetJobType(seg, ev.target.value || null);
+                                  }}
+                                  className="mt-2 h-6 w-full rounded-lg border border-[#e0e8dc] bg-white px-1.5 text-[10px] font-semibold text-slate-500 outline-none focus:border-emerald-400"
+                                >
+                                  <option value="">Jobbtyp…</option>
+                                  {JOB_TYPES.map((t) => (
+                                    <option key={t.key} value={t.key}>{t.label}</option>
+                                  ))}
+                                </select>
+                              )}
                             </>
                           ) : (
                             <div className="text-[11px] text-slate-400">Order saknas</div>

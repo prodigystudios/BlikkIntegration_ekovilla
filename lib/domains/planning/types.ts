@@ -30,6 +30,9 @@ export type OpsSegment = {
   start_day: string; // 'YYYY-MM-DD'
   end_day: string; // 'YYYY-MM-DD'
   sort_index: number;
+  // Planner-set job type (Ekovilla/Vitull/Leverans/…) driving the card colour; null → fall back
+  // to the material inferred from the work order. See lib/domains/planning/jobTypes.ts.
+  job_type: string | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;

@@ -113,7 +113,7 @@ export default function PlanningClient({ canWrite }: { canWrite: boolean }) {
   );
 
   const move = useCallback(
-    async (id: string, patch: { truck_id?: string; start_day?: string; end_day?: string }) => {
+    async (id: string, patch: { truck_id?: string; start_day?: string; end_day?: string; job_type?: string | null }) => {
       const r = await fetch(`${API}/segments/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -190,6 +190,7 @@ export default function PlanningClient({ canWrite }: { canWrite: boolean }) {
   );
 
   const onSegClick = useCallback((seg: OpsSegment) => router.push(`/crm/arbetsorder/${seg.work_order_id}`), [router]);
+  const onSetJobType = useCallback((seg: OpsSegment, jobType: string | null) => void move(seg.id, { job_type: jobType }), [move]);
 
   // ── selection / click-to-place ───────────────────────────────────────────────
   const onSelect = useCallback((id: string) => setSelectedId((cur) => (cur === id ? null : id)), []);
@@ -356,6 +357,7 @@ export default function PlanningClient({ canWrite }: { canWrite: boolean }) {
             onCellDrop={onCellDrop}
             onSegDragStart={onSegDragStart}
             onSegClick={onSegClick}
+            onSetJobType={onSetJobType}
           />
         ) : (
           <MonthGrid
