@@ -134,6 +134,27 @@ function StatField({ label, value }: { label: string; value: React.ReactNode }) 
   );
 }
 
+// What an invoice round actually billed, per article: maps the round's stored line_quantities
+// (index + quantity) back onto the work order's line_items for the article name/unit, and
+// recomputes the row amount the same way the pricing/Fortnox row builders do.
+function roundLineBreakdown(
+  lineItems: Array<Record<string, any>>,
+  lineQuantities: Array<{ index: number; quantity: number }> | null,
+) {
+  return (lineQuantities ?? []).map((lq) => {
+    const item = (lineItems[lq.index] ?? {}) as Record<string, any>;
+    const unitPrice = item.unit_price ? parseDecimal(item.unit_price) : (item.article_price ?? 0);
+    const discount = Math.min(100, Math.max(0, item.discount_percent ? parseDecimal(item.discount_percent) : 0));
+    return {
+      key: lq.index,
+      name: item.article_name || item.line_note || 'Artikel',
+      unit: item.article_unit_name || '',
+      quantity: lq.quantity,
+      amount: lq.quantity * Math.max(0, unitPrice * (1 - discount / 100)),
+    };
+  });
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, currentUserId }: { workOrderId: string; fortnoxConnected: boolean; currentUserId: string | null }) {
@@ -150,6 +171,16 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   const [invoiceRounds, setInvoiceRounds] = useState<InvoiceRound[]>([]);
   const [showPartialModal, setShowPartialModal] = useState(false);
   const [submittingPartial, setSubmittingPartial] = useState(false);
+  const [expandedRounds, setExpandedRounds] = useState<Set<string>>(() => new Set());
+
+  function toggleRound(id: string) {
+    setExpandedRounds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
   const [orderPdfLoading, setOrderPdfLoading] = useState(false);
   const [orderEmailing, setOrderEmailing] = useState(false);
   const [editingOverview, setEditingOverview] = useState(false); // overview fields locked until unlocked
@@ -709,34 +740,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
       {/* ─── Economy ─── */}
       {activeTab === 'economy' ? (
         <div className="grid gap-4">
-        <Card className="grid gap-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className={crm.sectionTitle}>Ekonomi</p>
-            <div className="flex flex-wrap gap-2">
-              <span className={cn(crm.badge, 'border-slate-200 bg-slate-50 text-slate-600')}>Delsumma {formatCurrency(workOrder.pricing_summary?.subtotal ?? 0, workOrder.currency_code)}</span>
-              <span className={cn(crm.badge, 'border-slate-200 bg-slate-50 text-slate-600')}>Moms {formatCurrency(workOrder.pricing_summary?.vat ?? 0, workOrder.currency_code)}</span>
-              <span className={cn(crm.badge, 'border-emerald-200 bg-emerald-50 text-emerald-700')}>Total {formatCurrency(workOrder.pricing_summary?.total ?? workOrder.amount, workOrder.currency_code)}</span>
-            </div>
-          </div>
-          <div className="grid gap-3 md:grid-cols-3">
-            <StatField label="Valuta" value={workOrder.currency_code} />
-            <StatField label="Moms %" value={String(workOrder.vat_percent)} />
-            <StatField label="ROT" value={rot.enabled ? 'Aktivt' : 'Ej aktivt'} />
-          </div>
-          {rot.enabled ? (
-            <div className="grid gap-2 rounded-xl border border-[#e0e8dc] bg-[#f1f5ee] p-4">
-              <p className={crm.sectionTitle}>ROT-uppställning</p>
-              <div className="grid gap-1.5 text-sm sm:grid-cols-2">
-                {rot.property_designation ? <StatField label="Fastighetsbeteckning" value={rot.property_designation} /> : null}
-                {rot.rot_percent != null ? <StatField label="Skattereduktion" value={`${rot.rot_percent}%`} /> : null}
-                {rot.max_deduction != null ? <StatField label="Max avdrag" value={formatCurrency(rot.max_deduction, workOrder.currency_code)} /> : null}
-                {rot.brf_org_number ? <StatField label="BRF org.nr" value={rot.brf_org_number} /> : null}
-              </div>
-            </div>
-          ) : null}
-        </Card>
-
-        {/* Fortnox faktura — invoicing lives under Ekonomi (moved from the overview sidebar). */}
+        {/* Fortnox faktura — invoicing first, the economy summary below it. */}
         {fortnoxConnected ? (
           <Card className="grid gap-3">
             <div className="flex items-center justify-between gap-2">
@@ -744,20 +748,54 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
               <span className={cn(crm.badge, syncStatusClass[workOrder.fortnox_invoice_sync_status])}>{syncStatusLabel[workOrder.fortnox_invoice_sync_status]}</span>
             </div>
 
-            {/* Delfakturering history — one row per invoice round (empty for one-shot invoices). */}
+            {/* Delfakturering history — one expandable row per invoice round (empty for one-shot
+                invoices). Expanding shows exactly which articles + quantities that round billed. */}
             {invoiceRounds.length > 0 ? (
               <div className="grid gap-1.5">
-                {invoiceRounds.map((r) => (
-                  <div key={r.id} className="flex items-center justify-between gap-2 rounded-lg border border-[#e0e8dc] bg-[#f1f5ee] px-2.5 py-1.5">
-                    <div className="min-w-0">
-                      <p className="text-xs font-semibold text-slate-700">
-                        Delfaktura {r.round_number}{r.fortnox_invoice_number ? ` · #${r.fortnox_invoice_number}` : ''}
-                      </p>
-                      <p className="text-[11px] text-slate-400">{formatDateTime(r.created_at)}</p>
+                {invoiceRounds.map((r) => {
+                  const open = expandedRounds.has(r.id);
+                  const lines = roundLineBreakdown((workOrder.line_items || []) as Array<Record<string, any>>, r.line_quantities);
+                  return (
+                    <div key={r.id} className="overflow-hidden rounded-lg border border-[#e0e8dc] bg-[#f1f5ee]">
+                      <button
+                        type="button"
+                        onClick={() => toggleRound(r.id)}
+                        aria-expanded={open}
+                        className="flex w-full items-center justify-between gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-[#eaf0e6]"
+                      >
+                        <div className="flex min-w-0 items-center gap-1.5">
+                          <svg className={cn('shrink-0 text-slate-400 transition-transform', open && 'rotate-90')} width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                            <path d="M4 2l4 4-4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                          <div className="min-w-0">
+                            <p className="text-xs font-semibold text-slate-700">
+                              Delfaktura {r.round_number}{r.fortnox_invoice_number ? ` · #${r.fortnox_invoice_number}` : ''}
+                            </p>
+                            <p className="text-[11px] text-slate-400">{formatDateTime(r.created_at)}</p>
+                          </div>
+                        </div>
+                        <span className="shrink-0 text-xs tabular-nums text-slate-600">{formatCurrency(r.amount, workOrder.currency_code)}</span>
+                      </button>
+                      {open ? (
+                        <div className="grid gap-1 border-t border-[#dce4d8] px-2.5 py-1.5">
+                          {lines.length === 0 ? (
+                            <p className="text-[11px] text-slate-400">Inga rader.</p>
+                          ) : (
+                            lines.map((l, i) => (
+                              <div key={i} className="flex items-center justify-between gap-2 text-[11px]">
+                                <span className="min-w-0 truncate text-slate-600">
+                                  {l.name}
+                                  {l.quantity ? <span className="text-slate-400"> · {l.quantity}{l.unit ? ` ${l.unit}` : ''}</span> : null}
+                                </span>
+                                <span className="shrink-0 tabular-nums text-slate-500">{formatCurrency(l.amount, workOrder.currency_code)}</span>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      ) : null}
                     </div>
-                    <span className="shrink-0 text-xs tabular-nums text-slate-600">{formatCurrency(r.amount, workOrder.currency_code)}</span>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ) : null}
 
@@ -788,6 +826,34 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
             )}
           </Card>
         ) : null}
+
+        {/* Ekonomi summary — below the invoicing card. */}
+        <Card className="grid gap-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className={crm.sectionTitle}>Ekonomi</p>
+            <div className="flex flex-wrap gap-2">
+              <span className={cn(crm.badge, 'border-slate-200 bg-slate-50 text-slate-600')}>Delsumma {formatCurrency(workOrder.pricing_summary?.subtotal ?? 0, workOrder.currency_code)}</span>
+              <span className={cn(crm.badge, 'border-slate-200 bg-slate-50 text-slate-600')}>Moms {formatCurrency(workOrder.pricing_summary?.vat ?? 0, workOrder.currency_code)}</span>
+              <span className={cn(crm.badge, 'border-emerald-200 bg-emerald-50 text-emerald-700')}>Total {formatCurrency(workOrder.pricing_summary?.total ?? workOrder.amount, workOrder.currency_code)}</span>
+            </div>
+          </div>
+          <div className="grid gap-3 md:grid-cols-3">
+            <StatField label="Valuta" value={workOrder.currency_code} />
+            <StatField label="Moms %" value={String(workOrder.vat_percent)} />
+            <StatField label="ROT" value={rot.enabled ? 'Aktivt' : 'Ej aktivt'} />
+          </div>
+          {rot.enabled ? (
+            <div className="grid gap-2 rounded-xl border border-[#e0e8dc] bg-[#f1f5ee] p-4">
+              <p className={crm.sectionTitle}>ROT-uppställning</p>
+              <div className="grid gap-1.5 text-sm sm:grid-cols-2">
+                {rot.property_designation ? <StatField label="Fastighetsbeteckning" value={rot.property_designation} /> : null}
+                {rot.rot_percent != null ? <StatField label="Skattereduktion" value={`${rot.rot_percent}%`} /> : null}
+                {rot.max_deduction != null ? <StatField label="Max avdrag" value={formatCurrency(rot.max_deduction, workOrder.currency_code)} /> : null}
+                {rot.brf_org_number ? <StatField label="BRF org.nr" value={rot.brf_org_number} /> : null}
+              </div>
+            </div>
+          ) : null}
+        </Card>
         </div>
       ) : null}
 
