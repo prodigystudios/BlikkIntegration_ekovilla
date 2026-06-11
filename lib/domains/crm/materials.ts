@@ -1,3 +1,6 @@
+import { parseDecimal } from '@/lib/shared/number';
+import { lineItemQuantity, type LineItemQuantitySource } from '@/lib/domains/crm/lineItems';
+
 // Lösull materials: bag weight (kg/säck) and lambdavärde (W/m²K).
 // Single source of truth shared by egenkontroll (manual select) and the quote form's
 // sack calculation (material inferred from the article).
@@ -35,4 +38,28 @@ export function inferMaterialFromArticle(articleName: string | null | undefined)
 export function sacksFor(volumeM3: number, densityKgPerM3: number, bagWeightKg: number): number {
   if (!(volumeM3 > 0) || !(densityKgPerM3 > 0) || !(bagWeightKg > 0)) return 0;
   return Math.ceil((volumeM3 * densityKgPerM3) / bagWeightKg);
+}
+
+// A quote/work-order line carrying enough to compute its sack count: the quantity inputs
+// (pricing_mode / m2 / thickness_mm / quantity) plus the article name (→ material & bag weight)
+// and the entered density.
+export type SackLineItem = LineItemQuantitySource & {
+  article_name?: string | null;
+  density?: string | null;
+};
+
+// Whole sacks for one line. 0 unless the material resolves from the article AND a positive
+// density is set. Single source of truth so the quote work-description, the Fortnox push, and
+// the planning backlog all agree on the sack count for the same line.
+export function lineItemSacks(item: SackLineItem): number {
+  const material = inferMaterialFromArticle(item.article_name);
+  const density = parseDecimal(item.density);
+  if (!material || !(density > 0)) return 0;
+  return sacksFor(lineItemQuantity(item), density, material.bagWeight);
+}
+
+// Total whole sacks across a quote/work-order's line items.
+export function totalSacks(items: SackLineItem[] | null | undefined): number {
+  if (!Array.isArray(items)) return 0;
+  return items.reduce((sum, it) => sum + lineItemSacks(it), 0);
 }

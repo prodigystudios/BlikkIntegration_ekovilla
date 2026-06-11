@@ -1,0 +1,13 @@
+import { getCurrentUser } from '@/lib/auth/route';
+import PlanningClient from './PlanningClient';
+
+export const dynamic = 'force-dynamic';
+
+// NEW CRM-first planning (Wave 7), as a CRM surface under the CRM layout (sidebar + auth gate).
+// The CRM layout already restricts access to sales/admin (konsult passes as read-only). The API
+// enforces the real planning.* permissions; konsult cannot write.
+export default async function CrmPlaneringPage() {
+  const user = await getCurrentUser().catch(() => null);
+  const canWrite = user?.role === 'admin' || user?.role === 'sales';
+  return <PlanningClient canWrite={canWrite} />;
+}
