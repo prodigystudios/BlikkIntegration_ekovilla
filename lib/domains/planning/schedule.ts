@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { mapWorkOrderJob, type WorkOrderJobRow } from './display';
+import { reportedSacksByWorkOrder } from './reports';
 import type { OpsSegment } from './types';
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -45,6 +46,7 @@ export function mapSegment(row: RawSegment): OpsSegment {
     created_at: row.created_at,
     updated_at: row.updated_at,
     job: wo ? mapWorkOrderJob(wo) : null,
+    sacks_reported: 0,
   };
 }
 
@@ -63,7 +65,13 @@ export async function listSegments(
     .order('sort_index', { ascending: true });
 
   if (error) return { data: [], error };
-  return { data: ((data ?? []) as unknown as RawSegment[]).map(mapSegment), error: null };
+
+  const segs = ((data ?? []) as unknown as RawSegment[]).map(mapSegment);
+  // Attach each job's blown-sack total (summed across the job's segments) for the "kvar X/Y" card.
+  const ids = [...new Set(segs.map((s) => s.work_order_id))];
+  const reported = await reportedSacksByWorkOrder(supabase, ids);
+  for (const s of segs) s.sacks_reported = reported.get(s.work_order_id) ?? 0;
+  return { data: segs, error: null };
 }
 
 export async function listTrucks(supabase: SupabaseClient) {

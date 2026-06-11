@@ -4,6 +4,7 @@ import { crm } from '@/app/crm/lib/crmTokens';
 import type { OpsSegment, OpsTruck } from '@/lib/domains/planning/types';
 import type { MonthWeek } from './planningDates';
 import { statusMeta, JobRef } from './jobCard';
+import { sacksRemaining } from '@/lib/domains/planning/reports';
 
 type MonthGridProps = {
   weeks: MonthWeek[];
@@ -97,7 +98,15 @@ export default function MonthGrid({
                             <div className="flex items-baseline justify-between gap-1.5">
                               {job ? <JobRef job={job} className="text-[10px]" /> : <span className="text-[10px] text-slate-400">—</span>}
                               {job && job.total_sacks > 0 && (
-                                <span className="shrink-0 text-[9px] font-bold tabular-nums text-emerald-700">{job.total_sacks}</span>
+                                <span
+                                  className={cn(
+                                    'shrink-0 text-[9px] font-bold tabular-nums',
+                                    seg.sacks_reported > 0 ? 'text-amber-700' : 'text-emerald-700',
+                                  )}
+                                  title={seg.sacks_reported > 0 ? `kvar ${sacksRemaining(job.total_sacks, seg.sacks_reported)} / ${job.total_sacks} säck` : `${job.total_sacks} säck`}
+                                >
+                                  {seg.sacks_reported > 0 ? sacksRemaining(job.total_sacks, seg.sacks_reported) : job.total_sacks}
+                                </span>
                               )}
                             </div>
                             <div className="truncate text-[10px] text-slate-600">{job?.client_name ?? job?.project_name ?? 'Order'}</div>

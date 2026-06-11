@@ -35,4 +35,6 @@ export type OpsSegment = {
   updated_at: string;
   // The job's card data (null only if the related work order is unreadable, which shouldn't happen).
   job: JobDisplay | null;
+  // Total sacks blown for this job across all its segments' reports (per-day sack reporting).
+  sacks_reported: number;
 };

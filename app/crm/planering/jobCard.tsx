@@ -6,6 +6,7 @@ import {
   type WorkOrderStatus,
 } from '@/app/crm/lib/crmTokens';
 import type { JobDisplay } from '@/lib/domains/planning/display';
+import { sacksRemaining } from '@/lib/domains/planning/reports';
 
 // Status label + colors for a job, reusing the CRM work-order tokens so the planning board reads
 // identically to the rest of the CRM.
@@ -27,8 +28,7 @@ export function StatusPill({ status, className }: { status: string; className?: 
   );
 }
 
-// Sack badge — amber "kvar X/Y" form is for a later per-day-reporting slice; for now it's the
-// planned sack total computed from the work order's line items.
+// Planned sack total computed from the work order's line items.
 export function SackBadge({ sacks }: { sacks: number }) {
   if (!(sacks > 0)) return null;
   return (
@@ -36,6 +36,23 @@ export function SackBadge({ sacks }: { sacks: number }) {
       {sacks} säck
     </span>
   );
+}
+
+// Sack progress: once any sacks are reported as blown it switches to an amber "kvar X / Y" plus
+// the blown count; otherwise it shows the planned total.
+export function SackProgress({ planned, reported }: { planned: number; reported: number }) {
+  if (!(planned > 0) && !(reported > 0)) return null;
+  if (reported > 0) {
+    return (
+      <span className="inline-flex items-center gap-1.5">
+        <span className="whitespace-nowrap rounded-full border border-amber-200 bg-amber-50 px-2 py-px text-[10px] font-bold tabular-nums text-amber-700">
+          kvar {sacksRemaining(planned, reported)} / {planned}
+        </span>
+        <span className="text-[9.5px] font-semibold tabular-nums text-slate-400">blåsta {reported}</span>
+      </span>
+    );
+  }
+  return <SackBadge sacks={planned} />;
 }
 
 export function MaterialChip({ material }: { material: string | null }) {

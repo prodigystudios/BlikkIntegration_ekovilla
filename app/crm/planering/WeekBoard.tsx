@@ -3,7 +3,7 @@ import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 import type { OpsSegment, OpsTruck } from '@/lib/domains/planning/types';
 import { parseISO, type WeekDay } from './planningDates';
-import { statusMeta, StatusPill, SackBadge, MaterialChip, JobRef } from './jobCard';
+import { statusMeta, StatusPill, SackProgress, MaterialChip, JobRef } from './jobCard';
 
 type WeekBoardProps = {
   weekDays: WeekDay[];
@@ -132,7 +132,7 @@ export default function WeekBoard({
                               {job.address && <div className="mt-0.5 text-[10.5px] text-slate-400">{job.address}</div>}
                               <div className="mt-2 flex flex-wrap items-center gap-1.5">
                                 <MaterialChip material={job.material} />
-                                <SackBadge sacks={job.total_sacks} />
+                                <SackProgress planned={job.total_sacks} reported={seg.sacks_reported} />
                               </div>
                             </>
                           ) : (
