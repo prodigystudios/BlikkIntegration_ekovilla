@@ -1,20 +1,16 @@
-// Domain types for the new CRM-first planning (Wave 7). Pure, no React/Next — these mirror
-// the ops_* tables (supabase/sql/20260611_ops_planning_foundation.sql) and the backlog read
-// model built from crm_work_orders.
+import type { JobDisplay } from './display';
 
-// A CRM work order eligible to be scheduled, annotated for the planning backlog. The "what to
-// schedule" comes entirely from the CRM (customer, address, sacks, desired date) — no Blikk.
-export type SchedulableWorkOrder = {
+// Domain types for the new CRM-first planning (Wave 7). Pure, no React/Next — these mirror the
+// ops_* tables and the read models built from crm_work_orders. JobDisplay (display.ts) holds the
+// fields a job shows on a card (ref/customer/address/sacks/status/material), shared by the backlog
+// and the scheduled segments so a job looks identical wherever it appears.
+
+// A CRM work order eligible to be scheduled, annotated for the planning backlog.
+export type SchedulableWorkOrder = JobDisplay & {
   id: string;
-  order_number: string;
-  project_name: string;
-  client_name: string;
-  status: string;
   desired_installation_date: string | null;
-  address: string | null;
   contact_email: string | null;
   contact_phone: string | null;
-  total_sacks: number;
   // How many ops_segments already cover this order (0 = not yet placed on the calendar).
   segment_count: number;
 };
@@ -37,11 +33,6 @@ export type OpsSegment = {
   created_by: string | null;
   created_at: string;
   updated_at: string;
-  // Joined display fields from crm_work_orders (present on list/read responses).
-  work_order?: {
-    order_number: string;
-    project_name: string;
-    client_name: string;
-    status: string;
-  } | null;
+  // The job's card data (null only if the related work order is unreadable, which shouldn't happen).
+  job: JobDisplay | null;
 };

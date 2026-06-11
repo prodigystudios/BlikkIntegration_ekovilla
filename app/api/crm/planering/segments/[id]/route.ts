@@ -1,6 +1,6 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { moveSegment } from '@/lib/domains/planning/schedule';
+import { moveSegment, removeSegment } from '@/lib/domains/planning/schedule';
 import { ok, routeError, validationError, invalidUuidParam, requirePermission, moveSegmentSchema } from '../../_lib';
 
 type RouteContext = {
@@ -36,5 +36,24 @@ export async function PATCH(req: Request, context: RouteContext) {
     return ok({ item: data });
   } catch (e: any) {
     return routeError(500, 'planning_segment_move_unexpected', e?.message || 'Failed to move segment');
+  }
+}
+
+// Unschedule a placement (dragged back to the backlog / removed from the calendar).
+export async function DELETE(_req: Request, context: RouteContext) {
+  try {
+    const gate = await requirePermission('planning.schedule.write');
+    if (gate.response) return gate.response;
+
+    const badId = invalidUuidParam(context.params.id);
+    if (badId) return badId;
+
+    const supabase = createRouteHandlerClient({ cookies });
+    const { error } = await removeSegment(supabase, context.params.id);
+    if (error) return routeError(500, 'planning_segment_delete_failed', error.message);
+
+    return ok({ ok: true });
+  } catch (e: any) {
+    return routeError(500, 'planning_segment_delete_unexpected', e?.message || 'Failed to remove segment');
   }
 }

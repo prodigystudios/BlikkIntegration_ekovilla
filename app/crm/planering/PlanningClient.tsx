@@ -1,81 +1,76 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { cn } from '@/lib/shared/cn';
 import { useToast } from '@/lib/Toast';
 import { crm } from '@/app/crm/lib/crmTokens';
-import type { SchedulableWorkOrder, OpsTruck, OpsSegment } from '@/lib/domains/planning/types';
+import type { OpsSegment, OpsTruck, SchedulableWorkOrder } from '@/lib/domains/planning/types';
+import {
+  addDays, addDaysISO, buildMonthWeeks, buildWeekDays, daysBetweenInclusive, fmtISO, isoWeek, startOfWeek, swedishMonthYear,
+} from './planningDates';
+import Backlog from './Backlog';
+import WeekBoard from './WeekBoard';
+import MonthGrid from './MonthGrid';
 
-// ── small date helpers (UI-local; a richer planning date util comes with the redesign slice) ──
-function startOfWeek(d: Date): Date {
-  const x = new Date(d);
-  const dow = (x.getDay() + 6) % 7; // 0 = Monday
-  x.setDate(x.getDate() - dow);
-  x.setHours(0, 0, 0, 0);
-  return x;
-}
-function addDays(d: Date, n: number): Date {
-  const x = new Date(d);
-  x.setDate(x.getDate() + n);
-  return x;
-}
-function fmtISO(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
-function isoWeek(d: Date): number {
-  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-  const dayNum = (date.getUTCDay() + 6) % 7;
-  date.setUTCDate(date.getUTCDate() - dayNum + 3);
-  const firstThursday = new Date(Date.UTC(date.getUTCFullYear(), 0, 4));
-  return 1 + Math.round((date.getTime() - firstThursday.getTime()) / (7 * 24 * 3600 * 1000));
-}
+type View = 'week' | 'month';
+type DragData =
+  | { kind: 'backlog'; id: string }
+  | { kind: 'segment'; id: string; start: string; end: string; truckId: string };
 
-type WeekDay = { date: Date; iso: string; weekday: string; dayLabel: string; isWeekend: boolean; isToday: boolean };
+const API = '/api/crm/planering';
 
 export default function PlanningClient({ canWrite }: { canWrite: boolean }) {
   const toast = useToast();
+  const router = useRouter();
 
+  const [view, setView] = useState<View>('week');
   const [weekOffset, setWeekOffset] = useState(0);
+  const [monthOffset, setMonthOffset] = useState(0);
+
   const [backlog, setBacklog] = useState<SchedulableWorkOrder[]>([]);
   const [trucks, setTrucks] = useState<OpsTruck[]>([]);
   const [segments, setSegments] = useState<OpsSegment[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loadingBacklog, setLoadingBacklog] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
 
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const [hiddenTrucks, setHiddenTrucks] = useState<Set<string>>(new Set());
+  const [backlogDropActive, setBacklogDropActive] = useState(false);
+  const [truckPicker, setTruckPicker] = useState<{ dayISO: string; workOrderId: string } | null>(null);
+
+  const dragRef = useRef<DragData | null>(null);
   const todayISO = useMemo(() => fmtISO(new Date()), []);
 
-  const weekDays = useMemo<WeekDay[]>(() => {
-    const monday = addDays(startOfWeek(new Date()), weekOffset * 7);
-    return Array.from({ length: 7 }, (_, i) => {
-      const date = addDays(monday, i);
-      const iso = fmtISO(date);
-      return {
-        date,
-        iso,
-        weekday: date.toLocaleDateString('sv-SE', { weekday: 'short' }),
-        dayLabel: date.toLocaleDateString('sv-SE', { day: 'numeric', month: 'numeric' }),
-        isWeekend: i >= 5,
-        isToday: iso === todayISO,
-      };
-    });
-  }, [weekOffset, todayISO]);
+  // ── visible range (depends on view + offset) ──────────────────────────────
+  const weekMonday = useMemo(() => addDays(startOfWeek(new Date()), weekOffset * 7), [weekOffset]);
+  const weekDays = useMemo(() => buildWeekDays(weekMonday), [weekMonday]);
+  const monthAnchor = useMemo(() => {
+    const b = new Date();
+    b.setHours(0, 0, 0, 0);
+    b.setDate(1);
+    b.setMonth(b.getMonth() + monthOffset);
+    return b;
+  }, [monthOffset]);
+  const monthWeeks = useMemo(() => buildMonthWeeks(monthAnchor), [monthAnchor]);
 
-  const weekNo = useMemo(() => isoWeek(weekDays[0].date), [weekDays]);
-  const fromISO = weekDays[0].iso;
-  const toISO = weekDays[6].iso;
+  const range = useMemo(() => {
+    if (view === 'week') return { from: weekDays[0].iso, to: weekDays[6].iso };
+    const days = monthWeeks.flatMap((w) => w.days);
+    return { from: days[0].iso, to: days[days.length - 1].iso };
+  }, [view, weekDays, monthWeeks]);
 
+  // ── data ──────────────────────────────────────────────────────────────────
   const loadBacklog = useCallback(async () => {
-    const r = await fetch('/api/crm/planering/backlog', { cache: 'no-store' });
+    const r = await fetch(`${API}/backlog`, { cache: 'no-store' });
     const j = await r.json();
     if (!j.ok) throw new Error(j.error || 'Kunde inte hämta arbetsordrar');
     setBacklog(j.data.items as SchedulableWorkOrder[]);
   }, []);
 
-  const loadSchedule = useCallback(async (from: string, to: string) => {
-    const r = await fetch(`/api/crm/planering/segments?from=${from}&to=${to}`, { cache: 'no-store' });
+  const loadSegments = useCallback(async (from: string, to: string) => {
+    const r = await fetch(`${API}/segments?from=${from}&to=${to}`, { cache: 'no-store' });
     const j = await r.json();
     if (!j.ok) throw new Error(j.error || 'Kunde inte hämta schemat');
     setSegments(j.data.segments as OpsSegment[]);
@@ -83,229 +78,322 @@ export default function PlanningClient({ canWrite }: { canWrite: boolean }) {
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    Promise.all([loadBacklog(), loadSchedule(fromISO, toISO)])
-      .catch((e) => {
-        if (!cancelled) setError(e?.message || 'Något gick fel');
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [fromISO, toISO, loadBacklog, loadSchedule]);
+    setLoadingBacklog(true);
+    loadBacklog()
+      .catch((e) => setError(e?.message || 'Något gick fel'))
+      .finally(() => setLoadingBacklog(false));
+  }, [loadBacklog]);
 
-  const segmentsByTruckDay = useMemo(() => {
-    const map = new Map<string, OpsSegment[]>();
-    for (const seg of segments) {
-      for (const wd of weekDays) {
-        if (seg.start_day <= wd.iso && seg.end_day >= wd.iso) {
-          const key = `${seg.truck_id}|${wd.iso}`;
-          const list = map.get(key) ?? [];
-          list.push(seg);
-          map.set(key, list);
-        }
-      }
+  useEffect(() => {
+    loadSegments(range.from, range.to).catch((e) => setError(e?.message || 'Något gick fel'));
+  }, [range.from, range.to, loadSegments]);
+
+  const refresh = useCallback(async () => {
+    try {
+      await Promise.all([loadBacklog(), loadSegments(range.from, range.to)]);
+    } catch {
+      /* a transient refresh error shouldn't undo the action; next nav reloads */
     }
-    return map;
-  }, [segments, weekDays]);
+  }, [loadBacklog, loadSegments, range.from, range.to]);
 
-  const selected = useMemo(() => backlog.find((b) => b.id === selectedId) ?? null, [backlog, selectedId]);
-
+  // ── mutations ───────────────────────────────────────────────────────────────
   const place = useCallback(
-    async (truckId: string, dayISO: string) => {
-      if (!canWrite || !selectedId) return;
-      const r = await fetch('/api/crm/planering/segments', {
+    async (workOrderId: string, truckId: string, startDay: string, endDay: string) => {
+      const r = await fetch(`${API}/segments`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ work_order_id: selectedId, truck_id: truckId, start_day: dayISO, end_day: dayISO }),
+        body: JSON.stringify({ work_order_id: workOrderId, truck_id: truckId, start_day: startDay, end_day: endDay }),
       });
       const j = await r.json();
-      if (!j.ok) {
-        toast.error(j.error || 'Kunde inte placera ordern');
-        return;
-      }
-      toast.success('Order placerad i schemat');
-      setSelectedId(null);
-      try {
-        await Promise.all([loadBacklog(), loadSchedule(fromISO, toISO)]);
-      } catch {
-        /* a transient refresh error shouldn't undo the toast; next nav reloads */
+      if (!j.ok) return toast.error(j.error || 'Kunde inte placera ordern');
+      toast.success('Order placerad');
+      await refresh();
+    },
+    [refresh, toast],
+  );
+
+  const move = useCallback(
+    async (id: string, patch: { truck_id?: string; start_day?: string; end_day?: string }) => {
+      const r = await fetch(`${API}/segments/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+      const j = await r.json();
+      if (!j.ok) return toast.error(j.error || 'Kunde inte flytta jobbet');
+      await refresh();
+    },
+    [refresh, toast],
+  );
+
+  const unschedule = useCallback(
+    async (id: string) => {
+      const r = await fetch(`${API}/segments/${id}`, { method: 'DELETE' });
+      const j = await r.json();
+      if (!j.ok) return toast.error(j.error || 'Kunde inte avplanera');
+      toast.success('Jobbet avplanerat');
+      await refresh();
+    },
+    [refresh, toast],
+  );
+
+  // ── drag handlers ───────────────────────────────────────────────────────────
+  const onBacklogDragStart = useCallback((e: React.DragEvent, item: SchedulableWorkOrder) => {
+    dragRef.current = { kind: 'backlog', id: item.id };
+    e.dataTransfer.setData('text/plain', item.id);
+    e.dataTransfer.effectAllowed = 'copyMove';
+  }, []);
+
+  const onSegDragStart = useCallback((e: React.DragEvent, seg: OpsSegment) => {
+    dragRef.current = { kind: 'segment', id: seg.id, start: seg.start_day, end: seg.end_day, truckId: seg.truck_id };
+    e.dataTransfer.setData('text/plain', seg.id);
+    e.dataTransfer.effectAllowed = 'move';
+  }, []);
+
+  const onCellDrop = useCallback(
+    (_e: React.DragEvent, truckId: string, dayISO: string) => {
+      const d = dragRef.current;
+      dragRef.current = null;
+      if (!d) return;
+      if (d.kind === 'backlog') void place(d.id, truckId, dayISO, dayISO);
+      else {
+        const span = daysBetweenInclusive(d.start, d.end);
+        void move(d.id, { truck_id: truckId, start_day: dayISO, end_day: addDaysISO(dayISO, span - 1) });
       }
     },
-    [canWrite, selectedId, fromISO, toISO, loadBacklog, loadSchedule, toast],
+    [place, move],
   );
+
+  const onMonthDayDrop = useCallback(
+    (_e: React.DragEvent, dayISO: string) => {
+      const d = dragRef.current;
+      dragRef.current = null;
+      if (!d) return;
+      if (d.kind === 'backlog') setTruckPicker({ dayISO, workOrderId: d.id });
+      else {
+        const span = daysBetweenInclusive(d.start, d.end);
+        void move(d.id, { start_day: dayISO, end_day: addDaysISO(dayISO, span - 1) });
+      }
+    },
+    [move],
+  );
+
+  const onBacklogDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      setBacklogDropActive(false);
+      const d = dragRef.current;
+      dragRef.current = null;
+      if (d?.kind === 'segment') void unschedule(d.id);
+    },
+    [unschedule],
+  );
+
+  const onSegClick = useCallback((seg: OpsSegment) => router.push(`/crm/arbetsorder/${seg.work_order_id}`), [router]);
+
+  // ── selection / click-to-place ───────────────────────────────────────────────
+  const onSelect = useCallback((id: string) => setSelectedId((cur) => (cur === id ? null : id)), []);
+  const onWeekCellClick = useCallback(
+    (truckId: string, dayISO: string) => {
+      if (!selectedId) return;
+      void place(selectedId, truckId, dayISO, dayISO);
+      setSelectedId(null);
+    },
+    [selectedId, place],
+  );
+  const onMonthDayClick = useCallback(
+    (dayISO: string) => {
+      if (selectedId) setTruckPicker({ dayISO, workOrderId: selectedId });
+    },
+    [selectedId],
+  );
+  const pickTruck = useCallback(
+    (truckId: string) => {
+      if (!truckPicker) return;
+      void place(truckPicker.workOrderId, truckId, truckPicker.dayISO, truckPicker.dayISO);
+      setTruckPicker(null);
+      setSelectedId(null);
+    },
+    [truckPicker, place],
+  );
+
+  // ── filters ───────────────────────────────────────────────────────────────
+  const q = search.trim().toLowerCase();
+  const matchJob = useCallback(
+    (j: { ref: string; client_name: string; project_name: string; address: string | null }) =>
+      !q || [j.ref, j.client_name, j.project_name, j.address].some((v) => (v ?? '').toLowerCase().includes(q)),
+    [q],
+  );
+  const visibleBacklog = useMemo(() => backlog.filter((b) => matchJob(b)), [backlog, matchJob]);
+  const visibleSegments = useMemo(
+    () => segments.filter((s) => !hiddenTrucks.has(s.truck_id) && (s.job ? matchJob(s.job) : true)),
+    [segments, hiddenTrucks, matchJob],
+  );
+  const visibleTrucks = useMemo(() => trucks.filter((t) => !hiddenTrucks.has(t.id)), [trucks, hiddenTrucks]);
+
+  const toggleTruck = (id: string) =>
+    setHiddenTrucks((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const goToday = () => (view === 'week' ? setWeekOffset(0) : setMonthOffset(0));
+  const goPrev = () => (view === 'week' ? setWeekOffset((o) => o - 1) : setMonthOffset((o) => o - 1));
+  const goNext = () => (view === 'week' ? setWeekOffset((o) => o + 1) : setMonthOffset((o) => o + 1));
+
+  const navLabel = view === 'week' ? swedishMonthYear(weekMonday) : swedishMonthYear(monthAnchor);
+  const placing = canWrite && !!selectedId;
+  const selected = backlog.find((b) => b.id === selectedId) ?? null;
 
   return (
     <div>
       {/* Header */}
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className={crm.pageTitle}>Planering</h1>
           <p className={crm.pageSubtitle}>Schemalägg arbetsordrar på bilar.</p>
         </div>
+
+        <div className="inline-flex rounded-xl border border-[#e0e8dc] bg-white p-0.5">
+          {(['week', 'month'] as View[]).map((v) => (
+            <button
+              key={v}
+              onClick={() => setView(v)}
+              className={cn(
+                'rounded-lg px-3.5 py-1.5 text-[12.5px] font-semibold transition',
+                view === v ? 'text-white' : 'text-slate-500 hover:text-slate-800',
+              )}
+              style={view === v ? { backgroundColor: 'var(--crm-primary)' } : undefined}
+            >
+              {v === 'week' ? 'Vecka' : 'Månad'}
+            </button>
+          ))}
+        </div>
+
         <div className="flex items-center gap-1.5">
-          <button className={crm.ghostButton} onClick={() => setWeekOffset((o) => o - 1)} aria-label="Föregående vecka">
-            ‹
-          </button>
-          <button className={crm.ghostButton} onClick={() => setWeekOffset(0)}>
-            Idag
-          </button>
-          <button className={crm.ghostButton} onClick={() => setWeekOffset((o) => o + 1)} aria-label="Nästa vecka">
-            ›
-          </button>
-          <span className="ml-1 rounded-lg border border-[#e0e8dc] bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600">
-            v.{weekNo}
-          </span>
+          <span className="mr-1 text-[13px] font-bold text-slate-700">{navLabel}</span>
+          <button className={crm.ghostButton} onClick={goPrev} aria-label="Bakåt">‹</button>
+          <button className={crm.ghostButton} onClick={goToday}>Idag</button>
+          <button className={crm.ghostButton} onClick={goNext} aria-label="Framåt">›</button>
+          {view === 'week' && (
+            <span className="ml-1 rounded-lg border border-[#e0e8dc] bg-white px-2.5 py-1 text-[11px] font-bold tabular-nums text-slate-600">
+              v.{isoWeek(weekMonday)}
+            </span>
+          )}
         </div>
       </div>
 
-      {/* Skeleton-stage banner */}
-      <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
-        Tidig version (Wave 7, skiva 1). Gamla planeringen ligger kvar orörd tills den nya är klar.
+      {/* Filters */}
+      <div className="mb-3 flex flex-wrap items-center gap-2.5">
+        <div className="relative max-w-[280px] flex-1">
+          <svg className="pointer-events-none absolute left-3 top-1/2 h-[15px] w-[15px] -translate-y-1/2 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Sök Fortnox-nr, kund eller adress…"
+            className="h-9 w-full rounded-lg border border-[#dce4d8] bg-white pl-9 pr-3 text-[13px] text-slate-900 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20"
+          />
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          {trucks.map((t) => {
+            const off = hiddenTrucks.has(t.id);
+            return (
+              <button
+                key={t.id}
+                onClick={() => toggleTruck(t.id)}
+                className={cn(
+                  'inline-flex h-[30px] items-center gap-2 rounded-full border px-3 text-[12px] font-semibold transition',
+                  off ? 'border-[#e0e8dc] bg-[#f3f6f1] text-slate-400 opacity-60' : 'border-[#e0e8dc] bg-white text-slate-600 hover:border-[#c8d4c3]',
+                )}
+              >
+                <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: t.color || '#94a3b8' }} />
+                {t.name}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
-      {error && (
-        <div className="mb-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>
+      {error && <div className="mb-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
+
+      {selected && (
+        <div className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-[12px] text-emerald-800">
+          <strong>{selected.project_name}</strong> vald — klicka {view === 'week' ? 'en cell (bil + dag)' : 'en dag'} för att placera, eller dra kortet.
+        </div>
       )}
 
       <div className="grid gap-4 lg:grid-cols-[320px_minmax(0,1fr)]">
-        {/* Backlog */}
-        <section className={`${crm.card} p-3`}>
-          <div className="mb-2 flex items-center justify-between">
-            <h2 className={crm.sectionTitle}>Att planera</h2>
-            <span className="text-[11px] text-slate-400">{backlog.length} st</span>
-          </div>
+        <Backlog
+          items={visibleBacklog}
+          loading={loadingBacklog}
+          canWrite={canWrite}
+          selectedId={selectedId}
+          onSelect={onSelect}
+          onDragStartItem={onBacklogDragStart}
+          onDropUnschedule={onBacklogDrop}
+          onDragOver={(e) => {
+            if (canWrite) {
+              e.preventDefault();
+              if (dragRef.current?.kind === 'segment') setBacklogDropActive(true);
+            }
+          }}
+          dropActive={backlogDropActive}
+        />
 
-          {loading ? (
-            <p className="py-6 text-center text-sm text-slate-400">Laddar…</p>
-          ) : backlog.length === 0 ? (
-            <p className="py-6 text-center text-sm text-slate-400">
-              Inga arbetsordrar att planera. Skapa en order i CRM:et så dyker den upp här.
-            </p>
-          ) : (
-            <ul className="grid gap-1.5">
-              {backlog.map((item) => {
-                const isSelected = item.id === selectedId;
-                return (
-                  <li key={item.id}>
-                    <button
-                      type="button"
-                      disabled={!canWrite}
-                      onClick={() => setSelectedId(isSelected ? null : item.id)}
-                      className={`w-full rounded-xl border p-2.5 text-left transition ${
-                        isSelected
-                          ? 'border-emerald-400 bg-emerald-50 ring-2 ring-emerald-500/20'
-                          : 'border-[#e0e8dc] bg-white hover:border-[#c8d4c3]'
-                      } ${canWrite ? 'cursor-pointer' : 'cursor-default'}`}
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-[13px] font-bold text-slate-900">{item.project_name}</span>
-                        <span className="shrink-0 text-[10px] font-semibold text-slate-400">{item.order_number}</span>
-                      </div>
-                      <div className="mt-0.5 text-[11px] text-slate-500">{item.client_name}</div>
-                      {item.address && <div className="text-[11px] text-slate-400">{item.address}</div>}
-                      <div className="mt-1 flex flex-wrap items-center gap-1">
-                        {item.total_sacks > 0 && (
-                          <span className={`${crm.badge} border-emerald-200 bg-emerald-50 text-emerald-700`}>
-                            {item.total_sacks} säck
-                          </span>
-                        )}
-                        {item.desired_installation_date && (
-                          <span className={`${crm.badge} border-sky-200 bg-sky-50 text-sky-700`}>
-                            Önskat {item.desired_installation_date}
-                          </span>
-                        )}
-                        {item.segment_count > 0 && (
-                          <span className={`${crm.badge} border-violet-200 bg-violet-50 text-violet-700`}>
-                            {item.segment_count} placerad{item.segment_count === 1 ? '' : 'e'}
-                          </span>
-                        )}
-                      </div>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
+        {view === 'week' ? (
+          <WeekBoard
+            weekDays={weekDays}
+            trucks={visibleTrucks}
+            segments={visibleSegments}
+            todayISO={todayISO}
+            canWrite={canWrite}
+            placing={placing}
+            onCellClick={onWeekCellClick}
+            onCellDrop={onCellDrop}
+            onSegDragStart={onSegDragStart}
+            onSegClick={onSegClick}
+          />
+        ) : (
+          <MonthGrid
+            weeks={monthWeeks}
+            trucks={trucks}
+            segments={visibleSegments}
+            todayISO={todayISO}
+            canWrite={canWrite}
+            placing={placing}
+            onDayClick={onMonthDayClick}
+            onDayDrop={onMonthDayDrop}
+            onSegDragStart={onSegDragStart}
+            onSegClick={onSegClick}
+          />
+        )}
+      </div>
 
-          {canWrite && selected && (
-            <p className="mt-2 rounded-lg bg-emerald-50 px-2 py-1.5 text-[11px] text-emerald-700">
-              <strong>{selected.project_name}</strong> vald — klicka en cell i schemat för att placera.
-            </p>
-          )}
-        </section>
-
-        {/* Schedule grid */}
-        <section className={`${crm.card} overflow-x-auto p-3`}>
-          <div className="min-w-[760px]">
-            {/* Day header row */}
-            <div className="grid grid-cols-[120px_repeat(7,minmax(96px,1fr))] gap-1">
-              <div />
-              {weekDays.map((wd) => (
-                <div
-                  key={wd.iso}
-                  className={`rounded-lg px-1.5 py-1 text-center text-[11px] font-semibold ${
-                    wd.isToday ? 'bg-emerald-100 text-emerald-800' : wd.isWeekend ? 'text-slate-400' : 'text-slate-600'
-                  }`}
+      {/* Truck picker (month placement) */}
+      {truckPicker && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4" onClick={() => setTruckPicker(null)}>
+          <div className="w-full max-w-xs rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <h3 className="mb-3 text-[13px] font-bold text-slate-900">Välj bil</h3>
+            <div className="grid gap-1.5">
+              {trucks.map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => pickTruck(t.id)}
+                  className="flex items-center gap-2.5 rounded-xl border border-[#e0e8dc] bg-white px-3 py-2 text-left text-[13px] font-semibold text-slate-700 transition hover:border-emerald-400 hover:bg-emerald-50"
                 >
-                  <div className="capitalize">{wd.weekday}</div>
-                  <div className="text-[10px] font-normal text-slate-400">{wd.dayLabel}</div>
-                </div>
+                  <span className="h-3 w-3 rounded-full" style={{ backgroundColor: t.color || '#94a3b8' }} />
+                  {t.name}
+                </button>
               ))}
             </div>
-
-            {/* Truck rows */}
-            {trucks.length === 0 ? (
-              <p className="py-6 text-center text-sm text-slate-400">Inga bilar upplagda än.</p>
-            ) : (
-              <div className="mt-1 grid gap-1">
-                {trucks.map((truck) => (
-                  <div key={truck.id} className="grid grid-cols-[120px_repeat(7,minmax(96px,1fr))] gap-1">
-                    <div className="flex items-center gap-1.5 rounded-lg bg-white px-2 py-1.5">
-                      <span
-                        className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
-                        style={{ backgroundColor: truck.color || '#94a3b8' }}
-                      />
-                      <span className="truncate text-[12px] font-semibold text-slate-700">{truck.name}</span>
-                    </div>
-                    {weekDays.map((wd) => {
-                      const cell = segmentsByTruckDay.get(`${truck.id}|${wd.iso}`) ?? [];
-                      const placeable = canWrite && !!selectedId;
-                      return (
-                        <button
-                          key={wd.iso}
-                          type="button"
-                          disabled={!placeable}
-                          onClick={() => place(truck.id, wd.iso)}
-                          className={`min-h-[52px] rounded-lg border p-1 text-left align-top transition ${
-                            wd.isWeekend ? 'border-slate-100 bg-slate-50/60' : 'border-[#e8efe5] bg-white'
-                          } ${placeable ? 'cursor-pointer hover:border-emerald-400 hover:bg-emerald-50/40' : 'cursor-default'}`}
-                        >
-                          <div className="grid gap-0.5">
-                            {cell.map((seg) => (
-                              <span
-                                key={seg.id}
-                                className="block truncate rounded-md border border-[#dbe7d6] bg-[#f1f7ef] px-1.5 py-0.5 text-[10px] font-semibold text-slate-700"
-                                title={`${seg.work_order?.order_number ?? ''} ${seg.work_order?.project_name ?? ''}`}
-                              >
-                                {seg.work_order?.project_name ?? seg.work_order?.order_number ?? 'Order'}
-                              </span>
-                            ))}
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                ))}
-              </div>
-            )}
+            <button onClick={() => setTruckPicker(null)} className={cn(crm.ghostButton, 'mt-3 w-full')}>Avbryt</button>
           </div>
-        </section>
-      </div>
+        </div>
+      )}
     </div>
   );
 }

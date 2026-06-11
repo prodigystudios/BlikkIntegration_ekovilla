@@ -1,0 +1,153 @@
+import type React from 'react';
+import { cn } from '@/lib/shared/cn';
+import { crm } from '@/app/crm/lib/crmTokens';
+import type { OpsSegment, OpsTruck } from '@/lib/domains/planning/types';
+import { parseISO, type WeekDay } from './planningDates';
+import { statusMeta, StatusPill, SackBadge, MaterialChip, JobRef } from './jobCard';
+
+type WeekBoardProps = {
+  weekDays: WeekDay[];
+  trucks: OpsTruck[];
+  segments: OpsSegment[];
+  todayISO: string;
+  canWrite: boolean;
+  placing: boolean; // a backlog item is selected → cells are placement targets
+  onCellClick: (truckId: string, dayISO: string) => void;
+  onCellDrop: (e: React.DragEvent, truckId: string, dayISO: string) => void;
+  onSegDragStart: (e: React.DragEvent, seg: OpsSegment) => void;
+  onSegClick: (seg: OpsSegment) => void;
+};
+
+// Which day column (0–6) a pointer x lands in, within a 7-column lane.
+function dayIndexFromX(e: React.MouseEvent | React.DragEvent): number {
+  const rect = e.currentTarget.getBoundingClientRect();
+  const idx = Math.floor(((e.clientX - rect.left) / rect.width) * 7);
+  return Math.max(0, Math.min(6, idx));
+}
+
+export default function WeekBoard({
+  weekDays, trucks, segments, todayISO, canWrite, placing, onCellClick, onCellDrop, onSegDragStart, onSegClick,
+}: WeekBoardProps) {
+  const weekStart = weekDays[0].iso;
+  const weekEnd = weekDays[6].iso;
+  const startMs = parseISO(weekStart).getTime();
+  const dayIndexOf = (iso: string) => Math.round((parseISO(iso).getTime() - startMs) / 86_400_000);
+
+  return (
+    <section className={cn(crm.card, 'overflow-x-auto p-3')}>
+      <div className="min-w-[1040px]">
+        {/* Day header */}
+        <div className="grid grid-cols-[112px_repeat(7,minmax(132px,1fr))]">
+          <div />
+          {weekDays.map((wd) => {
+            const isToday = wd.iso === todayISO;
+            return (
+              <div
+                key={wd.iso}
+                className={cn('rounded-lg px-1.5 py-1.5 text-center', isToday && 'bg-emerald-50')}
+              >
+                <div className={cn('text-[11.5px] font-bold capitalize', isToday ? 'text-emerald-700' : wd.isWeekend ? 'text-slate-400' : 'text-slate-600')}>
+                  {wd.weekday}
+                </div>
+                <div className={cn('text-[10px] tabular-nums', isToday ? 'text-emerald-600' : 'text-slate-400')}>{wd.dayLabel}</div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Truck lanes */}
+        {trucks.length === 0 ? (
+          <p className="py-8 text-center text-sm text-slate-400">Inga bilar upplagda än.</p>
+        ) : (
+          trucks.map((truck) => {
+            const laneSegs = segments.filter(
+              (s) => s.truck_id === truck.id && s.end_day >= weekStart && s.start_day <= weekEnd,
+            );
+            return (
+              <div key={truck.id} className="grid grid-cols-[112px_repeat(7,minmax(132px,1fr))] border-t border-[#e8efe5]">
+                <div className="flex items-start gap-2 py-3 pl-1 pr-2">
+                  <span className="mt-[3px] h-2.5 w-2.5 shrink-0 rounded-full ring-2 ring-black/[0.03]" style={{ backgroundColor: truck.color || '#94a3b8' }} />
+                  <span className="truncate text-[12.5px] font-bold text-slate-700">{truck.name}</span>
+                </div>
+
+                {/* Day-area: one drop zone; the target day is derived from the pointer x. */}
+                <div
+                  className="relative"
+                  style={{ gridColumn: '2 / -1' }}
+                  onDragOver={(e) => {
+                    if (canWrite) e.preventDefault();
+                  }}
+                  onDrop={(e) => {
+                    if (!canWrite) return;
+                    e.preventDefault();
+                    onCellDrop(e, truck.id, weekDays[dayIndexFromX(e)].iso);
+                  }}
+                  onClick={(e) => {
+                    if (placing) onCellClick(truck.id, weekDays[dayIndexFromX(e)].iso);
+                  }}
+                >
+                  {/* gridline / weekend / today background */}
+                  <div className="pointer-events-none absolute inset-0 grid grid-cols-7">
+                    {weekDays.map((wd) => (
+                      <div
+                        key={wd.iso}
+                        className={cn(
+                          'border-l border-[#e8efe5] last:border-r',
+                          wd.iso === todayISO ? 'bg-emerald-500/5' : wd.isWeekend ? 'bg-slate-400/[0.06]' : '',
+                        )}
+                      />
+                    ))}
+                  </div>
+
+                  {/* segments */}
+                  <div className={cn('relative grid grid-cols-7 content-start gap-1.5 p-1.5', placing && 'cursor-copy')} style={{ minHeight: 118 }}>
+                    {laneSegs.map((seg) => {
+                      const s = Math.max(0, dayIndexOf(seg.start_day));
+                      const e = Math.min(6, dayIndexOf(seg.end_day));
+                      const job = seg.job;
+                      return (
+                        <div
+                          key={seg.id}
+                          draggable={canWrite}
+                          onDragStart={(ev) => onSegDragStart(ev, seg)}
+                          onClick={(ev) => {
+                            ev.stopPropagation();
+                            onSegClick(seg);
+                          }}
+                          style={{ gridColumn: `${s + 1} / ${e + 2}` }}
+                          className={cn(
+                            'relative overflow-hidden rounded-xl border border-[#e0e8dc] bg-white p-2.5 pl-3.5 shadow-[0_1px_2px_rgba(20,44,27,0.06)] transition hover:-translate-y-px hover:shadow-[0_3px_10px_rgba(20,44,27,0.12)]',
+                            canWrite ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer',
+                          )}
+                        >
+                          <span className={cn('absolute inset-y-0 left-0 w-1', statusMeta(seg.job?.status ?? '').rail)} />
+                          {job ? (
+                            <>
+                              <div className="flex items-center gap-2">
+                                <JobRef job={job} />
+                                <StatusPill status={job.status} className="ml-auto" />
+                              </div>
+                              <div className="mt-1.5 text-[13px] font-bold leading-tight text-slate-900">{job.project_name}</div>
+                              <div className="text-[11px] text-slate-500">{job.client_name}</div>
+                              {job.address && <div className="mt-0.5 text-[10.5px] text-slate-400">{job.address}</div>}
+                              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                                <MaterialChip material={job.material} />
+                                <SackBadge sacks={job.total_sacks} />
+                              </div>
+                            </>
+                          ) : (
+                            <div className="text-[11px] text-slate-400">Order saknas</div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </section>
+  );
+}
