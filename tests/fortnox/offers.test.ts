@@ -25,6 +25,13 @@ describe('buildOfferRows', () => {
     expect(row.Price).toBe(700);
   });
 
+  it('forces 0 % VAT on rows for reverse charge (byggmoms), else the passed vatPercent', () => {
+    const [reverse] = buildOfferRows([{ pricing_mode: 'item', unit_price: '100', quantity: '1' }], 25, false, true);
+    expect(reverse.VAT).toBe(0);
+    const [normal] = buildOfferRows([{ pricing_mode: 'item', unit_price: '100', quantity: '1' }], 25, false, false);
+    expect(normal.VAT).toBe(25);
+  });
+
   it('adds a separate text row for measurements (m² + thickness)', () => {
     const rows = buildOfferRows([{ pricing_mode: 'm3', article_name: 'Lösull', m2: '100', thickness_mm: '200', unit_price: '700' }], 25, false);
     expect(rows).toHaveLength(2);

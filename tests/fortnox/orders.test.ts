@@ -52,4 +52,11 @@ describe('buildOrderRows', () => {
     const [withoutRot] = buildOrderRows([{ pricing_mode: 'item', unit_price: '100', quantity: '1', is_rot_work: true }], 25, false);
     expect((withoutRot as any).HouseWork).toBeUndefined();
   });
+
+  it('forces 0 % VAT on rows for reverse charge (byggmoms), else the passed vatPercent', () => {
+    const [reverse] = buildOrderRows([{ pricing_mode: 'item', unit_price: '100', quantity: '1' }], 25, false, true);
+    expect((reverse as any).VAT).toBe(0);
+    const [normal] = buildOrderRows([{ pricing_mode: 'item', unit_price: '100', quantity: '1' }], 25, false, false);
+    expect((normal as any).VAT).toBe(25);
+  });
 });

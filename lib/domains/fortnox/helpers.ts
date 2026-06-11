@@ -54,6 +54,25 @@ export async function claimFortnoxPush(
   return Array.isArray(second.data) && second.data.length > 0;
 }
 
+// Resolve whether a Fortnox document should be reverse-charge VAT (omvänd skattskyldighet /
+// byggmoms). The point-in-time `customer_snapshot.reverse_vat` is authoritative when present
+// (set at quote/order creation). Legacy rows whose snapshot predates the flag fall back to the
+// live customer record. Drives both the document VATType and the 0 % row VAT in the push.
+export async function resolveReverseVat(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  snapshotReverseVat: boolean | null | undefined,
+  customerId: string | null | undefined,
+): Promise<boolean> {
+  if (typeof snapshotReverseVat === 'boolean') return snapshotReverseVat;
+  if (!customerId) return false;
+  const { data } = await supabase
+    .from('crm_customers')
+    .select('reverse_vat')
+    .eq('id', customerId)
+    .maybeSingle();
+  return (data as { reverse_vat?: boolean | null } | null)?.reverse_vat === true;
+}
+
 // Looks up the assigned user's full name for use as OurReference in Fortnox documents.
 export async function resolveOurReference(
   userId: string | null,

@@ -16,7 +16,17 @@ function normalizeOptionalText(value: unknown) {
 // 'ready' is retired (migration 20260607 dropped it from the DB CHECK + migrated rows to
 // 'scheduled'), so it's not accepted on write. It stays in the display label/class maps
 // (crmTokens) only as a fallback for any un-migrated legacy row.
-const workOrderStatusSchema = z.enum(['draft', 'scheduled', 'in_progress', 'completed', 'invoiced', 'cancelled']);
+const workOrderStatusSchema = z.enum(['draft', 'scheduled', 'in_progress', 'completed', 'partially_invoiced', 'invoiced', 'cancelled']);
+
+// Per-article quantities for a delfakturering (partial invoice) round: how much of each line
+// item (matched by its index in line_items) to invoice now. Quantities are coerced to numbers;
+// the domain validates them against each line's remaining quantity. Swedish comma input is
+// normalised client-side before submit.
+export const partialInvoiceSchema = z.object({
+  lines: z
+    .array(z.object({ index: z.number().int().min(0), quantity: z.coerce.number().min(0) }))
+    .min(1, 'Ange minst en rad att fakturera'),
+});
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Ogiltigt datum');
 
 // Create a standalone work order (no originating quote). Customer is required; identity

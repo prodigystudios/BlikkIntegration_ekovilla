@@ -33,11 +33,17 @@ export async function PATCH(req: Request, context: RouteContext) {
 
     const wo = current.data as any;
 
-    // Lock: once a work order is invoiced (a Fortnox draft invoice exists) its articles must
-    // not change — the rows would silently diverge from the already-issued invoice and the
-    // reports' invoiced value would no longer match what was billed. The UI also hides the
-    // editor for invoiced orders; this is the server-side guarantee.
-    if (wo.status === 'invoiced' || wo.fortnox_invoice_number) {
+    // Lock: once a work order is invoiced — fully OR in part (delfakturering) — its articles must
+    // not change. The rows would silently diverge from the already-issued invoice(s) and, for
+    // partial invoicing, shifting line_items would break the array-index match used to track
+    // invoiced-vs-remaining per article. The UI hides the editor in these states; this is the
+    // server-side guarantee.
+    if (
+      wo.status === 'invoiced' ||
+      wo.status === 'partially_invoiced' ||
+      wo.fortnox_invoice_number ||
+      wo.partial_invoicing_started_at
+    ) {
       return routeError(409, 'work_order_locked', 'Arbetsordern är fakturerad och kan inte ändras.');
     }
 

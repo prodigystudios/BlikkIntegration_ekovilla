@@ -84,6 +84,12 @@ export function buildSalesOverTime(quotes: ReportQuoteRow[], orders: ReportOrder
       // created (those can differ by months). Fall back to the creation month for older
       // rows that predate fortnox_invoiced_at. NOTE: orders are fetched by created_at, so an
       // order invoiced in-range but created before the range isn't included here.
+      //
+      // DELFAKTURERING CAVEAT (deferred): a `partially_invoiced` order is excluded here, so its
+      // already-billed amount is undercounted until the final round flips it to `invoiced` (then
+      // the FULL order amount lands in the final round's month). Precise per-round attribution —
+      // summing crm_work_order_invoices.amount by each round's created_at — is roadmap D2 and is
+      // intentionally not wired in yet. `orderValue` is status-agnostic and unaffected.
       const invoicedKey = monthKey(o.fortnox_invoiced_at) || key;
       if (invoicedKey) invoicedByMonth.set(invoicedKey, (invoicedByMonth.get(invoicedKey) || 0) + num(o.amount));
     }

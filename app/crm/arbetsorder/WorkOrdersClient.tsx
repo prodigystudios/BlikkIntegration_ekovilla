@@ -12,7 +12,7 @@ import CrmModal from '@/app/crm/components/CrmModal';
 import EntityCombobox, { type EntityResult } from '@/app/crm/components/EntityCombobox';
 import { useToast } from '@/lib/Toast';
 
-type WorkOrderStatus = 'draft' | 'scheduled' | 'ready' | 'in_progress' | 'completed' | 'invoiced' | 'cancelled';
+type WorkOrderStatus = 'draft' | 'scheduled' | 'ready' | 'in_progress' | 'completed' | 'partially_invoiced' | 'invoiced' | 'cancelled';
 type FortnoxSyncStatus = 'not_synced' | 'pending' | 'synced' | 'failed';
 
 type WorkOrderItem = {
@@ -44,7 +44,9 @@ function matchesFilter(item: WorkOrderItem, filter: WorkOrderFilter) {
   if (filter === 'all') return true;
   if (filter === 'draft') return item.status === 'draft';
   if (filter === 'scheduled') return item.status === 'scheduled' || item.status === 'ready';
-  if (filter === 'completed') return item.status === 'completed';
+  // 'Fakturera' covers orders still in the invoicing stage — completed AND mid-delfakturering,
+  // so a partially-invoiced order stays visible there until it's fully invoiced ('Avslutade').
+  if (filter === 'completed') return item.status === 'completed' || item.status === 'partially_invoiced';
   if (filter === 'invoiced') return item.status === 'invoiced';
   return item.status === 'in_progress';
 }

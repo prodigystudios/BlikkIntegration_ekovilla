@@ -64,7 +64,7 @@ export const opportunityStatusClass: Record<OpportunityStatus, string> = {
 // differ, e.g. completed = "Fakturera"). `ready` is retired (migrated to scheduled);
 // `invoiced` = "Avslutad" is the terminal state set after invoicing.
 
-export type WorkOrderStatus = 'draft' | 'scheduled' | 'ready' | 'in_progress' | 'completed' | 'invoiced' | 'cancelled';
+export type WorkOrderStatus = 'draft' | 'scheduled' | 'ready' | 'in_progress' | 'completed' | 'partially_invoiced' | 'invoiced' | 'cancelled';
 
 export const workOrderStatusLabel: Record<WorkOrderStatus, string> = {
   draft: 'Ej planerad',
@@ -72,6 +72,7 @@ export const workOrderStatusLabel: Record<WorkOrderStatus, string> = {
   ready: 'Planerad', // retired status — shown as Planerad for any legacy rows
   in_progress: 'Pågående',
   completed: 'Fakturera',
+  partially_invoiced: 'Delfakturerad',
   invoiced: 'Avslutad',
   cancelled: 'Avbruten',
 };
@@ -82,6 +83,7 @@ export const workOrderStatusClass: Record<WorkOrderStatus, string> = {
   ready: 'border-sky-200 bg-sky-50 text-sky-700',
   in_progress: 'border-violet-200 bg-violet-50 text-violet-700',
   completed: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  partially_invoiced: 'border-amber-200 bg-amber-50 text-amber-700',
   invoiced: 'border-teal-200 bg-teal-50 text-teal-700',
   cancelled: 'border-rose-200 bg-rose-50 text-rose-700',
 };
@@ -93,14 +95,16 @@ export const workOrderStatusAccent: Record<WorkOrderStatus, string> = {
   ready: 'bg-sky-400',
   in_progress: 'bg-violet-400',
   completed: 'bg-emerald-500',
+  partially_invoiced: 'bg-amber-400',
   invoiced: 'bg-teal-500',
   cancelled: 'bg-rose-400',
 };
 
 // The forward flow shown as a stepper (ready retired; cancelled is off-flow).
-export const WORK_ORDER_STATUS_FLOW: WorkOrderStatus[] = ['draft', 'scheduled', 'in_progress', 'completed', 'invoiced'];
+export const WORK_ORDER_STATUS_FLOW: WorkOrderStatus[] = ['draft', 'scheduled', 'in_progress', 'completed', 'partially_invoiced', 'invoiced'];
 
-// Statuses offered in the editable status picker (flow + cancelled, no retired 'ready').
+// Statuses offered in the editable status picker. 'partially_invoiced' is system-set by the
+// delfakturering flow (not manually selectable), so it's intentionally excluded here.
 export const WORK_ORDER_STATUS_OPTIONS: WorkOrderStatus[] = ['draft', 'scheduled', 'in_progress', 'completed', 'invoiced', 'cancelled'];
 
 // ── Design Tokens ───────────────────────────────────────────────────────────

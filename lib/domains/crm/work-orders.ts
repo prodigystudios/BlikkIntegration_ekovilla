@@ -29,6 +29,7 @@ export const crmWorkOrderSelect = `
   fortnox_invoice_number,
   fortnox_invoice_sync_status,
   fortnox_invoiced_at,
+  partial_invoicing_started_at,
   created_by,
   assigned_to,
   created_at,
@@ -63,7 +64,7 @@ export const crmWorkOrderCommentSelect = `
   )
 `;
 
-export type CrmWorkOrderStatus = 'draft' | 'scheduled' | 'ready' | 'in_progress' | 'completed' | 'invoiced' | 'cancelled';
+export type CrmWorkOrderStatus = 'draft' | 'scheduled' | 'ready' | 'in_progress' | 'completed' | 'partially_invoiced' | 'invoiced' | 'cancelled';
 
 type WorkOrderAddress = {
   street_address?: string | null;
@@ -138,7 +139,7 @@ type StandaloneWorkOrderInput = {
 export async function createStandaloneCrmWorkOrder(supabase: SupabaseClient, input: StandaloneWorkOrderInput) {
   const { data: customer, error: custErr } = await supabase
     .from('crm_customers')
-    .select('id, customer_type, company_name, organization_number, first_name, last_name, personal_number, email, phone, visit_address, delivery_address, invoice_address, contacts:crm_customer_contacts(name, is_primary)')
+    .select('id, customer_type, company_name, organization_number, first_name, last_name, personal_number, email, phone, visit_address, delivery_address, invoice_address, reverse_vat, contacts:crm_customer_contacts(name, is_primary)')
     .eq('id', input.customerId)
     .maybeSingle();
 
@@ -166,6 +167,9 @@ export async function createStandaloneCrmWorkOrder(supabase: SupabaseClient, inp
     city: visit.city || null,
     delivery_address: null,
     invoice_address: null,
+    // Reverse charge (omvänd skattskyldighet / byggmoms) from the customer card — drives
+    // vat_percent below and the Fortnox VATType on push (see lib/domains/fortnox/helpers.ts).
+    reverse_vat: customer.reverse_vat === true,
   };
 
   const createResult = await supabase
@@ -191,7 +195,9 @@ export async function createStandaloneCrmWorkOrder(supabase: SupabaseClient, inp
       internal_handoff: {},
       currency_code: 'SEK',
       amount: 0,
-      vat_percent: 25,
+      // 0 % for reverse-charge (byggmoms) customers, else the standard 25 %. Mirrors the quote
+      // form's auto-default so a standalone order's pricing/display matches the Fortnox document.
+      vat_percent: customerSnapshot.reverse_vat ? 0 : 25,
       desired_installation_date: input.desiredInstallationDate,
       status: 'draft',
       notes: null,
@@ -275,7 +281,9 @@ export async function createCrmWorkOrderFromQuote(supabase: SupabaseClient, quot
       internal_handoff: quote.internal_handoff || {},
       currency_code: quote.currency_code || 'SEK',
       amount: quote.amount || 0,
-      vat_percent: quote.vat_percent || 25,
+      // ?? not || — a reverse-charge (byggmoms) quote has vat_percent 0, and `0 || 25` would
+      // wrongly store 25 on the work order (the document/pricing stay 0, only the column drifts).
+      vat_percent: quote.vat_percent ?? 25,
       desired_installation_date: quote.internal_handoff?.desired_installation_date || null,
       source_status: quote.status,
       status: 'draft',
@@ -360,6 +368,17 @@ export async function updateCrmWorkOrder(supabase: SupabaseClient, id: string, i
 
 export async function getCrmWorkOrder(supabase: SupabaseClient, id: string) {
   return supabase.from('crm_work_orders').select(crmWorkOrderSelect).eq('id', id).single();
+}
+
+// Invoice rounds (delfakturering) for a work order, oldest round first. Each row records the
+// Fortnox invoice number + the per-line quantities billed that round; the app owns this state
+// because Fortnox can't report per-article invoiced quantity back. Returns [] when none.
+export async function listWorkOrderInvoiceRounds(supabase: SupabaseClient, workOrderId: string) {
+  return supabase
+    .from('crm_work_order_invoices')
+    .select('id, round_number, fortnox_invoice_number, fortnox_sync_status, amount, line_quantities, created_at')
+    .eq('work_order_id', workOrderId)
+    .order('round_number', { ascending: true });
 }
 
 // Resolve just the customer contact (name/phone/email) for a work order. Pass an ADMIN

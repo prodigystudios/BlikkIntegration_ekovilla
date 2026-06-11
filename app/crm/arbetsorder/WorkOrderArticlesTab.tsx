@@ -42,6 +42,11 @@ function sackInfo(item: ArticleLineItem) {
   const sacks = material ? sacksFor(lineItemQuantity(item as any), parseDecimal(item.density), material.bagWeight) : 0;
   return { material, sacks };
 }
+// Swedish-formatted volume (m³) — m³ rows are priced per cubic metre, so the calculation shows
+// the computed volume (m² × thickness), not the area.
+function formatVolume(n: number) {
+  return n.toLocaleString('sv-SE', { maximumFractionDigits: 3 });
+}
 
 // ─── Article search (compact Fortnox picker) ───────────────────────────────────
 function ArticleSearch({ onSelect }: { onSelect: (a: FortnoxArticle) => void }) {
@@ -177,12 +182,17 @@ export default function WorkOrderArticlesTab({ items, currencyCode, vatPercent, 
                     <div className="grid min-w-0 gap-0.5">
                       <strong className="truncate text-slate-900">{item.article_name || 'Offert-rad'}</strong>
                       <span className="text-xs text-slate-500">
-                        {item.article_number || 'Utan artikelnummer'}{item.thickness_mm ? ` · ${item.thickness_mm} mm` : ''}{material ? ` · ${material.short}` : ''}{item.density ? ` · ${item.density} kg/m³` : ''}
+                        {item.article_number || 'Utan artikelnummer'}
+                        {mode === 'm3'
+                          ? (item.m2 || item.thickness_mm ? ` · ${item.m2 || '0'} m² × ${item.thickness_mm || '0'} mm` : '')
+                          : (item.thickness_mm ? ` · ${item.thickness_mm} mm` : '')}
+                        {material ? ` · ${material.short}` : ''}{item.density ? ` · ${item.density} kg/m³` : ''}
                       </span>
                     </div>
                     <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
                       {sacks > 0 ? <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700">{sacks} säck</span> : null}
-                      <span>{mode === 'm3' ? `m² ${item.m2 || '0'}` : `Antal ${item.quantity || '0'}`} · à {formatCurrency(parseDecimal(item.unit_price), currencyCode)}</span>
+                      {/* m³ rows are priced per m³, so show the computed volume × à-pris (not the area). */}
+                      <span>{mode === 'm3' ? `${formatVolume(lineItemQuantity(item as any))} m³` : `Antal ${item.quantity || '0'}`} · à {formatCurrency(parseDecimal(item.unit_price), currencyCode)}</span>
                       <span className="font-semibold text-slate-900">{formatCurrency(lineItemRowTotal(item as PricingLineItem), currencyCode)}</span>
                     </div>
                   </div>
