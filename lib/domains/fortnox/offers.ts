@@ -2,7 +2,7 @@ import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { parseDecimal } from '@/lib/shared/number';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
 import { fortnoxPost, fortnoxPut, fortnoxGet, fortnoxGetBinary, FortnoxApiError, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
-import { claimFortnoxPush, resolveOurReference } from './helpers';
+import { claimFortnoxPush, resolveOurReference, resolveReverseVat } from './helpers';
 import { buildFortnoxCustomerPayload, createFortnoxCustomer, splitSwedishName, buildFortnoxAddress, type FortnoxCustomerSource } from './customers';
 import { DEFAULT_ROT_HOUSE_WORK_TYPE } from './types';
 
@@ -51,6 +51,7 @@ type QuoteRow = {
     delivery_city?: string | null;
     postal_code?: string | null;
     city?: string | null;
+    reverse_vat?: boolean | null;
   } | null;
   assigned_to: string | null;
   rot_details: {
@@ -103,6 +104,7 @@ export function buildOfferRows(
   lineItems: QuoteLineItem[],
   vatPercent: number,
   rotEnabled: boolean,
+  reverseVat = false,
 ): FortnoxOfferRow[] {
   if (!lineItems.length) return [];
 
@@ -119,7 +121,10 @@ export function buildOfferRows(
       Description: item.article_name || item.line_note || 'Artikel',
       Quantity: quantity,
       Price: price,
-      VAT: vatPercent,
+      // Reverse charge (omvänd skattskyldighet / byggmoms): the seller charges 0 % output VAT;
+      // the buyer accounts for it. The document's VAT regime comes from the customer card
+      // (synced from reverse_vat); matching the row VAT here keeps the document consistent.
+      VAT: reverseVat ? 0 : vatPercent,
     };
 
     if (item.article_number) row.ArticleNumber = item.article_number;
@@ -354,8 +359,11 @@ export async function pushQuoteToFortnox(quoteId: string): Promise<PushOfferResu
 
     const vatPercent = typeof quote.vat_percent === 'number' ? quote.vat_percent : 25;
     const lineItems = Array.isArray(quote.line_items) ? quote.line_items : [];
-    const rotEnabled = quote.rot_details?.enabled === true;
-    const offerRows = buildOfferRows(lineItems, vatPercent, rotEnabled);
+    // Reverse charge (byggmoms) and ROT are mutually exclusive (B2B vs private). When reverse
+    // charge applies, rows go out at 0 % VAT (the customer card supplies the SEREVERSEDVAT regime).
+    const reverseVat = await resolveReverseVat(supabase, quote.customer_snapshot?.reverse_vat, quote.customer_id);
+    const rotEnabled = quote.rot_details?.enabled === true && !reverseVat;
+    const offerRows = buildOfferRows(lineItems, vatPercent, rotEnabled, reverseVat);
 
     const ourReference = await resolveOurReference(quote.assigned_to, supabase);
 
@@ -384,6 +392,10 @@ export async function pushQuoteToFortnox(quoteId: string): Promise<PushOfferResu
         ...(quote.valid_until ? { ExpireDate: quote.valid_until } : {}),
         ...(ourReference ? { OurReference: ourReference } : {}),
         ...(snapshot?.contact_name ? { YourReference: snapshot.contact_name } : {}),
+        // NOTE: do NOT send VATType on offers — Fortnox rejects it (400 "Felaktigt fältnamn
+        // (VATType)", offers have no such field). The document's VAT regime is taken from the
+        // customer card (kept in sync with our reverse_vat), and we send rows at the MATCHING VAT
+        // (0 % for reverse charge, else vatPercent) so header and rows are always consistent.
         ...(rotEnabled ? { TaxReductionType: 'rot' } : {}),
         ...(remarks ? { Remarks: remarks } : {}),
         ...(deliveryAddress

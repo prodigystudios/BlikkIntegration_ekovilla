@@ -15,6 +15,7 @@ import { parseDecimal } from '@/lib/shared/number';
 import WorkOrderTimeTab from './WorkOrderTimeTab';
 import WorkOrderCommentsTab from './WorkOrderCommentsTab';
 import WorkOrderArticlesTab, { type ArticleLineItem } from './WorkOrderArticlesTab';
+import WorkOrderPartialInvoiceModal, { type PartialInvoiceLine } from './WorkOrderPartialInvoiceModal';
 import { useWorkOrderActivity } from './useWorkOrderActivity';
 import { useCustomerContact } from './useCustomerContact';
 import { formatDate, formatDateTime, formatCurrency, joinAddress, isWorkOrderOverdue, documentRef } from '@/app/crm/lib/format';
@@ -22,9 +23,20 @@ import { openFortnoxPdf, postFortnoxEmail } from '@/app/crm/lib/fortnoxDoc';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-type WorkOrderStatus = 'draft' | 'scheduled' | 'ready' | 'in_progress' | 'completed' | 'invoiced' | 'cancelled';
+type WorkOrderStatus = 'draft' | 'scheduled' | 'ready' | 'in_progress' | 'completed' | 'partially_invoiced' | 'invoiced' | 'cancelled';
 type WorkOrderTab = 'overview' | 'economy' | 'articles' | 'time' | 'comments';
 type FortnoxSyncStatus = 'not_synced' | 'pending' | 'synced' | 'failed';
+
+// One delfakturering round: the per-article quantities billed + the Fortnox invoice it produced.
+type InvoiceRound = {
+  id: string;
+  round_number: number;
+  fortnox_invoice_number: string | null;
+  fortnox_sync_status: FortnoxSyncStatus;
+  amount: number | string;
+  line_quantities: Array<{ index: number; quantity: number }> | null;
+  created_at: string;
+};
 
 type LineItem = {
   id: string;
@@ -75,6 +87,7 @@ type WorkOrderItem = {
   fortnox_invoice_number: string | null;
   fortnox_invoice_sync_status: FortnoxSyncStatus;
   fortnox_invoiced_at: string | null;
+  partial_invoicing_started_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -134,6 +147,9 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   const [savingArticles, setSavingArticles] = useState(false);
   const [pushingFortnox, setPushingFortnox] = useState(false);
   const [creatingInvoice, setCreatingInvoice] = useState(false);
+  const [invoiceRounds, setInvoiceRounds] = useState<InvoiceRound[]>([]);
+  const [showPartialModal, setShowPartialModal] = useState(false);
+  const [submittingPartial, setSubmittingPartial] = useState(false);
   const [orderPdfLoading, setOrderPdfLoading] = useState(false);
   const [orderEmailing, setOrderEmailing] = useState(false);
   const [editingOverview, setEditingOverview] = useState(false); // overview fields locked until unlocked
@@ -170,6 +186,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
         if (!active) return;
         if (!res.ok || !json.ok) { setError(json?.error || 'Kunde inte ladda arbetsorder'); return; }
         applyWorkOrder(json.data?.item as WorkOrderItem);
+        setInvoiceRounds((json.data?.rounds as InvoiceRound[] | undefined) ?? []);
       } catch { if (active) setError('Kunde inte ladda arbetsorder'); }
       finally { if (active) setLoading(false); }
     }
@@ -303,22 +320,49 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
     finally { setPushingFortnox(false); }
   }
 
-  // Create a draft invoice in Fortnox from this order. Only the draft is created here —
+  // "Fakturera allt": create a draft invoice in Fortnox for the whole order (or, once
+  // delfakturering has started, for the remaining quantities). Only the draft is created here —
   // bookkeeping/sending is done by finance inside Fortnox. On success the order is marked
   // "Avslutad" (status invoiced) and the returned work order reflects that.
   async function createInvoice() {
     if (!workOrder) return;
-    if (!window.confirm('Skapa ett fakturautkast i Fortnox från den här ordern? Själva faktureringen görs sedan i Fortnox.')) return;
+    const partialStarted = workOrder.status === 'partially_invoiced' || Boolean(workOrder.partial_invoicing_started_at);
+    const prompt = partialStarted
+      ? 'Fakturera resten av ordern i Fortnox? Ett fakturautkast skapas för det som inte redan delfakturerats.'
+      : 'Skapa ett fakturautkast i Fortnox från den här ordern? Själva faktureringen görs sedan i Fortnox.';
+    if (!window.confirm(prompt)) return;
     setCreatingInvoice(true);
     try {
       const res = await fetch(`/api/crm/work-orders/${workOrder.id}/invoice`, { method: 'POST' });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte skapa faktura i Fortnox'); return; }
       if (json.data?.item) applyWorkOrder(json.data.item as WorkOrderItem);
+      if (json.data?.rounds) setInvoiceRounds(json.data.rounds as InvoiceRound[]);
       const number = (json.data?.item as WorkOrderItem | undefined)?.fortnox_invoice_number;
       toast.success(number ? `Faktura skapad i Fortnox (#${number})` : 'Faktura skapad i Fortnox');
     } catch { toast.error('Fel vid skapande av faktura'); }
     finally { setCreatingInvoice(false); }
+  }
+
+  // Delfakturering: invoice the chosen per-article quantities now (one round). On success the
+  // order becomes "Delfakturerad" — or "Avslutad" when this round bills the last of every line.
+  async function submitPartialInvoice(lines: PartialInvoiceLine[]) {
+    if (!workOrder) return;
+    setSubmittingPartial(true);
+    try {
+      const res = await fetch(`/api/crm/work-orders/${workOrder.id}/invoice/partial`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lines }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte skapa delfaktura'); return; }
+      if (json.data?.item) applyWorkOrder(json.data.item as WorkOrderItem);
+      if (json.data?.rounds) setInvoiceRounds(json.data.rounds as InvoiceRound[]);
+      setShowPartialModal(false);
+      const invoiced = (json.data?.item as WorkOrderItem | undefined)?.status === 'invoiced';
+      toast.success(invoiced ? 'Sista delfakturan skapad – ordern är avslutad' : 'Delfaktura skapad i Fortnox');
+    } catch { toast.error('Fel vid skapande av delfaktura'); }
+    finally { setSubmittingPartial(false); }
   }
 
   // Order confirmation PDF + email. Shared fetch/popup/email logic in lib/fortnoxDoc.
@@ -654,20 +698,44 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                   <span className={cn(crm.badge, syncStatusClass[workOrder.fortnox_invoice_sync_status])}>{syncStatusLabel[workOrder.fortnox_invoice_sync_status]}</span>
                 </div>
 
-                {workOrder.fortnox_invoice_number ? (
+                {/* Delfakturering history — one row per invoice round (empty for one-shot invoices). */}
+                {invoiceRounds.length > 0 ? (
+                  <div className="grid gap-1.5">
+                    {invoiceRounds.map((r) => (
+                      <div key={r.id} className="flex items-center justify-between gap-2 rounded-lg border border-[#e0e8dc] bg-[#f1f5ee] px-2.5 py-1.5">
+                        <div className="min-w-0">
+                          <p className="text-xs font-semibold text-slate-700">
+                            Delfaktura {r.round_number}{r.fortnox_invoice_number ? ` · #${r.fortnox_invoice_number}` : ''}
+                          </p>
+                          <p className="text-[11px] text-slate-400">{formatDateTime(r.created_at)}</p>
+                        </div>
+                        <span className="shrink-0 text-xs tabular-nums text-slate-600">{formatCurrency(r.amount, workOrder.currency_code)}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+
+                {workOrder.status === 'invoiced' && workOrder.fortnox_invoice_number ? (
                   <>
                     <StatField label="Fakturanummer" value={`#${workOrder.fortnox_invoice_number}`} />
                     {workOrder.fortnox_invoiced_at ? (
                       <p className="text-xs text-slate-400">Skapad {formatDateTime(workOrder.fortnox_invoiced_at)}</p>
                     ) : null}
-                    <p className="text-[11px] leading-4 text-slate-400">Fakturautkast finns i Fortnox. Slutför faktureringen där.</p>
+                    <p className="text-[11px] leading-4 text-slate-400">
+                      {invoiceRounds.length > 1 ? 'Alla delfakturor finns i Fortnox. Slutför faktureringen där.' : 'Fakturautkast finns i Fortnox. Slutför faktureringen där.'}
+                    </p>
                   </>
-                ) : workOrder.status === 'completed' ? (
+                ) : workOrder.status === 'completed' || workOrder.status === 'partially_invoiced' ? (
                   <>
-                    <button type="button" onClick={createInvoice} disabled={creatingInvoice} className={cn(crm.saveButton, 'h-10 w-full')}>
-                      {creatingInvoice ? 'Skapar…' : 'Skapa faktura i Fortnox'}
-                    </button>
-                    <p className="text-[11px] leading-4 text-slate-400">Skapar ett fakturautkast i Fortnox. Bokföring och utskick görs sedan i Fortnox.</p>
+                    <div className="grid gap-2">
+                      <button type="button" onClick={createInvoice} disabled={creatingInvoice || submittingPartial} className={cn(crm.saveButton, 'h-10 w-full')}>
+                        {creatingInvoice ? 'Skapar…' : workOrder.status === 'partially_invoiced' ? 'Fakturera resten' : 'Fakturera allt'}
+                      </button>
+                      <button type="button" onClick={() => setShowPartialModal(true)} disabled={creatingInvoice || submittingPartial} className={cn(crm.ghostButton, 'h-10 w-full')}>
+                        Delfakturera…
+                      </button>
+                    </div>
+                    <p className="text-[11px] leading-4 text-slate-400">Skapar fakturautkast i Fortnox. Bokföring och utskick görs sedan i Fortnox.</p>
                   </>
                 ) : (
                   <p className="text-[11px] leading-4 text-slate-400">Sätt arbetsordern till “Fakturera” för att skapa en faktura i Fortnox.</p>
@@ -731,7 +799,12 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
           rotDetails={workOrder.rot_details}
           saving={savingArticles}
           fortnoxConnected={fortnoxConnected}
-          canEdit={workOrder.status !== 'invoiced' && !workOrder.fortnox_invoice_number}
+          canEdit={
+            workOrder.status !== 'invoiced' &&
+            workOrder.status !== 'partially_invoiced' &&
+            !workOrder.fortnox_invoice_number &&
+            !workOrder.partial_invoicing_started_at
+          }
           onSave={saveArticles}
         />
       ) : null}
@@ -759,6 +832,18 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
           onCreate={createComment}
           onUpdate={updateComment}
           onDelete={deleteComment}
+        />
+      ) : null}
+
+      {/* Delfakturering modal — per-article quantities to invoice now. */}
+      {showPartialModal && workOrder ? (
+        <WorkOrderPartialInvoiceModal
+          lineItems={(workOrder.line_items || []) as any}
+          rounds={invoiceRounds.map((r) => ({ line_quantities: r.line_quantities }))}
+          currencyCode={workOrder.currency_code}
+          submitting={submittingPartial}
+          onClose={() => setShowPartialModal(false)}
+          onSubmit={submitPartialInvoice}
         />
       ) : null}
     </div>

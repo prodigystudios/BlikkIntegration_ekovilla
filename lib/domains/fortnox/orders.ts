@@ -2,7 +2,7 @@ import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { parseDecimal } from '@/lib/shared/number';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
 import { fortnoxGet, fortnoxGetBinary, fortnoxPost, fortnoxPut, FortnoxApiError, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
-import { claimFortnoxPush, resolveOurReference } from './helpers';
+import { claimFortnoxPush, resolveOurReference, resolveReverseVat } from './helpers';
 import { DEFAULT_ROT_HOUSE_WORK_TYPE } from './types';
 
 type WorkOrderRow = {
@@ -17,6 +17,7 @@ type WorkOrderRow = {
     delivery_city?: string | null;
     postal_code?: string | null;
     city?: string | null;
+    reverse_vat?: boolean | null;
   } | null;
   project_name: string;
   client_name: string | null;
@@ -52,7 +53,7 @@ export type CreateInvoiceResult = {
 // Exported for tests. NOTE: Fortnox order rows use `OrderedQuantity` (offer rows use
 // `Quantity`, invoice rows use `DeliveredQuantity`) — sending `Quantity` to /orders
 // returns 400 "Felaktigt fältnamn (Quantity)".
-export function buildOrderRows(lineItems: WorkOrderRow['line_items'], vatPercent: number, rotEnabled: boolean) {
+export function buildOrderRows(lineItems: WorkOrderRow['line_items'], vatPercent: number, rotEnabled: boolean, reverseVat = false) {
   if (!lineItems?.length) return [];
   return lineItems.map((item) => {
     // parseDecimal handles Swedish comma input ("1,5") that plain parseFloat truncates.
@@ -71,7 +72,9 @@ export function buildOrderRows(lineItems: WorkOrderRow['line_items'], vatPercent
       OrderedQuantity: quantity,
       DeliveredQuantity: quantity,
       Price: price,
-      VAT: vatPercent,
+      // Reverse charge (omvänd skattskyldighet / byggmoms) → 0 % output VAT on rows; the document's
+      // VAT regime comes from the customer card (synced from reverse_vat), so matching rows here.
+      VAT: reverseVat ? 0 : vatPercent,
       ...(item.article_unit_name ? { Unit: item.article_unit_name } : {}),
       // DiscountType:'PERCENT' is required — Fortnox defaults to AMOUNT (kronor), which would
       // book discount_percent as a kronor discount and diverge from the CRM total.
@@ -164,6 +167,7 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
         delivery_city?: string | null;
         postal_code?: string | null;
         city?: string | null;
+        reverse_vat?: boolean | null;
       } | null;
       rot_details: { enabled?: boolean | null } | null;
     };
@@ -230,8 +234,14 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
       const deliveryCity = snapshot?.delivery_city;
 
       const vatPercent = typeof workOrder.vat_percent === 'number' ? workOrder.vat_percent : 25;
-      const rotEnabled = linkedQuote?.rot_details?.enabled === true;
-      const orderRows = buildOrderRows(workOrder.line_items, vatPercent, rotEnabled);
+      // Reverse charge (byggmoms) excludes ROT and forces 0 % rows + SEREVERSEDVAT on the order.
+      const reverseVat = await resolveReverseVat(
+        supabase,
+        snapshot?.reverse_vat,
+        linkedQuote?.customer_id ?? workOrder.customer_id,
+      );
+      const rotEnabled = linkedQuote?.rot_details?.enabled === true && !reverseVat;
+      const orderRows = buildOrderRows(workOrder.line_items, vatPercent, rotEnabled, reverseVat);
 
       const response = await fortnoxPost<{ Order: { DocumentNumber: string } }>('/orders', {
         Order: {
@@ -239,6 +249,9 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
           OrderDate: new Date().toISOString().slice(0, 10),
           ...(ourReference ? { OurReference: ourReference } : {}),
           ...(snapshot?.contact_name ? { YourReference: snapshot.contact_name } : {}),
+          // No VATType on the payload (Fortnox rejects it on offers; we keep orders consistent):
+          // the customer card drives the VAT regime, and rows carry the matching VAT (0 % for
+          // reverse charge, see buildOrderRows) so header and rows never diverge.
           ...(rotEnabled ? { TaxReductionType: 'rot' } : {}),
           ...(deliveryAddress
             ? {

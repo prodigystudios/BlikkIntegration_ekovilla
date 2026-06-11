@@ -103,6 +103,7 @@ export function resolveQuoteVatBreakdown(input: {
 
 export type QuoteAmountDisplay = {
   isPrivate: boolean;
+  reverseCharge: boolean; // omvänd skattskyldighet (byggmoms): business customer billed at 0 % VAT
   primary: number;      // the headline figure for this customer type
   primaryLabel: string; // label for the headline ('Att betala inkl. moms' | 'Belopp ex moms')
   basisSuffix: string;  // compact basis tag for list rows ('inkl. moms' | 'ex moms')
@@ -110,16 +111,22 @@ export type QuoteAmountDisplay = {
 
 // Apply the display convention to a resolved breakdown. Pure — the caller formats the
 // numbers (locale/currency) so this stays unit-testable and UI-agnostic.
+//
+// Reverse charge (omvänd skattskyldighet / byggmoms) = a business quote at 0 % VAT: the buyer
+// accounts for the VAT, so we lead with the ex-moms amount and label it explicitly rather than
+// showing a plain "0 % moms" that reads like a waiver.
 export function quoteAmountDisplay(
   quoteType: 'private' | 'business',
   breakdown: QuoteVatBreakdown,
 ): QuoteAmountDisplay {
   const isPrivate = quoteType === 'private';
+  const reverseCharge = !isPrivate && breakdown.vatPercent === 0;
   return {
     ...breakdown,
     isPrivate,
+    reverseCharge,
     primary: isPrivate ? breakdown.total : breakdown.subtotal,
-    primaryLabel: isPrivate ? 'Att betala inkl. moms' : 'Belopp ex moms',
-    basisSuffix: isPrivate ? 'inkl. moms' : 'ex moms',
+    primaryLabel: isPrivate ? 'Att betala inkl. moms' : reverseCharge ? 'Belopp (omvänd skattskyldighet)' : 'Belopp ex moms',
+    basisSuffix: isPrivate ? 'inkl. moms' : reverseCharge ? 'omvänd skattskyldighet' : 'ex moms',
   };
 }

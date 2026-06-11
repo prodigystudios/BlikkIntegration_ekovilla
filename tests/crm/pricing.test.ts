@@ -119,5 +119,19 @@ describe('quoteAmountDisplay', () => {
     expect(d.basisSuffix).toBe('ex moms');
     expect(d.vat).toBe(25_000);
     expect(d.vatPercent).toBe(25);
+    expect(d.reverseCharge).toBe(false);
+  });
+
+  it('business at 0 % VAT → reverse charge (omvänd skattskyldighet), not a plain ex-moms', () => {
+    const d = quoteAmountDisplay('business', { subtotal: 100_000, vat: 0, total: 100_000, vatPercent: 0 });
+    expect(d.reverseCharge).toBe(true);
+    expect(d.primary).toBe(100_000);
+    expect(d.basisSuffix).toBe('omvänd skattskyldighet');
+    expect(d.primaryLabel).toBe('Belopp (omvänd skattskyldighet)');
+  });
+
+  it('private at 0 % VAT is NOT reverse charge (byggmoms is B2B only)', () => {
+    const d = quoteAmountDisplay('private', { subtotal: 100_000, vat: 0, total: 100_000, vatPercent: 0 });
+    expect(d.reverseCharge).toBe(false);
   });
 });
