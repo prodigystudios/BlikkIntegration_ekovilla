@@ -35,10 +35,12 @@ alter table public.crm_work_order_invoices enable row level security;
 
 grant select, insert, update, delete on table public.crm_work_order_invoices to authenticated;
 
--- SELECT mirrors crm_work_orders_select_visible exactly (assigned_to = auth.uid() OR admin),
--- joined through work_order_id. INSERT/UPDATE are written only by server domain code via the
--- admin (service-role) client — the same model as the work order's fortnox_* sync columns — so
--- no session-client insert/update policy is granted.
+-- SELECT mirrors the CURRENT crm_work_orders_select_visible policy (20260609_rls_permissions_*):
+-- assigned_to = auth.uid() OR has_permission('crm.workorder.read'), joined through work_order_id.
+-- This must match the work-order policy or a CRM user who can read the order would see an empty
+-- delfaktura history (RLS would hide the rounds). INSERT/UPDATE are written only by server domain
+-- code via the admin (service-role) client — the same model as the work order's fortnox_* sync
+-- columns — so no session-client insert/update policy is granted.
 drop policy if exists crm_wo_invoices_select_visible on public.crm_work_order_invoices;
 create policy crm_wo_invoices_select_visible
   on public.crm_work_order_invoices
@@ -50,10 +52,7 @@ create policy crm_wo_invoices_select_visible
       where w.id = work_order_id
         and (
           auth.uid() = w.assigned_to
-          or exists (
-            select 1 from public.profiles p
-            where p.id = auth.uid() and p.role = 'admin'
-          )
+          or public.has_permission('crm.workorder.read')
         )
     )
   );

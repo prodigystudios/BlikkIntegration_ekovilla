@@ -568,9 +568,18 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                 <>
                   <label className="grid gap-1 text-sm text-slate-600">
                     <span className={crm.sectionTitle}>Status</span>
-                    <Select value={draft.status} onChange={(e) => setField('status', e.target.value as WorkOrderStatus)}>
-                      {WORK_ORDER_STATUS_OPTIONS.map((value) => <option key={value} value={value}>{workOrderStatusLabel[value]}</option>)}
-                    </Select>
+                    {/* invoiced / partially_invoiced are system-managed by the invoicing flow and
+                        aren't in WORK_ORDER_STATUS_OPTIONS — show them read-only so the picker can't
+                        render a value-less <select> or silently regress the status on save. */}
+                    {workOrder.status === 'invoiced' || workOrder.status === 'partially_invoiced' ? (
+                      <div className="flex h-11 items-center">
+                        <span className={cn(crm.badge, workOrderStatusClass[workOrder.status])}>{workOrderStatusLabel[workOrder.status]}</span>
+                      </div>
+                    ) : (
+                      <Select value={draft.status} onChange={(e) => setField('status', e.target.value as WorkOrderStatus)}>
+                        {WORK_ORDER_STATUS_OPTIONS.map((value) => <option key={value} value={value}>{workOrderStatusLabel[value]}</option>)}
+                      </Select>
+                    )}
                   </label>
                   <label className="grid gap-1 text-sm text-slate-600">
                     <span className={crm.sectionTitle}>Ansvarig</span>

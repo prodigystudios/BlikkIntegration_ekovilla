@@ -383,7 +383,7 @@ export async function updateWorkOrderInFortnox(workOrderId: string): Promise<Pus
 
   const { data: workOrder, error } = await supabase
     .from('crm_work_orders')
-    .select('id, quote_id, vat_percent, fortnox_order_number, line_items')
+    .select('id, quote_id, customer_id, customer_snapshot, vat_percent, fortnox_order_number, line_items')
     .eq('id', workOrderId)
     .single<WorkOrderRow>();
 
@@ -405,8 +405,11 @@ export async function updateWorkOrderInFortnox(workOrderId: string): Promise<Pus
       : { data: null as { rot_details: { enabled?: boolean | null } | null } | null };
 
     const vatPercent = typeof workOrder.vat_percent === 'number' ? workOrder.vat_percent : 25;
-    const rotEnabled = (linkedQuote as any)?.rot_details?.enabled === true;
-    const orderRows = buildOrderRows(workOrder.line_items, vatPercent, rotEnabled);
+    // Reverse charge (byggmoms) must be honoured on the edit-resync too, else editing an article
+    // re-PUTs the order at 25 % VAT and silently un-does the 0 %-rate push. ROT is excluded then.
+    const reverseVat = await resolveReverseVat(supabase, workOrder.customer_snapshot?.reverse_vat, workOrder.customer_id);
+    const rotEnabled = (linkedQuote as any)?.rot_details?.enabled === true && !reverseVat;
+    const orderRows = buildOrderRows(workOrder.line_items, vatPercent, rotEnabled, reverseVat);
 
     await fortnoxPut(`/orders/${workOrder.fortnox_order_number}`, { Order: { OrderRows: orderRows } });
 
