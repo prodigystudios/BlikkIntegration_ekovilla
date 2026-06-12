@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { cn } from '@/lib/shared/cn';
 import { useToast } from '@/lib/Toast';
 import { crm } from '@/app/crm/lib/crmTokens';
@@ -176,6 +177,49 @@ export default function PlanningClient({
     loadDayNotes(range.from, range.to).catch(() => {});
     loadTruckCrew(range.from, range.to).catch(() => {});
   }, [range.from, range.to, loadSegments, loadDayNotes, loadTruckCrew]);
+
+  // ── Realtime: ~10 planners work this board at once, so reflect each other's changes live to
+  // avoid double-bookings + missed updates. Subscribe once to ops_* changes and debounce-refetch
+  // the visible board (RLS still applies, so we only receive rows we may read). The ref keeps the
+  // handler pointed at the current range/loaders without re-subscribing on every nav.
+  const [supabase] = useState(() => createClientComponentClient());
+  const reloadBoardRef = useRef<() => void>(() => {});
+  reloadBoardRef.current = () => {
+    loadSegments(range.from, range.to).catch(() => {});
+    loadDayNotes(range.from, range.to).catch(() => {});
+    loadTruckCrew(range.from, range.to).catch(() => {});
+    loadBacklog().catch(() => {});
+    loadJobTypes().catch(() => {});
+  };
+
+  useEffect(() => {
+    const tables = [
+      'ops_segments',
+      'ops_segment_crew',
+      'ops_truck_crew',
+      'ops_day_notes',
+      'ops_segment_reports',
+      'ops_work_order_confirmations',
+      'ops_trucks',
+      'ops_depots',
+      'ops_depot_deliveries',
+      'ops_job_types',
+    ];
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const ping = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => reloadBoardRef.current(), 400);
+    };
+    let ch = supabase.channel('planning-board-sync');
+    for (const table of tables) {
+      ch = ch.on('postgres_changes', { event: '*', schema: 'public', table }, ping);
+    }
+    ch.subscribe();
+    return () => {
+      if (timer) clearTimeout(timer);
+      void supabase.removeChannel(ch);
+    };
+  }, [supabase]);
 
   const refresh = useCallback(async () => {
     try {
