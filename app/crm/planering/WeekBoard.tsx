@@ -83,7 +83,7 @@ export default function WeekBoard({
             const isToday = wd.iso === todayISO;
             const hol = swedishHoliday(wd.iso);
             return (
-              <div key={wd.iso} className={cn('rounded-lg px-1.5 py-1.5 text-center', isToday ? 'bg-emerald-50' : hol && 'bg-rose-50')}>
+              <div key={wd.iso} className={cn('border-l border-[#d3ddcb] px-1.5 py-1.5 text-center last:border-r', isToday ? 'bg-emerald-50' : hol && 'bg-rose-50')}>
                 <div className={cn('text-[11.5px] font-bold capitalize', isToday ? 'text-emerald-700' : hol ? 'text-rose-600' : wd.isWeekend ? 'text-slate-400' : 'text-slate-600')}>
                   {wd.weekday}
                 </div>
@@ -115,13 +115,17 @@ export default function WeekBoard({
         {trucks.length === 0 ? (
           <p className="py-8 text-center text-sm text-slate-400">Inga bilar upplagda än.</p>
         ) : (
-          trucks.map((truck) => {
+          trucks.map((truck, ti) => {
             const laneSegs = segments.filter(
               (s) => s.truck_id === truck.id && s.end_day >= weekStart && s.start_day <= weekEnd,
             );
             const laneCrew = crewForTruckInRange(truckCrew, truck.id, weekStart, weekEnd);
             return (
-              <div key={truck.id} className="grid border-t border-[#e0e8dc]" style={{ gridTemplateColumns: laneCols }}>
+              <div
+                key={truck.id}
+                className={cn('grid border-t border-[#d3ddcb]', ti === trucks.length - 1 && 'border-b')}
+                style={{ gridTemplateColumns: laneCols }}
+              >
                 <div className="flex flex-col gap-1.5 py-3 pl-1 pr-2">
                   <div className="flex items-center gap-2">
                     <span className="h-2.5 w-2.5 shrink-0 rounded-full ring-2 ring-black/[0.03]" style={{ backgroundColor: truck.color || '#94a3b8' }} />
@@ -176,7 +180,7 @@ export default function WeekBoard({
                       <div
                         key={wd.iso}
                         className={cn(
-                          'border-l border-[#e6ede1] last:border-r',
+                          'border-l border-[#d3ddcb] last:border-r',
                           wd.iso === todayISO
                             ? 'bg-emerald-500/5'
                             : swedishHoliday(wd.iso)

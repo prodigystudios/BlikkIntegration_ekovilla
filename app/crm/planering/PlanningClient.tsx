@@ -607,7 +607,7 @@ export default function PlanningClient({
         </div>
       )}
 
-      <div className="grid gap-4 lg:grid-cols-[320px_minmax(0,1fr)]">
+      <div className="grid items-start gap-4 lg:grid-cols-[320px_minmax(0,1fr)]">
         <Backlog
           items={visibleBacklog}
           loading={loadingBacklog}
