@@ -10,7 +10,7 @@ import type { JobDisplay } from '@/lib/domains/planning/display';
 import { sacksRemaining } from '@/lib/domains/planning/reports';
 import { resolveJobType } from '@/lib/domains/planning/jobTypes';
 import { crewInitials, crewColor, type CrewMember, type AssignablePerson } from '@/lib/domains/planning/crew';
-import type { ConfirmationSummary } from '@/lib/domains/planning/confirmations';
+import { describeSmsStatus, type ConfirmationSummary } from '@/lib/domains/planning/confirmations';
 
 // Status label + colors for a job, reusing the CRM work-order tokens so the planning board reads
 // identically to the rest of the CRM.
@@ -83,26 +83,41 @@ export function JobTypeOrMaterial({ jobType, material }: { jobType: string | nul
 }
 
 // Confirmation state: a green "bekräftad" pill once an email and/or SMS has gone out to the
-// customer, with the channels + dates + recipients in the tooltip. Renders nothing until sent.
+// customer, with the channels + dates + recipients in the tooltip. When Twilio reports the SMS as
+// failed/undelivered the pill turns rose so the planner sees the customer wasn't reached. Renders
+// nothing until something is sent.
 export function ConfirmationBadge({ confirmation }: { confirmation: ConfirmationSummary }) {
-  const { email_sent_at, sms_sent_at, email_to, sms_to } = confirmation;
+  const { email_sent_at, sms_sent_at, email_to, sms_to, sms_status } = confirmation;
   if (!email_sent_at && !sms_sent_at) return null;
+
+  const sms = sms_sent_at ? describeSmsStatus(sms_status) : null;
+  const failed = sms?.tone === 'fail';
   const channels = [email_sent_at ? 'Mejl' : null, sms_sent_at ? 'SMS' : null].filter(Boolean).join(' + ');
   const title = [
     email_sent_at && `Mejl ${email_sent_at.slice(0, 10)}${email_to ? ` → ${email_to}` : ''}`,
-    sms_sent_at && `SMS ${sms_sent_at.slice(0, 10)}${sms_to ? ` → ${sms_to}` : ''}`,
+    sms_sent_at && `SMS ${sms_sent_at.slice(0, 10)}${sms_to ? ` → ${sms_to}` : ''}${sms ? ` (${sms.label})` : ''}`,
   ]
     .filter(Boolean)
     .join(' · ');
+
   return (
     <span
       title={title}
-      className="inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-emerald-200 bg-emerald-50 px-2 py-px text-[9px] font-bold text-emerald-700"
+      className={cn(
+        'inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2 py-px text-[9px] font-bold',
+        failed ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700',
+      )}
     >
-      <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M20 6L9 17l-5-5" />
-      </svg>
-      {channels}
+      {failed ? (
+        <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
+        </svg>
+      ) : (
+        <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M20 6L9 17l-5-5" />
+        </svg>
+      )}
+      {failed ? `${channels} · ej levererat` : channels}
     </span>
   );
 }

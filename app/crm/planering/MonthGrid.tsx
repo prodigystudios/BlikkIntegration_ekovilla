@@ -5,6 +5,7 @@ import type { OpsSegment, OpsTruck } from '@/lib/domains/planning/types';
 import type { MonthWeek } from './planningDates';
 import { statusMeta, JobRef, CrewAvatars } from './jobCard';
 import { sacksRemaining } from '@/lib/domains/planning/reports';
+import { describeSmsStatus } from '@/lib/domains/planning/confirmations';
 
 type MonthGridProps = {
   weeks: MonthWeek[];
@@ -98,9 +99,22 @@ export default function MonthGrid({
                             <div className="flex items-baseline justify-between gap-1.5">
                               <span className="flex min-w-0 items-center gap-1">
                                 {job ? <JobRef job={job} className="text-[10px]" /> : <span className="text-[10px] text-slate-400">—</span>}
-                                {(seg.confirmation.email_sent_at || seg.confirmation.sms_sent_at) && (
-                                  <span title="Bekräftad" className="inline-flex h-2.5 w-2.5 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-[6px] font-bold leading-none text-white">✓</span>
-                                )}
+                                {(() => {
+                                  const c = seg.confirmation;
+                                  if (!c.email_sent_at && !c.sms_sent_at) return null;
+                                  const smsFailed = describeSmsStatus(c.sms_status)?.tone === 'fail' && !c.email_sent_at;
+                                  return (
+                                    <span
+                                      title={smsFailed ? 'SMS ej levererat' : 'Bekräftad'}
+                                      className={cn(
+                                        'inline-flex h-2.5 w-2.5 shrink-0 items-center justify-center rounded-full text-[6px] font-bold leading-none text-white',
+                                        smsFailed ? 'bg-rose-500' : 'bg-emerald-500',
+                                      )}
+                                    >
+                                      {smsFailed ? '!' : '✓'}
+                                    </span>
+                                  );
+                                })()}
                               </span>
                               {job && job.total_sacks > 0 && (
                                 <span

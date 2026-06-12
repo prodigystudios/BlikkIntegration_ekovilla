@@ -87,6 +87,15 @@ export async function POST(req: NextRequest) {
 
     if (error) throw error;
 
+    // Also update the new CRM-first planning's confirmation log (Wave 7). A given MessageSid lives
+    // in at most one of the two tables, so both updates are safe no-ops otherwise. Best-effort —
+    // never let the new table break the established callback.
+    const { error: opsError } = await supabase
+      .from('ops_work_order_confirmations')
+      .update({ status: messageStatus })
+      .eq('provider_message_id', messageSid);
+    if (opsError) console.error('[api/twilio/sms-status] ops_work_order_confirmations update failed', opsError);
+
     return new NextResponse(null, { status: 204 });
   } catch (e: any) {
     console.error('[api/twilio/sms-status] error', e);

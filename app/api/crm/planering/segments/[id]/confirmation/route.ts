@@ -1,7 +1,7 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { getWorkOrderCustomerContact } from '@/lib/domains/crm/work-orders';
-import { sendOrderConfirmation } from '@/lib/domains/planning/confirmations';
+import { sendOrderConfirmation } from '@/lib/domains/planning/confirmationsSend';
 import { ok, routeError, validationError, invalidUuidParam, requirePermission, sendConfirmationSchema } from '../../../_lib';
 
 type RouteContext = {
