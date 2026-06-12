@@ -3,7 +3,7 @@ import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 import type { OpsSegment, OpsTruck } from '@/lib/domains/planning/types';
 import { type WeekDay } from './planningDates';
-import { JOB_TYPES } from '@/lib/domains/planning/jobTypes';
+import { resolveJobTypeFrom, type JobType } from '@/lib/domains/planning/jobTypes';
 import type { AssignablePerson } from '@/lib/domains/planning/crew';
 import { crewForTruckInRange, type TruckCrewMember } from '@/lib/domains/planning/truckCrew';
 import { groupNotesByDay, type DayNote } from '@/lib/domains/planning/dayNotes';
@@ -20,6 +20,7 @@ type WeekBoardProps = {
   canWrite: boolean;
   placing: boolean; // a backlog item is selected → cells are placement targets
   people: AssignablePerson[];
+  jobTypes: JobType[];
   onCellClick: (truckId: string, dayISO: string) => void;
   onCellDrop: (e: React.DragEvent, truckId: string, dayISO: string) => void;
   onSegDragStart: (e: React.DragEvent, seg: OpsSegment) => void;
@@ -45,7 +46,7 @@ function dayIndexFromX(e: React.MouseEvent | React.DragEvent, count: number): nu
 }
 
 export default function WeekBoard({
-  weekDays, showWeekend, trucks, segments, todayISO, canWrite, placing, people,
+  weekDays, showWeekend, trucks, segments, todayISO, canWrite, placing, people, jobTypes,
   onCellClick, onCellDrop, onSegDragStart, onSegClick, onSetJobType, onAddCrew, onRemoveCrew, onOpenConfirm, onToggleHold,
   dayNotes, onAddNote, onRemoveNote, truckCrew, onAddTruckCrew, onRemoveTruckCrew,
 }: WeekBoardProps) {
@@ -213,7 +214,7 @@ export default function WeekBoard({
                               )}
                               <div className="mt-2 flex flex-wrap items-center gap-1.5">
                                 {seg.on_hold && <HoldBadge />}
-                                <JobTypeOrMaterial jobType={seg.job_type} material={job.material} />
+                                <JobTypeOrMaterial jobType={resolveJobTypeFrom(jobTypes, seg.job_type)} material={job.material} />
                                 <SackProgress planned={job.total_sacks} reported={seg.sacks_reported} />
                                 <ConfirmationBadge confirmation={seg.confirmation} />
                               </div>
@@ -241,7 +242,7 @@ export default function WeekBoard({
                                   className="mt-2 h-6 w-full rounded-lg border border-[#e0e8dc] bg-white px-1.5 text-[10px] font-semibold text-slate-500 outline-none focus:border-emerald-400"
                                 >
                                   <option value="">Jobbtyp…</option>
-                                  {JOB_TYPES.map((t) => (
+                                  {jobTypes.map((t) => (
                                     <option key={t.key} value={t.key}>{t.label}</option>
                                   ))}
                                 </select>

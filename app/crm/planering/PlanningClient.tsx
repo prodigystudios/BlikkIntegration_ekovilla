@@ -9,6 +9,7 @@ import type { OpsSegment, OpsTruck, SchedulableWorkOrder } from '@/lib/domains/p
 import type { AssignablePerson, CrewMember } from '@/lib/domains/planning/crew';
 import type { DayNote } from '@/lib/domains/planning/dayNotes';
 import type { TruckCrewMember } from '@/lib/domains/planning/truckCrew';
+import { DEFAULT_JOB_TYPES, type JobType, type JobTypeRow } from '@/lib/domains/planning/jobTypes';
 import {
   addDays, addDaysISO, buildMonthWeeks, buildWeekDays, daysBetweenInclusive, fmtISO, isoWeek, startOfWeek, swedishMonthYear,
 } from './planningDates';
@@ -19,6 +20,7 @@ import ConfirmModal from './ConfirmModal';
 import TruckManagerModal from './TruckManagerModal';
 import DepotManagerModal from './DepotManagerModal';
 import DepotStockModal from './DepotStockModal';
+import JobTypeManagerModal from './JobTypeManagerModal';
 
 type View = 'week' | 'month';
 type DragData =
@@ -48,6 +50,7 @@ export default function PlanningClient({
   const [trucks, setTrucks] = useState<OpsTruck[]>([]);
   const [segments, setSegments] = useState<OpsSegment[]>([]);
   const [people, setPeople] = useState<AssignablePerson[]>([]);
+  const [jobTypes, setJobTypes] = useState<JobType[]>(DEFAULT_JOB_TYPES);
   const [dayNotes, setDayNotes] = useState<DayNote[]>([]);
   const [truckCrew, setTruckCrew] = useState<TruckCrewMember[]>([]);
   const [loadingBacklog, setLoadingBacklog] = useState(true);
@@ -63,6 +66,7 @@ export default function PlanningClient({
   const [truckManagerOpen, setTruckManagerOpen] = useState(false);
   const [depotManagerOpen, setDepotManagerOpen] = useState(false);
   const [stockOpen, setStockOpen] = useState(false);
+  const [jobTypeManagerOpen, setJobTypeManagerOpen] = useState(false);
 
   const dragRef = useRef<DragData | null>(null);
   const todayISO = useMemo(() => fmtISO(new Date()), []);
@@ -151,6 +155,19 @@ export default function PlanningClient({
       })
       .catch(() => {});
   }, []);
+
+  // Job types (active ones) for the card chips + picker. Falls back to the built-in defaults before
+  // the list loads (or if the migration hasn't run yet).
+  const loadJobTypes = useCallback(async () => {
+    const r = await fetch(`${API}/job-types`, { cache: 'no-store' });
+    const j = await r.json();
+    if (!j.ok) return;
+    const active = (j.data.jobTypes as JobTypeRow[]).filter((t) => t.active).map((t) => ({ key: t.key, label: t.label, color: t.color }));
+    if (active.length) setJobTypes(active);
+  }, []);
+  useEffect(() => {
+    loadJobTypes().catch(() => {});
+  }, [loadJobTypes]);
 
   useEffect(() => {
     loadSegments(range.from, range.to).catch((e) => setError(e?.message || 'Något gick fel'));
@@ -537,6 +554,17 @@ export default function PlanningClient({
               Depåer
             </button>
           )}
+          {canManageTrucks && (
+            <button
+              onClick={() => setJobTypeManagerOpen(true)}
+              className="inline-flex h-[30px] items-center gap-1.5 rounded-full border border-dashed border-[#c8d4c3] bg-white px-3 text-[12px] font-semibold text-slate-500 transition hover:border-emerald-400 hover:text-emerald-600"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 2l3 7h7l-5.5 4.5L18 21l-6-4-6 4 1.5-7.5L2 9h7z" />
+              </svg>
+              Jobbtyper
+            </button>
+          )}
           <button
             onClick={() => setStockOpen(true)}
             className="inline-flex h-[30px] items-center gap-1.5 rounded-full border border-dashed border-[#c8d4c3] bg-white px-3 text-[12px] font-semibold text-slate-500 transition hover:border-emerald-400 hover:text-emerald-600"
@@ -585,6 +613,7 @@ export default function PlanningClient({
             canWrite={canWrite}
             placing={placing}
             people={people}
+            jobTypes={jobTypes}
             onCellClick={onWeekCellClick}
             onCellDrop={onCellDrop}
             onSegDragStart={onSegDragStart}
@@ -663,6 +692,11 @@ export default function PlanningClient({
 
       {/* Depot stock (balances + deliveries) */}
       {stockOpen && <DepotStockModal canWrite={canWrite} onClose={() => setStockOpen(false)} />}
+
+      {/* Job-type management */}
+      {jobTypeManagerOpen && (
+        <JobTypeManagerModal onClose={() => setJobTypeManagerOpen(false)} onChanged={() => loadJobTypes().catch(() => {})} />
+      )}
     </div>
   );
 }

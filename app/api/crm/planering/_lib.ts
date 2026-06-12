@@ -80,6 +80,20 @@ export const updateDepotSchema = z.object({
   active: z.boolean().optional(),
 });
 
+// Job-type administration (planning.truck.manage). The key is derived from the label server-side
+// and never edited.
+export const createJobTypeSchema = z.object({
+  label: z.string().trim().min(1, 'Ange ett namn').max(40, 'Namnet är för långt'),
+  color: hexColor.unwrap(),
+});
+
+export const updateJobTypeSchema = z.object({
+  label: z.string().trim().min(1, 'Ange ett namn').max(40, 'Namnet är för långt').optional(),
+  color: hexColor.unwrap().optional(),
+  active: z.boolean().optional(),
+  sort_index: z.coerce.number().int().min(0).optional(),
+});
+
 // Record a delivery of sacks into a depot. material must be a known catalogue short so deliveries
 // reconcile with derived consumption.
 export const createDeliverySchema = z.object({
