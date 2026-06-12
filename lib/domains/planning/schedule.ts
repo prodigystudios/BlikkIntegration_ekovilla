@@ -94,7 +94,7 @@ export async function listSegments(
 export async function listTrucks(supabase: SupabaseClient) {
   return supabase
     .from('ops_trucks')
-    .select('id, name, color, active')
+    .select('id, name, color, active, depot_id')
     .eq('active', true)
     .order('name', { ascending: true });
 }

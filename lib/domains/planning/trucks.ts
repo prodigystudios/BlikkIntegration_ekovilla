@@ -18,7 +18,7 @@ export function validateTruck(name: string, color: string | null): 'name_require
 
 // All trucks (including inactive) for the manage panel.
 export async function listAllTrucks(supabase: SupabaseClient) {
-  return supabase.from('ops_trucks').select('id, name, color, active').order('name', { ascending: true });
+  return supabase.from('ops_trucks').select('id, name, color, active, depot_id').order('name', { ascending: true });
 }
 
 export async function createTruck(
@@ -28,7 +28,7 @@ export async function createTruck(
   const { data, error } = await supabase
     .from('ops_trucks')
     .insert({ name: input.name.trim(), color: input.color })
-    .select('id, name, color, active')
+    .select('id, name, color, active, depot_id')
     .single();
   return { data: (data as OpsTruck) ?? null, error };
 }
@@ -37,6 +37,7 @@ export type UpdateTruckInput = {
   name?: string;
   color?: string | null;
   active?: boolean;
+  depotId?: string | null;
 };
 
 export async function updateTruck(
@@ -48,12 +49,13 @@ export async function updateTruck(
   if (patch.name !== undefined) update.name = patch.name.trim();
   if (patch.color !== undefined) update.color = patch.color;
   if (patch.active !== undefined) update.active = patch.active;
+  if (patch.depotId !== undefined) update.depot_id = patch.depotId;
 
   const { data, error } = await supabase
     .from('ops_trucks')
     .update(update)
     .eq('id', id)
-    .select('id, name, color, active')
+    .select('id, name, color, active, depot_id')
     .single();
   return { data: (data as OpsTruck) ?? null, error };
 }

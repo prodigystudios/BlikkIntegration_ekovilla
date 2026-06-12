@@ -17,6 +17,7 @@ import WeekBoard from './WeekBoard';
 import MonthGrid from './MonthGrid';
 import ConfirmModal from './ConfirmModal';
 import TruckManagerModal from './TruckManagerModal';
+import DepotManagerModal from './DepotManagerModal';
 
 type View = 'week' | 'month';
 type DragData =
@@ -25,7 +26,15 @@ type DragData =
 
 const API = '/api/crm/planering';
 
-export default function PlanningClient({ canWrite, canManageTrucks }: { canWrite: boolean; canManageTrucks: boolean }) {
+export default function PlanningClient({
+  canWrite,
+  canManageTrucks,
+  canManageDepots,
+}: {
+  canWrite: boolean;
+  canManageTrucks: boolean;
+  canManageDepots: boolean;
+}) {
   const toast = useToast();
   const router = useRouter();
 
@@ -49,6 +58,7 @@ export default function PlanningClient({ canWrite, canManageTrucks }: { canWrite
   const [truckPicker, setTruckPicker] = useState<{ dayISO: string; workOrderId: string } | null>(null);
   const [confirmSeg, setConfirmSeg] = useState<OpsSegment | null>(null);
   const [truckManagerOpen, setTruckManagerOpen] = useState(false);
+  const [depotManagerOpen, setDepotManagerOpen] = useState(false);
 
   const dragRef = useRef<DragData | null>(null);
   const todayISO = useMemo(() => fmtISO(new Date()), []);
@@ -454,6 +464,17 @@ export default function PlanningClient({ canWrite, canManageTrucks }: { canWrite
               Bilar
             </button>
           )}
+          {canManageDepots && (
+            <button
+              onClick={() => setDepotManagerOpen(true)}
+              className="inline-flex h-[30px] items-center gap-1.5 rounded-full border border-dashed border-[#c8d4c3] bg-white px-3 text-[12px] font-semibold text-slate-500 transition hover:border-emerald-400 hover:text-emerald-600"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 21V8l9-5 9 5v13M3 21h18M9 21v-6h6v6" />
+              </svg>
+              Depåer
+            </button>
+          )}
         </div>
       </div>
 
@@ -556,6 +577,14 @@ export default function PlanningClient({ canWrite, canManageTrucks }: { canWrite
       {truckManagerOpen && (
         <TruckManagerModal
           onClose={() => setTruckManagerOpen(false)}
+          onChanged={() => loadSegments(range.from, range.to).catch(() => {})}
+        />
+      )}
+
+      {/* Depot management */}
+      {depotManagerOpen && (
+        <DepotManagerModal
+          onClose={() => setDepotManagerOpen(false)}
           onChanged={() => loadSegments(range.from, range.to).catch(() => {})}
         />
       )}

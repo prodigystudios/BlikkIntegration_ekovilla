@@ -26,6 +26,7 @@ export async function PATCH(req: Request, context: RouteContext) {
       name: parsed.data.name,
       color: parsed.data.color,
       active: parsed.data.active,
+      depotId: parsed.data.depot_id,
     });
     if (error) return routeError(500, 'planning_truck_update_failed', error.message);
 

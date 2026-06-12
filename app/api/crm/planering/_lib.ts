@@ -64,6 +64,19 @@ export const updateTruckSchema = z.object({
   name: z.string().trim().min(1, 'Ange ett namn').max(60, 'Namnet är för långt').optional(),
   color: hexColor.optional(),
   active: z.boolean().optional(),
+  depot_id: z.string().uuid('Ogiltig depå').nullable().optional(),
+});
+
+// Depot (depå) administration (planning.depot.manage).
+export const createDepotSchema = z.object({
+  name: z.string().trim().min(1, 'Ange ett namn').max(80, 'Namnet är för långt'),
+  location: z.string().trim().max(200).nullable().optional(),
+});
+
+export const updateDepotSchema = z.object({
+  name: z.string().trim().min(1, 'Ange ett namn').max(80, 'Namnet är för långt').optional(),
+  location: z.string().trim().max(200).nullable().optional(),
+  active: z.boolean().optional(),
 });
 
 // Send an order confirmation (orderbekräftelse) for a scheduled job. At least one channel must be

@@ -22,6 +22,15 @@ export type OpsTruck = {
   name: string;
   color: string | null;
   active: boolean;
+  // The depot this truck draws sacks from (null = unassigned). See lib/domains/planning/depots.ts.
+  depot_id: string | null;
+};
+
+export type OpsDepot = {
+  id: string;
+  name: string;
+  location: string | null;
+  active: boolean;
 };
 
 // One scheduled placement of a work order on a truck across a day-range.
