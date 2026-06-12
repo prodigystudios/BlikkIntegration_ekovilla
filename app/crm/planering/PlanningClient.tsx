@@ -55,6 +55,7 @@ export default function PlanningClient({
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  const [salesFilter, setSalesFilter] = useState<string | null>(null);
   const [hiddenTrucks, setHiddenTrucks] = useState<Set<string>>(new Set());
   const [backlogDropActive, setBacklogDropActive] = useState(false);
   const [truckPicker, setTruckPicker] = useState<{ dayISO: string; workOrderId: string } | null>(null);
@@ -385,7 +386,20 @@ export default function PlanningClient({
       !q || [j.ref, j.client_name, j.project_name, j.address].some((v) => (v ?? '').toLowerCase().includes(q)),
     [q],
   );
-  const visibleBacklog = useMemo(() => backlog.filter((b) => matchJob(b)), [backlog, matchJob]);
+  // Sales-responsible options for the backlog filter: assignees present in the backlog, named via
+  // the people list (profiles are self-read-only, so we can't join names server-side).
+  const peopleById = useMemo(() => new Map(people.map((p) => [p.id, p.full_name])), [people]);
+  const salesOptions = useMemo(() => {
+    const ids = [...new Set(backlog.map((b) => b.assigned_to).filter((v): v is string => Boolean(v)))];
+    return ids
+      .map((id) => ({ id, name: peopleById.get(id) ?? 'Okänd säljare' }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'sv'));
+  }, [backlog, peopleById]);
+
+  const visibleBacklog = useMemo(
+    () => backlog.filter((b) => matchJob(b) && (!salesFilter || b.assigned_to === salesFilter)),
+    [backlog, matchJob, salesFilter],
+  );
   const visibleSegments = useMemo(
     () => segments.filter((s) => !hiddenTrucks.has(s.truck_id) && (s.job ? matchJob(s.job) : true)),
     [segments, hiddenTrucks, matchJob],
@@ -470,6 +484,20 @@ export default function PlanningClient({
             className="h-9 w-full rounded-lg border border-[#dce4d8] bg-white pl-9 pr-3 text-[13px] text-slate-900 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20"
           />
         </div>
+
+        {salesOptions.length > 0 && (
+          <select
+            value={salesFilter ?? ''}
+            onChange={(e) => setSalesFilter(e.target.value || null)}
+            aria-label="Filtrera på säljare"
+            className="h-9 rounded-lg border border-[#dce4d8] bg-white px-2.5 text-[12.5px] text-slate-600 outline-none transition focus:border-emerald-500"
+          >
+            <option value="">Alla säljare</option>
+            {salesOptions.map((s) => (
+              <option key={s.id} value={s.id}>{s.name}</option>
+            ))}
+          </select>
+        )}
         <div className="flex flex-wrap items-center gap-1.5">
           {trucks.map((t) => {
             const off = hiddenTrucks.has(t.id);

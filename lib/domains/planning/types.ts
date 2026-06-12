@@ -13,6 +13,9 @@ export type SchedulableWorkOrder = JobDisplay & {
   desired_installation_date: string | null;
   contact_email: string | null;
   contact_phone: string | null;
+  // The work order's assignee (sales-responsible) user id; mapped to a name via the people list for
+  // the backlog sales filter. null when unassigned.
+  assigned_to: string | null;
   // How many ops_segments already cover this order (0 = not yet placed on the calendar).
   segment_count: number;
 };

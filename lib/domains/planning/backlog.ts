@@ -13,6 +13,7 @@ export const SCHEDULABLE_WORK_ORDER_STATUSES = ['draft', 'scheduled', 'in_progre
 type WorkOrderRow = WorkOrderJobRow & {
   id: string;
   desired_installation_date: string | null;
+  assigned_to: string | null;
 };
 
 function str(value: unknown): string {
@@ -28,12 +29,13 @@ export function mapWorkOrderToBacklogItem(row: WorkOrderRow, segmentCount: numbe
     desired_installation_date: row.desired_installation_date ?? null,
     contact_email: str(snap.email) || null,
     contact_phone: str(snap.phone) || null,
+    assigned_to: row.assigned_to ?? null,
     segment_count: segmentCount,
   };
 }
 
 const WORK_ORDER_BACKLOG_SELECT =
-  'id, order_number, fortnox_order_number, project_name, client_name, status, desired_installation_date, work_address, customer_snapshot, line_items';
+  'id, order_number, fortnox_order_number, project_name, client_name, status, desired_installation_date, assigned_to, work_address, customer_snapshot, line_items';
 
 // List CRM work orders eligible for scheduling, annotated with how many ops_segments already
 // cover them. RLS applies to both reads (planner needs crm.workorder.read + planning.schedule.read).

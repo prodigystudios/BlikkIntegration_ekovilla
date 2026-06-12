@@ -8,7 +8,7 @@ import type { AssignablePerson } from '@/lib/domains/planning/crew';
 import { crewForTruckInRange, type TruckCrewMember } from '@/lib/domains/planning/truckCrew';
 import { groupNotesByDay, type DayNote } from '@/lib/domains/planning/dayNotes';
 import { swedishHoliday } from '@/lib/domains/planning/holidays';
-import { statusMeta, StatusPill, SackProgress, JobTypeOrMaterial, JobRef, CrewEditor, CrewAvatars, ConfirmationBadge, HoldBadge } from './jobCard';
+import { statusMeta, StatusPill, SackProgress, JobTypeOrMaterial, JobRef, CrewEditor, CrewAvatars, ConfirmationBadge, HoldBadge, MapLink } from './jobCard';
 import DayNotesCell from './DayNotesCell';
 
 type WeekBoardProps = {
@@ -205,7 +205,12 @@ export default function WeekBoard({
                               </div>
                               <div className="mt-1.5 text-[13px] font-bold leading-tight text-slate-900">{job.project_name}</div>
                               <div className="text-[11px] text-slate-500">{job.client_name}</div>
-                              {job.address && <div className="mt-0.5 text-[10.5px] text-slate-400">{job.address}</div>}
+                              {job.address && (
+                                <div className="mt-0.5 flex items-center gap-1 text-[10.5px] text-slate-400">
+                                  <span className="truncate">{job.address}</span>
+                                  <MapLink address={job.address} />
+                                </div>
+                              )}
                               <div className="mt-2 flex flex-wrap items-center gap-1.5">
                                 {seg.on_hold && <HoldBadge />}
                                 <JobTypeOrMaterial jobType={seg.job_type} material={job.material} />

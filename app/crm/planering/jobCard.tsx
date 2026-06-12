@@ -249,6 +249,29 @@ export function CrewEditor({
   );
 }
 
+// A small pin link opening the job-site address in Google Maps. Stops propagation so it doesn't
+// trigger the card's select/open handler.
+export function MapLink({ address }: { address: string | null }) {
+  if (!address) return null;
+  const href = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={(e) => e.stopPropagation()}
+      title="Öppna i Kartor"
+      aria-label="Öppna adressen i Kartor"
+      className="inline-flex shrink-0 text-slate-400 transition hover:text-emerald-600"
+    >
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M21 10c0 6-9 12-9 12s-9-6-9-12a9 9 0 0 1 18 0Z" />
+        <circle cx="12" cy="10" r="3" />
+      </svg>
+    </a>
+  );
+}
+
 // The reference shown on cards (Fortnox number, or internal AO when not synced yet).
 export function JobRef({ job, className }: { job: Pick<JobDisplay, 'ref' | 'is_fortnox_ref'>; className?: string }) {
   return (

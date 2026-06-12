@@ -2,7 +2,7 @@ import type React from 'react';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 import type { SchedulableWorkOrder } from '@/lib/domains/planning/types';
-import { statusMeta, SackBadge, JobRef } from './jobCard';
+import { statusMeta, SackBadge, JobRef, MapLink } from './jobCard';
 import { formatDate } from '@/app/crm/lib/format';
 
 type BacklogProps = {
@@ -74,7 +74,12 @@ export default function Backlog({
                       <JobRef job={item} />
                     </div>
                     <div className="mt-0.5 text-[11px] text-slate-500">{item.client_name}</div>
-                    {item.address && <div className="text-[11px] text-slate-400">{item.address}</div>}
+                    {item.address && (
+                      <div className="flex items-center gap-1 text-[11px] text-slate-400">
+                        <span className="truncate">{item.address}</span>
+                        <MapLink address={item.address} />
+                      </div>
+                    )}
                     <div className="mt-2 flex flex-wrap items-center gap-1.5">
                       <SackBadge sacks={item.total_sacks} />
                       {item.desired_installation_date && (

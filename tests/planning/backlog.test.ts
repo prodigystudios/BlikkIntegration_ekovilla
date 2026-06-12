@@ -9,6 +9,7 @@ const baseRow = {
   client_name: 'Bygg AB',
   status: 'scheduled',
   desired_installation_date: '2026-06-20',
+  assigned_to: null as string | null,
   work_address: null as Record<string, unknown> | null,
   customer_snapshot: null as Record<string, unknown> | null,
   line_items: [] as unknown[],
@@ -71,7 +72,10 @@ describe('mapWorkOrderToBacklogItem', () => {
   });
 
   it('passes through identity, date, contact and the segment count', () => {
-    const item = mapWorkOrderToBacklogItem({ ...baseRow, customer_snapshot: { email: 'a@b.se', phone: '070-1234567' } }, 2);
+    const item = mapWorkOrderToBacklogItem(
+      { ...baseRow, assigned_to: 'user-9', customer_snapshot: { email: 'a@b.se', phone: '070-1234567' } },
+      2,
+    );
     expect(item).toMatchObject({
       id: baseRow.id,
       project_name: 'Vind Storgatan',
@@ -80,6 +84,7 @@ describe('mapWorkOrderToBacklogItem', () => {
       desired_installation_date: '2026-06-20',
       contact_email: 'a@b.se',
       contact_phone: '070-1234567',
+      assigned_to: 'user-9',
       segment_count: 2,
     });
   });
