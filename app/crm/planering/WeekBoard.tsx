@@ -7,6 +7,7 @@ import { JOB_TYPES } from '@/lib/domains/planning/jobTypes';
 import type { AssignablePerson } from '@/lib/domains/planning/crew';
 import { crewForTruckInRange, type TruckCrewMember } from '@/lib/domains/planning/truckCrew';
 import { groupNotesByDay, type DayNote } from '@/lib/domains/planning/dayNotes';
+import { swedishHoliday } from '@/lib/domains/planning/holidays';
 import { statusMeta, StatusPill, SackProgress, JobTypeOrMaterial, JobRef, CrewEditor, CrewAvatars, ConfirmationBadge, HoldBadge } from './jobCard';
 import DayNotesCell from './DayNotesCell';
 
@@ -78,12 +79,14 @@ export default function WeekBoard({
           <div />
           {days.map((wd) => {
             const isToday = wd.iso === todayISO;
+            const hol = swedishHoliday(wd.iso);
             return (
-              <div key={wd.iso} className={cn('rounded-lg px-1.5 py-1.5 text-center', isToday && 'bg-emerald-50')}>
-                <div className={cn('text-[11.5px] font-bold capitalize', isToday ? 'text-emerald-700' : wd.isWeekend ? 'text-slate-400' : 'text-slate-600')}>
+              <div key={wd.iso} className={cn('rounded-lg px-1.5 py-1.5 text-center', isToday ? 'bg-emerald-50' : hol && 'bg-rose-50')}>
+                <div className={cn('text-[11.5px] font-bold capitalize', isToday ? 'text-emerald-700' : hol ? 'text-rose-600' : wd.isWeekend ? 'text-slate-400' : 'text-slate-600')}>
                   {wd.weekday}
                 </div>
-                <div className={cn('text-[10px] tabular-nums', isToday ? 'text-emerald-600' : 'text-slate-400')}>{wd.dayLabel}</div>
+                <div className={cn('text-[10px] tabular-nums', isToday ? 'text-emerald-600' : hol ? 'text-rose-400' : 'text-slate-400')}>{wd.dayLabel}</div>
+                {hol && <div className="truncate text-[8px] font-semibold leading-tight text-rose-500" title={hol}>{hol}</div>}
               </div>
             );
           })}
@@ -159,7 +162,13 @@ export default function WeekBoard({
                         key={wd.iso}
                         className={cn(
                           'border-l border-[#e8efe5] last:border-r',
-                          wd.iso === todayISO ? 'bg-emerald-500/5' : wd.isWeekend ? 'bg-slate-400/[0.06]' : '',
+                          wd.iso === todayISO
+                            ? 'bg-emerald-500/5'
+                            : swedishHoliday(wd.iso)
+                              ? 'bg-rose-400/[0.07]'
+                              : wd.isWeekend
+                                ? 'bg-slate-400/[0.06]'
+                                : '',
                         )}
                       />
                     ))}

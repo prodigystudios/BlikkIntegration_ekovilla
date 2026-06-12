@@ -7,6 +7,7 @@ import { statusMeta, JobRef, CrewAvatars } from './jobCard';
 import { sacksRemaining } from '@/lib/domains/planning/reports';
 import { describeSmsStatus } from '@/lib/domains/planning/confirmations';
 import { groupNotesByDay, type DayNote } from '@/lib/domains/planning/dayNotes';
+import { swedishHoliday } from '@/lib/domains/planning/holidays';
 
 type MonthGridProps = {
   weeks: MonthWeek[];
@@ -52,9 +53,11 @@ export default function MonthGrid({
                 const dayActive = placing && canWrite;
                 const daySegs = segments.filter((s) => s.start_day <= cell.iso && s.end_day >= cell.iso);
                 const cellNotes = notesByDay.get(cell.iso) ?? [];
+                const hol = swedishHoliday(cell.iso);
                 return (
                   <div
                     key={cell.iso}
+                    title={hol ?? undefined}
                     onClick={() => {
                       if (placing) onDayClick(cell.iso);
                     }}
@@ -70,13 +73,17 @@ export default function MonthGrid({
                       'flex min-h-[130px] flex-col gap-1 border-l border-t border-[#e8efe5] p-1.5',
                       cell.inMonth ? 'bg-[#f9fbf7]' : 'bg-[#eef2ec]',
                       cell.isWeekend && cell.inMonth && 'bg-slate-400/[0.05]',
+                      hol && cell.inMonth && 'bg-rose-400/[0.06]',
                       isToday && 'bg-emerald-50',
                       dayActive && 'cursor-copy',
                     )}
                   >
                     <div className="flex items-center justify-between">
-                      <span className={cn('text-[11px] font-bold tabular-nums', !cell.inMonth ? 'text-slate-300' : isToday ? 'text-emerald-700' : 'text-slate-500')}>
-                        {cell.day}
+                      <span className="flex items-center gap-1">
+                        <span className={cn('text-[11px] font-bold tabular-nums', !cell.inMonth ? 'text-slate-300' : isToday ? 'text-emerald-700' : hol ? 'text-rose-600' : 'text-slate-500')}>
+                          {cell.day}
+                        </span>
+                        {hol && cell.inMonth && <span className="h-1.5 w-1.5 rounded-full bg-rose-400" />}
                       </span>
                       <span className="flex items-center gap-1">
                         {cellNotes.length > 0 && (
