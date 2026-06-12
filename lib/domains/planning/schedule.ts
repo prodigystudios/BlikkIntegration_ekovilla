@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { mapWorkOrderJob, type WorkOrderJobRow } from './display';
 import { reportedSacksByWorkOrder } from './reports';
 import { listCrewBySegment } from './crew';
+import { confirmationsByWorkOrder, EMPTY_CONFIRMATION } from './confirmations';
 import type { OpsSegment } from './types';
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -51,6 +52,7 @@ export function mapSegment(row: RawSegment): OpsSegment {
     job: wo ? mapWorkOrderJob(wo) : null,
     sacks_reported: 0,
     crew: [],
+    confirmation: { ...EMPTY_CONFIRMATION },
   };
 }
 
@@ -71,16 +73,18 @@ export async function listSegments(
   if (error) return { data: [], error };
 
   const segs = ((data ?? []) as unknown as RawSegment[]).map(mapSegment);
-  // Attach each job's blown-sack total (summed across the job's segments) for the "kvar X/Y" card,
-  // and the crew assigned to each individual placement (keyed by segment id).
+  // Attach each job's blown-sack total + confirmation state (both summed/keyed by work order), and
+  // the crew assigned to each individual placement (keyed by segment id).
   const workOrderIds = [...new Set(segs.map((s) => s.work_order_id))];
-  const [reported, crewBySegment] = await Promise.all([
+  const [reported, crewBySegment, confirmations] = await Promise.all([
     reportedSacksByWorkOrder(supabase, workOrderIds),
     listCrewBySegment(supabase, segs.map((s) => s.id)),
+    confirmationsByWorkOrder(supabase, workOrderIds),
   ]);
   for (const s of segs) {
     s.sacks_reported = reported.get(s.work_order_id) ?? 0;
     s.crew = crewBySegment.get(s.id) ?? [];
+    s.confirmation = confirmations.get(s.work_order_id) ?? { ...EMPTY_CONFIRMATION };
   }
   return { data: segs, error: null };
 }

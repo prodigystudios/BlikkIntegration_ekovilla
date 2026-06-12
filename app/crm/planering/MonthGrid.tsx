@@ -96,7 +96,12 @@ export default function MonthGrid({
                           <span className="mt-1 h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: truckColor.get(seg.truck_id) || '#94a3b8' }} />
                           <div className="min-w-0 flex-1">
                             <div className="flex items-baseline justify-between gap-1.5">
-                              {job ? <JobRef job={job} className="text-[10px]" /> : <span className="text-[10px] text-slate-400">—</span>}
+                              <span className="flex min-w-0 items-center gap-1">
+                                {job ? <JobRef job={job} className="text-[10px]" /> : <span className="text-[10px] text-slate-400">—</span>}
+                                {(seg.confirmation.email_sent_at || seg.confirmation.sms_sent_at) && (
+                                  <span title="Bekräftad" className="inline-flex h-2.5 w-2.5 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-[6px] font-bold leading-none text-white">✓</span>
+                                )}
+                              </span>
                               {job && job.total_sacks > 0 && (
                                 <span
                                   className={cn(

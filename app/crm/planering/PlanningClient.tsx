@@ -13,6 +13,7 @@ import {
 import Backlog from './Backlog';
 import WeekBoard from './WeekBoard';
 import MonthGrid from './MonthGrid';
+import ConfirmModal from './ConfirmModal';
 
 type View = 'week' | 'month';
 type DragData =
@@ -41,6 +42,7 @@ export default function PlanningClient({ canWrite }: { canWrite: boolean }) {
   const [hiddenTrucks, setHiddenTrucks] = useState<Set<string>>(new Set());
   const [backlogDropActive, setBacklogDropActive] = useState(false);
   const [truckPicker, setTruckPicker] = useState<{ dayISO: string; workOrderId: string } | null>(null);
+  const [confirmSeg, setConfirmSeg] = useState<OpsSegment | null>(null);
 
   const dragRef = useRef<DragData | null>(null);
   const todayISO = useMemo(() => fmtISO(new Date()), []);
@@ -234,6 +236,7 @@ export default function PlanningClient({ canWrite }: { canWrite: boolean }) {
 
   const onSegClick = useCallback((seg: OpsSegment) => router.push(`/crm/arbetsorder/${seg.work_order_id}`), [router]);
   const onSetJobType = useCallback((seg: OpsSegment, jobType: string | null) => void move(seg.id, { job_type: jobType }), [move]);
+  const openConfirm = useCallback((seg: OpsSegment) => setConfirmSeg(seg), []);
 
   // ── selection / click-to-place ───────────────────────────────────────────────
   const onSelect = useCallback((id: string) => setSelectedId((cur) => (cur === id ? null : id)), []);
@@ -404,6 +407,7 @@ export default function PlanningClient({ canWrite }: { canWrite: boolean }) {
             onSetJobType={onSetJobType}
             onAddCrew={addCrew}
             onRemoveCrew={removeCrew}
+            onOpenConfirm={openConfirm}
           />
         ) : (
           <MonthGrid
@@ -441,6 +445,11 @@ export default function PlanningClient({ canWrite }: { canWrite: boolean }) {
             <button onClick={() => setTruckPicker(null)} className={cn(crm.ghostButton, 'mt-3 w-full')}>Avbryt</button>
           </div>
         </div>
+      )}
+
+      {/* Order confirmation (SMS/email) */}
+      {confirmSeg && (
+        <ConfirmModal segment={confirmSeg} onClose={() => setConfirmSeg(null)} onSent={refresh} />
       )}
     </div>
   );

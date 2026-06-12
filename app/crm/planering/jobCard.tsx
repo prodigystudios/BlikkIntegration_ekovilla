@@ -10,6 +10,7 @@ import type { JobDisplay } from '@/lib/domains/planning/display';
 import { sacksRemaining } from '@/lib/domains/planning/reports';
 import { resolveJobType } from '@/lib/domains/planning/jobTypes';
 import { crewInitials, crewColor, type CrewMember, type AssignablePerson } from '@/lib/domains/planning/crew';
+import type { ConfirmationSummary } from '@/lib/domains/planning/confirmations';
 
 // Status label + colors for a job, reusing the CRM work-order tokens so the planning board reads
 // identically to the rest of the CRM.
@@ -77,6 +78,31 @@ export function JobTypeOrMaterial({ jobType, material }: { jobType: string | nul
     <span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-[#e0e8dc] bg-[#f3f6f1] px-2 py-px text-[10px] font-semibold text-slate-600">
       <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: jt.color }} />
       {jt.label}
+    </span>
+  );
+}
+
+// Confirmation state: a green "bekräftad" pill once an email and/or SMS has gone out to the
+// customer, with the channels + dates + recipients in the tooltip. Renders nothing until sent.
+export function ConfirmationBadge({ confirmation }: { confirmation: ConfirmationSummary }) {
+  const { email_sent_at, sms_sent_at, email_to, sms_to } = confirmation;
+  if (!email_sent_at && !sms_sent_at) return null;
+  const channels = [email_sent_at ? 'Mejl' : null, sms_sent_at ? 'SMS' : null].filter(Boolean).join(' + ');
+  const title = [
+    email_sent_at && `Mejl ${email_sent_at.slice(0, 10)}${email_to ? ` → ${email_to}` : ''}`,
+    sms_sent_at && `SMS ${sms_sent_at.slice(0, 10)}${sms_to ? ` → ${sms_to}` : ''}`,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  return (
+    <span
+      title={title}
+      className="inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-emerald-200 bg-emerald-50 px-2 py-px text-[9px] font-bold text-emerald-700"
+    >
+      <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M20 6L9 17l-5-5" />
+      </svg>
+      {channels}
     </span>
   );
 }

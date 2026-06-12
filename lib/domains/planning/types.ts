@@ -1,5 +1,6 @@
 import type { JobDisplay } from './display';
 import type { CrewMember } from './crew';
+import type { ConfirmationSummary } from './confirmations';
 
 // Domain types for the new CRM-first planning (Wave 7). Pure, no React/Next — these mirror the
 // ops_* tables and the read models built from crm_work_orders. JobDisplay (display.ts) holds the
@@ -43,4 +44,6 @@ export type OpsSegment = {
   sacks_reported: number;
   // The crew (besättning) assigned to this specific placement; shown as initials on the card.
   crew: CrewMember[];
+  // Whether the customer has been sent an order confirmation (per work order); drives the badge.
+  confirmation: ConfirmationSummary;
 };

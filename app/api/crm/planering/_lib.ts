@@ -35,3 +35,13 @@ export const assignCrewSchema = z.object({
   member_id: z.string().uuid('Ogiltig montör'),
   member_name: z.string().trim().min(1, 'Namn krävs').max(120),
 });
+
+// Send an order confirmation (orderbekräftelse) for a scheduled job. At least one channel must be
+// chosen; the matching recipient is required (enforced in the route for a clear Swedish message).
+export const sendConfirmationSchema = z.object({
+  send_email: z.boolean().optional().default(false),
+  recipient_email: z.string().trim().email('Ogiltig e-postadress').nullable().optional(),
+  send_sms: z.boolean().optional().default(false),
+  recipient_phone: z.string().trim().min(3, 'Ogiltigt telefonnummer').nullable().optional(),
+  custom_message: z.string().trim().max(2000).nullable().optional(),
+});

@@ -5,7 +5,7 @@ import type { OpsSegment, OpsTruck } from '@/lib/domains/planning/types';
 import { parseISO, type WeekDay } from './planningDates';
 import { JOB_TYPES } from '@/lib/domains/planning/jobTypes';
 import type { AssignablePerson } from '@/lib/domains/planning/crew';
-import { statusMeta, StatusPill, SackProgress, JobTypeOrMaterial, JobRef, CrewEditor, CrewAvatars } from './jobCard';
+import { statusMeta, StatusPill, SackProgress, JobTypeOrMaterial, JobRef, CrewEditor, CrewAvatars, ConfirmationBadge } from './jobCard';
 
 type WeekBoardProps = {
   weekDays: WeekDay[];
@@ -22,6 +22,7 @@ type WeekBoardProps = {
   onSetJobType: (seg: OpsSegment, jobType: string | null) => void;
   onAddCrew: (seg: OpsSegment, person: AssignablePerson) => void;
   onRemoveCrew: (seg: OpsSegment, memberId: string) => void;
+  onOpenConfirm: (seg: OpsSegment) => void;
 };
 
 // Which day column (0–6) a pointer x lands in, within a 7-column lane.
@@ -33,7 +34,7 @@ function dayIndexFromX(e: React.MouseEvent | React.DragEvent): number {
 
 export default function WeekBoard({
   weekDays, trucks, segments, todayISO, canWrite, placing, people,
-  onCellClick, onCellDrop, onSegDragStart, onSegClick, onSetJobType, onAddCrew, onRemoveCrew,
+  onCellClick, onCellDrop, onSegDragStart, onSegClick, onSetJobType, onAddCrew, onRemoveCrew, onOpenConfirm,
 }: WeekBoardProps) {
   const weekStart = weekDays[0].iso;
   const weekEnd = weekDays[6].iso;
@@ -140,6 +141,7 @@ export default function WeekBoard({
                               <div className="mt-2 flex flex-wrap items-center gap-1.5">
                                 <JobTypeOrMaterial jobType={seg.job_type} material={job.material} />
                                 <SackProgress planned={job.total_sacks} reported={seg.sacks_reported} />
+                                <ConfirmationBadge confirmation={seg.confirmation} />
                               </div>
                               <div className="mt-2">
                                 {canWrite ? (
@@ -169,6 +171,23 @@ export default function WeekBoard({
                                     <option key={t.key} value={t.key}>{t.label}</option>
                                   ))}
                                 </select>
+                              )}
+                              {canWrite && (
+                                <button
+                                  type="button"
+                                  onMouseDown={(ev) => ev.stopPropagation()}
+                                  onClick={(ev) => {
+                                    ev.stopPropagation();
+                                    onOpenConfirm(seg);
+                                  }}
+                                  className="mt-1.5 inline-flex h-6 w-full items-center justify-center gap-1 rounded-lg border border-[#e0e8dc] bg-white text-[10px] font-semibold text-slate-500 transition hover:border-emerald-400 hover:text-emerald-600"
+                                >
+                                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <rect x="2" y="4" width="20" height="16" rx="2" />
+                                    <path d="M22 7l-10 6L2 7" />
+                                  </svg>
+                                  Skicka bekräftelse
+                                </button>
                               )}
                             </>
                           ) : (
