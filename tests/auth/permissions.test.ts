@@ -20,7 +20,7 @@ describe('PERMISSION_KEYS catalog', () => {
   // Mirrors the SQL `permissions` catalog in 20260608_permissions_model.sql. If you add a key
   // there, add it here too (and to the seed + parity assert) — this guards the count.
   it('has the expected count and no duplicates', () => {
-    expect(PERMISSION_KEYS.length).toBe(35);
+    expect(PERMISSION_KEYS.length).toBe(39);
     expect(new Set(PERMISSION_KEYS).size).toBe(PERMISSION_KEYS.length);
   });
 
@@ -40,6 +40,12 @@ describe('PERMISSION_KEYS catalog', () => {
 
   it('includes the Fortnox bookkeeping action keys', () => {
     for (const key of ['fortnox.offer.push', 'fortnox.workorder.push', 'fortnox.invoice.create', 'fortnox.customer.sync', 'fortnox.read'] as const) {
+      expect(PERMISSION_KEYS).toContain(key);
+    }
+  });
+
+  it('includes the planning scheduling keys (Wave 7)', () => {
+    for (const key of ['planning.schedule.read', 'planning.schedule.write', 'planning.truck.manage', 'planning.depot.manage'] as const) {
       expect(PERMISSION_KEYS).toContain(key);
     }
   });

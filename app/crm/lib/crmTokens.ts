@@ -140,4 +140,23 @@ export const crm = {
   // Destructive / secondary button (cancel, delete)
   ghostButton:
     'inline-flex h-8 items-center justify-center rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-800 disabled:opacity-50',
+
+  // ── Form fields (shared across modals/forms; sized for h-9 rows) ───────────
+  // Text/number/date/email input. In a flex row use it as-is; the global
+  // `input { width:100% }` makes it fill — pair with a grid/flex track for sizing.
+  input:
+    'h-9 w-full rounded-lg border border-[#dce4d8] bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/15',
+  // <select>
+  select:
+    'h-9 w-full rounded-lg border border-[#dce4d8] bg-white px-2.5 text-sm text-slate-700 outline-none transition focus:border-emerald-500',
+  // <input type="color"> — put it in a fixed grid track (e.g. grid-cols-[2.5rem_1fr])
+  // so it fills the track instead of the global input width:100% blowing it up.
+  colorInput: 'h-9 w-full cursor-pointer rounded-lg border border-[#dce4d8] bg-white p-1',
+  // Solid primary form button (Spara / Lägg till / Registrera). Pair with
+  // style={{ backgroundColor: 'var(--crm-primary)' }}.
+  formButton:
+    'inline-flex h-9 shrink-0 items-center justify-center rounded-lg px-4 text-[13px] font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50',
+  // Destructive outline button (Ta bort) for form rows.
+  dangerButton:
+    'inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-[#e0e8dc] bg-white px-3 text-[13px] font-semibold text-slate-500 transition hover:border-rose-300 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-50',
 } as const;

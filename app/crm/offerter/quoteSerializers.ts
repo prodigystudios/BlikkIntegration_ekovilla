@@ -6,8 +6,7 @@
 // callers pass `draft` directly, and tests build small plain objects.
 
 import { parseDecimal } from '@/lib/shared/number';
-import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
-import { inferMaterialFromArticle, sacksFor } from '@/lib/domains/crm/materials';
+import { inferMaterialFromArticle, lineItemSacks } from '@/lib/domains/crm/materials';
 
 export type QuoteCustomerFields = {
   quote_type: 'private' | 'business';
@@ -161,13 +160,10 @@ export function buildMeasurementLines(items: MeasurementLineItem[]): string[] {
     let row = label ? `${label} – ${dims}` : dims;
 
     const material = inferMaterialFromArticle(it.article_name);
-    const density = parseDecimal(it.density);
-    if (material && density > 0) {
-      const sacks = sacksFor(lineItemQuantity(it), density, material.bagWeight);
-      if (sacks > 0) {
-        row += ` @ ${(it.density ?? '').trim()} kg/m³ – ${sacks} säck`;
-        totalSacks += sacks;
-      }
+    const sacks = lineItemSacks(it);
+    if (sacks > 0) {
+      row += ` @ ${(it.density ?? '').trim()} kg/m³ – ${sacks} säck`;
+      totalSacks += sacks;
     }
 
     const heading = material?.short ?? '';

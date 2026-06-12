@@ -72,6 +72,12 @@ const navIcons: Record<string, JSX.Element> = {
       <path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z" />
     </svg>
   ),
+  '/crm/planering': (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" />
+      <line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" />
+    </svg>
+  ),
   '/crm/ringlistor': (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <line x1="8" y1="6" x2="21" y2="6" /><line x1="8" y1="12" x2="21" y2="12" />
@@ -103,6 +109,8 @@ type CrmSidebarProps = {
   userInitial?: string;
 };
 
+const COLLAPSE_KEY = 'crm-sidebar-collapsed';
+
 export default function CrmSidebar({ role, userName, userInitial = 'U' }: CrmSidebarProps) {
   const pathname = usePathname();
   const items = getVisibleCrmNavItems(role);
@@ -110,6 +118,29 @@ export default function CrmSidebar({ role, userName, userInitial = 'U' }: CrmSid
   const [mobileOpen, setMobileOpen] = useState(false);
   // Per-group manual expand override; falls back to "open when a child is active".
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  // Desktop collapse to an icon rail (gives wide surfaces like planning more room). Persisted;
+  // defaults to collapsed on the planning route until the user expresses a preference.
+  const [collapsed, setCollapsed] = useState(false);
+
+  useEffect(() => {
+    const stored = typeof window !== 'undefined' ? window.localStorage.getItem(COLLAPSE_KEY) : null;
+    if (stored === '1') setCollapsed(true);
+    else if (stored === '0') setCollapsed(false);
+    else setCollapsed(pathname.startsWith('/crm/planering'));
+    // run once on mount — later route changes shouldn't override a manual choice
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const toggleCollapsed = () =>
+    setCollapsed((c) => {
+      const next = !c;
+      try {
+        window.localStorage.setItem(COLLAPSE_KEY, next ? '1' : '0');
+      } catch {
+        /* ignore storage failures */
+      }
+      return next;
+    });
 
   // Reset pending state and close the mobile drawer whenever navigation completes.
   useEffect(() => {
@@ -169,17 +200,37 @@ export default function CrmSidebar({ role, userName, userInitial = 'U' }: CrmSid
           // Mobile: off-canvas drawer pinned below the global header
           'fixed left-0 z-50 h-[calc(100dvh-var(--header-base,56px)-var(--safe-top,0px))] top-[calc(var(--header-base,56px)_+_var(--safe-top,0px))] transition-transform duration-300 ease-out',
           mobileOpen ? 'translate-x-0' : '-translate-x-full',
-          // Desktop: static sticky sidebar (unchanged behavior)
-          'lg:sticky lg:top-0 lg:z-auto lg:translate-x-0 lg:transition-none'
+          // Desktop: static sticky sidebar; width depends on the collapsed state
+          'lg:sticky lg:top-0 lg:z-auto lg:translate-x-0 lg:transition-[width] lg:duration-200',
+          collapsed ? 'lg:w-[68px]' : 'lg:w-56',
         )}
         style={{ backgroundColor: 'var(--crm-sidebar-bg)' }}
       >
-      {/* Logo */}
-      <div className="flex items-center justify-between px-4 pb-3 pt-5">
-        <div>
+      {/* Logo + collapse toggle */}
+      <div className={cn('flex items-center justify-between px-4 pb-3 pt-5', collapsed && 'lg:px-3')}>
+        <div className={cn(collapsed && 'lg:hidden')}>
           <p className="text-base font-bold leading-tight text-white">Ekovilla</p>
           <p className="text-[11px] font-medium" style={{ color: 'var(--crm-sidebar-text-muted)' }}>CRM System</p>
         </div>
+        {/* Collapsed brand mark (desktop only) */}
+        <div
+          className={cn('hidden h-9 w-9 place-items-center rounded-lg text-sm font-extrabold text-white', collapsed ? 'lg:grid' : 'lg:hidden')}
+          style={{ backgroundColor: 'rgba(124,200,150,.18)', color: '#cfe8d6' }}
+        >
+          E
+        </div>
+        {/* Desktop collapse toggle */}
+        <button
+          type="button"
+          onClick={toggleCollapsed}
+          aria-label={collapsed ? 'Visa meny' : 'Fäll ihop meny'}
+          className={cn('hidden h-8 w-8 shrink-0 place-items-center rounded-lg text-white/80 transition-colors hover:bg-white/10 hover:text-white lg:grid', collapsed && 'lg:absolute lg:right-2 lg:top-2')}
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={cn('transition-transform', collapsed && 'rotate-180')}>
+            <polyline points="15 18 9 12 15 6" />
+          </svg>
+        </button>
+        {/* Mobile close */}
         <button
           type="button"
           onClick={() => setMobileOpen(false)}
@@ -195,7 +246,7 @@ export default function CrmSidebar({ role, userName, userInitial = 'U' }: CrmSid
       <div className="mx-3 mb-3 h-px" style={{ backgroundColor: 'var(--crm-sidebar-border)' }} />
 
       {/* Nav items */}
-      <nav className="flex-1 px-2">
+      <nav className={cn('flex-1 px-2', collapsed && 'lg:px-2')}>
         <ul role="list" className="grid list-none gap-0.5 p-0">
           {items.map((item) => {
             // Renders a single navigable link, shared by top-level items and
@@ -207,10 +258,12 @@ export default function CrmSidebar({ role, userName, userInitial = 'U' }: CrmSid
                 <Link
                   href={navItem.href}
                   aria-current={active ? 'page' : undefined}
+                  title={collapsed ? navItem.label : undefined}
                   onClick={() => { if (!active) setPendingHref(navItem.href); }}
                   className={cn(
                     'flex items-center gap-3 rounded-xl text-sm font-medium no-underline transition-colors',
                     isChild ? 'py-2 pl-11 pr-3 text-[13px]' : 'px-3 py-2.5',
+                    collapsed && !isChild && 'lg:justify-center lg:gap-0 lg:px-0',
                     active ? 'text-white' : pending ? 'text-emerald-300' : 'hover:text-white'
                   )}
                   style={
@@ -230,7 +283,7 @@ export default function CrmSidebar({ role, userName, userInitial = 'U' }: CrmSid
                   {!isChild && (
                     <span className={cn('shrink-0', active ? 'text-emerald-300' : '')}>{icon}</span>
                   )}
-                  <span className="truncate">{navItem.label}</span>
+                  <span className={cn('truncate', collapsed && 'lg:hidden')}>{navItem.label}</span>
                 </Link>
               );
             };
@@ -247,9 +300,11 @@ export default function CrmSidebar({ role, userName, userInitial = 'U' }: CrmSid
                   <button
                     type="button"
                     aria-expanded={open}
+                    title={collapsed ? item.label : undefined}
                     onClick={() => setExpanded((prev) => ({ ...prev, [item.href]: !open }))}
                     className={cn(
                       'flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors',
+                      collapsed && 'lg:justify-center lg:gap-0 lg:px-0',
                       groupActive ? 'text-white' : 'hover:text-white'
                     )}
                     style={{ color: groupActive ? '#ffffff' : 'var(--crm-sidebar-text)' }}
@@ -257,17 +312,17 @@ export default function CrmSidebar({ role, userName, userInitial = 'U' }: CrmSid
                     onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = ''; }}
                   >
                     <span className={cn('shrink-0', groupActive ? 'text-emerald-300' : '')}>{icon}</span>
-                    <span className="flex-1 truncate text-left">{item.label}</span>
+                    <span className={cn('flex-1 truncate text-left', collapsed && 'lg:hidden')}>{item.label}</span>
                     <svg
                       width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                       strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
-                      className={cn('shrink-0 transition-transform', open && 'rotate-180')}
+                      className={cn('shrink-0 transition-transform', open && 'rotate-180', collapsed && 'lg:hidden')}
                     >
                       <polyline points="6 9 12 15 18 9" />
                     </svg>
                   </button>
                   {open && (
-                    <ul role="list" className="mt-0.5 grid list-none gap-0.5 p-0">
+                    <ul role="list" className={cn('mt-0.5 grid list-none gap-0.5 p-0', collapsed && 'lg:hidden')}>
                       {children.map((child) => (
                         <li key={child.href}>{renderLink(child, childActive === child.href, true)}</li>
                       ))}
@@ -284,11 +339,11 @@ export default function CrmSidebar({ role, userName, userInitial = 'U' }: CrmSid
 
       {/* User profile */}
       <div className="mx-3 mt-2 mb-3 h-px" style={{ backgroundColor: 'var(--crm-sidebar-border)' }} />
-      <div className="flex items-center gap-2.5 px-4 pb-5">
+      <div className={cn('flex items-center gap-2.5 px-4 pb-5', collapsed && 'lg:justify-center lg:px-2')}>
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-700 text-xs font-bold text-white">
           {userInitial}
         </div>
-        <div className="min-w-0">
+        <div className={cn('min-w-0', collapsed && 'lg:hidden')}>
           <p className="truncate text-[13px] font-semibold text-white">{userName || 'Användare'}</p>
           <p className="truncate text-[11px]" style={{ color: 'var(--crm-sidebar-text-muted)' }}>CRM</p>
         </div>

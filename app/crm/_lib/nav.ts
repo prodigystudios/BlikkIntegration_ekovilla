@@ -14,6 +14,7 @@ export const CRM_NAV_ITEMS: CrmNavItem[] = [
   { href: '/crm/kunder', label: 'Kunder', description: 'Prospekt, kunder och Fortnox-konton', roles: ['sales', 'admin'] },
   { href: '/crm/offerter', label: 'Offerter', description: 'Offertflöde och uppföljning', roles: ['sales', 'admin'] },
   { href: '/crm/arbetsorder', label: 'Arbetsorder', description: 'Intern order och nästa operativa steg', roles: ['sales', 'admin'] },
+  { href: '/crm/planering', label: 'Planering', description: 'Schemalägg arbetsordrar på bilar', roles: ['sales', 'admin'] },
   { href: '/crm/samtal', label: 'Samtal', description: 'Ringlista och snabb loggning', roles: ['sales', 'admin'] },
   { href: '/crm/uppgifter', label: 'Uppgifter', description: 'Uppföljningar och deadlines', roles: ['sales', 'admin'] },
   { href: '/crm/affarsmojligheter', label: 'Affärsmöjligheter', description: 'Pipeline och aktiva affärer', roles: ['sales', 'admin'] },

@@ -2,6 +2,22 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Tailwind preflight is disabled project-wide (see tailwind.config.js → corePlugins.preflight:false),
+   so there is no global `border-width: 0` reset. Any element with a border *style* (e.g. the
+   `border-solid` utility) but no explicit width on a given side falls back to the CSS-initial
+   `medium` (~3px) border on that side — phantom borders that eat layout space. The planning boards
+   (week + month) use `border-solid` for their grid lines, so restore the reset *scoped to those
+   boards only* (in @layer base so real width utilities like `border-l`/`border-b` still win).
+   The proper app-wide fix (re-enable preflight / a global reset) is deferred: it would make
+   currently-hidden Tailwind div-borders appear across the not-yet-rebuilt non-CRM surfaces. */
+@layer base {
+  .planning-board *,
+  .planning-board *::before,
+  .planning-board *::after {
+    border-width: 0;
+  }
+}
+
 /* Melodic Frost — CRM-specific design tokens */
 .crm-shell {
   --crm-sidebar-bg: #0d2117;
