@@ -27,6 +27,7 @@ export const moveSegmentSchema = z.object({
   end_day: isoDate.optional(),
   sort_index: z.coerce.number().int().min(0).optional(),
   job_type: jobType.optional(),
+  on_hold: z.boolean().optional(),
 });
 
 // Assign a crew member to a segment. member_name is the durable display snapshot (profiles are

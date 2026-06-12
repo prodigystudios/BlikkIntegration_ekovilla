@@ -31,6 +31,7 @@ export async function PATCH(req: Request, context: RouteContext) {
       endDay: parsed.data.end_day,
       sortIndex: parsed.data.sort_index,
       jobType: parsed.data.job_type,
+      onHold: parsed.data.on_hold,
     });
     if (error) return routeError(500, 'planning_segment_move_failed', error.message);
 

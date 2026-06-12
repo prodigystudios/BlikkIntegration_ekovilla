@@ -91,6 +91,7 @@ export default function MonthGrid({
                           className={cn(
                             'relative flex items-start gap-1.5 overflow-hidden rounded-lg border border-[#e0e8dc] bg-white px-2 py-1 pl-2.5 shadow-[0_1px_2px_rgba(20,44,27,0.06)] transition hover:-translate-y-px',
                             canWrite ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer',
+                            seg.on_hold && 'opacity-55 ring-1 ring-amber-200',
                           )}
                         >
                           <span className={cn('absolute inset-y-0 left-0 w-[3px]', statusMeta(job?.status ?? '').rail)} />
@@ -98,6 +99,14 @@ export default function MonthGrid({
                           <div className="min-w-0 flex-1">
                             <div className="flex items-baseline justify-between gap-1.5">
                               <span className="flex min-w-0 items-center gap-1">
+                                {seg.on_hold && (
+                                  <span title="Pausad" className="inline-flex shrink-0 text-amber-500">
+                                    <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor">
+                                      <rect x="6" y="5" width="4" height="14" rx="1" />
+                                      <rect x="14" y="5" width="4" height="14" rx="1" />
+                                    </svg>
+                                  </span>
+                                )}
                                 {job ? <JobRef job={job} className="text-[10px]" /> : <span className="text-[10px] text-slate-400">—</span>}
                                 {(() => {
                                   const c = seg.confirmation;

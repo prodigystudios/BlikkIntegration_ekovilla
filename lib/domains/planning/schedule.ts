@@ -16,7 +16,7 @@ export function validateSegmentDates(startDay: string, endDay: string): 'invalid
 }
 
 const SEGMENT_SELECT =
-  'id, work_order_id, truck_id, start_day, end_day, sort_index, job_type, created_by, created_at, updated_at, ' +
+  'id, work_order_id, truck_id, start_day, end_day, sort_index, job_type, on_hold, created_by, created_at, updated_at, ' +
   'work_order:crm_work_orders(order_number, fortnox_order_number, project_name, client_name, status, customer_snapshot, work_address, line_items)';
 
 type RawSegment = {
@@ -27,6 +27,7 @@ type RawSegment = {
   end_day: string;
   sort_index: number;
   job_type: string | null;
+  on_hold: boolean;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -46,6 +47,7 @@ export function mapSegment(row: RawSegment): OpsSegment {
     end_day: row.end_day,
     sort_index: row.sort_index,
     job_type: row.job_type,
+    on_hold: row.on_hold ?? false,
     created_by: row.created_by,
     created_at: row.created_at,
     updated_at: row.updated_at,
@@ -135,9 +137,11 @@ export type MoveSegmentInput = {
   endDay?: string;
   sortIndex?: number;
   jobType?: string | null;
+  onHold?: boolean;
 };
 
-// Patch a placement (drag to another truck/day, reorder, set job type). Only sent fields written.
+// Patch a placement (drag to another truck/day, reorder, set job type, pause/resume). Only sent
+// fields are written.
 export async function moveSegment(
   supabase: SupabaseClient,
   id: string,
@@ -149,6 +153,7 @@ export async function moveSegment(
   if (patch.endDay !== undefined) update.end_day = patch.endDay;
   if (patch.sortIndex !== undefined) update.sort_index = patch.sortIndex;
   if (patch.jobType !== undefined) update.job_type = patch.jobType;
+  if (patch.onHold !== undefined) update.on_hold = patch.onHold;
 
   const { data, error } = await supabase.from('ops_segments').update(update).eq('id', id).select(SEGMENT_SELECT).single();
   return { data: data ? mapSegment(data as unknown as RawSegment) : null, error };

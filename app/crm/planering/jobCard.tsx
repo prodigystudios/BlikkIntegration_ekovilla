@@ -82,6 +82,19 @@ export function JobTypeOrMaterial({ jobType, material }: { jobType: string | nul
   );
 }
 
+// Paused-placement marker. Amber so it reads as "needs attention / not active".
+export function HoldBadge() {
+  return (
+    <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-amber-300 bg-amber-50 px-2 py-px text-[9px] font-bold text-amber-700">
+      <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor">
+        <rect x="6" y="5" width="4" height="14" rx="1" />
+        <rect x="14" y="5" width="4" height="14" rx="1" />
+      </svg>
+      Pausad
+    </span>
+  );
+}
+
 // Confirmation state: a green "bekräftad" pill once an email and/or SMS has gone out to the
 // customer, with the channels + dates + recipients in the tooltip. When Twilio reports the SMS as
 // failed/undelivered the pill turns rose so the planner sees the customer wasn't reached. Renders

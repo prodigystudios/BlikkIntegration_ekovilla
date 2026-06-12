@@ -127,7 +127,7 @@ export default function PlanningClient({ canWrite }: { canWrite: boolean }) {
   );
 
   const move = useCallback(
-    async (id: string, patch: { truck_id?: string; start_day?: string; end_day?: string; job_type?: string | null }) => {
+    async (id: string, patch: { truck_id?: string; start_day?: string; end_day?: string; job_type?: string | null; on_hold?: boolean }) => {
       const r = await fetch(`${API}/segments/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -236,6 +236,7 @@ export default function PlanningClient({ canWrite }: { canWrite: boolean }) {
 
   const onSegClick = useCallback((seg: OpsSegment) => router.push(`/crm/arbetsorder/${seg.work_order_id}`), [router]);
   const onSetJobType = useCallback((seg: OpsSegment, jobType: string | null) => void move(seg.id, { job_type: jobType }), [move]);
+  const onToggleHold = useCallback((seg: OpsSegment, value: boolean) => void move(seg.id, { on_hold: value }), [move]);
   const openConfirm = useCallback((seg: OpsSegment) => setConfirmSeg(seg), []);
 
   // ── selection / click-to-place ───────────────────────────────────────────────
@@ -408,6 +409,7 @@ export default function PlanningClient({ canWrite }: { canWrite: boolean }) {
             onAddCrew={addCrew}
             onRemoveCrew={removeCrew}
             onOpenConfirm={openConfirm}
+            onToggleHold={onToggleHold}
           />
         ) : (
           <MonthGrid

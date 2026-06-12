@@ -35,6 +35,9 @@ export type OpsSegment = {
   // Planner-set job type (Ekovilla/Vitull/Leverans/…) driving the card colour; null → fall back
   // to the material inferred from the work order. See lib/domains/planning/jobTypes.ts.
   job_type: string | null;
+  // Paused placement (customer postponed, material delayed, …): keeps its slot but is dimmed +
+  // badged "Pausad" so it isn't treated as active.
+  on_hold: boolean;
   created_by: string | null;
   created_at: string;
   updated_at: string;

@@ -5,7 +5,7 @@ import type { OpsSegment, OpsTruck } from '@/lib/domains/planning/types';
 import { parseISO, type WeekDay } from './planningDates';
 import { JOB_TYPES } from '@/lib/domains/planning/jobTypes';
 import type { AssignablePerson } from '@/lib/domains/planning/crew';
-import { statusMeta, StatusPill, SackProgress, JobTypeOrMaterial, JobRef, CrewEditor, CrewAvatars, ConfirmationBadge } from './jobCard';
+import { statusMeta, StatusPill, SackProgress, JobTypeOrMaterial, JobRef, CrewEditor, CrewAvatars, ConfirmationBadge, HoldBadge } from './jobCard';
 
 type WeekBoardProps = {
   weekDays: WeekDay[];
@@ -23,6 +23,7 @@ type WeekBoardProps = {
   onAddCrew: (seg: OpsSegment, person: AssignablePerson) => void;
   onRemoveCrew: (seg: OpsSegment, memberId: string) => void;
   onOpenConfirm: (seg: OpsSegment) => void;
+  onToggleHold: (seg: OpsSegment, value: boolean) => void;
 };
 
 // Which day column (0–6) a pointer x lands in, within a 7-column lane.
@@ -34,7 +35,7 @@ function dayIndexFromX(e: React.MouseEvent | React.DragEvent): number {
 
 export default function WeekBoard({
   weekDays, trucks, segments, todayISO, canWrite, placing, people,
-  onCellClick, onCellDrop, onSegDragStart, onSegClick, onSetJobType, onAddCrew, onRemoveCrew, onOpenConfirm,
+  onCellClick, onCellDrop, onSegDragStart, onSegClick, onSetJobType, onAddCrew, onRemoveCrew, onOpenConfirm, onToggleHold,
 }: WeekBoardProps) {
   const weekStart = weekDays[0].iso;
   const weekEnd = weekDays[6].iso;
@@ -126,6 +127,7 @@ export default function WeekBoard({
                           className={cn(
                             'relative overflow-hidden rounded-xl border border-[#e0e8dc] bg-white p-2.5 pl-3.5 shadow-[0_1px_2px_rgba(20,44,27,0.06)] transition hover:-translate-y-px hover:shadow-[0_3px_10px_rgba(20,44,27,0.12)]',
                             canWrite ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer',
+                            seg.on_hold && 'opacity-60 ring-1 ring-amber-200',
                           )}
                         >
                           <span className={cn('absolute inset-y-0 left-0 w-1', statusMeta(seg.job?.status ?? '').rail)} />
@@ -139,6 +141,7 @@ export default function WeekBoard({
                               <div className="text-[11px] text-slate-500">{job.client_name}</div>
                               {job.address && <div className="mt-0.5 text-[10.5px] text-slate-400">{job.address}</div>}
                               <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                                {seg.on_hold && <HoldBadge />}
                                 <JobTypeOrMaterial jobType={seg.job_type} material={job.material} />
                                 <SackProgress planned={job.total_sacks} reported={seg.sacks_reported} />
                                 <ConfirmationBadge confirmation={seg.confirmation} />
@@ -173,21 +176,39 @@ export default function WeekBoard({
                                 </select>
                               )}
                               {canWrite && (
-                                <button
-                                  type="button"
-                                  onMouseDown={(ev) => ev.stopPropagation()}
-                                  onClick={(ev) => {
-                                    ev.stopPropagation();
-                                    onOpenConfirm(seg);
-                                  }}
-                                  className="mt-1.5 inline-flex h-6 w-full items-center justify-center gap-1 rounded-lg border border-[#e0e8dc] bg-white text-[10px] font-semibold text-slate-500 transition hover:border-emerald-400 hover:text-emerald-600"
-                                >
-                                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <rect x="2" y="4" width="20" height="16" rx="2" />
-                                    <path d="M22 7l-10 6L2 7" />
-                                  </svg>
-                                  Skicka bekräftelse
-                                </button>
+                                <div className="mt-1.5 flex gap-1.5">
+                                  <button
+                                    type="button"
+                                    onMouseDown={(ev) => ev.stopPropagation()}
+                                    onClick={(ev) => {
+                                      ev.stopPropagation();
+                                      onToggleHold(seg, !seg.on_hold);
+                                    }}
+                                    className={cn(
+                                      'inline-flex h-6 flex-1 items-center justify-center gap-1 rounded-lg border text-[10px] font-semibold transition',
+                                      seg.on_hold
+                                        ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:border-emerald-400'
+                                        : 'border-[#e0e8dc] bg-white text-slate-500 hover:border-amber-400 hover:text-amber-600',
+                                    )}
+                                  >
+                                    {seg.on_hold ? 'Återuppta' : 'Pausa'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onMouseDown={(ev) => ev.stopPropagation()}
+                                    onClick={(ev) => {
+                                      ev.stopPropagation();
+                                      onOpenConfirm(seg);
+                                    }}
+                                    className="inline-flex h-6 flex-1 items-center justify-center gap-1 rounded-lg border border-[#e0e8dc] bg-white text-[10px] font-semibold text-slate-500 transition hover:border-emerald-400 hover:text-emerald-600"
+                                  >
+                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                      <rect x="2" y="4" width="20" height="16" rx="2" />
+                                      <path d="M22 7l-10 6L2 7" />
+                                    </svg>
+                                    Bekräftelse
+                                  </button>
+                                </div>
                               )}
                             </>
                           ) : (
