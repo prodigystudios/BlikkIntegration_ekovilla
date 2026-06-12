@@ -310,6 +310,7 @@ export default function PlanningClient({
   const onSegClick = useCallback((seg: OpsSegment) => router.push(`/crm/arbetsorder/${seg.work_order_id}`), [router]);
   const onSetJobType = useCallback((seg: OpsSegment, jobType: string | null) => void move(seg.id, { job_type: jobType }), [move]);
   const onToggleHold = useCallback((seg: OpsSegment, value: boolean) => void move(seg.id, { on_hold: value }), [move]);
+  const onResize = useCallback((seg: OpsSegment, startDay: string, endDay: string) => void move(seg.id, { start_day: startDay, end_day: endDay }), [move]);
   const openConfirm = useCallback((seg: OpsSegment) => setConfirmSeg(seg), []);
 
   // Day notes: optimistic local updates (a failed call resyncs from the server on the next nav).
@@ -652,6 +653,7 @@ export default function PlanningClient({
             onAddTruckCrew={addTruckCrew}
             onRemoveTruckCrew={removeTruckCrew}
             onCopyTruckCrew={copyTruckCrew}
+            onResize={onResize}
           />
         ) : (
           <MonthGrid

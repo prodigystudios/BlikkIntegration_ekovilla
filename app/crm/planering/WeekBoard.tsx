@@ -1,8 +1,9 @@
 import type React from 'react';
+import { useRef, useState } from 'react';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 import type { OpsSegment, OpsTruck } from '@/lib/domains/planning/types';
-import { type WeekDay } from './planningDates';
+import { type WeekDay, addDaysISO, daysBetweenInclusive } from './planningDates';
 import { resolveJobTypeFrom, type JobType } from '@/lib/domains/planning/jobTypes';
 import type { AssignablePerson } from '@/lib/domains/planning/crew';
 import { crewForTruckInRange, type TruckCrewMember } from '@/lib/domains/planning/truckCrew';
@@ -37,6 +38,7 @@ type WeekBoardProps = {
   onAddTruckCrew: (truckId: string, person: AssignablePerson, startDay: string, endDay: string) => void;
   onRemoveTruckCrew: (truckId: string, memberId: string) => void;
   onCopyTruckCrew: (truckId: string, sourceFrom: string, sourceTo: string) => void;
+  onResize: (seg: OpsSegment, startDay: string, endDay: string) => void;
 };
 
 // Which visible-day column (0…count-1) a pointer x lands in, within a `count`-column lane.
@@ -49,7 +51,7 @@ function dayIndexFromX(e: React.MouseEvent | React.DragEvent, count: number): nu
 export default function WeekBoard({
   weekDays, showWeekend, trucks, segments, todayISO, canWrite, placing, people, jobTypes,
   onCellClick, onCellDrop, onSegDragStart, onSegClick, onSetJobType, onAddCrew, onRemoveCrew, onOpenConfirm, onToggleHold,
-  dayNotes, onAddNote, onRemoveNote, truckCrew, onAddTruckCrew, onRemoveTruckCrew, onCopyTruckCrew,
+  dayNotes, onAddNote, onRemoveNote, truckCrew, onAddTruckCrew, onRemoveTruckCrew, onCopyTruckCrew, onResize,
 }: WeekBoardProps) {
   // The visible day columns: all seven, or weekdays only when weekends are hidden.
   const days = showWeekend ? weekDays : weekDays.filter((d) => !d.isWeekend);
@@ -73,17 +75,48 @@ export default function WeekBoard({
     return s === -1 ? null : { s, e };
   };
 
+  const [resize, setResize] = useState<{ segId: string; endIso: string } | null>(null);
+  const resizeEndRef = useRef<string | null>(null);
+  const suppressClickRef = useRef(false);
+
+  // Pointer-drag a card's right edge to change how many days it spans (live preview via `resize`).
+  const startResize = (e: React.MouseEvent, seg: OpsSegment) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const dayArea = (e.currentTarget as HTMLElement).closest('[data-dayarea]') as HTMLElement | null;
+    if (!dayArea) return;
+    const rect = dayArea.getBoundingClientRect();
+    resizeEndRef.current = seg.end_day;
+    const onMove = (me: MouseEvent) => {
+      const idx = Math.max(0, Math.min(n - 1, Math.floor(((me.clientX - rect.left) / rect.width) * n)));
+      const endIso = days[idx].iso < seg.start_day ? seg.start_day : days[idx].iso;
+      resizeEndRef.current = endIso;
+      setResize({ segId: seg.id, endIso });
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      const endIso = resizeEndRef.current;
+      setResize(null);
+      suppressClickRef.current = true;
+      setTimeout(() => { suppressClickRef.current = false; }, 0);
+      if (endIso && endIso !== seg.end_day) onResize(seg, seg.start_day, endIso);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
   return (
-    <section className={cn(crm.card, 'overflow-x-auto p-3')}>
+    <section className={cn(crm.card, 'wk-board overflow-x-auto p-3')}>
       <div style={{ minWidth: 112 + n * 132 }}>
         {/* Day header */}
-        <div className="grid" style={{ gridTemplateColumns: laneCols }}>
+        <div className="mb-1.5 grid" style={{ gridTemplateColumns: laneCols }}>
           <div />
           {days.map((wd) => {
             const isToday = wd.iso === todayISO;
             const hol = swedishHoliday(wd.iso);
             return (
-              <div key={wd.iso} className={cn('border-l border-[#d3ddcb] px-1.5 py-1.5 text-center last:border-r', isToday ? 'bg-emerald-50' : hol && 'bg-rose-50')}>
+              <div key={wd.iso} className={cn('px-1.5 py-1.5 text-center', isToday ? 'bg-emerald-50' : hol && 'bg-rose-50')}>
                 <div className={cn('text-[11.5px] font-bold capitalize', isToday ? 'text-emerald-700' : hol ? 'text-rose-600' : wd.isWeekend ? 'text-slate-400' : 'text-slate-600')}>
                   {wd.weekday}
                 </div>
@@ -95,7 +128,7 @@ export default function WeekBoard({
         </div>
 
         {/* Day notes strip (dagsanteckningar) */}
-        <div className="grid border-t border-[#eef3eb]" style={{ gridTemplateColumns: laneCols }}>
+        <div className="grid" style={{ gridTemplateColumns: laneCols }}>
           <div className="flex items-center justify-end pr-2 text-[9.5px] font-semibold uppercase tracking-wide text-slate-300">Noteringar</div>
           {days.map((wd) => (
             <DayNotesCell
@@ -123,15 +156,15 @@ export default function WeekBoard({
             return (
               <div
                 key={truck.id}
-                className={cn('grid border-t border-[#d3ddcb]', ti === trucks.length - 1 && 'border-b')}
+                className={cn('grid border-t border-solid border-[#e8efe5]', ti === trucks.length - 1 && 'border-b')}
                 style={{ gridTemplateColumns: laneCols }}
               >
-                <div className="flex flex-col gap-1.5 py-3 pl-1 pr-2">
+                <div className="flex flex-col gap-1 py-2 pl-1 pr-2">
                   <div className="flex items-center gap-2">
                     <span className="h-2.5 w-2.5 shrink-0 rounded-full ring-2 ring-black/[0.03]" style={{ backgroundColor: truck.color || '#94a3b8' }} />
                     <span className="truncate text-[12.5px] font-bold text-slate-700">{truck.name}</span>
                   </div>
-                  <div className="pl-[18px]">
+                  <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 pl-[18px]">
                     {canWrite ? (
                       <CrewEditor
                         crew={laneCrew}
@@ -147,7 +180,7 @@ export default function WeekBoard({
                         type="button"
                         onClick={() => onCopyTruckCrew(truck.id, weekStart, weekEnd)}
                         title="Kopiera besättningen till nästa vecka"
-                        className="mt-1 inline-flex items-center gap-0.5 text-[9px] font-semibold text-slate-400 transition hover:text-emerald-600"
+                        className="inline-flex items-center gap-0.5 text-[9px] font-semibold text-slate-400 transition hover:text-emerald-600"
                       >
                         <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
                           <path d="M5 12h14M13 6l6 6-6 6" />
@@ -160,6 +193,7 @@ export default function WeekBoard({
 
                 {/* Day-area: one drop zone; the target day is derived from the pointer x. */}
                 <div
+                  data-dayarea
                   className="relative"
                   style={{ gridColumn: '2 / -1' }}
                   onDragOver={(e) => {
@@ -180,7 +214,7 @@ export default function WeekBoard({
                       <div
                         key={wd.iso}
                         className={cn(
-                          'border-l border-[#d3ddcb] last:border-r',
+                          'border-solid border-[#e8efe5] border-l',
                           wd.iso === todayISO
                             ? 'bg-emerald-500/5'
                             : swedishHoliday(wd.iso)
@@ -194,11 +228,13 @@ export default function WeekBoard({
                   </div>
 
                   {/* segments */}
-                  <div className={cn('relative grid content-start gap-1.5 p-1.5', placing && 'cursor-copy')} style={{ gridTemplateColumns: dayCols, minHeight: 118 }}>
+                  <div className={cn('relative grid h-full content-start gap-1.5 px-1.5 py-1.5', placing && 'cursor-copy')} style={{ gridTemplateColumns: dayCols, minHeight: 72 }}>
                     {laneSegs.map((seg) => {
                       const col = segColumns(seg);
                       if (!col) return null;
                       const job = seg.job;
+                      const previewEnd = resize?.segId === seg.id ? days.findIndex((d) => d.iso === resize.endIso) : -1;
+                      const endIdx = previewEnd >= col.s ? previewEnd : col.e;
                       return (
                         <div
                           key={seg.id}
@@ -206,9 +242,10 @@ export default function WeekBoard({
                           onDragStart={(ev) => onSegDragStart(ev, seg)}
                           onClick={(ev) => {
                             ev.stopPropagation();
+                            if (suppressClickRef.current) return;
                             onSegClick(seg);
                           }}
-                          style={{ gridColumn: `${col.s + 1} / ${col.e + 2}` }}
+                          style={{ gridColumn: `${col.s + 1} / ${endIdx + 2}` }}
                           className={cn(
                             'relative overflow-hidden rounded-xl border border-[#e0e8dc] bg-white p-2.5 pl-3.5 shadow-[0_1px_2px_rgba(20,44,27,0.06)] transition hover:-translate-y-px hover:shadow-[0_3px_10px_rgba(20,44,27,0.12)]',
                             canWrite ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer',
@@ -216,6 +253,16 @@ export default function WeekBoard({
                           )}
                         >
                           <span className={cn('absolute inset-y-0 left-0 w-1', statusMeta(seg.job?.status ?? '').rail)} />
+                          {canWrite && (
+                            <span
+                              onMouseDown={(e) => startResize(e, seg)}
+                              onClick={(e) => e.stopPropagation()}
+                              title="Dra för att ändra antal dagar"
+                              className="absolute inset-y-1 right-0 z-10 flex w-2.5 cursor-ew-resize items-center justify-center rounded-r-xl text-slate-300 transition hover:bg-emerald-50 hover:text-emerald-500"
+                            >
+                              <svg width="4" height="13" viewBox="0 0 4 14" fill="currentColor"><rect width="1.2" height="14" rx="0.6" /><rect x="2.8" width="1.2" height="14" rx="0.6" /></svg>
+                            </span>
+                          )}
                           {job ? (
                             <>
                               <div className="flex items-center gap-2">
@@ -226,9 +273,11 @@ export default function WeekBoard({
                                     jobType={seg.job_type}
                                     jobTypes={jobTypes}
                                     onHold={seg.on_hold}
+                                    lengthDays={daysBetweenInclusive(seg.start_day, seg.end_day)}
                                     onSetJobType={(key) => onSetJobType(seg, key)}
                                     onToggleHold={() => onToggleHold(seg, !seg.on_hold)}
                                     onOpenConfirm={() => onOpenConfirm(seg)}
+                                    onSetLength={(d) => onResize(seg, seg.start_day, addDaysISO(seg.start_day, d - 1))}
                                   />
                                 )}
                               </div>

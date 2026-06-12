@@ -297,16 +297,20 @@ export function SegmentMenu({
   jobType,
   jobTypes,
   onHold,
+  lengthDays,
   onSetJobType,
   onToggleHold,
   onOpenConfirm,
+  onSetLength,
 }: {
   jobType: string | null;
   jobTypes: JobType[];
   onHold: boolean;
+  lengthDays: number;
   onSetJobType: (key: string | null) => void;
   onToggleHold: () => void;
   onOpenConfirm: () => void;
+  onSetLength: (days: number) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
@@ -345,8 +349,8 @@ export function SegmentMenu({
         title="Åtgärder"
         aria-label="Åtgärder"
         className={cn(
-          'inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-lg transition',
-          open ? 'bg-slate-100 text-slate-600' : 'text-slate-300 hover:bg-slate-100 hover:text-slate-600',
+          'inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-lg p-0 transition',
+          open ? 'bg-slate-100 text-slate-600' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-600',
         )}
       >
         <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
@@ -389,6 +393,28 @@ export function SegmentMenu({
                     </button>
                   );
                 })}
+              </div>
+
+              <div className="my-1.5 h-px bg-[#eef3eb]" />
+
+              <p className="px-1.5 pb-1 pt-0.5 text-[9px] font-bold uppercase tracking-wide text-slate-400">Längd (dagar)</p>
+              <div className="flex gap-1 px-0.5">
+                {[1, 2, 3, 4, 5, 6, 7].map((d) => (
+                  <button
+                    key={d}
+                    type="button"
+                    onClick={() => {
+                      onSetLength(d);
+                      setOpen(false);
+                    }}
+                    className={cn(
+                      'h-6 flex-1 rounded-lg p-0 text-[11px] font-bold tabular-nums transition',
+                      d === lengthDays ? 'bg-emerald-600 text-white' : 'bg-slate-50 text-slate-600 hover:bg-slate-100',
+                    )}
+                  >
+                    {d}
+                  </button>
+                ))}
               </div>
 
               <div className="my-1.5 h-px bg-[#eef3eb]" />

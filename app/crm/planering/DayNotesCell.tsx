@@ -46,7 +46,7 @@ export default function DayNotesCell({
   return (
     <div
       className={cn(
-        'flex min-h-[30px] flex-col gap-1 border-l border-[#d3ddcb] px-1 py-1',
+        'flex min-h-[30px] flex-col gap-1 px-1 py-1',
         isToday ? 'bg-emerald-50/50' : isWeekend ? 'bg-slate-400/[0.04]' : '',
       )}
     >
