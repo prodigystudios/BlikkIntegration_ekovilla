@@ -48,6 +48,7 @@ export default function PlanningClient({
   const [weekOffset, setWeekOffset] = useState(0);
   const [monthOffset, setMonthOffset] = useState(0);
   const [showWeekend, setShowWeekend] = useState(false);
+  const [stackWeeks, setStackWeeks] = useState(false);
 
   const [backlog, setBacklog] = useState<SchedulableWorkOrder[]>([]);
   const [trucks, setTrucks] = useState<OpsTruck[]>([]);
@@ -77,6 +78,17 @@ export default function PlanningClient({
   // ── visible range (depends on view + offset) ──────────────────────────────
   const weekMonday = useMemo(() => addDays(startOfWeek(new Date()), weekOffset * 7), [weekOffset]);
   const weekDays = useMemo(() => buildWeekDays(weekMonday), [weekMonday]);
+  // "Hela månaden"-toggle: stack this week + each following week through the month end, each as
+  // its own WeekBoard (otherwise just the single current week).
+  const weekMondays = useMemo(() => {
+    if (view !== 'week' || !stackWeeks) return [weekMonday];
+    const end = new Date(weekMonday);
+    end.setMonth(end.getMonth() + 1, 0); // last day of weekMonday's month
+    const out: Date[] = [];
+    for (let m = weekMonday; m.getTime() <= end.getTime(); m = addDays(m, 7)) out.push(m);
+    return out.length ? out : [weekMonday];
+  }, [view, stackWeeks, weekMonday]);
+  const weekDaysList = useMemo(() => weekMondays.map((m) => buildWeekDays(m)), [weekMondays]);
   const monthAnchor = useMemo(() => {
     const b = new Date();
     b.setHours(0, 0, 0, 0);
@@ -87,10 +99,14 @@ export default function PlanningClient({
   const monthWeeks = useMemo(() => buildMonthWeeks(monthAnchor), [monthAnchor]);
 
   const range = useMemo(() => {
-    if (view === 'week') return { from: weekDays[0].iso, to: weekDays[6].iso };
+    if (view === 'week') {
+      const first = weekDaysList[0];
+      const last = weekDaysList[weekDaysList.length - 1];
+      return { from: first[0].iso, to: last[6].iso };
+    }
     const days = monthWeeks.flatMap((w) => w.days);
     return { from: days[0].iso, to: days[days.length - 1].iso };
-  }, [view, weekDays, monthWeeks]);
+  }, [view, weekDaysList, monthWeeks]);
 
   // ── data ──────────────────────────────────────────────────────────────────
   const loadBacklog = useCallback(async () => {
@@ -133,6 +149,7 @@ export default function PlanningClient({
   useEffect(() => {
     try {
       setShowWeekend(localStorage.getItem('crm-planning-show-weekend') === '1');
+      setStackWeeks(localStorage.getItem('crm-planning-stack-weeks') === '1');
     } catch {
       /* ignore */
     }
@@ -142,6 +159,17 @@ export default function PlanningClient({
       const next = !v;
       try {
         localStorage.setItem('crm-planning-show-weekend', next ? '1' : '0');
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  }, []);
+  const toggleStackWeeks = useCallback(() => {
+    setStackWeeks((v) => {
+      const next = !v;
+      try {
+        localStorage.setItem('crm-planning-stack-weeks', next ? '1' : '0');
       } catch {
         /* ignore */
       }
@@ -594,6 +622,17 @@ export default function PlanningClient({
               {showWeekend ? 'Dölj helg' : 'Visa helg'}
             </button>
           )}
+          {view === 'week' && (
+            <button
+              onClick={toggleStackWeeks}
+              className={cn(
+                'ml-1 rounded-lg border px-2.5 py-1 text-[11px] font-bold transition',
+                stackWeeks ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-[#e0e8dc] bg-white text-slate-500 hover:border-[#c8d4c3]',
+              )}
+            >
+              {stackWeeks ? 'En vecka' : 'Hela månaden'}
+            </button>
+          )}
         </div>
       </div>
 
@@ -713,29 +752,44 @@ export default function PlanningClient({
         />
 
         {view === 'week' ? (
-          <WeekBoard
-            weekDays={weekDays}
-            showWeekend={showWeekend}
-            trucks={visibleTrucks}
-            segments={visibleSegments}
-            todayISO={todayISO}
-            canWrite={canWrite}
-            placing={placing}
-            people={people}
-            jobTypes={jobTypes}
-            onCellClick={onWeekCellClick}
-            onCellDrop={onCellDrop}
-            onSegDragStart={onSegDragStart}
-            onSegClick={onSegClick}
-            actions={actions}
-            dayNotes={dayNotes}
-            onAddNote={addDayNote}
-            onRemoveNote={removeDayNote}
-            truckCrew={truckCrew}
-            onAddTruckCrew={addTruckCrew}
-            onRemoveTruckCrew={removeTruckCrew}
-            onCopyTruckCrew={copyTruckCrew}
-          />
+          <div className="grid gap-4">
+            {weekMondays.map((m, i) => {
+              const wd = weekDaysList[i];
+              return (
+                <div key={wd[0].iso}>
+                  {weekMondays.length > 1 && (
+                    <div className="mb-1.5 flex items-center gap-2 px-1">
+                      <span className="rounded-lg border border-[#e0e8dc] bg-white px-2 py-0.5 text-[11px] font-bold tabular-nums text-slate-600">v.{isoWeek(m)}</span>
+                      <span className="text-[12px] font-semibold tabular-nums text-slate-500">{wd[0].dayLabel}–{wd[6].dayLabel}</span>
+                    </div>
+                  )}
+                  <WeekBoard
+                    weekDays={wd}
+                    showWeekend={showWeekend}
+                    trucks={visibleTrucks}
+                    segments={visibleSegments}
+                    todayISO={todayISO}
+                    canWrite={canWrite}
+                    placing={placing}
+                    people={people}
+                    jobTypes={jobTypes}
+                    onCellClick={onWeekCellClick}
+                    onCellDrop={onCellDrop}
+                    onSegDragStart={onSegDragStart}
+                    onSegClick={onSegClick}
+                    actions={actions}
+                    dayNotes={dayNotes}
+                    onAddNote={addDayNote}
+                    onRemoveNote={removeDayNote}
+                    truckCrew={truckCrew}
+                    onAddTruckCrew={addTruckCrew}
+                    onRemoveTruckCrew={removeTruckCrew}
+                    onCopyTruckCrew={copyTruckCrew}
+                  />
+                </div>
+              );
+            })}
+          </div>
         ) : (
           <MonthGrid
             weeks={monthWeeks}
