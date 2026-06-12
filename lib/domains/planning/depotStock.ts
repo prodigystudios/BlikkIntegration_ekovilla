@@ -82,6 +82,15 @@ async function listDeliveryRows(supabase: SupabaseClient): Promise<StockRow[]> {
 // Consumption stock rows derived from sack reports: blown sacks → segment's truck → truck's depot,
 // attributed to the work order's material. Empty until the installer reporting flow populates
 // ops_segment_reports.
+//
+// ⚠️ KNOWN LIMITATIONS — revisit when wiring the installer sack-reporting flow (currently dormant
+// because there are no reports yet):
+//   1. materialShortFromLineItems returns only the FIRST recognised material, so a work order with
+//      two materials debits all its blown sacks from that one material. A faithful split needs the
+//      report (or line items) to carry sacks-per-material, which the reporting model must define.
+//   2. A segment whose truck has depot_id = null is silently skipped (`if (depotId && material)`),
+//      so those blown sacks are never subtracted from any depot. Decide where un-depoted consumption
+//      lands (a default depot? surfaced as a warning?) once trucks-without-depots is a real case.
 async function deriveConsumptionRows(supabase: SupabaseClient): Promise<StockRow[]> {
   const { data: trucks } = await supabase.from('ops_trucks').select('id, depot_id');
   const truckDepot = new Map((trucks ?? []).map((t: any) => [t.id as string, (t.depot_id as string | null) ?? null]));

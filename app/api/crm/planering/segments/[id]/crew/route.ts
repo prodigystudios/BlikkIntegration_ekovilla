@@ -28,7 +28,12 @@ export async function POST(req: Request, context: RouteContext) {
       memberName: parsed.data.member_name,
       actorUserId: gate.currentUser.id,
     });
-    if (error) return routeError(500, 'planning_crew_assign_failed', error.message);
+    if (error) {
+      if ((error as { code?: string }).code === '23505') {
+        return routeError(409, 'planning_crew_already_assigned', 'Personen är redan tillagd på jobbet.');
+      }
+      return routeError(500, 'planning_crew_assign_failed', error.message);
+    }
 
     return ok({ item: data }, 201);
   } catch (e: any) {

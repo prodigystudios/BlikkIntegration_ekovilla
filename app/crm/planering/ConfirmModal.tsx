@@ -80,14 +80,21 @@ export default function ConfirmModal({
         return;
       }
       const res = j.data.result as {
-        email: { sent: boolean; error: string | null };
-        sms: { sent: boolean; error: string | null };
+        email: { sent: boolean; recorded: boolean; error: string | null };
+        sms: { sent: boolean; recorded: boolean; error: string | null };
       };
-      const errors = [res.email?.error && `Mejl: ${res.email.error}`, res.sms?.error && `SMS: ${res.sms.error}`].filter(Boolean);
-      if (errors.length) toast.error(errors.join(' · '));
+      // Hard failures = a channel that did NOT send. A channel that sent but couldn't be logged
+      // (recorded=false) is surfaced as a warning so the planner doesn't re-send and double-notify.
+      const hardErrors = [
+        res.email?.error && !res.email?.sent && `Mejl: ${res.email.error}`,
+        res.sms?.error && !res.sms?.sent && `SMS: ${res.sms.error}`,
+      ].filter(Boolean);
+      if (hardErrors.length) toast.error(hardErrors.join(' · '));
       if (res.email?.sent || res.sms?.sent) {
         const channels = [res.email?.sent && 'mejl', res.sms?.sent && 'SMS'].filter(Boolean).join(' + ');
-        toast.success(`Bekräftelse skickad (${channels})`);
+        const unrecorded = (res.email?.sent && !res.email?.recorded) || (res.sms?.sent && !res.sms?.recorded);
+        if (unrecorded) toast.error(`Skickat (${channels}), men kunde inte loggas — skicka INTE igen.`);
+        else toast.success(`Bekräftelse skickad (${channels})`);
         onSent();
         onClose();
       }

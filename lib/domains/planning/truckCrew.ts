@@ -96,7 +96,21 @@ export type CopyTruckCrewInput = {
   actorUserId: string;
 };
 
-// Copy a truck's crew from one week to another, skipping anyone already on the target week.
+// Pure: shift an ISO date by whole days (UTC, so date-only and DST-safe).
+export function shiftISO(iso: string, days: number): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+// Whole-day delta between two ISO dates (target − source).
+function dayDelta(fromISO: string, toISO: string): number {
+  return Math.round((Date.parse(`${toISO}T00:00:00Z`) - Date.parse(`${fromISO}T00:00:00Z`)) / 86_400_000);
+}
+
+// Copy a truck's crew from one week to another, skipping anyone already on the target week. Each
+// member's own date range is preserved, shifted by the source→target delta, so a partial-week
+// assignment (e.g. Mon–Wed) stays partial after the copy instead of becoming a full week.
 export async function copyTruckCrewWeek(
   supabase: SupabaseClient,
   input: CopyTruckCrewInput,
@@ -106,13 +120,14 @@ export async function copyTruckCrewWeek(
   const toCopy = membersToCopy(source, target);
   if (toCopy.length === 0) return { data: { copied: 0 }, error: null };
 
+  const delta = dayDelta(input.sourceFrom, input.targetFrom);
   const { error } = await supabase.from('ops_truck_crew').insert(
     toCopy.map((m) => ({
       truck_id: input.truckId,
       member_id: m.member_id,
       member_name: m.member_name,
-      start_day: input.targetFrom,
-      end_day: input.targetTo,
+      start_day: shiftISO(m.start_day, delta),
+      end_day: shiftISO(m.end_day, delta),
       created_by: input.actorUserId,
     })),
   );

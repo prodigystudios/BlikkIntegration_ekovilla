@@ -85,7 +85,7 @@ export default function MonthGrid({
           ))}
         </div>
 
-        <div className="rounded-b-lg border-b border-r border-[#e8efe5]">
+        <div className="rounded-b-lg border-b border-r border-solid border-[#e8efe5]">
           {weeks.map((week) => (
             <div key={`${week.weekNo}-${week.days[0].iso}`} className="grid grid-cols-[34px_repeat(7,1fr)]">
               <div className="flex justify-center pt-2 text-[10px] font-bold tabular-nums text-slate-300">{week.weekNo}</div>
@@ -118,7 +118,7 @@ export default function MonthGrid({
                       onDayDrop(e, cell.iso);
                     }}
                     className={cn(
-                      'flex min-h-[140px] flex-col gap-1 border-l border-t border-[#e8efe5] p-1.5',
+                      'flex min-h-[140px] flex-col gap-1 border-l border-t border-solid border-[#e8efe5] p-1.5',
                       cell.inMonth ? 'bg-[#f9fbf7]' : 'bg-[#eef2ec]',
                       cell.isWeekend && cell.inMonth && 'bg-slate-400/[0.05]',
                       hol && cell.inMonth && 'bg-rose-400/[0.06]',

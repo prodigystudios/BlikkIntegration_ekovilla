@@ -47,7 +47,12 @@ export async function POST(req: Request) {
       endDay: parsed.data.end_day,
       actorUserId: gate.currentUser.id,
     });
-    if (error) return routeError(500, 'planning_truck_crew_assign_failed', error.message);
+    if (error) {
+      if ((error as { code?: string }).code === '23505') {
+        return routeError(409, 'planning_truck_crew_already_assigned', 'Personen är redan i bilbesättningen den veckan.');
+      }
+      return routeError(500, 'planning_truck_crew_assign_failed', error.message);
+    }
 
     return ok({ item: data }, 201);
   } catch (e: any) {

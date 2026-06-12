@@ -66,8 +66,11 @@ type RecordConfirmationInput = {
   actorUserId: string;
 };
 
-async function recordConfirmation(supabase: SupabaseClient, input: RecordConfirmationInput): Promise<void> {
-  await supabase.from('ops_work_order_confirmations').insert({
+async function recordConfirmation(
+  supabase: SupabaseClient,
+  input: RecordConfirmationInput,
+): Promise<{ error: { message: string } | null }> {
+  const { error } = await supabase.from('ops_work_order_confirmations').insert({
     work_order_id: input.workOrderId,
     segment_id: input.segmentId,
     channel: input.channel,
@@ -78,6 +81,7 @@ async function recordConfirmation(supabase: SupabaseClient, input: RecordConfirm
     status: input.status,
     created_by: input.actorUserId,
   });
+  return { error: error ?? null };
 }
 
 export type SendConfirmationInput = {
@@ -92,8 +96,10 @@ export type SendConfirmationInput = {
 };
 
 export type SendConfirmationResult = {
-  email: { sent: boolean; error: string | null };
-  sms: { sent: boolean; status: string | null; error: string | null };
+  // `recorded` is false when the message was sent but its audit row failed to persist — the caller
+  // must warn the planner NOT to re-send (the customer was already contacted, just not logged).
+  email: { sent: boolean; recorded: boolean; error: string | null };
+  sms: { sent: boolean; recorded: boolean; status: string | null; error: string | null };
 };
 
 // Build + send the requested channels, recording each successful send. Channels are independent: a
@@ -111,8 +117,8 @@ export async function sendOrderConfirmation(
   const orderNumber = ctx.fortnox_order_number || ctx.order_number || null;
   const customerName = ctx.client_name || null;
   const result: SendConfirmationResult = {
-    email: { sent: false, error: null },
-    sms: { sent: false, status: null, error: null },
+    email: { sent: false, recorded: false, error: null },
+    sms: { sent: false, recorded: false, status: null, error: null },
   };
 
   if (input.sendEmail && input.recipientEmail) {
@@ -129,7 +135,8 @@ export async function sendOrderConfirmation(
         customMessage: input.customMessage,
       });
       await sendEmail({ to: input.recipientEmail, subject, html, text });
-      await recordConfirmation(supabase, {
+      result.email.sent = true;
+      const rec = await recordConfirmation(supabase, {
         workOrderId: ctx.work_order_id,
         segmentId: input.segmentId,
         channel: 'email',
@@ -140,7 +147,11 @@ export async function sendOrderConfirmation(
         status: null,
         actorUserId: input.actorUserId,
       });
-      result.email.sent = true;
+      result.email.recorded = !rec.error;
+      if (rec.error) {
+        console.error('[planning] confirmation email sent but not recorded:', rec.error.message);
+        result.email.error = 'Skickat, men kunde inte loggas — skicka inte igen.';
+      }
     } catch (e: any) {
       result.email.error = e?.message || 'Mejlet kunde inte skickas';
     }
@@ -158,7 +169,9 @@ export async function sendOrderConfirmation(
         salesResponsible: input.actorName,
       });
       const res = await sendSms({ to: input.recipientPhone, body });
-      await recordConfirmation(supabase, {
+      result.sms.sent = true;
+      result.sms.status = res.status;
+      const rec = await recordConfirmation(supabase, {
         workOrderId: ctx.work_order_id,
         segmentId: input.segmentId,
         channel: 'sms',
@@ -169,8 +182,11 @@ export async function sendOrderConfirmation(
         status: res.status,
         actorUserId: input.actorUserId,
       });
-      result.sms.sent = true;
-      result.sms.status = res.status;
+      result.sms.recorded = !rec.error;
+      if (rec.error) {
+        console.error('[planning] confirmation SMS sent but not recorded:', rec.error.message);
+        result.sms.error = 'Skickat, men kunde inte loggas — skicka inte igen.';
+      }
     } catch (e: any) {
       result.sms.error = e?.message || 'SMS kunde inte skickas';
     }

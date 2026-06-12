@@ -33,7 +33,14 @@ export async function PATCH(req: Request, context: RouteContext) {
       jobType: parsed.data.job_type,
       onHold: parsed.data.on_hold,
     });
-    if (error) return routeError(500, 'planning_segment_move_failed', error.message);
+    if (error) {
+      // A one-sided patch (only start_day or only end_day) can't be range-checked above against the
+      // existing row, so an inverted range is caught by the DB CHECK — surface it as a clean 400.
+      if ((error as { code?: string }).code === '23514') {
+        return routeError(400, 'invalid_range', 'Slutdatum kan inte vara före startdatum.');
+      }
+      return routeError(500, 'planning_segment_move_failed', error.message);
+    }
 
     return ok({ item: data });
   } catch (e: any) {

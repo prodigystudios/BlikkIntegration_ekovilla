@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { crewForTruckInRange, membersToCopy, type TruckCrewMember } from '@/lib/domains/planning/truckCrew';
+import { crewForTruckInRange, membersToCopy, shiftISO, type TruckCrewMember } from '@/lib/domains/planning/truckCrew';
 
 function row(id: string, truck_id: string, start_day: string, end_day: string): TruckCrewMember {
   return { id, truck_id, member_id: id, member_name: `M${id}`, start_day, end_day };
@@ -48,5 +48,19 @@ describe('membersToCopy', () => {
   it('copies nothing when the target already has everyone', () => {
     const source = [member('a'), member('b')];
     expect(membersToCopy(source, [member('a'), member('b')])).toEqual([]);
+  });
+});
+
+describe('shiftISO', () => {
+  it('shifts a date forward by whole days', () => {
+    expect(shiftISO('2026-06-15', 7)).toBe('2026-06-22');
+  });
+  it('shifts across a month boundary', () => {
+    expect(shiftISO('2026-06-29', 7)).toBe('2026-07-06');
+  });
+  it('preserves a partial-week range offset (Mon–Wed stays 3 days after a +7 copy)', () => {
+    // Source Mon–Wed copied to next week must remain Mon–Wed, not become the full week.
+    expect(shiftISO('2026-06-15', 7)).toBe('2026-06-22'); // Mon → next Mon
+    expect(shiftISO('2026-06-17', 7)).toBe('2026-06-24'); // Wed → next Wed
   });
 });
