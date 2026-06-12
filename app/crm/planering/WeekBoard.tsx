@@ -5,7 +5,9 @@ import type { OpsSegment, OpsTruck } from '@/lib/domains/planning/types';
 import { parseISO, type WeekDay } from './planningDates';
 import { JOB_TYPES } from '@/lib/domains/planning/jobTypes';
 import type { AssignablePerson } from '@/lib/domains/planning/crew';
+import { groupNotesByDay, type DayNote } from '@/lib/domains/planning/dayNotes';
 import { statusMeta, StatusPill, SackProgress, JobTypeOrMaterial, JobRef, CrewEditor, CrewAvatars, ConfirmationBadge, HoldBadge } from './jobCard';
+import DayNotesCell from './DayNotesCell';
 
 type WeekBoardProps = {
   weekDays: WeekDay[];
@@ -24,6 +26,9 @@ type WeekBoardProps = {
   onRemoveCrew: (seg: OpsSegment, memberId: string) => void;
   onOpenConfirm: (seg: OpsSegment) => void;
   onToggleHold: (seg: OpsSegment, value: boolean) => void;
+  dayNotes: DayNote[];
+  onAddNote: (dayISO: string, body: string) => void;
+  onRemoveNote: (id: string) => void;
 };
 
 // Which day column (0–6) a pointer x lands in, within a 7-column lane.
@@ -36,11 +41,13 @@ function dayIndexFromX(e: React.MouseEvent | React.DragEvent): number {
 export default function WeekBoard({
   weekDays, trucks, segments, todayISO, canWrite, placing, people,
   onCellClick, onCellDrop, onSegDragStart, onSegClick, onSetJobType, onAddCrew, onRemoveCrew, onOpenConfirm, onToggleHold,
+  dayNotes, onAddNote, onRemoveNote,
 }: WeekBoardProps) {
   const weekStart = weekDays[0].iso;
   const weekEnd = weekDays[6].iso;
   const startMs = parseISO(weekStart).getTime();
   const dayIndexOf = (iso: string) => Math.round((parseISO(iso).getTime() - startMs) / 86_400_000);
+  const notesByDay = groupNotesByDay(dayNotes);
 
   return (
     <section className={cn(crm.card, 'overflow-x-auto p-3')}>
@@ -62,6 +69,23 @@ export default function WeekBoard({
               </div>
             );
           })}
+        </div>
+
+        {/* Day notes strip (dagsanteckningar) */}
+        <div className="grid grid-cols-[112px_repeat(7,minmax(132px,1fr))] border-t border-[#eef3eb]">
+          <div className="flex items-center justify-end pr-2 text-[9.5px] font-semibold uppercase tracking-wide text-slate-300">Noteringar</div>
+          {weekDays.map((wd) => (
+            <DayNotesCell
+              key={wd.iso}
+              dayISO={wd.iso}
+              notes={notesByDay.get(wd.iso) ?? []}
+              canWrite={canWrite}
+              isWeekend={wd.isWeekend}
+              isToday={wd.iso === todayISO}
+              onAdd={onAddNote}
+              onRemove={onRemoveNote}
+            />
+          ))}
         </div>
 
         {/* Truck lanes */}

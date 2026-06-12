@@ -37,6 +37,12 @@ export const assignCrewSchema = z.object({
   member_name: z.string().trim().min(1, 'Namn krävs').max(120),
 });
 
+// Create a day note (dagsanteckning) pinned to a calendar day.
+export const createDayNoteSchema = z.object({
+  note_day: isoDate,
+  body: z.string().trim().min(1, 'Skriv en notering').max(500, 'Noteringen är för lång'),
+});
+
 // Send an order confirmation (orderbekräftelse) for a scheduled job. At least one channel must be
 // chosen; the matching recipient is required (enforced in the route for a clear Swedish message).
 export const sendConfirmationSchema = z.object({

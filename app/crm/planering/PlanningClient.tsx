@@ -7,6 +7,7 @@ import { useToast } from '@/lib/Toast';
 import { crm } from '@/app/crm/lib/crmTokens';
 import type { OpsSegment, OpsTruck, SchedulableWorkOrder } from '@/lib/domains/planning/types';
 import type { AssignablePerson, CrewMember } from '@/lib/domains/planning/crew';
+import type { DayNote } from '@/lib/domains/planning/dayNotes';
 import {
   addDays, addDaysISO, buildMonthWeeks, buildWeekDays, daysBetweenInclusive, fmtISO, isoWeek, startOfWeek, swedishMonthYear,
 } from './planningDates';
@@ -34,6 +35,7 @@ export default function PlanningClient({ canWrite }: { canWrite: boolean }) {
   const [trucks, setTrucks] = useState<OpsTruck[]>([]);
   const [segments, setSegments] = useState<OpsSegment[]>([]);
   const [people, setPeople] = useState<AssignablePerson[]>([]);
+  const [dayNotes, setDayNotes] = useState<DayNote[]>([]);
   const [loadingBacklog, setLoadingBacklog] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -81,6 +83,13 @@ export default function PlanningClient({ canWrite }: { canWrite: boolean }) {
     setTrucks(j.data.trucks as OpsTruck[]);
   }, []);
 
+  const loadDayNotes = useCallback(async (from: string, to: string) => {
+    const r = await fetch(`${API}/day-notes?from=${from}&to=${to}`, { cache: 'no-store' });
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || 'Kunde inte hämta noteringar');
+    setDayNotes(j.data.notes as DayNote[]);
+  }, []);
+
   useEffect(() => {
     setLoadingBacklog(true);
     loadBacklog()
@@ -100,7 +109,8 @@ export default function PlanningClient({ canWrite }: { canWrite: boolean }) {
 
   useEffect(() => {
     loadSegments(range.from, range.to).catch((e) => setError(e?.message || 'Något gick fel'));
-  }, [range.from, range.to, loadSegments]);
+    loadDayNotes(range.from, range.to).catch(() => {});
+  }, [range.from, range.to, loadSegments, loadDayNotes]);
 
   const refresh = useCallback(async () => {
     try {
@@ -238,6 +248,34 @@ export default function PlanningClient({ canWrite }: { canWrite: boolean }) {
   const onSetJobType = useCallback((seg: OpsSegment, jobType: string | null) => void move(seg.id, { job_type: jobType }), [move]);
   const onToggleHold = useCallback((seg: OpsSegment, value: boolean) => void move(seg.id, { on_hold: value }), [move]);
   const openConfirm = useCallback((seg: OpsSegment) => setConfirmSeg(seg), []);
+
+  // Day notes: optimistic local updates (a failed call resyncs from the server on the next nav).
+  const addDayNote = useCallback(
+    async (dayISO: string, body: string) => {
+      const r = await fetch(`${API}/day-notes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ note_day: dayISO, body }),
+      });
+      const j = await r.json();
+      if (!j.ok) return toast.error(j.error || 'Kunde inte spara noteringen');
+      setDayNotes((prev) => [...prev, j.data.item as DayNote]);
+    },
+    [toast],
+  );
+
+  const removeDayNote = useCallback(
+    async (id: string) => {
+      setDayNotes((cur) => cur.filter((n) => n.id !== id));
+      const r = await fetch(`${API}/day-notes/${id}`, { method: 'DELETE' });
+      const j = await r.json();
+      if (!j.ok) {
+        toast.error(j.error || 'Kunde inte ta bort noteringen');
+        loadDayNotes(range.from, range.to).catch(() => {});
+      }
+    },
+    [toast, loadDayNotes, range.from, range.to],
+  );
 
   // ── selection / click-to-place ───────────────────────────────────────────────
   const onSelect = useCallback((id: string) => setSelectedId((cur) => (cur === id ? null : id)), []);
@@ -410,6 +448,9 @@ export default function PlanningClient({ canWrite }: { canWrite: boolean }) {
             onRemoveCrew={removeCrew}
             onOpenConfirm={openConfirm}
             onToggleHold={onToggleHold}
+            dayNotes={dayNotes}
+            onAddNote={addDayNote}
+            onRemoveNote={removeDayNote}
           />
         ) : (
           <MonthGrid
@@ -423,6 +464,7 @@ export default function PlanningClient({ canWrite }: { canWrite: boolean }) {
             onDayDrop={onMonthDayDrop}
             onSegDragStart={onSegDragStart}
             onSegClick={onSegClick}
+            dayNotes={dayNotes}
           />
         )}
       </div>

@@ -6,6 +6,7 @@ import type { MonthWeek } from './planningDates';
 import { statusMeta, JobRef, CrewAvatars } from './jobCard';
 import { sacksRemaining } from '@/lib/domains/planning/reports';
 import { describeSmsStatus } from '@/lib/domains/planning/confirmations';
+import { groupNotesByDay, type DayNote } from '@/lib/domains/planning/dayNotes';
 
 type MonthGridProps = {
   weeks: MonthWeek[];
@@ -18,14 +19,16 @@ type MonthGridProps = {
   onDayDrop: (e: React.DragEvent, dayISO: string) => void;
   onSegDragStart: (e: React.DragEvent, seg: OpsSegment) => void;
   onSegClick: (seg: OpsSegment) => void;
+  dayNotes: DayNote[];
 };
 
 const WEEKDAYS = ['mån', 'tis', 'ons', 'tor', 'fre', 'lör', 'sön'];
 
 export default function MonthGrid({
-  weeks, trucks, segments, todayISO, canWrite, placing, onDayClick, onDayDrop, onSegDragStart, onSegClick,
+  weeks, trucks, segments, todayISO, canWrite, placing, onDayClick, onDayDrop, onSegDragStart, onSegClick, dayNotes,
 }: MonthGridProps) {
   const truckColor = new Map(trucks.map((t) => [t.id, t.color || '#94a3b8']));
+  const notesByDay = groupNotesByDay(dayNotes);
 
   return (
     <section className={cn(crm.card, 'overflow-x-auto p-3')}>
@@ -48,6 +51,7 @@ export default function MonthGrid({
                 const isToday = cell.iso === todayISO;
                 const dayActive = placing && canWrite;
                 const daySegs = segments.filter((s) => s.start_day <= cell.iso && s.end_day >= cell.iso);
+                const cellNotes = notesByDay.get(cell.iso) ?? [];
                 return (
                   <div
                     key={cell.iso}
@@ -74,7 +78,17 @@ export default function MonthGrid({
                       <span className={cn('text-[11px] font-bold tabular-nums', !cell.inMonth ? 'text-slate-300' : isToday ? 'text-emerald-700' : 'text-slate-500')}>
                         {cell.day}
                       </span>
-                      {isToday && <span className="rounded-full bg-emerald-600 px-1.5 py-px text-[8.5px] font-extrabold text-white">idag</span>}
+                      <span className="flex items-center gap-1">
+                        {cellNotes.length > 0 && (
+                          <span
+                            title={cellNotes.map((n) => n.body).join(' · ')}
+                            className="inline-flex h-3.5 min-w-[14px] items-center justify-center rounded-full bg-amber-100 px-1 text-[8px] font-bold tabular-nums text-amber-700"
+                          >
+                            {cellNotes.length}
+                          </span>
+                        )}
+                        {isToday && <span className="rounded-full bg-emerald-600 px-1.5 py-px text-[8.5px] font-extrabold text-white">idag</span>}
+                      </span>
                     </div>
 
                     {daySegs.map((seg) => {
