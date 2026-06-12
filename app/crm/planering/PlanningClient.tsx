@@ -678,10 +678,19 @@ export default function PlanningClient({
             todayISO={todayISO}
             canWrite={canWrite}
             placing={placing}
+            people={people}
+            jobTypes={jobTypes}
             onDayClick={onMonthDayClick}
             onDayDrop={onMonthDayDrop}
             onSegDragStart={onSegDragStart}
             onSegClick={onSegClick}
+            onSetStatus={onSetStatus}
+            onSetJobType={onSetJobType}
+            onToggleHold={onToggleHold}
+            onOpenConfirm={openConfirm}
+            onResize={onResize}
+            onAddCrew={addCrew}
+            onRemoveCrew={removeCrew}
             dayNotes={dayNotes}
           />
         )}
