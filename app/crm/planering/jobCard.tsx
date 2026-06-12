@@ -12,7 +12,9 @@ import type { JobDisplay } from '@/lib/domains/planning/display';
 import { sacksRemaining, sacksOverrun } from '@/lib/domains/planning/reports';
 import { crewInitials, crewColor, type CrewMember, type AssignablePerson } from '@/lib/domains/planning/crew';
 import { describeSmsStatus, type ConfirmationSummary } from '@/lib/domains/planning/confirmations';
-import type { JobType } from '@/lib/domains/planning/jobTypes';
+import { resolveJobTypeFrom, type JobType } from '@/lib/domains/planning/jobTypes';
+import type { OpsSegment } from '@/lib/domains/planning/types';
+import { addDaysISO, daysBetweenInclusive } from './planningDates';
 
 // Status label + colors for a job, reusing the CRM work-order tokens so the planning board reads
 // identically to the rest of the CRM.
@@ -582,6 +584,102 @@ export function SegmentMenu({
           </>,
           document.body,
         )}
+    </>
+  );
+}
+
+
+// The per-segment mutation handlers (each takes the segment), shared by both board views.
+export type SegmentActions = {
+  onSetStatus: (seg: OpsSegment, status: string) => void;
+  onSetJobType: (seg: OpsSegment, jobType: string | null) => void;
+  onToggleHold: (seg: OpsSegment, value: boolean) => void;
+  onOpenConfirm: (seg: OpsSegment) => void;
+  onResize: (seg: OpsSegment, startDay: string, endDay: string) => void;
+  onAddCrew: (seg: OpsSegment, person: AssignablePerson) => void;
+  onRemoveCrew: (seg: OpsSegment, memberId: string) => void;
+};
+
+// The shared inner content of a scheduled-job card (status rail, header with kebab, project/client/
+// address, job-type + sack/confirmation/crew). Used by BOTH the week and month boards so the card
+// reads identically everywhere; each board owns only the outer wrapper (drag, positioning, the
+// week-only resize handle). Pass truckColor/truckName to show the truck (the month board needs it;
+// the week board groups by truck rows so it omits them). The caller's wrapper must be `relative`.
+export function SegmentCardBody({
+  seg,
+  canWrite,
+  jobTypes,
+  people,
+  actions,
+  truckColor,
+  truckName,
+}: {
+  seg: OpsSegment;
+  canWrite: boolean;
+  jobTypes: JobType[];
+  people: AssignablePerson[];
+  actions: SegmentActions;
+  truckColor?: string;
+  truckName?: string;
+}) {
+  const job = seg.job;
+  return (
+    <>
+      <span className={cn('absolute inset-y-0 left-0 w-1', statusMeta(job?.status ?? '').rail)} />
+      {job ? (
+        <>
+          <div className="flex items-center gap-2">
+            {truckColor && <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: truckColor }} />}
+            <JobRef job={job} />
+            <StatusPill status={job.status} className="ml-auto" />
+            {canWrite && (
+              <span className="relative z-20 inline-flex">
+              <SegmentMenu
+                status={job.status}
+                jobType={seg.job_type}
+                jobTypes={jobTypes}
+                onHold={seg.on_hold}
+                lengthDays={daysBetweenInclusive(seg.start_day, seg.end_day)}
+                crew={seg.crew}
+                people={people}
+                onSetStatus={(st) => actions.onSetStatus(seg, st)}
+                onSetJobType={(key) => actions.onSetJobType(seg, key)}
+                onToggleHold={() => actions.onToggleHold(seg, !seg.on_hold)}
+                onOpenConfirm={() => actions.onOpenConfirm(seg)}
+                onSetLength={(d) => actions.onResize(seg, seg.start_day, addDaysISO(seg.start_day, d - 1))}
+                onAddCrew={(person) => actions.onAddCrew(seg, person)}
+                onRemoveCrew={(mid) => actions.onRemoveCrew(seg, mid)}
+              />
+              </span>
+            )}
+          </div>
+          <div className="mt-1.5 truncate text-[13px] font-bold leading-tight text-slate-900">{job.project_name}</div>
+          <div className="truncate text-[11px] text-slate-500">{job.client_name}</div>
+          {job.address && (
+            <div className="mt-0.5 flex items-center gap-1 text-[10.5px] text-slate-400">
+              <span className="truncate">{job.address}</span>
+              <MapLink address={job.address} />
+            </div>
+          )}
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            {seg.on_hold && <HoldBadge />}
+            <JobTypeOrMaterial jobType={resolveJobTypeFrom(jobTypes, seg.job_type)} material={job.material} />
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <SackProgress planned={job.total_sacks} reported={seg.sacks_reported} />
+            <ConfirmationBadge confirmation={seg.confirmation} />
+            <div className="ml-auto flex items-center gap-1">
+              {truckName && <span className="truncate text-[9px] font-semibold text-slate-400">{truckName}</span>}
+              <CrewAvatars crew={seg.crew} />
+            </div>
+          </div>
+        </>
+      ) : (
+        <div className="flex items-center gap-1.5">
+          {truckColor && <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: truckColor }} />}
+          <span className="text-[11px] text-slate-400">Order saknas</span>
+        </div>
+      )}
     </>
   );
 }

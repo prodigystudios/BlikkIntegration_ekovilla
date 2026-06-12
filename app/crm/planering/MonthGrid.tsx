@@ -2,20 +2,9 @@ import type React from 'react';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 import type { OpsSegment, OpsTruck } from '@/lib/domains/planning/types';
-import { addDaysISO, daysBetweenInclusive, type MonthWeek } from './planningDates';
-import {
-  statusMeta,
-  StatusPill,
-  JobRef,
-  CrewAvatars,
-  SegmentMenu,
-  JobTypeOrMaterial,
-  HoldBadge,
-  SackProgress,
-  ConfirmationBadge,
-  MapLink,
-} from './jobCard';
-import { resolveJobTypeFrom, type JobType } from '@/lib/domains/planning/jobTypes';
+import type { MonthWeek } from './planningDates';
+import { SegmentCardBody, type SegmentActions } from './jobCard';
+import type { JobType } from '@/lib/domains/planning/jobTypes';
 import type { AssignablePerson } from '@/lib/domains/planning/crew';
 import { groupNotesByDay, type DayNote } from '@/lib/domains/planning/dayNotes';
 import { swedishHoliday } from '@/lib/domains/planning/holidays';
@@ -33,13 +22,7 @@ type MonthGridProps = {
   onDayDrop: (e: React.DragEvent, dayISO: string) => void;
   onSegDragStart: (e: React.DragEvent, seg: OpsSegment) => void;
   onSegClick: (seg: OpsSegment) => void;
-  onSetStatus: (seg: OpsSegment, status: string) => void;
-  onSetJobType: (seg: OpsSegment, jobType: string | null) => void;
-  onToggleHold: (seg: OpsSegment, value: boolean) => void;
-  onOpenConfirm: (seg: OpsSegment) => void;
-  onResize: (seg: OpsSegment, startDay: string, endDay: string) => void;
-  onAddCrew: (seg: OpsSegment, person: AssignablePerson) => void;
-  onRemoveCrew: (seg: OpsSegment, memberId: string) => void;
+  actions: SegmentActions;
   dayNotes: DayNote[];
 };
 
@@ -58,13 +41,7 @@ export default function MonthGrid({
   onDayDrop,
   onSegDragStart,
   onSegClick,
-  onSetStatus,
-  onSetJobType,
-  onToggleHold,
-  onOpenConfirm,
-  onResize,
-  onAddCrew,
-  onRemoveCrew,
+  actions,
   dayNotes,
 }: MonthGridProps) {
   const truckColor = new Map(trucks.map((t) => [t.id, t.color || '#94a3b8']));
@@ -146,79 +123,32 @@ export default function MonthGrid({
                       </span>
                     </div>
 
-                    {daySegs.map((seg) => {
-                      const job = seg.job;
-                      return (
-                        <div
-                          key={seg.id}
-                          draggable={canWrite}
-                          onDragStart={(ev) => onSegDragStart(ev, seg)}
-                          onClick={(ev) => {
-                            ev.stopPropagation();
-                            onSegClick(seg);
-                          }}
-                          className={cn(
-                            'relative overflow-hidden rounded-lg border border-[#e0e8dc] bg-white p-2 pl-2.5 shadow-[0_1px_2px_rgba(20,44,27,0.06)] transition hover:shadow-[0_3px_10px_rgba(20,44,27,0.12)]',
-                            canWrite ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer',
-                            seg.on_hold && 'opacity-60 ring-1 ring-amber-200',
-                          )}
-                        >
-                          <span className={cn('absolute inset-y-0 left-0 w-1', statusMeta(job?.status ?? '').rail)} />
-                          {job ? (
-                            <>
-                              <div className="flex items-center gap-1.5">
-                                <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: truckColor.get(seg.truck_id) || '#94a3b8' }} />
-                                <JobRef job={job} className="text-[10.5px]" />
-                                <StatusPill status={job.status} className="ml-auto" />
-                                {canWrite && (
-                                  <SegmentMenu
-                                    status={job.status}
-                                    jobType={seg.job_type}
-                                    jobTypes={jobTypes}
-                                    onHold={seg.on_hold}
-                                    lengthDays={daysBetweenInclusive(seg.start_day, seg.end_day)}
-                                    crew={seg.crew}
-                                    people={people}
-                                    onSetStatus={(st) => onSetStatus(seg, st)}
-                                    onSetJobType={(key) => onSetJobType(seg, key)}
-                                    onToggleHold={() => onToggleHold(seg, !seg.on_hold)}
-                                    onOpenConfirm={() => onOpenConfirm(seg)}
-                                    onSetLength={(d) => onResize(seg, seg.start_day, addDaysISO(seg.start_day, d - 1))}
-                                    onAddCrew={(p) => onAddCrew(seg, p)}
-                                    onRemoveCrew={(mid) => onRemoveCrew(seg, mid)}
-                                  />
-                                )}
-                              </div>
-                              <div className="mt-1 truncate text-[11.5px] font-bold leading-tight text-slate-900">{job.project_name}</div>
-                              <div className="truncate text-[10px] text-slate-500">{job.client_name}</div>
-                              {job.address && (
-                                <div className="mt-0.5 flex items-center gap-1 text-[9.5px] text-slate-400">
-                                  <span className="truncate">{job.address}</span>
-                                  <MapLink address={job.address} />
-                                </div>
-                              )}
-                              <div className="mt-1 flex flex-wrap items-center gap-1">
-                                {seg.on_hold && <HoldBadge />}
-                                <JobTypeOrMaterial jobType={resolveJobTypeFrom(jobTypes, seg.job_type)} material={job.material} />
-                              </div>
-                              <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                                <SackProgress planned={job.total_sacks} reported={seg.sacks_reported} />
-                                <ConfirmationBadge confirmation={seg.confirmation} />
-                                <div className="ml-auto flex items-center gap-1">
-                                  <span className="truncate text-[9px] font-semibold text-slate-400">{truckName.get(seg.truck_id) ?? ''}</span>
-                                  {seg.crew.length > 0 && <CrewAvatars crew={seg.crew} size={14} />}
-                                </div>
-                              </div>
-                            </>
-                          ) : (
-                            <div className="flex items-center gap-1.5">
-                              <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: truckColor.get(seg.truck_id) || '#94a3b8' }} />
-                              <span className="text-[10px] text-slate-400">Order saknas</span>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
+                    {daySegs.map((seg) => (
+                      <div
+                        key={seg.id}
+                        draggable={canWrite}
+                        onDragStart={(ev) => onSegDragStart(ev, seg)}
+                        onClick={(ev) => {
+                          ev.stopPropagation();
+                          onSegClick(seg);
+                        }}
+                        className={cn(
+                          'relative overflow-hidden rounded-lg border border-[#e0e8dc] bg-white p-2 pl-2.5 shadow-[0_1px_2px_rgba(20,44,27,0.06)] transition hover:shadow-[0_3px_10px_rgba(20,44,27,0.12)]',
+                          canWrite ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer',
+                          seg.on_hold && 'opacity-60 ring-1 ring-amber-200',
+                        )}
+                      >
+                        <SegmentCardBody
+                          seg={seg}
+                          canWrite={canWrite}
+                          jobTypes={jobTypes}
+                          people={people}
+                          actions={actions}
+                          truckColor={truckColor.get(seg.truck_id) || '#94a3b8'}
+                          truckName={truckName.get(seg.truck_id) ?? ''}
+                        />
+                      </div>
+                    ))}
                   </div>
                 );
               })}

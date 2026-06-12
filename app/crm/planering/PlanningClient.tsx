@@ -16,6 +16,7 @@ import {
 import Backlog from './Backlog';
 import WeekBoard from './WeekBoard';
 import MonthGrid from './MonthGrid';
+import type { SegmentActions } from './jobCard';
 import ConfirmModal from './ConfirmModal';
 import TruckManagerModal from './TruckManagerModal';
 import DepotManagerModal from './DepotManagerModal';
@@ -476,6 +477,11 @@ export default function PlanningClient({
   const placing = canWrite && !!selectedId;
   const selected = backlog.find((b) => b.id === selectedId) ?? null;
 
+  const actions = useMemo<SegmentActions>(
+    () => ({ onSetStatus, onSetJobType, onToggleHold, onOpenConfirm: openConfirm, onResize, onAddCrew: addCrew, onRemoveCrew: removeCrew }),
+    [onSetStatus, onSetJobType, onToggleHold, openConfirm, onResize, addCrew, removeCrew],
+  );
+
   return (
     <div>
       {/* Header */}
@@ -655,11 +661,7 @@ export default function PlanningClient({
             onCellDrop={onCellDrop}
             onSegDragStart={onSegDragStart}
             onSegClick={onSegClick}
-            onSetJobType={onSetJobType}
-            onAddCrew={addCrew}
-            onRemoveCrew={removeCrew}
-            onOpenConfirm={openConfirm}
-            onToggleHold={onToggleHold}
+            actions={actions}
             dayNotes={dayNotes}
             onAddNote={addDayNote}
             onRemoveNote={removeDayNote}
@@ -667,8 +669,6 @@ export default function PlanningClient({
             onAddTruckCrew={addTruckCrew}
             onRemoveTruckCrew={removeTruckCrew}
             onCopyTruckCrew={copyTruckCrew}
-            onResize={onResize}
-            onSetStatus={onSetStatus}
           />
         ) : (
           <MonthGrid
@@ -684,13 +684,7 @@ export default function PlanningClient({
             onDayDrop={onMonthDayDrop}
             onSegDragStart={onSegDragStart}
             onSegClick={onSegClick}
-            onSetStatus={onSetStatus}
-            onSetJobType={onSetJobType}
-            onToggleHold={onToggleHold}
-            onOpenConfirm={openConfirm}
-            onResize={onResize}
-            onAddCrew={addCrew}
-            onRemoveCrew={removeCrew}
+            actions={actions}
             dayNotes={dayNotes}
           />
         )}

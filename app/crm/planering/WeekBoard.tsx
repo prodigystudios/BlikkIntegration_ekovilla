@@ -4,12 +4,12 @@ import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 import type { OpsSegment, OpsTruck } from '@/lib/domains/planning/types';
 import { type WeekDay, addDaysISO, daysBetweenInclusive } from './planningDates';
-import { resolveJobTypeFrom, type JobType } from '@/lib/domains/planning/jobTypes';
+import type { JobType } from '@/lib/domains/planning/jobTypes';
 import type { AssignablePerson } from '@/lib/domains/planning/crew';
 import { crewForTruckInRange, type TruckCrewMember } from '@/lib/domains/planning/truckCrew';
 import { groupNotesByDay, type DayNote } from '@/lib/domains/planning/dayNotes';
 import { swedishHoliday } from '@/lib/domains/planning/holidays';
-import { statusMeta, StatusPill, SackProgress, JobTypeOrMaterial, JobRef, CrewEditor, CrewAvatars, ConfirmationBadge, HoldBadge, MapLink, SegmentMenu } from './jobCard';
+import { CrewEditor, CrewAvatars, SegmentCardBody, type SegmentActions } from './jobCard';
 import DayNotesCell from './DayNotesCell';
 
 type WeekBoardProps = {
@@ -26,11 +26,7 @@ type WeekBoardProps = {
   onCellDrop: (e: React.DragEvent, truckId: string, dayISO: string) => void;
   onSegDragStart: (e: React.DragEvent, seg: OpsSegment) => void;
   onSegClick: (seg: OpsSegment) => void;
-  onSetJobType: (seg: OpsSegment, jobType: string | null) => void;
-  onAddCrew: (seg: OpsSegment, person: AssignablePerson) => void;
-  onRemoveCrew: (seg: OpsSegment, memberId: string) => void;
-  onOpenConfirm: (seg: OpsSegment) => void;
-  onToggleHold: (seg: OpsSegment, value: boolean) => void;
+  actions: SegmentActions;
   dayNotes: DayNote[];
   onAddNote: (dayISO: string, body: string) => void;
   onRemoveNote: (id: string) => void;
@@ -38,8 +34,6 @@ type WeekBoardProps = {
   onAddTruckCrew: (truckId: string, person: AssignablePerson, startDay: string, endDay: string) => void;
   onRemoveTruckCrew: (truckId: string, memberId: string) => void;
   onCopyTruckCrew: (truckId: string, sourceFrom: string, sourceTo: string) => void;
-  onResize: (seg: OpsSegment, startDay: string, endDay: string) => void;
-  onSetStatus: (seg: OpsSegment, status: string) => void;
 };
 
 // Which visible-day column (0…count-1) a pointer x lands in, within a `count`-column lane.
@@ -51,8 +45,8 @@ function dayIndexFromX(e: React.MouseEvent | React.DragEvent, count: number): nu
 
 export default function WeekBoard({
   weekDays, showWeekend, trucks, segments, todayISO, canWrite, placing, people, jobTypes,
-  onCellClick, onCellDrop, onSegDragStart, onSegClick, onSetJobType, onAddCrew, onRemoveCrew, onOpenConfirm, onToggleHold,
-  dayNotes, onAddNote, onRemoveNote, truckCrew, onAddTruckCrew, onRemoveTruckCrew, onCopyTruckCrew, onResize, onSetStatus,
+  onCellClick, onCellDrop, onSegDragStart, onSegClick, actions,
+  dayNotes, onAddNote, onRemoveNote, truckCrew, onAddTruckCrew, onRemoveTruckCrew, onCopyTruckCrew,
 }: WeekBoardProps) {
   // The visible day columns: all seven, or weekdays only when weekends are hidden.
   const days = showWeekend ? weekDays : weekDays.filter((d) => !d.isWeekend);
@@ -101,7 +95,7 @@ export default function WeekBoard({
       setResize(null);
       suppressClickRef.current = true;
       setTimeout(() => { suppressClickRef.current = false; }, 0);
-      if (endIso && endIso !== seg.end_day) onResize(seg, seg.start_day, endIso);
+      if (endIso && endIso !== seg.end_day) actions.onResize(seg, seg.start_day, endIso);
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
@@ -233,7 +227,6 @@ export default function WeekBoard({
                     {laneSegs.map((seg) => {
                       const col = segColumns(seg);
                       if (!col) return null;
-                      const job = seg.job;
                       const previewEnd = resize?.segId === seg.id ? days.findIndex((d) => d.iso === resize.endIso) : -1;
                       const endIdx = previewEnd >= col.s ? previewEnd : col.e;
                       return (
@@ -253,7 +246,6 @@ export default function WeekBoard({
                             seg.on_hold && 'opacity-60 ring-1 ring-amber-200',
                           )}
                         >
-                          <span className={cn('absolute inset-y-0 left-0 w-1', statusMeta(seg.job?.status ?? '').rail)} />
                           {canWrite && (
                             <span
                               onMouseDown={(e) => startResize(e, seg)}
@@ -264,55 +256,13 @@ export default function WeekBoard({
                               <svg width="4" height="13" viewBox="0 0 4 14" fill="currentColor"><rect width="1.2" height="14" rx="0.6" /><rect x="2.8" width="1.2" height="14" rx="0.6" /></svg>
                             </span>
                           )}
-                          {job ? (
-                            <>
-                              <div className="flex items-center gap-2">
-                                <JobRef job={job} />
-                                <StatusPill status={job.status} className="ml-auto" />
-                                {canWrite && (
-                                  <span className="relative z-20 inline-flex">
-                                  <SegmentMenu
-                                    status={job.status}
-                                    jobType={seg.job_type}
-                                    jobTypes={jobTypes}
-                                    onHold={seg.on_hold}
-                                    lengthDays={daysBetweenInclusive(seg.start_day, seg.end_day)}
-                                    crew={seg.crew}
-                                    people={people}
-                                    onSetStatus={(st) => onSetStatus(seg, st)}
-                                    onSetJobType={(key) => onSetJobType(seg, key)}
-                                    onToggleHold={() => onToggleHold(seg, !seg.on_hold)}
-                                    onOpenConfirm={() => onOpenConfirm(seg)}
-                                    onSetLength={(d) => onResize(seg, seg.start_day, addDaysISO(seg.start_day, d - 1))}
-                                    onAddCrew={(p) => onAddCrew(seg, p)}
-                                    onRemoveCrew={(mid) => onRemoveCrew(seg, mid)}
-                                  />
-                                  </span>
-                                )}
-                              </div>
-                              <div className="mt-1.5 text-[13px] font-bold leading-tight text-slate-900">{job.project_name}</div>
-                              <div className="text-[11px] text-slate-500">{job.client_name}</div>
-                              {job.address && (
-                                <div className="mt-0.5 flex items-center gap-1 text-[10.5px] text-slate-400">
-                                  <span className="truncate">{job.address}</span>
-                                  <MapLink address={job.address} />
-                                </div>
-                              )}
-                              <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                                {seg.on_hold && <HoldBadge />}
-                                <JobTypeOrMaterial jobType={resolveJobTypeFrom(jobTypes, seg.job_type)} material={job.material} />
-                              </div>
-                              <div className="mt-2 flex flex-wrap items-center gap-2">
-                                <SackProgress planned={job.total_sacks} reported={seg.sacks_reported} />
-                                <ConfirmationBadge confirmation={seg.confirmation} />
-                                <div className="ml-auto">
-                                  <CrewAvatars crew={seg.crew} />
-                                </div>
-                              </div>
-                            </>
-                          ) : (
-                            <div className="text-[11px] text-slate-400">Order saknas</div>
-                          )}
+                          <SegmentCardBody
+                            seg={seg}
+                            canWrite={canWrite}
+                            jobTypes={jobTypes}
+                            people={people}
+                            actions={actions}
+                          />
                         </div>
                       );
                     })}
