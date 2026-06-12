@@ -39,6 +39,7 @@ type WeekBoardProps = {
   onRemoveTruckCrew: (truckId: string, memberId: string) => void;
   onCopyTruckCrew: (truckId: string, sourceFrom: string, sourceTo: string) => void;
   onResize: (seg: OpsSegment, startDay: string, endDay: string) => void;
+  onSetStatus: (seg: OpsSegment, status: string) => void;
 };
 
 // Which visible-day column (0…count-1) a pointer x lands in, within a `count`-column lane.
@@ -51,7 +52,7 @@ function dayIndexFromX(e: React.MouseEvent | React.DragEvent, count: number): nu
 export default function WeekBoard({
   weekDays, showWeekend, trucks, segments, todayISO, canWrite, placing, people, jobTypes,
   onCellClick, onCellDrop, onSegDragStart, onSegClick, onSetJobType, onAddCrew, onRemoveCrew, onOpenConfirm, onToggleHold,
-  dayNotes, onAddNote, onRemoveNote, truckCrew, onAddTruckCrew, onRemoveTruckCrew, onCopyTruckCrew, onResize,
+  dayNotes, onAddNote, onRemoveNote, truckCrew, onAddTruckCrew, onRemoveTruckCrew, onCopyTruckCrew, onResize, onSetStatus,
 }: WeekBoardProps) {
   // The visible day columns: all seven, or weekdays only when weekends are hidden.
   const days = showWeekend ? weekDays : weekDays.filter((d) => !d.isWeekend);
@@ -247,7 +248,7 @@ export default function WeekBoard({
                           }}
                           style={{ gridColumn: `${col.s + 1} / ${endIdx + 2}` }}
                           className={cn(
-                            'relative overflow-hidden rounded-xl border border-[#e0e8dc] bg-white p-2.5 pl-3.5 shadow-[0_1px_2px_rgba(20,44,27,0.06)] transition hover:-translate-y-px hover:shadow-[0_3px_10px_rgba(20,44,27,0.12)]',
+                            'relative overflow-hidden rounded-xl border border-[#e0e8dc] bg-white p-2.5 pl-3.5 shadow-[0_1px_2px_rgba(20,44,27,0.06)] transition hover:shadow-[0_3px_10px_rgba(20,44,27,0.12)]',
                             canWrite ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer',
                             seg.on_hold && 'opacity-60 ring-1 ring-amber-200',
                           )}
@@ -258,7 +259,7 @@ export default function WeekBoard({
                               onMouseDown={(e) => startResize(e, seg)}
                               onClick={(e) => e.stopPropagation()}
                               title="Dra för att ändra antal dagar"
-                              className="absolute inset-y-1 right-0 z-10 flex w-2.5 cursor-ew-resize items-center justify-center rounded-r-xl text-slate-300 transition hover:bg-emerald-50 hover:text-emerald-500"
+                              className="absolute inset-y-2 right-0 z-10 flex w-2 cursor-ew-resize items-center justify-center text-slate-300 transition hover:text-emerald-500"
                             >
                               <svg width="4" height="13" viewBox="0 0 4 14" fill="currentColor"><rect width="1.2" height="14" rx="0.6" /><rect x="2.8" width="1.2" height="14" rx="0.6" /></svg>
                             </span>
@@ -269,16 +270,24 @@ export default function WeekBoard({
                                 <JobRef job={job} />
                                 <StatusPill status={job.status} className="ml-auto" />
                                 {canWrite && (
+                                  <span className="relative z-20 inline-flex">
                                   <SegmentMenu
+                                    status={job.status}
                                     jobType={seg.job_type}
                                     jobTypes={jobTypes}
                                     onHold={seg.on_hold}
                                     lengthDays={daysBetweenInclusive(seg.start_day, seg.end_day)}
+                                    crew={seg.crew}
+                                    people={people}
+                                    onSetStatus={(st) => onSetStatus(seg, st)}
                                     onSetJobType={(key) => onSetJobType(seg, key)}
                                     onToggleHold={() => onToggleHold(seg, !seg.on_hold)}
                                     onOpenConfirm={() => onOpenConfirm(seg)}
                                     onSetLength={(d) => onResize(seg, seg.start_day, addDaysISO(seg.start_day, d - 1))}
+                                    onAddCrew={(p) => onAddCrew(seg, p)}
+                                    onRemoveCrew={(mid) => onRemoveCrew(seg, mid)}
                                   />
+                                  </span>
                                 )}
                               </div>
                               <div className="mt-1.5 text-[13px] font-bold leading-tight text-slate-900">{job.project_name}</div>
@@ -297,16 +306,7 @@ export default function WeekBoard({
                                 <SackProgress planned={job.total_sacks} reported={seg.sacks_reported} />
                                 <ConfirmationBadge confirmation={seg.confirmation} />
                                 <div className="ml-auto">
-                                  {canWrite ? (
-                                    <CrewEditor
-                                      crew={seg.crew}
-                                      people={people}
-                                      onAdd={(p) => onAddCrew(seg, p)}
-                                      onRemove={(mid) => onRemoveCrew(seg, mid)}
-                                    />
-                                  ) : (
-                                    <CrewAvatars crew={seg.crew} />
-                                  )}
+                                  <CrewAvatars crew={seg.crew} />
                                 </div>
                               </div>
                             </>

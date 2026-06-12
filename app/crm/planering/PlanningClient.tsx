@@ -311,6 +311,20 @@ export default function PlanningClient({
   const onSetJobType = useCallback((seg: OpsSegment, jobType: string | null) => void move(seg.id, { job_type: jobType }), [move]);
   const onToggleHold = useCallback((seg: OpsSegment, value: boolean) => void move(seg.id, { on_hold: value }), [move]);
   const onResize = useCallback((seg: OpsSegment, startDay: string, endDay: string) => void move(seg.id, { start_day: startDay, end_day: endDay }), [move]);
+  const onSetStatus = useCallback(
+    async (seg: OpsSegment, status: string) => {
+      const r = await fetch(`/api/crm/work-orders/${seg.work_order_id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status }),
+      });
+      const j = await r.json();
+      if (!j.ok) return toast.error(j.error || 'Kunde inte ändra status');
+      toast.success('Status uppdaterad');
+      await refresh();
+    },
+    [toast, refresh],
+  );
   const openConfirm = useCallback((seg: OpsSegment) => setConfirmSeg(seg), []);
 
   // Day notes: optimistic local updates (a failed call resyncs from the server on the next nav).
@@ -654,6 +668,7 @@ export default function PlanningClient({
             onRemoveTruckCrew={removeTruckCrew}
             onCopyTruckCrew={copyTruckCrew}
             onResize={onResize}
+            onSetStatus={onSetStatus}
           />
         ) : (
           <MonthGrid

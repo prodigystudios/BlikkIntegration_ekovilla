@@ -5,6 +5,7 @@ import {
   workOrderStatusLabel,
   workOrderStatusClass,
   workOrderStatusAccent,
+  WORK_ORDER_STATUS_OPTIONS,
   type WorkOrderStatus,
 } from '@/app/crm/lib/crmTokens';
 import type { JobDisplay } from '@/lib/domains/planning/display';
@@ -186,9 +187,40 @@ export function CrewEditor({
   onRemove: (memberId: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const stop = (e: SyntheticEvent) => e.stopPropagation();
   const assigned = new Set(crew.map((c) => c.member_id));
   const available = people.filter((p) => !assigned.has(p.id));
+
+  useEffect(() => {
+    if (!open) return;
+    const onScroll = (e: Event) => {
+      // Scrolling inside the (portaled) list shouldn't close it — only a page/board scroll should.
+      if (menuRef.current && e.target instanceof Node && menuRef.current.contains(e.target)) return;
+      setOpen(false);
+    };
+    const onResize = () => setOpen(false);
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', onResize);
+    return () => {
+      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', onResize);
+    };
+  }, [open]);
+
+  const toggle = (e: SyntheticEvent) => {
+    stop(e);
+    if (open) {
+      setOpen(false);
+      return;
+    }
+    const r = btnRef.current?.getBoundingClientRect();
+    if (!r) return;
+    setPos({ top: r.bottom + 4, left: Math.max(8, Math.min(r.left, window.innerWidth - 184)) });
+    setOpen(true);
+  };
 
   return (
     <div className="flex flex-wrap items-center gap-1" onClick={stop} onMouseDown={stop}>
@@ -209,21 +241,26 @@ export function CrewEditor({
         </button>
       ))}
 
-      <div className="relative">
-        <button
-          type="button"
-          onClick={(e) => {
-            stop(e);
-            setOpen((o) => !o);
-          }}
-          className="inline-flex h-5 items-center rounded-full border border-dashed border-[#c8d4c3] bg-white px-1.5 text-[9px] font-bold text-slate-400 transition hover:border-emerald-400 hover:text-emerald-600"
-        >
-          + team
-        </button>
-        {open && (
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={toggle}
+        className="inline-flex h-5 items-center rounded-full border border-dashed border-[#c8d4c3] bg-white px-1.5 text-[9px] font-bold text-slate-400 transition hover:border-emerald-400 hover:text-emerald-600"
+      >
+        + team
+      </button>
+      {open &&
+        pos &&
+        createPortal(
           <>
-            <span className="fixed inset-0 z-10" onClick={(e) => { stop(e); setOpen(false); }} />
-            <div className="absolute left-0 top-6 z-20 max-h-52 w-44 overflow-auto rounded-xl border border-[#e0e8dc] bg-white p-1 shadow-lg">
+            <div className="fixed inset-0 z-[60]" onMouseDown={(e) => { stop(e); setOpen(false); }} />
+            <div
+              ref={menuRef}
+              className="fixed z-[61] max-h-52 w-44 overflow-auto overscroll-contain rounded-xl border border-[#e0e8dc] bg-white p-1 shadow-[0_10px_30px_rgba(20,44,27,0.2)]"
+              style={{ top: pos.top, left: pos.left }}
+              onMouseDown={(e) => stop(e)}
+              onClick={(e) => stop(e)}
+            >
               {available.length === 0 ? (
                 <p className="px-2 py-1.5 text-[10px] text-slate-400">Alla tillagda</p>
               ) : (
@@ -244,15 +281,14 @@ export function CrewEditor({
                 ))
               )}
             </div>
-          </>
+          </>,
+          document.body,
         )}
-      </div>
     </div>
   );
 }
 
-// A small pin link opening the job-site address in Google Maps. Stops propagation so it doesn't
-// trigger the card's select/open handler.
+// A small Google Maps pin link next to an address.
 export function MapLink({ address }: { address: string | null }) {
   if (!address) return null;
   const href = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
@@ -289,41 +325,57 @@ export function JobRef({ job, className }: { job: Pick<JobDisplay, 'ref' | 'is_f
   );
 }
 
-// Per-segment actions, tucked behind a kebab so the card itself stays calm (matching the mockup):
-// set/clear the job type, pause/resume, and send an order confirmation. The popover is portalled to
-// <body> so it escapes the card's overflow-hidden / transform clipping; it closes on outside click,
-// scroll, or resize.
+// Per-segment actions behind a kebab. Portalled to <body> so it escapes the card's overflow-hidden /
+// transform clipping; closes on outside click, scroll, or resize. Two-column layout to stay compact.
 export function SegmentMenu({
+  status,
   jobType,
   jobTypes,
   onHold,
   lengthDays,
+  crew,
+  people,
+  onSetStatus,
   onSetJobType,
   onToggleHold,
   onOpenConfirm,
   onSetLength,
+  onAddCrew,
+  onRemoveCrew,
 }: {
+  status: string;
   jobType: string | null;
   jobTypes: JobType[];
   onHold: boolean;
   lengthDays: number;
+  crew: CrewMember[];
+  people: AssignablePerson[];
+  onSetStatus: (status: string) => void;
   onSetJobType: (key: string | null) => void;
   onToggleHold: () => void;
   onOpenConfirm: () => void;
   onSetLength: (days: number) => void;
+  onAddCrew: (person: AssignablePerson) => void;
+  onRemoveCrew: (memberId: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const available = people.filter((p) => !crew.some((c) => c.member_id === p.id));
 
   useEffect(() => {
     if (!open) return;
-    const close = () => setOpen(false);
-    window.addEventListener('scroll', close, true);
-    window.addEventListener('resize', close);
+    const onScroll = (e: Event) => {
+      if (menuRef.current && e.target instanceof Node && menuRef.current.contains(e.target)) return;
+      setOpen(false);
+    };
+    const onResize = () => setOpen(false);
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', onResize);
     return () => {
-      window.removeEventListener('scroll', close, true);
-      window.removeEventListener('resize', close);
+      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', onResize);
     };
   }, [open]);
 
@@ -335,7 +387,7 @@ export function SegmentMenu({
     }
     const r = btnRef.current?.getBoundingClientRect();
     if (!r) return;
-    setPos({ top: r.bottom + 4, left: Math.max(8, Math.min(r.right - 204, window.innerWidth - 212)) });
+    setPos({ top: r.bottom + 4, left: Math.max(8, Math.min(r.right - 380, window.innerWidth - 388)) });
     setOpen(true);
   };
 
@@ -366,88 +418,166 @@ export function SegmentMenu({
           <>
             <div className="fixed inset-0 z-[60]" onMouseDown={(e) => { e.stopPropagation(); setOpen(false); }} />
             <div
-              className="fixed z-[61] w-[204px] rounded-xl border border-[#e0e8dc] bg-white p-1.5 shadow-[0_10px_30px_rgba(20,44,27,0.2)]"
+              ref={menuRef}
+              className="fixed z-[61] max-h-[82vh] w-[380px] overflow-auto overscroll-contain rounded-2xl border border-[#e0e8dc] bg-white p-3 shadow-[0_16px_40px_rgba(20,44,27,0.22)]"
               style={{ top: pos.top, left: pos.left }}
               onMouseDown={(e) => e.stopPropagation()}
               onClick={(e) => e.stopPropagation()}
             >
-              <p className="px-1.5 pb-1 pt-0.5 text-[9px] font-bold uppercase tracking-wide text-slate-400">Jobbtyp</p>
-              <div className="grid grid-cols-2 gap-1">
-                {jobTypes.map((t) => {
-                  const active = t.key === jobType;
-                  return (
-                    <button
-                      key={t.key}
-                      type="button"
-                      onClick={() => {
-                        onSetJobType(active ? null : t.key);
-                        setOpen(false);
-                      }}
-                      className={cn(
-                        'flex items-center gap-1.5 rounded-lg px-1.5 py-1 text-left text-[10.5px] font-semibold transition',
-                        active ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200' : 'text-slate-600 hover:bg-slate-50',
-                      )}
-                    >
-                      <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: t.color }} />
-                      <span className="truncate">{t.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
+              <div className="grid grid-cols-2 gap-x-3">
+                {/* Left column - work-order attributes */}
+                <div>
+                  <p className="mb-1 px-0.5 text-[9px] font-bold uppercase tracking-[0.07em] text-slate-400">Status</p>
+                  <div className="space-y-0.5">
+                    {WORK_ORDER_STATUS_OPTIONS.map((st) => {
+                      const active = st === status;
+                      const m = statusMeta(st);
+                      return (
+                        <button
+                          key={st}
+                          type="button"
+                          onClick={() => {
+                            onSetStatus(st);
+                            setOpen(false);
+                          }}
+                          className={cn(
+                            'flex w-full items-center gap-2 rounded-lg border px-2 py-1 text-left text-[11px] font-semibold transition',
+                            active ? m.pill : 'border-transparent text-slate-600 hover:bg-slate-50',
+                          )}
+                        >
+                          <span className={cn('h-2 w-2 shrink-0 rounded-full', m.rail)} />
+                          <span className="truncate">{workOrderStatusLabel[st]}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
 
-              <div className="my-1.5 h-px bg-[#eef3eb]" />
+                  <p className="mb-1 mt-3 px-0.5 text-[9px] font-bold uppercase tracking-[0.07em] text-slate-400">Jobbtyp</p>
+                  <div className="space-y-0.5">
+                    {jobTypes.map((t) => {
+                      const active = t.key === jobType;
+                      return (
+                        <button
+                          key={t.key}
+                          type="button"
+                          onClick={() => {
+                            onSetJobType(active ? null : t.key);
+                            setOpen(false);
+                          }}
+                          className={cn(
+                            'flex w-full items-center gap-2 rounded-lg border px-2 py-1 text-left text-[11px] font-semibold transition',
+                            active ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-transparent text-slate-600 hover:bg-slate-50',
+                          )}
+                        >
+                          <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: t.color }} />
+                          <span className="truncate">{t.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
 
-              <p className="px-1.5 pb-1 pt-0.5 text-[9px] font-bold uppercase tracking-wide text-slate-400">Längd (dagar)</p>
-              <div className="flex gap-1 px-0.5">
-                {[1, 2, 3, 4, 5, 6, 7].map((d) => (
-                  <button
-                    key={d}
-                    type="button"
-                    onClick={() => {
-                      onSetLength(d);
-                      setOpen(false);
-                    }}
-                    className={cn(
-                      'h-6 flex-1 rounded-lg p-0 text-[11px] font-bold tabular-nums transition',
-                      d === lengthDays ? 'bg-emerald-600 text-white' : 'bg-slate-50 text-slate-600 hover:bg-slate-100',
+                {/* Right column - timing + crew */}
+                <div className="border-l border-[#eef3eb] pl-3">
+                  <p className="mb-1 px-0.5 text-[9px] font-bold uppercase tracking-[0.07em] text-slate-400">
+                    Längd <span className="font-semibold normal-case tracking-normal text-slate-300">dagar</span>
+                  </p>
+                  <div className="flex gap-1">
+                    {[1, 2, 3, 4, 5, 6, 7].map((d) => (
+                      <button
+                        key={d}
+                        type="button"
+                        onClick={() => {
+                          onSetLength(d);
+                          setOpen(false);
+                        }}
+                        className={cn(
+                          'h-7 flex-1 rounded-md p-0 text-[11px] font-bold tabular-nums transition',
+                          d === lengthDays ? 'bg-emerald-600 text-white shadow-sm' : 'bg-slate-50 text-slate-600 hover:bg-slate-100',
+                        )}
+                      >
+                        {d}
+                      </button>
+                    ))}
+                  </div>
+
+                  <p className="mb-1 mt-3 px-0.5 text-[9px] font-bold uppercase tracking-[0.07em] text-slate-400">Besättning</p>
+                  {crew.length > 0 && (
+                    <div className="mb-1 flex flex-wrap gap-1">
+                      {crew.map((c) => (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onClick={() => c.member_id && onRemoveCrew(c.member_id)}
+                          title={`${c.member_name} - ta bort`}
+                          className="inline-flex items-center gap-1 rounded-full bg-slate-50 py-0.5 pl-0.5 pr-2 text-[10px] font-semibold text-slate-600 transition hover:bg-rose-50 hover:text-rose-600"
+                        >
+                          <span
+                            className="inline-flex h-4 w-4 items-center justify-center rounded-full text-[7.5px] font-bold text-white"
+                            style={{ backgroundColor: crewColor(c.member_id ?? c.member_name) }}
+                          >
+                            {crewInitials(c.member_name)}
+                          </span>
+                          <span className="max-w-[100px] truncate">{c.member_name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <div className="max-h-[200px] overflow-auto overscroll-contain rounded-lg border border-[#eef3eb] bg-[#f9fbf7] p-0.5">
+                    {available.length === 0 ? (
+                      <p className="px-1.5 py-1.5 text-[10px] text-slate-400">{crew.length ? 'Alla tillagda' : 'Inga personer'}</p>
+                    ) : (
+                      available.map((p) => (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => onAddCrew(p)}
+                          className="flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left text-[11px] text-slate-700 transition hover:bg-emerald-50"
+                        >
+                          <Avatar name={p.full_name} seed={p.id} size={16} />
+                          <span className="truncate">{p.full_name}</span>
+                        </button>
+                      ))
                     )}
-                  >
-                    {d}
-                  </button>
-                ))}
+                  </div>
+                </div>
               </div>
 
-              <div className="my-1.5 h-px bg-[#eef3eb]" />
-
-              <button
-                type="button"
-                onClick={() => {
-                  onToggleHold();
-                  setOpen(false);
-                }}
-                className="flex w-full items-center gap-2 rounded-lg px-1.5 py-1.5 text-left text-[11px] font-semibold text-slate-600 transition hover:bg-slate-50"
-              >
-                {onHold ? (
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
-                ) : (
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1" /><rect x="14" y="5" width="4" height="14" rx="1" /></svg>
-                )}
-                {onHold ? 'Återuppta' : 'Pausa'}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  onOpenConfirm();
-                  setOpen(false);
-                }}
-                className="flex w-full items-center gap-2 rounded-lg px-1.5 py-1.5 text-left text-[11px] font-semibold text-slate-600 transition hover:bg-emerald-50 hover:text-emerald-700"
-              >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="2" y="4" width="20" height="16" rx="2" />
-                  <path d="M22 7l-10 6L2 7" />
-                </svg>
-                Skicka bekräftelse
-              </button>
+              {/* Footer actions */}
+              <div className="mt-3 grid grid-cols-2 gap-2 border-t border-[#eef3eb] pt-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    onToggleHold();
+                    setOpen(false);
+                  }}
+                  className={cn(
+                    'flex items-center justify-center gap-1.5 rounded-lg border px-2 py-1.5 text-[11px] font-semibold transition',
+                    onHold ? 'border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100' : 'border-[#e0e8dc] bg-white text-slate-600 hover:bg-slate-50',
+                  )}
+                >
+                  {onHold ? (
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
+                  ) : (
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1" /><rect x="14" y="5" width="4" height="14" rx="1" /></svg>
+                  )}
+                  {onHold ? 'Återuppta' : 'Pausa'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onOpenConfirm();
+                    setOpen(false);
+                  }}
+                  className="flex items-center justify-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1.5 text-[11px] font-semibold text-emerald-700 transition hover:bg-emerald-100"
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="2" y="4" width="20" height="16" rx="2" />
+                    <path d="M22 7l-10 6L2 7" />
+                  </svg>
+                  Bekräftelse
+                </button>
+              </div>
             </div>
           </>,
           document.body,
