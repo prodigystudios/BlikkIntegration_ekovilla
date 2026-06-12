@@ -75,6 +75,7 @@ export default function WeekBoard({
   const resizeEndRef = useRef<string | null>(null);
   const suppressClickRef = useRef(false);
   const [dragCell, setDragCell] = useState<{ truckId: string; idx: number } | null>(null);
+  const [hoverCell, setHoverCell] = useState<{ truckId: string; idx: number } | null>(null);
   // Clear the drag-target highlight whenever a drag ends (drop, Esc, or leaving the window).
   useEffect(() => {
     const clear = () => setDragCell(null);
@@ -211,6 +212,12 @@ export default function WeekBoard({
                     setDragCell(null);
                     onCellDrop(e, truck.id, days[dayIndexFromX(e, n)].iso);
                   }}
+                  onMouseMove={(e) => {
+                    if (!placing) return;
+                    const idx = dayIndexFromX(e, n);
+                    setHoverCell((cur) => (cur && cur.truckId === truck.id && cur.idx === idx ? cur : { truckId: truck.id, idx }));
+                  }}
+                  onMouseLeave={() => placing && setHoverCell(null)}
                   onClick={(e) => {
                     if (placing) onCellClick(truck.id, days[dayIndexFromX(e, n)].iso);
                   }}
@@ -224,13 +231,17 @@ export default function WeekBoard({
                           'border-solid border-[#e8efe5] border-l',
                           dragCell?.truckId === truck.id && dragCell.idx === di
                             ? 'bg-emerald-400/20 ring-2 ring-inset ring-emerald-400'
-                            : wd.iso === todayISO
-                              ? 'bg-emerald-500/5'
-                              : swedishHoliday(wd.iso)
-                                ? 'bg-rose-400/[0.07]'
-                                : wd.isWeekend
-                                  ? 'bg-slate-400/[0.06]'
-                                  : '',
+                            : placing && hoverCell?.truckId === truck.id && hoverCell.idx === di
+                              ? 'bg-emerald-400/10 outline-dashed outline-2 -outline-offset-2 outline-emerald-400/70'
+                              : placing
+                                ? 'bg-emerald-400/[0.05]'
+                                : wd.iso === todayISO
+                                  ? 'bg-emerald-500/5'
+                                  : swedishHoliday(wd.iso)
+                                    ? 'bg-rose-400/[0.07]'
+                                    : wd.isWeekend
+                                      ? 'bg-slate-400/[0.06]'
+                                      : '',
                         )}
                       />
                     ))}

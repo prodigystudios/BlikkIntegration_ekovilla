@@ -111,7 +111,7 @@ export default function MonthGrid({
                       cell.isWeekend && cell.inMonth && 'bg-slate-400/[0.05]',
                       hol && cell.inMonth && 'bg-rose-400/[0.06]',
                       isToday && 'bg-emerald-50',
-                      dayActive && 'cursor-copy',
+                      dayActive && 'cursor-copy bg-emerald-400/[0.05] hover:bg-emerald-400/15 hover:outline-dashed hover:outline-2 hover:-outline-offset-2 hover:outline-emerald-400/70',
                       dragDay === cell.iso && 'ring-2 ring-inset ring-emerald-400',
                     )}
                   >
