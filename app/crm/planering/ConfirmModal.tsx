@@ -7,7 +7,7 @@ import { crm } from '@/app/crm/lib/crmTokens';
 import CrmModal from '@/app/crm/components/CrmModal';
 import type { OpsSegment } from '@/lib/domains/planning/types';
 
-const FIELD = 'h-9 w-full rounded-lg border border-[#dce4d8] bg-white px-3 text-[13px] text-slate-900 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 disabled:bg-slate-50 disabled:text-slate-400';
+const FIELD = cn(crm.input, 'disabled:bg-slate-50 disabled:text-slate-400');
 const FORM_ID = 'planning-confirm-form';
 
 // Send an order confirmation (orderbekräftelse) to the customer for a scheduled job. The recipient
@@ -127,7 +127,7 @@ export default function ConfirmModal({
             type="submit"
             form={FORM_ID}
             disabled={sending || loading || (!sendEmail && !sendSms)}
-            className="inline-flex h-9 items-center rounded-lg px-4 text-[13px] font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50"
+            className={crm.formButton}
             style={{ backgroundColor: 'var(--crm-primary)' }}
           >
             {sending ? 'Skickar…' : 'Skicka'}

@@ -10,8 +10,8 @@ import type { DepotBalance } from '@/lib/domains/planning/depotStock';
 
 const STOCK_API = '/api/crm/planering/depot-stock';
 const DELIVERIES_API = '/api/crm/planering/depot-deliveries';
-const FIELD = 'h-9 w-full rounded-lg border border-[#dce4d8] bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/15';
-const PRIMARY = 'inline-flex h-9 shrink-0 items-center justify-center rounded-lg px-4 text-[13px] font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50';
+const FIELD = crm.input;
+const PRIMARY = crm.formButton;
 
 function balanceClass(balance: number): string {
   if (balance < 0) return 'text-rose-600';

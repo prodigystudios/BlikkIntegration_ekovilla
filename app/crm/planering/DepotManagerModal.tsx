@@ -1,95 +1,40 @@
 'use client';
 
-import { useEffect, useState, type FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
 import { cn } from '@/lib/shared/cn';
-import { useToast } from '@/lib/Toast';
 import { crm } from '@/app/crm/lib/crmTokens';
 import CrmModal from '@/app/crm/components/CrmModal';
+import { useEntityCrud } from './useEntityCrud';
+import { TrashIcon } from './managerModalUi';
 import type { OpsDepot } from '@/lib/domains/planning/types';
 
 const API = '/api/crm/planering/depots';
-const TEXT_INPUT = 'h-9 w-full rounded-lg border border-[#dce4d8] bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/15';
-const PRIMARY = 'inline-flex h-9 shrink-0 items-center justify-center rounded-lg px-4 text-[13px] font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50';
-const DANGER = 'inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-[#e0e8dc] bg-white px-3 text-[13px] font-semibold text-slate-500 transition hover:border-rose-300 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-50';
 
-// Depot management: list every depot (incl inactive), rename/relocate/(de)activate, add or remove.
-// onChanged lets the truck pickers + board refresh after a change.
+// Depot management: rename/relocate/(de)activate, add or remove. onChanged refreshes the truck
+// pickers + board after a change.
 export default function DepotManagerModal({ onClose, onChanged }: { onClose: () => void; onChanged: () => void }) {
-  const toast = useToast();
-  const [depots, setDepots] = useState<OpsDepot[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState(false);
+  const { items: depots, loading, busy, patchLocal, save, remove, add } = useEntityCrud<OpsDepot>({
+    api: API,
+    listKey: 'depots',
+    toPayload: (d) => ({ name: d.name, location: d.location, active: d.active }),
+    labels: { saveFail: 'Kunde inte spara depån', removeFail: 'Kunde inte ta bort depån', addFail: 'Kunde inte lägga till depån' },
+  });
   const [newName, setNewName] = useState('');
   const [newLocation, setNewLocation] = useState('');
 
-  useEffect(() => {
-    let active = true;
-    fetch(API, { cache: 'no-store' })
-      .then((r) => r.json())
-      .then((j) => {
-        if (active && j.ok) setDepots(j.data.depots as OpsDepot[]);
-      })
-      .catch(() => {})
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  function patchLocal(id: string, patch: Partial<OpsDepot>) {
-    setDepots((prev) => prev.map((d) => (d.id === id ? { ...d, ...patch } : d)));
+  async function onSave(d: OpsDepot) {
+    if (await save(d)) onChanged();
   }
-
-  async function saveDepot(d: OpsDepot) {
-    setBusy(true);
-    try {
-      const r = await fetch(`${API}/${d.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: d.name, location: d.location, active: d.active }),
-      });
-      const j = await r.json();
-      if (!j.ok) return toast.error(j.error || 'Kunde inte spara depån');
-      toast.success('Sparad');
-      onChanged();
-    } finally {
-      setBusy(false);
-    }
+  async function onRemove(id: string) {
+    if (await remove(id)) onChanged();
   }
-
-  async function removeDepot(id: string) {
-    setBusy(true);
-    try {
-      const r = await fetch(`${API}/${id}`, { method: 'DELETE' });
-      const j = await r.json();
-      if (!j.ok) return toast.error(j.error || 'Kunde inte ta bort depån');
-      setDepots((prev) => prev.filter((d) => d.id !== id));
-      onChanged();
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function addDepot(e: FormEvent) {
+  async function onAdd(e: FormEvent) {
     e.preventDefault();
     if (!newName.trim()) return;
-    setBusy(true);
-    try {
-      const r = await fetch(API, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newName.trim(), location: newLocation.trim() || null }),
-      });
-      const j = await r.json();
-      if (!j.ok) return toast.error(j.error || 'Kunde inte lägga till depån');
-      setDepots((prev) => [...prev, j.data.item as OpsDepot]);
+    if (await add({ name: newName.trim(), location: newLocation.trim() || null })) {
       setNewName('');
       setNewLocation('');
       onChanged();
-    } finally {
-      setBusy(false);
     }
   }
 
@@ -117,8 +62,8 @@ export default function DepotManagerModal({ onClose, onChanged }: { onClose: () 
           {depots.map((d) => (
             <div key={d.id} className={cn('rounded-xl border border-[#e0e8dc] bg-white p-3', !d.active && 'opacity-60')}>
               <div className="grid grid-cols-2 gap-2.5">
-                <input value={d.name} onChange={(e) => patchLocal(d.id, { name: e.target.value })} className={TEXT_INPUT} placeholder="Namn" aria-label="Namn" />
-                <input value={d.location ?? ''} onChange={(e) => patchLocal(d.id, { location: e.target.value })} className={TEXT_INPUT} placeholder="Plats (valfritt)" aria-label="Plats" />
+                <input value={d.name} onChange={(e) => patchLocal(d.id, { name: e.target.value })} className={crm.input} placeholder="Namn" aria-label="Namn" />
+                <input value={d.location ?? ''} onChange={(e) => patchLocal(d.id, { location: e.target.value })} className={crm.input} placeholder="Plats (valfritt)" aria-label="Plats" />
               </div>
               <div className="mt-3 flex items-center justify-between gap-2 border-t border-[#eef3eb] pt-2.5">
                 <label className="flex h-9 cursor-pointer select-none items-center gap-2 rounded-lg border border-[#e0e8dc] bg-[#f9fbf7] px-3 text-[13px] font-semibold text-slate-600">
@@ -126,13 +71,11 @@ export default function DepotManagerModal({ onClose, onChanged }: { onClose: () 
                   Aktiv
                 </label>
                 <div className="flex items-center gap-2">
-                  <button type="button" onClick={() => removeDepot(d.id)} disabled={busy} className={DANGER}>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" />
-                    </svg>
+                  <button type="button" onClick={() => onRemove(d.id)} disabled={busy} className={crm.dangerButton}>
+                    <TrashIcon />
                     Ta bort
                   </button>
-                  <button type="button" onClick={() => saveDepot(d)} disabled={busy} className={PRIMARY} style={{ backgroundColor: 'var(--crm-primary)' }}>
+                  <button type="button" onClick={() => onSave(d)} disabled={busy} className={crm.formButton} style={{ backgroundColor: 'var(--crm-primary)' }}>
                     Spara
                   </button>
                 </div>
@@ -142,12 +85,12 @@ export default function DepotManagerModal({ onClose, onChanged }: { onClose: () 
 
           {depots.length === 0 && <p className="py-2 text-center text-[13px] text-slate-400">Inga depåer upplagda än.</p>}
 
-          <form onSubmit={addDepot} className="rounded-xl border border-dashed border-[#c8d4c3] bg-[#f9fbf7] p-3">
+          <form onSubmit={onAdd} className="rounded-xl border border-dashed border-[#c8d4c3] bg-[#f9fbf7] p-3">
             <p className="mb-2 px-0.5 text-[11px] font-bold uppercase tracking-wide text-slate-400">Lägg till ny depå</p>
             <div className="grid grid-cols-[1fr_1fr_auto] items-center gap-2.5">
-              <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Namn…" className={TEXT_INPUT} aria-label="Namn på ny depå" />
-              <input value={newLocation} onChange={(e) => setNewLocation(e.target.value)} placeholder="Plats (valfritt)" className={TEXT_INPUT} aria-label="Plats" />
-              <button type="submit" disabled={busy || !newName.trim()} className={PRIMARY} style={{ backgroundColor: 'var(--crm-primary)' }}>
+              <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Namn…" className={crm.input} aria-label="Namn på ny depå" />
+              <input value={newLocation} onChange={(e) => setNewLocation(e.target.value)} placeholder="Plats (valfritt)" className={crm.input} aria-label="Plats" />
+              <button type="submit" disabled={busy || !newName.trim()} className={crm.formButton} style={{ backgroundColor: 'var(--crm-primary)' }}>
                 Lägg till
               </button>
             </div>
