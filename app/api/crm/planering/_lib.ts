@@ -43,6 +43,20 @@ export const createDayNoteSchema = z.object({
   body: z.string().trim().min(1, 'Skriv en notering').max(500, 'Noteringen är för lång'),
 });
 
+const hexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Ogiltig färg').nullable();
+
+// Fleet administration (planning.truck.manage).
+export const createTruckSchema = z.object({
+  name: z.string().trim().min(1, 'Ange ett namn').max(60, 'Namnet är för långt'),
+  color: hexColor.optional(),
+});
+
+export const updateTruckSchema = z.object({
+  name: z.string().trim().min(1, 'Ange ett namn').max(60, 'Namnet är för långt').optional(),
+  color: hexColor.optional(),
+  active: z.boolean().optional(),
+});
+
 // Send an order confirmation (orderbekräftelse) for a scheduled job. At least one channel must be
 // chosen; the matching recipient is required (enforced in the route for a clear Swedish message).
 export const sendConfirmationSchema = z.object({

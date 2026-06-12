@@ -9,5 +9,8 @@ export const dynamic = 'force-dynamic';
 export default async function CrmPlaneringPage() {
   const user = await getCurrentUser().catch(() => null);
   const canWrite = user?.role === 'admin' || user?.role === 'sales';
-  return <PlanningClient canWrite={canWrite} />;
+  // Fleet management is seeded to admins (planning.truck.manage). The API enforces the real
+  // permission; this is just the UI affordance.
+  const canManageTrucks = user?.role === 'admin';
+  return <PlanningClient canWrite={canWrite} canManageTrucks={canManageTrucks} />;
 }
