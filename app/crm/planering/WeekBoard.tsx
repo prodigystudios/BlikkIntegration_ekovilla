@@ -102,7 +102,7 @@ export default function WeekBoard({
   };
 
   return (
-    <section className={cn(crm.card, 'wk-board overflow-x-auto p-3')}>
+    <section className={cn(crm.card, 'planning-board overflow-x-auto p-3')}>
       <div style={{ minWidth: 112 + n * 132 }}>
         {/* Day header */}
         <div className="mb-1.5 grid" style={{ gridTemplateColumns: laneCols }}>

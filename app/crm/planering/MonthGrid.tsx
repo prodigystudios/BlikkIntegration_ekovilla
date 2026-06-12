@@ -50,7 +50,7 @@ export default function MonthGrid({
   const notesByDay = groupNotesByDay(dayNotes);
 
   return (
-    <section className={cn(crm.card, 'overflow-x-auto p-3')}>
+    <section className={cn(crm.card, 'planning-board overflow-x-auto p-3')}>
       <div className="min-w-[1240px]">
         {/* weekday header */}
         <div className="grid grid-cols-[34px_repeat(7,1fr)]">
