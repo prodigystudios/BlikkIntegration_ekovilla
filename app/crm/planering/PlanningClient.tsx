@@ -42,6 +42,7 @@ export default function PlanningClient({
   const [view, setView] = useState<View>('week');
   const [weekOffset, setWeekOffset] = useState(0);
   const [monthOffset, setMonthOffset] = useState(0);
+  const [showWeekend, setShowWeekend] = useState(false);
 
   const [backlog, setBacklog] = useState<SchedulableWorkOrder[]>([]);
   const [trucks, setTrucks] = useState<OpsTruck[]>([]);
@@ -119,6 +120,26 @@ export default function PlanningClient({
       .catch((e) => setError(e?.message || 'Något gick fel'))
       .finally(() => setLoadingBacklog(false));
   }, [loadBacklog]);
+
+  // "Visa helg" preference, persisted across visits (weekends hidden by default for width).
+  useEffect(() => {
+    try {
+      setShowWeekend(localStorage.getItem('crm-planning-show-weekend') === '1');
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  const toggleWeekend = useCallback(() => {
+    setShowWeekend((v) => {
+      const next = !v;
+      try {
+        localStorage.setItem('crm-planning-show-weekend', next ? '1' : '0');
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  }, []);
 
   // Assignable crew (every named employee) — fetched once; a failure just leaves the picker empty.
   useEffect(() => {
@@ -422,6 +443,17 @@ export default function PlanningClient({
               v.{isoWeek(weekMonday)}
             </span>
           )}
+          {view === 'week' && (
+            <button
+              onClick={toggleWeekend}
+              className={cn(
+                'ml-1 rounded-lg border px-2.5 py-1 text-[11px] font-bold transition',
+                showWeekend ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-[#e0e8dc] bg-white text-slate-500 hover:border-[#c8d4c3]',
+              )}
+            >
+              {showWeekend ? 'Dölj helg' : 'Visa helg'}
+            </button>
+          )}
         </div>
       </div>
 
@@ -518,6 +550,7 @@ export default function PlanningClient({
         {view === 'week' ? (
           <WeekBoard
             weekDays={weekDays}
+            showWeekend={showWeekend}
             trucks={visibleTrucks}
             segments={visibleSegments}
             todayISO={todayISO}

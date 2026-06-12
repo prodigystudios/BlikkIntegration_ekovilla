@@ -2,7 +2,7 @@ import type React from 'react';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 import type { OpsSegment, OpsTruck } from '@/lib/domains/planning/types';
-import { parseISO, type WeekDay } from './planningDates';
+import { type WeekDay } from './planningDates';
 import { JOB_TYPES } from '@/lib/domains/planning/jobTypes';
 import type { AssignablePerson } from '@/lib/domains/planning/crew';
 import { crewForTruckInRange, type TruckCrewMember } from '@/lib/domains/planning/truckCrew';
@@ -12,6 +12,7 @@ import DayNotesCell from './DayNotesCell';
 
 type WeekBoardProps = {
   weekDays: WeekDay[];
+  showWeekend: boolean;
   trucks: OpsTruck[];
   segments: OpsSegment[];
   todayISO: string;
@@ -35,37 +36,50 @@ type WeekBoardProps = {
   onRemoveTruckCrew: (truckId: string, memberId: string) => void;
 };
 
-// Which day column (0–6) a pointer x lands in, within a 7-column lane.
-function dayIndexFromX(e: React.MouseEvent | React.DragEvent): number {
+// Which visible-day column (0…count-1) a pointer x lands in, within a `count`-column lane.
+function dayIndexFromX(e: React.MouseEvent | React.DragEvent, count: number): number {
   const rect = e.currentTarget.getBoundingClientRect();
-  const idx = Math.floor(((e.clientX - rect.left) / rect.width) * 7);
-  return Math.max(0, Math.min(6, idx));
+  const idx = Math.floor(((e.clientX - rect.left) / rect.width) * count);
+  return Math.max(0, Math.min(count - 1, idx));
 }
 
 export default function WeekBoard({
-  weekDays, trucks, segments, todayISO, canWrite, placing, people,
+  weekDays, showWeekend, trucks, segments, todayISO, canWrite, placing, people,
   onCellClick, onCellDrop, onSegDragStart, onSegClick, onSetJobType, onAddCrew, onRemoveCrew, onOpenConfirm, onToggleHold,
   dayNotes, onAddNote, onRemoveNote, truckCrew, onAddTruckCrew, onRemoveTruckCrew,
 }: WeekBoardProps) {
+  // The visible day columns: all seven, or weekdays only when weekends are hidden.
+  const days = showWeekend ? weekDays : weekDays.filter((d) => !d.isWeekend);
+  const n = days.length;
   const weekStart = weekDays[0].iso;
   const weekEnd = weekDays[6].iso;
-  const startMs = parseISO(weekStart).getTime();
-  const dayIndexOf = (iso: string) => Math.round((parseISO(iso).getTime() - startMs) / 86_400_000);
+  const laneCols = `112px repeat(${n}, minmax(132px,1fr))`;
+  const dayCols = `repeat(${n}, minmax(0,1fr))`;
   const notesByDay = groupNotesByDay(dayNotes);
+
+  // First/last visible-day column a segment occupies (null when it falls entirely on hidden days).
+  const segColumns = (seg: OpsSegment): { s: number; e: number } | null => {
+    let s = -1;
+    let e = -1;
+    for (let i = 0; i < n; i++) {
+      if (days[i].iso >= seg.start_day && days[i].iso <= seg.end_day) {
+        if (s === -1) s = i;
+        e = i;
+      }
+    }
+    return s === -1 ? null : { s, e };
+  };
 
   return (
     <section className={cn(crm.card, 'overflow-x-auto p-3')}>
-      <div className="min-w-[1040px]">
+      <div style={{ minWidth: 112 + n * 132 }}>
         {/* Day header */}
-        <div className="grid grid-cols-[112px_repeat(7,minmax(132px,1fr))]">
+        <div className="grid" style={{ gridTemplateColumns: laneCols }}>
           <div />
-          {weekDays.map((wd) => {
+          {days.map((wd) => {
             const isToday = wd.iso === todayISO;
             return (
-              <div
-                key={wd.iso}
-                className={cn('rounded-lg px-1.5 py-1.5 text-center', isToday && 'bg-emerald-50')}
-              >
+              <div key={wd.iso} className={cn('rounded-lg px-1.5 py-1.5 text-center', isToday && 'bg-emerald-50')}>
                 <div className={cn('text-[11.5px] font-bold capitalize', isToday ? 'text-emerald-700' : wd.isWeekend ? 'text-slate-400' : 'text-slate-600')}>
                   {wd.weekday}
                 </div>
@@ -76,9 +90,9 @@ export default function WeekBoard({
         </div>
 
         {/* Day notes strip (dagsanteckningar) */}
-        <div className="grid grid-cols-[112px_repeat(7,minmax(132px,1fr))] border-t border-[#eef3eb]">
+        <div className="grid border-t border-[#eef3eb]" style={{ gridTemplateColumns: laneCols }}>
           <div className="flex items-center justify-end pr-2 text-[9.5px] font-semibold uppercase tracking-wide text-slate-300">Noteringar</div>
-          {weekDays.map((wd) => (
+          {days.map((wd) => (
             <DayNotesCell
               key={wd.iso}
               dayISO={wd.iso}
@@ -102,7 +116,7 @@ export default function WeekBoard({
             );
             const laneCrew = crewForTruckInRange(truckCrew, truck.id, weekStart, weekEnd);
             return (
-              <div key={truck.id} className="grid grid-cols-[112px_repeat(7,minmax(132px,1fr))] border-t border-[#e8efe5]">
+              <div key={truck.id} className="grid border-t border-[#e8efe5]" style={{ gridTemplateColumns: laneCols }}>
                 <div className="flex flex-col gap-1.5 py-3 pl-1 pr-2">
                   <div className="flex items-center gap-2">
                     <span className="h-2.5 w-2.5 shrink-0 rounded-full ring-2 ring-black/[0.03]" style={{ backgroundColor: truck.color || '#94a3b8' }} />
@@ -132,15 +146,15 @@ export default function WeekBoard({
                   onDrop={(e) => {
                     if (!canWrite) return;
                     e.preventDefault();
-                    onCellDrop(e, truck.id, weekDays[dayIndexFromX(e)].iso);
+                    onCellDrop(e, truck.id, days[dayIndexFromX(e, n)].iso);
                   }}
                   onClick={(e) => {
-                    if (placing) onCellClick(truck.id, weekDays[dayIndexFromX(e)].iso);
+                    if (placing) onCellClick(truck.id, days[dayIndexFromX(e, n)].iso);
                   }}
                 >
                   {/* gridline / weekend / today background */}
-                  <div className="pointer-events-none absolute inset-0 grid grid-cols-7">
-                    {weekDays.map((wd) => (
+                  <div className="pointer-events-none absolute inset-0 grid" style={{ gridTemplateColumns: dayCols }}>
+                    {days.map((wd) => (
                       <div
                         key={wd.iso}
                         className={cn(
@@ -152,10 +166,10 @@ export default function WeekBoard({
                   </div>
 
                   {/* segments */}
-                  <div className={cn('relative grid grid-cols-7 content-start gap-1.5 p-1.5', placing && 'cursor-copy')} style={{ minHeight: 118 }}>
+                  <div className={cn('relative grid content-start gap-1.5 p-1.5', placing && 'cursor-copy')} style={{ gridTemplateColumns: dayCols, minHeight: 118 }}>
                     {laneSegs.map((seg) => {
-                      const s = Math.max(0, dayIndexOf(seg.start_day));
-                      const e = Math.min(6, dayIndexOf(seg.end_day));
+                      const col = segColumns(seg);
+                      if (!col) return null;
                       const job = seg.job;
                       return (
                         <div
@@ -166,7 +180,7 @@ export default function WeekBoard({
                             ev.stopPropagation();
                             onSegClick(seg);
                           }}
-                          style={{ gridColumn: `${s + 1} / ${e + 2}` }}
+                          style={{ gridColumn: `${col.s + 1} / ${col.e + 2}` }}
                           className={cn(
                             'relative overflow-hidden rounded-xl border border-[#e0e8dc] bg-white p-2.5 pl-3.5 shadow-[0_1px_2px_rgba(20,44,27,0.06)] transition hover:-translate-y-px hover:shadow-[0_3px_10px_rgba(20,44,27,0.12)]',
                             canWrite ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer',
