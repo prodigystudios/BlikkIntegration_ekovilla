@@ -10,7 +10,8 @@ import type { DepotBalance } from '@/lib/domains/planning/depotStock';
 
 const STOCK_API = '/api/crm/planering/depot-stock';
 const DELIVERIES_API = '/api/crm/planering/depot-deliveries';
-const FIELD = 'h-8 rounded-lg border border-[#dce4d8] bg-white px-2 text-[13px] text-slate-900 outline-none transition focus:border-emerald-500';
+const FIELD = 'h-9 w-full rounded-lg border border-[#dce4d8] bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/15';
+const PRIMARY = 'inline-flex h-9 shrink-0 items-center justify-center rounded-lg px-4 text-[13px] font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50';
 
 function balanceClass(balance: number): string {
   if (balance < 0) return 'text-rose-600';
@@ -91,29 +92,29 @@ export default function DepotStockModal({ canWrite, onClose }: { canWrite: boole
       ) : (
         <div className="grid gap-4">
           {canWrite && (
-            <form onSubmit={record} className="grid gap-2 rounded-xl border border-dashed border-[#c8d4c3] bg-[#f9fbf7] p-3">
-              <p className="text-[12px] font-semibold text-slate-600">Registrera leverans</p>
-              <div className="flex flex-wrap items-center gap-2">
-                <select value={depotId} onChange={(e) => setDepotId(e.target.value)} aria-label="Depå" className={cn(FIELD, 'min-w-[120px] flex-1')}>
+            <form onSubmit={record} className="grid gap-2.5 rounded-xl border border-dashed border-[#c8d4c3] bg-[#f9fbf7] p-3">
+              <p className="px-0.5 text-[11px] font-bold uppercase tracking-wide text-slate-400">Registrera leverans</p>
+              <div className="grid grid-cols-2 gap-2.5">
+                <select value={depotId} onChange={(e) => setDepotId(e.target.value)} aria-label="Depå" className={FIELD}>
                   {depots.length === 0 && <option value="">Ingen depå</option>}
                   {depots.map((d) => (
                     <option key={d.depot_id} value={d.depot_id}>{d.depot_name}</option>
                   ))}
                 </select>
-                <select value={material} onChange={(e) => setMaterial(e.target.value)} aria-label="Material" className={cn(FIELD, 'min-w-[130px] flex-1')}>
+                <select value={material} onChange={(e) => setMaterial(e.target.value)} aria-label="Material" className={FIELD}>
                   {MATERIAL_SHORTS.map((m) => (
                     <option key={m} value={m}>{m}</option>
                   ))}
                 </select>
-                <input type="number" min={1} value={sacks} onChange={(e) => setSacks(e.target.value)} placeholder="Säckar" aria-label="Antal säckar" className={cn(FIELD, 'w-[88px]')} />
-                <input type="date" value={deliveredOn} onChange={(e) => setDeliveredOn(e.target.value)} aria-label="Datum" className={cn(FIELD, 'w-[140px] tabular-nums')} />
+                <input type="number" min={1} value={sacks} onChange={(e) => setSacks(e.target.value)} placeholder="Antal säckar" aria-label="Antal säckar" className={FIELD} />
+                <input type="date" value={deliveredOn} onChange={(e) => setDeliveredOn(e.target.value)} aria-label="Datum" className={cn(FIELD, 'tabular-nums')} />
               </div>
-              <div className="flex items-center gap-2">
-                <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Notering (valfritt)" aria-label="Notering" className={cn(FIELD, 'flex-1')} />
+              <div className="grid grid-cols-[1fr_auto] gap-2.5">
+                <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Notering (valfritt)" aria-label="Notering" className={FIELD} />
                 <button
                   type="submit"
                   disabled={busy || !depotId || !(Number(sacks) > 0)}
-                  className="inline-flex h-8 shrink-0 items-center rounded-lg px-3.5 text-[12px] font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50"
+                  className={PRIMARY}
                   style={{ backgroundColor: 'var(--crm-primary)' }}
                 >
                   Registrera
