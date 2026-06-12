@@ -28,3 +28,10 @@ export const moveSegmentSchema = z.object({
   sort_index: z.coerce.number().int().min(0).optional(),
   job_type: jobType.optional(),
 });
+
+// Assign a crew member to a segment. member_name is the durable display snapshot (profiles are
+// self-read-only, so the board never re-reads the person) — required even though member_id is too.
+export const assignCrewSchema = z.object({
+  member_id: z.string().uuid('Ogiltig montör'),
+  member_name: z.string().trim().min(1, 'Namn krävs').max(120),
+});

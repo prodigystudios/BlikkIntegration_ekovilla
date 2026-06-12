@@ -1,3 +1,4 @@
+import { useState, type SyntheticEvent } from 'react';
 import { cn } from '@/lib/shared/cn';
 import {
   workOrderStatusLabel,
@@ -8,6 +9,7 @@ import {
 import type { JobDisplay } from '@/lib/domains/planning/display';
 import { sacksRemaining } from '@/lib/domains/planning/reports';
 import { resolveJobType } from '@/lib/domains/planning/jobTypes';
+import { crewInitials, crewColor, type CrewMember, type AssignablePerson } from '@/lib/domains/planning/crew';
 
 // Status label + colors for a job, reusing the CRM work-order tokens so the planning board reads
 // identically to the rest of the CRM.
@@ -76,6 +78,110 @@ export function JobTypeOrMaterial({ jobType, material }: { jobType: string | nul
       <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: jt.color }} />
       {jt.label}
     </span>
+  );
+}
+
+// A single crew avatar: initials on the person's deterministic colour.
+function Avatar({ name, seed, size = 20 }: { name: string; seed: string; size?: number }) {
+  return (
+    <span
+      title={name}
+      className="inline-flex items-center justify-center rounded-full font-bold text-white ring-1 ring-black/5"
+      style={{ width: size, height: size, fontSize: size <= 16 ? 7 : 8.5, backgroundColor: crewColor(seed) }}
+    >
+      {crewInitials(name)}
+    </span>
+  );
+}
+
+// Read-only crew cluster (overlapping avatars) — used where the board isn't editable.
+export function CrewAvatars({ crew, size }: { crew: CrewMember[]; size?: number }) {
+  if (crew.length === 0) return null;
+  return (
+    <div className="flex items-center -space-x-1.5">
+      {crew.map((c) => (
+        <Avatar key={c.id} name={c.member_name} seed={c.member_id ?? c.member_name} size={size} />
+      ))}
+    </div>
+  );
+}
+
+// Editable crew row: removable avatars + a "+ team" dropdown of assignable people. All clicks are
+// stopped so they don't bubble to the card's open-work-order handler.
+export function CrewEditor({
+  crew,
+  people,
+  onAdd,
+  onRemove,
+}: {
+  crew: CrewMember[];
+  people: AssignablePerson[];
+  onAdd: (person: AssignablePerson) => void;
+  onRemove: (memberId: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const stop = (e: SyntheticEvent) => e.stopPropagation();
+  const assigned = new Set(crew.map((c) => c.member_id));
+  const available = people.filter((p) => !assigned.has(p.id));
+
+  return (
+    <div className="flex flex-wrap items-center gap-1" onClick={stop} onMouseDown={stop}>
+      {crew.map((c) => (
+        <button
+          key={c.id}
+          type="button"
+          onClick={(e) => {
+            stop(e);
+            if (c.member_id) onRemove(c.member_id);
+          }}
+          title={`${c.member_name} — klicka för att ta bort`}
+          className="group/av relative inline-flex h-5 w-5 items-center justify-center rounded-full text-[8.5px] font-bold text-white ring-1 ring-black/5"
+          style={{ backgroundColor: crewColor(c.member_id ?? c.member_name) }}
+        >
+          <span className="group-hover/av:opacity-0">{crewInitials(c.member_name)}</span>
+          <span className="absolute inset-0 hidden items-center justify-center rounded-full bg-rose-500 text-[11px] leading-none group-hover/av:flex">×</span>
+        </button>
+      ))}
+
+      <div className="relative">
+        <button
+          type="button"
+          onClick={(e) => {
+            stop(e);
+            setOpen((o) => !o);
+          }}
+          className="inline-flex h-5 items-center rounded-full border border-dashed border-[#c8d4c3] bg-white px-1.5 text-[9px] font-bold text-slate-400 transition hover:border-emerald-400 hover:text-emerald-600"
+        >
+          + team
+        </button>
+        {open && (
+          <>
+            <span className="fixed inset-0 z-10" onClick={(e) => { stop(e); setOpen(false); }} />
+            <div className="absolute left-0 top-6 z-20 max-h-52 w-44 overflow-auto rounded-xl border border-[#e0e8dc] bg-white p-1 shadow-lg">
+              {available.length === 0 ? (
+                <p className="px-2 py-1.5 text-[10px] text-slate-400">Alla tillagda</p>
+              ) : (
+                available.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={(e) => {
+                      stop(e);
+                      onAdd(p);
+                      setOpen(false);
+                    }}
+                    className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[11px] text-slate-700 transition hover:bg-emerald-50"
+                  >
+                    <Avatar name={p.full_name} seed={p.id} size={18} />
+                    <span className="truncate">{p.full_name}</span>
+                  </button>
+                ))
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
   );
 }
 

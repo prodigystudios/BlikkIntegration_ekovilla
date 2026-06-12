@@ -1,4 +1,5 @@
 import type { JobDisplay } from './display';
+import type { CrewMember } from './crew';
 
 // Domain types for the new CRM-first planning (Wave 7). Pure, no React/Next — these mirror the
 // ops_* tables and the read models built from crm_work_orders. JobDisplay (display.ts) holds the
@@ -40,4 +41,6 @@ export type OpsSegment = {
   job: JobDisplay | null;
   // Total sacks blown for this job across all its segments' reports (per-day sack reporting).
   sacks_reported: number;
+  // The crew (besättning) assigned to this specific placement; shown as initials on the card.
+  crew: CrewMember[];
 };

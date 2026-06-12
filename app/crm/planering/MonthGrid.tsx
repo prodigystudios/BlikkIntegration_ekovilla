@@ -3,7 +3,7 @@ import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 import type { OpsSegment, OpsTruck } from '@/lib/domains/planning/types';
 import type { MonthWeek } from './planningDates';
-import { statusMeta, JobRef } from './jobCard';
+import { statusMeta, JobRef, CrewAvatars } from './jobCard';
 import { sacksRemaining } from '@/lib/domains/planning/reports';
 
 type MonthGridProps = {
@@ -110,6 +110,11 @@ export default function MonthGrid({
                               )}
                             </div>
                             <div className="truncate text-[10px] text-slate-600">{job?.client_name ?? job?.project_name ?? 'Order'}</div>
+                            {seg.crew.length > 0 && (
+                              <div className="mt-0.5">
+                                <CrewAvatars crew={seg.crew} size={14} />
+                              </div>
+                            )}
                           </div>
                         </div>
                       );

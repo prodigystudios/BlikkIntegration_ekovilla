@@ -6,6 +6,7 @@ import { cn } from '@/lib/shared/cn';
 import { useToast } from '@/lib/Toast';
 import { crm } from '@/app/crm/lib/crmTokens';
 import type { OpsSegment, OpsTruck, SchedulableWorkOrder } from '@/lib/domains/planning/types';
+import type { AssignablePerson, CrewMember } from '@/lib/domains/planning/crew';
 import {
   addDays, addDaysISO, buildMonthWeeks, buildWeekDays, daysBetweenInclusive, fmtISO, isoWeek, startOfWeek, swedishMonthYear,
 } from './planningDates';
@@ -31,6 +32,7 @@ export default function PlanningClient({ canWrite }: { canWrite: boolean }) {
   const [backlog, setBacklog] = useState<SchedulableWorkOrder[]>([]);
   const [trucks, setTrucks] = useState<OpsTruck[]>([]);
   const [segments, setSegments] = useState<OpsSegment[]>([]);
+  const [people, setPeople] = useState<AssignablePerson[]>([]);
   const [loadingBacklog, setLoadingBacklog] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -84,6 +86,16 @@ export default function PlanningClient({ canWrite }: { canWrite: boolean }) {
       .finally(() => setLoadingBacklog(false));
   }, [loadBacklog]);
 
+  // Assignable crew (every named employee) — fetched once; a failure just leaves the picker empty.
+  useEffect(() => {
+    fetch(`${API}/crew`, { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((j) => {
+        if (j.ok) setPeople(j.data.people as AssignablePerson[]);
+      })
+      .catch(() => {});
+  }, []);
+
   useEffect(() => {
     loadSegments(range.from, range.to).catch((e) => setError(e?.message || 'Något gick fel'));
   }, [range.from, range.to, loadSegments]);
@@ -135,6 +147,37 @@ export default function PlanningClient({ canWrite }: { canWrite: boolean }) {
       await refresh();
     },
     [refresh, toast],
+  );
+
+  // Crew is per-segment, so add/remove patch the one segment's crew locally (snappy) rather than
+  // refetching the whole board. A failed call toasts; the next nav/refresh resyncs from the server.
+  const patchSegCrew = useCallback((segId: string, fn: (crew: CrewMember[]) => CrewMember[]) => {
+    setSegments((prev) => prev.map((s) => (s.id === segId ? { ...s, crew: fn(s.crew) } : s)));
+  }, []);
+
+  const addCrew = useCallback(
+    async (seg: OpsSegment, person: AssignablePerson) => {
+      const r = await fetch(`${API}/segments/${seg.id}/crew`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ member_id: person.id, member_name: person.full_name }),
+      });
+      const j = await r.json();
+      if (!j.ok) return toast.error(j.error || 'Kunde inte lägga till montör');
+      const item = j.data.item as CrewMember;
+      patchSegCrew(seg.id, (crew) => [...crew.filter((c) => c.member_id !== person.id), item]);
+    },
+    [patchSegCrew, toast],
+  );
+
+  const removeCrew = useCallback(
+    async (seg: OpsSegment, memberId: string) => {
+      const r = await fetch(`${API}/segments/${seg.id}/crew?member_id=${memberId}`, { method: 'DELETE' });
+      const j = await r.json();
+      if (!j.ok) return toast.error(j.error || 'Kunde inte ta bort montör');
+      patchSegCrew(seg.id, (crew) => crew.filter((c) => c.member_id !== memberId));
+    },
+    [patchSegCrew, toast],
   );
 
   // ── drag handlers ───────────────────────────────────────────────────────────
@@ -353,11 +396,14 @@ export default function PlanningClient({ canWrite }: { canWrite: boolean }) {
             todayISO={todayISO}
             canWrite={canWrite}
             placing={placing}
+            people={people}
             onCellClick={onWeekCellClick}
             onCellDrop={onCellDrop}
             onSegDragStart={onSegDragStart}
             onSegClick={onSegClick}
             onSetJobType={onSetJobType}
+            onAddCrew={addCrew}
+            onRemoveCrew={removeCrew}
           />
         ) : (
           <MonthGrid

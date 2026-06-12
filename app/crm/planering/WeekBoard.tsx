@@ -4,7 +4,8 @@ import { crm } from '@/app/crm/lib/crmTokens';
 import type { OpsSegment, OpsTruck } from '@/lib/domains/planning/types';
 import { parseISO, type WeekDay } from './planningDates';
 import { JOB_TYPES } from '@/lib/domains/planning/jobTypes';
-import { statusMeta, StatusPill, SackProgress, JobTypeOrMaterial, JobRef } from './jobCard';
+import type { AssignablePerson } from '@/lib/domains/planning/crew';
+import { statusMeta, StatusPill, SackProgress, JobTypeOrMaterial, JobRef, CrewEditor, CrewAvatars } from './jobCard';
 
 type WeekBoardProps = {
   weekDays: WeekDay[];
@@ -13,11 +14,14 @@ type WeekBoardProps = {
   todayISO: string;
   canWrite: boolean;
   placing: boolean; // a backlog item is selected → cells are placement targets
+  people: AssignablePerson[];
   onCellClick: (truckId: string, dayISO: string) => void;
   onCellDrop: (e: React.DragEvent, truckId: string, dayISO: string) => void;
   onSegDragStart: (e: React.DragEvent, seg: OpsSegment) => void;
   onSegClick: (seg: OpsSegment) => void;
   onSetJobType: (seg: OpsSegment, jobType: string | null) => void;
+  onAddCrew: (seg: OpsSegment, person: AssignablePerson) => void;
+  onRemoveCrew: (seg: OpsSegment, memberId: string) => void;
 };
 
 // Which day column (0–6) a pointer x lands in, within a 7-column lane.
@@ -28,7 +32,8 @@ function dayIndexFromX(e: React.MouseEvent | React.DragEvent): number {
 }
 
 export default function WeekBoard({
-  weekDays, trucks, segments, todayISO, canWrite, placing, onCellClick, onCellDrop, onSegDragStart, onSegClick, onSetJobType,
+  weekDays, trucks, segments, todayISO, canWrite, placing, people,
+  onCellClick, onCellDrop, onSegDragStart, onSegClick, onSetJobType, onAddCrew, onRemoveCrew,
 }: WeekBoardProps) {
   const weekStart = weekDays[0].iso;
   const weekEnd = weekDays[6].iso;
@@ -135,6 +140,18 @@ export default function WeekBoard({
                               <div className="mt-2 flex flex-wrap items-center gap-1.5">
                                 <JobTypeOrMaterial jobType={seg.job_type} material={job.material} />
                                 <SackProgress planned={job.total_sacks} reported={seg.sacks_reported} />
+                              </div>
+                              <div className="mt-2">
+                                {canWrite ? (
+                                  <CrewEditor
+                                    crew={seg.crew}
+                                    people={people}
+                                    onAdd={(p) => onAddCrew(seg, p)}
+                                    onRemove={(mid) => onRemoveCrew(seg, mid)}
+                                  />
+                                ) : (
+                                  <CrewAvatars crew={seg.crew} />
+                                )}
                               </div>
                               {canWrite && (
                                 <select
