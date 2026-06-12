@@ -14,6 +14,12 @@ export function sacksRemaining(planned: number, blown: number): number {
   return Math.max(0, planned - blown);
 }
 
+// Sacks blown beyond plan (overrun), floored at 0. Drives the "över N" warning when installers
+// report more sacks than the quote planned.
+export function sacksOverrun(planned: number, blown: number): number {
+  return Math.max(0, blown - planned);
+}
+
 export type CreateReportInput = {
   segmentId: string;
   reportDay: string;

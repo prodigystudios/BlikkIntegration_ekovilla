@@ -128,9 +128,14 @@ export default function DepotStockModal({ canWrite, onClose }: { canWrite: boole
             <div className="grid gap-2.5">
               {depots.map((d) => (
                 <div key={d.depot_id} className="rounded-xl border border-[#e0e8dc] bg-white p-3">
-                  <div className="mb-1.5 flex items-baseline justify-between">
-                    <span className="text-[13px] font-bold text-slate-800">{d.depot_name}</span>
-                    <span className={cn('text-[12px] font-bold tabular-nums', balanceClass(d.total_balance))}>{d.total_balance} säck</span>
+                  <div className="mb-1.5 flex items-baseline justify-between gap-2">
+                    <span className="flex items-center gap-2">
+                      <span className="text-[13px] font-bold text-slate-800">{d.depot_name}</span>
+                      {d.rows.some((r) => r.balance < 0) && (
+                        <span className="rounded-full border border-rose-200 bg-rose-50 px-2 py-px text-[9px] font-bold text-rose-700">Underskott</span>
+                      )}
+                    </span>
+                    <span className={cn('shrink-0 text-[12px] font-bold tabular-nums', balanceClass(d.total_balance))}>{d.total_balance} säck</span>
                   </div>
                   {d.rows.length === 0 ? (
                     <p className="text-[11px] text-slate-400">Inga rörelser än.</p>

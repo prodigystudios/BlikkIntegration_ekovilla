@@ -4,7 +4,7 @@ import { crm } from '@/app/crm/lib/crmTokens';
 import type { OpsSegment, OpsTruck } from '@/lib/domains/planning/types';
 import type { MonthWeek } from './planningDates';
 import { statusMeta, JobRef, CrewAvatars } from './jobCard';
-import { sacksRemaining } from '@/lib/domains/planning/reports';
+import { sacksRemaining, sacksOverrun } from '@/lib/domains/planning/reports';
 import { describeSmsStatus } from '@/lib/domains/planning/confirmations';
 import { groupNotesByDay, type DayNote } from '@/lib/domains/planning/dayNotes';
 import { swedishHoliday } from '@/lib/domains/planning/holidays';
@@ -146,17 +146,27 @@ export default function MonthGrid({
                                   );
                                 })()}
                               </span>
-                              {job && job.total_sacks > 0 && (
-                                <span
-                                  className={cn(
-                                    'shrink-0 text-[9px] font-bold tabular-nums',
-                                    seg.sacks_reported > 0 ? 'text-amber-700' : 'text-emerald-700',
-                                  )}
-                                  title={seg.sacks_reported > 0 ? `kvar ${sacksRemaining(job.total_sacks, seg.sacks_reported)} / ${job.total_sacks} säck` : `${job.total_sacks} säck`}
-                                >
-                                  {seg.sacks_reported > 0 ? sacksRemaining(job.total_sacks, seg.sacks_reported) : job.total_sacks}
-                                </span>
-                              )}
+                              {job && job.total_sacks > 0 && (() => {
+                                const over = sacksOverrun(job.total_sacks, seg.sacks_reported);
+                                const reported = seg.sacks_reported;
+                                return (
+                                  <span
+                                    className={cn(
+                                      'shrink-0 text-[9px] font-bold tabular-nums',
+                                      reported > 0 ? (over > 0 ? 'text-rose-600' : 'text-amber-700') : 'text-emerald-700',
+                                    )}
+                                    title={
+                                      reported > 0
+                                        ? over > 0
+                                          ? `över ${over} / ${job.total_sacks} säck`
+                                          : `kvar ${sacksRemaining(job.total_sacks, reported)} / ${job.total_sacks} säck`
+                                        : `${job.total_sacks} säck`
+                                    }
+                                  >
+                                    {reported > 0 ? (over > 0 ? `+${over}` : sacksRemaining(job.total_sacks, reported)) : job.total_sacks}
+                                  </span>
+                                );
+                              })()}
                             </div>
                             <div className="truncate text-[10px] text-slate-600">{job?.client_name ?? job?.project_name ?? 'Order'}</div>
                             {seg.crew.length > 0 && (
