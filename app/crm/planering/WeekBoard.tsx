@@ -5,6 +5,7 @@ import type { OpsSegment, OpsTruck } from '@/lib/domains/planning/types';
 import { parseISO, type WeekDay } from './planningDates';
 import { JOB_TYPES } from '@/lib/domains/planning/jobTypes';
 import type { AssignablePerson } from '@/lib/domains/planning/crew';
+import { crewForTruckInRange, type TruckCrewMember } from '@/lib/domains/planning/truckCrew';
 import { groupNotesByDay, type DayNote } from '@/lib/domains/planning/dayNotes';
 import { statusMeta, StatusPill, SackProgress, JobTypeOrMaterial, JobRef, CrewEditor, CrewAvatars, ConfirmationBadge, HoldBadge } from './jobCard';
 import DayNotesCell from './DayNotesCell';
@@ -29,6 +30,9 @@ type WeekBoardProps = {
   dayNotes: DayNote[];
   onAddNote: (dayISO: string, body: string) => void;
   onRemoveNote: (id: string) => void;
+  truckCrew: TruckCrewMember[];
+  onAddTruckCrew: (truckId: string, person: AssignablePerson, startDay: string, endDay: string) => void;
+  onRemoveTruckCrew: (truckId: string, memberId: string) => void;
 };
 
 // Which day column (0–6) a pointer x lands in, within a 7-column lane.
@@ -41,7 +45,7 @@ function dayIndexFromX(e: React.MouseEvent | React.DragEvent): number {
 export default function WeekBoard({
   weekDays, trucks, segments, todayISO, canWrite, placing, people,
   onCellClick, onCellDrop, onSegDragStart, onSegClick, onSetJobType, onAddCrew, onRemoveCrew, onOpenConfirm, onToggleHold,
-  dayNotes, onAddNote, onRemoveNote,
+  dayNotes, onAddNote, onRemoveNote, truckCrew, onAddTruckCrew, onRemoveTruckCrew,
 }: WeekBoardProps) {
   const weekStart = weekDays[0].iso;
   const weekEnd = weekDays[6].iso;
@@ -96,11 +100,26 @@ export default function WeekBoard({
             const laneSegs = segments.filter(
               (s) => s.truck_id === truck.id && s.end_day >= weekStart && s.start_day <= weekEnd,
             );
+            const laneCrew = crewForTruckInRange(truckCrew, truck.id, weekStart, weekEnd);
             return (
               <div key={truck.id} className="grid grid-cols-[112px_repeat(7,minmax(132px,1fr))] border-t border-[#e8efe5]">
-                <div className="flex items-start gap-2 py-3 pl-1 pr-2">
-                  <span className="mt-[3px] h-2.5 w-2.5 shrink-0 rounded-full ring-2 ring-black/[0.03]" style={{ backgroundColor: truck.color || '#94a3b8' }} />
-                  <span className="truncate text-[12.5px] font-bold text-slate-700">{truck.name}</span>
+                <div className="flex flex-col gap-1.5 py-3 pl-1 pr-2">
+                  <div className="flex items-center gap-2">
+                    <span className="h-2.5 w-2.5 shrink-0 rounded-full ring-2 ring-black/[0.03]" style={{ backgroundColor: truck.color || '#94a3b8' }} />
+                    <span className="truncate text-[12.5px] font-bold text-slate-700">{truck.name}</span>
+                  </div>
+                  <div className="pl-[18px]">
+                    {canWrite ? (
+                      <CrewEditor
+                        crew={laneCrew}
+                        people={people}
+                        onAdd={(p) => onAddTruckCrew(truck.id, p, weekStart, weekEnd)}
+                        onRemove={(mid) => onRemoveTruckCrew(truck.id, mid)}
+                      />
+                    ) : (
+                      <CrewAvatars crew={laneCrew} />
+                    )}
+                  </div>
                 </div>
 
                 {/* Day-area: one drop zone; the target day is derived from the pointer x. */}

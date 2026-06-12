@@ -8,6 +8,7 @@ import { crm } from '@/app/crm/lib/crmTokens';
 import type { OpsSegment, OpsTruck, SchedulableWorkOrder } from '@/lib/domains/planning/types';
 import type { AssignablePerson, CrewMember } from '@/lib/domains/planning/crew';
 import type { DayNote } from '@/lib/domains/planning/dayNotes';
+import type { TruckCrewMember } from '@/lib/domains/planning/truckCrew';
 import {
   addDays, addDaysISO, buildMonthWeeks, buildWeekDays, daysBetweenInclusive, fmtISO, isoWeek, startOfWeek, swedishMonthYear,
 } from './planningDates';
@@ -37,6 +38,7 @@ export default function PlanningClient({ canWrite, canManageTrucks }: { canWrite
   const [segments, setSegments] = useState<OpsSegment[]>([]);
   const [people, setPeople] = useState<AssignablePerson[]>([]);
   const [dayNotes, setDayNotes] = useState<DayNote[]>([]);
+  const [truckCrew, setTruckCrew] = useState<TruckCrewMember[]>([]);
   const [loadingBacklog, setLoadingBacklog] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -92,6 +94,13 @@ export default function PlanningClient({ canWrite, canManageTrucks }: { canWrite
     setDayNotes(j.data.notes as DayNote[]);
   }, []);
 
+  const loadTruckCrew = useCallback(async (from: string, to: string) => {
+    const r = await fetch(`${API}/truck-crew?from=${from}&to=${to}`, { cache: 'no-store' });
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || 'Kunde inte hämta bilbesättning');
+    setTruckCrew(j.data.crew as TruckCrewMember[]);
+  }, []);
+
   useEffect(() => {
     setLoadingBacklog(true);
     loadBacklog()
@@ -112,7 +121,8 @@ export default function PlanningClient({ canWrite, canManageTrucks }: { canWrite
   useEffect(() => {
     loadSegments(range.from, range.to).catch((e) => setError(e?.message || 'Något gick fel'));
     loadDayNotes(range.from, range.to).catch(() => {});
-  }, [range.from, range.to, loadSegments, loadDayNotes]);
+    loadTruckCrew(range.from, range.to).catch(() => {});
+  }, [range.from, range.to, loadSegments, loadDayNotes, loadTruckCrew]);
 
   const refresh = useCallback(async () => {
     try {
@@ -277,6 +287,36 @@ export default function PlanningClient({ canWrite, canManageTrucks }: { canWrite
       }
     },
     [toast, loadDayNotes, range.from, range.to],
+  );
+
+  // Weekly truck crew: assign for the visible week (startDay/endDay come from the board). Optimistic.
+  const addTruckCrew = useCallback(
+    async (truckId: string, person: AssignablePerson, startDay: string, endDay: string) => {
+      const r = await fetch(`${API}/truck-crew`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ truck_id: truckId, member_id: person.id, member_name: person.full_name, start_day: startDay, end_day: endDay }),
+      });
+      const j = await r.json();
+      if (!j.ok) return toast.error(j.error || 'Kunde inte lägga till i bilbesättningen');
+      setTruckCrew((prev) => [...prev, j.data.item as TruckCrewMember]);
+    },
+    [toast],
+  );
+
+  const removeTruckCrew = useCallback(
+    async (truckId: string, memberId: string) => {
+      const row = truckCrew.find((c) => c.truck_id === truckId && c.member_id === memberId);
+      if (!row) return;
+      setTruckCrew((prev) => prev.filter((c) => c.id !== row.id));
+      const r = await fetch(`${API}/truck-crew/${row.id}`, { method: 'DELETE' });
+      const j = await r.json();
+      if (!j.ok) {
+        toast.error(j.error || 'Kunde inte ta bort ur bilbesättningen');
+        loadTruckCrew(range.from, range.to).catch(() => {});
+      }
+    },
+    [toast, truckCrew, loadTruckCrew, range.from, range.to],
   );
 
   // ── selection / click-to-place ───────────────────────────────────────────────
@@ -464,6 +504,9 @@ export default function PlanningClient({ canWrite, canManageTrucks }: { canWrite
             dayNotes={dayNotes}
             onAddNote={addDayNote}
             onRemoveNote={removeDayNote}
+            truckCrew={truckCrew}
+            onAddTruckCrew={addTruckCrew}
+            onRemoveTruckCrew={removeTruckCrew}
           />
         ) : (
           <MonthGrid

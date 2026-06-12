@@ -37,6 +37,15 @@ export const assignCrewSchema = z.object({
   member_name: z.string().trim().min(1, 'Namn krävs').max(120),
 });
 
+// Assign a crew member to a truck for a date range (weekly truck crew / rotation).
+export const assignTruckCrewSchema = z.object({
+  truck_id: z.string().uuid('Ogiltig bil'),
+  member_id: z.string().uuid('Ogiltig montör'),
+  member_name: z.string().trim().min(1, 'Namn krävs').max(120),
+  start_day: isoDate,
+  end_day: isoDate,
+});
+
 // Create a day note (dagsanteckning) pinned to a calendar day.
 export const createDayNoteSchema = z.object({
   note_day: isoDate,
