@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type SyntheticEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type SyntheticEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { cn } from '@/lib/shared/cn';
 import {
@@ -364,6 +364,7 @@ export function SegmentMenu({
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const anchorRef = useRef<{ top: number; bottom: number } | null>(null);
   const available = people.filter((p) => !crew.some((c) => c.member_id === p.id));
 
   useEffect(() => {
@@ -381,6 +382,19 @@ export function SegmentMenu({
     };
   }, [open]);
 
+  useLayoutEffect(() => {
+    if (!open || !menuRef.current || !anchorRef.current) return;
+    const h = menuRef.current.offsetHeight;
+    const vh = window.innerHeight;
+    const a = anchorRef.current;
+    let top = a.bottom + 4;
+    if (top + h > vh - 8) {
+      const above = a.top - 4 - h;
+      top = above >= 8 ? above : Math.max(8, vh - 8 - h);
+    }
+    setPos((prev) => (prev && prev.top !== top ? { ...prev, top } : prev));
+  }, [open]);
+
   const toggle = (e: SyntheticEvent) => {
     e.stopPropagation();
     if (open) {
@@ -389,7 +403,8 @@ export function SegmentMenu({
     }
     const r = btnRef.current?.getBoundingClientRect();
     if (!r) return;
-    setPos({ top: r.bottom + 4, left: Math.max(8, Math.min(r.right - 380, window.innerWidth - 388)) });
+    anchorRef.current = { top: r.top, bottom: r.bottom };
+    setPos({ top: r.bottom + 4, left: Math.max(8, Math.min(r.right - 540, window.innerWidth - 548)) });
     setOpen(true);
   };
 
@@ -421,13 +436,13 @@ export function SegmentMenu({
             <div className="fixed inset-0 z-[60]" onMouseDown={(e) => { e.stopPropagation(); setOpen(false); }} />
             <div
               ref={menuRef}
-              className="fixed z-[61] max-h-[82vh] w-[380px] overflow-auto overscroll-contain rounded-2xl border border-[#e0e8dc] bg-white p-3 shadow-[0_16px_40px_rgba(20,44,27,0.22)]"
+              className="fixed z-[61] max-h-[82vh] w-[540px] overflow-auto overscroll-contain rounded-2xl border border-[#e0e8dc] bg-white p-3 shadow-[0_16px_40px_rgba(20,44,27,0.22)]"
               style={{ top: pos.top, left: pos.left }}
               onMouseDown={(e) => e.stopPropagation()}
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="grid grid-cols-2 gap-x-3">
-                {/* Left column - work-order attributes */}
+              <div className="grid grid-cols-3 gap-x-3">
+                {/* Status */}
                 <div>
                   <p className="mb-1 px-0.5 text-[9px] font-bold uppercase tracking-[0.07em] text-slate-400">Status</p>
                   <div className="space-y-0.5">
@@ -453,8 +468,11 @@ export function SegmentMenu({
                       );
                     })}
                   </div>
+                </div>
 
-                  <p className="mb-1 mt-3 px-0.5 text-[9px] font-bold uppercase tracking-[0.07em] text-slate-400">Jobbtyp</p>
+                {/* Jobbtyp */}
+                <div className="border-l border-[#eef3eb] pl-3">
+                  <p className="mb-1 px-0.5 text-[9px] font-bold uppercase tracking-[0.07em] text-slate-400">Jobbtyp</p>
                   <div className="space-y-0.5">
                     {jobTypes.map((t) => {
                       const active = t.key === jobType;
@@ -479,7 +497,7 @@ export function SegmentMenu({
                   </div>
                 </div>
 
-                {/* Right column - timing + crew */}
+                {/* Längd + Besättning */}
                 <div className="border-l border-[#eef3eb] pl-3">
                   <p className="mb-1 px-0.5 text-[9px] font-bold uppercase tracking-[0.07em] text-slate-400">
                     Längd <span className="font-semibold normal-case tracking-normal text-slate-300">dagar</span>
@@ -525,7 +543,7 @@ export function SegmentMenu({
                       ))}
                     </div>
                   )}
-                  <div className="max-h-[200px] overflow-auto overscroll-contain rounded-lg border border-[#eef3eb] bg-[#f9fbf7] p-0.5">
+                  <div className="max-h-[160px] overflow-auto overscroll-contain rounded-lg border border-[#eef3eb] bg-[#f9fbf7] p-0.5">
                     {available.length === 0 ? (
                       <p className="px-1.5 py-1.5 text-[10px] text-slate-400">{crew.length ? 'Alla tillagda' : 'Inga personer'}</p>
                     ) : (
