@@ -8,7 +8,7 @@ import type { AssignablePerson } from '@/lib/domains/planning/crew';
 import { crewForTruckInRange, type TruckCrewMember } from '@/lib/domains/planning/truckCrew';
 import { groupNotesByDay, type DayNote } from '@/lib/domains/planning/dayNotes';
 import { swedishHoliday } from '@/lib/domains/planning/holidays';
-import { statusMeta, StatusPill, SackProgress, JobTypeOrMaterial, JobRef, CrewEditor, CrewAvatars, ConfirmationBadge, HoldBadge, MapLink } from './jobCard';
+import { statusMeta, StatusPill, SackProgress, JobTypeOrMaterial, JobRef, CrewEditor, CrewAvatars, ConfirmationBadge, HoldBadge, MapLink, SegmentMenu } from './jobCard';
 import DayNotesCell from './DayNotesCell';
 
 type WeekBoardProps = {
@@ -217,6 +217,16 @@ export default function WeekBoard({
                               <div className="flex items-center gap-2">
                                 <JobRef job={job} />
                                 <StatusPill status={job.status} className="ml-auto" />
+                                {canWrite && (
+                                  <SegmentMenu
+                                    jobType={seg.job_type}
+                                    jobTypes={jobTypes}
+                                    onHold={seg.on_hold}
+                                    onSetJobType={(key) => onSetJobType(seg, key)}
+                                    onToggleHold={() => onToggleHold(seg, !seg.on_hold)}
+                                    onOpenConfirm={() => onOpenConfirm(seg)}
+                                  />
+                                )}
                               </div>
                               <div className="mt-1.5 text-[13px] font-bold leading-tight text-slate-900">{job.project_name}</div>
                               <div className="text-[11px] text-slate-500">{job.client_name}</div>
@@ -229,73 +239,23 @@ export default function WeekBoard({
                               <div className="mt-2 flex flex-wrap items-center gap-1.5">
                                 {seg.on_hold && <HoldBadge />}
                                 <JobTypeOrMaterial jobType={resolveJobTypeFrom(jobTypes, seg.job_type)} material={job.material} />
+                              </div>
+                              <div className="mt-2 flex flex-wrap items-center gap-2">
                                 <SackProgress planned={job.total_sacks} reported={seg.sacks_reported} />
                                 <ConfirmationBadge confirmation={seg.confirmation} />
-                              </div>
-                              <div className="mt-2">
-                                {canWrite ? (
-                                  <CrewEditor
-                                    crew={seg.crew}
-                                    people={people}
-                                    onAdd={(p) => onAddCrew(seg, p)}
-                                    onRemove={(mid) => onRemoveCrew(seg, mid)}
-                                  />
-                                ) : (
-                                  <CrewAvatars crew={seg.crew} />
-                                )}
-                              </div>
-                              {canWrite && (
-                                <select
-                                  value={seg.job_type ?? ''}
-                                  onClick={(ev) => ev.stopPropagation()}
-                                  onMouseDown={(ev) => ev.stopPropagation()}
-                                  onChange={(ev) => {
-                                    ev.stopPropagation();
-                                    onSetJobType(seg, ev.target.value || null);
-                                  }}
-                                  className="mt-2 h-6 w-full rounded-lg border border-[#e0e8dc] bg-white px-1.5 text-[10px] font-semibold text-slate-500 outline-none focus:border-emerald-400"
-                                >
-                                  <option value="">Jobbtyp…</option>
-                                  {jobTypes.map((t) => (
-                                    <option key={t.key} value={t.key}>{t.label}</option>
-                                  ))}
-                                </select>
-                              )}
-                              {canWrite && (
-                                <div className="mt-1.5 flex gap-1.5">
-                                  <button
-                                    type="button"
-                                    onMouseDown={(ev) => ev.stopPropagation()}
-                                    onClick={(ev) => {
-                                      ev.stopPropagation();
-                                      onToggleHold(seg, !seg.on_hold);
-                                    }}
-                                    className={cn(
-                                      'inline-flex h-6 flex-1 items-center justify-center gap-1 rounded-lg border text-[10px] font-semibold transition',
-                                      seg.on_hold
-                                        ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:border-emerald-400'
-                                        : 'border-[#e0e8dc] bg-white text-slate-500 hover:border-amber-400 hover:text-amber-600',
-                                    )}
-                                  >
-                                    {seg.on_hold ? 'Återuppta' : 'Pausa'}
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onMouseDown={(ev) => ev.stopPropagation()}
-                                    onClick={(ev) => {
-                                      ev.stopPropagation();
-                                      onOpenConfirm(seg);
-                                    }}
-                                    className="inline-flex h-6 flex-1 items-center justify-center gap-1 rounded-lg border border-[#e0e8dc] bg-white text-[10px] font-semibold text-slate-500 transition hover:border-emerald-400 hover:text-emerald-600"
-                                  >
-                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                      <rect x="2" y="4" width="20" height="16" rx="2" />
-                                      <path d="M22 7l-10 6L2 7" />
-                                    </svg>
-                                    Bekräftelse
-                                  </button>
+                                <div className="ml-auto">
+                                  {canWrite ? (
+                                    <CrewEditor
+                                      crew={seg.crew}
+                                      people={people}
+                                      onAdd={(p) => onAddCrew(seg, p)}
+                                      onRemove={(mid) => onRemoveCrew(seg, mid)}
+                                    />
+                                  ) : (
+                                    <CrewAvatars crew={seg.crew} />
+                                  )}
                                 </div>
-                              )}
+                              </div>
                             </>
                           ) : (
                             <div className="text-[11px] text-slate-400">Order saknas</div>

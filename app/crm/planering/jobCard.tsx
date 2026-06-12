@@ -1,4 +1,5 @@
-import { useState, type SyntheticEvent } from 'react';
+import { useEffect, useRef, useState, type SyntheticEvent } from 'react';
+import { createPortal } from 'react-dom';
 import { cn } from '@/lib/shared/cn';
 import {
   workOrderStatusLabel,
@@ -10,6 +11,7 @@ import type { JobDisplay } from '@/lib/domains/planning/display';
 import { sacksRemaining, sacksOverrun } from '@/lib/domains/planning/reports';
 import { crewInitials, crewColor, type CrewMember, type AssignablePerson } from '@/lib/domains/planning/crew';
 import { describeSmsStatus, type ConfirmationSummary } from '@/lib/domains/planning/confirmations';
+import type { JobType } from '@/lib/domains/planning/jobTypes';
 
 // Status label + colors for a job, reusing the CRM work-order tokens so the planning board reads
 // identically to the rest of the CRM.
@@ -284,5 +286,146 @@ export function JobRef({ job, className }: { job: Pick<JobDisplay, 'ref' | 'is_f
     >
       {job.ref}
     </span>
+  );
+}
+
+// Per-segment actions, tucked behind a kebab so the card itself stays calm (matching the mockup):
+// set/clear the job type, pause/resume, and send an order confirmation. The popover is portalled to
+// <body> so it escapes the card's overflow-hidden / transform clipping; it closes on outside click,
+// scroll, or resize.
+export function SegmentMenu({
+  jobType,
+  jobTypes,
+  onHold,
+  onSetJobType,
+  onToggleHold,
+  onOpenConfirm,
+}: {
+  jobType: string | null;
+  jobTypes: JobType[];
+  onHold: boolean;
+  onSetJobType: (key: string | null) => void;
+  onToggleHold: () => void;
+  onOpenConfirm: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = () => setOpen(false);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    return () => {
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+    };
+  }, [open]);
+
+  const toggle = (e: SyntheticEvent) => {
+    e.stopPropagation();
+    if (open) {
+      setOpen(false);
+      return;
+    }
+    const r = btnRef.current?.getBoundingClientRect();
+    if (!r) return;
+    setPos({ top: r.bottom + 4, left: Math.max(8, Math.min(r.right - 204, window.innerWidth - 212)) });
+    setOpen(true);
+  };
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={toggle}
+        title="Åtgärder"
+        aria-label="Åtgärder"
+        className={cn(
+          'inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-lg transition',
+          open ? 'bg-slate-100 text-slate-600' : 'text-slate-300 hover:bg-slate-100 hover:text-slate-600',
+        )}
+      >
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+          <circle cx="12" cy="5" r="1.7" />
+          <circle cx="12" cy="12" r="1.7" />
+          <circle cx="12" cy="19" r="1.7" />
+        </svg>
+      </button>
+
+      {open &&
+        pos &&
+        createPortal(
+          <>
+            <div className="fixed inset-0 z-[60]" onMouseDown={(e) => { e.stopPropagation(); setOpen(false); }} />
+            <div
+              className="fixed z-[61] w-[204px] rounded-xl border border-[#e0e8dc] bg-white p-1.5 shadow-[0_10px_30px_rgba(20,44,27,0.2)]"
+              style={{ top: pos.top, left: pos.left }}
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <p className="px-1.5 pb-1 pt-0.5 text-[9px] font-bold uppercase tracking-wide text-slate-400">Jobbtyp</p>
+              <div className="grid grid-cols-2 gap-1">
+                {jobTypes.map((t) => {
+                  const active = t.key === jobType;
+                  return (
+                    <button
+                      key={t.key}
+                      type="button"
+                      onClick={() => {
+                        onSetJobType(active ? null : t.key);
+                        setOpen(false);
+                      }}
+                      className={cn(
+                        'flex items-center gap-1.5 rounded-lg px-1.5 py-1 text-left text-[10.5px] font-semibold transition',
+                        active ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200' : 'text-slate-600 hover:bg-slate-50',
+                      )}
+                    >
+                      <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: t.color }} />
+                      <span className="truncate">{t.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="my-1.5 h-px bg-[#eef3eb]" />
+
+              <button
+                type="button"
+                onClick={() => {
+                  onToggleHold();
+                  setOpen(false);
+                }}
+                className="flex w-full items-center gap-2 rounded-lg px-1.5 py-1.5 text-left text-[11px] font-semibold text-slate-600 transition hover:bg-slate-50"
+              >
+                {onHold ? (
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
+                ) : (
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1" /><rect x="14" y="5" width="4" height="14" rx="1" /></svg>
+                )}
+                {onHold ? 'Återuppta' : 'Pausa'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  onOpenConfirm();
+                  setOpen(false);
+                }}
+                className="flex w-full items-center gap-2 rounded-lg px-1.5 py-1.5 text-left text-[11px] font-semibold text-slate-600 transition hover:bg-emerald-50 hover:text-emerald-700"
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="2" y="4" width="20" height="16" rx="2" />
+                  <path d="M22 7l-10 6L2 7" />
+                </svg>
+                Skicka bekräftelse
+              </button>
+            </div>
+          </>,
+          document.body,
+        )}
+    </>
   );
 }

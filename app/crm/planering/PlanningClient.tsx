@@ -670,6 +670,22 @@ export default function PlanningClient({
         )}
       </div>
 
+      {/* Legend — job-type colours (dot) + status rail colours, mirroring the card accents. */}
+      <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 px-1 text-[10.5px] text-slate-500">
+        <span className="font-bold text-slate-600">Jobbtyp:</span>
+        {jobTypes.map((t) => (
+          <span key={t.key} className="inline-flex items-center gap-1.5">
+            <span className="h-2 w-2 rounded-full" style={{ backgroundColor: t.color }} />
+            {t.label}
+          </span>
+        ))}
+        <span className="h-3 w-px bg-[#e0e8dc]" />
+        <span className="font-bold text-slate-600">Status:</span>
+        <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-sky-400" />Planerad</span>
+        <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-violet-400" />Pågående</span>
+        <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-emerald-500" />Fakturera</span>
+      </div>
+
       {/* Truck picker (month placement) */}
       {truckPicker && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4" onClick={() => setTruckPicker(null)}>
