@@ -1,4 +1,5 @@
 import type React from 'react';
+import { useEffect, useState } from 'react';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 import type { OpsSegment, OpsTruck } from '@/lib/domains/planning/types';
@@ -49,6 +50,12 @@ export default function MonthGrid({
   const truckName = new Map(trucks.map((t) => [t.id, t.name]));
   const truckOrder = new Map(trucks.map((t, i) => [t.id, i]));
   const notesByDay = groupNotesByDay(dayNotes);
+  const [dragDay, setDragDay] = useState<string | null>(null);
+  useEffect(() => {
+    const clear = () => setDragDay(null);
+    window.addEventListener('dragend', clear);
+    return () => window.removeEventListener('dragend', clear);
+  }, []);
 
   return (
     <section className={cn(crm.card, 'planning-board overflow-x-auto p-3')}>
@@ -88,11 +95,14 @@ export default function MonthGrid({
                       if (placing) onDayClick(cell.iso);
                     }}
                     onDragOver={(e) => {
-                      if (canWrite) e.preventDefault();
+                      if (!canWrite) return;
+                      e.preventDefault();
+                      if (dragDay !== cell.iso) setDragDay(cell.iso);
                     }}
                     onDrop={(e) => {
                       if (!canWrite) return;
                       e.preventDefault();
+                      setDragDay(null);
                       onDayDrop(e, cell.iso);
                     }}
                     className={cn(
@@ -102,6 +112,7 @@ export default function MonthGrid({
                       hol && cell.inMonth && 'bg-rose-400/[0.06]',
                       isToday && 'bg-emerald-50',
                       dayActive && 'cursor-copy',
+                      dragDay === cell.iso && 'ring-2 ring-inset ring-emerald-400',
                     )}
                   >
                     <div className="flex items-center justify-between">

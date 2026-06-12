@@ -1,5 +1,5 @@
 import type React from 'react';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 import type { OpsSegment, OpsTruck } from '@/lib/domains/planning/types';
@@ -74,6 +74,13 @@ export default function WeekBoard({
   const [resize, setResize] = useState<{ segId: string; endIso: string } | null>(null);
   const resizeEndRef = useRef<string | null>(null);
   const suppressClickRef = useRef(false);
+  const [dragCell, setDragCell] = useState<{ truckId: string; idx: number } | null>(null);
+  // Clear the drag-target highlight whenever a drag ends (drop, Esc, or leaving the window).
+  useEffect(() => {
+    const clear = () => setDragCell(null);
+    window.addEventListener('dragend', clear);
+    return () => window.removeEventListener('dragend', clear);
+  }, []);
 
   // Pointer-drag a card's right edge to change how many days it spans (live preview via `resize`).
   const startResize = (e: React.MouseEvent, seg: OpsSegment) => {
@@ -193,11 +200,15 @@ export default function WeekBoard({
                   className="relative"
                   style={{ gridColumn: '2 / -1' }}
                   onDragOver={(e) => {
-                    if (canWrite) e.preventDefault();
+                    if (!canWrite) return;
+                    e.preventDefault();
+                    const idx = dayIndexFromX(e, n);
+                    setDragCell((cur) => (cur && cur.truckId === truck.id && cur.idx === idx ? cur : { truckId: truck.id, idx }));
                   }}
                   onDrop={(e) => {
                     if (!canWrite) return;
                     e.preventDefault();
+                    setDragCell(null);
                     onCellDrop(e, truck.id, days[dayIndexFromX(e, n)].iso);
                   }}
                   onClick={(e) => {
@@ -206,18 +217,20 @@ export default function WeekBoard({
                 >
                   {/* gridline / weekend / today background */}
                   <div className="pointer-events-none absolute inset-0 grid" style={{ gridTemplateColumns: dayCols }}>
-                    {days.map((wd) => (
+                    {days.map((wd, di) => (
                       <div
                         key={wd.iso}
                         className={cn(
                           'border-solid border-[#e8efe5] border-l',
-                          wd.iso === todayISO
-                            ? 'bg-emerald-500/5'
-                            : swedishHoliday(wd.iso)
-                              ? 'bg-rose-400/[0.07]'
-                              : wd.isWeekend
-                                ? 'bg-slate-400/[0.06]'
-                                : '',
+                          dragCell?.truckId === truck.id && dragCell.idx === di
+                            ? 'bg-emerald-400/20 ring-2 ring-inset ring-emerald-400'
+                            : wd.iso === todayISO
+                              ? 'bg-emerald-500/5'
+                              : swedishHoliday(wd.iso)
+                                ? 'bg-rose-400/[0.07]'
+                                : wd.isWeekend
+                                  ? 'bg-slate-400/[0.06]'
+                                  : '',
                         )}
                       />
                     ))}
