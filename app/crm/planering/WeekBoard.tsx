@@ -36,6 +36,7 @@ type WeekBoardProps = {
   truckCrew: TruckCrewMember[];
   onAddTruckCrew: (truckId: string, person: AssignablePerson, startDay: string, endDay: string) => void;
   onRemoveTruckCrew: (truckId: string, memberId: string) => void;
+  onCopyTruckCrew: (truckId: string, sourceFrom: string, sourceTo: string) => void;
 };
 
 // Which visible-day column (0…count-1) a pointer x lands in, within a `count`-column lane.
@@ -48,7 +49,7 @@ function dayIndexFromX(e: React.MouseEvent | React.DragEvent, count: number): nu
 export default function WeekBoard({
   weekDays, showWeekend, trucks, segments, todayISO, canWrite, placing, people, jobTypes,
   onCellClick, onCellDrop, onSegDragStart, onSegClick, onSetJobType, onAddCrew, onRemoveCrew, onOpenConfirm, onToggleHold,
-  dayNotes, onAddNote, onRemoveNote, truckCrew, onAddTruckCrew, onRemoveTruckCrew,
+  dayNotes, onAddNote, onRemoveNote, truckCrew, onAddTruckCrew, onRemoveTruckCrew, onCopyTruckCrew,
 }: WeekBoardProps) {
   // The visible day columns: all seven, or weekdays only when weekends are hidden.
   const days = showWeekend ? weekDays : weekDays.filter((d) => !d.isWeekend);
@@ -136,6 +137,19 @@ export default function WeekBoard({
                       />
                     ) : (
                       <CrewAvatars crew={laneCrew} />
+                    )}
+                    {canWrite && laneCrew.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => onCopyTruckCrew(truck.id, weekStart, weekEnd)}
+                        title="Kopiera besättningen till nästa vecka"
+                        className="mt-1 inline-flex items-center gap-0.5 text-[9px] font-semibold text-slate-400 transition hover:text-emerald-600"
+                      >
+                        <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M5 12h14M13 6l6 6-6 6" />
+                        </svg>
+                        nästa v.
+                      </button>
                     )}
                   </div>
                 </div>

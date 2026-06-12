@@ -47,6 +47,15 @@ export const assignTruckCrewSchema = z.object({
   end_day: isoDate,
 });
 
+// Copy a truck's crew from one week to another.
+export const copyTruckCrewSchema = z.object({
+  truck_id: z.string().uuid('Ogiltig bil'),
+  source_start: isoDate,
+  source_end: isoDate,
+  target_start: isoDate,
+  target_end: isoDate,
+});
+
 // Create a day note (dagsanteckning) pinned to a calendar day.
 export const createDayNoteSchema = z.object({
   note_day: isoDate,

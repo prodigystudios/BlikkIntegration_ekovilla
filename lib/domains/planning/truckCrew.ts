@@ -72,3 +72,49 @@ export async function assignTruckCrew(
 export async function unassignTruckCrew(supabase: SupabaseClient, id: string) {
   return supabase.from('ops_truck_crew').delete().eq('id', id);
 }
+
+// Pure: source crew members not already present in the target week (deduped by member_id). These
+// are the rows to copy when cloning a truck's crew to another week.
+export function membersToCopy(source: TruckCrewMember[], targetExisting: TruckCrewMember[]): TruckCrewMember[] {
+  const have = new Set(targetExisting.map((m) => m.member_id).filter((v): v is string => Boolean(v)));
+  const seen = new Set<string>();
+  const out: TruckCrewMember[] = [];
+  for (const m of source) {
+    if (!m.member_id || have.has(m.member_id) || seen.has(m.member_id)) continue;
+    seen.add(m.member_id);
+    out.push(m);
+  }
+  return out;
+}
+
+export type CopyTruckCrewInput = {
+  truckId: string;
+  sourceFrom: string;
+  sourceTo: string;
+  targetFrom: string;
+  targetTo: string;
+  actorUserId: string;
+};
+
+// Copy a truck's crew from one week to another, skipping anyone already on the target week.
+export async function copyTruckCrewWeek(
+  supabase: SupabaseClient,
+  input: CopyTruckCrewInput,
+): Promise<{ data: { copied: number } | null; error: { message: string } | null }> {
+  const source = (await listTruckCrew(supabase, { from: input.sourceFrom, to: input.sourceTo })).data.filter((m) => m.truck_id === input.truckId);
+  const target = (await listTruckCrew(supabase, { from: input.targetFrom, to: input.targetTo })).data.filter((m) => m.truck_id === input.truckId);
+  const toCopy = membersToCopy(source, target);
+  if (toCopy.length === 0) return { data: { copied: 0 }, error: null };
+
+  const { error } = await supabase.from('ops_truck_crew').insert(
+    toCopy.map((m) => ({
+      truck_id: input.truckId,
+      member_id: m.member_id,
+      member_name: m.member_name,
+      start_day: input.targetFrom,
+      end_day: input.targetTo,
+      created_by: input.actorUserId,
+    })),
+  );
+  return { data: error ? null : { copied: toCopy.length }, error };
+}

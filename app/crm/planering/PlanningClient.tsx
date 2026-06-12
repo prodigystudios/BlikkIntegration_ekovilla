@@ -370,6 +370,28 @@ export default function PlanningClient({
     [toast, truckCrew, loadTruckCrew, range.from, range.to],
   );
 
+  const copyTruckCrew = useCallback(
+    async (truckId: string, sourceFrom: string, sourceTo: string) => {
+      const r = await fetch(`${API}/truck-crew/copy`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          truck_id: truckId,
+          source_start: sourceFrom,
+          source_end: sourceTo,
+          target_start: addDaysISO(sourceFrom, 7),
+          target_end: addDaysISO(sourceTo, 7),
+        }),
+      });
+      const j = await r.json();
+      if (!j.ok) return toast.error(j.error || 'Kunde inte kopiera besättningen');
+      const copied = j.data.copied ?? 0;
+      toast.success(copied > 0 ? `Besättning kopierad till nästa vecka (${copied})` : 'Nästa vecka har redan besättningen');
+      loadTruckCrew(range.from, range.to).catch(() => {});
+    },
+    [toast, loadTruckCrew, range.from, range.to],
+  );
+
   // ── selection / click-to-place ───────────────────────────────────────────────
   const onSelect = useCallback((id: string) => setSelectedId((cur) => (cur === id ? null : id)), []);
   const onWeekCellClick = useCallback(
@@ -629,6 +651,7 @@ export default function PlanningClient({
             truckCrew={truckCrew}
             onAddTruckCrew={addTruckCrew}
             onRemoveTruckCrew={removeTruckCrew}
+            onCopyTruckCrew={copyTruckCrew}
           />
         ) : (
           <MonthGrid
