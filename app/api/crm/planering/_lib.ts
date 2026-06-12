@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MATERIAL_SHORTS } from '@/lib/domains/crm/materials';
 
 // Planning is a CRM surface, so it shares the CRM route helpers + permission gate directly.
 export { ok, routeError, validationError, invalidUuidParam, requirePermission } from '../_shared';
@@ -77,6 +78,16 @@ export const updateDepotSchema = z.object({
   name: z.string().trim().min(1, 'Ange ett namn').max(80, 'Namnet är för långt').optional(),
   location: z.string().trim().max(200).nullable().optional(),
   active: z.boolean().optional(),
+});
+
+// Record a delivery of sacks into a depot. material must be a known catalogue short so deliveries
+// reconcile with derived consumption.
+export const createDeliverySchema = z.object({
+  depot_id: z.string().uuid('Ogiltig depå'),
+  material: z.string().trim().refine((m) => MATERIAL_SHORTS.includes(m), 'Okänt material'),
+  sacks: z.coerce.number().int().positive('Ange ett antal säckar'),
+  delivered_on: isoDate,
+  note: z.string().trim().max(300).nullable().optional(),
 });
 
 // Send an order confirmation (orderbekräftelse) for a scheduled job. At least one channel must be

@@ -33,6 +33,21 @@ export function inferMaterialFromArticle(articleName: string | null | undefined)
   return null;
 }
 
+// The canonical material short labels (EKOVILLA, KNAUF SUPAFIL, …), in catalogue order. The single
+// material identity used by depot deliveries + consumption so stock reconciles.
+export const MATERIAL_SHORTS: string[] = [...new Set(Object.values(MATERIALS).map((m) => m.short))];
+
+// The material `short` of the first line item whose article resolves to a known material, else null.
+// Attributes a work order's blown sacks to a depot material (depot stock consumption).
+export function materialShortFromLineItems(lineItems: unknown[] | null | undefined): string | null {
+  if (!Array.isArray(lineItems)) return null;
+  for (const it of lineItems) {
+    const m = inferMaterialFromArticle((it as { article_name?: string | null })?.article_name);
+    if (m) return m.short;
+  }
+  return null;
+}
+
 // Whole sacks needed: mass (volume × density) / bag weight, rounded UP – you order
 // whole sacks. Returns 0 when any input is non-positive.
 export function sacksFor(volumeM3: number, densityKgPerM3: number, bagWeightKg: number): number {

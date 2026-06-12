@@ -18,6 +18,7 @@ import MonthGrid from './MonthGrid';
 import ConfirmModal from './ConfirmModal';
 import TruckManagerModal from './TruckManagerModal';
 import DepotManagerModal from './DepotManagerModal';
+import DepotStockModal from './DepotStockModal';
 
 type View = 'week' | 'month';
 type DragData =
@@ -59,6 +60,7 @@ export default function PlanningClient({
   const [confirmSeg, setConfirmSeg] = useState<OpsSegment | null>(null);
   const [truckManagerOpen, setTruckManagerOpen] = useState(false);
   const [depotManagerOpen, setDepotManagerOpen] = useState(false);
+  const [stockOpen, setStockOpen] = useState(false);
 
   const dragRef = useRef<DragData | null>(null);
   const todayISO = useMemo(() => fmtISO(new Date()), []);
@@ -475,6 +477,15 @@ export default function PlanningClient({
               Depåer
             </button>
           )}
+          <button
+            onClick={() => setStockOpen(true)}
+            className="inline-flex h-[30px] items-center gap-1.5 rounded-full border border-dashed border-[#c8d4c3] bg-white px-3 text-[12px] font-semibold text-slate-500 transition hover:border-emerald-400 hover:text-emerald-600"
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M3 7l9-4 9 4-9 4-9-4ZM3 7v10l9 4 9-4V7M12 11v10" />
+            </svg>
+            Lager
+          </button>
         </div>
       </div>
 
@@ -588,6 +599,9 @@ export default function PlanningClient({
           onChanged={() => loadSegments(range.from, range.to).catch(() => {})}
         />
       )}
+
+      {/* Depot stock (balances + deliveries) */}
+      {stockOpen && <DepotStockModal canWrite={canWrite} onClose={() => setStockOpen(false)} />}
     </div>
   );
 }
