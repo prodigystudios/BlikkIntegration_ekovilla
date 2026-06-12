@@ -45,12 +45,12 @@ export default function Backlog({
             Inga arbetsordrar att planera. Skapa en order i CRM:et så dyker den upp här.
           </p>
         ) : (
-          <ul className="grid gap-2">
+          <div className="grid gap-2">
             {items.map((item) => {
               const isSelected = item.id === selectedId;
               return (
-                <li key={item.id}>
                   <div
+                    key={item.id}
                     role="button"
                     tabIndex={0}
                     draggable={canWrite}
@@ -92,10 +92,9 @@ export default function Backlog({
                       </span>
                     </div>
                   </div>
-                </li>
               );
             })}
-          </ul>
+          </div>
         )}
       </div>
 

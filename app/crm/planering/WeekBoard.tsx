@@ -121,7 +121,7 @@ export default function WeekBoard({
             );
             const laneCrew = crewForTruckInRange(truckCrew, truck.id, weekStart, weekEnd);
             return (
-              <div key={truck.id} className="grid border-t border-[#e8efe5]" style={{ gridTemplateColumns: laneCols }}>
+              <div key={truck.id} className="grid border-t border-[#e0e8dc]" style={{ gridTemplateColumns: laneCols }}>
                 <div className="flex flex-col gap-1.5 py-3 pl-1 pr-2">
                   <div className="flex items-center gap-2">
                     <span className="h-2.5 w-2.5 shrink-0 rounded-full ring-2 ring-black/[0.03]" style={{ backgroundColor: truck.color || '#94a3b8' }} />
@@ -176,7 +176,7 @@ export default function WeekBoard({
                       <div
                         key={wd.iso}
                         className={cn(
-                          'border-l border-[#e8efe5] last:border-r',
+                          'border-l border-[#e6ede1] last:border-r',
                           wd.iso === todayISO
                             ? 'bg-emerald-500/5'
                             : swedishHoliday(wd.iso)

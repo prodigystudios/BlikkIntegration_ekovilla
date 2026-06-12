@@ -47,21 +47,23 @@ export function SackProgress({ planned, reported }: { planned: number; reported:
   if (!(planned > 0) && !(reported > 0)) return null;
   if (reported > 0) {
     const over = sacksOverrun(planned, reported);
+    const title = `Blåsta ${reported} av ${planned} planerade säckar`;
+    if (over > 0) {
+      return (
+        <span
+          title={title}
+          className="whitespace-nowrap rounded-full border border-rose-200 bg-rose-50 px-2 py-px text-[10px] font-bold tabular-nums text-rose-700"
+        >
+          över {over} / {planned}
+        </span>
+      );
+    }
     return (
-      <span className="inline-flex items-center gap-1.5">
-        {over > 0 ? (
-          <span
-            title="Fler säckar blåsta än planerat"
-            className="whitespace-nowrap rounded-full border border-rose-200 bg-rose-50 px-2 py-px text-[10px] font-bold tabular-nums text-rose-700"
-          >
-            över {over} / {planned}
-          </span>
-        ) : (
-          <span className="whitespace-nowrap rounded-full border border-amber-200 bg-amber-50 px-2 py-px text-[10px] font-bold tabular-nums text-amber-700">
-            kvar {sacksRemaining(planned, reported)} / {planned}
-          </span>
-        )}
-        <span className="text-[9.5px] font-semibold tabular-nums text-slate-400">blåsta {reported}</span>
+      <span
+        title={title}
+        className="whitespace-nowrap rounded-full border border-amber-200 bg-amber-50 px-2 py-px text-[10px] font-bold tabular-nums text-amber-700"
+      >
+        kvar {sacksRemaining(planned, reported)} / {planned}
       </span>
     );
   }
