@@ -17,6 +17,7 @@ import Backlog from './Backlog';
 import WeekBoard from './WeekBoard';
 import MonthGrid from './MonthGrid';
 import type { SegmentActions } from './jobCard';
+import { dayGroup, reorderWithinGroup } from '@/lib/domains/planning/order';
 import ConfirmModal from './ConfirmModal';
 import TruckManagerModal from './TruckManagerModal';
 import DepotManagerModal from './DepotManagerModal';
@@ -477,9 +478,30 @@ export default function PlanningClient({
   const placing = canWrite && !!selectedId;
   const selected = backlog.find((b) => b.id === selectedId) ?? null;
 
+  // Reorder jobs that share a truck on the same day (sort_index) — nudges one earlier/later and
+  // PATCHes the affected segments, then refreshes.
+  const reorderSegment = useCallback(
+    async (seg: OpsSegment, direction: 'up' | 'down') => {
+      const changes = reorderWithinGroup(dayGroup(segments, seg), seg.id, direction);
+      if (!changes.length) return;
+      const results = await Promise.all(
+        changes.map((ch) =>
+          fetch(`${API}/segments/${ch.id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sort_index: ch.sort_index }),
+          }).then((r) => r.json()),
+        ),
+      );
+      if (results.some((j) => !j.ok)) toast.error('Kunde inte ändra ordningen');
+      await refresh();
+    },
+    [segments, refresh, toast],
+  );
+
   const actions = useMemo<SegmentActions>(
-    () => ({ onSetStatus, onSetJobType, onToggleHold, onOpenConfirm: openConfirm, onResize, onAddCrew: addCrew, onRemoveCrew: removeCrew }),
-    [onSetStatus, onSetJobType, onToggleHold, openConfirm, onResize, addCrew, removeCrew],
+    () => ({ onSetStatus, onSetJobType, onToggleHold, onOpenConfirm: openConfirm, onResize, onAddCrew: addCrew, onRemoveCrew: removeCrew, onReorder: reorderSegment }),
+    [onSetStatus, onSetJobType, onToggleHold, openConfirm, onResize, addCrew, removeCrew, reorderSegment],
   );
 
   return (

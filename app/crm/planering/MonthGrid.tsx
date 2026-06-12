@@ -4,6 +4,7 @@ import { crm } from '@/app/crm/lib/crmTokens';
 import type { OpsSegment, OpsTruck } from '@/lib/domains/planning/types';
 import type { MonthWeek } from './planningDates';
 import { SegmentCardBody, type SegmentActions } from './jobCard';
+import { orderInfo } from '@/lib/domains/planning/order';
 import type { JobType } from '@/lib/domains/planning/jobTypes';
 import type { AssignablePerson } from '@/lib/domains/planning/crew';
 import { groupNotesByDay, type DayNote } from '@/lib/domains/planning/dayNotes';
@@ -146,6 +147,7 @@ export default function MonthGrid({
                           actions={actions}
                           truckColor={truckColor.get(seg.truck_id) || '#94a3b8'}
                           truckName={truckName.get(seg.truck_id) ?? ''}
+                          order={orderInfo(segments, seg)}
                         />
                       </div>
                     ))}

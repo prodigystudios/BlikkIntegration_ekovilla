@@ -10,6 +10,7 @@ import { crewForTruckInRange, type TruckCrewMember } from '@/lib/domains/plannin
 import { groupNotesByDay, type DayNote } from '@/lib/domains/planning/dayNotes';
 import { swedishHoliday } from '@/lib/domains/planning/holidays';
 import { CrewEditor, CrewAvatars, SegmentCardBody, type SegmentActions } from './jobCard';
+import { orderInfo } from '@/lib/domains/planning/order';
 import DayNotesCell from './DayNotesCell';
 
 type WeekBoardProps = {
@@ -262,6 +263,7 @@ export default function WeekBoard({
                             jobTypes={jobTypes}
                             people={people}
                             actions={actions}
+                            order={orderInfo(segments, seg)}
                           />
                         </div>
                       );

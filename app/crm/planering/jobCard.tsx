@@ -15,6 +15,7 @@ import { describeSmsStatus, type ConfirmationSummary } from '@/lib/domains/plann
 import { resolveJobTypeFrom, type JobType } from '@/lib/domains/planning/jobTypes';
 import type { OpsSegment } from '@/lib/domains/planning/types';
 import { addDaysISO, daysBetweenInclusive } from './planningDates';
+import type { OrderInfo } from '@/lib/domains/planning/order';
 
 // Status label + colors for a job, reusing the CRM work-order tokens so the planning board reads
 // identically to the rest of the CRM.
@@ -344,6 +345,7 @@ export function SegmentMenu({
   onSetLength,
   onAddCrew,
   onRemoveCrew,
+  order,
 }: {
   status: string;
   jobType: string | null;
@@ -359,6 +361,7 @@ export function SegmentMenu({
   onSetLength: (days: number) => void;
   onAddCrew: (person: AssignablePerson) => void;
   onRemoveCrew: (memberId: string) => void;
+  order?: { index: number; total: number; onMove: (dir: 'up' | 'down') => void };
 }) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
@@ -497,8 +500,40 @@ export function SegmentMenu({
                   </div>
                 </div>
 
-                {/* Längd + Besättning */}
+                {/* Ordning + Längd + Besättning */}
                 <div className="border-l border-[#eef3eb] pl-3">
+                  {order && order.total > 1 && (
+                    <div className="mb-3">
+                      <p className="mb-1 px-0.5 text-[9px] font-bold uppercase tracking-[0.07em] text-slate-400">Ordning på dagen</p>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          disabled={order.index === 0}
+                          onClick={() => {
+                            order.onMove('up');
+                            setOpen(false);
+                          }}
+                          title="Tidigare"
+                          className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-slate-50 p-0 text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M18 15l-6-6-6 6" /></svg>
+                        </button>
+                        <span className="min-w-[42px] text-center text-[11px] font-bold tabular-nums text-slate-500">{order.index + 1} / {order.total}</span>
+                        <button
+                          type="button"
+                          disabled={order.index === order.total - 1}
+                          onClick={() => {
+                            order.onMove('down');
+                            setOpen(false);
+                          }}
+                          title="Senare"
+                          className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-slate-50 p-0 text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6" /></svg>
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   <p className="mb-1 px-0.5 text-[9px] font-bold uppercase tracking-[0.07em] text-slate-400">
                     Längd <span className="font-semibold normal-case tracking-normal text-slate-300">dagar</span>
                   </p>
@@ -616,6 +651,7 @@ export type SegmentActions = {
   onResize: (seg: OpsSegment, startDay: string, endDay: string) => void;
   onAddCrew: (seg: OpsSegment, person: AssignablePerson) => void;
   onRemoveCrew: (seg: OpsSegment, memberId: string) => void;
+  onReorder: (seg: OpsSegment, direction: 'up' | 'down') => void;
 };
 
 // The shared inner content of a scheduled-job card (status rail, header with kebab, project/client/
@@ -631,6 +667,7 @@ export function SegmentCardBody({
   actions,
   truckColor,
   truckName,
+  order,
 }: {
   seg: OpsSegment;
   canWrite: boolean;
@@ -639,6 +676,7 @@ export function SegmentCardBody({
   actions: SegmentActions;
   truckColor?: string;
   truckName?: string;
+  order?: OrderInfo;
 }) {
   const job = seg.job;
   return (
@@ -648,11 +686,20 @@ export function SegmentCardBody({
         <>
           <div className="flex items-center gap-2">
             {truckColor && <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: truckColor }} />}
+            {order && order.total > 1 && (
+              <span
+                title={`Ordning ${order.index + 1} av ${order.total} på dagen`}
+                className="inline-flex h-4 min-w-[16px] shrink-0 items-center justify-center rounded-full bg-slate-100 px-1 text-[9px] font-bold tabular-nums text-slate-500"
+              >
+                {order.index + 1}
+              </span>
+            )}
             <JobRef job={job} />
             <StatusPill status={job.status} className="ml-auto" />
             {canWrite && (
               <span className="relative z-20 inline-flex">
               <SegmentMenu
+                order={order && order.total > 1 ? { index: order.index, total: order.total, onMove: (dir) => actions.onReorder(seg, dir) } : undefined}
                 status={job.status}
                 jobType={seg.job_type}
                 jobTypes={jobTypes}
