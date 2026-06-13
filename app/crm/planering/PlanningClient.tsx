@@ -61,6 +61,7 @@ export default function PlanningClient({
   const [defaultCrew, setDefaultCrew] = useState<DefaultCrewMember[]>([]);
   const [depotStock, setDepotStock] = useState<DepotBalance[]>([]);
   const [loadingBacklog, setLoadingBacklog] = useState(true);
+  const [boardLoaded, setBoardLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -125,6 +126,7 @@ export default function PlanningClient({
     if (!j.ok) throw new Error(j.error || 'Kunde inte hämta schemat');
     setSegments(j.data.segments as OpsSegment[]);
     setTrucks(j.data.trucks as OpsTruck[]);
+    setBoardLoaded(true);
   }, []);
 
   const loadDayNotes = useCallback(async (from: string, to: string) => {
@@ -292,7 +294,14 @@ export default function PlanningClient({
       const j = await r.json();
       if (!j.ok) return toast.error(j.error || 'Kunde inte placera ordern');
       toast.success('Order placerad');
-      await refresh();
+      // Append the created segment locally instead of refetching the whole board; bump the source
+      // job's backlog count so its badge stays in sync.
+      if (j.data?.item) {
+        setSegments((prev) => [...prev, j.data.item as OpsSegment]);
+        setBacklog((prev) => prev.map((b) => (b.id === workOrderId ? { ...b, segment_count: b.segment_count + 1 } : b)));
+      } else {
+        refresh();
+      }
     },
     [refresh, toast],
   );
@@ -331,11 +340,16 @@ export default function PlanningClient({
 
   const unschedule = useCallback(
     async (id: string) => {
+      // Optimistic: drop the card at once; re-sync from the server only if the delete fails.
+      setSegments((prev) => prev.filter((s) => s.id !== id));
       const r = await fetch(`${API}/segments/${id}`, { method: 'DELETE' });
       const j = await r.json();
-      if (!j.ok) return toast.error(j.error || 'Kunde inte avplanera');
+      if (!j.ok) {
+        toast.error(j.error || 'Kunde inte avplanera');
+        refresh();
+        return;
+      }
       toast.success('Jobbet avplanerat');
-      await refresh();
     },
     [refresh, toast],
   );
@@ -875,7 +889,20 @@ export default function PlanningClient({
           dropActive={backlogDropActive}
         />
 
-        {view === 'week' ? (
+        {!boardLoaded ? (
+          // Skeleton while the schedule first loads — avoids flashing "Inga bilar upplagda än".
+          <div className={cn(crm.card, 'p-3')}>
+            <div className="grid gap-2.5">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className="flex items-center gap-3">
+                  <div className="h-3 w-16 shrink-0 animate-pulse rounded bg-[#e8efe5]" />
+                  <div className="h-14 flex-1 animate-pulse rounded-xl bg-[#eef3eb]" />
+                </div>
+              ))}
+            </div>
+            <div className="mt-2.5 text-center text-[11px] text-slate-400">Laddar schema…</div>
+          </div>
+        ) : view === 'week' ? (
           <div className="grid gap-4">
             {weekMondays.map((m, i) => {
               const wd = weekDaysList[i];
