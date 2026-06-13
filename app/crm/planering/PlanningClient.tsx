@@ -20,10 +20,7 @@ import MonthGrid from './MonthGrid';
 import type { SegmentActions } from './jobCard';
 import { dayGroup, reorderWithinGroup } from '@/lib/domains/planning/order';
 import ConfirmModal from './ConfirmModal';
-import TruckManagerModal from './TruckManagerModal';
-import DepotManagerModal from './DepotManagerModal';
-import DepotStockModal from './DepotStockModal';
-import JobTypeManagerModal from './JobTypeManagerModal';
+import PlanningAdminModal from './PlanningAdminModal';
 import ActivityLogModal from './ActivityLogModal';
 import PlaceholderModal, { type PlaceholderInput } from './PlaceholderModal';
 
@@ -70,10 +67,7 @@ export default function PlanningClient({
   const [truckPicker, setTruckPicker] = useState<{ dayISO: string; workOrderId: string } | null>(null);
   const [copySeg, setCopySeg] = useState<OpsSegment | null>(null);
   const [confirmSeg, setConfirmSeg] = useState<OpsSegment | null>(null);
-  const [truckManagerOpen, setTruckManagerOpen] = useState(false);
-  const [depotManagerOpen, setDepotManagerOpen] = useState(false);
-  const [stockOpen, setStockOpen] = useState(false);
-  const [jobTypeManagerOpen, setJobTypeManagerOpen] = useState(false);
+  const [adminOpen, setAdminOpen] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
   const [placeholderOpen, setPlaceholderOpen] = useState(false);
 
@@ -733,47 +727,15 @@ export default function PlanningClient({
               </button>
             );
           })}
-          {canManageTrucks && (
-            <button
-              onClick={() => setTruckManagerOpen(true)}
-              className="inline-flex h-[30px] items-center gap-1.5 rounded-full border border-dashed border-[#c8d4c3] bg-white px-3 text-[12px] font-semibold text-slate-500 transition hover:border-emerald-400 hover:text-emerald-600"
-            >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M10 17h4V5H2v12h3M15 17h6v-5l-3-3h-3M5.5 17a1.5 1.5 0 1 0 3 0 1.5 1.5 0 0 0-3 0ZM16.5 17a1.5 1.5 0 1 0 3 0 1.5 1.5 0 0 0-3 0Z" />
-              </svg>
-              Bilar
-            </button>
-          )}
-          {canManageDepots && (
-            <button
-              onClick={() => setDepotManagerOpen(true)}
-              className="inline-flex h-[30px] items-center gap-1.5 rounded-full border border-dashed border-[#c8d4c3] bg-white px-3 text-[12px] font-semibold text-slate-500 transition hover:border-emerald-400 hover:text-emerald-600"
-            >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M3 21V8l9-5 9 5v13M3 21h18M9 21v-6h6v6" />
-              </svg>
-              Depåer
-            </button>
-          )}
-          {canManageTrucks && (
-            <button
-              onClick={() => setJobTypeManagerOpen(true)}
-              className="inline-flex h-[30px] items-center gap-1.5 rounded-full border border-dashed border-[#c8d4c3] bg-white px-3 text-[12px] font-semibold text-slate-500 transition hover:border-emerald-400 hover:text-emerald-600"
-            >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 2l3 7h7l-5.5 4.5L18 21l-6-4-6 4 1.5-7.5L2 9h7z" />
-              </svg>
-              Jobbtyper
-            </button>
-          )}
           <button
-            onClick={() => setStockOpen(true)}
+            onClick={() => setAdminOpen(true)}
             className="inline-flex h-[30px] items-center gap-1.5 rounded-full border border-dashed border-[#c8d4c3] bg-white px-3 text-[12px] font-semibold text-slate-500 transition hover:border-emerald-400 hover:text-emerald-600"
           >
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M3 7l9-4 9 4-9 4-9-4ZM3 7v10l9 4 9-4V7M12 11v10" />
+              <path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" />
             </svg>
-            Lager
+            Administrera
           </button>
           <button
             onClick={() => setActivityOpen(true)}
@@ -952,28 +914,18 @@ export default function PlanningClient({
         <ConfirmModal segment={confirmSeg} onClose={() => setConfirmSeg(null)} onSent={refresh} />
       )}
 
-      {/* Fleet management */}
-      {truckManagerOpen && (
-        <TruckManagerModal
-          onClose={() => setTruckManagerOpen(false)}
-          onChanged={() => loadSegments(range.from, range.to).catch(() => {})}
+      {/* Consolidated admin (bilar · depåer · jobbtyper · lager) */}
+      {adminOpen && (
+        <PlanningAdminModal
+          canManageTrucks={canManageTrucks}
+          canManageDepots={canManageDepots}
+          canWrite={canWrite}
+          onClose={() => setAdminOpen(false)}
+          onChanged={() => {
+            loadSegments(range.from, range.to).catch(() => {});
+            loadJobTypes().catch(() => {});
+          }}
         />
-      )}
-
-      {/* Depot management */}
-      {depotManagerOpen && (
-        <DepotManagerModal
-          onClose={() => setDepotManagerOpen(false)}
-          onChanged={() => loadSegments(range.from, range.to).catch(() => {})}
-        />
-      )}
-
-      {/* Depot stock (balances + deliveries) */}
-      {stockOpen && <DepotStockModal canWrite={canWrite} onClose={() => setStockOpen(false)} />}
-
-      {/* Job-type management */}
-      {jobTypeManagerOpen && (
-        <JobTypeManagerModal onClose={() => setJobTypeManagerOpen(false)} onChanged={() => loadJobTypes().catch(() => {})} />
       )}
 
       {/* Activity log (audit trail) */}
