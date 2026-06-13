@@ -333,7 +333,7 @@ export function JobRef({ job, className }: { job: Pick<JobDisplay, 'ref' | 'is_f
   return (
     <span
       className={cn(
-        'whitespace-nowrap text-[12px] font-extrabold tabular-nums tracking-tight',
+        'whitespace-nowrap text-[11px] font-extrabold tabular-nums tracking-tight',
         job.is_fortnox_ref ? 'text-[#1f4a2e]' : 'font-bold text-slate-400',
         className,
       )}
@@ -752,19 +752,19 @@ export function SegmentCardBody({
               </span>
             )}
           </div>
-          <div className="mt-1.5 truncate text-[13px] font-bold leading-tight text-slate-900">{job.project_name}</div>
-          <div className="truncate text-[11px] text-slate-500">{job.client_name}</div>
+          <div className="mt-1 truncate text-[11.5px] font-bold leading-tight text-slate-900">{job.project_name}</div>
+          <div className="truncate text-[10px] text-slate-500">{job.client_name}</div>
           {job.address && (
-            <div className="mt-0.5 flex items-center gap-1 text-[10.5px] text-slate-400">
+            <div className="mt-0.5 flex items-center gap-1 text-[9.5px] text-slate-400">
               <span className="truncate">{job.address}</span>
               <MapLink address={job.address} />
             </div>
           )}
-          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
             {seg.on_hold && <HoldBadge />}
             <JobTypeOrMaterial jobType={resolveJobTypeFrom(jobTypes, seg.job_type)} material={job.material} />
           </div>
-          <div className="mt-2 flex flex-wrap items-center gap-2">
+          <div className="mt-1.5 flex flex-wrap items-center gap-2">
             <SackProgress planned={job.total_sacks} reported={seg.sacks_reported} />
             <ConfirmationBadge confirmation={seg.confirmation} />
             <CreatorBadge name={seg.created_by_name} />
@@ -794,8 +794,8 @@ export function SegmentCardBody({
               </button>
             )}
           </div>
-          <div className="mt-1.5 truncate text-[13px] font-bold leading-tight text-slate-800">{seg.placeholder_title}</div>
-          {seg.placeholder_customer && <div className="truncate text-[11px] text-slate-500">{seg.placeholder_customer}</div>}
+          <div className="mt-1 truncate text-[11.5px] font-bold leading-tight text-slate-800">{seg.placeholder_title}</div>
+          {seg.placeholder_customer && <div className="truncate text-[10px] text-slate-500">{seg.placeholder_customer}</div>}
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <JobTypeOrMaterial jobType={resolveJobTypeFrom(jobTypes, seg.job_type)} material={null} />
             <div className="ml-auto flex items-center gap-1">
