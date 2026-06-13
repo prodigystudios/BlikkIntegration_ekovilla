@@ -105,15 +105,19 @@ export default function WeekBoard({
   }, []);
 
   // Pointer-drag a card's right edge to change how many days it spans (live preview via `resize`).
+  // The target day is read with elementFromPoint against a per-day overlay (rendered while resizing),
+  // not pointer-x ÷ rect math — the latter breaks under CSS `zoom` because WebKit's
+  // getBoundingClientRect ignores zoom while MouseEvent.clientX is visual, so the last day became
+  // unreachable. elementFromPoint uses the browser's own visual hit-testing, correct at any zoom.
   const startResize = (e: React.MouseEvent, seg: OpsSegment) => {
     e.stopPropagation();
     e.preventDefault();
-    const dayArea = (e.currentTarget as HTMLElement).closest('[data-dayarea]') as HTMLElement | null;
-    if (!dayArea) return;
-    const rect = dayArea.getBoundingClientRect();
     resizeEndRef.current = seg.end_day;
+    setResize({ segId: seg.id, endIso: seg.end_day }); // show the day overlay from the first move
     const onMove = (me: MouseEvent) => {
-      const idx = Math.max(0, Math.min(n - 1, Math.floor(((me.clientX - rect.left) / rect.width) * n)));
+      const cell = (document.elementFromPoint(me.clientX, me.clientY) as HTMLElement | null)?.closest('[data-dayidx]') as HTMLElement | null;
+      if (!cell) return;
+      const idx = Math.max(0, Math.min(n - 1, Number(cell.dataset.dayidx)));
       const endIso = days[idx].iso < seg.start_day ? seg.start_day : days[idx].iso;
       resizeEndRef.current = endIso;
       setResize({ segId: seg.id, endIso });
@@ -357,6 +361,16 @@ export default function WeekBoard({
                       );
                     })}
                   </div>
+
+                  {/* Day-index hit overlay — only while resizing a card in this lane. Sits above the
+                      cards so elementFromPoint reliably reports the day under the pointer (zoom-safe). */}
+                  {resize && laneSegs.some((s) => s.id === resize.segId) && (
+                    <div className="absolute inset-0 z-40 grid" style={{ gridTemplateColumns: dayCols }}>
+                      {days.map((wd, di) => (
+                        <div key={wd.iso} data-dayidx={di} />
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             );
