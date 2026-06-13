@@ -184,6 +184,7 @@ export default function WeekBoard({
             const laneWeekly = crewForTruckInRange(truckCrew, truck.id, weekStart, weekEnd);
             const overridden = laneWeekly.length > 0;
             const defaultTeam = defaultCrew.filter((m) => m.truck_id === truck.id);
+            const laneColor = truck.color || '#94a3b8';
             return (
               <div
                 key={truck.id}
@@ -332,9 +333,11 @@ export default function WeekBoard({
                             if (suppressClickRef.current) return;
                             onSegClick(seg);
                           }}
-                          style={{ gridColumn: `${col.s + 1} / ${endIdx + 2}` }}
+                          // Tint the card by its truck's colour (same as the month view) so jobs read
+                          // by truck at a glance everywhere — consistent across week + month.
+                          style={{ gridColumn: `${col.s + 1} / ${endIdx + 2}`, backgroundColor: `${laneColor}1f`, borderColor: `${laneColor}66` }}
                           className={cn(
-                            'relative overflow-hidden rounded-xl border border-[#e0e8dc] bg-white p-2.5 pl-3.5 shadow-[0_1px_2px_rgba(20,44,27,0.06)] transition hover:shadow-[0_3px_10px_rgba(20,44,27,0.12)]',
+                            'relative overflow-hidden rounded-xl border border-solid p-2.5 pl-3.5 shadow-[0_1px_2px_rgba(20,44,27,0.06)] transition hover:shadow-[0_3px_10px_rgba(20,44,27,0.12)]',
                             canWrite ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer',
                             seg.on_hold && 'opacity-60 ring-1 ring-amber-200',
                           )}
