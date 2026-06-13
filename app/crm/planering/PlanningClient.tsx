@@ -25,8 +25,9 @@ import ConfirmModal from './ConfirmModal';
 import PlanningAdminModal from './PlanningAdminModal';
 import ActivityLogModal from './ActivityLogModal';
 import PlaceholderModal, { type PlaceholderInput } from './PlaceholderModal';
+import InsightsView from './InsightsView';
 
-type View = 'week' | 'month';
+type View = 'week' | 'month' | 'insights';
 type DragData =
   | { kind: 'backlog'; id: string }
   | { kind: 'segment'; id: string; start: string; end: string; truckId: string };
@@ -714,7 +715,7 @@ export default function PlanningClient({
         </div>
 
         <div className="inline-flex rounded-xl border border-[#e0e8dc] bg-white p-0.5">
-          {(['week', 'month'] as View[]).map((v) => (
+          {(['week', 'month', 'insights'] as View[]).map((v) => (
             <button
               key={v}
               onClick={() => setView(v)}
@@ -724,7 +725,7 @@ export default function PlanningClient({
               )}
               style={view === v ? { backgroundColor: 'var(--crm-primary)' } : undefined}
             >
-              {v === 'week' ? 'Vecka' : 'Månad'}
+              {({ week: 'Vecka', month: 'Månad', insights: 'Insikter' } as const)[v]}
             </button>
           ))}
         </div>
@@ -871,6 +872,10 @@ export default function PlanningClient({
         </div>
       )}
 
+      {view === 'insights' ? (
+        <InsightsView weeks={8} />
+      ) : (
+      <>
       <div className="grid items-start gap-4 lg:grid-cols-[320px_minmax(0,1fr)]">
         <Backlog
           items={visibleBacklog}
@@ -979,6 +984,8 @@ export default function PlanningClient({
         <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-violet-400" />Pågående</span>
         <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-emerald-500" />Fakturera</span>
       </div>
+      </>
+      )}
     </div>
 
       {/* Modals/overlays live OUTSIDE .planning-density so their `fixed` positioning isn't thrown
