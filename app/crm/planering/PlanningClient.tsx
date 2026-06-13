@@ -24,6 +24,7 @@ import TruckManagerModal from './TruckManagerModal';
 import DepotManagerModal from './DepotManagerModal';
 import DepotStockModal from './DepotStockModal';
 import JobTypeManagerModal from './JobTypeManagerModal';
+import ActivityLogModal from './ActivityLogModal';
 
 type View = 'week' | 'month';
 type DragData =
@@ -71,6 +72,7 @@ export default function PlanningClient({
   const [depotManagerOpen, setDepotManagerOpen] = useState(false);
   const [stockOpen, setStockOpen] = useState(false);
   const [jobTypeManagerOpen, setJobTypeManagerOpen] = useState(false);
+  const [activityOpen, setActivityOpen] = useState(false);
 
   const dragRef = useRef<DragData | null>(null);
   const todayISO = useMemo(() => fmtISO(new Date()), []);
@@ -722,6 +724,15 @@ export default function PlanningClient({
             </svg>
             Lager
           </button>
+          <button
+            onClick={() => setActivityOpen(true)}
+            className="inline-flex h-[30px] items-center gap-1.5 rounded-full border border-dashed border-[#c8d4c3] bg-white px-3 text-[12px] font-semibold text-slate-500 transition hover:border-emerald-400 hover:text-emerald-600"
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 8v4l3 2M3.05 11a9 9 0 1 1 .5 4M3 21v-5h5" />
+            </svg>
+            Logg
+          </button>
         </div>
       </div>
 
@@ -876,6 +887,9 @@ export default function PlanningClient({
       {jobTypeManagerOpen && (
         <JobTypeManagerModal onClose={() => setJobTypeManagerOpen(false)} onChanged={() => loadJobTypes().catch(() => {})} />
       )}
+
+      {/* Activity log (audit trail) */}
+      {activityOpen && <ActivityLogModal onClose={() => setActivityOpen(false)} />}
     </div>
   );
 }

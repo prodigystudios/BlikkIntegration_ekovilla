@@ -1,6 +1,7 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { listSegments, listTrucks, placeSegment } from '@/lib/domains/planning/schedule';
+import { logActivity } from '@/lib/domains/planning/activity';
 import { ok, routeError, validationError, requirePermission, listSegmentsQuerySchema, placeSegmentSchema } from '../_lib';
 
 // Schedule (segments overlapping a date window) + the active trucks to render lanes for.
@@ -53,6 +54,16 @@ export async function POST(req: Request) {
       actorUserId: gate.currentUser.id,
     });
     if (error) return routeError(500, 'planning_segment_create_failed', error.message);
+
+    await logActivity(supabase, gate.currentUser, {
+      action: 'segment.create',
+      entityType: 'segment',
+      entityId: data?.id ?? null,
+      segmentId: data?.id ?? null,
+      workOrderId: parsed.data.work_order_id,
+      summary: `Placerade ${data?.job?.ref ?? 'jobb'} på kalendern`,
+      details: { truck_id: parsed.data.truck_id, start_day: parsed.data.start_day, end_day: parsed.data.end_day },
+    });
 
     return ok({ item: data }, 201);
   } catch (e: any) {

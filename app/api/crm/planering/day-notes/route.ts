@@ -1,6 +1,7 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { listDayNotes, createDayNote } from '@/lib/domains/planning/dayNotes';
+import { logActivity } from '@/lib/domains/planning/activity';
 import { ok, routeError, validationError, requirePermission, listSegmentsQuerySchema, createDayNoteSchema } from '../_lib';
 
 // Day notes whose day falls inside the visible window.
@@ -42,6 +43,14 @@ export async function POST(req: Request) {
       actorUserId: gate.currentUser.id,
     });
     if (error) return routeError(500, 'planning_day_note_create_failed', error.message);
+
+    await logActivity(supabase, gate.currentUser, {
+      action: 'day_note.add',
+      entityType: 'day_note',
+      entityId: data?.id ?? null,
+      summary: `La till dagsanteckning (${parsed.data.note_day})`,
+      details: { note_day: parsed.data.note_day },
+    });
 
     return ok({ item: data }, 201);
   } catch (e: any) {

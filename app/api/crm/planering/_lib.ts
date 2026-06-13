@@ -113,6 +113,16 @@ export const createDeliverySchema = z.object({
   note: z.string().trim().max(300).nullable().optional(),
 });
 
+// List the activity log (audit trail). Newest-first, keyset-paginated by `before` (ISO timestamp),
+// with optional filters on actor name, exact action key, and a free-text search over the summary.
+export const listActivityQuerySchema = z.object({
+  before: z.string().datetime({ offset: true }).optional(),
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+  actor: z.string().trim().min(1).max(120).optional(),
+  action: z.string().trim().min(1).max(40).optional(),
+  search: z.string().trim().min(1).max(120).optional(),
+});
+
 // Send an order confirmation (orderbekräftelse) for a scheduled job. At least one channel must be
 // chosen; the matching recipient is required (enforced in the route for a clear Swedish message).
 export const sendConfirmationSchema = z.object({

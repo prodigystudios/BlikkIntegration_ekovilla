@@ -1,6 +1,7 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { copyTruckCrewWeek } from '@/lib/domains/planning/truckCrew';
+import { logActivity } from '@/lib/domains/planning/activity';
 import { ok, routeError, validationError, requirePermission, copyTruckCrewSchema } from '../../_lib';
 
 // Copy a truck's crew from one week to another (e.g. this week → next week), skipping anyone already
@@ -24,7 +25,20 @@ export async function POST(req: Request) {
     });
     if (error) return routeError(500, 'planning_truck_crew_copy_failed', error.message);
 
-    return ok({ copied: data?.copied ?? 0 });
+    const copied = data?.copied ?? 0;
+    await logActivity(supabase, gate.currentUser, {
+      action: 'truck_crew.copy',
+      entityType: 'truck_crew',
+      summary: `Kopierade bilbesättning till nästa vecka (${copied} st)`,
+      details: {
+        truck_id: parsed.data.truck_id,
+        source_start: parsed.data.source_start,
+        target_start: parsed.data.target_start,
+        copied,
+      },
+    });
+
+    return ok({ copied });
   } catch (e: any) {
     return routeError(500, 'planning_truck_crew_copy_unexpected', e?.message || 'Failed to copy truck crew');
   }

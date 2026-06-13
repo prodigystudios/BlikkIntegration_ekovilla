@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { mapWorkOrderJob, type WorkOrderJobRow } from './display';
+import { mapWorkOrderJob, workOrderRef, type WorkOrderJobRow } from './display';
 import { reportedSacksByWorkOrder } from './reports';
 import { listCrewBySegment } from './crew';
 import { confirmationsByWorkOrder, EMPTY_CONFIRMATION } from './confirmations';
@@ -162,4 +162,22 @@ export async function moveSegment(
 // Unschedule a placement (e.g. dragged back to the backlog).
 export async function removeSegment(supabase: SupabaseClient, id: string) {
   return supabase.from('ops_segments').delete().eq('id', id);
+}
+
+// The job reference + work order id for a segment, for audit-log summaries (e.g. logging a delete
+// before the row is gone). Returns a 'jobb' fallback if the segment/work order can't be read.
+export async function getSegmentRef(
+  supabase: SupabaseClient,
+  id: string,
+): Promise<{ workOrderId: string | null; ref: string }> {
+  const { data } = await supabase
+    .from('ops_segments')
+    .select('work_order_id, work_order:crm_work_orders(order_number, fortnox_order_number)')
+    .eq('id', id)
+    .single();
+  if (!data) return { workOrderId: null, ref: 'jobb' };
+  const row = data as { work_order_id: string; work_order: { order_number: string; fortnox_order_number: string | null } | { order_number: string; fortnox_order_number: string | null }[] | null };
+  const wo = Array.isArray(row.work_order) ? row.work_order[0] : row.work_order;
+  const { ref } = workOrderRef(wo?.fortnox_order_number, wo?.order_number ?? '');
+  return { workOrderId: row.work_order_id, ref: ref || 'jobb' };
 }
