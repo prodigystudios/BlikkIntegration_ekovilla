@@ -41,6 +41,8 @@ type WeekBoardProps = {
   onRestoreWeek: (truckId: string, startDay: string, endDay: string) => void;
 };
 
+const krFmt = new Intl.NumberFormat('sv-SE', { maximumFractionDigits: 0 });
+
 // A read-only avatar row marking the leader with a star — used for the inherited default team.
 function DefaultCrewAvatars({ team }: { team: DefaultCrewMember[] }) {
   if (team.length === 0) return null;
@@ -185,6 +187,17 @@ export default function WeekBoard({
             const overridden = laneWeekly.length > 0;
             const defaultTeam = defaultCrew.filter((m) => m.truck_id === truck.id);
             const laneColor = truck.color || '#94a3b8';
+            // Weekly per-truck totals from the jobs on it, deduped by work order (a multi-segment job
+            // counts once): planned sacks to blow + revenue (omsättning, ex moms).
+            const seenWO = new Set<string>();
+            let plannedSacks = 0;
+            let revenue = 0;
+            for (const s of laneSegs) {
+              if (!s.job || !s.work_order_id || seenWO.has(s.work_order_id)) continue;
+              seenWO.add(s.work_order_id);
+              plannedSacks += s.job.total_sacks;
+              revenue += s.job.revenue;
+            }
             return (
               <div
                 key={truck.id}
@@ -196,6 +209,13 @@ export default function WeekBoard({
                     <span className="h-2.5 w-2.5 shrink-0 rounded-full ring-2 ring-black/[0.03]" style={{ backgroundColor: truck.color || '#94a3b8' }} />
                     <span className="truncate text-[12.5px] font-bold text-slate-700">{truck.name}</span>
                   </div>
+                  {seenWO.size > 0 && (
+                    <div className="flex flex-wrap items-center gap-x-1.5 pl-[18px] text-[9px] leading-tight text-slate-400" title="Planerat den här veckan: säckar att blåsa · omsättning (ex moms)">
+                      <span className="tabular-nums"><span className="font-bold text-slate-500">{plannedSacks}</span> säck</span>
+                      <span className="text-slate-300">·</span>
+                      <span className="tabular-nums"><span className="font-bold text-slate-500">{krFmt.format(revenue)}</span> kr</span>
+                    </div>
+                  )}
                   <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 pl-[18px]">
                     {overridden ? (
                       // This week deviates from the default — edit it directly.
