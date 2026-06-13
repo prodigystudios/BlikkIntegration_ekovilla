@@ -10,6 +10,7 @@ import type { OpsSegment, OpsTruck, SchedulableWorkOrder } from '@/lib/domains/p
 import type { AssignablePerson, CrewMember } from '@/lib/domains/planning/crew';
 import type { DayNote } from '@/lib/domains/planning/dayNotes';
 import type { TruckCrewMember } from '@/lib/domains/planning/truckCrew';
+import type { DefaultCrewMember } from '@/lib/domains/planning/defaultCrew';
 import { DEFAULT_JOB_TYPES, type JobType, type JobTypeRow } from '@/lib/domains/planning/jobTypes';
 import {
   addDays, addDaysISO, buildMonthWeeks, buildWeekDays, daysBetweenInclusive, fmtISO, isoWeek, startOfWeek, swedishMonthYear,
@@ -20,10 +21,9 @@ import MonthGrid from './MonthGrid';
 import type { SegmentActions } from './jobCard';
 import { dayGroup, reorderWithinGroup } from '@/lib/domains/planning/order';
 import ConfirmModal from './ConfirmModal';
-import TruckManagerModal from './TruckManagerModal';
-import DepotManagerModal from './DepotManagerModal';
-import DepotStockModal from './DepotStockModal';
-import JobTypeManagerModal from './JobTypeManagerModal';
+import PlanningAdminModal from './PlanningAdminModal';
+import ActivityLogModal from './ActivityLogModal';
+import PlaceholderModal, { type PlaceholderInput } from './PlaceholderModal';
 
 type View = 'week' | 'month';
 type DragData =
@@ -57,6 +57,7 @@ export default function PlanningClient({
   const [jobTypes, setJobTypes] = useState<JobType[]>(DEFAULT_JOB_TYPES);
   const [dayNotes, setDayNotes] = useState<DayNote[]>([]);
   const [truckCrew, setTruckCrew] = useState<TruckCrewMember[]>([]);
+  const [defaultCrew, setDefaultCrew] = useState<DefaultCrewMember[]>([]);
   const [loadingBacklog, setLoadingBacklog] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -66,11 +67,11 @@ export default function PlanningClient({
   const [hiddenTrucks, setHiddenTrucks] = useState<Set<string>>(new Set());
   const [backlogDropActive, setBacklogDropActive] = useState(false);
   const [truckPicker, setTruckPicker] = useState<{ dayISO: string; workOrderId: string } | null>(null);
+  const [copySeg, setCopySeg] = useState<OpsSegment | null>(null);
   const [confirmSeg, setConfirmSeg] = useState<OpsSegment | null>(null);
-  const [truckManagerOpen, setTruckManagerOpen] = useState(false);
-  const [depotManagerOpen, setDepotManagerOpen] = useState(false);
-  const [stockOpen, setStockOpen] = useState(false);
-  const [jobTypeManagerOpen, setJobTypeManagerOpen] = useState(false);
+  const [adminOpen, setAdminOpen] = useState(false);
+  const [activityOpen, setActivityOpen] = useState(false);
+  const [placeholderOpen, setPlaceholderOpen] = useState(false);
 
   const dragRef = useRef<DragData | null>(null);
   const todayISO = useMemo(() => fmtISO(new Date()), []);
@@ -136,6 +137,14 @@ export default function PlanningClient({
     const j = await r.json();
     if (!j.ok) throw new Error(j.error || 'Kunde inte hämta bilbesättning');
     setTruckCrew(j.data.crew as TruckCrewMember[]);
+  }, []);
+
+  // Default crew (standardbemanning) is range-independent — every truck's standing team. The board
+  // falls back to it on weeks with no explicit truck crew.
+  const loadDefaultCrew = useCallback(async () => {
+    const r = await fetch(`${API}/default-crew`, { cache: 'no-store' });
+    const j = await r.json();
+    if (j.ok) setDefaultCrew(j.data.crew as DefaultCrewMember[]);
   }, []);
 
   useEffect(() => {
@@ -204,7 +213,8 @@ export default function PlanningClient({
     loadSegments(range.from, range.to).catch((e) => setError(e?.message || 'Något gick fel'));
     loadDayNotes(range.from, range.to).catch(() => {});
     loadTruckCrew(range.from, range.to).catch(() => {});
-  }, [range.from, range.to, loadSegments, loadDayNotes, loadTruckCrew]);
+    loadDefaultCrew().catch(() => {});
+  }, [range.from, range.to, loadSegments, loadDayNotes, loadTruckCrew, loadDefaultCrew]);
 
   // ── Realtime: ~10 planners work this board at once, so reflect each other's changes live to
   // avoid double-bookings + missed updates. Subscribe once to ops_* changes and debounce-refetch
@@ -216,6 +226,7 @@ export default function PlanningClient({
     loadSegments(range.from, range.to).catch(() => {});
     loadDayNotes(range.from, range.to).catch(() => {});
     loadTruckCrew(range.from, range.to).catch(() => {});
+    loadDefaultCrew().catch(() => {});
     loadBacklog().catch(() => {});
     loadJobTypes().catch(() => {});
   };
@@ -225,6 +236,7 @@ export default function PlanningClient({
       'ops_segments',
       'ops_segment_crew',
       'ops_truck_crew',
+      'ops_truck_default_crew',
       'ops_day_notes',
       'ops_segment_reports',
       'ops_work_order_confirmations',
@@ -381,7 +393,13 @@ export default function PlanningClient({
     [unschedule],
   );
 
-  const onSegClick = useCallback((seg: OpsSegment) => router.push(`/crm/arbetsorder/${seg.work_order_id}`), [router]);
+  // Placeholders have no work order to open; clicking one is a no-op (edit/link comes in a later slice).
+  const onSegClick = useCallback(
+    (seg: OpsSegment) => {
+      if (seg.work_order_id) router.push(`/crm/arbetsorder/${seg.work_order_id}`);
+    },
+    [router],
+  );
   const onSetJobType = useCallback((seg: OpsSegment, jobType: string | null) => void move(seg.id, { job_type: jobType }), [move]);
   const onToggleHold = useCallback((seg: OpsSegment, value: boolean) => void move(seg.id, { on_hold: value }), [move]);
   const onResize = useCallback((seg: OpsSegment, startDay: string, endDay: string) => void move(seg.id, { start_day: startDay, end_day: endDay }), [move]);
@@ -481,6 +499,24 @@ export default function PlanningClient({
     [toast, loadTruckCrew, range.from, range.to],
   );
 
+  // Fork a week from the truck's default crew so it can be edited independently; restore drops the
+  // override and the lane falls back to the default again.
+  const weekCrewAction = useCallback(
+    async (action: 'materialize' | 'restore', truckId: string, startDay: string, endDay: string) => {
+      const r = await fetch(`${API}/truck-crew/week`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, truck_id: truckId, start_day: startDay, end_day: endDay }),
+      });
+      const j = await r.json();
+      if (!j.ok) return toast.error(j.error || 'Kunde inte uppdatera veckans besättning');
+      loadTruckCrew(range.from, range.to).catch(() => {});
+    },
+    [toast, loadTruckCrew, range.from, range.to],
+  );
+  const forkWeek = useCallback((t: string, f: string, to: string) => weekCrewAction('materialize', t, f, to), [weekCrewAction]);
+  const restoreWeek = useCallback((t: string, f: string, to: string) => weekCrewAction('restore', t, f, to), [weekCrewAction]);
+
   // ── selection / click-to-place ───────────────────────────────────────────────
   const onSelect = useCallback((id: string) => setSelectedId((cur) => (cur === id ? null : id)), []);
   const onWeekCellClick = useCallback(
@@ -505,6 +541,48 @@ export default function PlanningClient({
       setSelectedId(null);
     },
     [truckPicker, place],
+  );
+
+  // Copy a scheduled job to another truck as a freestanding duplicate (its own ops_segment with the
+  // same work order, dates and job type) — e.g. when two trucks share a big job.
+  const copyToTruck = useCallback(
+    async (truckId: string) => {
+      if (!copySeg) return;
+      const r = await fetch(`${API}/segments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          work_order_id: copySeg.work_order_id,
+          truck_id: truckId,
+          start_day: copySeg.start_day,
+          end_day: copySeg.end_day,
+          job_type: copySeg.job_type,
+        }),
+      });
+      const j = await r.json();
+      setCopySeg(null);
+      if (!j.ok) return toast.error(j.error || 'Kunde inte kopiera jobbet');
+      toast.success('Jobbet kopierat');
+      await refresh();
+    },
+    [copySeg, refresh, toast],
+  );
+
+  // Create a placeholder card (booked slot before the real work order exists).
+  const createPlaceholder = useCallback(
+    async (input: PlaceholderInput) => {
+      const r = await fetch(`${API}/placeholders`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input),
+      });
+      const j = await r.json();
+      if (!j.ok) return toast.error(j.error || 'Kunde inte skapa platshållaren');
+      setPlaceholderOpen(false);
+      toast.success('Platshållare skapad');
+      await refresh();
+    },
+    [refresh, toast],
   );
 
   // ── filters ───────────────────────────────────────────────────────────────
@@ -572,12 +650,13 @@ export default function PlanningClient({
   );
 
   const actions = useMemo<SegmentActions>(
-    () => ({ onSetStatus, onSetJobType, onToggleHold, onOpenConfirm: openConfirm, onResize, onAddCrew: addCrew, onRemoveCrew: removeCrew, onReorder: reorderSegment }),
-    [onSetStatus, onSetJobType, onToggleHold, openConfirm, onResize, addCrew, removeCrew, reorderSegment],
+    () => ({ onSetStatus, onSetJobType, onToggleHold, onOpenConfirm: openConfirm, onResize, onAddCrew: addCrew, onRemoveCrew: removeCrew, onReorder: reorderSegment, onCopyToTruck: (seg) => setCopySeg(seg), onDelete: (seg) => unschedule(seg.id) }),
+    [onSetStatus, onSetJobType, onToggleHold, openConfirm, onResize, addCrew, removeCrew, reorderSegment, unschedule],
   );
 
   return (
-    <div>
+    <>
+    <div className="planning-density">
       {/* Header */}
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <div>
@@ -680,48 +759,36 @@ export default function PlanningClient({
               </button>
             );
           })}
-          {canManageTrucks && (
-            <button
-              onClick={() => setTruckManagerOpen(true)}
-              className="inline-flex h-[30px] items-center gap-1.5 rounded-full border border-dashed border-[#c8d4c3] bg-white px-3 text-[12px] font-semibold text-slate-500 transition hover:border-emerald-400 hover:text-emerald-600"
-            >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M10 17h4V5H2v12h3M15 17h6v-5l-3-3h-3M5.5 17a1.5 1.5 0 1 0 3 0 1.5 1.5 0 0 0-3 0ZM16.5 17a1.5 1.5 0 1 0 3 0 1.5 1.5 0 0 0-3 0Z" />
-              </svg>
-              Bilar
-            </button>
-          )}
-          {canManageDepots && (
-            <button
-              onClick={() => setDepotManagerOpen(true)}
-              className="inline-flex h-[30px] items-center gap-1.5 rounded-full border border-dashed border-[#c8d4c3] bg-white px-3 text-[12px] font-semibold text-slate-500 transition hover:border-emerald-400 hover:text-emerald-600"
-            >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M3 21V8l9-5 9 5v13M3 21h18M9 21v-6h6v6" />
-              </svg>
-              Depåer
-            </button>
-          )}
-          {canManageTrucks && (
-            <button
-              onClick={() => setJobTypeManagerOpen(true)}
-              className="inline-flex h-[30px] items-center gap-1.5 rounded-full border border-dashed border-[#c8d4c3] bg-white px-3 text-[12px] font-semibold text-slate-500 transition hover:border-emerald-400 hover:text-emerald-600"
-            >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 2l3 7h7l-5.5 4.5L18 21l-6-4-6 4 1.5-7.5L2 9h7z" />
-              </svg>
-              Jobbtyper
-            </button>
-          )}
           <button
-            onClick={() => setStockOpen(true)}
+            onClick={() => setAdminOpen(true)}
             className="inline-flex h-[30px] items-center gap-1.5 rounded-full border border-dashed border-[#c8d4c3] bg-white px-3 text-[12px] font-semibold text-slate-500 transition hover:border-emerald-400 hover:text-emerald-600"
           >
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M3 7l9-4 9 4-9 4-9-4ZM3 7v10l9 4 9-4V7M12 11v10" />
+              <path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" />
             </svg>
-            Lager
+            Administrera
           </button>
+          <button
+            onClick={() => setActivityOpen(true)}
+            className="inline-flex h-[30px] items-center gap-1.5 rounded-full border border-dashed border-[#c8d4c3] bg-white px-3 text-[12px] font-semibold text-slate-500 transition hover:border-emerald-400 hover:text-emerald-600"
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 8v4l3 2M3.05 11a9 9 0 1 1 .5 4M3 21v-5h5" />
+            </svg>
+            Logg
+          </button>
+          {canWrite && (
+            <button
+              onClick={() => setPlaceholderOpen(true)}
+              className="inline-flex h-[30px] items-center gap-1.5 rounded-full border border-dashed border-[#c8d4c3] bg-white px-3 text-[12px] font-semibold text-slate-500 transition hover:border-emerald-400 hover:text-emerald-600"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18M12 14v4M10 16h4" />
+              </svg>
+              Ny platshållare
+            </button>
+          )}
         </div>
       </div>
 
@@ -782,9 +849,12 @@ export default function PlanningClient({
                     onAddNote={addDayNote}
                     onRemoveNote={removeDayNote}
                     truckCrew={truckCrew}
+                    defaultCrew={defaultCrew}
                     onAddTruckCrew={addTruckCrew}
                     onRemoveTruckCrew={removeTruckCrew}
                     onCopyTruckCrew={copyTruckCrew}
+                    onForkWeek={forkWeek}
+                    onRestoreWeek={restoreWeek}
                   />
                 </div>
               );
@@ -825,11 +895,14 @@ export default function PlanningClient({
         <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-violet-400" />Pågående</span>
         <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-emerald-500" />Fakturera</span>
       </div>
+    </div>
 
+      {/* Modals/overlays live OUTSIDE .planning-density so their `fixed` positioning isn't thrown
+          off by the zoom — they render at 100% and stay centred. */}
       {/* Truck picker (month placement) */}
       {truckPicker && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4" onClick={() => setTruckPicker(null)}>
-          <div className="w-full max-w-xs rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 z-[2800] flex items-center justify-center bg-slate-900/40 p-4" onClick={() => setTruckPicker(null)}>
+          <div className="planning-modal w-full max-w-xs rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
             <h3 className="mb-3 text-[13px] font-bold text-slate-900">Välj bil</h3>
             <div className="grid gap-1.5">
               {trucks.map((t) => (
@@ -848,34 +921,64 @@ export default function PlanningClient({
         </div>
       )}
 
+      {/* Copy-to-truck picker (freestanding duplicate of a scheduled job) */}
+      {copySeg && (
+        <div className="fixed inset-0 z-[2800] flex items-center justify-center bg-slate-900/40 p-4" onClick={() => setCopySeg(null)}>
+          <div className="planning-modal w-full max-w-xs rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-[13px] font-bold text-slate-900">Kopiera till bil</h3>
+            <p className="mb-3 mt-0.5 text-[11px] text-slate-500">
+              Skapar en kopia av <strong>{copySeg.job?.ref ?? 'jobbet'}</strong> på vald bil ({copySeg.start_day === copySeg.end_day ? copySeg.start_day : `${copySeg.start_day}–${copySeg.end_day}`}).
+            </p>
+            <div className="grid gap-1.5">
+              {trucks.map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => copyToTruck(t.id)}
+                  className="flex items-center gap-2.5 rounded-xl border border-[#e0e8dc] bg-white px-3 py-2 text-left text-[13px] font-semibold text-slate-700 transition hover:border-emerald-400 hover:bg-emerald-50"
+                >
+                  <span className="h-3 w-3 rounded-full" style={{ backgroundColor: t.color || '#94a3b8' }} />
+                  {t.name}
+                  {t.id === copySeg.truck_id && <span className="ml-auto text-[10px] font-normal text-slate-400">nuvarande</span>}
+                </button>
+              ))}
+            </div>
+            <button onClick={() => setCopySeg(null)} className={cn(crm.ghostButton, 'mt-3 w-full')}>Avbryt</button>
+          </div>
+        </div>
+      )}
+
       {/* Order confirmation (SMS/email) */}
       {confirmSeg && (
         <ConfirmModal segment={confirmSeg} onClose={() => setConfirmSeg(null)} onSent={refresh} />
       )}
 
-      {/* Fleet management */}
-      {truckManagerOpen && (
-        <TruckManagerModal
-          onClose={() => setTruckManagerOpen(false)}
-          onChanged={() => loadSegments(range.from, range.to).catch(() => {})}
+      {/* Consolidated admin (bilar · depåer · jobbtyper · lager) */}
+      {adminOpen && (
+        <PlanningAdminModal
+          canManageTrucks={canManageTrucks}
+          canManageDepots={canManageDepots}
+          canWrite={canWrite}
+          onClose={() => setAdminOpen(false)}
+          onChanged={() => {
+            loadSegments(range.from, range.to).catch(() => {});
+            loadJobTypes().catch(() => {});
+          }}
         />
       )}
 
-      {/* Depot management */}
-      {depotManagerOpen && (
-        <DepotManagerModal
-          onClose={() => setDepotManagerOpen(false)}
-          onChanged={() => loadSegments(range.from, range.to).catch(() => {})}
+      {/* Activity log (audit trail) */}
+      {activityOpen && <ActivityLogModal onClose={() => setActivityOpen(false)} />}
+
+      {/* New placeholder (booked slot before a work order exists) */}
+      {placeholderOpen && (
+        <PlaceholderModal
+          trucks={trucks}
+          jobTypes={jobTypes}
+          defaultDay={todayISO}
+          onClose={() => setPlaceholderOpen(false)}
+          onCreate={createPlaceholder}
         />
       )}
-
-      {/* Depot stock (balances + deliveries) */}
-      {stockOpen && <DepotStockModal canWrite={canWrite} onClose={() => setStockOpen(false)} />}
-
-      {/* Job-type management */}
-      {jobTypeManagerOpen && (
-        <JobTypeManagerModal onClose={() => setJobTypeManagerOpen(false)} onChanged={() => loadJobTypes().catch(() => {})} />
-      )}
-    </div>
+    </>
   );
 }

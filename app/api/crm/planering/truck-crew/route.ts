@@ -1,6 +1,7 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { listTruckCrew, assignTruckCrew } from '@/lib/domains/planning/truckCrew';
+import { logActivity } from '@/lib/domains/planning/activity';
 import { ok, routeError, validationError, requirePermission, listSegmentsQuerySchema, assignTruckCrewSchema } from '../_lib';
 
 // Truck crew rows overlapping the visible window.
@@ -53,6 +54,19 @@ export async function POST(req: Request) {
       }
       return routeError(500, 'planning_truck_crew_assign_failed', error.message);
     }
+
+    await logActivity(supabase, gate.currentUser, {
+      action: 'truck_crew.assign',
+      entityType: 'truck_crew',
+      entityId: data?.id ?? null,
+      summary: `Lade till ${parsed.data.member_name} i bilbesättningen`,
+      details: {
+        truck_id: parsed.data.truck_id,
+        member_id: parsed.data.member_id,
+        start_day: parsed.data.start_day,
+        end_day: parsed.data.end_day,
+      },
+    });
 
     return ok({ item: data }, 201);
   } catch (e: any) {

@@ -22,6 +22,17 @@ export const placeSegmentSchema = z.object({
   job_type: jobType.optional(),
 });
 
+// Create a placeholder placement (booked slot before a CRM work order exists). Carries its own
+// title/customer instead of a work_order_id.
+export const createPlaceholderSchema = z.object({
+  title: z.string().trim().min(1, 'Ange en titel').max(120, 'Titeln är för lång'),
+  customer: z.string().trim().max(120).nullable().optional(),
+  truck_id: z.string().uuid('Ogiltig bil'),
+  start_day: isoDate,
+  end_day: isoDate,
+  job_type: jobType.optional(),
+});
+
 export const moveSegmentSchema = z.object({
   truck_id: z.string().uuid('Ogiltig bil').optional(),
   start_day: isoDate.optional(),
@@ -43,6 +54,27 @@ export const assignTruckCrewSchema = z.object({
   truck_id: z.string().uuid('Ogiltig bil'),
   member_id: z.string().uuid('Ogiltig montör'),
   member_name: z.string().trim().min(1, 'Namn krävs').max(120),
+  start_day: isoDate,
+  end_day: isoDate,
+});
+
+// Replace a truck's default crew (standardbemanning): the whole standing team in one go.
+export const replaceDefaultCrewSchema = z.object({
+  members: z
+    .array(
+      z.object({
+        member_id: z.string().uuid('Ogiltig montör').nullable(),
+        member_name: z.string().trim().min(1, 'Namn krävs').max(120),
+        role: z.enum(['leader', 'member']),
+      }),
+    )
+    .max(12, 'För många i teamet'),
+});
+
+// Fork a week from the default crew, or drop the week's override back to the default.
+export const truckCrewWeekSchema = z.object({
+  action: z.enum(['materialize', 'restore']),
+  truck_id: z.string().uuid('Ogiltig bil'),
   start_day: isoDate,
   end_day: isoDate,
 });
@@ -111,6 +143,16 @@ export const createDeliverySchema = z.object({
   sacks: z.coerce.number().int().positive('Ange ett antal säckar'),
   delivered_on: isoDate,
   note: z.string().trim().max(300).nullable().optional(),
+});
+
+// List the activity log (audit trail). Newest-first, keyset-paginated by `before` (ISO timestamp),
+// with optional filters on actor name, exact action key, and a free-text search over the summary.
+export const listActivityQuerySchema = z.object({
+  before: z.string().datetime({ offset: true }).optional(),
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+  actor: z.string().trim().min(1).max(120).optional(),
+  action: z.string().trim().min(1).max(40).optional(),
+  search: z.string().trim().min(1).max(120).optional(),
 });
 
 // Send an order confirmation (orderbekräftelse) for a scheduled job. At least one channel must be

@@ -2,6 +2,8 @@ import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { getWorkOrderCustomerContact } from '@/lib/domains/crm/work-orders';
 import { sendOrderConfirmation } from '@/lib/domains/planning/confirmationsSend';
+import { getSegmentRef } from '@/lib/domains/planning/schedule';
+import { logActivity } from '@/lib/domains/planning/activity';
 import { ok, routeError, validationError, invalidUuidParam, requirePermission, sendConfirmationSchema } from '../../../_lib';
 
 type RouteContext = {
@@ -68,6 +70,17 @@ export async function POST(req: Request, context: RouteContext) {
       actorName: gate.currentUser.name ?? null,
     });
     if (error) return routeError(500, 'planning_confirmation_send_failed', error.message);
+
+    const channels = [send_email ? 'mejl' : null, send_sms ? 'SMS' : null].filter(Boolean).join(' + ');
+    const { workOrderId, ref } = await getSegmentRef(supabase, context.params.id);
+    await logActivity(supabase, gate.currentUser, {
+      action: 'confirmation.send',
+      entityType: 'confirmation',
+      segmentId: context.params.id,
+      workOrderId,
+      summary: `Skickade orderbekräftelse (${channels}) för ${ref}`,
+      details: { channels: { email: send_email, sms: send_sms } },
+    });
 
     return ok({ result: data });
   } catch (e: any) {

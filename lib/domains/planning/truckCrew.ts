@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { listAllDefaultCrew, type CrewRole } from './defaultCrew';
 
 // Weekly truck crew (besättning per bil): who crews a truck over a date range. The board resolves
 // each truck's crew for the visible week from these rows. member_name is denormalised (profiles are
@@ -11,6 +12,7 @@ export type TruckCrewMember = {
   member_name: string;
   start_day: string;
   end_day: string;
+  role: CrewRole;
 };
 
 // Pure: crew rows for a truck whose date range overlaps [from, to] (ISO dates sort lexically, so a
@@ -24,7 +26,7 @@ export function crewForTruckInRange(
   return rows.filter((r) => r.truck_id === truckId && r.start_day <= to && r.end_day >= from);
 }
 
-const TRUCK_CREW_SELECT = 'id, truck_id, member_id, member_name, start_day, end_day';
+const TRUCK_CREW_SELECT = 'id, truck_id, member_id, member_name, start_day, end_day, role';
 
 // Crew rows overlapping [from, to]. RLS (planning.schedule.read) applies.
 export async function listTruckCrew(
@@ -46,6 +48,7 @@ export type AssignTruckCrewInput = {
   memberName: string;
   startDay: string;
   endDay: string;
+  role?: CrewRole;
   actorUserId: string;
 };
 
@@ -62,6 +65,7 @@ export async function assignTruckCrew(
       member_name: input.memberName,
       start_day: input.startDay,
       end_day: input.endDay,
+      role: input.role ?? 'member',
       created_by: input.actorUserId,
     })
     .select(TRUCK_CREW_SELECT)
@@ -71,6 +75,46 @@ export async function assignTruckCrew(
 
 export async function unassignTruckCrew(supabase: SupabaseClient, id: string) {
   return supabase.from('ops_truck_crew').delete().eq('id', id);
+}
+
+// "Fork" a week from the truck's default crew: copy the standing team into ops_truck_crew for the
+// given range so the week becomes an editable override. No-op (count 0) if the truck has no default.
+export async function materializeDefaultCrew(
+  supabase: SupabaseClient,
+  input: { truckId: string; startDay: string; endDay: string; actorUserId: string },
+): Promise<{ data: { copied: number } | null; error: { message: string } | null }> {
+  const all = await listAllDefaultCrew(supabase);
+  if (all.error) return { data: null, error: all.error };
+  const team = all.data.filter((m) => m.truck_id === input.truckId);
+  if (team.length === 0) return { data: { copied: 0 }, error: null };
+  const { error } = await supabase.from('ops_truck_crew').insert(
+    team.map((m) => ({
+      truck_id: input.truckId,
+      member_id: m.member_id,
+      member_name: m.member_name,
+      role: m.role,
+      start_day: input.startDay,
+      end_day: input.endDay,
+      created_by: input.actorUserId,
+    })),
+  );
+  return { data: error ? null : { copied: team.length }, error };
+}
+
+// Drop a week's override (delete the truck's ops_truck_crew rows overlapping [from, to]) so the lane
+// falls back to the default crew again.
+export async function clearTruckCrewRange(
+  supabase: SupabaseClient,
+  truckId: string,
+  from: string,
+  to: string,
+) {
+  return supabase
+    .from('ops_truck_crew')
+    .delete()
+    .eq('truck_id', truckId)
+    .lte('start_day', to)
+    .gte('end_day', from);
 }
 
 // Pure: source crew members not already present in the target week (deduped by member_id). These
@@ -126,6 +170,7 @@ export async function copyTruckCrewWeek(
       truck_id: input.truckId,
       member_id: m.member_id,
       member_name: m.member_name,
+      role: m.role,
       start_day: shiftISO(m.start_day, delta),
       end_day: shiftISO(m.end_day, delta),
       created_by: input.actorUserId,

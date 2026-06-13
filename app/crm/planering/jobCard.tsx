@@ -151,6 +151,21 @@ export function ConfirmationBadge({ confirmation }: { confirmation: Confirmation
   );
 }
 
+// Who placed this job on the calendar (lightweight stand-in for presence). Muted person glyph +
+// first name; full name in the tooltip. Hidden for segments placed before created_by_name existed.
+export function CreatorBadge({ name }: { name: string | null }) {
+  if (!name || !name.trim()) return null;
+  const firstName = name.trim().split(/\s+/)[0];
+  return (
+    <span title={`Inlagd av ${name}`} className="inline-flex items-center gap-0.5 whitespace-nowrap text-[9px] font-semibold text-slate-400">
+      <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" />
+      </svg>
+      {firstName}
+    </span>
+  );
+}
+
 // A single crew avatar: initials on the person's deterministic colour.
 function Avatar({ name, seed, size = 20 }: { name: string; seed: string; size?: number }) {
   return (
@@ -345,6 +360,7 @@ export function SegmentMenu({
   onSetLength,
   onAddCrew,
   onRemoveCrew,
+  onCopyToTruck,
   order,
 }: {
   status: string;
@@ -361,6 +377,7 @@ export function SegmentMenu({
   onSetLength: (days: number) => void;
   onAddCrew: (person: AssignablePerson) => void;
   onRemoveCrew: (memberId: string) => void;
+  onCopyToTruck: () => void;
   order?: { index: number; total: number; onMove: (dir: 'up' | 'down') => void };
 }) {
   const [open, setOpen] = useState(false);
@@ -632,6 +649,20 @@ export function SegmentMenu({
                   </svg>
                   Bekräftelse
                 </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onCopyToTruck();
+                    setOpen(false);
+                  }}
+                  className="col-span-2 flex items-center justify-center gap-1.5 rounded-lg border border-[#e0e8dc] bg-white px-2 py-1.5 text-[11px] font-semibold text-slate-600 transition hover:bg-slate-50"
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="9" y="9" width="13" height="13" rx="2" />
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                  </svg>
+                  Kopiera till bil…
+                </button>
               </div>
             </div>
           </>,
@@ -652,6 +683,8 @@ export type SegmentActions = {
   onAddCrew: (seg: OpsSegment, person: AssignablePerson) => void;
   onRemoveCrew: (seg: OpsSegment, memberId: string) => void;
   onReorder: (seg: OpsSegment, direction: 'up' | 'down') => void;
+  onCopyToTruck: (seg: OpsSegment) => void;
+  onDelete: (seg: OpsSegment) => void;
 };
 
 // The shared inner content of a scheduled-job card (status rail, header with kebab, project/client/
@@ -714,6 +747,7 @@ export function SegmentCardBody({
                 onSetLength={(d) => actions.onResize(seg, seg.start_day, addDaysISO(seg.start_day, d - 1))}
                 onAddCrew={(person) => actions.onAddCrew(seg, person)}
                 onRemoveCrew={(mid) => actions.onRemoveCrew(seg, mid)}
+                onCopyToTruck={() => actions.onCopyToTruck(seg)}
               />
               </span>
             )}
@@ -733,9 +767,40 @@ export function SegmentCardBody({
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <SackProgress planned={job.total_sacks} reported={seg.sacks_reported} />
             <ConfirmationBadge confirmation={seg.confirmation} />
+            <CreatorBadge name={seg.created_by_name} />
             <div className="ml-auto flex items-center gap-1">
               {truckName && <span className="truncate text-[9px] font-semibold text-slate-400">{truckName}</span>}
               <CrewAvatars crew={seg.crew} />
+            </div>
+          </div>
+        </>
+      ) : seg.placeholder_title ? (
+        <>
+          <div className="flex items-center gap-2">
+            {truckColor && <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: truckColor }} />}
+            <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-dashed border-slate-300 bg-slate-50 px-1.5 py-px text-[9px] font-bold uppercase tracking-wide text-slate-500">
+              Platshållare
+            </span>
+            {canWrite && (
+              <button
+                type="button"
+                onClick={() => actions.onDelete(seg)}
+                aria-label="Ta bort platshållare"
+                className="relative z-20 ml-auto rounded p-0.5 text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <path d="M18 6 6 18M6 6l12 12" />
+                </svg>
+              </button>
+            )}
+          </div>
+          <div className="mt-1.5 truncate text-[13px] font-bold leading-tight text-slate-800">{seg.placeholder_title}</div>
+          {seg.placeholder_customer && <div className="truncate text-[11px] text-slate-500">{seg.placeholder_customer}</div>}
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <JobTypeOrMaterial jobType={resolveJobTypeFrom(jobTypes, seg.job_type)} material={null} />
+            <div className="ml-auto flex items-center gap-1">
+              {truckName && <span className="truncate text-[9px] font-semibold text-slate-400">{truckName}</span>}
+              <CreatorBadge name={seg.created_by_name} />
             </div>
           </div>
         </>

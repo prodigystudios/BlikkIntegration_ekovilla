@@ -1,6 +1,7 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { unassignTruckCrew } from '@/lib/domains/planning/truckCrew';
+import { logActivity } from '@/lib/domains/planning/activity';
 import { ok, routeError, invalidUuidParam, requirePermission } from '../../_lib';
 
 type RouteContext = {
@@ -13,7 +14,7 @@ type RouteContext = {
 export async function DELETE(_req: Request, context: RouteContext) {
   try {
     const gate = await requirePermission('planning.schedule.write');
-    if (gate.response) return gate.response;
+    if (gate.response || !gate.currentUser) return gate.response;
 
     const badId = invalidUuidParam(context.params.id);
     if (badId) return badId;
@@ -21,6 +22,14 @@ export async function DELETE(_req: Request, context: RouteContext) {
     const supabase = createRouteHandlerClient({ cookies });
     const { error } = await unassignTruckCrew(supabase, context.params.id);
     if (error) return routeError(500, 'planning_truck_crew_unassign_failed', error.message);
+
+    await logActivity(supabase, gate.currentUser, {
+      action: 'truck_crew.remove',
+      entityType: 'truck_crew',
+      entityId: context.params.id,
+      summary: 'Tog bort en montör ur bilbesättningen',
+      details: { id: context.params.id },
+    });
 
     return ok({ ok: true });
   } catch (e: any) {

@@ -1,6 +1,7 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { assignCrew, unassignCrew } from '@/lib/domains/planning/crew';
+import { logActivity } from '@/lib/domains/planning/activity';
 import { ok, routeError, validationError, invalidUuidParam, requirePermission, assignCrewSchema } from '../../../_lib';
 
 type RouteContext = {
@@ -35,6 +36,14 @@ export async function POST(req: Request, context: RouteContext) {
       return routeError(500, 'planning_crew_assign_failed', error.message);
     }
 
+    await logActivity(supabase, gate.currentUser, {
+      action: 'crew.add',
+      entityType: 'crew',
+      segmentId: context.params.id,
+      summary: `Lade till ${parsed.data.member_name} i besättningen`,
+      details: { segment_id: context.params.id, member_id: parsed.data.member_id },
+    });
+
     return ok({ item: data }, 201);
   } catch (e: any) {
     return routeError(500, 'planning_crew_assign_unexpected', e?.message || 'Failed to assign crew');
@@ -45,7 +54,7 @@ export async function POST(req: Request, context: RouteContext) {
 export async function DELETE(req: Request, context: RouteContext) {
   try {
     const gate = await requirePermission('planning.schedule.write');
-    if (gate.response) return gate.response;
+    if (gate.response || !gate.currentUser) return gate.response;
 
     const badId = invalidUuidParam(context.params.id);
     if (badId) return badId;
@@ -57,6 +66,14 @@ export async function DELETE(req: Request, context: RouteContext) {
     const supabase = createRouteHandlerClient({ cookies });
     const { error } = await unassignCrew(supabase, context.params.id, memberId as string);
     if (error) return routeError(500, 'planning_crew_unassign_failed', error.message);
+
+    await logActivity(supabase, gate.currentUser, {
+      action: 'crew.remove',
+      entityType: 'crew',
+      segmentId: context.params.id,
+      summary: 'Tog bort en montör ur besättningen',
+      details: { segment_id: context.params.id, member_id: memberId },
+    });
 
     return ok({ ok: true });
   } catch (e: any) {

@@ -2,11 +2,11 @@ import { describe, it, expect } from 'vitest';
 import { crewForTruckInRange, membersToCopy, shiftISO, type TruckCrewMember } from '@/lib/domains/planning/truckCrew';
 
 function row(id: string, truck_id: string, start_day: string, end_day: string): TruckCrewMember {
-  return { id, truck_id, member_id: id, member_name: `M${id}`, start_day, end_day };
+  return { id, truck_id, member_id: id, member_name: `M${id}`, start_day, end_day, role: 'member' };
 }
 
 function member(memberId: string | null): TruckCrewMember {
-  return { id: `row-${memberId}`, truck_id: 't1', member_id: memberId, member_name: `M${memberId}`, start_day: '2026-06-15', end_day: '2026-06-21' };
+  return { id: `row-${memberId}`, truck_id: 't1', member_id: memberId, member_name: `M${memberId}`, start_day: '2026-06-15', end_day: '2026-06-21', role: 'member' };
 }
 
 describe('crewForTruckInRange', () => {

@@ -5,8 +5,9 @@ import { crm } from '@/app/crm/lib/crmTokens';
 import type { OpsSegment, OpsTruck } from '@/lib/domains/planning/types';
 import { type WeekDay, addDaysISO, daysBetweenInclusive } from './planningDates';
 import type { JobType } from '@/lib/domains/planning/jobTypes';
-import type { AssignablePerson } from '@/lib/domains/planning/crew';
+import { crewInitials, crewColor, type AssignablePerson } from '@/lib/domains/planning/crew';
 import { crewForTruckInRange, type TruckCrewMember } from '@/lib/domains/planning/truckCrew';
+import type { DefaultCrewMember } from '@/lib/domains/planning/defaultCrew';
 import { groupNotesByDay, type DayNote } from '@/lib/domains/planning/dayNotes';
 import { swedishHoliday } from '@/lib/domains/planning/holidays';
 import { CrewEditor, CrewAvatars, SegmentCardBody, type SegmentActions } from './jobCard';
@@ -32,10 +33,30 @@ type WeekBoardProps = {
   onAddNote: (dayISO: string, body: string) => void;
   onRemoveNote: (id: string) => void;
   truckCrew: TruckCrewMember[];
+  defaultCrew: DefaultCrewMember[];
   onAddTruckCrew: (truckId: string, person: AssignablePerson, startDay: string, endDay: string) => void;
   onRemoveTruckCrew: (truckId: string, memberId: string) => void;
   onCopyTruckCrew: (truckId: string, sourceFrom: string, sourceTo: string) => void;
+  onForkWeek: (truckId: string, startDay: string, endDay: string) => void;
+  onRestoreWeek: (truckId: string, startDay: string, endDay: string) => void;
 };
+
+// A read-only avatar row marking the leader with a star — used for the inherited default team.
+function DefaultCrewAvatars({ team }: { team: DefaultCrewMember[] }) {
+  if (team.length === 0) return null;
+  return (
+    <div className="flex items-center -space-x-1.5">
+      {team.map((m) => (
+        <span key={m.id} className="relative inline-grid h-5 w-5 place-items-center rounded-full text-[7px] font-bold text-white ring-1 ring-white" style={{ backgroundColor: crewColor(m.member_id ?? m.member_name) }} title={`${m.member_name}${m.role === 'leader' ? ' (teamledare)' : ''}`}>
+          {crewInitials(m.member_name)}
+          {m.role === 'leader' && (
+            <svg className="absolute -right-1 -top-1 text-amber-500" width="8" height="8" viewBox="0 0 24 24" fill="currentColor" stroke="white" strokeWidth="1.5"><path d="M12 2l3 7h7l-5.5 4.5L18 21l-6-4-6 4 1.5-7.5L2 9h7z" /></svg>
+          )}
+        </span>
+      ))}
+    </div>
+  );
+}
 
 // Which visible-day column (0…count-1) a pointer x lands in, within a `count`-column lane.
 function dayIndexFromX(e: React.MouseEvent | React.DragEvent, count: number): number {
@@ -47,7 +68,7 @@ function dayIndexFromX(e: React.MouseEvent | React.DragEvent, count: number): nu
 export default function WeekBoard({
   weekDays, showWeekend, trucks, segments, todayISO, canWrite, placing, people, jobTypes,
   onCellClick, onCellDrop, onSegDragStart, onSegClick, actions,
-  dayNotes, onAddNote, onRemoveNote, truckCrew, onAddTruckCrew, onRemoveTruckCrew, onCopyTruckCrew,
+  dayNotes, onAddNote, onRemoveNote, truckCrew, defaultCrew, onAddTruckCrew, onRemoveTruckCrew, onCopyTruckCrew, onForkWeek, onRestoreWeek,
 }: WeekBoardProps) {
   // The visible day columns: all seven, or weekdays only when weekends are hidden.
   const days = showWeekend ? weekDays : weekDays.filter((d) => !d.isWeekend);
@@ -156,7 +177,9 @@ export default function WeekBoard({
             const laneSegs = segments.filter(
               (s) => s.truck_id === truck.id && s.end_day >= weekStart && s.start_day <= weekEnd,
             );
-            const laneCrew = crewForTruckInRange(truckCrew, truck.id, weekStart, weekEnd);
+            const laneWeekly = crewForTruckInRange(truckCrew, truck.id, weekStart, weekEnd);
+            const overridden = laneWeekly.length > 0;
+            const defaultTeam = defaultCrew.filter((m) => m.truck_id === truck.id);
             return (
               <div
                 key={truck.id}
@@ -169,28 +192,69 @@ export default function WeekBoard({
                     <span className="truncate text-[12.5px] font-bold text-slate-700">{truck.name}</span>
                   </div>
                   <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 pl-[18px]">
-                    {canWrite ? (
-                      <CrewEditor
-                        crew={laneCrew}
-                        people={people}
-                        onAdd={(p) => onAddTruckCrew(truck.id, p, weekStart, weekEnd)}
-                        onRemove={(mid) => onRemoveTruckCrew(truck.id, mid)}
-                      />
+                    {overridden ? (
+                      // This week deviates from the default — edit it directly.
+                      <>
+                        {canWrite ? (
+                          <CrewEditor
+                            crew={laneWeekly}
+                            people={people}
+                            onAdd={(p) => onAddTruckCrew(truck.id, p, weekStart, weekEnd)}
+                            onRemove={(mid) => onRemoveTruckCrew(truck.id, mid)}
+                          />
+                        ) : (
+                          <CrewAvatars crew={laneWeekly} />
+                        )}
+                        {canWrite && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => onRestoreWeek(truck.id, weekStart, weekEnd)}
+                              title="Återgå till standardbemanningen för den här veckan"
+                              className="inline-flex items-center gap-0.5 text-[9px] font-semibold text-slate-400 transition hover:text-emerald-600"
+                            >
+                              <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5" /></svg>
+                              standard
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => onCopyTruckCrew(truck.id, weekStart, weekEnd)}
+                              title="Kopiera besättningen till nästa vecka"
+                              className="inline-flex items-center gap-0.5 text-[9px] font-semibold text-slate-400 transition hover:text-emerald-600"
+                            >
+                              <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+                              nästa v.
+                            </button>
+                          </>
+                        )}
+                      </>
+                    ) : defaultTeam.length > 0 ? (
+                      // No override → show the truck's standing team (inherited), with a fork button.
+                      <>
+                        <DefaultCrewAvatars team={defaultTeam} />
+                        <span className="rounded-full border border-[#e0e8dc] bg-[#f3f6f1] px-1.5 py-px text-[8.5px] font-semibold text-slate-400">standard</span>
+                        {canWrite && (
+                          <button
+                            type="button"
+                            onClick={() => onForkWeek(truck.id, weekStart, weekEnd)}
+                            title="Avvik från standardbemanningen för den här veckan"
+                            className="inline-flex items-center gap-0.5 text-[9px] font-semibold text-slate-400 transition hover:text-emerald-600"
+                          >
+                            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
+                            ändra
+                          </button>
+                        )}
+                      </>
                     ) : (
-                      <CrewAvatars crew={laneCrew} />
-                    )}
-                    {canWrite && laneCrew.length > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => onCopyTruckCrew(truck.id, weekStart, weekEnd)}
-                        title="Kopiera besättningen till nästa vecka"
-                        className="inline-flex items-center gap-0.5 text-[9px] font-semibold text-slate-400 transition hover:text-emerald-600"
-                      >
-                        <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M5 12h14M13 6l6 6-6 6" />
-                        </svg>
-                        nästa v.
-                      </button>
+                      // No default + no override → assign directly (creates this week's crew).
+                      canWrite ? (
+                        <CrewEditor
+                          crew={laneWeekly}
+                          people={people}
+                          onAdd={(p) => onAddTruckCrew(truck.id, p, weekStart, weekEnd)}
+                          onRemove={(mid) => onRemoveTruckCrew(truck.id, mid)}
+                        />
+                      ) : null
                     )}
                   </div>
                 </div>
