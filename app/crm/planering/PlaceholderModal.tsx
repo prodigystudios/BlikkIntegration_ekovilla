@@ -59,7 +59,7 @@ export default function PlaceholderModal({
   const field = 'h-9 w-full rounded-lg border border-[#dce4d8] bg-white px-2.5 text-[12.5px] text-slate-700 outline-none transition focus:border-emerald-500';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[2800] flex items-center justify-center bg-slate-900/40 p-4" onClick={onClose}>
       <div className="planning-modal w-full max-w-sm rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
         <h3 className="mb-0.5 text-[14px] font-bold text-slate-900">Ny platshållare</h3>
         <p className="mb-3 text-[11px] text-slate-500">Boka en bil/dag innan den riktiga arbetsordern finns.</p>

@@ -161,7 +161,7 @@ export default function ActivityLogModal({ onClose }: { onClose: () => void }) {
   }, [events]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-slate-900/40 p-4 sm:p-6" onClick={onClose}>
+    <div className="fixed inset-0 z-[2800] flex items-center justify-center bg-slate-900/40 p-4 sm:p-6" onClick={onClose}>
       <div
         className="planning-modal flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] shadow-xl"
         onClick={(e) => e.stopPropagation()}
