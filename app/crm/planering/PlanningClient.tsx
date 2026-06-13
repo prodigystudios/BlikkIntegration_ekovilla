@@ -287,14 +287,32 @@ export default function PlanningClient({
 
   const move = useCallback(
     async (id: string, patch: { truck_id?: string; start_day?: string; end_day?: string; job_type?: string | null; on_hold?: boolean }) => {
+      // Optimistic: reflect the change locally at once so the card doesn't snap back to its old value
+      // while the PATCH is in flight (and a full refetch lands). Re-sync from the server only on error.
+      setSegments((cur) =>
+        cur.map((s) =>
+          s.id === id
+            ? {
+                ...s,
+                ...(patch.truck_id !== undefined ? { truck_id: patch.truck_id } : {}),
+                ...(patch.start_day !== undefined ? { start_day: patch.start_day } : {}),
+                ...(patch.end_day !== undefined ? { end_day: patch.end_day } : {}),
+                ...(patch.job_type !== undefined ? { job_type: patch.job_type } : {}),
+                ...(patch.on_hold !== undefined ? { on_hold: patch.on_hold } : {}),
+              }
+            : s,
+        ),
+      );
       const r = await fetch(`${API}/segments/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(patch),
       });
       const j = await r.json();
-      if (!j.ok) return toast.error(j.error || 'Kunde inte flytta jobbet');
-      await refresh();
+      if (!j.ok) {
+        toast.error(j.error || 'Kunde inte flytta jobbet');
+        refresh();
+      }
     },
     [refresh, toast],
   );
@@ -634,6 +652,9 @@ export default function PlanningClient({
     async (seg: OpsSegment, direction: 'up' | 'down') => {
       const changes = reorderWithinGroup(dayGroup(segments, seg), seg.id, direction);
       if (!changes.length) return;
+      // Optimistic: apply the new sort_index locally before the PATCHes land.
+      const order = new Map(changes.map((c) => [c.id, c.sort_index]));
+      setSegments((cur) => cur.map((s) => (order.has(s.id) ? { ...s, sort_index: order.get(s.id) as number } : s)));
       const results = await Promise.all(
         changes.map((ch) =>
           fetch(`${API}/segments/${ch.id}`, {
@@ -643,8 +664,10 @@ export default function PlanningClient({
           }).then((r) => r.json()),
         ),
       );
-      if (results.some((j) => !j.ok)) toast.error('Kunde inte ändra ordningen');
-      await refresh();
+      if (results.some((j) => !j.ok)) {
+        toast.error('Kunde inte ändra ordningen');
+        refresh();
+      }
     },
     [segments, refresh, toast],
   );
