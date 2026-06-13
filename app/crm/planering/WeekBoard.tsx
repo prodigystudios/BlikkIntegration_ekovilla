@@ -209,13 +209,6 @@ export default function WeekBoard({
                     <span className="h-2.5 w-2.5 shrink-0 rounded-full ring-2 ring-black/[0.03]" style={{ backgroundColor: truck.color || '#94a3b8' }} />
                     <span className="truncate text-[12.5px] font-bold text-slate-700">{truck.name}</span>
                   </div>
-                  {seenWO.size > 0 && (
-                    <div className="flex flex-wrap items-center gap-x-1.5 pl-[18px] text-[9px] leading-tight text-slate-400" title="Planerat den här veckan: säckar att blåsa · omsättning (ex moms)">
-                      <span className="tabular-nums"><span className="font-bold text-slate-500">{plannedSacks}</span> säck</span>
-                      <span className="text-slate-300">·</span>
-                      <span className="tabular-nums"><span className="font-bold text-slate-500">{krFmt.format(revenue)}</span> kr</span>
-                    </div>
-                  )}
                   <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 pl-[18px]">
                     {overridden ? (
                       // This week deviates from the default — edit it directly.
@@ -282,6 +275,14 @@ export default function WeekBoard({
                       ) : null
                     )}
                   </div>
+
+                  {/* Weekly per-truck totals (planned sacks to blow · revenue ex moms). */}
+                  {seenWO.size > 0 && (
+                    <div className="mt-0.5 grid gap-0.5 pl-[18px] text-[9px] leading-tight text-slate-400" title="Planerat den här veckan">
+                      <span className="tabular-nums"><span className="font-bold text-slate-500">{plannedSacks}</span> säck planerat</span>
+                      <span className="tabular-nums"><span className="font-bold text-slate-500">{krFmt.format(revenue)}</span> kr omsättning</span>
+                    </div>
+                  )}
                 </div>
 
                 {/* Day-area: one drop zone; the target day is derived from the pointer x. */}
