@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { sendEmail } from '@/lib/email';
 import { sendSms } from '@/lib/sms';
+import { toSwedishE164 } from '@/lib/phone';
 import { buildPlanningNotificationEmail } from '@/lib/planningNotificationEmail';
 import { buildPlanningNotificationSms } from '@/lib/planningNotificationSms';
 import type { ConfirmationChannel } from './confirmations';
@@ -158,7 +159,12 @@ export async function sendOrderConfirmation(
   }
 
   if (input.sendSms && input.recipientPhone) {
-    try {
+    // Twilio needs E.164 (+46…); normalise the Swedish number the planner typed so a plain
+    // "0701234567" / "070-123 45 67" isn't rejected as invalid.
+    const to = toSwedishE164(input.recipientPhone);
+    if (!to) {
+      result.sms.error = 'Ogiltigt telefonnummer';
+    } else try {
       const body = buildPlanningNotificationSms({
         projectName: ctx.project_name,
         orderNumber,
@@ -168,14 +174,14 @@ export async function sendOrderConfirmation(
         truck: ctx.truck_name,
         salesResponsible: input.actorName,
       });
-      const res = await sendSms({ to: input.recipientPhone, body });
+      const res = await sendSms({ to, body });
       result.sms.sent = true;
       result.sms.status = res.status;
       const rec = await recordConfirmation(supabase, {
         workOrderId: ctx.work_order_id,
         segmentId: input.segmentId,
         channel: 'sms',
-        recipient: input.recipientPhone,
+        recipient: to,
         startDay: ctx.start_day,
         endDay: ctx.end_day,
         providerMessageId: res.sid,

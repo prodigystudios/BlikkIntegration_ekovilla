@@ -136,22 +136,32 @@ export default function ConfirmModal({
       }
     >
       <form id={FORM_ID} onSubmit={handleSubmit} className="grid gap-4">
-        <p className="rounded-lg border border-[#e0e8dc] bg-[#f3f6f1] px-3 py-2 text-[11.5px] text-slate-500">
-          Mottagaren hämtas från kundkortet i CRM. Kontrollera och justera vid behov innan du skickar.
-        </p>
+        {loading ? (
+          <p className="flex items-center gap-2 rounded-lg border border-[#e0e8dc] bg-[#f3f6f1] px-3 py-2 text-[11.5px] text-slate-500">
+            <svg className="h-3.5 w-3.5 animate-spin text-slate-400" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="3" className="opacity-25" />
+              <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+            </svg>
+            Hämtar kontaktuppgifter från kundkortet…
+          </p>
+        ) : (
+          <p className="rounded-lg border border-[#e0e8dc] bg-[#f3f6f1] px-3 py-2 text-[11.5px] text-slate-500">
+            Mottagaren hämtas från kundkortet i CRM. Kontrollera och justera vid behov innan du skickar.
+          </p>
+        )}
 
         {/* Email */}
         <div className="grid gap-1.5">
           <label className="flex items-center gap-2 text-[13px] font-semibold text-slate-700">
-            <input type="checkbox" checked={sendEmail} onChange={(e) => setSendEmail(e.target.checked)} className="h-4 w-4 accent-emerald-600" />
+            <input type="checkbox" checked={sendEmail} onChange={(e) => setSendEmail(e.target.checked)} disabled={loading} className="h-4 w-4 accent-emerald-600" />
             Skicka mejl
           </label>
           <input
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            disabled={!sendEmail}
-            placeholder="kund@exempel.se"
+            disabled={!sendEmail || loading}
+            placeholder={loading ? 'Hämtar…' : 'kund@exempel.se'}
             className={FIELD}
           />
         </div>
@@ -159,15 +169,15 @@ export default function ConfirmModal({
         {/* SMS */}
         <div className="grid gap-1.5">
           <label className="flex items-center gap-2 text-[13px] font-semibold text-slate-700">
-            <input type="checkbox" checked={sendSms} onChange={(e) => setSendSms(e.target.checked)} className="h-4 w-4 accent-emerald-600" />
+            <input type="checkbox" checked={sendSms} onChange={(e) => setSendSms(e.target.checked)} disabled={loading} className="h-4 w-4 accent-emerald-600" />
             Skicka SMS
           </label>
           <input
             type="tel"
             value={phone}
             onChange={(e) => setPhone(e.target.value)}
-            disabled={!sendSms}
-            placeholder="+46 70 123 45 67"
+            disabled={!sendSms || loading}
+            placeholder={loading ? 'Hämtar…' : '+46 70 123 45 67'}
             className={FIELD}
           />
         </div>
