@@ -76,12 +76,12 @@ export default function Backlog({
                   >
                     <span className={cn('absolute bottom-2.5 left-0 top-2.5 w-[3px] rounded-full', statusMeta(item.status).rail)} />
                     <div className="flex items-baseline justify-between gap-2">
-                      <span className="text-[13px] font-bold text-slate-900">{item.project_name}</span>
+                      <span className="text-[11px] font-bold text-slate-900">{item.project_name}</span>
                       <JobRef job={item} />
                     </div>
-                    <div className="mt-0.5 text-[11px] text-slate-500">{item.client_name}</div>
+                    <div className="mt-0.5 text-[10px] text-slate-500">{item.client_name}</div>
                     {item.address && (
-                      <div className="flex items-center gap-1 text-[11px] text-slate-400">
+                      <div className="flex items-center gap-1 text-[9.5px] text-slate-400">
                         <span className="truncate">{item.address}</span>
                         <MapLink address={item.address} />
                       </div>
