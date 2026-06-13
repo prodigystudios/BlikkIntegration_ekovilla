@@ -81,6 +81,21 @@ export default function WeekBoard({
   const dayCols = `repeat(${n}, minmax(0,1fr))`;
   const notesByDay = groupNotesByDay(dayNotes);
 
+  // Whole-week total across all trucks (deduped by work order, same basis as the per-lane totals).
+  const weekTotals = (() => {
+    const seen = new Set<string>();
+    let sacks = 0;
+    let revenue = 0;
+    for (const s of segments) {
+      if (s.end_day < weekStart || s.start_day > weekEnd) continue;
+      if (!s.job || !s.work_order_id || seen.has(s.work_order_id)) continue;
+      seen.add(s.work_order_id);
+      sacks += s.job.total_sacks;
+      revenue += s.job.revenue;
+    }
+    return { sacks, revenue, jobs: seen.size };
+  })();
+
   // First/last visible-day column a segment occupies (null when it falls entirely on hidden days).
   const segColumns = (seg: OpsSegment): { s: number; e: number } | null => {
     let s = -1;
@@ -142,7 +157,16 @@ export default function WeekBoard({
       <div style={{ minWidth: 112 + n * 132 }}>
         {/* Day header */}
         <div className="mb-1.5 grid" style={{ gridTemplateColumns: laneCols }}>
-          <div />
+          {/* Whole-week total for all trucks (top-left corner, above the notes row). */}
+          <div className="flex flex-col justify-center pl-1 pr-2">
+            {weekTotals.jobs > 0 && (
+              <>
+                <span className="text-[8.5px] font-bold uppercase tracking-wide text-slate-300">Veckan totalt</span>
+                <span className="text-[10px] leading-tight tabular-nums text-slate-500"><span className="font-bold text-slate-700">{weekTotals.sacks}</span> säck</span>
+                <span className="text-[10px] leading-tight tabular-nums text-slate-500"><span className="font-bold text-slate-700">{krFmt.format(weekTotals.revenue)}</span> kr</span>
+              </>
+            )}
+          </div>
           {days.map((wd) => {
             const isToday = wd.iso === todayISO;
             const hol = swedishHoliday(wd.iso);
