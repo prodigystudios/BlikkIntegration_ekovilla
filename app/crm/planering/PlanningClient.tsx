@@ -67,6 +67,7 @@ export default function PlanningClient({
   const [hiddenTrucks, setHiddenTrucks] = useState<Set<string>>(new Set());
   const [backlogDropActive, setBacklogDropActive] = useState(false);
   const [truckPicker, setTruckPicker] = useState<{ dayISO: string; workOrderId: string } | null>(null);
+  const [copySeg, setCopySeg] = useState<OpsSegment | null>(null);
   const [confirmSeg, setConfirmSeg] = useState<OpsSegment | null>(null);
   const [truckManagerOpen, setTruckManagerOpen] = useState(false);
   const [depotManagerOpen, setDepotManagerOpen] = useState(false);
@@ -509,6 +510,31 @@ export default function PlanningClient({
     [truckPicker, place],
   );
 
+  // Copy a scheduled job to another truck as a freestanding duplicate (its own ops_segment with the
+  // same work order, dates and job type) — e.g. when two trucks share a big job.
+  const copyToTruck = useCallback(
+    async (truckId: string) => {
+      if (!copySeg) return;
+      const r = await fetch(`${API}/segments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          work_order_id: copySeg.work_order_id,
+          truck_id: truckId,
+          start_day: copySeg.start_day,
+          end_day: copySeg.end_day,
+          job_type: copySeg.job_type,
+        }),
+      });
+      const j = await r.json();
+      setCopySeg(null);
+      if (!j.ok) return toast.error(j.error || 'Kunde inte kopiera jobbet');
+      toast.success('Jobbet kopierat');
+      await refresh();
+    },
+    [copySeg, refresh, toast],
+  );
+
   // ── filters ───────────────────────────────────────────────────────────────
   const q = search.trim().toLowerCase();
   const matchJob = useCallback(
@@ -574,7 +600,7 @@ export default function PlanningClient({
   );
 
   const actions = useMemo<SegmentActions>(
-    () => ({ onSetStatus, onSetJobType, onToggleHold, onOpenConfirm: openConfirm, onResize, onAddCrew: addCrew, onRemoveCrew: removeCrew, onReorder: reorderSegment }),
+    () => ({ onSetStatus, onSetJobType, onToggleHold, onOpenConfirm: openConfirm, onResize, onAddCrew: addCrew, onRemoveCrew: removeCrew, onReorder: reorderSegment, onCopyToTruck: (seg) => setCopySeg(seg) }),
     [onSetStatus, onSetJobType, onToggleHold, openConfirm, onResize, addCrew, removeCrew, reorderSegment],
   );
 
@@ -855,6 +881,32 @@ export default function PlanningClient({
               ))}
             </div>
             <button onClick={() => setTruckPicker(null)} className={cn(crm.ghostButton, 'mt-3 w-full')}>Avbryt</button>
+          </div>
+        </div>
+      )}
+
+      {/* Copy-to-truck picker (freestanding duplicate of a scheduled job) */}
+      {copySeg && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4" onClick={() => setCopySeg(null)}>
+          <div className="w-full max-w-xs rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-[13px] font-bold text-slate-900">Kopiera till bil</h3>
+            <p className="mb-3 mt-0.5 text-[11px] text-slate-500">
+              Skapar en kopia av <strong>{copySeg.job?.ref ?? 'jobbet'}</strong> på vald bil ({copySeg.start_day === copySeg.end_day ? copySeg.start_day : `${copySeg.start_day}–${copySeg.end_day}`}).
+            </p>
+            <div className="grid gap-1.5">
+              {trucks.map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => copyToTruck(t.id)}
+                  className="flex items-center gap-2.5 rounded-xl border border-[#e0e8dc] bg-white px-3 py-2 text-left text-[13px] font-semibold text-slate-700 transition hover:border-emerald-400 hover:bg-emerald-50"
+                >
+                  <span className="h-3 w-3 rounded-full" style={{ backgroundColor: t.color || '#94a3b8' }} />
+                  {t.name}
+                  {t.id === copySeg.truck_id && <span className="ml-auto text-[10px] font-normal text-slate-400">nuvarande</span>}
+                </button>
+              ))}
+            </div>
+            <button onClick={() => setCopySeg(null)} className={cn(crm.ghostButton, 'mt-3 w-full')}>Avbryt</button>
           </div>
         </div>
       )}
