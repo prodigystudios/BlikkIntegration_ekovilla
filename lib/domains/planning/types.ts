@@ -51,6 +51,9 @@ export type OpsSegment = {
   // badged "Pausad" so it isn't treated as active.
   on_hold: boolean;
   created_by: string | null;
+  // Display name of whoever placed the job on the calendar, snapshotted at placement time (profiles
+  // are self-read-only). Drives the "inlagd av" badge. null for segments placed before this existed.
+  created_by_name: string | null;
   created_at: string;
   updated_at: string;
   // The job's card data (null only if the related work order is unreadable, which shouldn't happen).

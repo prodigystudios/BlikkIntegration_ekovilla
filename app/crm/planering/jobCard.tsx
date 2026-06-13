@@ -151,6 +151,21 @@ export function ConfirmationBadge({ confirmation }: { confirmation: Confirmation
   );
 }
 
+// Who placed this job on the calendar (lightweight stand-in for presence). Muted person glyph +
+// first name; full name in the tooltip. Hidden for segments placed before created_by_name existed.
+export function CreatorBadge({ name }: { name: string | null }) {
+  if (!name || !name.trim()) return null;
+  const firstName = name.trim().split(/\s+/)[0];
+  return (
+    <span title={`Inlagd av ${name}`} className="inline-flex items-center gap-0.5 whitespace-nowrap text-[9px] font-semibold text-slate-400">
+      <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" />
+      </svg>
+      {firstName}
+    </span>
+  );
+}
+
 // A single crew avatar: initials on the person's deterministic colour.
 function Avatar({ name, seed, size = 20 }: { name: string; seed: string; size?: number }) {
   return (
@@ -733,6 +748,7 @@ export function SegmentCardBody({
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <SackProgress planned={job.total_sacks} reported={seg.sacks_reported} />
             <ConfirmationBadge confirmation={seg.confirmation} />
+            <CreatorBadge name={seg.created_by_name} />
             <div className="ml-auto flex items-center gap-1">
               {truckName && <span className="truncate text-[9px] font-semibold text-slate-400">{truckName}</span>}
               <CrewAvatars crew={seg.crew} />

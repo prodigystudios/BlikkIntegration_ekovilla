@@ -16,7 +16,7 @@ export function validateSegmentDates(startDay: string, endDay: string): 'invalid
 }
 
 const SEGMENT_SELECT =
-  'id, work_order_id, truck_id, start_day, end_day, sort_index, job_type, on_hold, created_by, created_at, updated_at, ' +
+  'id, work_order_id, truck_id, start_day, end_day, sort_index, job_type, on_hold, created_by, created_by_name, created_at, updated_at, ' +
   'work_order:crm_work_orders(order_number, fortnox_order_number, project_name, client_name, status, customer_snapshot, work_address, line_items)';
 
 type RawSegment = {
@@ -29,6 +29,7 @@ type RawSegment = {
   job_type: string | null;
   on_hold: boolean;
   created_by: string | null;
+  created_by_name: string | null;
   created_at: string;
   updated_at: string;
   work_order: WorkOrderJobRow | WorkOrderJobRow[] | null;
@@ -49,6 +50,7 @@ export function mapSegment(row: RawSegment): OpsSegment {
     job_type: row.job_type,
     on_hold: row.on_hold ?? false,
     created_by: row.created_by,
+    created_by_name: row.created_by_name ?? null,
     created_at: row.created_at,
     updated_at: row.updated_at,
     job: wo ? mapWorkOrderJob(wo) : null,
@@ -107,6 +109,8 @@ export type PlaceSegmentInput = {
   sortIndex?: number;
   jobType?: string | null;
   actorUserId: string;
+  // Display name snapshot of the placer for the "inlagd av" badge (profiles are self-read-only).
+  actorName?: string | null;
 };
 
 // created_by must equal the caller (RLS insert policy checks created_by = auth.uid()).
@@ -124,6 +128,7 @@ export async function placeSegment(
       sort_index: input.sortIndex ?? 0,
       job_type: input.jobType ?? null,
       created_by: input.actorUserId,
+      created_by_name: input.actorName ?? null,
     })
     .select(SEGMENT_SELECT)
     .single();

@@ -52,6 +52,7 @@ export async function POST(req: Request) {
       sortIndex: parsed.data.sort_index,
       jobType: parsed.data.job_type,
       actorUserId: gate.currentUser.id,
+      actorName: gate.currentUser.name ?? null,
     });
     if (error) return routeError(500, 'planning_segment_create_failed', error.message);
 
