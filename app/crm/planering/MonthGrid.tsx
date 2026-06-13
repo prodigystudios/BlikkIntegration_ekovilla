@@ -135,7 +135,12 @@ export default function MonthGrid({
                       </span>
                     </div>
 
-                    {daySegs.map((seg) => (
+                    {daySegs.map((seg) => {
+                      // Colour the whole card by its truck so a dense month (5 trucks × many jobs) is
+                      // scannable at a glance — soft truck-colour fill + a clear truck-colour border.
+                      // The toolbar truck chips act as the colour legend; status stays on the left rail.
+                      const tc = truckColor.get(seg.truck_id) || '#94a3b8';
+                      return (
                       <div
                         key={seg.id}
                         draggable={canWrite}
@@ -144,8 +149,9 @@ export default function MonthGrid({
                           ev.stopPropagation();
                           onSegClick(seg);
                         }}
+                        style={{ backgroundColor: `${tc}1f`, borderColor: `${tc}66` }}
                         className={cn(
-                          'relative overflow-hidden rounded-lg border border-[#e0e8dc] bg-white p-2 pl-2.5 shadow-[0_1px_2px_rgba(20,44,27,0.06)] transition hover:shadow-[0_3px_10px_rgba(20,44,27,0.12)]',
+                          'relative overflow-hidden rounded-lg border border-solid p-2 pl-2.5 shadow-[0_1px_2px_rgba(20,44,27,0.06)] transition hover:shadow-[0_3px_10px_rgba(20,44,27,0.12)]',
                           canWrite ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer',
                           seg.on_hold && 'opacity-60 ring-1 ring-amber-200',
                         )}
@@ -161,7 +167,8 @@ export default function MonthGrid({
                           order={orderInfo(segments, seg)}
                         />
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 );
               })}
