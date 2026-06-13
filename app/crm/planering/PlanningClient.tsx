@@ -10,6 +10,7 @@ import type { OpsSegment, OpsTruck, SchedulableWorkOrder } from '@/lib/domains/p
 import type { AssignablePerson, CrewMember } from '@/lib/domains/planning/crew';
 import type { DayNote } from '@/lib/domains/planning/dayNotes';
 import type { TruckCrewMember } from '@/lib/domains/planning/truckCrew';
+import type { DefaultCrewMember } from '@/lib/domains/planning/defaultCrew';
 import { DEFAULT_JOB_TYPES, type JobType, type JobTypeRow } from '@/lib/domains/planning/jobTypes';
 import {
   addDays, addDaysISO, buildMonthWeeks, buildWeekDays, daysBetweenInclusive, fmtISO, isoWeek, startOfWeek, swedishMonthYear,
@@ -56,6 +57,7 @@ export default function PlanningClient({
   const [jobTypes, setJobTypes] = useState<JobType[]>(DEFAULT_JOB_TYPES);
   const [dayNotes, setDayNotes] = useState<DayNote[]>([]);
   const [truckCrew, setTruckCrew] = useState<TruckCrewMember[]>([]);
+  const [defaultCrew, setDefaultCrew] = useState<DefaultCrewMember[]>([]);
   const [loadingBacklog, setLoadingBacklog] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -137,6 +139,14 @@ export default function PlanningClient({
     setTruckCrew(j.data.crew as TruckCrewMember[]);
   }, []);
 
+  // Default crew (standardbemanning) is range-independent — every truck's standing team. The board
+  // falls back to it on weeks with no explicit truck crew.
+  const loadDefaultCrew = useCallback(async () => {
+    const r = await fetch(`${API}/default-crew`, { cache: 'no-store' });
+    const j = await r.json();
+    if (j.ok) setDefaultCrew(j.data.crew as DefaultCrewMember[]);
+  }, []);
+
   useEffect(() => {
     setLoadingBacklog(true);
     loadBacklog()
@@ -203,7 +213,8 @@ export default function PlanningClient({
     loadSegments(range.from, range.to).catch((e) => setError(e?.message || 'Något gick fel'));
     loadDayNotes(range.from, range.to).catch(() => {});
     loadTruckCrew(range.from, range.to).catch(() => {});
-  }, [range.from, range.to, loadSegments, loadDayNotes, loadTruckCrew]);
+    loadDefaultCrew().catch(() => {});
+  }, [range.from, range.to, loadSegments, loadDayNotes, loadTruckCrew, loadDefaultCrew]);
 
   // ── Realtime: ~10 planners work this board at once, so reflect each other's changes live to
   // avoid double-bookings + missed updates. Subscribe once to ops_* changes and debounce-refetch
@@ -215,6 +226,7 @@ export default function PlanningClient({
     loadSegments(range.from, range.to).catch(() => {});
     loadDayNotes(range.from, range.to).catch(() => {});
     loadTruckCrew(range.from, range.to).catch(() => {});
+    loadDefaultCrew().catch(() => {});
     loadBacklog().catch(() => {});
     loadJobTypes().catch(() => {});
   };
@@ -224,6 +236,7 @@ export default function PlanningClient({
       'ops_segments',
       'ops_segment_crew',
       'ops_truck_crew',
+      'ops_truck_default_crew',
       'ops_day_notes',
       'ops_segment_reports',
       'ops_work_order_confirmations',
@@ -485,6 +498,24 @@ export default function PlanningClient({
     },
     [toast, loadTruckCrew, range.from, range.to],
   );
+
+  // Fork a week from the truck's default crew so it can be edited independently; restore drops the
+  // override and the lane falls back to the default again.
+  const weekCrewAction = useCallback(
+    async (action: 'materialize' | 'restore', truckId: string, startDay: string, endDay: string) => {
+      const r = await fetch(`${API}/truck-crew/week`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, truck_id: truckId, start_day: startDay, end_day: endDay }),
+      });
+      const j = await r.json();
+      if (!j.ok) return toast.error(j.error || 'Kunde inte uppdatera veckans besättning');
+      loadTruckCrew(range.from, range.to).catch(() => {});
+    },
+    [toast, loadTruckCrew, range.from, range.to],
+  );
+  const forkWeek = useCallback((t: string, f: string, to: string) => weekCrewAction('materialize', t, f, to), [weekCrewAction]);
+  const restoreWeek = useCallback((t: string, f: string, to: string) => weekCrewAction('restore', t, f, to), [weekCrewAction]);
 
   // ── selection / click-to-place ───────────────────────────────────────────────
   const onSelect = useCallback((id: string) => setSelectedId((cur) => (cur === id ? null : id)), []);
@@ -817,9 +848,12 @@ export default function PlanningClient({
                     onAddNote={addDayNote}
                     onRemoveNote={removeDayNote}
                     truckCrew={truckCrew}
+                    defaultCrew={defaultCrew}
                     onAddTruckCrew={addTruckCrew}
                     onRemoveTruckCrew={removeTruckCrew}
                     onCopyTruckCrew={copyTruckCrew}
+                    onForkWeek={forkWeek}
+                    onRestoreWeek={restoreWeek}
                   />
                 </div>
               );

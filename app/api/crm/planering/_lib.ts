@@ -58,6 +58,27 @@ export const assignTruckCrewSchema = z.object({
   end_day: isoDate,
 });
 
+// Replace a truck's default crew (standardbemanning): the whole standing team in one go.
+export const replaceDefaultCrewSchema = z.object({
+  members: z
+    .array(
+      z.object({
+        member_id: z.string().uuid('Ogiltig montör').nullable(),
+        member_name: z.string().trim().min(1, 'Namn krävs').max(120),
+        role: z.enum(['leader', 'member']),
+      }),
+    )
+    .max(12, 'För många i teamet'),
+});
+
+// Fork a week from the default crew, or drop the week's override back to the default.
+export const truckCrewWeekSchema = z.object({
+  action: z.enum(['materialize', 'restore']),
+  truck_id: z.string().uuid('Ogiltig bil'),
+  start_day: isoDate,
+  end_day: isoDate,
+});
+
 // Copy a truck's crew from one week to another.
 export const copyTruckCrewSchema = z.object({
   truck_id: z.string().uuid('Ogiltig bil'),

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { cn } from '@/lib/shared/cn';
 import { useToast } from '@/lib/Toast';
 import { crm } from '@/app/crm/lib/crmTokens';
@@ -10,6 +10,9 @@ import { TrashIcon } from './managerModalUi';
 import type { OpsTruck, OpsDepot } from '@/lib/domains/planning/types';
 import type { JobTypeRow } from '@/lib/domains/planning/jobTypes';
 import type { DepotBalance } from '@/lib/domains/planning/depotStock';
+import type { AssignablePerson } from '@/lib/domains/planning/crew';
+import { crewInitials, crewColor } from '@/lib/domains/planning/crew';
+import { defaultCrewByTruck, type DefaultCrewMember } from '@/lib/domains/planning/defaultCrew';
 
 // One consolidated admin workspace for the planning board (replaces the separate Bilar/Depåer/
 // Jobbtyper/Lager modals). Master-detail: left "Områden" nav → list → detail/editor. Areas are
@@ -52,6 +55,24 @@ export default function PlanningAdminModal({
     toPayload: (t) => ({ label: t.label, color: t.color, active: t.active }),
     labels: { saveFail: 'Kunde inte spara jobbtypen', removeFail: 'Kunde inte ta bort jobbtypen', addFail: 'Kunde inte lägga till jobbtypen' },
   });
+
+  // People + default crew (standardbemanning) for the Lastbilar area's crew editor.
+  const [people, setPeople] = useState<AssignablePerson[]>([]);
+  const [defaultCrew, setDefaultCrew] = useState<DefaultCrewMember[]>([]);
+  const loadDefaultCrew = useCallback(async () => {
+    const r = await fetch('/api/crm/planering/default-crew', { cache: 'no-store' });
+    const j = await r.json();
+    if (j.ok) setDefaultCrew(j.data.crew as DefaultCrewMember[]);
+  }, []);
+  useEffect(() => {
+    if (!canManageTrucks) return;
+    fetch('/api/crm/planering/crew', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((j) => { if (j.ok) setPeople(j.data.people as AssignablePerson[]); })
+      .catch(() => {});
+    loadDefaultCrew().catch(() => {});
+  }, [canManageTrucks, loadDefaultCrew]);
+  const defaultByTruck = useMemo(() => defaultCrewByTruck(defaultCrew), [defaultCrew]);
 
   const areas = useMemo(
     () =>
@@ -129,7 +150,7 @@ export default function PlanningAdminModal({
 
           {/* Content */}
           <div className="min-h-0 overflow-hidden">
-            {active === 'trucks' && <TruckPanel crud={trucksCrud} depots={depotsCrud.items} onChanged={onChanged} />}
+            {active === 'trucks' && <TruckPanel crud={trucksCrud} depots={depotsCrud.items} people={people} defaultByTruck={defaultByTruck} onCrewSaved={loadDefaultCrew} onChanged={onChanged} />}
             {active === 'depots' && <DepotPanel crud={depotsCrud} onChanged={onChanged} />}
             {active === 'jobtypes' && <JobTypePanel crud={jobTypesCrud} onChanged={onChanged} />}
             {active === 'stock' && <StockPanel canWrite={canWrite} />}
@@ -166,8 +187,111 @@ function RiskZone({ title, body, label, onConfirm, busy }: { title: string; body
   );
 }
 
+// Standardbemanning: a truck's standing team (one leader + personal). Saved as a whole via PUT.
+function PersonAvatar({ name, seed }: { name: string; seed: string }) {
+  return (
+    <span className="inline-grid h-5 w-5 place-items-center rounded-full text-[8px] font-bold text-white" style={{ backgroundColor: crewColor(seed) }}>
+      {crewInitials(name)}
+    </span>
+  );
+}
+
+function StandardCrewEditor({ truckId, initial, people, onSaved }: { truckId: string; initial: DefaultCrewMember[]; people: AssignablePerson[]; onSaved: () => void }) {
+  const toast = useToast();
+  const [leaderId, setLeaderId] = useState('');
+  const [members, setMembers] = useState<{ member_id: string; member_name: string }[]>([]);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    const leader = initial.find((m) => m.role === 'leader');
+    setLeaderId(leader?.member_id ?? '');
+    setMembers(initial.filter((m) => m.role === 'member' && m.member_id).map((m) => ({ member_id: m.member_id as string, member_name: m.member_name })));
+  }, [initial]);
+
+  const leaderPerson = people.find((p) => p.id === leaderId) ?? null;
+  const available = people.filter((p) => p.id !== leaderId && !members.some((m) => m.member_id === p.id));
+
+  async function save() {
+    setSaving(true);
+    try {
+      const payload = {
+        members: [
+          ...(leaderId && leaderPerson ? [{ member_id: leaderId, member_name: leaderPerson.full_name, role: 'leader' as const }] : []),
+          ...members.map((m) => ({ member_id: m.member_id, member_name: m.member_name, role: 'member' as const })),
+        ],
+      };
+      const r = await fetch(`/api/crm/planering/trucks/${truckId}/default-crew`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const j = await r.json();
+      if (!j.ok) return toast.error(j.error || 'Kunde inte spara bemanningen');
+      toast.success('Standardbemanning sparad');
+      onSaved();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className={PANEL}>
+      <h3 className="text-[13.5px] font-extrabold text-[#142c1b]">Standardbemanning</h3>
+      <p className="mb-3 mt-0.5 text-[11.5px] text-slate-500">Bilens stående team. Tavlan visar det varje vecka tills veckan ändras.</p>
+
+      <span className={LABEL}>Teamledare</span>
+      <select value={leaderId} onChange={(e) => setLeaderId(e.target.value)} className={crm.select} aria-label="Teamledare">
+        <option value="">Ingen teamledare</option>
+        {people.map((p) => <option key={p.id} value={p.id}>{p.full_name}</option>)}
+      </select>
+
+      <span className={cn(LABEL, 'mt-3.5')}>Personal</span>
+      <div className="flex flex-wrap gap-1.5">
+        {members.length === 0 && <span className="text-[11.5px] text-slate-400">Ingen personal tillagd.</span>}
+        {members.map((m) => (
+          <span key={m.member_id} className="inline-flex items-center gap-1.5 rounded-full border border-[#e0e8dc] bg-white py-0.5 pl-0.5 pr-1.5 text-[11.5px] font-semibold text-slate-700">
+            <PersonAvatar name={m.member_name} seed={m.member_id} />
+            {m.member_name}
+            <button type="button" onClick={() => setMembers((prev) => prev.filter((x) => x.member_id !== m.member_id))} aria-label="Ta bort" className="text-slate-400 transition hover:text-rose-600">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
+            </button>
+          </span>
+        ))}
+      </div>
+      {available.length > 0 && (
+        <select
+          value=""
+          onChange={(e) => {
+            const p = people.find((x) => x.id === e.target.value);
+            if (p) setMembers((prev) => [...prev, { member_id: p.id, member_name: p.full_name }]);
+          }}
+          className={cn(crm.select, 'mt-2')}
+          aria-label="Lägg till personal"
+        >
+          <option value="">+ Lägg till personal…</option>
+          {available.map((p) => <option key={p.id} value={p.id}>{p.full_name}</option>)}
+        </select>
+      )}
+
+      <button onClick={save} disabled={saving} className={cn(crm.formButton, 'mt-3.5')} style={{ backgroundColor: 'var(--crm-primary)' }}>
+        {saving ? 'Sparar…' : 'Spara bemanning'}
+      </button>
+    </div>
+  );
+}
+
 // ── Lastbilar ───────────────────────────────────────────────────────────────
-function TruckPanel({ crud, depots, onChanged }: { crud: ReturnType<typeof useEntityCrud<OpsTruck>>; depots: OpsDepot[]; onChanged: () => void }) {
+function TruckPanel({
+  crud,
+  depots,
+  people,
+  defaultByTruck,
+  onCrewSaved,
+  onChanged,
+}: {
+  crud: ReturnType<typeof useEntityCrud<OpsTruck>>;
+  depots: OpsDepot[];
+  people: AssignablePerson[];
+  defaultByTruck: Map<string, DefaultCrewMember[]>;
+  onCrewSaved: () => void;
+  onChanged: () => void;
+}) {
   const { items, loading, busy, patchLocal, save, remove, add } = crud;
   const [sel, setSel] = useState<string | null>(null);
   const [newName, setNewName] = useState('');
@@ -260,10 +384,7 @@ function TruckPanel({ crud, depots, onChanged }: { crud: ReturnType<typeof useEn
               <button onClick={onSave} disabled={busy} className={cn(crm.formButton, 'mt-3')} style={{ backgroundColor: 'var(--crm-primary)' }}>Spara depå</button>
             </div>
 
-            <div className={cn(PANEL, 'border-dashed bg-[#fbfdfa]')}>
-              <h3 className="text-[13.5px] font-extrabold text-slate-500">Standardbemanning</h3>
-              <p className="mt-0.5 text-[11.5px] text-slate-400">Bilens stående team läggs till här i nästa steg. Veckans besättning redigeras tills vidare direkt på tavlan.</p>
-            </div>
+            <StandardCrewEditor key={truck.id} truckId={truck.id} initial={defaultByTruck.get(truck.id) ?? []} people={people} onSaved={onCrewSaved} />
 
             <RiskZone title="Riskzon" body="Ta bort bil endast om den inte längre används i planeringen. En bil med schemalagda jobb kan inte tas bort — avaktivera istället." label="Ta bort bil" onConfirm={onRemove} busy={busy} />
           </div>
