@@ -655,7 +655,7 @@ export default function PlanningClient({
   );
 
   return (
-    <div>
+    <div className="planning-density">
       {/* Header */}
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <div>

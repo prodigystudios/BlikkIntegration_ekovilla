@@ -29,6 +29,14 @@
   }
 }
 
+/* Planning density: the board was designed a touch large, so scale the whole planning surface down
+   to a denser default (≈ two Safari zoom-out notches). `zoom` re-rasterises like browser zoom, so
+   text stays crisp and layout/scroll stay correct (unlike transform:scale). Tune via the variable. */
+.planning-density {
+  --planning-zoom: 0.70;
+  zoom: var(--planning-zoom);
+}
+
 /* Melodic Frost — CRM-specific design tokens */
 .crm-shell {
   --crm-sidebar-bg: #0d2117;
