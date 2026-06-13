@@ -28,7 +28,13 @@ export default function Backlog({
 }: BacklogProps) {
   return (
     <section
-      className={cn(crm.card, 'flex max-h-[calc(100dvh-220px)] flex-col', dropActive && 'ring-2 ring-rose-300')}
+      className={cn(
+        crm.card,
+        // Sticky on desktop so the backlog follows the board down — no scrolling back up to grab a
+        // card when planning a job on a later week. Capped under viewport height with its own scroll.
+        'flex max-h-[calc(100dvh-220px)] flex-col lg:sticky lg:top-3 lg:self-start',
+        dropActive && 'ring-2 ring-rose-300',
+      )}
       onDragOver={onDragOver}
       onDrop={onDropUnschedule}
     >
