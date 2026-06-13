@@ -684,6 +684,7 @@ export type SegmentActions = {
   onRemoveCrew: (seg: OpsSegment, memberId: string) => void;
   onReorder: (seg: OpsSegment, direction: 'up' | 'down') => void;
   onCopyToTruck: (seg: OpsSegment) => void;
+  onDelete: (seg: OpsSegment) => void;
 };
 
 // The shared inner content of a scheduled-job card (status rail, header with kebab, project/client/
@@ -770,6 +771,36 @@ export function SegmentCardBody({
             <div className="ml-auto flex items-center gap-1">
               {truckName && <span className="truncate text-[9px] font-semibold text-slate-400">{truckName}</span>}
               <CrewAvatars crew={seg.crew} />
+            </div>
+          </div>
+        </>
+      ) : seg.placeholder_title ? (
+        <>
+          <div className="flex items-center gap-2">
+            {truckColor && <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: truckColor }} />}
+            <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-dashed border-slate-300 bg-slate-50 px-1.5 py-px text-[9px] font-bold uppercase tracking-wide text-slate-500">
+              Platshållare
+            </span>
+            {canWrite && (
+              <button
+                type="button"
+                onClick={() => actions.onDelete(seg)}
+                aria-label="Ta bort platshållare"
+                className="relative z-20 ml-auto rounded p-0.5 text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <path d="M18 6 6 18M6 6l12 12" />
+                </svg>
+              </button>
+            )}
+          </div>
+          <div className="mt-1.5 truncate text-[13px] font-bold leading-tight text-slate-800">{seg.placeholder_title}</div>
+          {seg.placeholder_customer && <div className="truncate text-[11px] text-slate-500">{seg.placeholder_customer}</div>}
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <JobTypeOrMaterial jobType={resolveJobTypeFrom(jobTypes, seg.job_type)} material={null} />
+            <div className="ml-auto flex items-center gap-1">
+              {truckName && <span className="truncate text-[9px] font-semibold text-slate-400">{truckName}</span>}
+              <CreatorBadge name={seg.created_by_name} />
             </div>
           </div>
         </>

@@ -22,6 +22,17 @@ export const placeSegmentSchema = z.object({
   job_type: jobType.optional(),
 });
 
+// Create a placeholder placement (booked slot before a CRM work order exists). Carries its own
+// title/customer instead of a work_order_id.
+export const createPlaceholderSchema = z.object({
+  title: z.string().trim().min(1, 'Ange en titel').max(120, 'Titeln är för lång'),
+  customer: z.string().trim().max(120).nullable().optional(),
+  truck_id: z.string().uuid('Ogiltig bil'),
+  start_day: isoDate,
+  end_day: isoDate,
+  job_type: jobType.optional(),
+});
+
 export const moveSegmentSchema = z.object({
   truck_id: z.string().uuid('Ogiltig bil').optional(),
   start_day: isoDate.optional(),

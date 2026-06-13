@@ -25,6 +25,7 @@ import DepotManagerModal from './DepotManagerModal';
 import DepotStockModal from './DepotStockModal';
 import JobTypeManagerModal from './JobTypeManagerModal';
 import ActivityLogModal from './ActivityLogModal';
+import PlaceholderModal, { type PlaceholderInput } from './PlaceholderModal';
 
 type View = 'week' | 'month';
 type DragData =
@@ -74,6 +75,7 @@ export default function PlanningClient({
   const [stockOpen, setStockOpen] = useState(false);
   const [jobTypeManagerOpen, setJobTypeManagerOpen] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
+  const [placeholderOpen, setPlaceholderOpen] = useState(false);
 
   const dragRef = useRef<DragData | null>(null);
   const todayISO = useMemo(() => fmtISO(new Date()), []);
@@ -384,7 +386,13 @@ export default function PlanningClient({
     [unschedule],
   );
 
-  const onSegClick = useCallback((seg: OpsSegment) => router.push(`/crm/arbetsorder/${seg.work_order_id}`), [router]);
+  // Placeholders have no work order to open; clicking one is a no-op (edit/link comes in a later slice).
+  const onSegClick = useCallback(
+    (seg: OpsSegment) => {
+      if (seg.work_order_id) router.push(`/crm/arbetsorder/${seg.work_order_id}`);
+    },
+    [router],
+  );
   const onSetJobType = useCallback((seg: OpsSegment, jobType: string | null) => void move(seg.id, { job_type: jobType }), [move]);
   const onToggleHold = useCallback((seg: OpsSegment, value: boolean) => void move(seg.id, { on_hold: value }), [move]);
   const onResize = useCallback((seg: OpsSegment, startDay: string, endDay: string) => void move(seg.id, { start_day: startDay, end_day: endDay }), [move]);
@@ -535,6 +543,23 @@ export default function PlanningClient({
     [copySeg, refresh, toast],
   );
 
+  // Create a placeholder card (booked slot before the real work order exists).
+  const createPlaceholder = useCallback(
+    async (input: PlaceholderInput) => {
+      const r = await fetch(`${API}/placeholders`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input),
+      });
+      const j = await r.json();
+      if (!j.ok) return toast.error(j.error || 'Kunde inte skapa platshållaren');
+      setPlaceholderOpen(false);
+      toast.success('Platshållare skapad');
+      await refresh();
+    },
+    [refresh, toast],
+  );
+
   // ── filters ───────────────────────────────────────────────────────────────
   const q = search.trim().toLowerCase();
   const matchJob = useCallback(
@@ -600,8 +625,8 @@ export default function PlanningClient({
   );
 
   const actions = useMemo<SegmentActions>(
-    () => ({ onSetStatus, onSetJobType, onToggleHold, onOpenConfirm: openConfirm, onResize, onAddCrew: addCrew, onRemoveCrew: removeCrew, onReorder: reorderSegment, onCopyToTruck: (seg) => setCopySeg(seg) }),
-    [onSetStatus, onSetJobType, onToggleHold, openConfirm, onResize, addCrew, removeCrew, reorderSegment],
+    () => ({ onSetStatus, onSetJobType, onToggleHold, onOpenConfirm: openConfirm, onResize, onAddCrew: addCrew, onRemoveCrew: removeCrew, onReorder: reorderSegment, onCopyToTruck: (seg) => setCopySeg(seg), onDelete: (seg) => unschedule(seg.id) }),
+    [onSetStatus, onSetJobType, onToggleHold, openConfirm, onResize, addCrew, removeCrew, reorderSegment, unschedule],
   );
 
   return (
@@ -759,6 +784,17 @@ export default function PlanningClient({
             </svg>
             Logg
           </button>
+          {canWrite && (
+            <button
+              onClick={() => setPlaceholderOpen(true)}
+              className="inline-flex h-[30px] items-center gap-1.5 rounded-full border border-dashed border-[#c8d4c3] bg-white px-3 text-[12px] font-semibold text-slate-500 transition hover:border-emerald-400 hover:text-emerald-600"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18M12 14v4M10 16h4" />
+              </svg>
+              Ny platshållare
+            </button>
+          )}
         </div>
       </div>
 
@@ -942,6 +978,17 @@ export default function PlanningClient({
 
       {/* Activity log (audit trail) */}
       {activityOpen && <ActivityLogModal onClose={() => setActivityOpen(false)} />}
+
+      {/* New placeholder (booked slot before a work order exists) */}
+      {placeholderOpen && (
+        <PlaceholderModal
+          trucks={trucks}
+          jobTypes={jobTypes}
+          defaultDay={todayISO}
+          onClose={() => setPlaceholderOpen(false)}
+          onCreate={createPlaceholder}
+        />
+      )}
     </div>
   );
 }

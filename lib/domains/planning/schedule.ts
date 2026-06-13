@@ -16,12 +16,12 @@ export function validateSegmentDates(startDay: string, endDay: string): 'invalid
 }
 
 const SEGMENT_SELECT =
-  'id, work_order_id, truck_id, start_day, end_day, sort_index, job_type, on_hold, created_by, created_by_name, created_at, updated_at, ' +
+  'id, work_order_id, truck_id, start_day, end_day, sort_index, job_type, on_hold, created_by, created_by_name, placeholder_title, placeholder_customer, created_at, updated_at, ' +
   'work_order:crm_work_orders(order_number, fortnox_order_number, project_name, client_name, status, customer_snapshot, work_address, line_items)';
 
 type RawSegment = {
   id: string;
-  work_order_id: string;
+  work_order_id: string | null;
   truck_id: string;
   start_day: string;
   end_day: string;
@@ -30,6 +30,8 @@ type RawSegment = {
   on_hold: boolean;
   created_by: string | null;
   created_by_name: string | null;
+  placeholder_title: string | null;
+  placeholder_customer: string | null;
   created_at: string;
   updated_at: string;
   work_order: WorkOrderJobRow | WorkOrderJobRow[] | null;
@@ -51,6 +53,8 @@ export function mapSegment(row: RawSegment): OpsSegment {
     on_hold: row.on_hold ?? false,
     created_by: row.created_by,
     created_by_name: row.created_by_name ?? null,
+    placeholder_title: row.placeholder_title ?? null,
+    placeholder_customer: row.placeholder_customer ?? null,
     created_at: row.created_at,
     updated_at: row.updated_at,
     job: wo ? mapWorkOrderJob(wo) : null,
@@ -78,17 +82,18 @@ export async function listSegments(
 
   const segs = ((data ?? []) as unknown as RawSegment[]).map(mapSegment);
   // Attach each job's blown-sack total + confirmation state (both summed/keyed by work order), and
-  // the crew assigned to each individual placement (keyed by segment id).
-  const workOrderIds = [...new Set(segs.map((s) => s.work_order_id))];
+  // the crew assigned to each individual placement (keyed by segment id). Placeholders have no work
+  // order, so they contribute no ids here.
+  const workOrderIds = [...new Set(segs.map((s) => s.work_order_id))].filter((id): id is string => id != null);
   const [reported, crewBySegment, confirmations] = await Promise.all([
     reportedSacksByWorkOrder(supabase, workOrderIds),
     listCrewBySegment(supabase, segs.map((s) => s.id)),
     confirmationsByWorkOrder(supabase, workOrderIds),
   ]);
   for (const s of segs) {
-    s.sacks_reported = reported.get(s.work_order_id) ?? 0;
+    s.sacks_reported = s.work_order_id ? reported.get(s.work_order_id) ?? 0 : 0;
     s.crew = crewBySegment.get(s.id) ?? [];
-    s.confirmation = confirmations.get(s.work_order_id) ?? { ...EMPTY_CONFIRMATION };
+    s.confirmation = (s.work_order_id && confirmations.get(s.work_order_id)) || { ...EMPTY_CONFIRMATION };
   }
   return { data: segs, error: null };
 }
@@ -126,6 +131,42 @@ export async function placeSegment(
       start_day: input.startDay,
       end_day: input.endDay,
       sort_index: input.sortIndex ?? 0,
+      job_type: input.jobType ?? null,
+      created_by: input.actorUserId,
+      created_by_name: input.actorName ?? null,
+    })
+    .select(SEGMENT_SELECT)
+    .single();
+
+  return { data: data ? mapSegment(data as unknown as RawSegment) : null, error };
+}
+
+export type PlaceholderSegmentInput = {
+  title: string;
+  customer?: string | null;
+  truckId: string;
+  startDay: string;
+  endDay: string;
+  jobType?: string | null;
+  actorUserId: string;
+  actorName?: string | null;
+};
+
+// A placeholder placement (no work order yet): a booked slot a sales rep blocks before the real
+// order exists. work_order_id stays null; the CHECK requires placeholder_title instead.
+export async function createPlaceholderSegment(
+  supabase: SupabaseClient,
+  input: PlaceholderSegmentInput,
+): Promise<{ data: OpsSegment | null; error: { message: string } | null }> {
+  const { data, error } = await supabase
+    .from('ops_segments')
+    .insert({
+      work_order_id: null,
+      placeholder_title: input.title,
+      placeholder_customer: input.customer ?? null,
+      truck_id: input.truckId,
+      start_day: input.startDay,
+      end_day: input.endDay,
       job_type: input.jobType ?? null,
       created_by: input.actorUserId,
       created_by_name: input.actorName ?? null,

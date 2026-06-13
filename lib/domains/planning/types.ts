@@ -36,10 +36,12 @@ export type OpsDepot = {
   active: boolean;
 };
 
-// One scheduled placement of a work order on a truck across a day-range.
+// One scheduled placement on a truck across a day-range. Normally a CRM work order, but may be a
+// placeholder (work_order_id null) — a booked slot a sales rep blocks before the real order exists,
+// carrying its own title/customer until a later slice links it to the work order.
 export type OpsSegment = {
   id: string;
-  work_order_id: string;
+  work_order_id: string | null;
   truck_id: string;
   start_day: string; // 'YYYY-MM-DD'
   end_day: string; // 'YYYY-MM-DD'
@@ -56,7 +58,10 @@ export type OpsSegment = {
   created_by_name: string | null;
   created_at: string;
   updated_at: string;
-  // The job's card data (null only if the related work order is unreadable, which shouldn't happen).
+  // Placeholder title/customer when this is a booked slot without a work order yet (else null).
+  placeholder_title: string | null;
+  placeholder_customer: string | null;
+  // The job's card data (null for a placeholder, or if the related work order is unreadable).
   job: JobDisplay | null;
   // Total sacks blown for this job across all its segments' reports (per-day sack reporting).
   sacks_reported: number;
