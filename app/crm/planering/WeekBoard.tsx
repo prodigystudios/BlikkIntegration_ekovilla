@@ -45,12 +45,12 @@ type WeekBoardProps = {
 function DefaultCrewAvatars({ team }: { team: DefaultCrewMember[] }) {
   if (team.length === 0) return null;
   return (
-    <div className="flex items-center -space-x-1.5">
+    <div className="flex items-center space-x-0.5">
       {team.map((m) => (
         <span key={m.id} className="relative inline-grid h-5 w-5 place-items-center rounded-full text-[7px] font-bold text-white ring-1 ring-white" style={{ backgroundColor: crewColor(m.member_id ?? m.member_name) }} title={`${m.member_name}${m.role === 'leader' ? ' (teamledare)' : ''}`}>
           {crewInitials(m.member_name)}
           {m.role === 'leader' && (
-            <svg className="absolute -right-1 -top-1 text-amber-500" width="8" height="8" viewBox="0 0 24 24" fill="currentColor" stroke="white" strokeWidth="1.5"><path d="M12 2l3 7h7l-5.5 4.5L18 21l-6-4-6 4 1.5-7.5L2 9h7z" /></svg>
+            <svg className="absolute right-5 -top-1 text-amber-500" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="white" strokeWidth="1.5"><path d="M12 2l3 7h7l-5.5 4.5L18 21l-6-4-6 4 1.5-7.5L2 9h7z" /></svg>
           )}
         </span>
       ))}
