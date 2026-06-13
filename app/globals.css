@@ -3,18 +3,19 @@
 @tailwind utilities;
 
 /* Tailwind preflight is disabled project-wide (see tailwind.config.js → corePlugins.preflight:false),
-   so there is no global `border-width: 0` reset. Any element with a border *style* (e.g. the
-   `border-solid` utility) but no explicit width on a given side falls back to the CSS-initial
-   `medium` (~3px) border on that side — phantom borders that eat layout space. The planning boards
-   (week + month) use `border-solid` for their grid lines, so restore the reset *scoped to those
-   boards only* (in @layer base so real width utilities like `border-l`/`border-b` still win).
-   The proper app-wide fix (re-enable preflight / a global reset) is deferred: it would make
-   currently-hidden Tailwind div-borders appear across the not-yet-rebuilt non-CRM surfaces. */
+   so there is no global `border-width: 0 / border-style: solid` reset. A plain `border` utility on a
+   <div>/<span> then draws NOTHING (style defaults to none), and a `border-solid` without a width util
+   gets a phantom `medium` (~3px) border. Restore Tailwind's own preflight border reset scoped to the
+   whole planning surface (in @layer base so real width utilities like `border`/`border-l` still win),
+   so every bordered element — cards, grid lines, badges, the backlog — draws a clean hairline with no
+   phantom borders. The app-wide fix is deferred (would surface hidden borders on not-yet-rebuilt
+   non-CRM surfaces), hence the scope to .planning-density. */
 @layer base {
-  .planning-board *,
-  .planning-board *::before,
-  .planning-board *::after {
+  .planning-density *,
+  .planning-density *::before,
+  .planning-density *::after {
     border-width: 0;
+    border-style: solid;
   }
 
   /* The custom planning overlays (admin, activity log, placeholder) use plain `border` utilities on
