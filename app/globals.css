@@ -33,7 +33,7 @@
    to a denser default (≈ two Safari zoom-out notches). `zoom` re-rasterises like browser zoom, so
    text stays crisp and layout/scroll stay correct (unlike transform:scale). Tune via the variable. */
 .planning-density {
-  --planning-zoom: 0.80;
+  --planning-zoom: 1;
   zoom: var(--planning-zoom);
 }
 
