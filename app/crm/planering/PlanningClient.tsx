@@ -655,6 +655,7 @@ export default function PlanningClient({
   );
 
   return (
+    <>
     <div className="planning-density">
       {/* Header */}
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
@@ -894,7 +895,10 @@ export default function PlanningClient({
         <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-violet-400" />Pågående</span>
         <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-emerald-500" />Fakturera</span>
       </div>
+    </div>
 
+      {/* Modals/overlays live OUTSIDE .planning-density so their `fixed` positioning isn't thrown
+          off by the zoom — they render at 100% and stay centred. */}
       {/* Truck picker (month placement) */}
       {truckPicker && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4" onClick={() => setTruckPicker(null)}>
@@ -975,6 +979,6 @@ export default function PlanningClient({
           onCreate={createPlaceholder}
         />
       )}
-    </div>
+    </>
   );
 }
