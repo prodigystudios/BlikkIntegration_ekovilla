@@ -864,7 +864,7 @@ export default function PlanningClient({
       {/* Truck picker (month placement) */}
       {truckPicker && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4" onClick={() => setTruckPicker(null)}>
-          <div className="w-full max-w-xs rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
+          <div className="planning-modal w-full max-w-xs rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
             <h3 className="mb-3 text-[13px] font-bold text-slate-900">Välj bil</h3>
             <div className="grid gap-1.5">
               {trucks.map((t) => (
@@ -886,7 +886,7 @@ export default function PlanningClient({
       {/* Copy-to-truck picker (freestanding duplicate of a scheduled job) */}
       {copySeg && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4" onClick={() => setCopySeg(null)}>
-          <div className="w-full max-w-xs rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
+          <div className="planning-modal w-full max-w-xs rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-[13px] font-bold text-slate-900">Kopiera till bil</h3>
             <p className="mb-3 mt-0.5 text-[11px] text-slate-500">
               Skapar en kopia av <strong>{copySeg.job?.ref ?? 'jobbet'}</strong> på vald bil ({copySeg.start_day === copySeg.end_day ? copySeg.start_day : `${copySeg.start_day}–${copySeg.end_day}`}).

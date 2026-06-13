@@ -163,7 +163,7 @@ export default function ActivityLogModal({ onClose }: { onClose: () => void }) {
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-slate-900/40 p-4 sm:p-6" onClick={onClose}>
       <div
-        className="flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] shadow-xl"
+        className="planning-modal flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-[#e0e8dc] bg-white px-4 py-3">

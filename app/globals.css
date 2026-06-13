@@ -16,6 +16,17 @@
   .planning-board *::after {
     border-width: 0;
   }
+
+  /* The custom planning overlays (admin, activity log, placeholder) use plain `border` utilities on
+     <div>s, which render nothing with preflight off (no border-style). Restore Tailwind's own
+     preflight border reset (width:0 + style:solid) scoped to those modals, so width utilities draw a
+     hairline and elements without one get no phantom `medium` border. */
+  .planning-modal *,
+  .planning-modal *::before,
+  .planning-modal *::after {
+    border-width: 0;
+    border-style: solid;
+  }
 }
 
 /* Melodic Frost — CRM-specific design tokens */
