@@ -145,7 +145,8 @@ export default function MonthGrid({
                         key={seg.id}
                         draggable={canWrite}
                         onDragStart={(ev) => onSegDragStart(ev, seg)}
-                        onClick={(ev) => {
+                        onClick={(ev) => ev.stopPropagation()}
+                        onDoubleClick={(ev) => {
                           ev.stopPropagation();
                           onSegClick(seg);
                         }}

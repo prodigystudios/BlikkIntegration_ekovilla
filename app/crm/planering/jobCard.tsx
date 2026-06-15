@@ -473,10 +473,7 @@ export function SegmentMenu({
                         <button
                           key={st}
                           type="button"
-                          onClick={() => {
-                            onSetStatus(st);
-                            setOpen(false);
-                          }}
+                          onClick={() => onSetStatus(st)}
                           className={cn(
                             'flex w-full items-center gap-2 rounded-lg border px-2 py-1 text-left text-[11px] font-semibold transition',
                             active ? m.pill : 'border-transparent text-slate-600 hover:bg-slate-50',
@@ -500,10 +497,7 @@ export function SegmentMenu({
                         <button
                           key={t.key}
                           type="button"
-                          onClick={() => {
-                            onSetJobType(active ? null : t.key);
-                            setOpen(false);
-                          }}
+                          onClick={() => onSetJobType(active ? null : t.key)}
                           className={cn(
                             'flex w-full items-center gap-2 rounded-lg border px-2 py-1 text-left text-[11px] font-semibold transition',
                             active ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-transparent text-slate-600 hover:bg-slate-50',
@@ -526,10 +520,7 @@ export function SegmentMenu({
                         <button
                           type="button"
                           disabled={order.index === 0}
-                          onClick={() => {
-                            order.onMove('up');
-                            setOpen(false);
-                          }}
+                          onClick={() => order.onMove('up')}
                           title="Tidigare"
                           className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-slate-50 p-0 text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
                         >
@@ -539,10 +530,7 @@ export function SegmentMenu({
                         <button
                           type="button"
                           disabled={order.index === order.total - 1}
-                          onClick={() => {
-                            order.onMove('down');
-                            setOpen(false);
-                          }}
+                          onClick={() => order.onMove('down')}
                           title="Senare"
                           className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-slate-50 p-0 text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
                         >
@@ -559,10 +547,7 @@ export function SegmentMenu({
                       <button
                         key={d}
                         type="button"
-                        onClick={() => {
-                          onSetLength(d);
-                          setOpen(false);
-                        }}
+                        onClick={() => onSetLength(d)}
                         className={cn(
                           'h-7 flex-1 rounded-md p-0 text-[11px] font-bold tabular-nums transition',
                           d === lengthDays ? 'bg-emerald-600 text-white shadow-sm' : 'bg-slate-50 text-slate-600 hover:bg-slate-100',
@@ -619,10 +604,7 @@ export function SegmentMenu({
               <div className="mt-3 grid grid-cols-2 gap-2 border-t border-[#eef3eb] pt-3">
                 <button
                   type="button"
-                  onClick={() => {
-                    onToggleHold();
-                    setOpen(false);
-                  }}
+                  onClick={() => onToggleHold()}
                   className={cn(
                     'flex items-center justify-center gap-1.5 rounded-lg border px-2 py-1.5 text-[11px] font-semibold transition',
                     onHold ? 'border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100' : 'border-[#e0e8dc] bg-white text-slate-600 hover:bg-slate-50',

@@ -373,7 +373,8 @@ export default function WeekBoard({
                           key={seg.id}
                           draggable={canWrite}
                           onDragStart={(ev) => onSegDragStart(ev, seg)}
-                          onClick={(ev) => {
+                          onClick={(ev) => ev.stopPropagation()}
+                          onDoubleClick={(ev) => {
                             ev.stopPropagation();
                             if (suppressClickRef.current) return;
                             onSegClick(seg);
