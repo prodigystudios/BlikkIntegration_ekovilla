@@ -333,7 +333,7 @@ export function JobRef({ job, className }: { job: Pick<JobDisplay, 'ref' | 'is_f
   return (
     <span
       className={cn(
-        'whitespace-nowrap text-[12px] font-extrabold tabular-nums tracking-tight',
+        'whitespace-nowrap text-[10px] font-extrabold tabular-nums tracking-tight',
         job.is_fortnox_ref ? 'text-[#1f4a2e]' : 'font-bold text-slate-400',
         className,
       )}
@@ -473,10 +473,7 @@ export function SegmentMenu({
                         <button
                           key={st}
                           type="button"
-                          onClick={() => {
-                            onSetStatus(st);
-                            setOpen(false);
-                          }}
+                          onClick={() => onSetStatus(st)}
                           className={cn(
                             'flex w-full items-center gap-2 rounded-lg border px-2 py-1 text-left text-[11px] font-semibold transition',
                             active ? m.pill : 'border-transparent text-slate-600 hover:bg-slate-50',
@@ -500,10 +497,7 @@ export function SegmentMenu({
                         <button
                           key={t.key}
                           type="button"
-                          onClick={() => {
-                            onSetJobType(active ? null : t.key);
-                            setOpen(false);
-                          }}
+                          onClick={() => onSetJobType(active ? null : t.key)}
                           className={cn(
                             'flex w-full items-center gap-2 rounded-lg border px-2 py-1 text-left text-[11px] font-semibold transition',
                             active ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-transparent text-slate-600 hover:bg-slate-50',
@@ -526,10 +520,7 @@ export function SegmentMenu({
                         <button
                           type="button"
                           disabled={order.index === 0}
-                          onClick={() => {
-                            order.onMove('up');
-                            setOpen(false);
-                          }}
+                          onClick={() => order.onMove('up')}
                           title="Tidigare"
                           className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-slate-50 p-0 text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
                         >
@@ -539,10 +530,7 @@ export function SegmentMenu({
                         <button
                           type="button"
                           disabled={order.index === order.total - 1}
-                          onClick={() => {
-                            order.onMove('down');
-                            setOpen(false);
-                          }}
+                          onClick={() => order.onMove('down')}
                           title="Senare"
                           className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-slate-50 p-0 text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
                         >
@@ -559,10 +547,7 @@ export function SegmentMenu({
                       <button
                         key={d}
                         type="button"
-                        onClick={() => {
-                          onSetLength(d);
-                          setOpen(false);
-                        }}
+                        onClick={() => onSetLength(d)}
                         className={cn(
                           'h-7 flex-1 rounded-md p-0 text-[11px] font-bold tabular-nums transition',
                           d === lengthDays ? 'bg-emerald-600 text-white shadow-sm' : 'bg-slate-50 text-slate-600 hover:bg-slate-100',
@@ -619,10 +604,7 @@ export function SegmentMenu({
               <div className="mt-3 grid grid-cols-2 gap-2 border-t border-[#eef3eb] pt-3">
                 <button
                   type="button"
-                  onClick={() => {
-                    onToggleHold();
-                    setOpen(false);
-                  }}
+                  onClick={() => onToggleHold()}
                   className={cn(
                     'flex items-center justify-center gap-1.5 rounded-lg border px-2 py-1.5 text-[11px] font-semibold transition',
                     onHold ? 'border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100' : 'border-[#e0e8dc] bg-white text-slate-600 hover:bg-slate-50',
@@ -752,19 +734,19 @@ export function SegmentCardBody({
               </span>
             )}
           </div>
-          <div className="mt-1.5 truncate text-[13px] font-bold leading-tight text-slate-900">{job.project_name}</div>
-          <div className="truncate text-[11px] text-slate-500">{job.client_name}</div>
+          <div className="mt-1 truncate text-[10.5px] font-bold leading-tight text-slate-900">{job.project_name}</div>
+          <div className="truncate text-[9.5px] text-slate-500">{job.client_name}</div>
           {job.address && (
-            <div className="mt-0.5 flex items-center gap-1 text-[10.5px] text-slate-400">
+            <div className="mt-0.5 flex items-center gap-1 text-[9px] text-slate-400">
               <span className="truncate">{job.address}</span>
               <MapLink address={job.address} />
             </div>
           )}
-          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
             {seg.on_hold && <HoldBadge />}
             <JobTypeOrMaterial jobType={resolveJobTypeFrom(jobTypes, seg.job_type)} material={job.material} />
           </div>
-          <div className="mt-2 flex flex-wrap items-center gap-2">
+          <div className="mt-1.5 flex flex-wrap items-center gap-2">
             <SackProgress planned={job.total_sacks} reported={seg.sacks_reported} />
             <ConfirmationBadge confirmation={seg.confirmation} />
             <CreatorBadge name={seg.created_by_name} />
@@ -773,6 +755,13 @@ export function SegmentCardBody({
               <CrewAvatars crew={seg.crew} />
             </div>
           </div>
+          {/* Hover hint — the card opens its work order on double-click. */}
+          <span className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex justify-center pb-1 opacity-0 transition-opacity duration-150 group-hover:opacity-100">
+            <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-emerald-300 bg-white/95 px-2 py-0.5 text-[8.5px] font-bold text-emerald-700 shadow-sm">
+              <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><path d="M7 17 17 7M8 7h9v9" /></svg>
+              Dubbelklicka för att öppna
+            </span>
+          </span>
         </>
       ) : seg.placeholder_title ? (
         <>
@@ -794,8 +783,8 @@ export function SegmentCardBody({
               </button>
             )}
           </div>
-          <div className="mt-1.5 truncate text-[13px] font-bold leading-tight text-slate-800">{seg.placeholder_title}</div>
-          {seg.placeholder_customer && <div className="truncate text-[11px] text-slate-500">{seg.placeholder_customer}</div>}
+          <div className="mt-1 truncate text-[10.5px] font-bold leading-tight text-slate-800">{seg.placeholder_title}</div>
+          {seg.placeholder_customer && <div className="truncate text-[9.5px] text-slate-500">{seg.placeholder_customer}</div>}
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <JobTypeOrMaterial jobType={resolveJobTypeFrom(jobTypes, seg.job_type)} material={null} />
             <div className="ml-auto flex items-center gap-1">

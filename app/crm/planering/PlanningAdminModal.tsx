@@ -654,12 +654,15 @@ function StockPanel({ canWrite }: { canWrite: boolean }) {
           <div className={PANEL}>
             <h3 className="mb-3 text-[13.5px] font-extrabold text-[#142c1b]">Saldo per depå</h3>
             <div className="grid gap-2.5">
-              {depots.map((d) => (
+              {depots.map((d) => {
+                const shortfall = d.rows.reduce((s, r) => s + r.shortfall, 0);
+                return (
                 <div key={d.depot_id} className="rounded-xl border border-[#e0e8dc] bg-[#f9fbf7] p-3">
                   <div className="mb-1.5 flex items-baseline justify-between gap-2">
-                    <span className="flex items-center gap-2">
+                    <span className="flex flex-wrap items-center gap-2">
                       <span className="text-[13px] font-bold text-slate-800">{d.depot_name}</span>
-                      {d.rows.some((r) => r.balance < 0) && <span className="rounded-full border border-rose-200 bg-rose-50 px-2 py-px text-[9px] font-bold text-rose-700">Underskott</span>}
+                      {shortfall > 0 && <span className="rounded-full border border-rose-200 bg-rose-50 px-2 py-px text-[9px] font-bold text-rose-700">Lager räcker inte · −{shortfall}</span>}
+                      {shortfall === 0 && d.rows.some((r) => r.balance < 0) && <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-px text-[9px] font-bold text-amber-700">Underskott</span>}
                     </span>
                     <span className={cn('shrink-0 text-[12px] font-bold tabular-nums', balanceClass(d.total_balance))}>{d.total_balance} säck</span>
                   </div>
@@ -667,7 +670,7 @@ function StockPanel({ canWrite }: { canWrite: boolean }) {
                     <p className="text-[11px] text-slate-400">Inga rörelser än.</p>
                   ) : (
                     <table className="w-full text-[11.5px]">
-                      <thead><tr className="text-left text-[10px] uppercase tracking-wide text-slate-400"><th className="font-semibold">Material</th><th className="text-right font-semibold">Levererat</th><th className="text-right font-semibold">Förbrukat</th><th className="text-right font-semibold">Saldo</th></tr></thead>
+                      <thead><tr className="text-left text-[10px] uppercase tracking-wide text-slate-400"><th className="font-semibold">Material</th><th className="text-right font-semibold">Levererat</th><th className="text-right font-semibold">Förbrukat</th><th className="text-right font-semibold">Saldo</th><th className="text-right font-semibold">Planerat</th><th className="text-right font-semibold">Räcker?</th></tr></thead>
                       <tbody>
                         {d.rows.map((r) => (
                           <tr key={r.material} className="border-t border-[#eef3eb]">
@@ -675,14 +678,19 @@ function StockPanel({ canWrite }: { canWrite: boolean }) {
                             <td className="py-1 text-right tabular-nums text-slate-500">{r.delivered}</td>
                             <td className="py-1 text-right tabular-nums text-slate-500">{r.consumed}</td>
                             <td className={cn('py-1 text-right font-bold tabular-nums', balanceClass(r.balance))}>{r.balance}</td>
+                            <td className="py-1 text-right tabular-nums text-slate-500">{r.planned}</td>
+                            <td className="py-1 text-right font-bold tabular-nums">
+                              {r.shortfall > 0 ? <span className="text-rose-600">−{r.shortfall}</span> : <span className="text-emerald-600">✓</span>}
+                            </td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
                   )}
                 </div>
-              ))}
-              <p className="text-[10.5px] text-slate-400">Förbrukning fylls i automatiskt när installatörernas säckrapportering är på plats.</p>
+                );
+              })}
+              <p className="text-[10.5px] text-slate-400">Planerat = säckar bokade på öppna jobb från depån. "Räcker?" visar om lagret täcker det planerade. Förbrukning fylls i automatiskt när installatörernas säckrapportering är på plats.</p>
             </div>
           </div>
         )}

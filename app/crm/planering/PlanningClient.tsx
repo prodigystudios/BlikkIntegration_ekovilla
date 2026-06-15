@@ -11,6 +11,7 @@ import type { AssignablePerson, CrewMember } from '@/lib/domains/planning/crew';
 import type { DayNote } from '@/lib/domains/planning/dayNotes';
 import type { TruckCrewMember } from '@/lib/domains/planning/truckCrew';
 import type { DefaultCrewMember } from '@/lib/domains/planning/defaultCrew';
+import type { DepotBalance } from '@/lib/domains/planning/depotStock';
 import { DEFAULT_JOB_TYPES, type JobType, type JobTypeRow } from '@/lib/domains/planning/jobTypes';
 import {
   addDays, addDaysISO, buildMonthWeeks, buildWeekDays, daysBetweenInclusive, fmtISO, isoWeek, startOfWeek, swedishMonthYear,
@@ -24,8 +25,9 @@ import ConfirmModal from './ConfirmModal';
 import PlanningAdminModal from './PlanningAdminModal';
 import ActivityLogModal from './ActivityLogModal';
 import PlaceholderModal, { type PlaceholderInput } from './PlaceholderModal';
+import InsightsView from './InsightsView';
 
-type View = 'week' | 'month';
+type View = 'week' | 'month' | 'insights';
 type DragData =
   | { kind: 'backlog'; id: string }
   | { kind: 'segment'; id: string; start: string; end: string; truckId: string };
@@ -58,7 +60,9 @@ export default function PlanningClient({
   const [dayNotes, setDayNotes] = useState<DayNote[]>([]);
   const [truckCrew, setTruckCrew] = useState<TruckCrewMember[]>([]);
   const [defaultCrew, setDefaultCrew] = useState<DefaultCrewMember[]>([]);
+  const [depotStock, setDepotStock] = useState<DepotBalance[]>([]);
   const [loadingBacklog, setLoadingBacklog] = useState(true);
+  const [boardLoaded, setBoardLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -123,6 +127,7 @@ export default function PlanningClient({
     if (!j.ok) throw new Error(j.error || 'Kunde inte hämta schemat');
     setSegments(j.data.segments as OpsSegment[]);
     setTrucks(j.data.trucks as OpsTruck[]);
+    setBoardLoaded(true);
   }, []);
 
   const loadDayNotes = useCallback(async (from: string, to: string) => {
@@ -145,6 +150,14 @@ export default function PlanningClient({
     const r = await fetch(`${API}/default-crew`, { cache: 'no-store' });
     const j = await r.json();
     if (j.ok) setDefaultCrew(j.data.crew as DefaultCrewMember[]);
+  }, []);
+
+  // Depot stock + planned demand — range-independent (all open booked jobs vs current stock). Drives
+  // the "lager räcker inte"-banner so planners catch a shortfall before over-committing.
+  const loadDepotStock = useCallback(async () => {
+    const r = await fetch(`${API}/depot-stock`, { cache: 'no-store' });
+    const j = await r.json();
+    if (j.ok) setDepotStock(j.data.depots as DepotBalance[]);
   }, []);
 
   useEffect(() => {
@@ -214,7 +227,8 @@ export default function PlanningClient({
     loadDayNotes(range.from, range.to).catch(() => {});
     loadTruckCrew(range.from, range.to).catch(() => {});
     loadDefaultCrew().catch(() => {});
-  }, [range.from, range.to, loadSegments, loadDayNotes, loadTruckCrew, loadDefaultCrew]);
+    loadDepotStock().catch(() => {});
+  }, [range.from, range.to, loadSegments, loadDayNotes, loadTruckCrew, loadDefaultCrew, loadDepotStock]);
 
   // ── Realtime: ~10 planners work this board at once, so reflect each other's changes live to
   // avoid double-bookings + missed updates. Subscribe once to ops_* changes and debounce-refetch
@@ -227,6 +241,7 @@ export default function PlanningClient({
     loadDayNotes(range.from, range.to).catch(() => {});
     loadTruckCrew(range.from, range.to).catch(() => {});
     loadDefaultCrew().catch(() => {});
+    loadDepotStock().catch(() => {});
     loadBacklog().catch(() => {});
     loadJobTypes().catch(() => {});
   };
@@ -280,32 +295,62 @@ export default function PlanningClient({
       const j = await r.json();
       if (!j.ok) return toast.error(j.error || 'Kunde inte placera ordern');
       toast.success('Order placerad');
-      await refresh();
+      // Append the created segment locally instead of refetching the whole board; bump the source
+      // job's backlog count so its badge stays in sync.
+      if (j.data?.item) {
+        setSegments((prev) => [...prev, j.data.item as OpsSegment]);
+        setBacklog((prev) => prev.map((b) => (b.id === workOrderId ? { ...b, segment_count: b.segment_count + 1 } : b)));
+      } else {
+        refresh();
+      }
     },
     [refresh, toast],
   );
 
   const move = useCallback(
     async (id: string, patch: { truck_id?: string; start_day?: string; end_day?: string; job_type?: string | null; on_hold?: boolean }) => {
+      // Optimistic: reflect the change locally at once so the card doesn't snap back to its old value
+      // while the PATCH is in flight (and a full refetch lands). Re-sync from the server only on error.
+      setSegments((cur) =>
+        cur.map((s) =>
+          s.id === id
+            ? {
+                ...s,
+                ...(patch.truck_id !== undefined ? { truck_id: patch.truck_id } : {}),
+                ...(patch.start_day !== undefined ? { start_day: patch.start_day } : {}),
+                ...(patch.end_day !== undefined ? { end_day: patch.end_day } : {}),
+                ...(patch.job_type !== undefined ? { job_type: patch.job_type } : {}),
+                ...(patch.on_hold !== undefined ? { on_hold: patch.on_hold } : {}),
+              }
+            : s,
+        ),
+      );
       const r = await fetch(`${API}/segments/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(patch),
       });
       const j = await r.json();
-      if (!j.ok) return toast.error(j.error || 'Kunde inte flytta jobbet');
-      await refresh();
+      if (!j.ok) {
+        toast.error(j.error || 'Kunde inte flytta jobbet');
+        refresh();
+      }
     },
     [refresh, toast],
   );
 
   const unschedule = useCallback(
     async (id: string) => {
+      // Optimistic: drop the card at once; re-sync from the server only if the delete fails.
+      setSegments((prev) => prev.filter((s) => s.id !== id));
       const r = await fetch(`${API}/segments/${id}`, { method: 'DELETE' });
       const j = await r.json();
-      if (!j.ok) return toast.error(j.error || 'Kunde inte avplanera');
+      if (!j.ok) {
+        toast.error(j.error || 'Kunde inte avplanera');
+        refresh();
+        return;
+      }
       toast.success('Jobbet avplanerat');
-      await refresh();
     },
     [refresh, toast],
   );
@@ -634,6 +679,9 @@ export default function PlanningClient({
     async (seg: OpsSegment, direction: 'up' | 'down') => {
       const changes = reorderWithinGroup(dayGroup(segments, seg), seg.id, direction);
       if (!changes.length) return;
+      // Optimistic: apply the new sort_index locally before the PATCHes land.
+      const order = new Map(changes.map((c) => [c.id, c.sort_index]));
+      setSegments((cur) => cur.map((s) => (order.has(s.id) ? { ...s, sort_index: order.get(s.id) as number } : s)));
       const results = await Promise.all(
         changes.map((ch) =>
           fetch(`${API}/segments/${ch.id}`, {
@@ -643,8 +691,10 @@ export default function PlanningClient({
           }).then((r) => r.json()),
         ),
       );
-      if (results.some((j) => !j.ok)) toast.error('Kunde inte ändra ordningen');
-      await refresh();
+      if (results.some((j) => !j.ok)) {
+        toast.error('Kunde inte ändra ordningen');
+        refresh();
+      }
     },
     [segments, refresh, toast],
   );
@@ -665,7 +715,7 @@ export default function PlanningClient({
         </div>
 
         <div className="inline-flex rounded-xl border border-[#e0e8dc] bg-white p-0.5">
-          {(['week', 'month'] as View[]).map((v) => (
+          {(['week', 'month', 'insights'] as View[]).map((v) => (
             <button
               key={v}
               onClick={() => setView(v)}
@@ -675,7 +725,7 @@ export default function PlanningClient({
               )}
               style={view === v ? { backgroundColor: 'var(--crm-primary)' } : undefined}
             >
-              {v === 'week' ? 'Vecka' : 'Månad'}
+              {({ week: 'Vecka', month: 'Månad', insights: 'Insikter' } as const)[v]}
             </button>
           ))}
         </div>
@@ -794,12 +844,38 @@ export default function PlanningClient({
 
       {error && <div className="mb-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
 
+      {/* Depot stock shortfall — the booked work needs more sacks than the depot has in stock. */}
+      {depotStock.some((d) => d.rows.some((r) => r.shortfall > 0)) && (
+        <div className="mb-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[12px] text-rose-700">
+          <div className="flex items-center gap-1.5 font-bold">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" /><path d="M12 9v4M12 17h.01" /></svg>
+            Lagret räcker inte för det som är bokat
+          </div>
+          <ul className="mt-1 grid gap-0.5 pl-0.5">
+            {depotStock.flatMap((d) =>
+              d.rows
+                .filter((r) => r.shortfall > 0)
+                .map((r) => (
+                  <li key={`${d.depot_id}-${r.material}`} className="tabular-nums">
+                    <strong>{d.depot_name}</strong> · {r.material}: planerat {r.planned}, lager {r.balance} <strong>(−{r.shortfall} säck)</strong>
+                  </li>
+                )),
+            )}
+          </ul>
+          <div className="mt-1 text-[11px] text-rose-500">Registrera en påfyllning under Administrera → Lager.</div>
+        </div>
+      )}
+
       {selected && (
         <div className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-[12px] text-emerald-800">
           <strong>{selected.project_name}</strong> vald — klicka {view === 'week' ? 'en cell (bil + dag)' : 'en dag'} för att placera, eller dra kortet.
         </div>
       )}
 
+      {view === 'insights' ? (
+        <InsightsView weeks={8} />
+      ) : (
+      <>
       <div className="grid items-start gap-4 lg:grid-cols-[320px_minmax(0,1fr)]">
         <Backlog
           items={visibleBacklog}
@@ -818,7 +894,20 @@ export default function PlanningClient({
           dropActive={backlogDropActive}
         />
 
-        {view === 'week' ? (
+        {!boardLoaded ? (
+          // Skeleton while the schedule first loads — avoids flashing "Inga bilar upplagda än".
+          <div className={cn(crm.card, 'p-3')}>
+            <div className="grid gap-2.5">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className="flex items-center gap-3">
+                  <div className="h-3 w-16 shrink-0 animate-pulse rounded bg-[#e8efe5]" />
+                  <div className="h-14 flex-1 animate-pulse rounded-xl bg-[#eef3eb]" />
+                </div>
+              ))}
+            </div>
+            <div className="mt-2.5 text-center text-[11px] text-slate-400">Laddar schema…</div>
+          </div>
+        ) : view === 'week' ? (
           <div className="grid gap-4">
             {weekMondays.map((m, i) => {
               const wd = weekDaysList[i];
@@ -895,6 +984,8 @@ export default function PlanningClient({
         <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-violet-400" />Pågående</span>
         <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-emerald-500" />Fakturera</span>
       </div>
+      </>
+      )}
     </div>
 
       {/* Modals/overlays live OUTSIDE .planning-density so their `fixed` positioning isn't thrown

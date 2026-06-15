@@ -1,4 +1,12 @@
 import { inferMaterialFromArticle, totalSacks } from '@/lib/domains/crm/materials';
+import { lineItemRowTotal, type PricingLineItem } from '@/lib/domains/crm/pricing';
+
+// A work order's revenue (omsättning) = sum of its line-item row totals, ex VAT — the same row math
+// the quote/order/Fortnox use, so the figure can't drift.
+function lineItemsRevenue(items: unknown[] | null | undefined): number {
+  if (!Array.isArray(items)) return 0;
+  return items.reduce<number>((sum, it) => sum + lineItemRowTotal(it as PricingLineItem), 0);
+}
 
 // Shared, pure display mapping for a CRM work order shown in the planning board — used by both
 // the backlog read model and the scheduled-segment read model so a job looks identical wherever
@@ -27,6 +35,8 @@ export type JobDisplay = {
   address: string | null;
   total_sacks: number;
   material: string | null;
+  // Order value ex VAT (omsättning), summed from the line items.
+  revenue: number;
 };
 
 function str(value: unknown): string {
@@ -84,5 +94,6 @@ export function mapWorkOrderJob(row: WorkOrderJobRow): JobDisplay {
     address: resolveJobAddress(row.work_address, row.customer_snapshot),
     total_sacks: totalSacks((row.line_items ?? []) as never),
     material: materialLabelFromLineItems(row.line_items),
+    revenue: lineItemsRevenue(row.line_items),
   };
 }

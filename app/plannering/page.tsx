@@ -16,8 +16,6 @@ import CalendarDayList from './components/CalendarDayList';
 import { listDayNotes, type DayNote } from '@/lib/dayNotes';
 import nextDynamic from 'next/dynamic';
 const AdminJobTypes = nextDynamic(() => import('../admin/jobtypes/AdminJobTypes'), { ssr: false });
-// NOTE: The file header was previously corrupted by an accidental paste of JSX outside any component.
-// Restoring intended interface/type declarations here.
 
 interface Project {
   id: string;

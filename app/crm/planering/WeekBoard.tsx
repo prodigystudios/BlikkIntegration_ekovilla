@@ -41,16 +41,18 @@ type WeekBoardProps = {
   onRestoreWeek: (truckId: string, startDay: string, endDay: string) => void;
 };
 
+const krFmt = new Intl.NumberFormat('sv-SE', { maximumFractionDigits: 0 });
+
 // A read-only avatar row marking the leader with a star — used for the inherited default team.
 function DefaultCrewAvatars({ team }: { team: DefaultCrewMember[] }) {
   if (team.length === 0) return null;
   return (
-    <div className="flex items-center -space-x-1.5">
+    <div className="flex items-center space-x-0.5">
       {team.map((m) => (
         <span key={m.id} className="relative inline-grid h-5 w-5 place-items-center rounded-full text-[7px] font-bold text-white ring-1 ring-white" style={{ backgroundColor: crewColor(m.member_id ?? m.member_name) }} title={`${m.member_name}${m.role === 'leader' ? ' (teamledare)' : ''}`}>
           {crewInitials(m.member_name)}
           {m.role === 'leader' && (
-            <svg className="absolute -right-1 -top-1 text-amber-500" width="8" height="8" viewBox="0 0 24 24" fill="currentColor" stroke="white" strokeWidth="1.5"><path d="M12 2l3 7h7l-5.5 4.5L18 21l-6-4-6 4 1.5-7.5L2 9h7z" /></svg>
+            <svg className="absolute right-5 -top-1 text-amber-500" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="white" strokeWidth="1.5"><path d="M12 2l3 7h7l-5.5 4.5L18 21l-6-4-6 4 1.5-7.5L2 9h7z" /></svg>
           )}
         </span>
       ))}
@@ -79,6 +81,21 @@ export default function WeekBoard({
   const dayCols = `repeat(${n}, minmax(0,1fr))`;
   const notesByDay = groupNotesByDay(dayNotes);
 
+  // Whole-week total across all trucks (deduped by work order, same basis as the per-lane totals).
+  const weekTotals = (() => {
+    const seen = new Set<string>();
+    let sacks = 0;
+    let revenue = 0;
+    for (const s of segments) {
+      if (s.end_day < weekStart || s.start_day > weekEnd) continue;
+      if (!s.job || !s.work_order_id || seen.has(s.work_order_id)) continue;
+      seen.add(s.work_order_id);
+      sacks += s.job.total_sacks;
+      revenue += s.job.revenue;
+    }
+    return { sacks, revenue, jobs: seen.size };
+  })();
+
   // First/last visible-day column a segment occupies (null when it falls entirely on hidden days).
   const segColumns = (seg: OpsSegment): { s: number; e: number } | null => {
     let s = -1;
@@ -105,15 +122,19 @@ export default function WeekBoard({
   }, []);
 
   // Pointer-drag a card's right edge to change how many days it spans (live preview via `resize`).
+  // The target day is read with elementFromPoint against a per-day overlay (rendered while resizing),
+  // not pointer-x ÷ rect math — the latter breaks under CSS `zoom` because WebKit's
+  // getBoundingClientRect ignores zoom while MouseEvent.clientX is visual, so the last day became
+  // unreachable. elementFromPoint uses the browser's own visual hit-testing, correct at any zoom.
   const startResize = (e: React.MouseEvent, seg: OpsSegment) => {
     e.stopPropagation();
     e.preventDefault();
-    const dayArea = (e.currentTarget as HTMLElement).closest('[data-dayarea]') as HTMLElement | null;
-    if (!dayArea) return;
-    const rect = dayArea.getBoundingClientRect();
     resizeEndRef.current = seg.end_day;
+    setResize({ segId: seg.id, endIso: seg.end_day }); // show the day overlay from the first move
     const onMove = (me: MouseEvent) => {
-      const idx = Math.max(0, Math.min(n - 1, Math.floor(((me.clientX - rect.left) / rect.width) * n)));
+      const cell = (document.elementFromPoint(me.clientX, me.clientY) as HTMLElement | null)?.closest('[data-dayidx]') as HTMLElement | null;
+      if (!cell) return;
+      const idx = Math.max(0, Math.min(n - 1, Number(cell.dataset.dayidx)));
       const endIso = days[idx].iso < seg.start_day ? seg.start_day : days[idx].iso;
       resizeEndRef.current = endIso;
       setResize({ segId: seg.id, endIso });
@@ -136,7 +157,16 @@ export default function WeekBoard({
       <div style={{ minWidth: 112 + n * 132 }}>
         {/* Day header */}
         <div className="mb-1.5 grid" style={{ gridTemplateColumns: laneCols }}>
-          <div />
+          {/* Whole-week total for all trucks (top-left corner, above the notes row). */}
+          <div className="flex flex-col justify-center pl-1 pr-2">
+            {weekTotals.jobs > 0 && (
+              <>
+                <span className="text-[8.5px] font-bold uppercase tracking-wide text-slate-300">Veckan totalt</span>
+                <span className="text-[10px] leading-tight tabular-nums text-slate-500"><span className="font-bold text-slate-700">{weekTotals.sacks}</span> säck</span>
+                <span className="text-[10px] leading-tight tabular-nums text-slate-500"><span className="font-bold text-slate-700">{krFmt.format(weekTotals.revenue)}</span> kr</span>
+              </>
+            )}
+          </div>
           {days.map((wd) => {
             const isToday = wd.iso === todayISO;
             const hol = swedishHoliday(wd.iso);
@@ -180,6 +210,18 @@ export default function WeekBoard({
             const laneWeekly = crewForTruckInRange(truckCrew, truck.id, weekStart, weekEnd);
             const overridden = laneWeekly.length > 0;
             const defaultTeam = defaultCrew.filter((m) => m.truck_id === truck.id);
+            const laneColor = truck.color || '#94a3b8';
+            // Weekly per-truck totals from the jobs on it, deduped by work order (a multi-segment job
+            // counts once): planned sacks to blow + revenue (omsättning, ex moms).
+            const seenWO = new Set<string>();
+            let plannedSacks = 0;
+            let revenue = 0;
+            for (const s of laneSegs) {
+              if (!s.job || !s.work_order_id || seenWO.has(s.work_order_id)) continue;
+              seenWO.add(s.work_order_id);
+              plannedSacks += s.job.total_sacks;
+              revenue += s.job.revenue;
+            }
             return (
               <div
                 key={truck.id}
@@ -257,6 +299,14 @@ export default function WeekBoard({
                       ) : null
                     )}
                   </div>
+
+                  {/* Weekly per-truck totals (planned sacks to blow · revenue ex moms). */}
+                  {seenWO.size > 0 && (
+                    <div className="mt-0.5 grid gap-0.5 pl-[18px] text-[9px] leading-tight text-slate-400" title="Planerat den här veckan">
+                      <span className="tabular-nums"><span className="font-bold text-slate-500">{plannedSacks}</span> säck planerat</span>
+                      <span className="tabular-nums"><span className="font-bold text-slate-500">{krFmt.format(revenue)}</span> kr omsättning</span>
+                    </div>
+                  )}
                 </div>
 
                 {/* Day-area: one drop zone; the target day is derived from the pointer x. */}
@@ -323,14 +373,18 @@ export default function WeekBoard({
                           key={seg.id}
                           draggable={canWrite}
                           onDragStart={(ev) => onSegDragStart(ev, seg)}
-                          onClick={(ev) => {
+                          onClick={(ev) => ev.stopPropagation()}
+                          onDoubleClick={(ev) => {
                             ev.stopPropagation();
                             if (suppressClickRef.current) return;
                             onSegClick(seg);
                           }}
-                          style={{ gridColumn: `${col.s + 1} / ${endIdx + 2}` }}
+                          // Tint the card by its truck's colour (same as the month view) so jobs read
+                          // by truck at a glance everywhere — consistent across week + month.
+                          style={{ gridColumn: `${col.s + 1} / ${endIdx + 2}`, backgroundColor: `${laneColor}1f`, borderColor: `${laneColor}66` }}
                           className={cn(
-                            'relative overflow-hidden rounded-xl border border-[#e0e8dc] bg-white p-2.5 pl-3.5 shadow-[0_1px_2px_rgba(20,44,27,0.06)] transition hover:shadow-[0_3px_10px_rgba(20,44,27,0.12)]',
+                            'group relative overflow-hidden rounded-xl border border-solid p-2.5 pl-3.5 shadow-[0_1px_2px_rgba(20,44,27,0.06)] transition hover:shadow-[0_3px_10px_rgba(20,44,27,0.12)]',
+                            seg.job && 'hover:ring-2 hover:ring-emerald-400/40',
                             canWrite ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer',
                             seg.on_hold && 'opacity-60 ring-1 ring-amber-200',
                           )}
@@ -357,6 +411,16 @@ export default function WeekBoard({
                       );
                     })}
                   </div>
+
+                  {/* Day-index hit overlay — only while resizing a card in this lane. Sits above the
+                      cards so elementFromPoint reliably reports the day under the pointer (zoom-safe). */}
+                  {resize && laneSegs.some((s) => s.id === resize.segId) && (
+                    <div className="absolute inset-0 z-40 grid" style={{ gridTemplateColumns: dayCols }}>
+                      {days.map((wd, di) => (
+                        <div key={wd.iso} data-dayidx={di} />
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             );
