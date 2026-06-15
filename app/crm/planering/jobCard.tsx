@@ -755,6 +755,13 @@ export function SegmentCardBody({
               <CrewAvatars crew={seg.crew} />
             </div>
           </div>
+          {/* Hover hint — the card opens its work order on double-click. */}
+          <span className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex justify-center pb-1 opacity-0 transition-opacity duration-150 group-hover:opacity-100">
+            <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-emerald-300 bg-white/95 px-2 py-0.5 text-[8.5px] font-bold text-emerald-700 shadow-sm">
+              <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><path d="M7 17 17 7M8 7h9v9" /></svg>
+              Dubbelklicka för att öppna
+            </span>
+          </span>
         </>
       ) : seg.placeholder_title ? (
         <>

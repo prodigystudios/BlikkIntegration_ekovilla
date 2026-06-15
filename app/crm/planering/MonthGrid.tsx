@@ -152,7 +152,8 @@ export default function MonthGrid({
                         }}
                         style={{ backgroundColor: `${tc}1f`, borderColor: `${tc}66` }}
                         className={cn(
-                          'relative overflow-hidden rounded-lg border border-solid p-2 pl-2.5 shadow-[0_1px_2px_rgba(20,44,27,0.06)] transition hover:shadow-[0_3px_10px_rgba(20,44,27,0.12)]',
+                          'group relative overflow-hidden rounded-lg border border-solid p-2 pl-2.5 shadow-[0_1px_2px_rgba(20,44,27,0.06)] transition hover:shadow-[0_3px_10px_rgba(20,44,27,0.12)]',
+                          seg.job && 'hover:ring-2 hover:ring-emerald-400/40',
                           canWrite ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer',
                           seg.on_hold && 'opacity-60 ring-1 ring-amber-200',
                         )}
