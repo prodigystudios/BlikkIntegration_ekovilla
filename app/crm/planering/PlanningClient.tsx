@@ -68,6 +68,7 @@ export default function PlanningClient({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [salesFilter, setSalesFilter] = useState<string | null>(null);
+  const [backlogFilter, setBacklogFilter] = useState<'unplanned' | 'planned' | 'all'>('unplanned');
   const [hiddenTrucks, setHiddenTrucks] = useState<Set<string>>(new Set());
   const [backlogDropActive, setBacklogDropActive] = useState(false);
   const [truckPicker, setTruckPicker] = useState<{ dayISO: string; workOrderId: string } | null>(null);
@@ -341,8 +342,11 @@ export default function PlanningClient({
 
   const unschedule = useCallback(
     async (id: string) => {
-      // Optimistic: drop the card at once; re-sync from the server only if the delete fails.
+      // Optimistic: drop the card at once + decrement the job's backlog placement count (so it hops
+      // back to "Oplanerade" when its last placement is removed); re-sync only if the delete fails.
+      const woId = segments.find((s) => s.id === id)?.work_order_id ?? null;
       setSegments((prev) => prev.filter((s) => s.id !== id));
+      if (woId) setBacklog((prev) => prev.map((b) => (b.id === woId ? { ...b, segment_count: Math.max(0, b.segment_count - 1) } : b)));
       const r = await fetch(`${API}/segments/${id}`, { method: 'DELETE' });
       const j = await r.json();
       if (!j.ok) {
@@ -352,7 +356,7 @@ export default function PlanningClient({
       }
       toast.success('Jobbet avplanerat');
     },
-    [refresh, toast],
+    [segments, refresh, toast],
   );
 
   // Crew is per-segment, so add/remove patch the one segment's crew locally (snappy) rather than
@@ -647,9 +651,22 @@ export default function PlanningClient({
       .sort((a, b) => a.name.localeCompare(b.name, 'sv'));
   }, [backlog, peopleById]);
 
-  const visibleBacklog = useMemo(
+  // Search + sales-filtered set, then split by whether the job is already placed (segment_count): the
+  // backlog defaults to showing only unplanned jobs so it doesn't fill up with scheduled work.
+  const backlogBase = useMemo(
     () => backlog.filter((b) => matchJob(b) && (!salesFilter || b.assigned_to === salesFilter)),
     [backlog, matchJob, salesFilter],
+  );
+  const backlogCounts = useMemo(() => {
+    const planned = backlogBase.reduce((n, b) => n + (b.segment_count > 0 ? 1 : 0), 0);
+    return { planned, unplanned: backlogBase.length - planned, all: backlogBase.length };
+  }, [backlogBase]);
+  const visibleBacklog = useMemo(
+    () =>
+      backlogFilter === 'all'
+        ? backlogBase
+        : backlogBase.filter((b) => (backlogFilter === 'planned' ? b.segment_count > 0 : b.segment_count === 0)),
+    [backlogBase, backlogFilter],
   );
   const visibleSegments = useMemo(
     () => segments.filter((s) => !hiddenTrucks.has(s.truck_id) && (s.job ? matchJob(s.job) : true)),
@@ -882,6 +899,9 @@ export default function PlanningClient({
           loading={loadingBacklog}
           canWrite={canWrite}
           selectedId={selectedId}
+          filter={backlogFilter}
+          onFilterChange={setBacklogFilter}
+          counts={backlogCounts}
           onSelect={onSelect}
           onDragStartItem={onBacklogDragStart}
           onDropUnschedule={onBacklogDrop}
