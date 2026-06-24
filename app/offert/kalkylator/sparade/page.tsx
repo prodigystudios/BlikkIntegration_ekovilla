@@ -425,8 +425,8 @@ export default function SparadeOfferterPage() {
   }, [selectedItem]);
 
   return (
-    <div style={{ padding: isNarrow ? 14 : 18, maxWidth: 1180, margin: '0 auto', display: 'grid', gap: 16 }}>
-      <div style={{ border: '1px solid #dbe4ef', borderRadius: 24, padding: isNarrow ? '16px 16px 14px' : '20px 22px 18px', background: 'linear-gradient(180deg, #ffffff 0%, #f7fbff 100%)', display: 'grid', gap: 14, boxShadow: '0 14px 36px rgba(15,23,42,0.05)' }}>
+    <div style={{ maxWidth: 1180, margin: '0 auto', width: '100%', display: 'grid', gap: 16 }}>
+      <div style={{ border: '1px solid #e0e8dc', borderRadius: 24, padding: isNarrow ? '16px 16px 14px' : '20px 22px 18px', background: '#f9fbf7', display: 'grid', gap: 14, boxShadow: '0 14px 36px rgba(15,23,42,0.05)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
           <div style={{ display: 'grid', gap: 6, maxWidth: 760 }}>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -436,7 +436,7 @@ export default function SparadeOfferterPage() {
             <h1 style={{ margin: 0, fontSize: isNarrow ? 28 : 34, lineHeight: 1.05, color: '#0f172a' }}>Sparade offerter</h1>
             <p style={{ margin: 0, fontSize: 14, color: '#475569', maxWidth: 760 }}>Här kan du sortera, öppna, dela och följa upp tidigare offerter i en tydligare översikt.</p>
           </div>
-          <Link className="btn--plain btn--sm" href="/offert/kalkylator" style={ghostLinkStyle}>
+          <Link className="inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 transition hover:border-slate-300" href="/offert/kalkylator" style={ghostLinkStyle}>
             Till kalkylatorn
           </Link>
         </div>
@@ -451,7 +451,7 @@ export default function SparadeOfferterPage() {
         </div>
       </div>
 
-      <section style={{ border: '1px solid #dbe4ef', borderRadius: 20, padding: 12, background: '#ffffff', display: 'grid', gap: 12, boxShadow: '0 12px 28px rgba(15,23,42,0.04)' }}>
+      <section style={{ border: '1px solid #e0e8dc', borderRadius: 20, padding: 12, background: '#ffffff', display: 'grid', gap: 12, boxShadow: '0 12px 28px rgba(15,23,42,0.04)' }}>
         <div style={{ display: 'grid', gridTemplateColumns: isNarrow ? '1fr' : 'minmax(240px, 280px) minmax(0, 1fr)', gap: 12, alignItems: 'start' }}>
           <aside
             style={{
@@ -462,7 +462,7 @@ export default function SparadeOfferterPage() {
               padding: isNarrow ? '12px' : '14px',
               borderRadius: 18,
               border: '1px solid rgba(219, 228, 239, 0.95)',
-              background: 'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)',
+              background: '#f9fbf7',
               boxShadow: '0 10px 22px rgba(15,23,42,0.05)',
               alignContent: 'start',
             }}
@@ -524,12 +524,12 @@ export default function SparadeOfferterPage() {
             </label>
 
             <div style={{ display: 'grid', gap: 6 }}>
-              <button className="btn--plain btn--sm" onClick={refreshList} disabled={loadingList}>
+              <button className="inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 transition hover:border-slate-300" onClick={refreshList} disabled={loadingList}>
                 {loadingList ? 'Uppdaterar…' : 'Uppdatera'}
               </button>
               {(nameQuery.trim() || salespersonFilter !== 'all' || listScope !== 'mine') ? (
                 <button
-                  className="btn--plain btn--sm"
+                  className="inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 transition hover:border-slate-300"
                   onClick={() => {
                     setNameQuery('');
                     setSalespersonFilter('all');
@@ -659,13 +659,13 @@ export default function SparadeOfferterPage() {
                     )}
                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                       <span style={{ fontSize: 11, color: '#94a3b8' }}>{new Date(it.created_at).toLocaleString('sv-SE')}</span>
-                      <span style={{ fontSize: 11, fontWeight: 700, color: '#2563eb' }}>Klicka för detaljer</span>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: '#047857' }}>Klicka för detaljer</span>
                     </div>
                   </div>
                   <div style={{ display: 'grid', gap: 6, textAlign: isNarrow ? 'left' : 'right', justifyItems: isNarrow ? 'start' : 'end' }}>
                     <div style={{ padding: '8px 10px', borderRadius: 12, border: '1px solid #bfdbfe', background: 'linear-gradient(180deg, #eff6ff 0%, #dbeafe 100%)', minWidth: isNarrow ? 'auto' : 138 }}>
-                      <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.25, textTransform: 'uppercase', color: '#1d4ed8' }}>Efter ROT</div>
-                      <div style={{ fontWeight: 800, fontSize: 16, color: '#1d4ed8', marginTop: 3 }}>{formatKr(it.total_after_rot)}</div>
+                      <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.25, textTransform: 'uppercase', color: '#047857' }}>Efter ROT</div>
+                      <div style={{ fontWeight: 800, fontSize: 16, color: '#047857', marginTop: 3 }}>{formatKr(it.total_after_rot)}</div>
                     </div>
                     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: isNarrow ? 'flex-start' : 'flex-end' }}>
                       <span style={compactMetaChipStyle}>Före ROT {formatKr(it.total_before_rot)}</span>
@@ -716,7 +716,7 @@ export default function SparadeOfferterPage() {
                   <p style={{ margin: 0, fontSize: 14, color: '#475569' }}>Hantera status, kundlänk, PDF och offertinformation utan att belasta listvyn.</p>
                 </div>
               </div>
-              <button className="btn--plain btn--sm" onClick={() => setSelectedId(null)}>
+              <button className="inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 transition hover:border-slate-300" onClick={() => setSelectedId(null)}>
                 Stäng
               </button>
             </div>
@@ -744,8 +744,8 @@ export default function SparadeOfferterPage() {
                 <strong style={{ ...previewStatValueStyle, color: '#92400e' }}>− {formatKr(selectedItem.rot_amount)}</strong>
               </div>
               <div style={{ ...previewStatCardStyle, background: 'linear-gradient(180deg, #eff6ff 0%, #dbeafe 100%)', border: '1px solid #bfdbfe' }}>
-                <span style={{ ...previewStatLabelStyle, color: '#1d4ed8' }}>Efter ROT</span>
-                <strong style={{ ...previewStatValueStyle, color: '#1d4ed8' }}>{formatKr(selectedItem.total_after_rot)}</strong>
+                <span style={{ ...previewStatLabelStyle, color: '#047857' }}>Efter ROT</span>
+                <strong style={{ ...previewStatValueStyle, color: '#047857' }}>{formatKr(selectedItem.total_after_rot)}</strong>
               </div>
             </div>
 
@@ -811,7 +811,7 @@ export default function SparadeOfferterPage() {
                       {String(selectedItem.internal_note || '').trim() ? 'Senast sparad internt på denna offert.' : 'Ingen intern anteckning sparad ännu.'}
                     </span>
                     <button
-                      className="btn--primary btn--sm"
+                      className="inline-flex items-center justify-center rounded-lg bg-emerald-700 px-2.5 py-1 text-xs font-semibold text-white transition hover:bg-emerald-800"
                       onClick={saveInternalNote}
                       disabled={savingNoteId === selectedItem.id || noteDraft === String(selectedItem.internal_note || '')}
                     >
@@ -846,28 +846,28 @@ export default function SparadeOfferterPage() {
 
                   <div style={{ display: 'grid', gap: 8 }}>
                     <button
-                      className="btn--primary btn--sm"
+                      className="inline-flex items-center justify-center rounded-lg bg-emerald-700 px-2.5 py-1 text-xs font-semibold text-white transition hover:bg-emerald-800"
                       onClick={() => openInCalculator(selectedItem.id)}
                       disabled={loadingId === selectedItem.id || deletingId === selectedItem.id || updatingId === selectedItem.id || sharingId === selectedItem.id}
                     >
                       {loadingId === selectedItem.id ? 'Öppnar…' : 'Öppna i kalkylatorn'}
                     </button>
                     <button
-                      className="btn--success btn--sm"
+                      className="inline-flex items-center justify-center rounded-lg bg-emerald-700 px-2.5 py-1 text-xs font-semibold text-white transition hover:bg-emerald-800"
                       onClick={() => sharePdf(selectedItem.id, selectedItem.name)}
                       disabled={loadingId === selectedItem.id || deletingId === selectedItem.id || updatingId === selectedItem.id || sharingId === selectedItem.id || customerLinkingId === selectedItem.id}
                     >
                       {sharingId === selectedItem.id ? 'Skapar…' : 'Skapa PDF'}
                     </button>
                     <button
-                      className="btn--plain btn--sm"
+                      className="inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 transition hover:border-slate-300"
                       onClick={() => createCustomerLink(selectedItem.id)}
                       disabled={loadingId === selectedItem.id || deletingId === selectedItem.id || updatingId === selectedItem.id || sharingId === selectedItem.id || customerLinkingId === selectedItem.id}
                     >
                       {customerLinkingId === selectedItem.id ? 'Skapar…' : 'Skapa kundlänk'}
                     </button>
                     <button
-                      className="btn--danger btn--sm"
+                      className="inline-flex items-center justify-center rounded-lg border border-rose-200 bg-white px-2.5 py-1 text-xs font-semibold text-rose-700 transition hover:border-rose-300"
                       onClick={() => {
                         const ok = window.confirm(`Ta bort offert ”${String(selectedItem.name || '').trim() || 'offert'}”?`);
                         if (!ok) return;
@@ -904,7 +904,7 @@ const heroEyebrowStyle: React.CSSProperties = {
   borderRadius: 999,
   background: '#dbeafe',
   border: '1px solid #bfdbfe',
-  color: '#2563eb',
+  color: '#047857',
   fontSize: 11,
   fontWeight: 700,
   letterSpacing: 0.35,
@@ -917,7 +917,7 @@ const ghostLinkStyle: React.CSSProperties = {
   justifyContent: 'center',
   padding: '10px 12px',
   borderRadius: 12,
-  border: '1px solid #dbe4ef',
+  border: '1px solid #e0e8dc',
   background: '#fff',
   color: '#0f172a',
   fontWeight: 600,
@@ -961,9 +961,9 @@ function statusFilterChipStyle(active: boolean): React.CSSProperties {
     justifyContent: 'center',
     padding: '6px 9px',
     borderRadius: 999,
-    border: active ? '1px solid #93c5fd' : '1px solid #dbe4ef',
+    border: active ? '1px solid #93c5fd' : '1px solid #e0e8dc',
     background: active ? '#dbeafe' : '#ffffff',
-    color: active ? '#1d4ed8' : '#475569',
+    color: active ? '#047857' : '#475569',
     fontSize: 11,
     fontWeight: 700,
     cursor: 'pointer',
@@ -973,7 +973,7 @@ function statusFilterChipStyle(active: boolean): React.CSSProperties {
 const selectFieldStyle: React.CSSProperties = {
   width: '100%',
   padding: '8px 10px',
-  border: '1px solid #dbe4ef',
+  border: '1px solid #e0e8dc',
   borderRadius: 12,
   background: '#fff',
   color: '#0f172a',
@@ -986,7 +986,7 @@ const previewStatCardStyle: React.CSSProperties = {
   gap: 6,
   padding: '12px 12px 10px',
   borderRadius: 14,
-  border: '1px solid #dbe4ef',
+  border: '1px solid #e0e8dc',
   background: '#ffffff',
 };
 
@@ -1063,7 +1063,7 @@ const modalCardStyle: React.CSSProperties = {
   overflowY: 'auto',
   borderRadius: 28,
   border: '1px solid rgba(219, 228, 239, 0.9)',
-  background: 'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)',
+  background: '#f9fbf7',
   boxShadow: '0 30px 80px rgba(15,23,42,0.22)',
   display: 'grid',
   gap: 14,
@@ -1074,7 +1074,7 @@ const modalSectionStyle: React.CSSProperties = {
   gap: 10,
   padding: '14px 14px 12px',
   borderRadius: 18,
-  border: '1px solid #dbe4ef',
+  border: '1px solid #e0e8dc',
   background: '#ffffff',
 };
 
@@ -1127,7 +1127,7 @@ const noteTextareaStyle: React.CSSProperties = {
   resize: 'vertical',
   padding: '12px 13px',
   borderRadius: 14,
-  border: '1px solid #dbe4ef',
+  border: '1px solid #e0e8dc',
   background: '#f8fafc',
   color: '#0f172a',
   fontSize: 13,
@@ -1179,7 +1179,7 @@ function activityCardStyle(tone: 'neutral' | 'success' | 'warning'): React.CSSPr
     gap: 8,
     padding: '12px 12px 10px',
     borderRadius: 16,
-    border: '1px solid #dbe4ef',
+    border: '1px solid #e0e8dc',
     background: 'linear-gradient(180deg, #ffffff 0%, #f8fafc 100%)',
   };
 }

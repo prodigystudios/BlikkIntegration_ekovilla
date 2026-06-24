@@ -206,7 +206,7 @@ export default function OffertPage() {
                 <strong style={{ fontSize: 16 }}>Ny offert • {form.type === 'private' ? 'Privat' : 'Företag'}</strong>
                 <span style={{ fontSize: 12, color: '#64748b' }}>Fyll i kunduppgifter och offertdetaljer.</span>
               </div>
-              <button onClick={() => setIsOpen(false)} className="btn--danger btn--sm" style={{ borderRadius: 6, padding: '6px 10px', fontSize: 12, border: '1px solid #fecaca' }}>Stäng</button>
+              <button onClick={() => setIsOpen(false)} className="inline-flex items-center justify-center rounded-lg border border-rose-200 bg-white px-2.5 py-1 text-xs font-semibold text-rose-700 transition hover:border-rose-300" style={{ borderRadius: 6, padding: '6px 10px', fontSize: 12, border: '1px solid #fecaca' }}>Stäng</button>
             </div>
 
             {error && <div style={{ fontSize: 12, color: '#991b1b', background: '#fef2f2', border: '1px solid #fecaca', padding: '6px 8px', borderRadius: 8 }}>{error}</div>}
@@ -375,13 +375,13 @@ export default function OffertPage() {
                         </div>
                       </label>
                       <div style={{ display: 'flex', gap: 8 }}>
-                        <button type="button" className='btn--sm btn--danger' onClick={() => setForm({ ...form, items: form.items.filter((x) => x.id !== row.id) })} style={{ }}>Ta bort</button>
+                        <button type="button" className='inline-flex items-center justify-center rounded-lg border border-rose-200 bg-white px-2.5 py-1 text-xs font-semibold text-rose-700 transition hover:border-rose-300' onClick={() => setForm({ ...form, items: form.items.filter((x) => x.id !== row.id) })} style={{ }}>Ta bort</button>
                       </div>
                     </div>
                   );
                 })}
                 <div>
-                  <button type="button" className='btn--sm btn--primary' onClick={() => setForm({ ...form, items: [...form.items, { id: crypto.randomUUID(), construction: '', m2: '', thicknessMm: '', autoPrice: true, unitPrice: '', pricing: 'm3', quantity: '' }] })} style={{ }}>+ Lägg till rad</button>
+                  <button type="button" className='inline-flex items-center justify-center rounded-lg bg-emerald-700 px-2.5 py-1 text-xs font-semibold text-white transition hover:bg-emerald-800' onClick={() => setForm({ ...form, items: [...form.items, { id: crypto.randomUUID(), construction: '', m2: '', thicknessMm: '', autoPrice: true, unitPrice: '', pricing: 'm3', quantity: '' }] })} style={{ }}>+ Lägg till rad</button>
                 </div>
                 <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
                   <span>Moms %</span>
@@ -407,8 +407,8 @@ export default function OffertPage() {
             </div>
 
             <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-              <button onClick={() => setIsOpen(false)} className="btn--plain btn--sm" style={{ borderRadius: 8, padding: '8px 12px', border: '1px solid #e2e8f0', background: '#fff' }}>Avbryt</button>
-              <button onClick={submit} disabled={submitting} className="btn--plain btn--sm" style={{ borderRadius: 8, padding: '8px 12px', border: '1px solid #16a34a', background: '#16a34a', color: '#fff' }}>{submitting ? 'Skapar…' : 'Skapa offert (PDF)'}</button>
+              <button onClick={() => setIsOpen(false)} className="inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 transition hover:border-slate-300" style={{ borderRadius: 8, padding: '8px 12px', border: '1px solid #e2e8f0', background: '#fff' }}>Avbryt</button>
+              <button onClick={submit} disabled={submitting} className="inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 transition hover:border-slate-300" style={{ borderRadius: 8, padding: '8px 12px', border: '1px solid #16a34a', background: '#16a34a', color: '#fff' }}>{submitting ? 'Skapar…' : 'Skapa offert (PDF)'}</button>
             </div>
           </div>
         </div>
