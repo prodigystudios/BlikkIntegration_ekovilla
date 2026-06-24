@@ -4,6 +4,17 @@ import { useEffect, useMemo, useRef, useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { MATERIALS } from '@/lib/domains/crm/materials';
+import {
+  calculateOpenRowDensity,
+  calculateClosedRowDensity,
+  formatDensity,
+  installedThickness,
+  parseEtappRows,
+  sumOpenBags,
+  sumClosedBags,
+  type EtappOpenRow,
+  type EtappClosedRow,
+} from '@/lib/domains/egenkontroll/calculations';
 
 // Reconstructed Egenkontroll form (migrated from historical root page)
 // NOTE: Consider refactoring into smaller components later for maintainability.
@@ -78,16 +89,6 @@ export default function EgenkontrollPage() {
   const [dammighet, setDammighet] = useState<string>(''); // 1-10 (optional)
   const [klumpighet, setKlumpighet] = useState<string>(''); // 1-10 (optional)
 
-  type EtappOpenRow = {
-    etapp?: string;
-    ytaM2?: string;
-    bestalldTjocklek?: string; // ex sättningspåslag
-    sattningsprocent?: string; // %
-    installeradTjocklek?: string; // inkl sättningspåslag
-    installeradDensitet?: string; // kg/m2
-    antalSack?: string; // - kg/m2
-    lambdavarde?: string; // w/m2k
-  };
   const [etapperOpen, setEtapperOpen] = useState<EtappOpenRow[]>([]);
 
   const addEtappOpenRow = () =>
@@ -105,36 +106,15 @@ export default function EgenkontrollPage() {
       const row = next[idx];
       // Auto-calc installeradTjocklek = beställd tjocklek + (beställd * sättningsprocent/100)
       if (("bestalldTjocklek" in patch || "sattningsprocent" in patch) && !("installeradTjocklek" in patch)) {
-        const base = parseFloat(String(row.bestalldTjocklek ?? ''));
-        const perc = parseFloat(String(row.sattningsprocent ?? ''));
-        const installed = Number.isFinite(base) && Number.isFinite(perc)
-          ? base + (base * (perc / 100))
-          : NaN;
-        next[idx] = {
-          ...row,
-          installeradTjocklek: Number.isFinite(installed) && installed > 0 ? String(Math.round(installed)) : '',
-        };
+        next[idx] = { ...row, installeradTjocklek: installedThickness(row.bestalldTjocklek, row.sattningsprocent) };
       }
       // If any inputs affecting density changed (and user isn't directly typing density), update density using the helper
       if (("ytaM2" in patch || "bestalldTjocklek" in patch || "antalSack" in patch) && !("installeradDensitet" in patch)) {
-        const calc = CalculateDensityOnRow(row);
-        next[idx] = {
-          ...row,
-          installeradDensitet: Number.isFinite(calc) && calc > 0 ? String(Math.round(calc * 100) / 100) : '',
-        };
+        next[idx] = { ...row, installeradDensitet: formatDensity(CalculateDensityOnRow(row)) };
       }
       return next;
     });
 
-  type EtappClosedRow = {
-    etapp?: string; // Etapp(slutet)
-    ytaM2?: string;
-    bestalldTjocklek?: string; // Beställd tjocklek
-    uppmatTjocklek?: string;   // Uppmät tjocklek
-    installeradDensitet?: string; // Installerad densitet
-    antalSackKgPerSack?: string;  // Antal säck kg/säck
-    lambdavarde?: string; // Lamdavärde W/m2K
-  };
   const [etapperClosed, setEtapperClosed] = useState<EtappClosedRow[]>([]);
 
   const addEtappClosedRow = () =>
@@ -152,11 +132,7 @@ export default function EgenkontrollPage() {
       const row = next[idx];
       // Recalculate density when any contributing value changes. We now prefer uppmatTjocklek (measured) over bestalldTjocklek (ordered).
       if (("ytaM2" in patch || "uppmatTjocklek" in patch || "bestalldTjocklek" in patch || "antalSackKgPerSack" in patch) && !("installeradDensitet" in patch)) {
-        const calc = CalculateDensityOnClosedRow(row);
-        next[idx] = {
-          ...row,
-          installeradDensitet: Number.isFinite(calc) && calc > 0 ? String(Math.round(calc * 100) / 100) : '',
-        };
+        next[idx] = { ...row, installeradDensitet: formatDensity(CalculateDensityOnClosedRow(row)) };
       }
       return next;
     });
@@ -570,44 +546,7 @@ export default function EgenkontrollPage() {
   }, [project]);
 
   function parseDescriptionToRows(desc: string): { open: EtappOpenRow[]; closed: EtappClosedRow[] } {
-    const open: EtappOpenRow[] = [];
-    const closed: EtappClosedRow[] = [];
-    const re = /([A-Za-zÅÄÖåäö][A-Za-zÅÄÖåäö\s/()_-]*?)\s*-\s*(\d+[.,]?\d*)\s*m(?:2|²)\s*[x×]\s*(\d+[.,]?\d*)\s*mm\s*-\s*(\d+)\s*eko/gi;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(desc)) !== null) {
-      const rawName = (m[1] || '').trim();
-      const nameNorm = rawName.toLowerCase();
-      const areaStr = (m[2] || '').replace(',', '.');
-      const thickStr = (m[3] || '').replace(',', '.');
-      const sacksStr = (m[4] || '').trim();
-      const area = isFinite(Number(areaStr)) ? String(Number(areaStr)) : '';
-      const thickness = isFinite(Number(thickStr)) ? String(Number(thickStr)) : '';
-      const sacks = /^\d+$/.test(sacksStr) ? sacksStr : '';
-      const isVind = nameNorm === 'vind' || nameNorm.startsWith('vind');
-      if (isVind) {
-        open.push({
-          etapp: rawName,
-          ytaM2: area,
-          bestalldTjocklek: thickness,
-          sattningsprocent: '',
-          installeradTjocklek: '',
-          antalSack: sacks,
-          installeradDensitet: '',
-          lambdavarde: MATERIALS[materialUsed]?.lambda,
-        });
-      } else {
-        closed.push({
-          etapp: rawName,
-          ytaM2: area,
-          bestalldTjocklek: thickness,
-          uppmatTjocklek: '',
-          installeradDensitet: '',
-          antalSackKgPerSack: sacks,
-          lambdavarde: MATERIALS[materialUsed]?.lambda,
-        });
-      }
-    }
-    return { open, closed };
+    return parseEtappRows(desc, MATERIALS[materialUsed]?.lambda);
   }
 
   const [projectLoading, setProjectLoading] = useState(false);
@@ -636,60 +575,32 @@ export default function EgenkontrollPage() {
     }
   }, [orderId]);
   function CalculateDensityOnRow(etapp: EtappOpenRow): number {
-    const { ytaM2, bestalldTjocklek, antalSack } = etapp;
-    const bagWeight = MATERIALS[materialUsed]?.bagWeight ?? 0;
-    if (!ytaM2 || !bestalldTjocklek || !antalSack || !bagWeight) return 0;
-    const area = parseFloat(ytaM2);
-    const thicknessMm = parseFloat(bestalldTjocklek);
-    const bags = parseFloat(antalSack);
-    if (isNaN(area) || isNaN(thicknessMm) || isNaN(bags) || area === 0 || thicknessMm === 0) return 0;
-    const thicknessMeters = thicknessMm / 1000;
-    const volumeM3 = area * thicknessMeters;
-    const totalKg = bags * bagWeight;
-    return totalKg / volumeM3;
+    return calculateOpenRowDensity(etapp, MATERIALS[materialUsed]?.bagWeight ?? 0);
   }
   function CalculateDensityOnClosedRow(etapp: EtappClosedRow): number {
-    const { ytaM2, uppmatTjocklek, bestalldTjocklek, antalSackKgPerSack } = etapp;
-    const bagWeight = MATERIALS[materialUsed]?.bagWeight ?? 0;
-    // Prefer measured thickness (uppmatTjocklek). Fallback to ordered thickness if measurement missing.
-    const thicknessSource = (uppmatTjocklek && uppmatTjocklek.trim() !== '') ? uppmatTjocklek : bestalldTjocklek;
-    if (!ytaM2 || !thicknessSource || !antalSackKgPerSack || !bagWeight) return 0;
-    const area = parseFloat(ytaM2);
-    const thicknessMm = parseFloat(thicknessSource);
-    const bags = parseFloat(antalSackKgPerSack);
-    if (isNaN(area) || isNaN(thicknessMm) || isNaN(bags) || area === 0 || thicknessMm === 0) return 0;
-    const thicknessMeters = thicknessMm / 1000;
-    const volumeM3 = area * thicknessMeters;
-    const totalKg = bags * bagWeight;
-    return totalKg / volumeM3;
+    return calculateClosedRowDensity(etapp, MATERIALS[materialUsed]?.bagWeight ?? 0);
   }
 
   // Recalculate densities on material change
   useEffect(() => {
     const lambda = MATERIALS[materialUsed]?.lambda;
-    setEtapperOpen(rows => rows.map(r => {
-      const calc = CalculateDensityOnRow(r);
-      return {
-        ...r,
-        installeradDensitet: Number.isFinite(calc) && calc > 0 ? String(Math.round(calc * 100) / 100) : r.installeradDensitet || '',
-        lambdavarde: r.lambdavarde && r.lambdavarde.trim() !== '' ? r.lambdavarde : (lambda ?? r.lambdavarde),
-      };
-    }));
+    setEtapperOpen(rows => rows.map(r => ({
+      ...r,
+      installeradDensitet: formatDensity(CalculateDensityOnRow(r)) || r.installeradDensitet || '',
+      lambdavarde: r.lambdavarde && r.lambdavarde.trim() !== '' ? r.lambdavarde : (lambda ?? r.lambdavarde),
+    })));
   }, [materialUsed]);
   useEffect(() => {
     const lambda = MATERIALS[materialUsed]?.lambda;
-    setEtapperClosed(rows => rows.map(r => {
-      const calc = CalculateDensityOnClosedRow(r);
-      return {
-        ...r,
-        installeradDensitet: Number.isFinite(calc) && calc > 0 ? String(Math.round(calc * 100) / 100) : r.installeradDensitet || '',
-        lambdavarde: r.lambdavarde && r.lambdavarde.trim() !== '' ? r.lambdavarde : (lambda ?? r.lambdavarde),
-      };
-    }));
+    setEtapperClosed(rows => rows.map(r => ({
+      ...r,
+      installeradDensitet: formatDensity(CalculateDensityOnClosedRow(r)) || r.installeradDensitet || '',
+      lambdavarde: r.lambdavarde && r.lambdavarde.trim() !== '' ? r.lambdavarde : (lambda ?? r.lambdavarde),
+    })));
   }, [materialUsed]);
 
-  const totalOpenBags = etapperOpen.reduce((sum, row) => sum + (Number(row.antalSack) || 0), 0);
-  const totalClosedBags = etapperClosed.reduce((sum, row) => sum + (Number(row.antalSackKgPerSack) || 0), 0);
+  const totalOpenBags = sumOpenBags(etapperOpen);
+  const totalClosedBags = sumClosedBags(etapperClosed);
   const totalBags = totalOpenBags + totalClosedBags;
   const selectedPhotosCount = Number(Boolean(beforePhoto)) + Number(Boolean(afterPhoto));
 
