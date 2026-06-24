@@ -1,6 +1,7 @@
 "use client";
 
 import { useId } from 'react';
+import Input from '../../../../components/ui/Input';
 import { crm } from '../../lib/crmTokens';
 
 // One address input with geolocation, a favourites dropdown, an inline
@@ -48,8 +49,7 @@ export default function KorjournalAddressField({
       <span className={crm.label}>{label}</span>
       <div className="relative">
         <div className="grid grid-cols-[1fr_auto] gap-2">
-          <input
-            className={crm.input}
+          <Input
             list={listId}
             value={value}
             onChange={(e) => onChange(e.target.value)}
@@ -66,7 +66,7 @@ export default function KorjournalAddressField({
           />
           <button
             type="button"
-            className={crm.ghostButton}
+            className="inline-flex min-h-11 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-800 disabled:opacity-50"
             onClick={onFillLocation}
             disabled={locating}
             title="Hämta nuvarande plats"

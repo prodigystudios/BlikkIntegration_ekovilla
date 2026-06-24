@@ -1,6 +1,7 @@
 "use client";
 
 import { cn } from '@/lib/shared/cn';
+import Input from '../../../../components/ui/Input';
 import CrmModal from '../../components/CrmModal';
 import { crm } from '../../lib/crmTokens';
 import type { UsageStats } from '@/lib/domains/korjournal/types';
@@ -97,12 +98,7 @@ export default function KorjournalTripModal({
 
         <label className="grid gap-1.5">
           <span className={crm.label}>Datum</span>
-          <input
-            type="date"
-            className={crm.input}
-            value={form.date}
-            onChange={(e) => onField({ date: e.target.value })}
-          />
+          <Input type="date" value={form.date} onChange={(e) => onField({ date: e.target.value })} />
         </label>
 
         <div className="grid gap-3.5 [grid-template-columns:repeat(auto-fit,minmax(260px,1fr))]">
@@ -145,30 +141,18 @@ export default function KorjournalTripModal({
         <div className="grid gap-3.5 [grid-template-columns:repeat(auto-fit,minmax(160px,1fr))]">
           <label className="grid gap-1.5">
             <span className={crm.label}>Start km</span>
-            <input
-              className={crm.input}
-              inputMode="numeric"
-              value={form.startKm}
-              onChange={(e) => onField({ startKm: e.target.value })}
-              placeholder="0"
-            />
+            <Input inputMode="numeric" value={form.startKm} onChange={(e) => onField({ startKm: e.target.value })} placeholder="0" />
           </label>
           <label className="grid gap-1.5">
             <span className={crm.label}>Slut km</span>
-            <input
-              className={crm.input}
-              inputMode="numeric"
-              value={form.endKm}
-              onChange={(e) => onField({ endKm: e.target.value })}
-              placeholder="0"
-            />
+            <Input inputMode="numeric" value={form.endKm} onChange={(e) => onField({ endKm: e.target.value })} placeholder="0" />
           </label>
         </div>
 
         <label className="grid gap-1.5">
           <span className={crm.label}>Anteckning</span>
           <textarea
-            className="min-h-24 w-full resize-y rounded-lg border border-[#dce4d8] bg-white px-3 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/15"
+            className="min-h-24 w-full resize-y appearance-none rounded-lg border border-[#dce4d8] bg-white px-3 py-2 text-sm text-slate-900 transition-colors placeholder:text-slate-400 hover:border-[#c8d4c3] focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
             value={form.note}
             onChange={(e) => onField({ note: e.target.value })}
             placeholder="Syfte med resan eller extra kontext"
