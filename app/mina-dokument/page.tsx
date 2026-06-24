@@ -10,9 +10,5 @@ export default async function MinaDokumentPage() {
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) redirect('/auth/sign-in');
 
-  return (
-    <main style={{ padding: '16px 20px', width: '100%', boxSizing: 'border-box' }}>
-      <MyDocumentsClient />
-    </main>
-  );
+  return <MyDocumentsClient />;
 }

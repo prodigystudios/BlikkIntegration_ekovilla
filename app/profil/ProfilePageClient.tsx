@@ -163,7 +163,7 @@ export default function ProfilePageClient() {
   }
 
   return (
-    <main style={pageStyle}>
+    <div style={pageStyle}>
       <section style={heroStyle}>
         <div style={{ display: 'grid', gap: 12 }}>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -288,7 +288,7 @@ export default function ProfilePageClient() {
           </div>
         </div>
       )}
-    </main>
+    </div>
   );
 }
 

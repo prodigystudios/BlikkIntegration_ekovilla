@@ -147,7 +147,7 @@ export default function ProfileMenu({ fullName, role, placement = 'down' }: { fu
           <button
             role="menuitem"
             onClick={() => { setOpen(false); router.push('/profil'); }}
-            className="btn--plain"
+            className="cursor-pointer border-0 bg-transparent text-slate-700 transition-colors hover:bg-slate-50"
             style={{ width: '100%', textAlign: 'left', padding: '8px 10px', borderRadius: 8 }}
           >
             Min profil
@@ -155,7 +155,7 @@ export default function ProfileMenu({ fullName, role, placement = 'down' }: { fu
           <button
             role="menuitem"
             onClick={logout}
-            className="btn--plain"
+            className="cursor-pointer border-0 bg-transparent text-slate-700 transition-colors hover:bg-slate-50"
             style={{ width: '100%', textAlign: 'left', padding: '8px 10px', borderRadius: 8 }}
           >
             Logga ut
@@ -163,7 +163,7 @@ export default function ProfileMenu({ fullName, role, placement = 'down' }: { fu
           <button
             role="menuitem"
             onClick={() => { setPwdOpen(true); setOpen(false); }}
-            className="btn--plain"
+            className="cursor-pointer border-0 bg-transparent text-slate-700 transition-colors hover:bg-slate-50"
             style={{ width: '100%', textAlign: 'left', padding: '8px 10px', borderRadius: 8 }}
           >
             Byt lösenord
