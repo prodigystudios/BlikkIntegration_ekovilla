@@ -13,7 +13,7 @@ function IconUser(props: React.SVGProps<SVGSVGElement>) {
   );
 }
 
-export default function ProfileMenu({ fullName, role }: { fullName: string | null, role: 'member' | 'sales' | 'admin' | 'konsult' | null }) {
+export default function ProfileMenu({ fullName, role, placement = 'down' }: { fullName: string | null, role: 'member' | 'sales' | 'admin' | 'konsult' | null, placement?: 'down' | 'up' }) {
   const [open, setOpen] = useState(false);
   const [alignRight, setAlignRight] = useState(false); // flip to right edge if near viewport edge
   const btnRef = useRef<HTMLButtonElement | null>(null);
@@ -124,7 +124,7 @@ export default function ProfileMenu({ fullName, role }: { fullName: string | nul
           ref={popRef}
           role="menu"
           aria-label="Profilmeny"
-          style={{ position: 'absolute', top: 'calc(100% + 6px)', [alignRight ? 'right' : 'left']: 0, minWidth: 200, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 12, boxShadow: '0 8px 28px rgba(0,0,0,0.08)', padding: 8, zIndex: 40 }}
+          style={{ position: 'absolute', [placement === 'up' ? 'bottom' : 'top']: 'calc(100% + 6px)', [alignRight ? 'right' : 'left']: 0, minWidth: 200, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 12, boxShadow: '0 8px 28px rgba(0,0,0,0.08)', padding: 8, zIndex: 40 }}
         >
           <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.5, color: '#6b7280', padding: '4px 8px 6px' }}>Konto</div>
           <div style={{ padding: '0 8px 2px', fontSize: 14, fontWeight: 500, color: '#111827', lineHeight: 1.2 }}>
