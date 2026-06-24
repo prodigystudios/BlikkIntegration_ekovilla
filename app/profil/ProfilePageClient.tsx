@@ -338,17 +338,17 @@ function ReadOnlyField({ label, value, multiline = false, compact = false }: { l
 const pageStyle: React.CSSProperties = {
   display: 'grid',
   gap: 16,
-  padding: '18px 18px 30px',
-  maxWidth: 1260,
+  maxWidth: 1100,
   margin: '0 auto',
+  width: '100%',
 };
 
 const heroStyle: React.CSSProperties = {
-  border: '1px solid #dde7f1',
+  border: '1px solid #e0e8dc',
   borderRadius: 22,
   padding: '18px 20px',
-  background: 'linear-gradient(180deg, #ffffff 0%, #fbfdff 100%)',
-  boxShadow: '0 10px 28px rgba(15,23,42,0.04)',
+  background: '#f9fbf7',
+  boxShadow: '0 1px 3px rgba(20,44,27,0.06), 0 18px 36px -18px rgba(20,44,27,0.24)',
 };
 
 const heroContentStyle: React.CSSProperties = {
@@ -387,11 +387,11 @@ const layoutGridStyle: React.CSSProperties = {
 };
 
 const mainCardStyle: React.CSSProperties = {
-  border: '1px solid #dbe4ef',
-  background: '#fff',
+  border: '1px solid #e0e8dc',
+  background: '#f9fbf7',
   borderRadius: 20,
   padding: 18,
-  boxShadow: '0 10px 24px rgba(15,23,42,0.04)',
+  boxShadow: '0 1px 3px rgba(20,44,27,0.06), 0 18px 36px -18px rgba(20,44,27,0.24)',
 };
 
 const sideColumnStyle: React.CSSProperties = {
@@ -476,13 +476,12 @@ const sectionTextStyle: React.CSSProperties = {
 };
 
 const inputStyle: React.CSSProperties = {
-  border: '1px solid #d7e0ea',
+  border: '1px solid #dce4d8',
   borderRadius: 10,
   padding: '10px 12px',
   fontSize: 14,
   color: '#0f172a',
   background: '#fff',
-  boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.7)',
 };
 
 const readOnlyInputStyle: React.CSSProperties = {
@@ -515,13 +514,13 @@ const cardFooterStyle: React.CSSProperties = {
 const primaryButtonStyle: React.CSSProperties = {
   padding: '10px 15px',
   borderRadius: 10,
-  border: '1px solid #0f172a',
-  background: '#0f172a',
+  border: '1px solid var(--crm-primary)',
+  background: 'var(--crm-primary)',
   color: '#fff',
   fontSize: 13,
   fontWeight: 700,
   cursor: 'pointer',
-  boxShadow: '0 8px 18px rgba(15,23,42,0.12)',
+  boxShadow: '0 8px 18px rgba(20,44,27,0.18)',
 };
 
 const secondaryButtonStyle: React.CSSProperties = {
@@ -536,9 +535,9 @@ const eyebrowStyle: React.CSSProperties = {
   alignItems: 'center',
   padding: '4px 9px',
   borderRadius: 999,
-  background: '#dbeafe',
-  border: '1px solid #bfdbfe',
-  color: '#2563eb',
+  background: '#ecfdf5',
+  border: '1px solid #a7f3d0',
+  color: '#047857',
   fontSize: 11,
   fontWeight: 800,
   letterSpacing: 0.4,
