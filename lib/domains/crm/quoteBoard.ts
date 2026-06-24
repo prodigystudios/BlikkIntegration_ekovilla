@@ -1,40 +1,27 @@
 // Pure column-derivation logic for the Säljtavla (sales board). The board's
-// columns follow a quote's own status, with one derived column: a won quote that
-// has been converted to a work order moves downstream into "Arbetsorder" so the
-// handoff to production is visible. Kept side-effect-free so it can be unit-tested
-// and shared between the server and the board client.
+// columns map 1:1 to a quote's own status. A won quote that's been converted to a
+// work order stays in the "Vunnen" column (shown with an "Order #" badge) rather
+// than moving to a separate column — won offers should read as won. Kept
+// side-effect-free so it can be unit-tested and shared between server and client.
 
 export type QuoteBoardStatus = 'draft' | 'sent' | 'follow_up' | 'won' | 'lost';
 
-// The board columns, in display order. 'work_order' is derived (not a DB status).
-export type SaljtavlaColumn = 'draft' | 'sent' | 'follow_up' | 'won' | 'work_order' | 'lost';
+// Board columns, in display order — identical to the quote statuses.
+export type SaljtavlaColumn = QuoteBoardStatus;
 
-export const SALJTAVLA_COLUMNS: SaljtavlaColumn[] = [
-  'draft',
-  'sent',
-  'follow_up',
-  'won',
-  'work_order',
-  'lost',
-];
+export const SALJTAVLA_COLUMNS: SaljtavlaColumn[] = ['draft', 'sent', 'follow_up', 'won', 'lost'];
 
-// Columns a card can be dropped onto to change its status. 'work_order' is
-// intentionally excluded: a work order is created from the quote's detail view,
-// not by a drag gesture, and such cards are locked.
+// Columns a card can be dropped onto to change its status (all of them).
 export const SALJTAVLA_DROPPABLE_STATUSES: QuoteBoardStatus[] = ['draft', 'sent', 'follow_up', 'won', 'lost'];
 
-// Which board column a quote belongs in. A won quote with a linked work order is
-// shown in the downstream 'work_order' column; everything else maps 1:1 to status.
-export function quoteBoardColumn(quote: {
-  status: QuoteBoardStatus;
-  work_order_id: string | null;
-}): SaljtavlaColumn {
-  if (quote.status === 'won' && quote.work_order_id) return 'work_order';
+// Which board column a quote belongs in — its status.
+export function quoteBoardColumn(quote: { status: QuoteBoardStatus }): SaljtavlaColumn {
   return quote.status;
 }
 
-// A card is locked (non-draggable) once it sits in the work_order column — the
-// quote is already converted/locked and must not be dragged back to a sales status.
+// A won quote that's been converted to a work order is locked in Fortnox and must
+// not be dragged to another status. Such cards sit in the Vunnen column with an
+// "Order #" badge and are non-draggable.
 export function isQuoteCardLocked(quote: { status: QuoteBoardStatus; work_order_id: string | null }): boolean {
-  return quoteBoardColumn(quote) === 'work_order';
+  return quote.status === 'won' && quote.work_order_id != null;
 }

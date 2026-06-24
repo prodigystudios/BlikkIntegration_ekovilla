@@ -43,14 +43,13 @@ type BoardQuote = {
   updated_at: string;
 };
 
-// Per-column header presentation. The five status columns borrow their accent from
-// the shared quoteStatusMeta; 'work_order' is the derived downstream column.
+// Per-column header presentation. Columns map 1:1 to quote status and borrow their
+// accent from the shared quoteStatusMeta.
 const COLUMN_DEF: Record<SaljtavlaColumn, { label: string; hint: string; accent: string }> = {
   draft: { label: quoteStatusMeta.draft.label, hint: 'Ej skickad', accent: quoteStatusMeta.draft.accent },
   sent: { label: quoteStatusMeta.sent.label, hint: 'Hos kund', accent: quoteStatusMeta.sent.accent },
   follow_up: { label: quoteStatusMeta.follow_up.label, hint: 'Inväntar svar', accent: quoteStatusMeta.follow_up.accent },
   won: { label: quoteStatusMeta.won.label, hint: 'Affär klar', accent: quoteStatusMeta.won.accent },
-  work_order: { label: 'Arbetsorder', hint: 'Överlämnad till produktion', accent: 'bg-indigo-500' },
   lost: { label: quoteStatusMeta.lost.label, hint: 'Stängd utan affär', accent: quoteStatusMeta.lost.accent },
 };
 
@@ -332,7 +331,7 @@ function BoardCard({
         moving && 'opacity-50',
       )}
     >
-      <span className={cn('w-1.5 shrink-0', locked ? 'bg-indigo-500' : meta.accent)} />
+      <span className={cn('w-1.5 shrink-0', meta.accent)} />
       <div className="min-w-0 flex-1 px-2.5 py-2">
         <div className="flex items-center justify-between gap-2">
           <DocumentNumberBadge label="Offert" value={documentRef(item.fortnox_offer_number, item.quote_number)} />
