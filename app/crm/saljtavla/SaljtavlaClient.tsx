@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation';
 import Input from '../../../components/ui/Input';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
-import AssigneeFilter, { matchesAssignee, type AssigneeFilterValue, type AssigneeOption } from '@/app/crm/components/AssigneeFilter';
+import AssigneeFilter, { matchesAssignee, MINE, type AssigneeFilterValue, type AssigneeOption } from '@/app/crm/components/AssigneeFilter';
 import DocumentNumberBadge from '@/app/crm/components/DocumentNumberBadge';
 import { documentRef } from '@/app/crm/lib/format';
 import { resolveQuoteVatBreakdown, quoteAmountDisplay } from '@/lib/domains/crm/pricing';
@@ -93,7 +93,9 @@ export default function SaljtavlaClient({ currentUserId }: { currentUserId: stri
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [assignees, setAssignees] = useState<AssigneeOption[]>([]);
-  const [assigneeFilter, setAssigneeFilter] = useState<AssigneeFilterValue>([]);
+  // Default to the logged-in seller's own offers ("mina offerter"); the filter can be
+  // widened to other sellers / everyone.
+  const [assigneeFilter, setAssigneeFilter] = useState<AssigneeFilterValue>([MINE]);
   const [movingId, setMovingId] = useState<string | null>(null);
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [dragOverColumn, setDragOverColumn] = useState<SaljtavlaColumn | null>(null);
@@ -133,13 +135,18 @@ export default function SaljtavlaClient({ currentUserId }: { currentUserId: stri
     [quotes, assigneeFilter, currentUserId],
   );
 
-  // Group into board columns.
+  // Group into board columns, with a summed value per column (uses the same
+  // headline amount as the cards: incl. moms for private, ex moms for business).
   const columns = useMemo(() => {
-    const byColumn = new Map<SaljtavlaColumn, BoardQuote[]>();
-    for (const col of SALJTAVLA_COLUMNS) byColumn.set(col, []);
-    for (const q of scopedQuotes) byColumn.get(quoteBoardColumn(q))!.push(q);
-    for (const list of byColumn.values()) {
-      list.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+    const byColumn = new Map<SaljtavlaColumn, { items: BoardQuote[]; total: number }>();
+    for (const col of SALJTAVLA_COLUMNS) byColumn.set(col, { items: [], total: 0 });
+    for (const q of scopedQuotes) {
+      const bucket = byColumn.get(quoteBoardColumn(q))!;
+      bucket.items.push(q);
+      bucket.total += quoteAmountDisplay(q.quote_type, resolveQuoteVatBreakdown(q)).primary;
+    }
+    for (const bucket of byColumn.values()) {
+      bucket.items.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
     }
     return byColumn;
   }, [scopedQuotes]);
@@ -244,7 +251,8 @@ export default function SaljtavlaClient({ currentUserId }: { currentUserId: stri
       <div className="flex gap-3 overflow-x-auto pb-2">
         {SALJTAVLA_COLUMNS.map((col) => {
           const def = COLUMN_DEF[col];
-          const items = columns.get(col) ?? [];
+          const bucket = columns.get(col) ?? { items: [], total: 0 };
+          const items = bucket.items;
           const isDropTarget = dragOverColumn === col && DROPPABLE.has(col);
           return (
             <div
@@ -263,11 +271,12 @@ export default function SaljtavlaClient({ currentUserId }: { currentUserId: stri
               )}
             >
               <div className="flex items-center justify-between gap-2 border-b border-[#e0e8dc] px-3 py-2">
-                <div className="flex items-center gap-2">
-                  <span className={cn('h-2.5 w-2.5 rounded-full', def.accent)} />
-                  <span className="text-[13px] font-bold text-slate-900">{def.label}</span>
-                  <span className="rounded-full bg-white px-1.5 text-[11px] font-semibold text-slate-500">{items.length}</span>
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className={cn('h-2.5 w-2.5 shrink-0 rounded-full', def.accent)} />
+                  <span className="truncate text-[13px] font-bold text-slate-900">{def.label}</span>
+                  <span className="shrink-0 rounded-full bg-white px-1.5 text-[11px] font-semibold text-slate-500">{items.length}</span>
                 </div>
+                <span className="shrink-0 text-[11px] font-semibold tabular-nums text-slate-500">{formatAmount(bucket.total, 'SEK')}</span>
               </div>
               <div className="flex min-h-[120px] flex-1 flex-col gap-2 p-2">
                 {loading ? (
