@@ -69,6 +69,8 @@ caught at compile time).
 **CRM resources** (each has `.read` + `.write`): `crm.prospect`, `crm.call`, `crm.customer`,
 `crm.contact`, `crm.opportunity`, `crm.offer` (= quotes), `crm.workorder`, `crm.task`.
 
+> `crm.opportunity.*` är **vilande** sedan 2026-06-24: affärsmöjligheter togs bort (ersatta av Säljtavlan) men nycklarna behålls i `PERMISSION_KEYS` + DB-seed så paritets-asserten (`20260608_permissions_parity_assert.sql`) inte bryts. Inga route-/RLS-checkar använder dem längre. Ta bort dem bara om seed, `PERMISSION_KEYS` och paritets-oraklet städas samtidigt.
+
 **CRM read-only:** `crm.report.read`, `crm.coach.read`.
 
 **CRM admin-managed:** `crm.goal.read` / `crm.goal.manage`, `crm.routingrule.read` /
