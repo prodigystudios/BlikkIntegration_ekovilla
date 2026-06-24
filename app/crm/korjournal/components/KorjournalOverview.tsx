@@ -55,7 +55,7 @@ export default function KorjournalOverview({ overview, latestTrip, hasFavorites,
         </div>
       </div>
 
-      <div className="grid gap-2 [grid-template-columns:repeat(auto-fit,minmax(160px,1fr))]">
+      <div className="hidden gap-2 sm:grid sm:grid-cols-2 xl:grid-cols-4">
         <div className={statCard}>
           <span className={statLabel}>Totala kilometer</span>
           <strong className={statValue}>{overview.totalKm.toLocaleString('sv-SE')} km</strong>
@@ -79,7 +79,7 @@ export default function KorjournalOverview({ overview, latestTrip, hasFavorites,
         </div>
       </div>
 
-      <div className="grid gap-2 [grid-template-columns:repeat(auto-fit,minmax(260px,1fr))]">
+      <div className="hidden gap-2 sm:grid sm:grid-cols-2">
         <div className={infoCard}>
           <strong className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">Senaste registrerade resa</strong>
           {latestTrip ? (
