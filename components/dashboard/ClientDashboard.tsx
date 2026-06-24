@@ -1,16 +1,15 @@
 "use client";
-import Link from 'next/link';
 import React, { useMemo, useEffect, useState } from 'react';
-import { QuickLinksGrid, QuickLink, QuickLinksIconBar, QuickLinksSidebar, QuickLinksStrip } from './QuickLinks';
-import DashboardNotes from './DashboardNotes';
 import dynamic from 'next/dynamic';
+import { QuickLinksGrid, QuickLink } from './QuickLinks';
+import DashboardNotes from './DashboardNotes';
 const DashboardSchedule = dynamic(() => import('./DashboardSchedule'));
 import DashboardTasks from './DashboardTasks';
 import DashboardDocumentApprovals from './DashboardDocumentApprovals';
 import TimeReportModal from './TimeReportModal';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
-import SectionCard from '../ui/SectionCard';
+import { crm } from '@/app/crm/lib/crmTokens';
 import type { UserRole } from '../../lib/roles';
 import NewsModal, { type NewsItem } from './NewsModal';
 
@@ -119,26 +118,18 @@ const baseExtra: Record<string, Omit<QuickLink, 'href' | 'title'>> = {
     </svg>
   ) },
 };
-// Dashboard main component (expects role only after cleanup of deprecated userQuickHrefs prop)
+
+const cardClass = cn(crm.cardInner, 'min-h-0');
+
 export function ClientDashboard({ role }: { role: UserRole | null }) {
   const NEWS_SEEN_KEY = 'dashboard.news.lastSeenId';
-  const DESKTOP_BREAKPOINT = 1180;
-  const stickyTop = 92;
 
   // konsult should have the same viewing permissions as sales.
   const effectiveRole: UserRole | null = role === 'konsult' ? 'sales' : role;
 
-  // Responsive flags (client-only)
-  const [isSmall, setIsSmall] = useState(false); // <= 640px
-  const [isXS, setIsXS] = useState(false); // <= 420px
-  const [isDesktop, setIsDesktop] = useState(false);
+  const [isSmall, setIsSmall] = useState(false);
   useEffect(() => {
-    const calc = () => {
-      const w = window.innerWidth;
-      setIsSmall(w <= 768);
-      setIsXS(w <= 460);
-      setIsDesktop(w >= DESKTOP_BREAKPOINT);
-    };
+    const calc = () => setIsSmall(window.innerWidth <= 768);
     calc();
     window.addEventListener('resize', calc);
     return () => window.removeEventListener('resize', calc);
@@ -147,7 +138,6 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
   // News modal (shown once per news item)
   const [newsItem, setNewsItem] = useState<NewsItem | null>(null);
   const [newsOpen, setNewsOpen] = useState(false);
-
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -157,17 +147,11 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
         const j = await res.json();
         const item = (j?.item || null) as NewsItem | null;
         if (!alive || !item?.id) return;
-
         let lastSeen: string | null = null;
         try { lastSeen = localStorage.getItem(NEWS_SEEN_KEY); } catch { /* ignore */ }
-
         setNewsItem(item);
-        if (!lastSeen || lastSeen !== item.id) {
-          setNewsOpen(true);
-        }
-      } catch {
-        // ignore
-      }
+        if (!lastSeen || lastSeen !== item.id) setNewsOpen(true);
+      } catch { /* ignore */ }
     })();
     return () => { alive = false; };
   }, []);
@@ -178,6 +162,7 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
       try { localStorage.setItem(NEWS_SEEN_KEY, newsItem.id); } catch { /* ignore */ }
     }
   };
+
   const links: QuickLink[] = useMemo(() => {
     if (role === 'konsult') {
       return [
@@ -186,7 +171,6 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
         { href: '/kontakt-lista', title: 'Kontakt', ...baseExtra['/kontakt-lista'] },
       ];
     }
-    // Explicit role-based sets as requested
     if (effectiveRole === 'member') {
       return [
         { href: '/egenkontroll', title: 'Skapa egenkontroll', ...baseExtra['/egenkontroll'] },
@@ -224,342 +208,115 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
         { href: '/offert/kalkylator', title: 'Kalkylator Försäljning Privat', ...baseExtra['/offert/kalkylator'] },
       ];
     }
-    // Fallback before role known: minimal set
-    return [
-      { href: '/egenkontroll', title: 'Egenkontroll', ...baseExtra['/egenkontroll'] },
-    ];
+    return [{ href: '/egenkontroll', title: 'Egenkontroll', ...baseExtra['/egenkontroll'] }];
   }, [effectiveRole, role]);
-  const [mini, setMini] = useState(false);
-  const [showDesktopApprovals, setShowDesktopApprovals] = useState(true);
-  const [showAllDesktopLinks, setShowAllDesktopLinks] = useState(false);
-  const [showDesktopTasks, setShowDesktopTasks] = useState(true);
+
   const [timeModalOpen, setTimeModalOpen] = useState(false);
   const [timePrefill, setTimePrefill] = useState<{ project?: string; projectId?: string; date?: string } | null>(null);
-  // Persist mini preference in localStorage
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem('dashboard.quicklinks.mini');
-      if (raw === '1') setMini(true);
-      // On first visit or no preference, auto-compact on very small screens
-      if (raw == null) {
-        const w = window.innerWidth;
-        if (w <= 480) setMini(true);
-      }
-    } catch {}
-  }, []);
-  useEffect(() => {
-    try { localStorage.setItem('dashboard.quicklinks.mini', mini ? '1' : '0'); } catch {}
-  }, [mini]);
-
-  // Toast
   const toast = useToast();
-  const desktopSidebarLinks = useMemo(() => showAllDesktopLinks ? links : links.slice(0, 6), [links, showAllDesktopLinks]);
+
   const todayMeta = useMemo(() => {
     const now = new Date();
     const weekday = now.toLocaleDateString('sv-SE', { weekday: 'long' });
     const monthDay = now.toLocaleDateString('sv-SE', { day: 'numeric', month: 'long' });
     const hour = now.getHours();
     const greeting = hour < 10 ? 'God morgon' : hour < 17 ? 'Hej' : 'God kväll';
-    return {
-      greeting,
-      weekday: weekday.charAt(0).toUpperCase() + weekday.slice(1),
-      monthDay,
-    };
+    return { greeting, weekday: weekday.charAt(0).toUpperCase() + weekday.slice(1), monthDay };
   }, []);
-
-  const surfaceCardStyle: React.CSSProperties = {
-    border: '1px solid #e5e7eb',
-    background: '#fff',
-    borderRadius: isSmall ? 18 : 20,
-    padding: isSmall ? (isXS ? 14 : 18) : 24,
-    display: 'grid',
-    gap: isSmall ? 16 : 22,
-    boxShadow: '0 10px 26px rgba(15, 23, 42, 0.04)'
-  };
-
-  const desktopShellStyle: React.CSSProperties = {
-    padding: 24,
-    maxWidth: 1580,
-    margin: '0 auto',
-    display: 'grid',
-    gridTemplateColumns: 'minmax(220px, 260px) minmax(0, 1.6fr) minmax(280px, 340px)',
-    gap: 24,
-    alignItems: 'start'
-  };
-
-  const desktopRailStyle: React.CSSProperties = {
-    position: 'sticky',
-    top: stickyTop,
-    display: 'grid',
-    gap: 18,
-    alignSelf: 'start'
-  };
-
-  const desktopMainStyle: React.CSSProperties = {
-    display: 'grid',
-    gap: 24,
-    minWidth: 0,
-  };
-
-  const desktopQuickLinksCardStyle: React.CSSProperties = {
-    ...surfaceCardStyle,
-    padding: 18,
-    gap: 14,
-    border: '1px solid #dbe4ef',
-    background: 'linear-gradient(180deg,#fcfdff 0%,#f5f8fc 100%)',
-    boxShadow: '0 12px 28px rgba(15,23,42,0.06)',
-  };
-
-  const desktopDenseCardStyle: React.CSSProperties = {
-    ...surfaceCardStyle,
-    padding: 20,
-    gap: 16,
-  };
-
-  const miniToggleBtnClass = 'inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-sm leading-none text-slate-700 shadow-[0_2px_4px_rgba(0,0,0,0.06)] transition-colors hover:bg-slate-50';
-
-  const renderHeroSection = (showQuickLinks: boolean) => (
-    <section
-      className={cn(
-        'relative grid overflow-hidden rounded-[24px] border border-[#d6e4d8] bg-[linear-gradient(135deg,#f7fbf8_0%,#eef8f0_42%,#f7fbff_100%)] shadow-[0_24px_56px_rgba(15,23,42,0.10)]',
-        isDesktop ? 'gap-4 p-[22px]' : isSmall ? (isXS ? 'gap-3 p-[14px]' : 'gap-3 p-4') : 'gap-[18px] p-6'
-      )}
-    >
-      <div className="pointer-events-none absolute inset-[1px] rounded-[23px] border border-white/70" />
-      <div className="pointer-events-none absolute inset-x-0 top-0 h-[88px] bg-[linear-gradient(180deg,rgba(255,255,255,0.72)_0%,rgba(255,255,255,0)_100%)]" />
-      <div
-        className={cn(
-          'absolute rounded-full bg-[radial-gradient(circle,rgba(34,197,94,0.16)_0%,rgba(34,197,94,0)_72%)] blur-[2px]',
-          isSmall ? '-right-[26px] -top-[42px] h-[140px] w-[140px]' : '-right-[18px] -top-[54px] h-[190px] w-[190px]'
-        )}
-      />
-      <div className="pointer-events-none absolute -left-[64px] bottom-[-92px] h-[220px] w-[220px] rounded-full bg-[radial-gradient(circle,rgba(59,130,246,0.10)_0%,rgba(59,130,246,0)_72%)]" />
-      <div className="relative flex flex-wrap items-start justify-between gap-3">
-        <div className={cn('grid', isSmall ? 'max-w-full gap-2' : 'max-w-[680px] gap-2.5', isDesktop ? 'max-w-full' : '')}>
-          <div className="inline-flex w-fit items-center gap-2 rounded-full border border-[#d9e5dc] bg-white/80 px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-[0.3px] text-green-700">
-            {todayMeta.greeting}
-            <span className="h-1 w-1 rounded-full bg-green-500" />
-            {todayMeta.weekday}
-          </div>
-          <div className="grid gap-1.5">
-            <h1
-              className={cn(
-                'm-0 leading-[1.02] tracking-[-1.1px] text-slate-900',
-                isSmall ? (isXS ? 'text-[26px]' : 'text-[30px]') : isDesktop ? 'text-[34px]' : 'text-[38px]'
-              )}
-            >
-              Översikt
-            </h1>
-            <p
-              className={cn(
-                'm-0 leading-[1.45] text-slate-600',
-                isSmall ? 'max-w-[520px] text-[13px]' : 'max-w-[560px] text-[15px]',
-                isDesktop ? 'max-w-[720px]' : ''
-              )}
-            >
-              {isDesktop
-                ? 'Välkommen till din dashboard! Här har vi samlat allt du behöver för att snabbt komma igång med dagens arbete och hålla koll på det som är viktigt.'
-                : 'Börja med dagens viktigaste saker. Snabb åtkomst till tidrapport, dokument och dina vanligaste genvägar.'}
-            </p>
-          </div>
-        </div>
-        <div className={cn('grid gap-2.5', isSmall ? 'min-w-full' : isDesktop ? 'min-w-[260px]' : 'min-w-[240px]')}>
-          <button
-            type="button"
-            onClick={()=>{ setTimePrefill(null); setTimeModalOpen(true); }}
-            className={cn(
-              'inline-flex items-center justify-center gap-2 rounded-[16px] border border-green-600 bg-[linear-gradient(180deg,#22c55e_0%,#16a34a_100%)] font-bold text-white shadow-[0_16px_28px_rgba(22,163,74,0.24)] transition-[transform,box-shadow,background] hover:-translate-y-0.5 hover:bg-[linear-gradient(180deg,#20b455_0%,#15803d_100%)] hover:shadow-[0_20px_36px_rgba(22,163,74,0.26)]',
-              isSmall ? 'px-4 py-3 text-[13px]' : 'px-[18px] py-[13px] text-[13px]'
-            )}
-          >
-            <span aria-hidden className="inline-flex">
-              <svg width="16" height="16" viewBox="0 0 24 24" strokeWidth={2} stroke="#fff" fill="none"><path d="M12 5v14M5 12h14" strokeLinecap="round" strokeLinejoin="round"/></svg>
-            </span>
-            Rapportera tid
-          </button>
-          <div className={cn('grid gap-2.5', isSmall || isDesktop ? 'grid-cols-1' : 'grid-cols-2')}>
-            <div className={cn('flex flex-wrap items-center justify-between gap-3 rounded-[20px] border border-white/80 bg-white/88 shadow-[0_12px_28px_rgba(15,23,42,0.08)] backdrop-blur-[6px]', isSmall ? 'px-3 py-2.5' : 'px-[14px] py-3')}>
-              <div className="grid gap-0.5">
-                <span className="text-[11px] font-bold uppercase tracking-[0.3px] text-slate-500">Idag</span>
-                <strong className={cn('text-slate-900', isSmall ? 'text-[15px]' : 'text-base')}>{todayMeta.monthDay}</strong>
-              </div>
-              <span className="text-xs text-slate-500">Fokus på det viktigaste först.</span>
-            </div>
-            {!isSmall && !isDesktop && (
-              <div className="grid gap-1 rounded-[20px] border border-white/80 bg-white/88 px-[14px] py-3 shadow-[0_12px_28px_rgba(15,23,42,0.08)] backdrop-blur-[6px]">
-                <span className="text-[11px] font-bold uppercase tracking-[0.3px] text-slate-500">Snabbt nu</span>
-                <strong className="text-base text-slate-900">Öppna dokument</strong>
-                <Link href="/mina-dokument" className="text-xs font-bold text-blue-600 no-underline hover:text-blue-700">Gå till mina dokument</Link>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {showQuickLinks && !mini && (
-        <div className={cn('grid', isSmall ? 'gap-2' : 'gap-2.5')}>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="grid gap-1">
-              <h2 className={cn('m-0 text-slate-900', isSmall ? 'text-base' : 'text-[19px]')}>Snabba genvägar</h2>
-              {!isSmall && <p className="m-0 text-[13px] text-slate-500">Det du använder mest ska ligga först och kräva så lite scroll som möjligt.</p>}
-            </div>
-            <div className="flex items-center gap-2">
-              {isSmall && (
-                <span className="inline-flex items-center gap-1.5 text-[11px] text-slate-500">
-                  Svep för fler
-                  <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path fill="#94a3b8" d="M8 5l7 7-7 7"/></svg>
-                </span>
-              )}
-              <button onClick={()=>setMini(true)} className={miniToggleBtnClass} aria-label="Minimera och visa endast ikoner" title="Minimera och visa endast ikoner">Minimera</button>
-            </div>
-          </div>
-          {isSmall ? (
-            <QuickLinksStrip links={links} compact={true} extraCompact={isXS} />
-          ) : (
-            <QuickLinksGrid links={links} compact={false} extraCompact={false} />
-          )}
-        </div>
-      )}
-    </section>
-  );
 
   return (
     <>
-      {newsItem && (
-        <NewsModal open={newsOpen} item={newsItem} onClose={closeNews} />
-      )}
-    <main className="dash-layout" style={isDesktop ? desktopShellStyle : {
-      padding: isSmall ? (isXS ? 10 : 14) : 24,
-      maxWidth: mini ? 1400 : 1200,
-      margin: '0 auto',
-      display: 'flex',
-      flexDirection: mini ? 'row' : 'column',
-      gap: mini ? 24 : (isSmall ? 20 : 32),
-      alignItems: mini ? 'flex-start' : 'stretch'
-    }}>
-      {isDesktop ? (
-        <>
-          <aside style={desktopRailStyle}>
-            <section style={desktopQuickLinksCardStyle}>
-              <div className="grid gap-1">
-                <h2 className="m-0 text-lg text-slate-900">Snabba genvägar</h2>
-                <p className="m-0 text-[12.5px] leading-[1.45] text-slate-500">Lägg det du öppnar ofta nära till hands i stället för mitt i arbetsflödet.</p>
-              </div>
-              <QuickLinksSidebar links={desktopSidebarLinks} />
-              {links.length > 6 && (
-                <button
-                  type="button"
-                  onClick={() => setShowAllDesktopLinks((prev) => !prev)}
-                  className={cn(miniToggleBtnClass, 'w-full justify-center px-3 py-2.5 text-[12.5px] font-bold')}
-                >
-                  {showAllDesktopLinks ? 'Visa färre' : `Visa fler (${links.length - 6})`}
-                </button>
-              )}
-            </section>
-          </aside>
+      {newsItem && <NewsModal open={newsOpen} item={newsItem} onClose={closeNews} />}
 
-          <div className="dash-main-col" style={desktopMainStyle}>
-            {renderHeroSection(false)}
-
-            <SectionCard className={cn(isSmall ? (isXS ? 'rounded-[18px] p-[14px]' : 'rounded-[18px] p-[18px]') : 'rounded-[20px] p-6', 'grid gap-[22px] shadow-[0_10px_26px_rgba(15,23,42,0.04)] min-h-0')}>
-              <DashboardNotes compact desktopMode />
-            </SectionCard>
-
-            {effectiveRole !== 'sales' && (
-              <section style={surfaceCardStyle}>
-                <DashboardSchedule compact={false} onReportTime={(info: { projectId?: string; projectName?: string; orderNumber?: string; day?: string }) => {
-                  const label = info.orderNumber ? `#${info.orderNumber}` : (info.projectName || info.projectId || '');
-                  setTimePrefill({ project: label, projectId: info.projectId, date: info.day });
-                  setTimeModalOpen(true);
-                }} />
-              </section>
-            )}
+      <div className="mx-auto grid w-full max-w-[1200px] grid-cols-1 gap-4">
+        {/* Header */}
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <div className="inline-flex w-fit items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.06em] text-emerald-700">
+              {todayMeta.greeting}
+              <span className="h-1 w-1 rounded-full bg-emerald-500" />
+              {todayMeta.weekday}
+            </div>
+            <h1 className="m-0 mt-1.5 text-xl font-bold tracking-tight text-slate-900">Översikt</h1>
+            <p className="m-0 mt-1 text-sm text-slate-500">{todayMeta.monthDay} · fokus på det viktigaste först</p>
           </div>
+          <button
+            type="button"
+            onClick={() => { setTimePrefill(null); setTimeModalOpen(true); }}
+            className="inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-sm font-semibold text-white transition hover:opacity-90"
+            style={{ backgroundColor: 'var(--crm-primary)' }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" fill="none" aria-hidden><path d="M12 5v14M5 12h14" strokeLinecap="round" strokeLinejoin="round" /></svg>
+            Rapportera tid
+          </button>
+        </div>
 
-          <aside style={desktopRailStyle}>
-            {showDesktopApprovals && (
-              <section style={desktopDenseCardStyle}>
-                <DashboardDocumentApprovals compact hideWhenEmpty onVisibilityChange={setShowDesktopApprovals} />
-              </section>
-            )}
-            {showDesktopTasks && (
-              <section style={desktopDenseCardStyle}>
-                <DashboardTasks compact hideWhenEmpty onVisibilityChange={setShowDesktopTasks} />
-              </section>
-            )}
-          </aside>
-        </>
-      ) : (
-        <>
-          {mini && (
-            <aside className="dash-sidebar sticky top-3 flex min-w-[72px] flex-col gap-3.5">
-              <div className="flex justify-center">
-                <button onClick={()=>setMini(false)} className={miniToggleBtnClass} aria-label="Expandera genvägar">»</button>
-              </div>
-              <QuickLinksIconBar links={links} />
-            </aside>
-          )}
-          <div className="dash-main-col" style={{ flex:1, display:'flex', flexDirection:'column', gap: mini ? 24 : (isSmall ? 20 : 32) }}>
-            {renderHeroSection(true)}
+        {/* Quick links */}
+        <section className={cn(crm.cardInner)}>
+          <p className={cn('mb-3', crm.sectionTitle)}>Snabba genvägar</p>
+          <QuickLinksGrid links={links} />
+        </section>
 
-            {effectiveRole !== 'sales' && (
-              <div className={cn(isSmall ? 'order-[-1]' : 'order-none')}>
-                <DashboardSchedule compact={isSmall || mini} onReportTime={(info: { projectId?: string; projectName?: string; orderNumber?: string; day?: string }) => {
-                  const label = info.orderNumber ? `#${info.orderNumber}` : (info.projectName || info.projectId || '');
-                  setTimePrefill({ project: label, projectId: info.projectId, date: info.day });
-                  setTimeModalOpen(true);
-                }} />
-              </div>
-            )}
-            <SectionCard className={cn(isSmall ? (isXS ? 'rounded-[18px] p-[14px]' : 'rounded-[18px] p-[18px]') : 'rounded-[20px] p-6', 'grid gap-[22px] shadow-[0_10px_26px_rgba(15,23,42,0.04)]', mini ? 'order-[-1]' : 'order-none')}>
-              <DashboardDocumentApprovals compact={isSmall || mini} />
-            </SectionCard>
-            <SectionCard className={cn(isSmall ? (isXS ? 'rounded-[18px] p-[14px]' : 'rounded-[18px] p-[18px]') : 'rounded-[20px] p-6', 'grid gap-[22px] shadow-[0_10px_26px_rgba(15,23,42,0.04)]', mini ? 'order-[-1]' : 'order-none')}>
-              <DashboardTasks compact={isSmall || mini} />
-            </SectionCard>
-            <SectionCard className={cn(isSmall ? (isXS ? 'rounded-[18px] p-[14px]' : 'rounded-[18px] p-[18px]') : 'rounded-[20px] p-6', 'grid gap-[22px] shadow-[0_10px_26px_rgba(15,23,42,0.04)]', mini ? 'order-[-1]' : 'order-none')}>
-              <DashboardNotes compact={isSmall || mini} />
-            </SectionCard>
-          </div>
-        </>
-      )}
-      <TimeReportModal open={timeModalOpen} onClose={()=>setTimeModalOpen(false)}
+        {/* Schedule (not for sales) */}
+        {effectiveRole !== 'sales' && (
+          <section className={cardClass}>
+            <DashboardSchedule
+              compact={isSmall}
+              onReportTime={(info: { projectId?: string; projectName?: string; orderNumber?: string; day?: string }) => {
+                const label = info.orderNumber ? `#${info.orderNumber}` : (info.projectName || info.projectId || '');
+                setTimePrefill({ project: label, projectId: info.projectId, date: info.day });
+                setTimeModalOpen(true);
+              }}
+            />
+          </section>
+        )}
+
+        <section className={cardClass}>
+          <DashboardDocumentApprovals compact={isSmall} />
+        </section>
+        <section className={cardClass}>
+          <DashboardTasks compact={isSmall} />
+        </section>
+        <section className={cardClass}>
+          <DashboardNotes compact={isSmall} />
+        </section>
+      </div>
+
+      <TimeReportModal
+        open={timeModalOpen}
+        onClose={() => setTimeModalOpen(false)}
         initialProject={timePrefill?.project || null}
         initialProjectId={timePrefill?.projectId || null}
         initialDate={timePrefill?.date || null}
-        onSubmit={async (payload)=>{
-        try {
-          const minutes = Math.round(payload.totalHours * 60);
-          const body = {
-            date: payload.date,
-            minutes,
-            breakMinutes: payload.breakMinutes,
-            start: payload.start,
-            end: payload.end,
-            projectId: payload.reportType === 'project' && payload.projectId ? Number(payload.projectId) : undefined,
-            internalProjectId: payload.reportType === 'internal' && payload.internalProjectId ? Number(payload.internalProjectId) : undefined,
-            absenceProjectId: payload.reportType === 'absence' && payload.absenceProjectId ? Number(payload.absenceProjectId) : undefined,
-            activityId: payload.activityId ? Number(payload.activityId) : undefined,
-            timeCodeId: payload.timecodeId ? Number(payload.timecodeId) : undefined,
-            description: payload.description || undefined,
-          };
-          console.debug('[time-report] creating', body);
-          const url = process.env.NODE_ENV !== 'production' ? '/api/blikk/time-reports?debug=1' : '/api/blikk/time-reports';
-          const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-          const json = await res.json().catch(()=>({}));
-          if (!res.ok || !json.ok) {
-            console.warn('Time report create failed', json);
-            toast.error(json?.error || 'Misslyckades att spara tid');
-          } else {
-            console.debug('Time report created', json);
-            toast.success('Tidrapport sparad');
+        onSubmit={async (payload) => {
+          try {
+            const minutes = Math.round(payload.totalHours * 60);
+            const body = {
+              date: payload.date,
+              minutes,
+              breakMinutes: payload.breakMinutes,
+              start: payload.start,
+              end: payload.end,
+              projectId: payload.reportType === 'project' && payload.projectId ? Number(payload.projectId) : undefined,
+              internalProjectId: payload.reportType === 'internal' && payload.internalProjectId ? Number(payload.internalProjectId) : undefined,
+              absenceProjectId: payload.reportType === 'absence' && payload.absenceProjectId ? Number(payload.absenceProjectId) : undefined,
+              activityId: payload.activityId ? Number(payload.activityId) : undefined,
+              timeCodeId: payload.timecodeId ? Number(payload.timecodeId) : undefined,
+              description: payload.description || undefined,
+            };
+            const url = process.env.NODE_ENV !== 'production' ? '/api/blikk/time-reports?debug=1' : '/api/blikk/time-reports';
+            const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+            const json = await res.json().catch(() => ({}));
+            if (!res.ok || !json.ok) {
+              toast.error(json?.error || 'Misslyckades att spara tid');
+            } else {
+              toast.success('Tidrapport sparad');
+            }
+          } catch {
+            try { toast.error('Fel vid sparande av tid'); } catch { /* ignore */ }
           }
-        } catch (e:any) {
-          console.warn('Time report create error', e);
-          try { toast.error('Fel vid sparande av tid'); } catch {}
-        }
-      }} />
-    </main>
+        }}
+      />
     </>
   );
 }
