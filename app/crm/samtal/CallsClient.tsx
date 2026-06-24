@@ -36,7 +36,6 @@ type CallItem = {
   id: string;
   prospect_id: string | null;
   customer_id: string | null;
-  opportunity_id: string | null;
   company_name: string | null;
   organization_number: string | null;
   contact_name: string | null;
@@ -56,7 +55,6 @@ type CallItem = {
 
 type CallDraft = {
   customer_id: string | null;
-  opportunity_id: string;
   company_name: string;
   organization_number: string;
   contact_name: string;
@@ -103,7 +101,6 @@ const outcomeAccent: Record<CallItem['outcome'], string> = {
 
 const initialDraft: CallDraft = {
   customer_id: null,
-  opportunity_id: '',
   company_name: '',
   organization_number: '',
   contact_name: '',
@@ -161,7 +158,6 @@ export default function CallsClient() {
   const searchParams = useSearchParams();
   const toast = useToast();
   const [calls, setCalls] = useState<CallItem[]>([]);
-  const [opportunities, setOpportunities] = useState<Array<{ id: string; title: string }>>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [promotingCallIds, setPromotingCallIds] = useState<string[]>([]);
@@ -187,14 +183,8 @@ export default function CallsClient() {
       setLoading(true);
       setError(null);
       try {
-        const [callsRes, oppsRes] = await Promise.all([
-          fetch(`/api/crm/calls${historySearch.trim() ? `?q=${encodeURIComponent(historySearch.trim())}` : ''}`, { cache: 'no-store' }),
-          fetch('/api/crm/opportunities', { cache: 'no-store' }),
-        ]);
-        const [callsJson, oppsJson] = await Promise.all([
-          callsRes.json().catch(() => ({})),
-          oppsRes.json().catch(() => ({})),
-        ]);
+        const callsRes = await fetch(`/api/crm/calls${historySearch.trim() ? `?q=${encodeURIComponent(historySearch.trim())}` : ''}`, { cache: 'no-store' });
+        const callsJson = await callsRes.json().catch(() => ({}));
         if (!active) return;
         if (!callsRes.ok || !callsJson.ok) {
           setError(callsJson?.error || 'Kunde inte ladda samtalshistorik.');
@@ -202,7 +192,6 @@ export default function CallsClient() {
           return;
         }
         setCalls(Array.isArray(callsJson?.data?.items) ? callsJson.data.items : []);
-        setOpportunities(Array.isArray(oppsJson?.data?.items) ? oppsJson.data.items : []);
       } catch {
         if (!active) return;
         setError('Kunde inte ladda samtalsytan.');
@@ -329,7 +318,6 @@ export default function CallsClient() {
     );
     setDraft({
       customer_id: call.customer_id ?? null,
-      opportunity_id: call.opportunity_id || '',
       company_name: call.company_name || '',
       organization_number: call.organization_number || '',
       contact_name: call.contact_name || '',
@@ -348,7 +336,7 @@ export default function CallsClient() {
 
   async function submitCall() {
     if (!draft.summary.trim()) { toast.error('Samtalsanteckning krävs'); return; }
-    if (!draft.customer_id && !draft.opportunity_id && !draft.company_name.trim()) {
+    if (!draft.customer_id && !draft.company_name.trim()) {
       toast.error('Välj en kund/prospekt eller fyll i företagsnamn');
       return;
     }
@@ -357,7 +345,6 @@ export default function CallsClient() {
       const isEditing = Boolean(editingCallId);
       const body: Record<string, unknown> = {
         customer_id: draft.customer_id || null,
-        opportunity_id: draft.opportunity_id || null,
         outcome: draft.outcome,
         summary: draft.summary,
         next_step: draft.next_step || null,
@@ -704,21 +691,6 @@ export default function CallsClient() {
                   </div>
                 )}
               </div>
-
-              {/* Affärsmöjlighet */}
-              <label className="grid gap-1 text-sm text-slate-600">
-                <span className={crm.sectionTitle}>Affärsmöjlighet (valfritt)</span>
-                <select
-                  value={draft.opportunity_id}
-                  onChange={(e) => setDraft((c) => ({ ...c, opportunity_id: e.target.value }))}
-                  className="min-h-11 w-full rounded-lg border border-[#dce4d8] bg-white px-3 py-2 text-sm text-slate-900 transition-colors focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
-                >
-                  <option value="">Ingen affärsmöjlighet</option>
-                  {opportunities.map((opp) => (
-                    <option key={opp.id} value={opp.id}>{opp.title}</option>
-                  ))}
-                </select>
-              </label>
 
               {/* Manuell inmatning — visas om ingen kund/prospekt är vald */}
               {!draft.customer_id ? (

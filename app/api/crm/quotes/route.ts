@@ -23,7 +23,6 @@ export async function GET(req: Request) {
       q: url.searchParams.get('q') || undefined,
       status: url.searchParams.get('status') || undefined,
       prospect_id: url.searchParams.get('prospect_id') || undefined,
-      opportunity_id: url.searchParams.get('opportunity_id') || undefined,
       customer_id: url.searchParams.get('customer_id') || undefined,
     });
 
@@ -34,7 +33,6 @@ export async function GET(req: Request) {
       search: parsedQuery.data.q,
       status: parsedQuery.data.status,
       prospectId: parsedQuery.data.prospect_id,
-      opportunityId: parsedQuery.data.opportunity_id,
       customerId: parsedQuery.data.customer_id,
     });
     const { data, error } = await query;

@@ -62,9 +62,11 @@ const navIcons: Record<string, JSX.Element> = {
       <path d="M23 21v-2a4 4 0 00-3-3.87" /><path d="M16 3.13a4 4 0 010 7.75" />
     </svg>
   ),
-  '/crm/affarsmojligheter': (
+  '/crm/saljtavla': (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+      <rect x="3" y="4" width="5" height="16" rx="1" />
+      <rect x="9.5" y="4" width="5" height="10" rx="1" />
+      <rect x="16" y="4" width="5" height="13" rx="1" />
     </svg>
   ),
   '/crm/arbetsorder': (

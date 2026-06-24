@@ -9,6 +9,7 @@ import { openFortnoxPdf, postFortnoxEmail } from '@/app/crm/lib/fortnoxDoc';
 import { documentRef } from '@/app/crm/lib/format';
 import DocumentNumberBadge from '@/app/crm/components/DocumentNumberBadge';
 import { resolveQuoteVatBreakdown, quoteAmountDisplay } from '@/lib/domains/crm/pricing';
+import { quoteStatusMeta } from '@/app/crm/lib/crmTokens';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -16,7 +17,6 @@ type QuoteItem = {
   id: string;
   quote_number: string | null;
   prospect_id: string | null;
-  opportunity_id: string | null;
   customer_id: string | null;
   assigned_to: string | null;
   customer_name: string | null;
@@ -28,7 +28,6 @@ type QuoteItem = {
   } | null;
   pricing_summary: { subtotal?: number; vat?: number; total?: number } | null;
   prospect: { id: string; company_name: string; contact_name: string | null; city: string | null; status: string } | Array<{ id: string; company_name: string; contact_name: string | null; city: string | null; status: string }> | null;
-  opportunity: { id: string; title: string; status: string } | null;
   project_name: string;
   description: string | null;
   amount: number | string;
@@ -52,44 +51,6 @@ type QuoteItem = {
 type QuoteFilter = 'all' | 'active' | 'follow_up' | 'won' | 'lost';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-const quoteStatusMeta: Record<QuoteItem['status'], { label: string; className: string; cardClass: string; amountClass: string; accent: string }> = {
-  draft: {
-    label: 'Utkast',
-    className: 'border-slate-200 bg-slate-50 text-slate-700',
-    cardClass: 'border-slate-200/90 bg-white',
-    amountClass: 'border-slate-200 bg-white text-slate-800',
-    accent: 'bg-slate-300',
-  },
-  sent: {
-    label: 'Skickad',
-    className: 'border-sky-200 bg-sky-50 text-sky-800',
-    cardClass: 'border-sky-100 bg-white',
-    amountClass: 'border-sky-200 bg-white text-sky-900',
-    accent: 'bg-sky-400',
-  },
-  follow_up: {
-    label: 'Följ upp',
-    className: 'border-amber-200 bg-amber-50 text-amber-900',
-    cardClass: 'border-amber-100 bg-white ring-1 ring-amber-50',
-    amountClass: 'border-amber-200 bg-white text-amber-900',
-    accent: 'bg-amber-400',
-  },
-  won: {
-    label: 'Vunnen',
-    className: 'border-emerald-200 bg-emerald-50 text-emerald-900',
-    cardClass: 'border-emerald-100 bg-white',
-    amountClass: 'border-emerald-200 bg-white text-emerald-900',
-    accent: 'bg-emerald-500',
-  },
-  lost: {
-    label: 'Förlorad',
-    className: 'border-rose-200 bg-rose-50 text-rose-800',
-    cardClass: 'border-rose-100 bg-white',
-    amountClass: 'border-rose-200 bg-white text-rose-900',
-    accent: 'bg-rose-400',
-  },
-};
 
 const quoteFilterMeta: Record<QuoteFilter, { label: string }> = {
   all: { label: 'Alla' },
@@ -192,7 +153,6 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
   const [hasHandledPreset, setHasHandledPreset] = useState(false);
 
   const presetProspectId = searchParams.get('prospect_id') || '';
-  const presetOpportunityId = searchParams.get('opportunity_id') || '';
   const presetQuoteId = searchParams.get('quote_id') || '';
   const shouldOpenCreate = searchParams.get('new') === '1';
   const [hasHandledQuotePreset, setHasHandledQuotePreset] = useState(false);
@@ -203,13 +163,12 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
     setHasHandledPreset(true);
     const params = new URLSearchParams();
     if (presetProspectId) params.set('prospect_id', presetProspectId);
-    if (presetOpportunityId) params.set('opportunity_id', presetOpportunityId);
     router.push(`/crm/offerter/ny${params.size > 0 ? `?${params}` : ''}`);
-  }, [shouldOpenCreate, hasHandledPreset, loading, presetProspectId, presetOpportunityId, router]);
+  }, [shouldOpenCreate, hasHandledPreset, loading, presetProspectId, router]);
 
   useEffect(() => {
     setHasHandledPreset(false);
-  }, [presetProspectId, presetOpportunityId, shouldOpenCreate]);
+  }, [presetProspectId, shouldOpenCreate]);
 
   // Load quotes
   useEffect(() => {
