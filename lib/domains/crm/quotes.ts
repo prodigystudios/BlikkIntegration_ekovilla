@@ -5,7 +5,6 @@ export const crmQuoteSelect = `
   id,
   quote_number,
   prospect_id,
-  opportunity_id,
   customer_id,
   customer_name,
   quote_type,
@@ -39,11 +38,6 @@ export const crmQuoteSelect = `
     id,
     company_name,
     customer_stage
-  ),
-  opportunity:crm_opportunities(
-    id,
-    title,
-    status
   )
 `;
 
@@ -117,7 +111,6 @@ type InternalHandoff = {
 
 type CreateCrmQuoteInput = {
   prospect_id: string | null;
-  opportunity_id?: string | null;
   customer_id?: string | null;
   customer_name: string | null;
   quote_type: CrmQuoteType;
@@ -147,7 +140,6 @@ type ListCrmQuotesOptions = {
   search?: string;
   status?: CrmQuoteStatus;
   prospectId?: string;
-  opportunityId?: string;
   customerId?: string;
 };
 
@@ -172,10 +164,6 @@ export async function listCrmQuotesWithFilters(supabase: SupabaseClient, options
 
   if (options.prospectId) {
     query = query.eq('prospect_id', options.prospectId);
-  }
-
-  if (options.opportunityId) {
-    query = query.eq('opportunity_id', options.opportunityId);
   }
 
   if (options.customerId) {

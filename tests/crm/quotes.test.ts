@@ -94,7 +94,7 @@ describe('createCrmQuoteSchema', () => {
     expect(createCrmQuoteSchema.safeParse(rest).success).toBe(false);
   });
 
-  it('misslyckas utan prospect_id, opportunity_id eller customer_name', () => {
+  it('misslyckas utan prospect_id, customer_id eller customer_name', () => {
     const { customer_name: _, ...rest } = validQuoteBase;
     expect(
       createCrmQuoteSchema.safeParse({ ...rest, customer_snapshot: {} }).success
@@ -303,7 +303,7 @@ describe('POST /api/crm/quotes', () => {
     expect(res.status).toBe(400);
   });
 
-  it('returnerar 400 utan customer_name / prospect / opportunity', async () => {
+  it('returnerar 400 utan customer_name / prospect / kund', async () => {
     mockGetUser.mockResolvedValue(salesUser);
     const { customer_name: _, ...rest } = validQuoteBase;
 

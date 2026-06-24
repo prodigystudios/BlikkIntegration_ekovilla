@@ -68,7 +68,6 @@ type QuoteItem = {
   id: string;
   quote_number: string | null;
   prospect_id: string | null;
-  opportunity_id: string | null;
   customer_id: string | null;
   customer_name: string | null;
   quote_type: 'private' | 'business';
@@ -124,7 +123,6 @@ type QuoteItem = {
 type QuoteDraft = {
   customer_id: string | null;
   prospect_id: string;
-  opportunity_id: string;
   quote_type: 'private' | 'business';
   customer_source: {
     kind: QuoteCustomerSourceKind;
@@ -308,7 +306,7 @@ function getValidationIssues(draft: QuoteDraft, effectiveRows: EffectiveRow[]) {
   const hasAnyLineItemInput = draft.items.some((item) => item.article_name || item.m2 || item.quantity || item.unit_price);
 
   if (!draft.project_name.trim()) issues.push('Offertnamn saknas');
-  if (!draft.prospect_id && !draft.opportunity_id && !effectiveCustomerName) issues.push('Kund måste anges');
+  if (!draft.prospect_id && !draft.customer_id && !effectiveCustomerName) issues.push('Kund måste anges');
   if (draft.customer_source.kind === 'prospect' && !draft.prospect_id) issues.push('Prospektkälla kräver valt prospekt');
   if (draft.customer_source.kind === 'fortnox' && !draft.customer_source.fortnox_customer_name.trim()) issues.push('Fortnox-kund behöver kundreferens');
   if (draft.quote_type === 'private' && !draft.personal_number.trim()) issues.push('Personnummer krävs');
@@ -336,7 +334,6 @@ function getValidationIssues(draft: QuoteDraft, effectiveRows: EffectiveRow[]) {
 const initialDraft: QuoteDraft = {
   customer_id: null,
   prospect_id: '',
-  opportunity_id: '',
   quote_type: 'business',
   customer_source: { kind: 'local', sync_intent: 'local_only', fortnox_customer_id: '', fortnox_customer_name: '' },
   customer_name: '',
@@ -844,7 +841,6 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   const restoredRef = useRef(false);
 
   const presetProspectId = searchParams.get('prospect_id') || '';
-  const presetOpportunityId = searchParams.get('opportunity_id') || '';
 
   // Per-form storage key so a new-quote draft never collides with an edit draft.
   const draftStorageKey = quoteId ? `crm:quote-draft:edit:${quoteId}` : 'crm:quote-draft:new';
@@ -934,7 +930,6 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
         setDraft({
           customer_id: item.customer_id || null,
           prospect_id: item.prospect_id || '',
-          opportunity_id: item.opportunity_id || '',
           quote_type: item.quote_type || 'business',
           customer_source: getDraftCustomerSource(item.customer_source, item.prospect_id),
           customer_name: item.customer_name || '',
@@ -1014,39 +1009,12 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
 
   // Apply URL presets (create mode only)
   useEffect(() => {
-    if (isEditing || (!presetProspectId && !presetOpportunityId)) return;
-
-    if (presetOpportunityId) {
-      fetch(`/api/crm/opportunities/${presetOpportunityId}`, { cache: 'no-store' })
-        .then((r) => r.json().catch(() => ({})))
-        .then((json) => {
-          const opportunity = json?.data?.item;
-          const prospect = opportunity?.prospect || null;
-          setDraft((current) => ({
-            ...current,
-            opportunity_id: presetOpportunityId,
-            prospect_id: prospect?.id || '',
-            customer_source: getDefaultDraftCustomerSource(prospect?.id || null),
-            customer_name: prospect?.company_name || opportunity?.title || '',
-            company_name: prospect?.company_name || '',
-            contact_name: prospect?.contact_name || '',
-            city: prospect?.city || '',
-            project_name: opportunity?.title || current.project_name,
-          }));
-        })
-        .catch(() => {
-          setDraft((current) => ({ ...current, opportunity_id: presetOpportunityId }));
-        });
-      return;
-    }
-
-    if (presetProspectId) {
-      setDraft((current) => ({
-        ...current,
-        prospect_id: presetProspectId,
-        customer_source: getDefaultDraftCustomerSource(presetProspectId),
-      }));
-    }
+    if (isEditing || !presetProspectId) return;
+    setDraft((current) => ({
+      ...current,
+      prospect_id: presetProspectId,
+      customer_source: getDefaultDraftCustomerSource(presetProspectId),
+    }));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1169,7 +1137,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     const effectiveCustomerName = getEffectiveCustomerName(draft);
     const errs: Record<string, string> = {};
     if (!draft.project_name.trim()) errs.project_name = 'Offertnamn saknas';
-    if (!draft.prospect_id && !draft.opportunity_id && !effectiveCustomerName) {
+    if (!draft.prospect_id && !draft.customer_id && !effectiveCustomerName) {
       errs.company_name = 'Kund måste anges';
       errs.customer_name = 'Kund måste anges';
     }
@@ -1255,7 +1223,6 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
 
       const payload = {
         prospect_id: draft.prospect_id || null,
-        opportunity_id: draft.opportunity_id || null,
         customer_id: draft.customer_id || null,
         customer_name: effectiveCustomerName,
         quote_type: draft.quote_type,

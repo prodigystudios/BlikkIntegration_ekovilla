@@ -17,7 +17,7 @@ export const CRM_NAV_ITEMS: CrmNavItem[] = [
   { href: '/crm/planering', label: 'Planering', description: 'Schemalägg arbetsordrar på bilar', roles: ['sales', 'admin'] },
   { href: '/crm/samtal', label: 'Samtal', description: 'Ringlista och snabb loggning', roles: ['sales', 'admin'] },
   { href: '/crm/uppgifter', label: 'Uppgifter', description: 'Uppföljningar och deadlines', roles: ['sales', 'admin'] },
-  { href: '/crm/affarsmojligheter', label: 'Affärsmöjligheter', description: 'Pipeline och aktiva affärer', roles: ['sales', 'admin'] },
+  { href: '/crm/saljtavla', label: 'Säljtavla', description: 'Offertflöde per status', roles: ['sales', 'admin'] },
   { href: '/crm/rapportering', label: 'Rapportering', description: 'Försäljningsrapporter och nyckeltal', roles: ['sales', 'admin'] },
   { href: '/crm/ringlistor', label: 'Ringlistor', description: 'Import, listor och tilldelning', roles: ['admin'] },
   { href: '/crm/ai-prospekt', label: 'AI Prospekt', description: 'Förslag och framtida prospektering', roles: ['admin'] },

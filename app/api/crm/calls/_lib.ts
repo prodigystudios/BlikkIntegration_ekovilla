@@ -18,7 +18,6 @@ export const listCrmCallsQuerySchema = z.object({
 export const createCrmCallSchema = z.object({
   prospect_id: z.preprocess((value) => normalizeOptionalText(value), z.string().uuid('Ogiltigt prospekt').nullable()).optional().default(null),
   customer_id: z.preprocess((value) => normalizeOptionalText(value), z.string().uuid('Ogiltig kund').nullable()).optional().default(null),
-  opportunity_id: z.preprocess((value) => normalizeOptionalText(value), z.string().uuid('Ogiltig affärsmöjlighet').nullable()).optional().default(null),
   company_name: z.preprocess((value) => normalizeOptionalText(value), z.string().min(1, 'Företagsnamn krävs').nullable()).optional().default(null),
   organization_number: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
   contact_name: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
@@ -34,7 +33,7 @@ export const createCrmCallSchema = z.object({
   next_step: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
   call_at: z.string().datetime().optional(),
 }).superRefine((value, ctx) => {
-  if (!value.prospect_id && !value.customer_id && !value.opportunity_id && !value.company_name) {
+  if (!value.prospect_id && !value.customer_id && !value.company_name) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['company_name'],

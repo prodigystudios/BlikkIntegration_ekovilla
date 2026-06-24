@@ -296,7 +296,7 @@ export default function ProspectsClient() {
               <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Nytt prospekt</span>
               <strong className="mt-0.5 block text-lg font-bold tracking-tight text-slate-950">Lägg in kunden</strong>
               <p className="m-0 mt-0.5 text-sm leading-6 text-slate-600">
-                Registrera kontaktuppgifterna. Du kan skapa affärsmöjligheter härifrån när köpintresse finns.
+                Registrera kontaktuppgifterna. Du kan skapa en offert härifrån när köpintresse finns.
               </p>
             </>
           }
@@ -361,8 +361,8 @@ export default function ProspectsClient() {
                 <button type="button" onClick={() => setDetailEditing(true)} className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300">
                   Redigera
                 </button>
-                <a href={`/crm/affarsmojligheter`} className="rounded-xl border border-emerald-600 bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-700">
-                  + Affärsmöjlighet
+                <a href={`/crm/offerter/ny?prospect_id=${selected.id}`} className="rounded-xl border border-emerald-600 bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-700">
+                  + Offert
                 </a>
                 <a href={`/crm/samtal?prospect_id=${selected.id}`} className="rounded-xl border border-slate-900 bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-950">
                   Logga samtal

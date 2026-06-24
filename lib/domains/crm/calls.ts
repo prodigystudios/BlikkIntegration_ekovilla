@@ -4,7 +4,6 @@ export const crmCallSelect = `
   id,
   prospect_id,
   customer_id,
-  opportunity_id,
   company_name,
   organization_number,
   contact_name,
@@ -39,7 +38,6 @@ export const crmCallSelect = `
 type CreateCrmCallInput = {
   prospect_id?: string | null;
   customer_id?: string | null;
-  opportunity_id?: string | null;
   company_name: string | null;
   organization_number: string | null;
   contact_name: string | null;
@@ -57,7 +55,6 @@ type CreateCrmCallInput = {
 type UpdateCrmCallInput = {
   prospect_id?: string | null;
   customer_id?: string | null;
-  opportunity_id?: string | null;
   company_name: string | null;
   organization_number: string | null;
   contact_name: string | null;
@@ -75,7 +72,6 @@ type ListCrmCallsOptions = {
   search?: string;
   prospectId?: string;
   customerId?: string;
-  opportunityId?: string;
 };
 
 export async function listCrmCalls(supabase: SupabaseClient, search?: string) {
@@ -109,10 +105,6 @@ export async function listCrmCallsWithFilters(supabase: SupabaseClient, options:
 
   if (options.customerId) {
     query = query.eq('customer_id', options.customerId);
-  }
-
-  if (options.opportunityId) {
-    query = query.eq('opportunity_id', options.opportunityId);
   }
 
   return query;

@@ -96,13 +96,11 @@ export const listCrmQuotesQuerySchema = z.object({
   q: z.string().trim().optional(),
   status: statusSchema.optional(),
   prospect_id: z.string().uuid('Ogiltigt prospekt').optional(),
-  opportunity_id: z.string().uuid('Ogiltig affärsmöjlighet').optional(),
   customer_id: z.string().uuid('Ogiltig kund').optional(),
 });
 
 export const createCrmQuoteSchema = z.object({
   prospect_id: z.preprocess((value) => normalizeOptionalText(value), z.string().uuid('Ogiltigt prospekt').nullable()).optional().default(null),
-  opportunity_id: z.preprocess((value) => normalizeOptionalText(value), z.string().uuid('Ogiltig affärsmöjlighet').nullable()).optional().default(null),
   // The linked CRM customer. Without this the quote/customer relation breaks: the
   // customer's quote list and the edit-view picker both resolve via customer_id.
   customer_id: z.preprocess((value) => normalizeOptionalText(value), z.string().uuid('Ogiltig kund').nullable()).optional().default(null),
@@ -125,11 +123,11 @@ export const createCrmQuoteSchema = z.object({
   follow_up_date: z.preprocess((value) => normalizeOptionalText(value), dateSchema.nullable()).optional().default(null),
   notes: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
 }).superRefine((value, ctx) => {
-  if (!value.prospect_id && !value.opportunity_id && !value.customer_name) {
+  if (!value.prospect_id && !value.customer_id && !value.customer_name) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['customer_name'],
-      message: 'Kundnamn krävs om offerten inte kopplas till ett prospekt eller en affärsmöjlighet',
+      message: 'Kundnamn krävs om offerten inte kopplas till ett prospekt eller en kund',
     });
   }
 

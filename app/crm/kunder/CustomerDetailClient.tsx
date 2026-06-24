@@ -6,7 +6,7 @@ import Input from '../../../components/ui/Input';
 import FortnoxCodeSelect from './FortnoxCodeSelect';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
-import { crm, customerStageLabel, customerStageClass, syncStatusLabel, syncStatusClass, opportunityStatusLabel, workOrderStatusLabel } from '@/app/crm/lib/crmTokens';
+import { crm, customerStageLabel, customerStageClass, syncStatusLabel, syncStatusClass, workOrderStatusLabel } from '@/app/crm/lib/crmTokens';
 import { formatSwedishIdNumber, isValidSwedishOrgNumber, vatFromOrgNumber } from './customerNumbers';
 import { riskTypeLabel } from '@/lib/domains/tic/mappers';
 import { PhoneLink, EmailLink, AddressLink } from '@/app/crm/components/ContactLinks';
@@ -65,8 +65,6 @@ type Customer = {
   contacts: CustomerContact[];
 };
 
-import type { OpportunityStatus } from '@/app/crm/lib/crmTokens';
-type RelatedOpportunity = { id: string; title: string; status: OpportunityStatus };
 type RelatedQuote = { id: string; project_name: string; amount: number; currency_code: string; status: string; quote_date: string };
 type RelatedWorkOrder = { id: string; order_number: string; project_name: string; status: string; desired_installation_date: string | null };
 type RelatedCall = { id: string; outcome: 'no_answer' | 'follow_up' | 'positive' | 'negative'; summary: string; call_at: string; contact_name: string | null };
@@ -243,7 +241,6 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
   const [savingContact, setSavingContact] = useState(false);
   const [contactDraft, setContactDraft] = useState<ContactDraft>({ name: '', role: '', phone: '', email: '', is_primary: false });
 
-  const [opportunities, setOpportunities] = useState<RelatedOpportunity[]>([]);
   const [quotes, setQuotes] = useState<RelatedQuote[]>([]);
   const [workOrders, setWorkOrders] = useState<RelatedWorkOrder[]>([]);
   const [calls, setCalls] = useState<RelatedCall[]>([]);
@@ -274,24 +271,22 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
     async function load() {
       setRelatedLoading(true);
       try {
-        const [oppRes, quoteRes, woRes, callRes, taskRes] = await Promise.all([
-          fetch(`/api/crm/opportunities?customer_id=${customerId}`, { cache: 'no-store' }),
+        const [quoteRes, woRes, callRes, taskRes] = await Promise.all([
           fetch(`/api/crm/quotes?customer_id=${customerId}`, { cache: 'no-store' }),
           fetch(`/api/crm/work-orders?customer_id=${customerId}`, { cache: 'no-store' }),
           fetch(`/api/crm/calls?customer_id=${customerId}`, { cache: 'no-store' }),
           fetch(`/api/crm/tasks?customer_id=${customerId}`, { cache: 'no-store' }),
         ]);
-        const [oppJson, quoteJson, woJson, callJson, taskJson] = await Promise.all([
-          oppRes.json().catch(() => ({})), quoteRes.json().catch(() => ({})), woRes.json().catch(() => ({})),
+        const [quoteJson, woJson, callJson, taskJson] = await Promise.all([
+          quoteRes.json().catch(() => ({})), woRes.json().catch(() => ({})),
           callRes.json().catch(() => ({})), taskRes.json().catch(() => ({})),
         ]);
         if (!active) return;
-        setOpportunities(oppRes.ok && oppJson.ok ? oppJson.data?.items || [] : []);
         setQuotes(quoteRes.ok && quoteJson.ok ? quoteJson.data?.items || [] : []);
         setWorkOrders(woRes.ok && woJson.ok ? woJson.data?.items || [] : []);
         setCalls(callRes.ok && callJson.ok ? callJson.data?.items || [] : []);
         setTasks(taskRes.ok && taskJson.ok ? taskJson.data?.items || [] : []);
-      } catch { if (active) { setOpportunities([]); setQuotes([]); setWorkOrders([]); setCalls([]); setTasks([]); } }
+      } catch { if (active) { setQuotes([]); setWorkOrders([]); setCalls([]); setTasks([]); } }
       finally { if (active) setRelatedLoading(false); }
     }
     load();
@@ -518,30 +513,6 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
           ) : null}
         </div>
       </Card>
-
-      {/* Affärsmöjligheter */}
-      <div className="rounded-2xl border border-violet-100 bg-gradient-to-b from-[#f9fbf7] to-violet-50/40 p-5 shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)]">
-        <div className="mb-3 flex items-center justify-between gap-2">
-          <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-violet-600">Affärsmöjligheter</p>
-          <a href="/crm/affarsmojligheter" className="text-xs font-semibold text-slate-400 hover:text-slate-600 transition">Pipeline →</a>
-        </div>
-        {relatedLoading ? (
-          <div className="h-8 animate-pulse rounded-lg bg-[#dfe6da]" />
-        ) : opportunities.length === 0 ? (
-          <p className="text-xs text-slate-400">Inga kopplade.</p>
-        ) : (
-          <div className="grid gap-1.5">
-            {opportunities.map((opp) => (
-              <a key={opp.id} href={`/crm/affarsmojligheter?opportunity_id=${opp.id}`} className="flex items-center justify-between gap-2 rounded-xl border border-slate-100 bg-white px-3 py-2 transition hover:border-violet-200 hover:bg-violet-50/50">
-                <span className="min-w-0 truncate text-sm text-slate-800">{opp.title}</span>
-                <span className="shrink-0 rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700">
-                  {opportunityStatusLabel[opp.status] || opp.status}
-                </span>
-              </a>
-            ))}
-          </div>
-        )}
-      </div>
 
       {/* Offerter */}
       <div className="rounded-2xl border border-amber-100 bg-gradient-to-b from-[#f9fbf7] to-amber-50/40 p-5 shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)]">

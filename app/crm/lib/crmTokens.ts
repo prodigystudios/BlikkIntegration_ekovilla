@@ -41,22 +41,56 @@ export const syncStatusClass: Record<SyncStatus, string> = {
   failed: 'border-rose-200 bg-rose-50 text-rose-700',
 };
 
-// ── Opportunity Status ──────────────────────────────────────────────────────
+// ── Quote (Offert) Status ─────────────────────────────────────────────────────
+// Shared by the offer list (QuotesClient) and the sales board (Säljtavlan) so the
+// two views label and colour a quote's status identically.
 
-export type OpportunityStatus = 'qualified' | 'quoted' | 'won' | 'lost';
+export type QuoteStatus = 'draft' | 'sent' | 'follow_up' | 'won' | 'lost';
 
-export const opportunityStatusLabel: Record<OpportunityStatus, string> = {
-  qualified: 'Kvalificerad',
-  quoted: 'Offert skickad',
-  won: 'Vunnen',
-  lost: 'Förlorad',
+export type QuoteStatusMeta = {
+  label: string;
+  className: string;   // badge border/bg/text
+  cardClass: string;   // list-card border/bg
+  amountClass: string; // amount chip border/bg/text
+  accent: string;      // solid left-rail colour
 };
 
-export const opportunityStatusClass: Record<OpportunityStatus, string> = {
-  qualified: 'border-violet-200 bg-violet-50 text-violet-700',
-  quoted: 'border-amber-200 bg-amber-50 text-amber-700',
-  won: 'border-emerald-200 bg-emerald-50 text-emerald-700',
-  lost: 'border-rose-200 bg-rose-50 text-rose-700',
+export const quoteStatusMeta: Record<QuoteStatus, QuoteStatusMeta> = {
+  draft: {
+    label: 'Utkast',
+    className: 'border-slate-200 bg-slate-50 text-slate-700',
+    cardClass: 'border-slate-200/90 bg-white',
+    amountClass: 'border-slate-200 bg-white text-slate-800',
+    accent: 'bg-slate-300',
+  },
+  sent: {
+    label: 'Skickad',
+    className: 'border-sky-200 bg-sky-50 text-sky-800',
+    cardClass: 'border-sky-100 bg-white',
+    amountClass: 'border-sky-200 bg-white text-sky-900',
+    accent: 'bg-sky-400',
+  },
+  follow_up: {
+    label: 'Följ upp',
+    className: 'border-amber-200 bg-amber-50 text-amber-900',
+    cardClass: 'border-amber-100 bg-white ring-1 ring-amber-50',
+    amountClass: 'border-amber-200 bg-white text-amber-900',
+    accent: 'bg-amber-400',
+  },
+  won: {
+    label: 'Vunnen',
+    className: 'border-emerald-200 bg-emerald-50 text-emerald-900',
+    cardClass: 'border-emerald-100 bg-white',
+    amountClass: 'border-emerald-200 bg-white text-emerald-900',
+    accent: 'bg-emerald-500',
+  },
+  lost: {
+    label: 'Förlorad',
+    className: 'border-rose-200 bg-rose-50 text-rose-800',
+    cardClass: 'border-rose-100 bg-white',
+    amountClass: 'border-rose-200 bg-white text-rose-900',
+    accent: 'bg-rose-400',
+  },
 };
 
 // ── Work Order Status ─────────────────────────────────────────────────────────
