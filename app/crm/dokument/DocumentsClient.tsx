@@ -2,10 +2,13 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useToast } from '../../lib/Toast';
+import { useToast } from '../../../lib/Toast';
+import { cn } from '@/lib/shared/cn';
+import Input from '../../../components/ui/Input';
+import CrmModal from '../components/CrmModal';
+import { crm } from '../lib/crmTokens';
 import DocumentsHeader from './components/DocumentsHeader';
 import DocumentsExplorer from './components/DocumentsExplorer';
-import DocumentsFileCollection from './components/DocumentsFileCollection';
 import DocumentsMainPanelHeader from './components/DocumentsMainPanelHeader';
 import DocumentsPublishDialog from './components/DocumentsPublishDialog';
 import DocumentsPreviewPanel from './components/DocumentsPreviewPanel';
@@ -63,6 +66,8 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
   const [showExplorerOnMobile, setShowExplorerOnMobile] = useState(true);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const createFolderNameRef = useRef<HTMLInputElement | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<{ type: 'file' | 'folder'; id: string; parentId: string | null; name: string } | null>(null);
+  const [renameUi, setRenameUi] = useState<{ id: string; parentId: string | null; name: string } | null>(null);
 
   const effectiveCanEdit = canEdit && (data?.canEdit ?? true);
   const showInitialLoading = loading && !data;
@@ -192,8 +197,8 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
     });
   }, [breadcrumbs, loading, folderLists, loadFolderChildren]);
 
-  const goRoot = () => router.push('/dokument', { scroll: false });
-  const openFolder = (id: string) => router.push(`/dokument?folderId=${encodeURIComponent(id)}`, { scroll: false });
+  const goRoot = () => router.push('/crm/dokument', { scroll: false });
+  const openFolder = (id: string) => router.push(`/crm/dokument?folderId=${encodeURIComponent(id)}`, { scroll: false });
 
   const folderColorHex = useCallback((color: string | null | undefined) => {
     switch (String(color || '').toLowerCase()) {
@@ -254,26 +259,52 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
   const onUploadFiles = async (files: FileList | null) => {
     if (!effectiveCanEdit) return;
     if (!files || files.length === 0) return;
-    const total = files.length;
+    const queue = Array.from(files);
+    const total = queue.length;
+    let completed = 0;
+    const failures: string[] = [];
     setUploadProgress({ current: 0, total });
     setBusy('upload');
-    try {
-      const arr = Array.from(files);
-      for (let i = 0; i < arr.length; i++) {
-        const f = arr[i];
-        setUploadProgress({ current: i + 1, total });
-        const fd = new FormData();
-        if (folderId) fd.set('folderId', folderId);
-        fd.set('file', f);
+
+    // Upload one file; failures are collected (not thrown) so one bad file
+    // doesn't abort the rest of the batch.
+    const uploadOne = async (f: File) => {
+      const fd = new FormData();
+      if (folderId) fd.set('folderId', folderId);
+      fd.set('file', f);
+      try {
         const res = await fetch('/api/documents/files', { method: 'POST', body: fd });
         const j = await res.json();
-        if (!res.ok || !j?.ok) throw new Error(j?.error || `Kunde inte ladda upp: ${f.name}`);
+        if (!res.ok || !j?.ok) throw new Error(j?.error || f.name);
+      } catch {
+        failures.push(f.name);
+      } finally {
+        completed += 1;
+        setUploadProgress({ current: completed, total });
       }
-      toast.success('Uppladdning klar');
+    };
+
+    try {
+      // Drain a shared queue with a small concurrency pool so large batches
+      // upload in parallel instead of one-at-a-time.
+      const CONCURRENCY = 3;
+      const workers = Array.from({ length: Math.min(CONCURRENCY, total) }, async () => {
+        for (let next = queue.shift(); next; next = queue.shift()) {
+          await uploadOne(next);
+        }
+      });
+      await Promise.all(workers);
+
       if (fileInputRef.current) fileInputRef.current.value = '';
       await load();
-    } catch (e: any) {
-      toast.error(e?.message || 'Kunde inte ladda upp');
+
+      if (failures.length === 0) {
+        toast.success('Uppladdning klar');
+      } else if (failures.length < total) {
+        toast.error(`${total - failures.length} av ${total} laddades upp. Misslyckades: ${failures.join(', ')}`);
+      } else {
+        toast.error('Kunde inte ladda upp filerna');
+      }
     } finally {
       setBusy(null);
       setUploadProgress(null);
@@ -313,21 +344,12 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
     }
   }, [getSignedUrl]);
 
-  const deleteFile = async (id: string) => {
+  const deleteFile = (id: string) => {
     if (!effectiveCanEdit) return;
-    if (!window.confirm('Ta bort filen?')) return;
-    setBusy('delete-file');
-    try {
-      const res = await fetch(`/api/documents/files?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
-      const j = await res.json();
-      if (!res.ok || !j?.ok) throw new Error(j?.error || 'Kunde inte ta bort fil');
-      toast.success('Filen är borttagen');
-      await load();
-    } catch (e: any) {
-      toast.error(e?.message || 'Kunde inte ta bort fil');
-    } finally {
-      setBusy(null);
-    }
+    const name = data?.files.find((f) => f.id === id)?.file_name
+      || globalSearchResults?.find((f) => f.id === id)?.file_name
+      || 'filen';
+    setDeleteConfirm({ type: 'file', id, parentId: null, name });
   };
 
   const loadPublishMeta = useCallback(async () => {
@@ -461,34 +483,59 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
     setPublishStatusUi(null);
   }, []);
 
-  const deleteFolder = async (id: string, parentId: string | null) => {
+  const deleteFolder = (id: string, parentId: string | null) => {
     if (!effectiveCanEdit) return;
-    if (!window.confirm('Ta bort mappen? (Mappen måste vara tom)')) return;
-    setBusy('delete-folder');
+    const name = Object.values(folderLists).flat().find((f) => f.id === id)?.name
+      || data?.folders.find((f) => f.id === id)?.name
+      || 'mappen';
+    setDeleteConfirm({ type: 'folder', id, parentId, name });
+  };
+
+  // Runs the delete chosen in the confirm modal (file or folder).
+  const performDelete = async () => {
+    if (!deleteConfirm) return;
+    const { type, id, parentId } = deleteConfirm;
+    setBusy(type === 'folder' ? 'delete-folder' : 'delete-file');
     try {
-      const res = await fetch(`/api/documents/folders?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
-      const j = await res.json();
-      if (!res.ok || !j?.ok) {
-        const msg = j?.error === 'folder_not_empty' ? 'Mappen är inte tom.' : (j?.error || 'Kunde inte ta bort mapp');
-        throw new Error(msg);
-      }
-      toast.success('Mapp borttagen');
-      await load();
-      await loadFolderChildren(parentId);
-      if (folderId === id || breadcrumbs.some(b => b.id === id)) {
-        router.push(parentId ? `/dokument?folderId=${encodeURIComponent(parentId)}` : '/dokument');
+      if (type === 'folder') {
+        const res = await fetch(`/api/documents/folders?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+        const j = await res.json();
+        if (!res.ok || !j?.ok) {
+          const msg = j?.error === 'folder_not_empty' ? 'Mappen är inte tom.' : (j?.error || 'Kunde inte ta bort mapp');
+          throw new Error(msg);
+        }
+        toast.success('Mapp borttagen');
+        setDeleteConfirm(null);
+        await load();
+        await loadFolderChildren(parentId);
+        if (folderId === id || breadcrumbs.some((b) => b.id === id)) {
+          router.push(parentId ? `/crm/dokument?folderId=${encodeURIComponent(parentId)}` : '/crm/dokument');
+        }
+      } else {
+        const res = await fetch(`/api/documents/files?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+        const j = await res.json();
+        if (!res.ok || !j?.ok) throw new Error(j?.error || 'Kunde inte ta bort fil');
+        toast.success('Filen är borttagen');
+        setDeleteConfirm(null);
+        await load();
       }
     } catch (e: any) {
-      toast.error(e?.message || 'Kunde inte ta bort mapp');
+      toast.error(e?.message || 'Kunde inte ta bort');
     } finally {
       setBusy(null);
     }
   };
 
-  const renameFolder = async (id: string, parentId: string | null, currentName: string) => {
+  const renameFolder = (id: string, parentId: string | null, currentName: string) => {
     if (!effectiveCanEdit) return;
-    const name = window.prompt('Nytt mappnamn:', currentName);
+    setRenameUi({ id, parentId, name: currentName });
+  };
+
+  const performRename = async () => {
+    if (!renameUi) return;
+    const name = renameUi.name.trim();
     if (!name) return;
+    const { id, parentId } = renameUi;
     setBusy('rename-folder');
     try {
       const res = await fetch('/api/documents/folders', {
@@ -502,6 +549,7 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
         throw new Error(msg);
       }
       toast.success('Mapp uppdaterad');
+      setRenameUi(null);
       await load();
       await loadFolderChildren(parentId);
     } catch (e: any) {
@@ -521,7 +569,7 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
         : `${data?.files.length ?? 0} filer`);
 
   return (
-    <section className="mt-3.5 grid gap-3.5">
+    <section className="grid grid-cols-1 gap-4">
       <DocumentsHeader
         breadcrumbs={breadcrumbs}
         currentFolderName={currentFolderName}
@@ -542,10 +590,10 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
       />
 
       {showInitialLoading && (
-        <div className="mt-3.5 text-sm text-slate-500">Laddar…</div>
+        <div className="text-sm text-slate-400">Laddar…</div>
       )}
       {!showInitialLoading && error && (
-        <div className="mt-3.5 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
           {error}
         </div>
       )}
@@ -553,8 +601,8 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
       {data && (
         <div
           className={isCompactViewport
-            ? 'grid items-start gap-3.5'
-            : 'grid items-start gap-3.5 [grid-template-columns:minmax(300px,360px)_minmax(0,1fr)]'}
+            ? 'grid grid-cols-1 items-start gap-4'
+            : 'grid items-start gap-4 [grid-template-columns:minmax(300px,360px)_minmax(0,1fr)]'}
         >
           {/* Left explorer */}
           {(!isCompactViewport || showExplorerOnMobile) && (
@@ -580,7 +628,7 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
           )}
 
           {/* Main documents pane */}
-          <div className="min-w-0 overflow-hidden rounded-2xl border border-ui-border bg-white shadow-[0_12px_28px_rgba(15,23,42,0.05)]">
+          <div className="min-w-0 overflow-hidden rounded-2xl border border-[#e0e8dc] bg-white shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)]">
             <DocumentsMainPanelHeader
               currentFolderName={currentFolderName}
               statusText={mainPanelStatusText}
@@ -659,6 +707,84 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
         onClose={closePublishStatus}
         onSelectPublication={loadPublicationStatus}
       />
+
+      {deleteConfirm ? (
+        <CrmModal
+          onClose={() => { if (!busy) setDeleteConfirm(null); }}
+          ariaLabel="Bekräfta borttagning"
+          maxWidth="sm:max-w-[440px]"
+          header={
+            <div className="grid gap-1">
+              <span className={crm.sectionTitle}>Ta bort</span>
+              <strong className="text-lg font-bold tracking-tight text-slate-900">
+                {deleteConfirm.type === 'folder' ? 'Ta bort mapp' : 'Ta bort fil'}
+              </strong>
+            </div>
+          }
+          footer={
+            <>
+              <button type="button" onClick={() => setDeleteConfirm(null)} disabled={!!busy} className={cn(crm.ghostButton, 'flex-1 sm:flex-none')}>
+                Avbryt
+              </button>
+              <button
+                type="button"
+                onClick={performDelete}
+                disabled={!!busy}
+                className="inline-flex h-9 flex-1 items-center justify-center rounded-lg bg-rose-600 px-4 text-[13px] font-semibold text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-50 sm:ml-auto sm:flex-none"
+              >
+                {busy ? 'Tar bort…' : 'Ta bort'}
+              </button>
+            </>
+          }
+        >
+          <p className="m-0 text-sm leading-6 text-slate-600">
+            Är du säker på att du vill ta bort {deleteConfirm.type === 'folder' ? 'mappen' : 'filen'}{' '}
+            <strong className="font-semibold text-slate-900">”{deleteConfirm.name}”</strong>?
+            {deleteConfirm.type === 'folder' ? ' Mappen måste vara tom.' : ' Det går inte att ångra.'}
+          </p>
+        </CrmModal>
+      ) : null}
+
+      {renameUi ? (
+        <CrmModal
+          onClose={() => { if (!busy) setRenameUi(null); }}
+          ariaLabel="Byt namn på mapp"
+          maxWidth="sm:max-w-[440px]"
+          header={
+            <div className="grid gap-1">
+              <span className={crm.sectionTitle}>Mapp</span>
+              <strong className="text-lg font-bold tracking-tight text-slate-900">Byt namn</strong>
+            </div>
+          }
+          footer={
+            <>
+              <button type="button" onClick={() => setRenameUi(null)} disabled={!!busy} className={cn(crm.ghostButton, 'flex-1 sm:flex-none')}>
+                Avbryt
+              </button>
+              <button
+                type="submit"
+                form="rename-folder-form"
+                disabled={!!busy || !renameUi.name.trim()}
+                className={cn(crm.formButton, 'flex-1 sm:ml-auto sm:flex-none')}
+                style={{ backgroundColor: 'var(--crm-primary)' }}
+              >
+                {busy ? 'Sparar…' : 'Spara'}
+              </button>
+            </>
+          }
+        >
+          <form id="rename-folder-form" onSubmit={(e) => { e.preventDefault(); performRename(); }} className="grid gap-1.5">
+            <label className={crm.label} htmlFor="rename-folder-input">Mappnamn</label>
+            <Input
+              id="rename-folder-input"
+              autoFocus
+              value={renameUi.name}
+              onChange={(e) => setRenameUi((prev) => (prev ? { ...prev, name: e.target.value } : prev))}
+              placeholder="Mappnamn"
+            />
+          </form>
+        </CrmModal>
+      ) : null}
     </section>
   );
 }
