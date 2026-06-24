@@ -52,6 +52,9 @@ export const listCrmWorkOrdersQuerySchema = z.object({
   status: workOrderStatusSchema.optional(),
   work_order_id: z.string().uuid('Ogiltig arbetsorder').optional(),
   customer_id: z.string().uuid('Ogiltig kund').optional(),
+  // Optional cap override (default 100). Board views that index every work order's
+  // Fortnox number pass a higher value so the lookup map isn't truncated.
+  limit: z.coerce.number().int().min(1).max(2000).optional(),
 });
 
 export const updateCrmWorkOrderSchema = z.object({

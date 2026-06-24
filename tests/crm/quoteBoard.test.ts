@@ -3,7 +3,6 @@ import {
   quoteBoardColumn,
   isQuoteCardLocked,
   SALJTAVLA_COLUMNS,
-  SALJTAVLA_DROPPABLE_STATUSES,
 } from '@/lib/domains/crm/quoteBoard';
 
 describe('quoteBoardColumn', () => {
@@ -34,9 +33,5 @@ describe('isQuoteCardLocked', () => {
 describe('board column config', () => {
   it('lists five columns in flow order', () => {
     expect(SALJTAVLA_COLUMNS).toEqual(['draft', 'sent', 'follow_up', 'won', 'lost']);
-  });
-
-  it('allows dropping onto every column', () => {
-    expect(SALJTAVLA_DROPPABLE_STATUSES).toEqual(['draft', 'sent', 'follow_up', 'won', 'lost']);
   });
 });

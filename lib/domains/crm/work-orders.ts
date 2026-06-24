@@ -332,14 +332,14 @@ export async function createCrmWorkOrderFromQuote(supabase: SupabaseClient, quot
 
 export async function listCrmWorkOrdersWithFilters(
   supabase: SupabaseClient,
-  options: { search?: string; status?: CrmWorkOrderStatus; workOrderId?: string; customerId?: string },
+  options: { search?: string; status?: CrmWorkOrderStatus; workOrderId?: string; customerId?: string; limit?: number },
 ) {
   let query = supabase
     .from('crm_work_orders')
     .select(crmWorkOrderSelect)
     .order('desired_installation_date', { ascending: true, nullsFirst: false })
     .order('created_at', { ascending: false })
-    .limit(100);
+    .limit(options.limit ?? 100);
 
   if (options.search) {
     query = query.or(

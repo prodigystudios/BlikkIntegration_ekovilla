@@ -235,6 +235,14 @@ describe('listCrmQuotesQuerySchema', () => {
       listCrmQuotesQuerySchema.safeParse({ status: 'draft', q: 'tak' }).success
     ).toBe(true);
   });
+
+  it('coercar limit från sträng och håller den inom gränsen', () => {
+    const ok = listCrmQuotesQuerySchema.safeParse({ limit: '2000' });
+    expect(ok.success && ok.data.limit).toBe(2000);
+    // Säljtavlan skickar en hög limit; över taket ska avvisas (skyddar query:n).
+    expect(listCrmQuotesQuerySchema.safeParse({ limit: '5000' }).success).toBe(false);
+    expect(listCrmQuotesQuerySchema.safeParse({ limit: '0' }).success).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -6,16 +6,20 @@ import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
 import AssigneeFilter, { matchesAssignee, MINE, type AssigneeFilterValue, type AssigneeOption } from '@/app/crm/components/AssigneeFilter';
 import DocumentNumberBadge from '@/app/crm/components/DocumentNumberBadge';
-import { documentRef } from '@/app/crm/lib/format';
+import { documentRef, formatCurrency } from '@/app/crm/lib/format';
 import { resolveQuoteVatBreakdown, quoteAmountDisplay } from '@/lib/domains/crm/pricing';
 import { crm, quoteStatusMeta, type QuoteStatus } from '@/app/crm/lib/crmTokens';
 import {
   quoteBoardColumn,
   isQuoteCardLocked,
   SALJTAVLA_COLUMNS,
-  SALJTAVLA_DROPPABLE_STATUSES,
   type SaljtavlaColumn,
 } from '@/lib/domains/crm/quoteBoard';
+
+// All of a seller's quotes/work orders are grouped client-side, so the board fetches
+// with a high cap (vs the offer list's default 100) — otherwise won/lost quotes,
+// which sort last, would be truncated and the column totals would be wrong.
+const BOARD_FETCH_LIMIT = 2000;
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -53,8 +57,6 @@ const COLUMN_DEF: Record<SaljtavlaColumn, { label: string; hint: string; accent:
   lost: { label: quoteStatusMeta.lost.label, hint: 'Stängd utan affär', accent: quoteStatusMeta.lost.accent },
 };
 
-const DROPPABLE = new Set<string>(SALJTAVLA_DROPPABLE_STATUSES);
-
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function getCustomerName(item: BoardQuote) {
@@ -76,11 +78,6 @@ function isOverdue(item: BoardQuote) {
   return item.follow_up_date < todayIso();
 }
 
-function formatAmount(value: number, currencyCode: string) {
-  if (!Number.isFinite(value)) return '–';
-  return new Intl.NumberFormat('sv-SE', { style: 'currency', currency: currencyCode || 'SEK', maximumFractionDigits: 0 }).format(value);
-}
-
 // ─── SaljtavlaClient ───────────────────────────────────────────────────────────
 
 export default function SaljtavlaClient({ currentUserId }: { currentUserId: string | null }) {
@@ -93,8 +90,9 @@ export default function SaljtavlaClient({ currentUserId }: { currentUserId: stri
   const [search, setSearch] = useState('');
   const [assignees, setAssignees] = useState<AssigneeOption[]>([]);
   // Default to the logged-in seller's own offers ("mina offerter"); the filter can be
-  // widened to other sellers / everyone.
-  const [assigneeFilter, setAssigneeFilter] = useState<AssigneeFilterValue>([MINE]);
+  // widened to other sellers / everyone. Fall back to everyone when the user id is
+  // unknown — [MINE] with a null id would filter every quote out and blank the board.
+  const [assigneeFilter, setAssigneeFilter] = useState<AssigneeFilterValue>(currentUserId ? [MINE] : []);
   const [movingId, setMovingId] = useState<string | null>(null);
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [dragOverColumn, setDragOverColumn] = useState<SaljtavlaColumn | null>(null);
@@ -108,9 +106,9 @@ export default function SaljtavlaClient({ currentUserId }: { currentUserId: stri
     let active = true;
     setLoading(true);
     setError(null);
-    const query = new URLSearchParams();
+    const query = new URLSearchParams({ limit: String(BOARD_FETCH_LIMIT) });
     if (search.trim()) query.set('q', search.trim());
-    fetch(`/api/crm/quotes${query.size > 0 ? `?${query}` : ''}`, { cache: 'no-store' })
+    fetch(`/api/crm/quotes?${query}`, { cache: 'no-store' })
       .then((r) => r.json().catch(() => ({})))
       .then((json) => {
         if (!active) return;
@@ -135,7 +133,7 @@ export default function SaljtavlaClient({ currentUserId }: { currentUserId: stri
   // Load the work-orders list once and index Fortnox order numbers by work_order_id.
   useEffect(() => {
     let active = true;
-    fetch('/api/crm/work-orders', { cache: 'no-store' })
+    fetch(`/api/crm/work-orders?limit=${BOARD_FETCH_LIMIT}`, { cache: 'no-store' })
       .then((r) => r.json().catch(() => ({})))
       .then((j) => {
         if (!active) return;
@@ -146,35 +144,46 @@ export default function SaljtavlaClient({ currentUserId }: { currentUserId: stri
     return () => { active = false; };
   }, []);
 
+  // Headline amount per quote (incl. moms for private, ex moms for business),
+  // computed once and reused by both the column totals and the cards.
+  const primaryById = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const q of quotes) m.set(q.id, quoteAmountDisplay(q.quote_type, resolveQuoteVatBreakdown(q)).primary);
+    return m;
+  }, [quotes]);
+
   // Scope to the chosen "Ansvarig" filter (default = mine).
   const scopedQuotes = useMemo(
     () => quotes.filter((q) => matchesAssignee(q.assigned_to, assigneeFilter, currentUserId)),
     [quotes, assigneeFilter, currentUserId],
   );
 
-  // Group into board columns, with a summed value per column (uses the same
-  // headline amount as the cards: incl. moms for private, ex moms for business).
+  // Group into board columns, with a summed value per column.
   const columns = useMemo(() => {
     const byColumn = new Map<SaljtavlaColumn, { items: BoardQuote[]; total: number }>();
     for (const col of SALJTAVLA_COLUMNS) byColumn.set(col, { items: [], total: 0 });
     for (const q of scopedQuotes) {
       const bucket = byColumn.get(quoteBoardColumn(q))!;
       bucket.items.push(q);
-      bucket.total += quoteAmountDisplay(q.quote_type, resolveQuoteVatBreakdown(q)).primary;
+      bucket.total += primaryById.get(q.id) ?? 0;
     }
     for (const bucket of byColumn.values()) {
       bucket.items.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
     }
     return byColumn;
-  }, [scopedQuotes]);
+  }, [scopedQuotes, primaryById]);
 
   async function moveToStatus(quoteId: string, nextStatus: QuoteStatus) {
     const currentItem = quotes.find((q) => q.id === quoteId);
     if (!currentItem || currentItem.status === nextStatus) return;
 
-    // Won converts a prospect into a customer — confirm the meaningful transition.
-    if (nextStatus === 'won' && !window.confirm('Markera offerten som vunnen? En kopplad prospekt konverteras då till kund.')) {
-      return;
+    // Won is a meaningful transition — confirm it. A linked prospect is converted to
+    // a customer on the server, so only mention that when the quote actually has one.
+    if (nextStatus === 'won') {
+      const message = currentItem.prospect_id
+        ? 'Markera offerten som vunnen? En kopplad prospekt konverteras då till kund.'
+        : 'Markera offerten som vunnen?';
+      if (!window.confirm(message)) return;
     }
 
     setMovingId(quoteId);
@@ -222,11 +231,7 @@ export default function SaljtavlaClient({ currentUserId }: { currentUserId: stri
     setDraggedId(null);
     setDragOverColumn(null);
     if (!id) return;
-    if (!DROPPABLE.has(column)) {
-      toast.info('Skapa arbetsorder från offertens detaljvy.');
-      return;
-    }
-    void moveToStatus(id, column as QuoteStatus);
+    void moveToStatus(id, column);
   }
 
   const totalVisible = scopedQuotes.length;
@@ -270,12 +275,11 @@ export default function SaljtavlaClient({ currentUserId }: { currentUserId: stri
           const def = COLUMN_DEF[col];
           const bucket = columns.get(col) ?? { items: [], total: 0 };
           const items = bucket.items;
-          const isDropTarget = dragOverColumn === col && DROPPABLE.has(col);
+          const isDropTarget = dragOverColumn === col;
           return (
             <div
               key={col}
               onDragOver={(e) => {
-                if (!DROPPABLE.has(col)) return;
                 e.preventDefault();
                 e.dataTransfer.dropEffect = 'move';
                 setDragOverColumn(col);
@@ -293,7 +297,7 @@ export default function SaljtavlaClient({ currentUserId }: { currentUserId: stri
                   <span className="truncate text-[13px] font-bold text-slate-900">{def.label}</span>
                   <span className="shrink-0 rounded-full bg-white px-1.5 text-[11px] font-semibold text-slate-500">{items.length}</span>
                 </div>
-                <span className="shrink-0 text-[11px] font-semibold tabular-nums text-slate-500">{formatAmount(bucket.total, 'SEK')}</span>
+                <span className="shrink-0 text-[11px] font-semibold tabular-nums text-slate-500">{formatCurrency(bucket.total, 'SEK')}</span>
               </div>
               <div className="flex min-h-[120px] flex-1 flex-col gap-2 p-2">
                 {loading ? (
@@ -301,7 +305,7 @@ export default function SaljtavlaClient({ currentUserId }: { currentUserId: stri
                 ) : items.length === 0 ? (
                   <p className="px-1 py-6 text-center text-[11px] italic text-slate-400">{def.hint}</p>
                 ) : (
-                  items.map((item) => <BoardCard key={item.id} item={item} fortnoxOrderNumber={item.work_order_id ? (workOrderFortnoxById.get(item.work_order_id) ?? null) : null} moving={movingId === item.id} onOpen={() => router.push(`/crm/offerter?quote_id=${item.id}`)} onDragStart={() => setDraggedId(item.id)} onDragEnd={() => { setDraggedId(null); setDragOverColumn(null); }} />)
+                  items.map((item) => <BoardCard key={item.id} item={item} amount={primaryById.get(item.id) ?? 0} fortnoxOrderNumber={item.work_order_id ? (workOrderFortnoxById.get(item.work_order_id) ?? null) : null} moving={movingId === item.id} onOpen={() => router.push(`/crm/offerter?quote_id=${item.id}`)} onDragStart={() => setDraggedId(item.id)} onDragEnd={() => { setDraggedId(null); setDragOverColumn(null); }} />)
                 )}
               </div>
             </div>
@@ -316,6 +320,7 @@ export default function SaljtavlaClient({ currentUserId }: { currentUserId: stri
 
 function BoardCard({
   item,
+  amount,
   fortnoxOrderNumber,
   moving,
   onOpen,
@@ -323,6 +328,7 @@ function BoardCard({
   onDragEnd,
 }: {
   item: BoardQuote;
+  amount: number;
   fortnoxOrderNumber: string | null;
   moving: boolean;
   onOpen: () => void;
@@ -332,7 +338,6 @@ function BoardCard({
   const meta = quoteStatusMeta[item.status];
   const locked = isQuoteCardLocked(item);
   const overdue = isOverdue(item);
-  const display = quoteAmountDisplay(item.quote_type, resolveQuoteVatBreakdown(item));
 
   return (
     <div
@@ -362,7 +367,7 @@ function BoardCard({
         <p className="mt-1 truncate text-[13px] font-bold text-slate-900">{getCustomerName(item)}</p>
         {item.project_name && <p className="truncate text-[11px] text-slate-500">{item.project_name}</p>}
         <div className="mt-1.5 flex items-center justify-between gap-2">
-          <span className="text-[12px] font-semibold tabular-nums text-slate-800">{formatAmount(display.primary, item.currency_code)}</span>
+          <span className="text-[12px] font-semibold tabular-nums text-slate-800">{formatCurrency(amount, item.currency_code)}</span>
           {locked && item.work_order_number && (
             <span className="rounded-full border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700">
               Order {documentRef(fortnoxOrderNumber, item.work_order_number)}
