@@ -286,6 +286,9 @@ export default function AppSidebar({
         className="flex items-center gap-3 px-4 pb-2.5 lg:hidden"
         style={{ backgroundColor: 'var(--crm-sidebar-bg)', paddingTop: 'calc(0.625rem + env(safe-area-inset-top))' }}
       >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/brand/Ekovilla_vit.png" alt="Ekovilla" className="h-5 w-auto" />
+        <span className="text-[11px] font-medium" style={{ color: 'var(--crm-sidebar-text-muted)' }}>{brandSub}</span>
         <button
           type="button"
           onClick={() => setMobileOpen(true)}
@@ -293,14 +296,12 @@ export default function AppSidebar({
           aria-haspopup="dialog"
           aria-expanded={mobileOpen}
           aria-controls="app-sidebar-nav"
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-white/25 bg-white/10 text-white transition-colors hover:bg-white/20"
+          className="ml-auto flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-white/25 bg-white/10 text-white transition-colors hover:bg-white/20"
         >
           <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="12" x2="21" y2="12" /><line x1="3" y1="18" x2="21" y2="18" />
           </svg>
         </button>
-        <span className="text-sm font-bold text-white">Ekovilla</span>
-        <span className="text-[11px] font-medium" style={{ color: 'var(--crm-sidebar-text-muted)' }}>{brandSub}</span>
       </div>
 
       {/* Backdrop (mobile) */}
@@ -318,9 +319,11 @@ export default function AppSidebar({
         aria-label="Navigation"
         className={cn(
           'app-sidebar flex w-56 shrink-0 flex-col overflow-y-auto',
-          'fixed left-0 top-0 z-50 h-[100dvh] transition-transform duration-300 ease-out',
-          mobileOpen ? 'translate-x-0' : '-translate-x-full',
-          'lg:sticky lg:top-0 lg:z-auto lg:h-[100dvh] lg:translate-x-0 lg:transition-[width] lg:duration-200',
+          // Mobile: off-canvas drawer from the RIGHT (better thumb reach).
+          'fixed right-0 top-0 z-50 h-[100dvh] transition-transform duration-300 ease-out',
+          mobileOpen ? 'translate-x-0' : 'translate-x-full',
+          // Desktop: static left rail (DOM order in the flex row puts it left).
+          'lg:sticky lg:right-auto lg:top-0 lg:z-auto lg:h-[100dvh] lg:translate-x-0 lg:transition-[width] lg:duration-200',
           collapsed ? 'lg:w-[68px]' : 'lg:w-56',
         )}
         style={{ backgroundColor: 'var(--crm-sidebar-bg)' }}
@@ -328,8 +331,9 @@ export default function AppSidebar({
         {/* Logo + collapse toggle */}
         <div className={cn('flex items-center justify-between px-4 pb-3 [padding-top:calc(1.25rem+env(safe-area-inset-top))] lg:pt-5', collapsed && 'lg:px-3')}>
           <div className={cn(collapsed && 'lg:hidden')}>
-            <p className="text-base font-bold leading-tight text-white">Ekovilla</p>
-            <p className="text-[11px] font-medium" style={{ color: 'var(--crm-sidebar-text-muted)' }}>{brandSub}</p>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/brand/Ekovilla_vit.png" alt="Ekovilla" className="h-6 w-auto" />
+            <p className="mt-1 text-[11px] font-medium" style={{ color: 'var(--crm-sidebar-text-muted)' }}>{brandSub}</p>
           </div>
           <div
             className={cn('hidden h-9 w-9 place-items-center rounded-lg text-sm font-extrabold text-white', collapsed ? 'lg:grid' : 'lg:hidden')}
