@@ -9,7 +9,6 @@ import CrmModal from '../components/CrmModal';
 import { crm } from '../lib/crmTokens';
 import DocumentsHeader from './components/DocumentsHeader';
 import DocumentsExplorer from './components/DocumentsExplorer';
-import DocumentsFileCollection from './components/DocumentsFileCollection';
 import DocumentsMainPanelHeader from './components/DocumentsMainPanelHeader';
 import DocumentsPublishDialog from './components/DocumentsPublishDialog';
 import DocumentsPreviewPanel from './components/DocumentsPreviewPanel';
