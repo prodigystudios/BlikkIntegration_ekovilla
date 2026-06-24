@@ -5,17 +5,28 @@ import type { SchedulableWorkOrder } from '@/lib/domains/planning/types';
 import { statusMeta, SackBadge, JobRef, MapLink } from './jobCard';
 import { formatDate } from '@/app/crm/lib/format';
 
+type BacklogFilter = 'unplanned' | 'planned' | 'all';
+
 type BacklogProps = {
   items: SchedulableWorkOrder[];
   loading: boolean;
   canWrite: boolean;
   selectedId: string | null;
+  filter: BacklogFilter;
+  onFilterChange: (f: BacklogFilter) => void;
+  counts: { unplanned: number; planned: number; all: number };
   onSelect: (id: string) => void;
   onDragStartItem: (e: React.DragEvent, item: SchedulableWorkOrder) => void;
   onDropUnschedule: (e: React.DragEvent) => void;
   onDragOver: (e: React.DragEvent) => void;
   dropActive: boolean;
 };
+
+const FILTER_TABS: ReadonlyArray<readonly [BacklogFilter, string]> = [
+  ['unplanned', 'Oplanerade'],
+  ['planned', 'Planerade'],
+  ['all', 'Alla'],
+];
 
 function shortDate(value: string | null): string | null {
   if (!value) return null;
@@ -24,8 +35,16 @@ function shortDate(value: string | null): string | null {
 }
 
 export default function Backlog({
-  items, loading, canWrite, selectedId, onSelect, onDragStartItem, onDropUnschedule, onDragOver, dropActive,
+  items, loading, canWrite, selectedId, filter, onFilterChange, counts, onSelect, onDragStartItem, onDropUnschedule, onDragOver, dropActive,
 }: BacklogProps) {
+  const emptyText =
+    filter === 'planned'
+      ? 'Inga inplanerade jobb än.'
+      : filter === 'unplanned'
+        ? counts.planned > 0
+          ? 'Alla jobb är inplanerade. 🎉'
+          : 'Inga arbetsordrar att planera. Skapa en order i CRM:et så dyker den upp här.'
+        : 'Inga arbetsordrar att planera. Skapa en order i CRM:et så dyker den upp här.';
   return (
     <section
       className={cn(
@@ -43,13 +62,29 @@ export default function Backlog({
         <span className="text-[11px] tabular-nums text-slate-400">{items.length} st</span>
       </div>
 
+      {/* Filter — defaults to "Oplanerade" so scheduled jobs don't clutter the backlog. */}
+      <div className="flex gap-1 px-3.5 pb-2.5">
+        {FILTER_TABS.map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => onFilterChange(key)}
+            className={cn(
+              'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10.5px] font-bold transition',
+              filter === key ? 'border-[#1a3f26] bg-[#1a3f26] text-white' : 'border-[#e0e8dc] bg-white text-slate-500 hover:border-[#c8d4c3]',
+            )}
+          >
+            {label}
+            <span className={cn('tabular-nums', filter === key ? 'text-white/70' : 'text-slate-400')}>{counts[key]}</span>
+          </button>
+        ))}
+      </div>
+
       <div className="min-h-0 flex-1 overflow-y-auto px-2.5 pb-3">
         {loading ? (
           <p className="py-6 text-center text-sm text-slate-400">Laddar…</p>
         ) : items.length === 0 ? (
-          <p className="px-2 py-6 text-center text-sm text-slate-400">
-            Inga arbetsordrar att planera. Skapa en order i CRM:et så dyker den upp här.
-          </p>
+          <p className="px-2 py-6 text-center text-sm text-slate-400">{emptyText}</p>
         ) : (
           <div className="grid gap-2">
             {items.map((item) => {
@@ -88,6 +123,11 @@ export default function Backlog({
                     )}
                     <div className="mt-2 flex flex-wrap items-center gap-1.5">
                       <SackBadge sacks={item.total_sacks} />
+                      {item.segment_count > 0 && (
+                        <span className="whitespace-nowrap rounded-full border border-violet-200 bg-violet-50 px-2 py-px text-[10px] font-bold text-violet-700">
+                          {item.segment_count} placering{item.segment_count > 1 ? 'ar' : ''}
+                        </span>
+                      )}
                       {item.desired_installation_date && (
                         <span className="whitespace-nowrap rounded-full border border-sky-200 bg-sky-50 px-2 py-px text-[10px] font-bold text-sky-700">
                           Önskat {shortDate(item.desired_installation_date)}
