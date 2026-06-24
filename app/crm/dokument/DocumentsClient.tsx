@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useToast } from '../../lib/Toast';
+import { useToast } from '../../../lib/Toast';
 import DocumentsHeader from './components/DocumentsHeader';
 import DocumentsExplorer from './components/DocumentsExplorer';
 import DocumentsFileCollection from './components/DocumentsFileCollection';
@@ -192,8 +192,8 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
     });
   }, [breadcrumbs, loading, folderLists, loadFolderChildren]);
 
-  const goRoot = () => router.push('/dokument', { scroll: false });
-  const openFolder = (id: string) => router.push(`/dokument?folderId=${encodeURIComponent(id)}`, { scroll: false });
+  const goRoot = () => router.push('/crm/dokument', { scroll: false });
+  const openFolder = (id: string) => router.push(`/crm/dokument?folderId=${encodeURIComponent(id)}`, { scroll: false });
 
   const folderColorHex = useCallback((color: string | null | undefined) => {
     switch (String(color || '').toLowerCase()) {
@@ -476,7 +476,7 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
       await load();
       await loadFolderChildren(parentId);
       if (folderId === id || breadcrumbs.some(b => b.id === id)) {
-        router.push(parentId ? `/dokument?folderId=${encodeURIComponent(parentId)}` : '/dokument');
+        router.push(parentId ? `/crm/dokument?folderId=${encodeURIComponent(parentId)}` : '/crm/dokument');
       }
     } catch (e: any) {
       toast.error(e?.message || 'Kunde inte ta bort mapp');
@@ -521,7 +521,7 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
         : `${data?.files.length ?? 0} filer`);
 
   return (
-    <section className="mt-3.5 grid gap-3.5">
+    <section className="grid grid-cols-1 gap-4">
       <DocumentsHeader
         breadcrumbs={breadcrumbs}
         currentFolderName={currentFolderName}
@@ -542,10 +542,10 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
       />
 
       {showInitialLoading && (
-        <div className="mt-3.5 text-sm text-slate-500">Laddar…</div>
+        <div className="text-sm text-slate-400">Laddar…</div>
       )}
       {!showInitialLoading && error && (
-        <div className="mt-3.5 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
           {error}
         </div>
       )}
@@ -553,8 +553,8 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
       {data && (
         <div
           className={isCompactViewport
-            ? 'grid items-start gap-3.5'
-            : 'grid items-start gap-3.5 [grid-template-columns:minmax(300px,360px)_minmax(0,1fr)]'}
+            ? 'grid grid-cols-1 items-start gap-4'
+            : 'grid items-start gap-4 [grid-template-columns:minmax(300px,360px)_minmax(0,1fr)]'}
         >
           {/* Left explorer */}
           {(!isCompactViewport || showExplorerOnMobile) && (
@@ -580,7 +580,7 @@ export default function DocumentsClient({ canEdit }: { canEdit: boolean }) {
           )}
 
           {/* Main documents pane */}
-          <div className="min-w-0 overflow-hidden rounded-2xl border border-ui-border bg-white shadow-[0_12px_28px_rgba(15,23,42,0.05)]">
+          <div className="min-w-0 overflow-hidden rounded-2xl border border-[#e0e8dc] bg-white shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)]">
             <DocumentsMainPanelHeader
               currentFolderName={currentFolderName}
               statusText={mainPanelStatusText}

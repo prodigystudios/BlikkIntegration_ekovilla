@@ -24,7 +24,7 @@ type DocumentsResultsPanelProps = {
 };
 
 function StatusMessage({ children, tone = 'muted' }: { children: React.ReactNode; tone?: 'muted' | 'danger' }) {
-  return <div className={tone === 'danger' ? 'p-3.5 text-red-700' : 'p-3.5 text-ui-text-soft'}>{children}</div>;
+  return <div className={tone === 'danger' ? 'p-3.5 text-sm text-rose-700' : 'p-3.5 text-sm text-slate-400'}>{children}</div>;
 }
 
 export default function DocumentsResultsPanel({

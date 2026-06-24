@@ -61,7 +61,7 @@ const baseExtra: Record<string, Omit<QuickLink, 'href' | 'title'>> = {
       <path d="M8 13h8M8 17h5" strokeLinecap="round" />
     </svg>
   ) },
-  '/dokument': { desc: 'Dokumentbibliotek', icon: (
+  '/crm/dokument': { desc: 'Dokumentbibliotek', icon: (
     <svg width="28" height="28" viewBox="0 0 24 24" strokeWidth={1.6} stroke="currentColor" fill="none" aria-hidden>
       <path d="M3.5 6a2 2 0 0 1 2-2h5l2 2H18.5a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5.5a2 2 0 0 1-2-2V6Z" />
       <path d="M7 12h10M7 16h7" strokeLinecap="round" />
@@ -182,7 +182,7 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
     if (role === 'konsult') {
       return [
         { href: '/offert/kalkylator', title: 'Kalkylator Försäljning Privat', ...baseExtra['/offert/kalkylator'] },
-        { href: '/dokument', title: 'Dokument', ...baseExtra['/dokument'] },
+        { href: '/crm/dokument', title: 'Dokument', ...baseExtra['/crm/dokument'] },
         { href: '/kontakt-lista', title: 'Kontakt', ...baseExtra['/kontakt-lista'] },
       ];
     }
@@ -205,7 +205,7 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
         { href: '/plannering', title: 'Planering', ...baseExtra['/planering'] },
         { href: '/kontakt-lista', title: 'Kontakt', ...baseExtra['/kontakt-lista'] },
         { href: '/mina-dokument', title: 'Mina dokument', ...baseExtra['/mina-dokument'] },
-        { href: '/dokument', title: 'Dokument', ...baseExtra['/dokument'] },
+        { href: '/crm/dokument', title: 'Dokument', ...baseExtra['/crm/dokument'] },
         { href: '/offert/kalkylator', title: 'Kalkylator Försäljning Privat', ...baseExtra['/offert/kalkylator'] },
       ];
     }
@@ -218,7 +218,7 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
         { href: '/plannering', title: 'Planering', ...baseExtra['/planering'] },
         { href: '/tidrapport', title: 'Tidrapport', ...baseExtra['/tidrapport'] },
         { href: '/mina-dokument', title: 'Mina dokument', ...baseExtra['/mina-dokument'] },
-        { href: '/dokument', title: 'Dokument', ...baseExtra['/dokument'] },
+        { href: '/crm/dokument', title: 'Dokument', ...baseExtra['/crm/dokument'] },
         { href: '/admin', title: 'Admin', ...baseExtra['/admin'] },
         { href: '/offert', title: 'Skapa offert', ...baseExtra['/offert'] },
         { href: '/offert/kalkylator', title: 'Kalkylator Försäljning Privat', ...baseExtra['/offert/kalkylator'] },

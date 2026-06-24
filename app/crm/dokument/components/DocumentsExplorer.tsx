@@ -2,9 +2,8 @@
 
 import { useMemo, useState, type MutableRefObject } from 'react';
 import { cn } from '@/lib/shared/cn';
-import Button from '../../../components/ui/Button';
-import Input from '../../../components/ui/Input';
-import SectionCard from '../../../components/ui/SectionCard';
+import Input from '../../../../components/ui/Input';
+import { crm } from '../../lib/crmTokens';
 
 type FolderRow = {
   id: string;
@@ -61,6 +60,10 @@ const folderColors = [
   { key: 'purple', label: 'Lila' },
 ] as const;
 
+const cardClass = 'rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)]';
+const iconButtonClass =
+  'inline-flex h-7 items-center justify-center rounded-lg border border-slate-200 bg-white px-2 text-xs font-bold text-slate-500 transition hover:border-slate-300 hover:text-slate-800 disabled:opacity-50';
+
 export default function DocumentsExplorer({
   folderId,
   breadcrumbs,
@@ -108,11 +111,11 @@ export default function DocumentsExplorer({
     const list = folderLists[key] || [];
     const depth = parentId ? Math.min(breadcrumbs.findIndex((item) => item.id === parentId) + 1, 3) : 0;
     if (!list.length) {
-      return <div className="px-2.5 py-2.5 text-[13px] text-slate-500">Inga mappar</div>;
+      return <div className="px-2.5 py-2.5 text-[13px] text-slate-400">Inga mappar</div>;
     }
 
     return (
-      <div className="grid gap-2 p-2.5">
+      <div className="grid gap-1.5 p-2.5">
         {list.map((folder) => {
           const active = selectedId === folder.id || (!selectedId && folderId === folder.id);
           const showActions = effectiveCanEdit && (active || hoveredFolderId === folder.id || isCompactViewport);
@@ -132,17 +135,17 @@ export default function DocumentsExplorer({
                 type="button"
                 onClick={() => onOpenFolder(folder.id)}
                 className={cn(
-                  'relative flex w-full items-center justify-start gap-2 rounded-xl border px-3 py-2.5 text-left text-slate-900 transition-colors',
+                  'relative flex w-full items-center justify-start gap-2 overflow-hidden rounded-xl border px-3 py-2 text-left text-slate-900 transition-colors',
                   active
-                    ? 'border-blue-200 bg-[linear-gradient(135deg,#eef4ff,#e0ecff)] font-extrabold shadow-[0_8px_18px_rgba(59,130,246,0.10)] hover:border-blue-300 hover:bg-[linear-gradient(135deg,#eef4ff,#e0ecff)] active:bg-[linear-gradient(135deg,#e0ecff,#d7e7ff)]'
-                    : 'border-slate-200 bg-white font-semibold shadow-[0_2px_6px_rgba(15,23,42,0.02)] hover:border-slate-300 hover:bg-slate-50 active:bg-slate-100',
+                    ? 'border-emerald-200 bg-emerald-50 font-bold hover:border-emerald-300'
+                    : 'border-[#e3e9df] bg-white font-semibold shadow-[0_1px_2px_rgba(15,23,42,0.04)] hover:border-[#cfdcc9] hover:bg-[#f9fbf7]',
                 )}
               >
                 <span
                   aria-hidden
                   className={cn(
-                    'absolute inset-y-0 left-0 w-1 rounded-l-xl',
-                    active ? 'bg-blue-500' : depth > 0 ? 'bg-blue-100' : 'bg-slate-200',
+                    'absolute inset-y-0 left-0 w-1',
+                    active ? 'bg-emerald-500' : depth > 0 ? 'bg-emerald-100' : 'bg-slate-200',
                   )}
                 />
                 {depth > 0 ? <span aria-hidden className="h-px shrink-0 bg-slate-200" style={{ width: depth * 10 }} /> : null}
@@ -163,28 +166,26 @@ export default function DocumentsExplorer({
                   )}
                   aria-hidden={!showActions}
                 >
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    className="min-h-0 rounded-[10px] px-[7px] py-[5px] text-xs font-extrabold"
+                  <button
+                    type="button"
+                    className={iconButtonClass}
                     onClick={() => onRenameFolder(folder.id, parentId, folder.name)}
                     disabled={!!busy}
                     title="Byt namn"
                     aria-label="Byt namn"
                   >
                     ✎
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    className="min-h-0 rounded-[10px] px-[7px] py-[5px] text-xs font-extrabold text-red-800"
+                  </button>
+                  <button
+                    type="button"
+                    className={cn(iconButtonClass, 'hover:border-rose-300 hover:text-rose-600')}
                     onClick={() => onDeleteFolder(folder.id, parentId)}
                     disabled={!!busy}
                     title="Ta bort (mappen måste vara tom)"
                     aria-label="Ta bort"
                   >
                     🗑
-                  </Button>
+                  </button>
                 </div>
               ) : null}
             </div>
@@ -196,38 +197,37 @@ export default function DocumentsExplorer({
 
   return (
     <aside className={cn('grid gap-2.5', !isCompactViewport && 'sticky top-[84px] self-start')}>
-      <SectionCard className="grid gap-1 px-3.5 py-3">
-        <strong className="text-[13px] text-slate-900">Mappnavigering</strong>
-        <span className="text-xs text-slate-500">Hoppa mellan nivåer och skapa nya mappar där du står.</span>
-      </SectionCard>
+      <div className={cn(cardClass, 'grid gap-1 px-3.5 py-3')}>
+        <strong className="text-[13px] font-semibold text-slate-800">Mappnavigering</strong>
+        <span className="text-xs text-slate-400">Hoppa mellan nivåer och skapa nya mappar där du står.</span>
+      </div>
 
       {visibleExplorerColumns.map((col) => (
-        <SectionCard key={col.key} className="w-full overflow-hidden">
-          <div className="border-b border-slate-200 bg-[linear-gradient(180deg,#fbfdff,#f8fafc)] px-3 py-[11px]">
+        <div key={col.key} className={cn(cardClass, 'w-full overflow-hidden')}>
+          <div className="border-b border-[#e0e8dc] bg-[#f6f9f3] px-3 py-2.5">
             <div className="flex items-center justify-between gap-2">
               <div className="grid min-w-0 gap-0.5">
-                <div className="min-w-0 truncate text-xs font-extrabold text-slate-500">
+                <div className="min-w-0 truncate text-xs font-bold text-slate-600">
                   {col.title}
                 </div>
                 <span className="text-[11px] text-slate-400">{(folderLists[col.parentId || 'root'] || []).length} mappar</span>
               </div>
 
               {effectiveCanEdit ? (
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  className="rounded-[10px] px-2 py-1 text-xs whitespace-nowrap"
+                <button
+                  type="button"
+                  className="inline-flex h-7 items-center whitespace-nowrap rounded-lg border border-slate-200 bg-white px-2 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-800 disabled:opacity-50"
                   onClick={() => onOpenCreateFolder(col.parentId)}
                   disabled={!!busy}
                   title="Skapa ny mapp här"
                 >
                   + Ny mapp
-                </Button>
+                </button>
               ) : null}
             </div>
 
             {effectiveCanEdit && createFolderUi && createFolderUi.parentId === col.parentId ? (
-              <div className="mt-2.5 border-t border-slate-200 pt-2.5">
+              <div className="mt-2.5 border-t border-[#e0e8dc] pt-2.5">
                 <div className="grid gap-2">
                   <Input
                     ref={createFolderNameRef}
@@ -240,7 +240,6 @@ export default function DocumentsExplorer({
                         onSubmitCreateFolder(createFolderUi.parentId, createFolderUi.name, createFolderUi.color);
                       }
                     }}
-                    className="min-h-0 rounded-[10px] border-slate-200 px-3 py-2.5 text-sm"
                     disabled={!!busy}
                   />
 
@@ -264,20 +263,22 @@ export default function DocumentsExplorer({
                         />
                       );
                     })}
-                    <span className="text-xs text-slate-500">(valfritt)</span>
+                    <span className="text-xs text-slate-400">(valfritt)</span>
                   </div>
 
                   <div className="flex flex-wrap justify-end gap-2">
-                    <Button variant="secondary" onClick={onCloseCreateFolder} disabled={!!busy}>
+                    <button type="button" className={crm.ghostButton} onClick={onCloseCreateFolder} disabled={!!busy}>
                       Avbryt
-                    </Button>
-                    <Button
-                      variant="primary"
+                    </button>
+                    <button
+                      type="button"
+                      className={crm.formButton}
+                      style={{ backgroundColor: 'var(--crm-primary)' }}
                       onClick={() => onSubmitCreateFolder(createFolderUi.parentId, createFolderUi.name, createFolderUi.color)}
                       disabled={!!busy || !createFolderUi.name.trim()}
                     >
                       Skapa
-                    </Button>
+                    </button>
                   </div>
                 </div>
               </div>
@@ -287,7 +288,7 @@ export default function DocumentsExplorer({
           <div className={cn(!isCompactViewport && 'max-h-[calc(100dvh-320px)] overflow-y-auto')}>
             {renderFolderList(col.parentId, col.selectedId)}
           </div>
-        </SectionCard>
+        </div>
       ))}
     </aside>
   );

@@ -1,7 +1,6 @@
 "use client";
 
-import Badge from '../../../components/ui/Badge';
-import Button from '../../../components/ui/Button';
+import { cn } from '@/lib/shared/cn';
 import type { FileRow, SearchFileRow } from '../types';
 
 type DocumentsFileCollectionProps = {
@@ -19,6 +18,11 @@ type DocumentsFileCollectionProps = {
   onDeleteFile: (id: string) => void;
 };
 
+const actionButtonClass =
+  'inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[13px] font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-800 disabled:cursor-not-allowed disabled:opacity-50';
+const chipClass =
+  'inline-flex items-center rounded-full border border-[#e0e8dc] bg-[#f9fbf7] px-2 py-0.5 text-[11px] font-semibold text-slate-500';
+
 export default function DocumentsFileCollection({
   files,
   includeFolderName,
@@ -35,60 +39,59 @@ export default function DocumentsFileCollection({
 }: DocumentsFileCollectionProps) {
   const renderFileActions = (file: FileRow | SearchFileRow) => (
     <div className={isCompactViewport ? 'flex flex-wrap gap-2 justify-stretch' : 'flex flex-wrap justify-end gap-2'}>
-      <Button size={isCompactViewport ? 'sm' : 'md'} variant="secondary" onClick={() => onPreviewFile(file)} disabled={previewLoading}>
+      <button type="button" className={actionButtonClass} onClick={() => onPreviewFile(file)} disabled={previewLoading}>
         Förhandsgranska
-      </Button>
-      <Button size={isCompactViewport ? 'sm' : 'md'} variant="secondary" onClick={() => onDownloadFile(file.id)}>
+      </button>
+      <button type="button" className={actionButtonClass} onClick={() => onDownloadFile(file.id)}>
         Ladda ner
-      </Button>
+      </button>
       {effectiveCanEdit && (
-        <Button size={isCompactViewport ? 'sm' : 'md'} variant="secondary" onClick={() => onOpenPublishStatus(file)} disabled={!!busy}>
+        <button type="button" className={actionButtonClass} onClick={() => onOpenPublishStatus(file)} disabled={!!busy}>
           Status
-        </Button>
+        </button>
       )}
       {effectiveCanEdit && (
-        <Button size={isCompactViewport ? 'sm' : 'md'} variant="secondary" onClick={() => onOpenPublish(file)} disabled={!!busy}>
+        <button type="button" className={actionButtonClass} onClick={() => onOpenPublish(file)} disabled={!!busy}>
           Publicera
-        </Button>
+        </button>
       )}
       {effectiveCanEdit && (
-        <Button
-          size={isCompactViewport ? 'sm' : 'md'}
-          variant="secondary"
-          className="text-red-800"
+        <button
+          type="button"
+          className={cn(actionButtonClass, 'hover:border-rose-300 hover:text-rose-600')}
           onClick={() => onDeleteFile(file.id)}
           disabled={!!busy}
         >
           Ta bort
-        </Button>
+        </button>
       )}
     </div>
   );
 
   if (isCompactViewport) {
     return (
-      <div className="grid gap-2.5 p-3">
+      <div className="grid gap-2 p-3">
         {files.map((file) => {
           const folderName = includeFolderName && 'folder_name' in file ? file.folder_name : null;
           return (
-            <div key={file.id} className="grid gap-2.5 rounded-[14px] border border-slate-200 bg-white px-3 py-[10px] shadow-[0_6px_18px_rgba(15,23,42,0.04)]">
+            <div key={file.id} className="grid gap-2.5 rounded-xl border border-[#e3e9df] bg-white px-3 py-2.5 shadow-[0_1px_2px_rgba(15,23,42,0.05)]">
               <div className="flex min-w-0 items-start gap-2.5">
                 <span aria-hidden className="text-[18px] leading-none">📄</span>
                 <div className="grid min-w-0 flex-1 gap-1.5">
                   <button
                     type="button"
                     onClick={() => onPreviewFile(file)}
-                    className="truncate border-none bg-transparent p-0 text-left text-sm font-extrabold text-slate-900"
+                    className="truncate border-none bg-transparent p-0 text-left text-[13px] font-bold text-slate-900"
                   >
                     {file.file_name}
                   </button>
                   <div className="flex flex-wrap items-center gap-1.5">
-                    {folderName ? <Badge>Mapp: {folderName || 'Rot'}</Badge> : null}
-                    <Badge>{formatBytes(file.size_bytes) || 'Okänd storlek'}</Badge>
+                    {folderName ? <span className={chipClass}>Mapp: {folderName || 'Rot'}</span> : null}
+                    <span className={chipClass}>{formatBytes(file.size_bytes) || 'Okänd storlek'}</span>
                   </div>
                 </div>
               </div>
-              <div className="flex flex-wrap gap-2 text-xs text-ui-text-soft">
+              <div className="flex flex-wrap gap-2 text-xs text-slate-400">
                 <span>Skapad {new Date(file.created_at).toLocaleString('sv-SE')}</span>
               </div>
               <div className="grid gap-2 [grid-template-columns:repeat(auto-fit,minmax(132px,1fr))]">
@@ -108,7 +111,7 @@ export default function DocumentsFileCollection({
   return (
     <div>
       <div
-        className="grid bg-[linear-gradient(180deg,#ffffff,#f8fafc)] px-3 py-2 text-[11px] font-extrabold uppercase tracking-[0.3px] text-ui-text-soft"
+        className="grid bg-[#f6f9f3] px-3 py-2 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400"
         style={{ gridTemplateColumns: columns }}
       >
         <div>Dokument</div>
@@ -123,30 +126,30 @@ export default function DocumentsFileCollection({
         return (
           <div
             key={file.id}
-            className="grid items-center gap-2.5 border-t border-slate-100 bg-white px-3 py-3"
+            className="grid items-center gap-2.5 border-t border-[#eef2ec] bg-white px-3 py-2.5 transition-colors hover:bg-[#f9fbf7]"
             style={{ gridTemplateColumns: columns }}
           >
             <div className="flex min-w-0 items-center gap-3">
-              <div className="grid h-[34px] w-[34px] shrink-0 place-items-center rounded-[10px] border border-ui-border bg-[linear-gradient(180deg,#ffffff,#f8fafc)] text-[10px] font-extrabold text-slate-700">
+              <div className="grid h-[34px] w-[34px] shrink-0 place-items-center rounded-lg border border-[#e0e8dc] bg-[#f9fbf7] text-[10px] font-bold text-slate-600">
                 {extension}
               </div>
               <div className="grid min-w-0 gap-1">
                 <button
                   type="button"
                   onClick={() => onPreviewFile(file)}
-                  className="truncate border-none bg-transparent p-0 text-left text-[13px] font-extrabold text-slate-900"
+                  className="truncate border-none bg-transparent p-0 text-left text-[13px] font-bold text-slate-900"
                 >
                   {file.file_name}
                 </button>
                 <div className="flex flex-wrap items-center gap-1.5">
-                  <Badge variant="info">{extension}</Badge>
-                  {!includeFolderName ? <Badge>{formatBytes(file.size_bytes) || 'Okänd storlek'}</Badge> : null}
+                  <span className="inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-semibold text-sky-700">{extension}</span>
+                  {!includeFolderName ? <span className={chipClass}>{formatBytes(file.size_bytes) || 'Okänd storlek'}</span> : null}
                 </div>
               </div>
             </div>
-            {includeFolderName ? <div className="truncate text-[13px] text-ui-text-soft">{folderName || 'Rot'}</div> : null}
+            {includeFolderName ? <div className="truncate text-[13px] text-slate-500">{folderName || 'Rot'}</div> : null}
             <div className="text-[13px] font-semibold text-slate-600">{formatBytes(file.size_bytes)}</div>
-            <div className="text-[13px] text-ui-text-soft">{new Date(file.created_at).toLocaleString('sv-SE')}</div>
+            <div className="text-[13px] text-slate-400">{new Date(file.created_at).toLocaleString('sv-SE')}</div>
             {renderFileActions(file)}
           </div>
         );
