@@ -29,7 +29,7 @@ const baseExtra: Record<string, Omit<QuickLink, 'href' | 'title'>> = {
       <path d="M9 11h6" strokeLinecap="round" />
     </svg>
   ) },
-  '/korjournal': { desc: 'Registrera och granska resor', icon: (
+  '/crm/korjournal': { desc: 'Registrera och granska resor', icon: (
     <svg width="28" height="28" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor" fill="none" aria-hidden>
       <path d="M4 16l2-8h12l2 8" strokeLinecap="round" strokeLinejoin="round" />
       <circle cx="7" cy="17" r="2" />
@@ -201,7 +201,7 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
       return [
         { href: '/crm', title: 'CRM', ...baseExtra['/crm'] },
         { href: '/archive', title: 'Egenkontroll arkiv', ...baseExtra['/archive'] },
-        { href: '/korjournal', title: 'Körjournal', ...baseExtra['/korjournal'] },
+        { href: '/crm/korjournal', title: 'Körjournal', ...baseExtra['/crm/korjournal'] },
         { href: '/plannering', title: 'Planering', ...baseExtra['/planering'] },
         { href: '/kontakt-lista', title: 'Kontakt', ...baseExtra['/kontakt-lista'] },
         { href: '/mina-dokument', title: 'Mina dokument', ...baseExtra['/mina-dokument'] },
@@ -214,7 +214,7 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
         { href: '/crm', title: 'CRM', ...baseExtra['/crm'] },
         { href: '/egenkontroll', title: 'Ny egenkontroll', ...baseExtra['/egenkontroll'] },
         { href: '/archive', title: 'Egenkontroll arkiv', ...baseExtra['/archive'] },
-        { href: '/korjournal', title: 'Körjournal', ...baseExtra['/korjournal'] },
+        { href: '/crm/korjournal', title: 'Körjournal', ...baseExtra['/crm/korjournal'] },
         { href: '/plannering', title: 'Planering', ...baseExtra['/planering'] },
         { href: '/tidrapport', title: 'Tidrapport', ...baseExtra['/tidrapport'] },
         { href: '/mina-dokument', title: 'Mina dokument', ...baseExtra['/mina-dokument'] },

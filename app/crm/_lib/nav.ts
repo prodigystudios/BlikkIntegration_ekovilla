@@ -23,6 +23,7 @@ export const CRM_NAV_ITEMS: CrmNavItem[] = [
   { href: '/crm/ai-prospekt', label: 'AI Prospekt', description: 'Förslag och framtida prospektering', roles: ['admin'] },
   { href: '/crm/coach', label: 'Coach', description: 'Säljhjälp och kommande AI-stöd', roles: ['sales', 'admin'] },
   { href: '/crm/dokument', label: 'Dokument', description: 'Dokumentbibliotek och publicering', roles: ['sales', 'admin'] },
+  { href: '/crm/korjournal', label: 'Körjournal', description: 'Registrera och följ upp resor', roles: ['sales', 'admin'] },
   {
     href: '/crm/installningar',
     label: 'Inställningar',
