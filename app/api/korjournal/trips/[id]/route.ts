@@ -1,13 +1,6 @@
-import { NextRequest, NextResponse } from 'next/server';
-import {
-  getKorjournalRouteContext,
-  normalizeOptionalKilometer,
-  normalizeOptionalText,
-  ok,
-  routeError,
-  tripIdParamsSchema,
-  updateTripSchema,
-} from '../_lib';
+import { NextRequest } from 'next/server';
+import { getKorjournalRouteContext, ok, routeError, tripIdParamsSchema, updateTripSchema } from '../_lib';
+import { buildUpdateTripRow, deleteKorjournalTrip, updateKorjournalTrip } from '@/lib/domains/korjournal/trips';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -31,31 +24,11 @@ export async function PATCH(req: NextRequest, { params }: Params) {
       return routeError(400, 'validation_error', message, flattened);
     }
 
-    const { id } = parsedParams.data;
-    const body = parsedBody.data;
-    const updates: any = {};
-    if (body.date !== undefined) updates.date = body.date;
-    if (body.startAddress !== undefined) updates.start_address = body.startAddress == null ? '' : String(body.startAddress);
-    if (body.endAddress !== undefined) updates.end_address = body.endAddress == null ? '' : String(body.endAddress);
-    if (body.startKm !== undefined) {
-      const startKm = normalizeOptionalKilometer(body.startKm);
-      if (Number.isNaN(startKm)) return routeError(400, 'validation_error', 'Invalid kilometer value');
-      updates.start_km = startKm;
-    }
-    if (body.endKm !== undefined) {
-      const endKm = normalizeOptionalKilometer(body.endKm);
-      if (Number.isNaN(endKm)) return routeError(400, 'validation_error', 'Invalid kilometer value');
-      updates.end_km = endKm;
-    }
-    if (body.note !== undefined) updates.note = normalizeOptionalText(body.note);
+    const built = buildUpdateTripRow(parsedBody.data);
+    if ('error' in built) return routeError(400, 'validation_error', 'Invalid kilometer value');
 
-    // RLS ensures only owner can update; still scope by id
-    const { data, error } = await context.supabase
-      .from('korjournal_trips')
-      .update(updates)
-      .eq('id', id)
-      .select('*')
-      .maybeSingle();
+    // RLS ensures only the owner can update; still scope by id.
+    const { data, error } = await updateKorjournalTrip(context.supabase, parsedParams.data.id, built.row);
     if (error) return routeError(500, 'trip_update_failed', error.message);
     if (!data) return routeError(404, 'trip_not_found', 'Not found');
     return ok({ trip: data }, { trip: data });
@@ -74,13 +47,7 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
     const context = await getKorjournalRouteContext();
     if (context.response) return context.response;
 
-    const { id } = parsedParams.data;
-
-    const { error } = await context.supabase
-      .from('korjournal_trips')
-      .delete()
-      .eq('id', id)
-      .limit(1);
+    const { error } = await deleteKorjournalTrip(context.supabase, parsedParams.data.id);
     if (error) return routeError(500, 'trip_delete_failed', error.message);
     return ok({ deleted: true }, { deleted: true });
   } catch (e: any) {

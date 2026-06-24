@@ -327,9 +327,9 @@ export default function HeaderMenu({ role, fullName }: { role: UserRole | null, 
               </Link> */}
                 {!isConsultant && (
                   <>
-                    <Link href="/korjournal" prefetch={true} onClick={() => setOpen(false)}
-                    aria-current={pathname === '/korjournal' ? 'page' : undefined}
-                    className={`menu-link${pathname === '/korjournal' ? ' is-active' : ''}`}>
+                    <Link href="/crm/korjournal" prefetch={false} onClick={() => setOpen(false)}
+                    aria-current={pathname?.startsWith('/crm/korjournal') ? 'page' : undefined}
+                    className={`menu-link${pathname?.startsWith('/crm/korjournal') ? ' is-active' : ''}`}>
                     <IconCar />
                     <span>Körjournal</span>
                     </Link>
