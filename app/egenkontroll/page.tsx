@@ -605,7 +605,7 @@ export default function EgenkontrollPage() {
   const selectedPhotosCount = Number(Boolean(beforePhoto)) + Number(Boolean(afterPhoto));
 
   return (
-    <main style={{ padding: isNarrow ? 14 : 22, maxWidth: 1240, margin: '0 auto', display: 'grid', gap: 18, background: '#f8fbff', width: '100%', boxSizing: 'border-box', overflowX: 'clip' }}>
+    <div style={{ maxWidth: 1240, margin: '0 auto', display: 'grid', gap: 18, width: '100%', boxSizing: 'border-box', overflowX: 'clip' }}>
       <Suspense fallback={null}>
         <InitOrderId orderId={orderId} setOrderId={setOrderId} />
       </Suspense>
@@ -640,7 +640,7 @@ export default function EgenkontrollPage() {
           <input value={orderId} onChange={(e) => setOrderId(e.target.value)} placeholder="Ange ordernummer" style={textFieldStyle} />
           <button
             type="button"
-            className="btn--primary btn--med"
+            className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-700 px-3 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800"
             style={{ opacity: projectLoading ? 0.7 : 1, cursor: projectLoading ? 'not-allowed' : 'pointer', width: isNarrow ? '100%' : 'fit-content' }}
             onClick={onLookup}
             disabled={projectLoading}
@@ -653,7 +653,7 @@ export default function EgenkontrollPage() {
           <div style={{ marginTop: 8, color: '#6b7280', fontSize: 14 }}>Hämtar projektdetaljer…</div>
         )}
         {project && (
-          <div style={{ border: '1px solid #dbe4ef', borderRadius: 18, padding: 14, background: '#f8fafc' }}>
+          <div style={{ border: '1px solid #e0e8dc', borderRadius: 18, padding: 14, background: '#f8fafc' }}>
             {project.error ? (
               <div style={{ color: 'crimson' }}>Error: {project.error}</div>
             ) : (
@@ -765,7 +765,7 @@ export default function EgenkontrollPage() {
         <div style={{ display: 'grid', gap: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <h3 style={subsectionTitleStyle}>Etapper (öppet)</h3>
-            <button className='btn--med' type="button" onClick={addEtappOpenRow} disabled={etapperOpen.length >= MAX_ETAPP_ROWS} title={etapperOpen.length >= MAX_ETAPP_ROWS ? `Max ${MAX_ETAPP_ROWS} rader` : ''} style={{ opacity: etapperOpen.length >= MAX_ETAPP_ROWS ? 0.5 : 1, cursor: etapperOpen.length >= MAX_ETAPP_ROWS ? 'not-allowed' : 'pointer' }}>
+            <button className='inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300' type="button" onClick={addEtappOpenRow} disabled={etapperOpen.length >= MAX_ETAPP_ROWS} title={etapperOpen.length >= MAX_ETAPP_ROWS ? `Max ${MAX_ETAPP_ROWS} rader` : ''} style={{ opacity: etapperOpen.length >= MAX_ETAPP_ROWS ? 0.5 : 1, cursor: etapperOpen.length >= MAX_ETAPP_ROWS ? 'not-allowed' : 'pointer' }}>
               + Lägg till rad
             </button>
           </div>
@@ -775,7 +775,7 @@ export default function EgenkontrollPage() {
                 <div key={idx} style={{ ...mobileRowCardStyle, border: openErrorIdxs.includes(idx) ? '1px solid #fca5a5' : mobileRowCardStyle.border, background: openErrorIdxs.includes(idx) ? '#fff1f2' : mobileRowCardStyle.background }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
                     <strong style={{ color: '#0f172a' }}>Rad {idx + 1}</strong>
-                    <button className='btn--danger btn--sm' type="button" onClick={() => removeEtappOpenRow(idx)}>Ta bort</button>
+                    <button className='inline-flex items-center rounded-lg border border-rose-200 bg-white px-2.5 py-1 text-xs font-semibold text-rose-700 transition hover:border-rose-300' type="button" onClick={() => removeEtappOpenRow(idx)}>Ta bort</button>
                   </div>
                   <div style={mobileFieldGridStyle}>
                     <MobileField label="Etapp"><input value={row.etapp || ''} onChange={(e) => updateEtappOpenRow(idx, { etapp: e.target.value })} placeholder="Etapp (öppet)" style={textFieldStyle} /></MobileField>
@@ -813,7 +813,7 @@ export default function EgenkontrollPage() {
                 <input value={row.installeradDensitet || ''} onChange={(e) => updateEtappOpenRow(idx, { installeradDensitet: e.target.value })} placeholder="kg/m³" style={{ padding: 6 }} />
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                   <input value={row.lambdavarde || ''} onChange={(e) => updateEtappOpenRow(idx, { lambdavarde: e.target.value })} placeholder="W/m²K" style={{ padding: 6, flex: 1 }} />
-                  <button className='btn--danger btn--sm' type="button" onClick={() => removeEtappOpenRow(idx)} style={{ whiteSpace: 'nowrap' }}>Ta bort</button>
+                  <button className='inline-flex items-center rounded-lg border border-rose-200 bg-white px-2.5 py-1 text-xs font-semibold text-rose-700 transition hover:border-rose-300' type="button" onClick={() => removeEtappOpenRow(idx)} style={{ whiteSpace: 'nowrap' }}>Ta bort</button>
                 </div>
               </div>
             ))}
@@ -824,7 +824,7 @@ export default function EgenkontrollPage() {
         <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: 12, display: 'grid', gap: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <h3 style={subsectionTitleStyle}>Etapper (slutet)</h3>
-            <button className='btn--med' type="button" onClick={addEtappClosedRow} disabled={etapperClosed.length >= MAX_ETAPP_ROWS} title={etapperClosed.length >= MAX_ETAPP_ROWS ? `Max ${MAX_ETAPP_ROWS} rader` : ''} style={{ opacity: etapperClosed.length >= MAX_ETAPP_ROWS ? 0.5 : 1, cursor: etapperClosed.length >= MAX_ETAPP_ROWS ? 'not-allowed' : 'pointer' }}>
+            <button className='inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300' type="button" onClick={addEtappClosedRow} disabled={etapperClosed.length >= MAX_ETAPP_ROWS} title={etapperClosed.length >= MAX_ETAPP_ROWS ? `Max ${MAX_ETAPP_ROWS} rader` : ''} style={{ opacity: etapperClosed.length >= MAX_ETAPP_ROWS ? 0.5 : 1, cursor: etapperClosed.length >= MAX_ETAPP_ROWS ? 'not-allowed' : 'pointer' }}>
               + Lägg till rad
             </button>
           </div>
@@ -834,7 +834,7 @@ export default function EgenkontrollPage() {
                 <div key={idx} style={{ ...mobileRowCardStyle, border: closedErrorIdxs.includes(idx) ? '1px solid #fca5a5' : mobileRowCardStyle.border, background: closedErrorIdxs.includes(idx) ? '#fff1f2' : mobileRowCardStyle.background }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
                     <strong style={{ color: '#0f172a' }}>Rad {idx + 1}</strong>
-                    <button className='btn--danger btn--sm' type="button" onClick={() => removeEtappClosedRow(idx)}>Ta bort</button>
+                    <button className='inline-flex items-center rounded-lg border border-rose-200 bg-white px-2.5 py-1 text-xs font-semibold text-rose-700 transition hover:border-rose-300' type="button" onClick={() => removeEtappClosedRow(idx)}>Ta bort</button>
                   </div>
                   <div style={mobileFieldGridStyle}>
                     <MobileField label="Etapp"><input value={row.etapp || ''} onChange={(e) => updateEtappClosedRow(idx, { etapp: e.target.value })} placeholder="Etapp (slutet)" style={textFieldStyle} /></MobileField>
@@ -869,7 +869,7 @@ export default function EgenkontrollPage() {
                 <input value={row.installeradDensitet || ''} onChange={(e) => updateEtappClosedRow(idx, { installeradDensitet: e.target.value })} placeholder="kg/m³" style={{ padding: 6 }} />
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                   <input value={row.lambdavarde || ''} onChange={(e) => updateEtappClosedRow(idx, { lambdavarde: e.target.value })} placeholder="W/m²K" style={{ padding: 6, flex: 1 }} />
-                  <button className='btn--danger btn--sm' type="button" onClick={() => removeEtappClosedRow(idx)} style={{ whiteSpace: 'nowrap' }}>Ta bort</button>
+                  <button className='inline-flex items-center rounded-lg border border-rose-200 bg-white px-2.5 py-1 text-xs font-semibold text-rose-700 transition hover:border-rose-300' type="button" onClick={() => removeEtappClosedRow(idx)} style={{ whiteSpace: 'nowrap' }}>Ta bort</button>
                 </div>
               </div>
             ))}
@@ -883,14 +883,14 @@ export default function EgenkontrollPage() {
         <h3 style={subsectionTitleStyle}>Projektbilder</h3>
         <div style={{ display: 'grid', gap: 12, maxWidth: 720 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            <button type="button" className="btn--primary btn--med" onClick={() => beforeInputRef.current?.click()}>Välj före-bild</button>
+            <button type="button" className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-700 px-3 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800" onClick={() => beforeInputRef.current?.click()}>Välj före-bild</button>
             <span style={{ color: beforePhoto ? '#111827' : '#6b7280', fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '60%' }}>
               {beforePhoto ? beforePhoto.name : 'Ingen fil vald'}
             </span>
             <input ref={beforeInputRef} type="file" accept="image/*" onChange={(e) => setBeforePhoto(e.target.files?.[0] ?? null)} style={{ display: 'none' }} />
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            <button type="button" className="btn--primary btn--med" onClick={() => afterInputRef.current?.click()}>Välj efter-bild</button>
+            <button type="button" className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-700 px-3 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800" onClick={() => afterInputRef.current?.click()}>Välj efter-bild</button>
             <span style={{ color: afterPhoto ? '#111827' : '#6b7280', fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '60%' }}>
               {afterPhoto ? afterPhoto.name : 'Ingen fil vald'}
             </span>
@@ -923,7 +923,7 @@ export default function EgenkontrollPage() {
             />
           </div>
           <div style={{ marginTop: 8, marginBottom: 16, display: 'flex', gap: 8 }}>
-            <button className='btn--danger btn--sm' type="button" onClick={clearSignature}>Rensa signatur</button>
+            <button className='inline-flex items-center rounded-lg border border-rose-200 bg-white px-2.5 py-1 text-xs font-semibold text-rose-700 transition hover:border-rose-300' type="button" onClick={clearSignature}>Rensa signatur</button>
             {missing.signature && (
               <span className="text-error" style={{ fontSize: 12 }}>Rita signaturen i rutan</span>
             )}
@@ -948,11 +948,11 @@ export default function EgenkontrollPage() {
               <div style={{ marginLeft: 'auto' }} />
               {previewUrl && (
                 <>
-                  <a href={previewUrl} download={`Egenkontroll_forhandsvisning.pdf`} className="btn--plain btn--sm">Ladda ner</a>
-                  <button className="btn--primary btn--sm" onClick={() => previewUrl && window.open(previewUrl, '_blank')}>Öppna i ny flik</button>
+                  <a href={previewUrl} download={`Egenkontroll_forhandsvisning.pdf`} className="inline-flex items-center rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 transition hover:border-slate-300">Ladda ner</a>
+                  <button className="inline-flex items-center rounded-lg bg-emerald-700 px-2.5 py-1 text-xs font-semibold text-white transition hover:bg-emerald-800" onClick={() => previewUrl && window.open(previewUrl, '_blank')}>Öppna i ny flik</button>
                 </>
               )}
-              <button className="btn--danger btn--sm" onClick={closePreview}>Stäng</button>
+              <button className="inline-flex items-center rounded-lg border border-rose-200 bg-white px-2.5 py-1 text-xs font-semibold text-rose-700 transition hover:border-rose-300" onClick={closePreview}>Stäng</button>
             </div>
             <div style={{ flex: 1, minHeight: 0 }}>
               {previewUrl ? (
@@ -967,7 +967,7 @@ export default function EgenkontrollPage() {
 
       <section style={{ ...sectionCardStyle, position: 'sticky', bottom: 12, zIndex: 5, boxShadow: '0 18px 36px rgba(15,23,42,0.12)', width: '100%', boxSizing: 'border-box', overflow: 'hidden' }}>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexDirection: isNarrow ? 'column' : 'row', minWidth: 0 }}>
-          <button className="btn--plain btn--lg" disabled={isSaving} onClick={async () => {
+          <button className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-slate-300 disabled:opacity-50" disabled={isSaving} onClick={async () => {
             if (isSaving) return;
             setIsPreviewing(true);
             setMessage('Genererar förhandsvisning…');
@@ -1012,7 +1012,7 @@ export default function EgenkontrollPage() {
               setToast({ text: e?.message || 'Misslyckades att förhandsvisa PDF', type: 'error' });
             } finally { setIsPreviewing(false); }
           }} style={{ flex: 1, width: isNarrow ? '100%' : undefined }}>{isPreviewing ? 'Genererar…' : 'Förhandsvisa'}</button>
-          <button className="btn--success btn--lg" disabled={isSaving} onClick={async () => {
+          <button className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:opacity-50" disabled={isSaving} onClick={async () => {
             if (isSaving) return;
             setMessage('Sparar…');
             const rowsOk = validateRows();
@@ -1230,7 +1230,7 @@ export default function EgenkontrollPage() {
           <span style={{ fontWeight: 500 }}>{toast.text}</span>
         </div>
       )}
-    </main>
+    </div>
   );
 }
 
@@ -1245,7 +1245,7 @@ function MobileField({ label, children }: { label: string; children: React.React
 
 function ControlCard({ label, checked, onChange, comment, onCommentChange, placeholder }: { label: string; checked: boolean; onChange: (next: boolean) => void; comment: string; onCommentChange: (next: string) => void; placeholder: string }) {
   return (
-    <div style={{ display: 'grid', gap: 10, padding: '14px 14px 12px', borderRadius: 18, border: '1px solid #dbe4ef', background: '#fff' }}>
+    <div style={{ display: 'grid', gap: 10, padding: '14px 14px 12px', borderRadius: 18, border: '1px solid #e0e8dc', background: '#fff' }}>
       <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
         <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
         <span style={{ fontWeight: 700, color: '#0f172a' }}>{label} OK?</span>
@@ -1256,11 +1256,11 @@ function ControlCard({ label, checked, onChange, comment, onCommentChange, place
 }
 
 const heroCardStyle: React.CSSProperties = {
-  border: '1px solid #dbe4ef',
+  border: '1px solid #e0e8dc',
   borderRadius: 28,
   padding: '20px 20px 18px',
-  background: 'linear-gradient(180deg, #ffffff 0%, #f7fbff 100%)',
-  boxShadow: '0 18px 46px rgba(15,23,42,0.05)',
+  background: '#f9fbf7',
+  boxShadow: '0 1px 3px rgba(20,44,27,0.06), 0 18px 36px -18px rgba(20,44,27,0.24)',
   display: 'grid',
   gap: 16,
 };
@@ -1297,8 +1297,8 @@ const heroStatCardStyle: React.CSSProperties = {
   minWidth: 0,
   padding: '12px 12px 10px',
   borderRadius: 16,
-  border: '1px solid #dbe4ef',
-  background: '#fff',
+  border: '1px solid #e0e8dc',
+  background: '#f9fbf7',
 };
 
 const heroStatLabelStyle: React.CSSProperties = {
@@ -1316,13 +1316,13 @@ const heroStatValueStyle: React.CSSProperties = {
 };
 
 const sectionCardStyle: React.CSSProperties = {
-  border: '1px solid #dbe4ef',
+  border: '1px solid #e0e8dc',
   borderRadius: 24,
   padding: '18px 18px 16px',
   minWidth: 0,
   boxSizing: 'border-box',
-  background: '#fff',
-  boxShadow: '0 14px 32px rgba(15,23,42,0.04)',
+  background: '#f9fbf7',
+  boxShadow: '0 1px 3px rgba(20,44,27,0.06), 0 18px 36px -18px rgba(20,44,27,0.24)',
   display: 'grid',
   gap: 14,
 };
@@ -1358,7 +1358,7 @@ const textFieldStyle: React.CSSProperties = {
   width: '100%',
   boxSizing: 'border-box',
   padding: '11px 12px',
-  border: '1px solid #dbe4ef',
+  border: '1px solid #e0e8dc',
   borderRadius: 14,
   fontSize: 14,
   background: '#fff',
@@ -1369,7 +1369,7 @@ const selectFieldStyle: React.CSSProperties = {
   width: '100%',
   boxSizing: 'border-box',
   padding: '11px 12px',
-  border: '1px solid #dbe4ef',
+  border: '1px solid #e0e8dc',
   borderRadius: 14,
   fontSize: 14,
   background: '#fff',
@@ -1380,7 +1380,7 @@ const textAreaStyle: React.CSSProperties = {
   width: '100%',
   boxSizing: 'border-box',
   padding: '11px 12px',
-  border: '1px solid #dbe4ef',
+  border: '1px solid #e0e8dc',
   borderRadius: 14,
   fontSize: 14,
   lineHeight: 1.5,
@@ -1395,8 +1395,8 @@ const summaryCardStyle: React.CSSProperties = {
   minWidth: 0,
   padding: '12px 12px 10px',
   borderRadius: 16,
-  border: '1px solid #dbe4ef',
-  background: '#fff',
+  border: '1px solid #e0e8dc',
+  background: '#f9fbf7',
 };
 
 const summaryLabelStyle: React.CSSProperties = {
@@ -1418,8 +1418,8 @@ const mobileRowCardStyle: React.CSSProperties = {
   gap: 12,
   padding: '14px 14px 12px',
   borderRadius: 18,
-  border: '1px solid #dbe4ef',
-  background: '#fff',
+  border: '1px solid #e0e8dc',
+  background: '#f9fbf7',
 };
 
 const mobileFieldGridStyle: React.CSSProperties = {
