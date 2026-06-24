@@ -63,6 +63,35 @@ function buildFortnoxError(status: number, method: string, path: string, text: s
   return new FortnoxApiError(status, `Fortnox ${method} ${path} misslyckades (${status}): ${text}`, code, message);
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Fortnox rate-limits the API (~4 req/s). On 429 it returns Retry-After. Retry
+// transparently with backoff so callers (sync passes, document pushes) ride out
+// a throttle instead of failing. Caps the wait so a request never hangs forever.
+const MAX_429_RETRIES = 5;
+const MAX_BACKOFF_MS = 8000;
+
+// Wraps fetch with transparent 429 handling. The body is drained between
+// attempts so the connection can be reused; the final Response is returned
+// untouched for the caller to read.
+async function fortnoxFetch(url: string, init: RequestInit): Promise<Response> {
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(url, init);
+    if (res.status !== 429 || attempt >= MAX_429_RETRIES) return res;
+
+    const retryAfter = Number(res.headers.get('retry-after'));
+    const waitMs =
+      Number.isFinite(retryAfter) && retryAfter > 0
+        ? retryAfter * 1000
+        : Math.min(1000 * 2 ** attempt, MAX_BACKOFF_MS);
+    // Drain the throttle body so the socket frees up before we wait + retry.
+    await res.text().catch(() => {});
+    await sleep(waitMs);
+  }
+}
+
 // Known Fortnox error codes → plain-language Swedish a salesperson understands.
 // Add codes here as we hit them; unknown codes fall back to Fortnox's own message.
 const FRIENDLY_FORTNOX_MESSAGES: Record<number, string> = {
@@ -212,7 +241,7 @@ export async function fortnoxGet<T>(
     for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
   }
 
-  const res = await fetch(url.toString(), {
+  const res = await fortnoxFetch(url.toString(), {
     // Never serve a cached response – Next.js App Router caches fetch() by
     // default, which would return stale Fortnox data after a write.
     cache: 'no-store',
@@ -239,7 +268,7 @@ export async function fortnoxGetBinary(
 ): Promise<{ bytes: Uint8Array; contentType: string }> {
   const token = await getValidAccessToken();
 
-  const res = await fetch(`${FORTNOX_API_BASE}${path}`, {
+  const res = await fortnoxFetch(`${FORTNOX_API_BASE}${path}`, {
     cache: 'no-store',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -263,7 +292,7 @@ export async function fortnoxGetBinary(
 export async function fortnoxPut<T>(path: string, body?: unknown): Promise<T> {
   const token = await getValidAccessToken();
 
-  const res = await fetch(`${FORTNOX_API_BASE}${path}`, {
+  const res = await fortnoxFetch(`${FORTNOX_API_BASE}${path}`, {
     method: 'PUT',
     cache: 'no-store',
     headers: {
@@ -286,7 +315,7 @@ export async function fortnoxPut<T>(path: string, body?: unknown): Promise<T> {
 export async function fortnoxPost<T>(path: string, body: unknown): Promise<T> {
   const token = await getValidAccessToken();
 
-  const res = await fetch(`${FORTNOX_API_BASE}${path}`, {
+  const res = await fortnoxFetch(`${FORTNOX_API_BASE}${path}`, {
     method: 'POST',
     cache: 'no-store',
     headers: {
@@ -310,7 +339,7 @@ export async function fortnoxPost<T>(path: string, body: unknown): Promise<T> {
 export async function fortnoxDelete(path: string): Promise<void> {
   const token = await getValidAccessToken();
 
-  const res = await fetch(`${FORTNOX_API_BASE}${path}`, {
+  const res = await fortnoxFetch(`${FORTNOX_API_BASE}${path}`, {
     method: 'DELETE',
     cache: 'no-store',
     headers: {

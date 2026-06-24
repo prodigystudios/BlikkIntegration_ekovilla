@@ -4,6 +4,7 @@ import {
   fortnoxCustomerFieldsChanged,
   splitSwedishName,
   buildFortnoxAddress,
+  inferCustomerType,
   type FortnoxCustomerSource,
 } from '@/lib/domains/fortnox/customers';
 
@@ -189,5 +190,34 @@ describe('buildFortnoxAddress', () => {
     expect(buildFortnoxAddress(null, null, null)).toBeNull();
     expect(buildFortnoxAddress('', '', '')).toBeNull();
     expect(buildFortnoxAddress(undefined, undefined, undefined)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// inferCustomerType — heuristic company-vs-private used on import (the list
+// endpoint omits Type). Org.nr 3rd digit >= 2 → company; personnummer 3rd digit
+// (tens-of-month) is 0/1 → private.
+// ---------------------------------------------------------------------------
+
+describe('inferCustomerType', () => {
+  it('classifies a Swedish organisationsnummer as business (3rd digit >= 2)', () => {
+    expect(inferCustomerType('556677-8899', null)).toBe('business');
+    expect(inferCustomerType('5566778899', null)).toBe('business');
+    // 16-prefixed / 12-digit org.nr normalises to the last 10.
+    expect(inferCustomerType('165566778899', null)).toBe('business');
+  });
+
+  it('classifies a personnummer as private (month tens digit 0/1)', () => {
+    expect(inferCustomerType('900101-1234', null)).toBe('private'); // 3rd digit 0
+    expect(inferCustomerType('8512159876', null)).toBe('private');  // 3rd digit 1
+    // 12-digit (century-prefixed) personnummer.
+    expect(inferCustomerType('199001011234', null)).toBe('private');
+  });
+
+  it('falls back to VAT-number presence, then private, when no usable number', () => {
+    expect(inferCustomerType(null, 'SE556677889901')).toBe('business');
+    expect(inferCustomerType('', '   ')).toBe('private');
+    expect(inferCustomerType(null, null)).toBe('private');
+    expect(inferCustomerType('12345', null)).toBe('private'); // too short to discriminate
   });
 });
