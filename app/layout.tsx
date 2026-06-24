@@ -1,12 +1,10 @@
 import './globals.css';
-import HeaderMenu from './components/HeaderMenu';
 import Script from 'next/script';
-import HeaderTitle from './components/HeaderTitle';
 import { getUserProfile } from '../lib/getUserProfile';
 import { UserProfileProvider } from '../lib/UserProfileContext';
 import { ToastProvider } from '../lib/Toast';
-import Link from 'next/link';
 import { TruckAssignmentsProvider } from '../lib/TruckAssignmentsContext';
+import AppShell from './components/AppShell';
 
 export const viewport = {
   width: 'device-width',
@@ -21,9 +19,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   // Single consolidated profile fetch (includes role + name)
   const profile = await getUserProfile();
   const role = profile?.role || null;
-  const isAuthPath = typeof (global as any).window === 'undefined' ? false : false; // placeholder (SSR can't read pathname)
-  // We will do a simple runtime check client side via a data attribute to hide header on auth pages when unauthenticated.
-  // If no profile (not logged in) and path starts with /auth we suppress the header entirely via inline JS.
+  const fullName = profile?.full_name || null;
+  const userInitial = fullName ? fullName.charAt(0).toUpperCase() : 'U';
   return (
     <html lang="en">
     <head>
@@ -40,44 +37,13 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     <body style={{ fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif', margin: 0, width: '100%', overflowX: 'hidden', minHeight: '100dvh', background: '#fff', paddingBottom: 'env(safe-area-inset-bottom)' }} data-has-user={!!profile}>
       <UserProfileProvider profile={profile}>
         <ToastProvider>
-          {/* Fixed, full-width header (hidden on auth pages when not logged in) */}
-          <header
-            className="header-app"
-            style={{
-              position: 'fixed',
-              top: 0,
-              left: 0,
-              right: 0,
-              background: '#ffffffff',
-              color: '#0b0f10',
-              display: 'flex',
-              alignItems: 'center',
-              paddingLeft: 16,
-              paddingRight: 16,
-              gap: 16,
-              zIndex: 1000,
-              boxShadow: '0 8px 24px rgba(15,23,42,0.08)'
-            }}
-          >
-            <Link href="/" aria-label="Gå till startsidan" className="header-brand-link" style={{ display: 'inline-flex', alignItems: 'center', cursor: 'pointer' }}>
-              <img src="/brand/Ekovilla_logo_Header.png" alt="Ekovilla header logo" className="header-brand-image" height={18} style={{ display: 'block', transform: 'scale(.8)', transformOrigin: 'left center' }} />
-            </Link>
-            {/* Client-only header title */}
-            <HeaderTitle />
-            <div style={{ marginLeft: 'auto' }} />
-            <HeaderMenu role={role} fullName={profile?.full_name || null} />
-          </header>
-          {/* Content wrapper with top padding to avoid overlap (responsive + safe area) */}
           <TruckAssignmentsProvider>
-            <div className="content-offset">{children}</div>
+            <AppShell role={role} fullName={fullName} userInitial={userInitial}>
+              {children}
+            </AppShell>
           </TruckAssignmentsProvider>
         </ToastProvider>
       </UserProfileProvider>
-      <script
-        dangerouslySetInnerHTML={{
-          __html: `(()=>{try{var hasUser=document.body.getAttribute('data-has-user')==='true';var p=location.pathname;if(!hasUser && p.startsWith('/auth')){var h=document.querySelector('header.header-app');if(h) h.style.display='none';var c=document.querySelector('.content-offset');if(c) c.style.paddingTop='0';}}catch(e){}})();`
-        }}
-      />
       <Script id="sw-register" strategy="afterInteractive">
         {`
           if ('serviceWorker' in navigator) {
