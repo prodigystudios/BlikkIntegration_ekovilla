@@ -63,16 +63,3 @@ export async function getKorjournalRouteContext() {
 
   return { supabase, user, response: null };
 }
-
-export function normalizeOptionalText(value: string | null | undefined) {
-  if (value === undefined) return undefined;
-  if (value === null) return null;
-  const text = String(value).trim();
-  return text || null;
-}
-
-export function normalizeOptionalKilometer(value: string | number | null | undefined) {
-  if (value === undefined || value === null || value === '') return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : Number.NaN;
-}
