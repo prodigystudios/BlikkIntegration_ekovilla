@@ -5,6 +5,7 @@ import { useProjectComments, formatRelativeTime } from '@/lib/useProjectComments
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import TimeReportModal, { TimeReportModalProps } from "../../components/dashboard/TimeReportModal";
 import { useToast } from "@/lib/Toast";
+import { buildTimeReportBody } from "@/lib/domains/time-reports/payload";
 
 const primaryBtn =
   'inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-sm font-semibold text-white transition hover:opacity-90';
@@ -103,20 +104,7 @@ export default function MinaJobbPage() {
         initialDate={prefill?.date || null}
         onSubmit={async (payload: Parameters<NonNullable<TimeReportModalProps['onSubmit']>>[0]) => {
           try {
-            const minutes = Math.round(payload.totalHours * 60);
-            const body = {
-              date: payload.date,
-              minutes,
-              breakMinutes: payload.breakMinutes,
-              start: payload.start,
-              end: payload.end,
-              projectId: payload.reportType === 'project' && payload.projectId ? Number(payload.projectId) : undefined,
-              internalProjectId: payload.reportType === 'internal' && payload.internalProjectId ? Number(payload.internalProjectId) : undefined,
-              absenceProjectId: payload.reportType === 'absence' && payload.absenceProjectId ? Number(payload.absenceProjectId) : undefined,
-              activityId: payload.activityId ? Number(payload.activityId) : undefined,
-              timeCodeId: payload.timecodeId ? Number(payload.timecodeId) : undefined,
-              description: payload.description || undefined,
-            };
+            const body = buildTimeReportBody(payload as any);
             const url = process.env.NODE_ENV !== 'production' ? '/api/blikk/time-reports?debug=1' : '/api/blikk/time-reports';
             const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
             const json = await res.json().catch(() => ({}));
