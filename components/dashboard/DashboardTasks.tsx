@@ -4,7 +4,6 @@ import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { cn } from '@/lib/shared/cn';
 import Button from '../ui/Button';
 import Badge from '../ui/Badge';
-import SectionCard from '../ui/SectionCard';
 
 type Task = {
   id: string;
@@ -183,22 +182,22 @@ function TaskRow({ t, onToggle, compact }: { t: Task; onToggle: ()=>void; compac
   const due = t.due_date ? new Date(t.due_date+'T00:00:00') : null;
   const dueStr = due ? due.toLocaleDateString('sv-SE') : null;
   return (
-    <SectionCard className={cn('grid gap-1.5 bg-slate-50 shadow-none', compact ? 'rounded-[10px] px-2.5 py-2' : 'rounded-[10px] px-3 py-2.5')}>
+    <div className={cn('grid gap-1.5 rounded-xl border border-[#e3e9df] bg-[#f9fbf7]', compact ? 'px-2.5 py-2' : 'px-3 py-2.5')}>
       <div className="flex items-center gap-2">
         <strong className={cn('text-slate-900', compact ? 'text-[13.5px]' : 'text-[15px]')}>{t.title}</strong>
         {t.source && <span className="ml-auto text-[11px] text-slate-500">{t.source}</span>}
       </div>
-      {t.description && <p className={cn('m-0 whitespace-pre-wrap text-slate-900', compact ? 'text-[12.5px]' : 'text-sm')}>{t.description}</p>}
+      {t.description && <p className={cn('m-0 whitespace-pre-wrap text-slate-700', compact ? 'text-[12.5px]' : 'text-sm')}>{t.description}</p>}
       <div className="flex items-center gap-2.5">
-        {dueStr && <span className={cn('text-slate-700', compact ? 'text-[11px]' : 'text-xs')}>Senast: {dueStr}</span>}
+        {dueStr && <span className={cn('text-slate-500', compact ? 'text-[11px]' : 'text-xs')}>Senast: {dueStr}</span>}
         <div className="ml-auto">
           {t.status === 'done' ? (
             <Button onClick={onToggle} variant="secondary" size={compact ? 'sm' : 'md'} title="Markera som öppen" className={cn(compact ? 'min-h-8 rounded-lg px-2.5' : 'rounded-lg')}>Återöppna</Button>
           ) : (
-            <Button onClick={onToggle} size={compact ? 'sm' : 'md'} title="Markera som klar" className={cn('border-slate-900 bg-slate-900 text-white hover:bg-slate-950', compact ? 'min-h-8 rounded-lg px-2.5' : 'rounded-lg')}>Markera klar</Button>
+            <Button onClick={onToggle} size={compact ? 'sm' : 'md'} title="Markera som klar" className={cn('border-emerald-700 bg-emerald-700 text-white hover:bg-emerald-800', compact ? 'min-h-8 rounded-lg px-2.5' : 'rounded-lg')}>Markera klar</Button>
           )}
         </div>
       </div>
-    </SectionCard>
+    </div>
   );
 }

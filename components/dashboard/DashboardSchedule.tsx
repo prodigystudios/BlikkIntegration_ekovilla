@@ -506,16 +506,16 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
   const selectedDayLabel = dayIdx == null ? 'Alla dagar' : ['Måndag', 'Tisdag', 'Onsdag', 'Torsdag', 'Fredag'][dayIdx];
   const visibleJobCount = grouped.reduce((sum, group) => sum + group.arr.length, 0);
   const scheduleCardStyle: React.CSSProperties = {
-    border: compact ? '1px solid #dbe4ef' : '1px solid #d5e1ee',
-    background: 'linear-gradient(180deg, #ffffff 0%, #f7fbff 100%)',
+    border: '1px solid #e0e8dc',
+    background: '#f9fbf7',
     borderRadius: compact ? 18 : 22,
     padding: compact ? 12 : 18,
     display: 'grid',
     gap: compact ? 10 : 14,
-    boxShadow: '0 14px 32px rgba(15,23,42,0.08), inset 0 1px 0 rgba(255,255,255,0.82)'
+    boxShadow: '0 1px 3px rgba(20,44,27,0.06), 0 18px 36px -18px rgba(20,44,27,0.24)'
   };
   const weekNavButtonClass = cn(
-    'w-fit rounded-[12px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#f8fafc_100%)] font-semibold text-slate-900 shadow-[0_8px_18px_rgba(15,23,42,0.08)] transition-[transform,background-color,border-color,box-shadow] hover:-translate-y-0.5 hover:border-sky-200 hover:bg-[linear-gradient(180deg,#ffffff_0%,#eff6ff_100%)] hover:text-slate-900 hover:shadow-[0_12px_24px_rgba(14,165,233,0.16)] active:translate-y-0',
+    'w-fit rounded-[12px] border border-[#dce4d8] bg-white font-semibold text-slate-700 shadow-[0_1px_2px_rgba(15,23,42,0.05)] transition-[transform,background-color,border-color,box-shadow] hover:-translate-y-0.5 hover:border-[#cfdcc9] hover:bg-[#f9fbf7] hover:text-slate-900 hover:shadow-[0_8px_20px_-10px_rgba(20,44,27,0.30)] active:translate-y-0',
     compact ? 'min-w-[100px] px-2.5 py-[5px] text-[11px]' : 'min-w-[112px] px-3 py-1.5 text-xs'
   );
   const metaPillClass = cn(
@@ -532,7 +532,7 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
           <div className="grid gap-1">
             <div className="inline-flex flex-wrap items-center gap-2">
               <h2 className={cn('m-0 text-slate-900', compact ? 'text-[15px]' : 'text-lg')}>Arbetsschema</h2>
-              <span className={cn('inline-flex items-center gap-1.5 rounded-full border border-blue-100 bg-[#eef6ff] font-bold text-blue-700', compact ? 'px-2 py-1 text-[10.5px]' : 'px-2 py-1 text-[11px]')}>
+              <span className={cn('inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 font-bold text-emerald-700', compact ? 'px-2 py-1 text-[10.5px]' : 'px-2 py-1 text-[11px]')}>
                 Vecka {range.weekNumber}
               </span>
             </div>
@@ -590,8 +590,8 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                 'w-full justify-center rounded-full border transition-[background,color,border-color,box-shadow]',
                 compact ? 'px-2.5 py-[5px] text-[11px]' : 'px-3 py-1.5 text-xs',
                 active
-                  ? 'border-sky-600 bg-[linear-gradient(135deg,#0ea5e9_0%,#0284c7_100%)] font-bold text-white shadow-[0_8px_18px_rgba(2,132,199,0.24)]'
-                  : 'border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#f8fafc_100%)] font-medium text-slate-700 shadow-[0_4px_10px_rgba(15,23,42,0.05)] hover:border-sky-200 hover:bg-[linear-gradient(180deg,#ffffff_0%,#eff6ff_100%)] hover:text-slate-900 hover:shadow-[0_10px_18px_rgba(14,165,233,0.12)]'
+                  ? 'border-transparent font-bold text-white shadow-[0_8px_18px_rgba(20,44,27,0.24)] [background:var(--crm-primary)]'
+                  : 'border-[#dce4d8] bg-white font-medium text-slate-700 shadow-[0_1px_2px_rgba(15,23,42,0.05)] hover:border-[#cfdcc9] hover:bg-[#f9fbf7] hover:text-slate-900'
               )}
               title={range.days[idx]}
             >{label}</button>
@@ -608,8 +608,8 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                 'w-full justify-center rounded-full border transition-[background,color,border-color,box-shadow]',
                 compact ? 'px-2.5 py-[5px] text-[11px]' : 'px-3 py-1.5 text-xs',
                 active
-                  ? 'border-sky-600 bg-[linear-gradient(135deg,#0ea5e9_0%,#0284c7_100%)] font-bold text-white shadow-[0_8px_18px_rgba(2,132,199,0.24)]'
-                  : 'border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#f8fafc_100%)] font-medium text-slate-700 shadow-[0_4px_10px_rgba(15,23,42,0.05)] hover:border-sky-200 hover:bg-[linear-gradient(180deg,#ffffff_0%,#eff6ff_100%)] hover:text-slate-900 hover:shadow-[0_10px_18px_rgba(14,165,233,0.12)]'
+                  ? 'border-transparent font-bold text-white shadow-[0_8px_18px_rgba(20,44,27,0.24)] [background:var(--crm-primary)]'
+                  : 'border-[#dce4d8] bg-white font-medium text-slate-700 shadow-[0_1px_2px_rgba(15,23,42,0.05)] hover:border-[#cfdcc9] hover:bg-[#f9fbf7] hover:text-slate-900'
               )}
             >Alla</button>
           );
@@ -736,7 +736,7 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                           </span>
                         )}
                           {reported > 0 && (
-                            <span className={cn('inline-flex items-center gap-1.5 rounded-full border border-sky-200 bg-[#f8fdff] px-[9px] py-[5px] text-slate-900', compact ? 'text-[10.5px]' : 'text-[11px]')} title={`Rapporterat: ${reported} säckar`}>
+                            <span className={cn('inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-[9px] py-[5px] text-slate-900', compact ? 'text-[10.5px]' : 'text-[11px]')} title={`Rapporterat: ${reported} säckar`}>
                               <svg width={14} height={14} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                                 <path fill="currentColor" d="M9 16.2l-3.5-3.5L4 14.2 9 19l12-12-1.5-1.5z" />
                               </svg>
@@ -952,7 +952,7 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                     {phoneList.length > 0 ? (
                       <div className="flex flex-wrap items-center gap-2">
                         {phoneList.map(p => (
-                          <a key={p.display} href={`tel:${p.tel}`} className={cn('rounded-full border border-slate-300 bg-sky-50 text-sky-700 no-underline', isDesktopModal ? 'px-[7px] py-[3px] text-[9px]' : 'px-2.5 py-1 text-xs')}>Ring {p.display}</a>
+                          <a key={p.display} href={`tel:${p.tel}`} className={cn('rounded-full border border-emerald-200 bg-emerald-50 text-emerald-700 no-underline', isDesktopModal ? 'px-[7px] py-[3px] text-[9px]' : 'px-2.5 py-1 text-xs')}>Ring {p.display}</a>
                         ))}
                       </div>
                     ) : (
@@ -967,10 +967,10 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                     {(sellerInfo.role || sellerInfo.location) && <span className={cn('text-slate-500', isDesktopModal ? 'text-[10px]' : 'text-xs')}>{[sellerInfo.role, sellerInfo.location].filter(Boolean).join(' • ')}</span>}
                     <div className="flex flex-wrap items-center gap-2">
                       {sellerInfo.tel && sellerInfo.phone && (
-                        <a href={`tel:${sellerInfo.tel}`} className={cn('rounded-full border border-slate-300 bg-sky-50 text-sky-700 no-underline', isDesktopModal ? 'px-[7px] py-[3px] text-[9px]' : 'px-2.5 py-1 text-xs')}>Ring {sellerInfo.phone}</a>
+                        <a href={`tel:${sellerInfo.tel}`} className={cn('rounded-full border border-emerald-200 bg-emerald-50 text-emerald-700 no-underline', isDesktopModal ? 'px-[7px] py-[3px] text-[9px]' : 'px-2.5 py-1 text-xs')}>Ring {sellerInfo.phone}</a>
                       )}
                       {sellerInfo.email && (
-                        <a href={`mailto:${sellerInfo.email}`} className={cn('rounded-full border border-slate-300 bg-slate-50 text-sky-700 no-underline', isDesktopModal ? 'px-[7px] py-[3px] text-[9px]' : 'px-2.5 py-1 text-xs')}>Maila</a>
+                        <a href={`mailto:${sellerInfo.email}`} className={cn('rounded-full border border-slate-300 bg-slate-50 text-emerald-700 no-underline', isDesktopModal ? 'px-[7px] py-[3px] text-[9px]' : 'px-2.5 py-1 text-xs')}>Maila</a>
                       )}
                     </div>
                   </div>
@@ -979,7 +979,7 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                   <div className={infoCardClass}>
                     <div className="flex flex-wrap items-center justify-between gap-2.5">
                       <span className="text-[11px] font-bold text-slate-700">Adress</span>
-                      <a href={mapsHref} target="_blank" rel="noopener noreferrer" className={cn('rounded-full border border-slate-300 bg-sky-100 text-sky-700 no-underline', isDesktopModal ? 'px-[7px] py-[3px] text-[9px]' : 'px-2.5 py-1 text-[11px]')}>Öppna i Kartor</a>
+                      <a href={mapsHref} target="_blank" rel="noopener noreferrer" className={cn('rounded-full border border-emerald-200 bg-emerald-100 text-emerald-800 no-underline', isDesktopModal ? 'px-[7px] py-[3px] text-[9px]' : 'px-2.5 py-1 text-[11px]')}>Öppna i Kartor</a>
                     </div>
                     <span className={cn('break-words leading-[1.35] text-slate-700', isDesktopModal ? 'text-xs' : 'text-sm')}>{address}</span>
                   </div>
@@ -992,7 +992,7 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                   <div className="flex items-center gap-2.5">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                       <circle cx="12" cy="12" r="9" stroke="#cbd5e1" strokeWidth="3" opacity="0.35" />
-                      <path d="M21 12a9 9 0 0 0-9-9" stroke="#0ea5e9" strokeWidth="3" strokeLinecap="round">
+                      <path d="M21 12a9 9 0 0 0-9-9" stroke="#1a3f26" strokeWidth="3" strokeLinecap="round">
                         <animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="0.8s" repeatCount="indefinite" />
                       </path>
                     </svg>

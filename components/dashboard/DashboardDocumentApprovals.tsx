@@ -50,7 +50,7 @@ export default function DashboardDocumentApprovals({ compact, hideWhenEmpty, onV
   const pendingCount = items.filter(item => !isCompleted(item)).length;
   const shouldRender = loading || !!error || pendingCount > 0;
   const highlightTone = pendingCount > 0
-    ? { border: '1px solid #bfdbfe', background: 'linear-gradient(180deg, #eff6ff 0%, #ffffff 100%)' }
+    ? { border: '1px solid #d6e6d3', background: '#f6f9f3' }
     : { border: '1px solid #e5e7eb', background: '#ffffff' };
 
   useEffect(() => {
@@ -73,7 +73,7 @@ export default function DashboardDocumentApprovals({ compact, hideWhenEmpty, onV
           </div>
           {(!compact || pendingCount > 0) && <p className={cn('m-0 text-slate-500', compact ? 'text-xs' : 'text-[13px]')}>Dokument som kräver läsning eller godkännande ska fångas direkt.</p>}
         </div>
-        <Link href="/mina-dokument" className="text-[13px] font-bold text-blue-600 no-underline hover:text-blue-700">
+        <Link href="/mina-dokument" className="text-[13px] font-bold text-emerald-700 no-underline hover:text-emerald-800">
           Öppna alla
         </Link>
       </div>
@@ -101,10 +101,10 @@ export default function DashboardDocumentApprovals({ compact, hideWhenEmpty, onV
           </div>
           <div className="grid gap-2">
             {pendingItems.map(item => (
-              <div key={item.publicationId} className={cn('grid gap-2 rounded-[14px] border border-[#dbe4ef] bg-[#f8fbff] shadow-[0_6px_16px_rgba(15,23,42,0.04)]', compact ? 'px-3 py-2.5' : 'px-3.5 py-3')}>
+              <div key={item.publicationId} className={cn('grid gap-2 rounded-[14px] border border-[#e3e9df] bg-[#f9fbf7] shadow-[0_1px_2px_rgba(15,23,42,0.05)]', compact ? 'px-3 py-2.5' : 'px-3.5 py-3')}>
                 <div className="flex items-start justify-between gap-2">
                   <strong className={cn('text-slate-900', compact ? 'text-[13.5px]' : 'text-[15px]')}>{item.title}</strong>
-                  <Badge className={cn('shrink-0 gap-1 px-[7px] py-1 text-[10.5px]', item.requiresApproval ? 'border-blue-200 bg-blue-100 text-blue-700' : 'border-cyan-100 bg-cyan-50 text-cyan-700')}>
+                  <Badge className={cn('shrink-0 gap-1 px-[7px] py-1 text-[10.5px]', item.requiresApproval ? 'border-sky-200 bg-sky-50 text-sky-700' : 'border-slate-200 bg-slate-50 text-slate-600')}>
                     {item.requiresApproval ? 'Godkänn' : 'Läs'}
                   </Badge>
                 </div>

@@ -728,7 +728,7 @@ export function DashboardNotes({ compact, desktopMode }: { compact?: boolean; de
                   {pushLoading ? 'Uppdaterar…' : 'Stäng av notiser'}
                 </Button>
               )}
-              <Button type="button" onClick={dispatchDueReminders} size="sm" disabled={dispatching} className="border-blue-600 bg-blue-600 text-white hover:bg-blue-700">
+              <Button type="button" onClick={dispatchDueReminders} size="sm" disabled={dispatching} className="border-emerald-700 bg-emerald-700 text-white hover:bg-emerald-800">
                 {dispatching ? 'Kör…' : 'Kör förfallna påminnelser nu'}
               </Button>
               {pushDebugMode && (
@@ -1024,14 +1024,14 @@ function NoteRow({ item, crmProspectName, onToggle, onRemove, onEdit, onSaveRemi
             {isMobileCard ? (
               <div className="grid gap-1">
                 {mobileDetailSummary && <span style={subtleMetaText}>{mobileDetailSummary}</span>}
-                {item.linkUrl && <a href={item.linkUrl} target="_blank" rel="noreferrer" className="text-[11.5px] text-blue-600 no-underline hover:text-blue-700">Öppna möteslänk</a>}
+                {item.linkUrl && <a href={item.linkUrl} target="_blank" rel="noreferrer" className="text-[11.5px] text-emerald-700 no-underline hover:text-emerald-800">Öppna möteslänk</a>}
               </div>
             ) : (
               <div className="flex flex-wrap items-center gap-2">
                 {item.kind === 'meeting' && item.startsAt && <span style={subtleMetaText}>Start {formatClockLabel(item.startsAt)}</span>}
                 {item.kind === 'meeting' && item.endsAt && <span style={subtleMetaText}>Slut {formatClockLabel(item.endsAt)}</span>}
                 {item.location && <span style={subtleMetaText}>{item.location}</span>}
-                {item.linkUrl && <a href={item.linkUrl} target="_blank" rel="noreferrer" className="text-[11.5px] text-blue-600 no-underline hover:text-blue-700">Öppna länk</a>}
+                {item.linkUrl && <a href={item.linkUrl} target="_blank" rel="noreferrer" className="text-[11.5px] text-emerald-700 no-underline hover:text-emerald-800">Öppna länk</a>}
               </div>
             )}
           </div>
@@ -1576,19 +1576,19 @@ const input: React.CSSProperties = { padding:'8px 10px', border:'1px solid #d1d5
 const selectInputStyle: React.CSSProperties = { ...input, appearance:'none', background:'#fff' };
 const textareaInput: React.CSSProperties = { ...input, minHeight:92, resize:'vertical', width:'100%', lineHeight:1.5, fontFamily:'inherit' };
 const dateTimeFieldStyle: React.CSSProperties = { display:'flex', gap:8, flexWrap:'wrap', alignItems:'center' };
-const btnPrimary: React.CSSProperties = { padding:'8px 14px', borderRadius:8, border:'1px solid #111827', background:'#111827', color:'#fff', fontSize:14, cursor:'pointer', fontWeight:500 };
-const filterBtn: React.CSSProperties = { padding:'6px 12px', borderRadius:999, background:'linear-gradient(180deg, #ffffff 0%, #f8fafc 100%)', border:'1px solid #d1d5db', cursor:'pointer', fontSize:12, color:'#111827', whiteSpace:'nowrap', boxShadow:'0 3px 10px rgba(15, 23, 42, 0.06), inset 0 1px 0 rgba(255,255,255,0.85)' };
-const filterBtnActive: React.CSSProperties = { background:'linear-gradient(180deg, #3b82f6 0%, #2563eb 100%)', color:'#fff', border:'1px solid #2563eb', boxShadow:'0 10px 18px rgba(37, 99, 235, 0.22)' };
+const btnPrimary: React.CSSProperties = { padding:'8px 14px', borderRadius:8, border:'1px solid var(--crm-primary)', background:'var(--crm-primary)', color:'#fff', fontSize:14, cursor:'pointer', fontWeight:500 };
+const filterBtn: React.CSSProperties = { padding:'6px 12px', borderRadius:999, background:'#ffffff', border:'1px solid #dce4d8', cursor:'pointer', fontSize:12, color:'#334155', whiteSpace:'nowrap', boxShadow:'0 1px 2px rgba(15, 23, 42, 0.05)' };
+const filterBtnActive: React.CSSProperties = { background:'var(--crm-primary)', color:'#fff', border:'1px solid var(--crm-primary)', boxShadow:'0 8px 16px rgba(26,63,38,0.22)' };
 const compactFilterBtn: React.CSSProperties = { padding:'6px 10px', fontSize:11.5 };
 const iconBtn: React.CSSProperties = { padding:'4px 6px', fontSize:12, lineHeight:1, cursor:'pointer', background:'#f1f5f9', borderRadius:6, border:'1px solid #e2e8f0' };
-const miniBtn: React.CSSProperties = { padding:'6px 10px', background:'#334155', color:'#fff', borderRadius:6, fontSize:12, cursor:'pointer', border:'1px solid #334155' };
+const miniBtn: React.CSSProperties = { padding:'6px 10px', background:'var(--crm-primary)', color:'#fff', borderRadius:6, fontSize:12, cursor:'pointer', border:'1px solid var(--crm-primary)' };
 const checkBtn: React.CSSProperties = { width:20, height:20, borderRadius:6, border:'1px solid #cbd5e1', background:'#fff', display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer' };
 const checkBtnDone: React.CSSProperties = { background:'#16a34a', border:'1px solid #16a34a' };
 const pushStateBadge: React.CSSProperties = { display:'inline-flex', alignItems:'center', padding:'6px 10px', borderRadius:999, border:'1px solid #d1d5db', fontSize:11.5, fontWeight:700 };
-const sectionCard: React.CSSProperties = { display:'grid', gap:10, padding:'16px 18px', border:'1px solid #dbe4ef', borderRadius:18, background:'linear-gradient(180deg, #ffffff 0%, #f7fbff 100%)', boxShadow:'0 12px 28px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255,255,255,0.78)' };
-const compactUtilityCard: React.CSSProperties = { display:'grid', gap:8, padding:'12px 14px', border:'1px solid #dbe4ef', borderRadius:16, background:'linear-gradient(180deg, #fcfdff 0%, #f6f9fd 100%)', boxShadow:'0 10px 22px rgba(15, 23, 42, 0.06), inset 0 1px 0 rgba(255,255,255,0.8)' };
+const sectionCard: React.CSSProperties = { display:'grid', gap:10, padding:'16px 18px', border:'1px solid #e0e8dc', borderRadius:18, background:'#f9fbf7', boxShadow:'0 1px 3px rgba(20,44,27,0.06), 0 18px 36px -18px rgba(20,44,27,0.24)' };
+const compactUtilityCard: React.CSSProperties = { display:'grid', gap:8, padding:'12px 14px', border:'1px solid #e0e8dc', borderRadius:16, background:'#f9fbf7', boxShadow:'0 1px 3px rgba(20,44,27,0.06)' };
 const summaryGridStyle: React.CSSProperties = { display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(160px, 1fr))', gap:10 };
-const summaryInfoCardStyle: React.CSSProperties = { display:'grid', gap:4, padding:'12px 14px', border:'1px solid #dbe4ef', borderRadius:16, background:'linear-gradient(180deg, #ffffff 0%, #fbfdff 100%)', boxShadow:'0 8px 18px rgba(15, 23, 42, 0.05)' };
+const summaryInfoCardStyle: React.CSSProperties = { display:'grid', gap:4, padding:'12px 14px', border:'1px solid #e3e9df', borderRadius:16, background:'#ffffff', boxShadow:'0 1px 2px rgba(15,23,42,0.05)' };
 const summaryInfoLabelStyle: React.CSSProperties = { fontSize:11.5, color:'#64748b', fontWeight:700, textTransform:'uppercase', letterSpacing:'0.04em' };
 const summaryInfoValueStyle: React.CSSProperties = { fontSize:14, color:'#0f172a' };
 const summaryInfoHintStyle: React.CSSProperties = { fontSize:11.5, color:'#64748b', lineHeight:1.45 };
@@ -1598,8 +1598,8 @@ const fieldLabel: React.CSSProperties = { fontSize:12, fontWeight:700, color:'#3
 const fieldHint: React.CSSProperties = { fontSize:11, color:'#64748b' };
 const secondaryBtn: React.CSSProperties = { padding:'8px 12px', background:'#ffffff', color:'#0f172a', borderRadius:8, fontSize:12.5, cursor:'pointer', border:'1px solid #cbd5e1', fontWeight:600, whiteSpace:'nowrap' };
 const compactSecondaryBtn: React.CSSProperties = { padding:'6px 10px', background:'#ffffff', color:'#334155', borderRadius:999, fontSize:11.5, cursor:'pointer', border:'1px solid #dbe4ef', fontWeight:700, whiteSpace:'nowrap' };
-const quickActionBtn: React.CSSProperties = { padding:'7px 10px', background:'#eff6ff', color:'#1d4ed8', borderRadius:999, fontSize:12, cursor:'pointer', border:'1px solid #bfdbfe', fontWeight:600, whiteSpace:'nowrap' };
-const composerModeBtnActive: React.CSSProperties = { background:'#1d4ed8', color:'#ffffff', border:'1px solid #1d4ed8' };
+const quickActionBtn: React.CSSProperties = { padding:'7px 10px', background:'#ecfdf5', color:'#047857', borderRadius:999, fontSize:12, cursor:'pointer', border:'1px solid #a7f3d0', fontWeight:600, whiteSpace:'nowrap' };
+const composerModeBtnActive: React.CSSProperties = { background:'var(--crm-primary)', color:'#ffffff', border:'1px solid var(--crm-primary)' };
 const dangerBtn: React.CSSProperties = { padding:'8px 12px', background:'#fff1f2', color:'#be123c', borderRadius:8, fontSize:12.5, cursor:'pointer', border:'1px solid #fecdd3', fontWeight:600, whiteSpace:'nowrap' };
 const subtleActionBtn: React.CSSProperties = { padding:'6px 9px', background:'#ffffff', color:'#475569', borderRadius:999, fontSize:11.5, cursor:'pointer', border:'1px solid #e2e8f0', fontWeight:700, whiteSpace:'nowrap' };
 const subtleDangerBtn: React.CSSProperties = { padding:'6px 9px', background:'#fff7f7', color:'#be123c', borderRadius:999, fontSize:11.5, cursor:'pointer', border:'1px solid #ffe4e6', fontWeight:700, whiteSpace:'nowrap' };
@@ -1612,13 +1612,13 @@ const emptyStateCardStyle: React.CSSProperties = { display:'grid', gap:6, paddin
 const constrainedListWrap: React.CSSProperties = { maxHeight: 560, overflowY:'auto', paddingRight:4 };
 const reminderMetaRow: React.CSSProperties = { display:'flex', justifyContent:'space-between', gap:10, flexWrap:'wrap', alignItems:'center', paddingTop:2, borderTop:'1px solid #eef2f7' };
 const reminderBox: React.CSSProperties = { display:'grid', gap:8, padding:'10px 12px', border:'1px solid #e2e8f0', borderRadius:12, background:'#fbfdff' };
-const subtleReminderPill: React.CSSProperties = { display:'inline-flex', alignItems:'center', padding:'4px 9px', borderRadius:999, background:'#eff6ff', color:'#1d4ed8', fontSize:11, fontWeight:700 };
+const subtleReminderPill: React.CSSProperties = { display:'inline-flex', alignItems:'center', padding:'4px 9px', borderRadius:999, background:'#f0f9ff', color:'#0369a1', fontSize:11, fontWeight:700 };
 const subtleMetaText: React.CSSProperties = { fontSize:11.5, color:'#64748b', lineHeight:1.4, wordBreak:'break-word' };
-const statusPillOpen: React.CSSProperties = { display:'inline-flex', alignItems:'center', padding:'4px 9px', borderRadius:999, background:'linear-gradient(180deg, #dbeafe 0%, #bfdbfe 100%)', color:'#1d4ed8', fontSize:11, fontWeight:700, border:'1px solid #bfdbfe', boxShadow:'inset 0 1px 0 rgba(255,255,255,0.72)' };
+const statusPillOpen: React.CSSProperties = { display:'inline-flex', alignItems:'center', padding:'4px 9px', borderRadius:999, background:'#f0f9ff', color:'#0369a1', fontSize:11, fontWeight:700, border:'1px solid #bae6fd' };
 const statusPillDone: React.CSSProperties = { display:'inline-flex', alignItems:'center', padding:'4px 9px', borderRadius:999, background:'#dcfce7', color:'#166534', fontSize:11, fontWeight:700 };
 const statusPillMuted: React.CSSProperties = { display:'inline-flex', alignItems:'center', padding:'4px 9px', borderRadius:999, background:'#f1f5f9', color:'#475569', fontSize:11, fontWeight:700 };
 const sectionCountPillStyle: React.CSSProperties = { display:'inline-flex', alignItems:'center', padding:'4px 9px', borderRadius:999, background:'#f8fafc', color:'#475569', border:'1px solid #e2e8f0', fontSize:11, fontWeight:700 };
-const addComposerBtn: React.CSSProperties = { display:'inline-flex', alignItems:'center', gap:10, padding:'10px 14px', background:'linear-gradient(180deg, #1e293b 0%, #0f172a 100%)', color:'#fff', borderRadius:14, fontSize:13, cursor:'pointer', border:'1px solid #0f172a', fontWeight:700, boxShadow:'0 14px 26px rgba(15, 23, 42, 0.16)' };
+const addComposerBtn: React.CSSProperties = { display:'inline-flex', alignItems:'center', gap:10, padding:'10px 14px', background:'var(--crm-primary)', color:'#fff', borderRadius:14, fontSize:13, cursor:'pointer', border:'1px solid var(--crm-primary)', fontWeight:700, boxShadow:'0 14px 26px rgba(20,44,27,0.18)' };
 const addComposerIcon: React.CSSProperties = { display:'inline-flex', alignItems:'center', justifyContent:'center', width:22, height:22, borderRadius:'50%', background:'rgba(255,255,255,0.16)', fontSize:16, lineHeight:1 };
 const completePillBtn: React.CSSProperties = { display:'inline-flex', alignItems:'center', gap:8, padding:'7px 10px', background:'#f8fafc', border:'1px solid #dbe4ef', borderRadius:999, cursor:'pointer', boxShadow:'inset 0 1px 0 rgba(255,255,255,0.7)', whiteSpace:'nowrap', flexShrink:0, maxWidth:'100%' };
 const completePillBtnDone: React.CSSProperties = { ...completePillBtn, background:'#f0fdf4', border:'1px solid #bbf7d0' };
