@@ -3,6 +3,7 @@ import { createServerComponentClient } from '@supabase/auth-helpers-nextjs';
 import { redirect } from 'next/navigation';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
+import { listNewsItems } from '@/lib/domains/news/queries';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,12 +12,7 @@ export default async function NewsArchivePage() {
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) redirect('/auth/sign-in');
 
-  const { data, error } = await supabase
-    .from('news_items')
-    .select('id, headline, body, image_url, created_at')
-    .order('created_at', { ascending: false })
-    .limit(200);
-
+  const { data, error } = await listNewsItems(supabase);
   const items = Array.isArray(data) ? data : [];
 
   return (
