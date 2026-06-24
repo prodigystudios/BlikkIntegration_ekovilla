@@ -1,6 +1,8 @@
 import { cookies } from 'next/headers';
 import { createServerComponentClient } from '@supabase/auth-helpers-nextjs';
 import { redirect } from 'next/navigation';
+import { cn } from '@/lib/shared/cn';
+import { crm } from '@/app/crm/lib/crmTokens';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,49 +20,45 @@ export default async function NewsArchivePage() {
   const items = Array.isArray(data) ? data : [];
 
   return (
-    <main style={{ padding: 24, maxWidth: 900, margin: '0 auto', display: 'grid', gap: 16 }}>
-      <header style={{ display: 'grid', gap: 6 }}>
-        <h1 style={{ margin: 0, fontSize: 30, letterSpacing: -0.4 }}>Nyheter</h1>
-        <div style={{ fontSize: 13, color: '#6b7280' }}>Arkiv över tidigare publicerade nyheter.</div>
-      </header>
+    <div className="mx-auto grid w-full max-w-[900px] grid-cols-1 gap-4">
+      <div>
+        <h1 className="m-0 text-lg font-bold tracking-tight text-slate-900">Nyheter</h1>
+        <p className="m-0 mt-1 text-sm text-slate-500">Arkiv över tidigare publicerade nyheter.</p>
+      </div>
 
       {error && (
-        <div style={{ border: '1px solid #fecaca', background: '#fff1f2', color: '#991b1b', borderRadius: 12, padding: 12, fontSize: 13 }}>
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
           Kunde inte hämta nyheter: {error.message}
         </div>
       )}
 
       {!error && items.length === 0 && (
-        <div style={{ border: '1px solid #e5e7eb', background: '#fff', borderRadius: 16, padding: 16, color: '#374151' }}>
-          Inga nyheter ännu.
-        </div>
+        <div className="rounded-xl border border-dashed border-slate-200 px-4 py-10 text-center text-sm text-slate-400">Inga nyheter ännu.</div>
       )}
 
-      <div style={{ display: 'grid', gap: 14 }}>
+      <div className="grid grid-cols-1 gap-3">
         {items.map((it: any) => {
           const created = it.created_at ? new Date(it.created_at).toLocaleString('sv-SE') : '';
           const img = (it.image_url || '').trim();
           return (
-            <article key={it.id} style={{ border: '1px solid #e5e7eb', background: '#fff', borderRadius: 16, overflow: 'hidden' }}>
+            <article key={it.id} className={cn(crm.card, 'overflow-hidden')}>
               {img && (
-                <div style={{ width: '100%', maxHeight: 260, overflow: 'hidden', background: '#f8fafc' }}>
+                <div className="max-h-[260px] w-full overflow-hidden bg-[#f6f9f3]">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={img} alt="" style={{ width: '100%', height: '100%', maxHeight: 260, objectFit: 'cover', display: 'block' }} />
+                  <img src={img} alt="" className="block h-full max-h-[260px] w-full object-cover" />
                 </div>
               )}
-              <div style={{ padding: 16, display: 'grid', gap: 10 }}>
-                <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-                  <div style={{ fontSize: 18, fontWeight: 800, color: '#111827', lineHeight: 1.2 }}>{it.headline}</div>
-                  {created && <div style={{ fontSize: 12, color: '#6b7280' }}>{created}</div>}
+              <div className="grid gap-2.5 p-4">
+                <div className="flex flex-wrap items-baseline justify-between gap-3">
+                  <div className="text-[17px] font-bold leading-tight text-slate-900">{it.headline}</div>
+                  {created && <div className="text-[11px] text-slate-400">{created}</div>}
                 </div>
-                <div style={{ fontSize: 14, color: '#374151', lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>
-                  {it.body}
-                </div>
+                <div className="whitespace-pre-wrap text-sm leading-6 text-slate-700">{it.body}</div>
               </div>
             </article>
           );
         })}
       </div>
-    </main>
+    </div>
   );
 }
