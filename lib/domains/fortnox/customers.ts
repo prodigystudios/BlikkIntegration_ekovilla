@@ -10,11 +10,41 @@ import type {
 type FortnoxCustomerDetailResponse = { Customer: FortnoxCustomer };
 
 const PAGE_SIZE = 500;
-const FETCH_CONCURRENCY = 10;
+// Concurrency for DB writes (no Fortnox calls happen in the bulk import path, so
+// this is only about not flooding Supabase with simultaneous statements).
+const DB_CONCURRENCY = 10;
+// Verification pass: small batch + spacing keeps the per-customer Fortnox GETs
+// well under the ~4 req/s rate limit. Resumable, so size is just per-request cost.
+const VERIFY_BATCH_SIZE = 50;
+const VERIFY_SPACING_MS = 300; // ~3 req/s
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Heuristic company-vs-private from the list endpoint, which omits Type. A Swedish
+// organisationsnummer's 3rd digit is the "group" digit (2–9), while a personnummer's
+// 3rd digit is the tens-of-month, always 0 or 1 (months 01–12). Falls back to
+// VAT-number presence, then private (safe default). Known edge case: a sole trader
+// (enskild firma) uses the owner's personnummer as org.nr and is read as private
+// until the verification pass fetches Fortnox's authoritative Type.
+export function inferCustomerType(
+  orgNumber: string | null | undefined,
+  vatNumber: string | null | undefined,
+): 'business' | 'private' {
+  const digits = (orgNumber ?? '').replace(/\D/g, '');
+  // A 12-digit number is century-prefixed (YYYYMMDD… or 16-prefixed org.nr) – the
+  // last 10 carry the discriminating digit either way.
+  const normalized = digits.length === 12 ? digits.slice(2) : digits;
+  if (normalized.length >= 10) {
+    return Number(normalized[2]) >= 2 ? 'business' : 'private';
+  }
+  if (vatNumber && vatNumber.trim()) return 'business';
+  return 'private';
+}
 
 // Runs fn over items in serial batches of batchSize concurrent calls. Used for
-// both reads (per-customer GETs) and writes (per-customer UPDATEs) to stay within
-// Fortnox rate limits / avoid flooding the DB with concurrent statements.
+// per-customer DB UPDATEs to avoid flooding the DB with concurrent statements.
 async function runInBatches<T, R>(
   items: T[],
   batchSize: number,
@@ -54,21 +84,27 @@ export function buildFortnoxAddress(
   return { street: street ?? null, postal_code: postalCode ?? null, city: city ?? null };
 }
 
-function mapFortnoxCustomerToRow(c: FortnoxCustomer, now: string) {
-  // Type is only returned by the individual GET endpoint, not the list endpoint.
-  // Default to 'private' when missing – safer than guessing from OrganisationNumber
-  // since private persons can also have a personal number in that field.
-  const isCompany = c.Type === 'COMPANY';
-  const isPrivate = c.Type === 'PRIVATE';
-  if (!isCompany && !isPrivate) {
-    console.warn(`[Fortnox sync] Kund ${c.CustomerNumber} har oväntat Type-värde: "${c.Type}" → klassificeras som privat`);
-  }
+// Maps a Fortnox customer onto a crm_customers row. `resolvedType` is decided by
+// the caller (heuristic on import, Fortnox's authoritative Type on verification),
+// and `verified` records which of those it is. Guards the identity constraint: a
+// single-word/empty Fortnox Name must never produce an all-null-identity row.
+function mapFortnoxCustomerToRow(
+  c: FortnoxCustomer,
+  resolvedType: 'business' | 'private',
+  verified: boolean,
+  now: string,
+) {
+  const isCompany = resolvedType === 'business';
   const name = splitSwedishName(c.Name);
+  // Fortnox always has a Name, but stay defensive: fall back to a stable label so
+  // company_name / first_name can never both be null (constraint violation).
+  const fallbackName = (c.Name ?? '').trim() || `Fortnox-kund ${c.CustomerNumber}`;
   return {
-    customer_type: isCompany ? 'business' : 'private',
+    customer_type: resolvedType,
+    customer_type_verified: verified,
     customer_stage: 'fortnox_customer' as const,
-    company_name: isCompany ? (c.Name ?? null) : null,
-    first_name: isCompany ? null : name.first,
+    company_name: isCompany ? fallbackName : null,
+    first_name: isCompany ? null : (name.first ?? fallbackName),
     last_name: isCompany ? null : name.last,
     // OrganisationNumber holds a company's org.nr or a private person's personnummer.
     organization_number: isCompany ? (c.OrganisationNumber ?? null) : null,
@@ -94,8 +130,38 @@ function mapFortnoxCustomerToRow(c: FortnoxCustomer, now: string) {
   };
 }
 
+// Bulk-insert rows, falling back to row-by-row on failure so a single bad record
+// (e.g. an identity-constraint edge case) never aborts the whole page. Returns
+// how many rows actually landed.
+async function insertCustomersResilient(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  rows: Record<string, unknown>[],
+): Promise<number> {
+  const { error } = await supabase.from('crm_customers').insert(rows);
+  if (!error) return rows.length;
+
+  console.warn(`[Fortnox sync] Bulk-insert misslyckades (${error.message}) → faller tillbaka på rad-för-rad`);
+  let inserted = 0;
+  for (const row of rows) {
+    const { error: rowErr } = await supabase.from('crm_customers').insert(row);
+    if (rowErr) {
+      console.warn(`[Fortnox sync] Hoppar över kund ${row.fortnox_customer_id} (${rowErr.message})`);
+    } else {
+      inserted++;
+    }
+  }
+  return inserted;
+}
+
 // Fetch all customers from Fortnox and upsert into crm_customers.
 // Matches on fortnox_customer_id (unique) to update existing rows.
+//
+// The list endpoint does NOT return Type, so company-vs-private is decided by
+// inferCustomerType() heuristic and the row is marked customer_type_verified=false.
+// We deliberately do NOT fetch each customer individually here – that fan-out
+// (one GET per customer) blew past Fortnox's rate limit on real-size registers
+// (thousands of customers → mass 429s → every row mis-classified as private).
+// verifyCustomerTypesBatch() confirms Type afterwards, throttled.
 export async function syncFortnoxCustomers(triggeredByUserId: string): Promise<CustomerSyncResult> {
   const supabase = getSupabaseAdmin();
   let page = 1;
@@ -116,57 +182,46 @@ export async function syncFortnoxCustomers(triggeredByUserId: string): Promise<C
     totalPages = response.MetaInformation?.['@TotalPages'] ?? 1;
 
     if (listCustomers.length > 0) {
-      // Fetch each customer individually – the list endpoint does not return Type.
-      // Batched at FETCH_CONCURRENCY to stay within Fortnox rate limits.
-      const customers = await runInBatches(
-        listCustomers,
-        FETCH_CONCURRENCY,
-        (c) =>
-          fortnoxGet<FortnoxCustomerDetailResponse>(`/customers/${c.CustomerNumber}`)
-            .then((r) => r.Customer)
-            .catch((err) => {
-              console.warn(`[Fortnox sync] Kunde inte hämta kund ${c.CustomerNumber} individuellt (${(err as Error)?.message ?? err}) → faller tillbaka på listdata, Type saknas`);
-              return c;
-            }),
-      );
-
-      // Check which fortnox_customer_ids already exist
-      const ids = customers.map((c) => c.CustomerNumber);
+      const ids = listCustomers.map((c) => c.CustomerNumber);
       const { data: existing } = await supabase
         .from('crm_customers')
-        .select('id, fortnox_customer_id')
+        .select('id, fortnox_customer_id, customer_type, customer_type_verified')
         .in('fortnox_customer_id', ids);
 
-      const existingIds = new Set((existing ?? []).map((r) => r.fortnox_customer_id));
+      const existingById = new Map((existing ?? []).map((r) => [r.fortnox_customer_id, r]));
 
-      const toCreate = customers.filter((c) => !existingIds.has(c.CustomerNumber));
-      const toUpdate = customers.filter((c) => existingIds.has(c.CustomerNumber));
+      const toCreate = listCustomers.filter((c) => !existingById.has(c.CustomerNumber));
+      const toUpdate = listCustomers.filter((c) => existingById.has(c.CustomerNumber));
 
-      // Create new rows (assign_to = null, created_by = null – no user owns Fortnox imports)
+      // Create new rows. Heuristic Type, unverified until the verification pass runs.
       if (toCreate.length > 0) {
         const rows = toCreate.map((c) => ({
-          ...mapFortnoxCustomerToRow(c, now),
+          ...mapFortnoxCustomerToRow(c, inferCustomerType(c.OrganisationNumber, c.VATNumber), false, now),
           assigned_to: triggeredByUserId,
           created_by: triggeredByUserId,
           created_at: now,
         }));
-
-        const { error } = await supabase.from('crm_customers').insert(rows);
-        if (error) throw new Error(`Kunde inte skapa Fortnox-kunder: ${error.message}`);
-        totalCreated += rows.length;
+        totalCreated += await insertCustomersResilient(supabase, rows);
       }
 
-      // Update existing rows with a real UPDATE per customer (matched on the
-      // unique fortnox_customer_id). An upsert would treat the row as a potential
-      // INSERT and fail the NOT NULL constraint on assigned_to/created_by, which
-      // mapFortnoxCustomerToRow intentionally omits to preserve ownership.
+      // Update existing rows. An upsert would clobber assigned_to/created_by
+      // ownership, so we UPDATE per customer (matched on unique fortnox_customer_id).
+      // A row already verified keeps its authoritative Type – we must not regress it
+      // back to a heuristic guess on a routine re-sync.
       if (toUpdate.length > 0) {
-        await runInBatches(toUpdate, FETCH_CONCURRENCY, async (c) => {
+        await runInBatches(toUpdate, DB_CONCURRENCY, async (c) => {
+          const prev = existingById.get(c.CustomerNumber)!;
+          const verified = prev.customer_type_verified === true;
+          const type: 'business' | 'private' = verified
+            ? (prev.customer_type === 'business' ? 'business' : 'private')
+            : inferCustomerType(c.OrganisationNumber, c.VATNumber);
           const { error } = await supabase
             .from('crm_customers')
-            .update(mapFortnoxCustomerToRow(c, now))
+            .update(mapFortnoxCustomerToRow(c, type, verified, now))
             .eq('fortnox_customer_id', c.CustomerNumber);
-          if (error) throw new Error(`Kunde inte uppdatera Fortnox-kund ${c.CustomerNumber}: ${error.message}`);
+          if (error) {
+            console.warn(`[Fortnox sync] Kunde inte uppdatera kund ${c.CustomerNumber} (${error.message})`);
+          }
           return null;
         });
         totalUpdated += toUpdate.length;
@@ -177,6 +232,64 @@ export async function syncFortnoxCustomers(triggeredByUserId: string): Promise<C
   } while (page <= totalPages);
 
   return { created: totalCreated, updated: totalUpdated, pages: totalPages };
+}
+
+export type VerifyTypesResult = {
+  processed: number;
+  corrected: number;
+  remaining: number;
+};
+
+// Confirm customer_type for rows imported via heuristic (customer_type_verified=false)
+// by fetching each customer's authoritative Type from Fortnox, throttled to stay
+// under the rate limit. Resumable: processes one batch per call and reports how
+// many still remain, so a UI/cron can loop until remaining === 0.
+export async function verifyCustomerTypesBatch(limit = VERIFY_BATCH_SIZE): Promise<VerifyTypesResult> {
+  const supabase = getSupabaseAdmin();
+  const now = new Date().toISOString();
+
+  const { data: pending, error } = await supabase
+    .from('crm_customers')
+    .select('id, fortnox_customer_id, customer_type')
+    .eq('customer_type_verified', false)
+    .not('fortnox_customer_id', 'is', null)
+    .order('fortnox_customer_id', { ascending: true })
+    .limit(limit);
+
+  if (error) throw new Error(`Kunde inte hämta overifierade kunder: ${error.message}`);
+
+  const rows = pending ?? [];
+  let corrected = 0;
+
+  for (const row of rows) {
+    try {
+      const detail = await fortnoxGet<FortnoxCustomerDetailResponse>(`/customers/${row.fortnox_customer_id}`);
+      const c = detail.Customer;
+      const realType: 'business' | 'private' = c.Type === 'COMPANY' ? 'business' : 'private';
+
+      const { error: updErr } = await supabase
+        .from('crm_customers')
+        .update(mapFortnoxCustomerToRow(c, realType, true, now))
+        .eq('id', row.id);
+
+      if (updErr) {
+        console.warn(`[Fortnox verify] Kunde inte uppdatera kund ${row.fortnox_customer_id} (${updErr.message})`);
+        continue;
+      }
+      if (realType !== row.customer_type) corrected++;
+    } catch (err) {
+      console.warn(`[Fortnox verify] Kunde inte hämta kund ${row.fortnox_customer_id} (${(err as Error)?.message ?? err})`);
+    }
+    await sleep(VERIFY_SPACING_MS);
+  }
+
+  const { count } = await supabase
+    .from('crm_customers')
+    .select('id', { count: 'exact', head: true })
+    .eq('customer_type_verified', false)
+    .not('fortnox_customer_id', 'is', null);
+
+  return { processed: rows.length, corrected, remaining: count ?? 0 };
 }
 
 // Search Fortnox customers live (for use in quote form, etc.)

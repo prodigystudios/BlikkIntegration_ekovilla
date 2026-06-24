@@ -22,6 +22,7 @@ export default function FortnoxIntegrationBlock({
   const [disconnecting, setDisconnecting] = useState(false);
   const [articleSync, setArticleSync] = useState<SyncResult>(defaultSync);
   const [customerSync, setCustomerSync] = useState<SyncResult>(defaultSync);
+  const [verifySync, setVerifySync] = useState<SyncResult>(defaultSync);
 
   async function handleDisconnect() {
     if (!confirm('Är du säker på att du vill koppla från Fortnox?')) return;
@@ -56,6 +57,44 @@ export default function FortnoxIntegrationBlock({
       }
     } catch {
       setter({ label: '', state: 'error', message: 'Nätverksfel' });
+    }
+  }
+
+  // Confirms heuristic-classified customer types against Fortnox. The endpoint
+  // processes one throttled batch per call and returns how many remain, so we
+  // loop until the queue is empty, accumulating progress as we go.
+  async function runVerifyTypes() {
+    setVerifySync({ label: '', state: 'loading', message: 'Startar verifiering...' });
+    let processed = 0;
+    let corrected = 0;
+    try {
+      for (let guard = 0; guard < 1000; guard++) {
+        const res = await fetch('/api/fortnox/customers/verify-types', { method: 'POST' });
+        const json = await res.json();
+        if (!res.ok || !json.ok) {
+          setVerifySync({ label: '', state: 'error', message: json.error || 'Okänt fel' });
+          return;
+        }
+        const d = json.data as { processed: number; corrected: number; remaining: number };
+        processed += d.processed;
+        corrected += d.corrected;
+        if (d.processed === 0 || d.remaining === 0) {
+          setVerifySync({
+            label: '',
+            state: 'success',
+            message: `Klart – ${processed} kunder verifierade, ${corrected} omklassade. ${d.remaining} kvar.`,
+          });
+          return;
+        }
+        setVerifySync({
+          label: '',
+          state: 'loading',
+          message: `${processed} verifierade, ${corrected} omklassade, ${d.remaining} kvar...`,
+        });
+      }
+      setVerifySync({ label: '', state: 'success', message: `Pausat efter ${processed} kunder – kör igen för resten.` });
+    } catch {
+      setVerifySync({ label: '', state: 'error', message: 'Nätverksfel' });
     }
   }
 
@@ -112,10 +151,19 @@ export default function FortnoxIntegrationBlock({
           {/* Customer sync */}
           <SyncRow
             label="Synka kunder från Fortnox"
-            description="Importerar Fortnox-kunder som Fortnox-kunder i CRM:et."
+            description="Importerar Fortnox-kunder som Fortnox-kunder i CRM:et. Kundtyp sätts preliminärt och bekräftas i steget nedan."
             state={customerSync.state}
             message={customerSync.message}
             onSync={() => runSync('/api/fortnox/customers/sync', setCustomerSync)}
+          />
+
+          {/* Customer type verification (confirms heuristic classification) */}
+          <SyncRow
+            label="Verifiera kundtyper"
+            description="Bekräftar företag/privat mot Fortnox för importerade kunder. Körs i bakgrunden, kan ta en stund vid många kunder."
+            state={verifySync.state}
+            message={verifySync.message}
+            onSync={runVerifyTypes}
           />
 
           <div className="mt-1 border-t border-slate-100 pt-3">
