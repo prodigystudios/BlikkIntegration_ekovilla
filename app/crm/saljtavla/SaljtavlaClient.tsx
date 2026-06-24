@@ -98,6 +98,10 @@ export default function SaljtavlaClient({ currentUserId }: { currentUserId: stri
   const [movingId, setMovingId] = useState<string | null>(null);
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [dragOverColumn, setDragOverColumn] = useState<SaljtavlaColumn | null>(null);
+  // Quote rows carry only the internal AO number; the work order's Fortnox order
+  // number lives on crm_work_orders. Index it once (work_order_id → fortnox number)
+  // so won cards can lead with the Fortnox number the customer recognises.
+  const [workOrderFortnoxById, setWorkOrderFortnoxById] = useState<Map<string, string | null>>(new Map());
 
   // Load quotes (all statuses — the board groups them client-side).
   useEffect(() => {
@@ -125,6 +129,20 @@ export default function SaljtavlaClient({ currentUserId }: { currentUserId: stri
       .then((r) => r.json().catch(() => ({})))
       .then((json) => { if (active) setAssignees(json?.ok ? json.data?.items || [] : []); })
       .catch(() => { if (active) setAssignees([]); });
+    return () => { active = false; };
+  }, []);
+
+  // Load the work-orders list once and index Fortnox order numbers by work_order_id.
+  useEffect(() => {
+    let active = true;
+    fetch('/api/crm/work-orders', { cache: 'no-store' })
+      .then((r) => r.json().catch(() => ({})))
+      .then((j) => {
+        if (!active) return;
+        const items: Array<{ id: string; fortnox_order_number: string | null }> = j?.ok && Array.isArray(j?.data?.items) ? j.data.items : [];
+        setWorkOrderFortnoxById(new Map(items.map((w) => [w.id, w.fortnox_order_number ?? null])));
+      })
+      .catch(() => { if (active) setWorkOrderFortnoxById(new Map()); });
     return () => { active = false; };
   }, []);
 
@@ -283,7 +301,7 @@ export default function SaljtavlaClient({ currentUserId }: { currentUserId: stri
                 ) : items.length === 0 ? (
                   <p className="px-1 py-6 text-center text-[11px] italic text-slate-400">{def.hint}</p>
                 ) : (
-                  items.map((item) => <BoardCard key={item.id} item={item} moving={movingId === item.id} onOpen={() => router.push(`/crm/offerter?quote_id=${item.id}`)} onDragStart={() => setDraggedId(item.id)} onDragEnd={() => { setDraggedId(null); setDragOverColumn(null); }} />)
+                  items.map((item) => <BoardCard key={item.id} item={item} fortnoxOrderNumber={item.work_order_id ? (workOrderFortnoxById.get(item.work_order_id) ?? null) : null} moving={movingId === item.id} onOpen={() => router.push(`/crm/offerter?quote_id=${item.id}`)} onDragStart={() => setDraggedId(item.id)} onDragEnd={() => { setDraggedId(null); setDragOverColumn(null); }} />)
                 )}
               </div>
             </div>
@@ -298,12 +316,14 @@ export default function SaljtavlaClient({ currentUserId }: { currentUserId: stri
 
 function BoardCard({
   item,
+  fortnoxOrderNumber,
   moving,
   onOpen,
   onDragStart,
   onDragEnd,
 }: {
   item: BoardQuote;
+  fortnoxOrderNumber: string | null;
   moving: boolean;
   onOpen: () => void;
   onDragStart: () => void;
@@ -345,7 +365,7 @@ function BoardCard({
           <span className="text-[12px] font-semibold tabular-nums text-slate-800">{formatAmount(display.primary, item.currency_code)}</span>
           {locked && item.work_order_number && (
             <span className="rounded-full border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700">
-              Order {documentRef(null, item.work_order_number)}
+              Order {documentRef(fortnoxOrderNumber, item.work_order_number)}
             </span>
           )}
           {overdue && (
