@@ -97,6 +97,10 @@ export const listCrmQuotesQuerySchema = z.object({
   status: statusSchema.optional(),
   prospect_id: z.string().uuid('Ogiltigt prospekt').optional(),
   customer_id: z.string().uuid('Ogiltig kund').optional(),
+  // Optional cap override. The default (100) suits the offer list; board views that
+  // group ALL of a seller's quotes client-side pass a higher value so won/lost
+  // quotes aren't truncated. Bounded to keep the query safe.
+  limit: z.coerce.number().int().min(1).max(2000).optional(),
 });
 
 export const createCrmQuoteSchema = z.object({

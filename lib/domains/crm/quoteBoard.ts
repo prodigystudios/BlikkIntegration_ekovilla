@@ -11,9 +11,6 @@ export type SaljtavlaColumn = QuoteBoardStatus;
 
 export const SALJTAVLA_COLUMNS: SaljtavlaColumn[] = ['draft', 'sent', 'follow_up', 'won', 'lost'];
 
-// Columns a card can be dropped onto to change its status (all of them).
-export const SALJTAVLA_DROPPABLE_STATUSES: QuoteBoardStatus[] = ['draft', 'sent', 'follow_up', 'won', 'lost'];
-
 // Which board column a quote belongs in — its status.
 export function quoteBoardColumn(quote: { status: QuoteBoardStatus }): SaljtavlaColumn {
   return quote.status;

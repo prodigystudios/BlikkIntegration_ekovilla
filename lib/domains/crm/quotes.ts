@@ -141,6 +141,7 @@ type ListCrmQuotesOptions = {
   status?: CrmQuoteStatus;
   prospectId?: string;
   customerId?: string;
+  limit?: number;
 };
 
 export async function listCrmQuotesWithFilters(supabase: SupabaseClient, options: ListCrmQuotesOptions) {
@@ -150,7 +151,7 @@ export async function listCrmQuotesWithFilters(supabase: SupabaseClient, options
     .order('status', { ascending: true })
     .order('follow_up_date', { ascending: true, nullsFirst: false })
     .order('quote_date', { ascending: false })
-    .limit(100);
+    .limit(options.limit ?? 100);
 
   if (options.search) {
     query = query.or(
