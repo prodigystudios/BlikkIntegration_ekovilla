@@ -1,153 +1,118 @@
 export const dynamic = 'force-dynamic';
 
 import { headers } from 'next/headers';
+import { cn } from '@/lib/shared/cn';
+import { crm } from '@/app/crm/lib/crmTokens';
+import { normalizeContacts, type PublicContact } from './contacts';
 
-type PublicContact = { id: string; name: string; phone?: string | null; location?: string | null; role?: string | null; category: string };
-type PublicAddress = { id: string; name: string; address: string };
-interface ContactsPayload { contacts?: any; addresses?: any; Adresser?: any }
-
-async function getContacts(): Promise<ContactsPayload> {
+async function getContacts(): Promise<unknown> {
   const h = headers();
   const host = h.get('x-forwarded-host') || h.get('host') || 'localhost:3000';
   const proto = h.get('x-forwarded-proto') || (host.startsWith('localhost') ? 'http' : 'https');
   const url = `${proto}://${host}/api/contacts`;
-  // IMPORTANT: Forward cookies so authenticated middleware + Supabase session works on internal fetch.
+  // Forward cookies so the authenticated Supabase session works on the internal fetch.
   const cookie = h.get('cookie') || '';
-  const res = await fetch(url, {
-    cache: 'no-store',
-    headers: cookie ? { cookie } : undefined,
-  });
+  const res = await fetch(url, { cache: 'no-store', headers: cookie ? { cookie } : undefined });
   if (!res.ok) throw new Error('Failed to load contacts');
   return res.json();
 }
 
-function Section({ title, people, defaultOpen = false }: { title: string; people: Array<{ name: string; phone?: string; location?: string; role?: string }>, defaultOpen?: boolean }) {
-  // Use <details> for native accessibility and animation
+function ContactRow({ person }: { person: { name: string; phone?: string | null; location?: string | null; role?: string | null } }) {
+  const area = person.location || person.role || null;
   return (
-    <details className="accordion-panel" {...(defaultOpen ? { open: true } : {})}>
-  <summary className="accordion-summary">{title}</summary>
-      <div className="accordion-content">
-        <div className="contacts-grid">
-          <div className="contacts-header">
-            <div className="contacts-cell">Namn</div>
-            <div className="contacts-cell">Telefon</div>
-            <div className="contacts-cell">Område/Roll</div>
-          </div>
-          {people.map((p, i) => (
-            <div key={p.name + i} className="contacts-row">
-              <div className="contacts-cell contacts-name">{p.name}</div>
-              <div className="contacts-cell">
-                {p.phone ? (
-                  <a href={`tel:${p.phone.replace(/\s+/g, '')}`} style={{ color: '#0ea5e9', textDecoration: 'none' }}>{p.phone}</a>
-                ) : (
-                  <span className="contacts-muted">–</span>
-                )}
-              </div>
-              <div className="contacts-cell contacts-info">{p.location || p.role || '–'}</div>
-            </div>
-          ))}
-        </div>
+    <div className="flex items-center justify-between gap-3 border-t border-[#eef2ec] px-3 py-2.5 first:border-t-0">
+      <div className="grid min-w-0 gap-0.5">
+        <span className="truncate text-[13px] font-semibold text-slate-900">{person.name}</span>
+        {area ? <span className="truncate text-[11px] text-slate-500">{area}</span> : null}
+      </div>
+      {person.phone ? (
+        <a
+          href={`tel:${person.phone.replace(/\s+/g, '')}`}
+          className="shrink-0 text-[13px] font-semibold text-emerald-700 no-underline hover:text-emerald-800"
+        >
+          {person.phone}
+        </a>
+      ) : (
+        <span className="shrink-0 text-[13px] text-slate-400">–</span>
+      )}
+    </div>
+  );
+}
+
+function CategoryCard({ name, people, defaultOpen }: { name: string; people: PublicContact[]; defaultOpen?: boolean }) {
+  return (
+    <details className={cn(crm.card, 'group')} {...(defaultOpen ? { open: true } : {})}>
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3.5 py-3">
+        <span className="text-sm font-bold tracking-tight text-slate-900">{name}</span>
+        <span className="flex items-center gap-2">
+          <span className="text-[11px] text-slate-400">{people.length}</span>
+          <svg className="shrink-0 text-slate-400 transition-transform group-open:rotate-180" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        </span>
+      </summary>
+      <div className="border-t border-[#e0e8dc] px-1 pb-1">
+        {people.map((p, i) => (
+          <ContactRow key={p.id + i} person={p} />
+        ))}
       </div>
     </details>
   );
 }
 
 export default async function ContactsPage() {
-  let data: ContactsPayload;
+  let normalized;
   try {
-    data = await getContacts();
-  } catch (e) {
+    normalized = normalizeContacts(await getContacts());
+  } catch {
     return (
-      <main style={{ padding: 16, maxWidth: 900, margin: '0 auto' }}>
-        <h1>Kontaktlista</h1>
-        <p style={{ color: '#dc2626' }}>Kunde inte ladda kontaktlistan.</p>
-      </main>
+      <div className="mx-auto grid w-full max-w-[900px] grid-cols-1 gap-4">
+        <h1 className={cn('m-0', crm.pageTitle)}>Kontakt & adresser</h1>
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">Kunde inte ladda kontaktlistan.</div>
+      </div>
     );
   }
 
-  let contactsArr: PublicContact[] = [];
-  let addressesArr: PublicAddress[] = [];
-  const normalizedData = (data && typeof data === 'object' && 'data' in data && data.data && typeof data.data === 'object')
-    ? data.data as ContactsPayload
-    : data;
-
-  // New shape
-  if (Array.isArray(normalizedData.contacts)) {
-    contactsArr = normalizedData.contacts as PublicContact[];
-  } else {
-    // Legacy grouped shape: keys = category names + optional Adresser
-    for (const [key, value] of Object.entries(normalizedData)) {
-      if (key === 'Adresser' && Array.isArray(value)) {
-        addressesArr = value.map((a: any) => ({ id: a.id || a.name, name: a.name, address: a.address }));
-      } else if (Array.isArray(value)) {
-        // value = [{ name, phone, location/role }]
-        contactsArr.push(...value.map((p: any) => ({
-          id: p.id || p.name,
-            name: p.name,
-            phone: p.phone,
-            location: p.location,
-            role: p.role,
-            category: key
-        })));
-      }
-    }
-  }
-
-  if (Array.isArray(normalizedData.addresses)) {
-    addressesArr = (normalizedData.addresses as any[]).map(a => ({ id: a.id, name: a.name, address: a.address }));
-  }
-
-  // Group by category
-  const grouped: Record<string, PublicContact[]> = {};
-  for (const c of contactsArr) {
-    if (!c.category) continue;
-    if (!grouped[c.category]) grouped[c.category] = [];
-    grouped[c.category].push(c);
-  }
-  // Sort each category by Område/Roll (location/role) alphabetically, tie-break by Name
-  Object.values(grouped).forEach(arr => arr.sort((a, b) => {
-    const aKey = (a.location || a.role || '').trim();
-    const bKey = (b.location || b.role || '').trim();
-    if (aKey && bKey) {
-      const cmp = aKey.localeCompare(bKey, 'sv', { sensitivity: 'base' });
-      if (cmp !== 0) return cmp;
-    } else if (aKey && !bKey) {
-      return -1; // non-empty before empty
-    } else if (!aKey && bKey) {
-      return 1;
-    }
-    return (a.name || '').localeCompare(b.name || '', 'sv', { sensitivity: 'base' });
-  }));
-  const categories = Object.keys(grouped).sort((a,b)=>a.localeCompare(b,'sv'));
+  const { categories, addresses } = normalized;
 
   return (
-    <main style={{ padding: 16, maxWidth: 900, margin: '0 auto' }}>
-      <h1>Kontaktlista</h1>
-      <p style={{ color: '#6b7280', marginTop: -6, marginBottom: 16 }}>Snabbsök kontakt och ring direkt.</p>
-      {categories.length === 0 && (
-        <div style={{ color:'#6b7280', fontStyle:'italic', paddingTop:8 }}>Inga kontakter hittades.</div>
-      )}
-      {categories.map((cat, idx) => (
-        <Section key={cat} title={cat} people={grouped[cat].map(c=>({ name: c.name, phone: c.phone||undefined, location: c.location||undefined, role: c.role||undefined }))} defaultOpen={idx===0} />
-      ))}
-      {addressesArr.length > 0 && (
-        <details className="accordion-panel" style={{ marginTop: 40 }}>
-          <summary className="accordion-summary">Depåer</summary>
-          <div className="accordion-content">
-            <div style={{ display: 'grid', gap: 16 }}>
-              {addressesArr.map(addr => {
-                const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addr.address)}`;
-                return (
-                  <div key={addr.id} style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: '14px 18px', background: '#f9fafb', display: 'flex', flexDirection: 'column' }}>
-                    <div style={{ fontWeight: 600, fontSize: 16 }}>{addr.name}</div>
-                    <a href={mapsUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#2563eb', fontSize: 15, marginTop: 2, textDecoration: 'underline', wordBreak: 'break-word' }}>{addr.address}</a>
-                  </div>
-                );
-              })}
-            </div>
+    <div className="mx-auto grid w-full max-w-[900px] grid-cols-1 gap-4">
+      <div>
+        <h1 className="m-0 text-lg font-bold tracking-tight text-slate-900">Kontakt & adresser</h1>
+        <p className="m-0 mt-1 text-sm text-slate-500">Snabbsök kontakt och ring direkt.</p>
+      </div>
+
+      {categories.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-slate-200 px-4 py-10 text-center text-sm text-slate-400">Inga kontakter hittades.</div>
+      ) : null}
+
+      <div className="grid grid-cols-1 gap-3">
+        {categories.map((cat, idx) => (
+          <CategoryCard key={cat.name} name={cat.name} people={cat.people} defaultOpen={idx === 0} />
+        ))}
+      </div>
+
+      {addresses.length > 0 ? (
+        <details className={crm.card}>
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3.5 py-3">
+            <span className="text-sm font-bold tracking-tight text-slate-900">Depåer</span>
+            <span className="text-[11px] text-slate-400">{addresses.length}</span>
+          </summary>
+          <div className="grid gap-2 border-t border-[#e0e8dc] p-3.5">
+            {addresses.map((addr) => {
+              const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addr.address)}`;
+              return (
+                <div key={addr.id} className="grid gap-0.5 rounded-xl border border-[#e3e9df] bg-[#f9fbf7] px-3.5 py-3">
+                  <span className="text-[13px] font-bold text-slate-900">{addr.name}</span>
+                  <a href={mapsUrl} target="_blank" rel="noopener noreferrer" className="break-words text-[13px] font-semibold text-emerald-700 no-underline hover:text-emerald-800">
+                    {addr.address}
+                  </a>
+                </div>
+              );
+            })}
           </div>
         </details>
-      )}
-    </main>
+      ) : null}
+    </div>
   );
 }
