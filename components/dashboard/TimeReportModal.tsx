@@ -2,9 +2,8 @@
 import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { cn } from '@/lib/shared/cn';
-import Button from '../ui/Button';
-import Input from '../ui/Input';
-import Textarea from '../ui/Textarea';
+import CrmModal from '@/app/crm/components/CrmModal';
+import { crm } from '@/app/crm/lib/crmTokens';
 
 export interface TimeReportModalProps {
   open: boolean;
@@ -57,8 +56,6 @@ export interface TimeReportModalProps {
 }
 
 export default function TimeReportModal({ open, onClose, onSubmit, initialProject, initialProjectId, initialDate, editId: propEditId, initialStart, initialEnd, initialBreakMinutes, initialDescription, initialTimecodeId, initialActivityId, initialReportType, initialInternalProjectId, initialAbsenceProjectId, initialTravelPlace, initialTravelDistance, initialTravelInvoiceableDistance, initialTravelToSalary, initialCompanyCarId, initialTripStart, initialTripEnd, initialAddressStart, initialAddressGoal, initialAddressEnd }: TimeReportModalProps) {
-  const [isSmall, setIsSmall] = useState(false); // <= 640px
-  const [isXS, setIsXS] = useState(false); // <= 420px
   const startRef = useRef<HTMLInputElement | null>(null);
   const [date, setDate] = useState<string>('');
   const [start, setStart] = useState<string>('');
@@ -123,17 +120,6 @@ export default function TimeReportModal({ open, onClose, onSubmit, initialProjec
   }, [todayJobs]);
 
   useEffect(() => {
-    const calc = () => {
-      const w = typeof window !== 'undefined' ? window.innerWidth : 1024;
-      setIsSmall(w <= 640);
-      setIsXS(w <= 420);
-    };
-    calc();
-    window.addEventListener('resize', calc);
-    return () => window.removeEventListener('resize', calc);
-  }, []);
-
-  useEffect(() => {
     if (!open) return;
     try {
       const today = new Date();
@@ -171,13 +157,13 @@ export default function TimeReportModal({ open, onClose, onSubmit, initialProjec
     setAddressStart(initialAddressStart || '');
     setAddressGoal(initialAddressGoal || '');
     setAddressEnd(initialAddressEnd || '');
-    // Avoid bringing up mobile keyboard on very small screens
-    if (!isXS) {
+    // Avoid bringing up the mobile keyboard on phones; only autofocus on larger screens.
+    if (typeof window !== 'undefined' && window.matchMedia('(min-width: 640px)').matches) {
       setTimeout(() => {
         try { startRef.current?.focus(); } catch {}
       }, 50);
     }
-  }, [open, isXS, initialProject, initialProjectId, initialDate, initialStart, initialEnd, initialBreakMinutes, initialDescription, initialTimecodeId, initialActivityId, initialReportType, initialInternalProjectId, initialAbsenceProjectId]);
+  }, [open, initialProject, initialProjectId, initialDate, initialStart, initialEnd, initialBreakMinutes, initialDescription, initialTimecodeId, initialActivityId, initialReportType, initialInternalProjectId, initialAbsenceProjectId]);
 
   // Load internal projects when needed
   useEffect(() => {
@@ -451,15 +437,6 @@ export default function TimeReportModal({ open, onClose, onSubmit, initialProjec
     }
   }, [open, reportType, activities, propEditId]);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (!open) return;
-      if (e.key === 'Escape') onClose();
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
-
   // Prevent background scroll while modal open
   useEffect(() => {
     if (!open) return;
@@ -590,271 +567,180 @@ export default function TimeReportModal({ open, onClose, onSubmit, initialProjec
     setSelectedProjectId(p.project_id);
   }, []);
 
-  const modalFieldLabelClass = cn('grid gap-1 text-slate-700', isSmall ? 'text-[13px]' : 'text-xs');
-  const modalInputClass = cn(isSmall ? 'min-h-11 px-3.5 py-3 text-base' : 'min-h-9 rounded-[10px] px-2.5 py-2 text-sm');
-  const modalSelectClass = cn(
-    'w-full rounded-xl border border-ui-border bg-white text-ui-text-strong transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ui-accent/20',
-    isSmall ? 'min-h-11 px-3.5 py-3 text-base' : 'min-h-9 rounded-[10px] px-2.5 py-2 text-sm',
-  );
-  const modalHelperTextClass = cn(isSmall ? 'text-[11px]' : 'text-[10px]');
-  const modalSectionClass = cn(
-    'grid border border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#fbfdff_100%)] shadow-[0_10px_24px_rgba(15,23,42,0.05)]',
-    isSmall ? 'gap-3 rounded-[18px] p-3.5' : 'gap-3.5 rounded-[20px] p-4'
-  );
-  const modalSectionTitleClass = cn('font-bold text-slate-900', isSmall ? 'text-[13px]' : 'text-[13.5px]');
-  const modalSectionHintClass = cn('leading-[1.45] text-slate-500', isSmall ? 'text-[11px]' : 'text-[11.5px]');
-  const modalSummaryPillClass = cn(
-    'inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white text-slate-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.75)]',
-    isSmall ? 'px-2.5 py-1 text-[11px] font-semibold' : 'px-2.5 py-1 text-[11px] font-semibold'
-  );
-  const reportTypeMeta = reportType === 'project'
-    ? {
-        hint: 'Koppla tiden till ett aktivt projekt eller ordernummer.',
-        pill: 'Projektläge',
-        activeClass: 'bg-green-600 text-white shadow-[0_4px_10px_rgba(22,163,74,0.18)]',
-      }
+  const labelText = 'text-xs font-semibold text-slate-500';
+  const fieldLabel = 'grid gap-1';
+  const inputCls = cn(crm.input, 'h-11 text-base sm:h-9 sm:text-sm');
+  const selectCls = cn(crm.select, 'h-11 text-base sm:h-9 sm:text-sm');
+  const textareaCls = 'w-full rounded-lg border border-[#dce4d8] bg-white px-3 py-2.5 text-base text-slate-900 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/15 sm:text-sm';
+  const helperText = 'text-[11px] text-slate-500';
+  const sectionTitle = 'text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400';
+  const hoursStr = totalHours.toFixed(2).replace('.', ',');
+
+  const reportTypeHint = reportType === 'project'
+    ? 'Koppla tiden till ett aktivt projekt eller ordernummer.'
     : reportType === 'internal'
-      ? {
-          hint: 'Används för internt arbete som inte ska bokas på kundprojekt.',
-          pill: 'Internt arbete',
-          activeClass: 'bg-blue-600 text-white shadow-[0_4px_10px_rgba(37,99,235,0.18)]',
-        }
-      : {
-          hint: 'Välj frånvarotyp för sjukdom, ledighet eller annan frånvaro.',
-          pill: 'Frånvaro',
-          activeClass: 'bg-amber-500 text-slate-950 shadow-[0_4px_10px_rgba(245,158,11,0.22)]',
-        };
+      ? 'Används för internt arbete som inte ska bokas på kundprojekt.'
+      : 'Välj frånvarotyp för sjukdom, ledighet eller annan frånvaro.';
+
+  // Segmented control: a white active pill on the sage track, tinted per mode so
+  // the installer sees which mode they're in without it shouting.
+  const tabActiveClass: Record<'project' | 'internal' | 'absence', string> = {
+    project: 'bg-white text-emerald-700 shadow-sm ring-1 ring-emerald-200',
+    internal: 'bg-white text-sky-700 shadow-sm ring-1 ring-sky-200',
+    absence: 'bg-white text-amber-700 shadow-sm ring-1 ring-amber-200',
+  };
 
   if (!open) return null;
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label="Rapportera arbetstid"
-      onClick={onClose}
-      className={cn(
-        'fixed inset-0 z-[1000] flex justify-center bg-slate-900/35',
-        isXS ? 'items-stretch p-0' : 'items-center p-4'
-      )}
-      style={{ touchAction: 'manipulation' }}
-    >
-      <div
-        onClick={e => e.stopPropagation()}
-        className={cn(
-          'relative flex flex-col border border-slate-200 bg-white',
-          isXS ? 'h-[100dvh] w-full rounded-none shadow-none' : 'w-full max-w-[700px] rounded-[14px] shadow-[0_20px_40px_rgba(0,0,0,0.15)]'
-        )}
-        style={{ maxHeight: isXS ? '100dvh' : '85vh', height: isXS ? '100dvh' : 'auto' }}
-      >
-        <div
-          className={cn(
-            'sticky top-0 z-[5] flex items-center justify-between border-b border-slate-200 bg-white',
-            isSmall ? 'px-3 py-2.5' : 'px-3.5 py-3'
-          )}
-          style={{ paddingTop: isXS ? 'max(10px, env(safe-area-inset-top))' : undefined }}
-        >
-          <div className="flex items-center gap-2">
-            <span className="h-4 w-4 rounded-full border-2 border-green-200 bg-green-500" />
-            <div className="text-base font-bold text-slate-900">Rapportera tid</div>
-          </div>
-          <Button
-            onClick={submitted === 'saving' ? undefined : onClose}
-            aria-label="Stäng"
-            variant="secondary"
-            size={isSmall ? 'md' : 'sm'}
-            disabled={submitted === 'saving'}
-            className={cn(isSmall ? 'min-h-11 px-3.5' : 'rounded-[10px] px-3')}
-          >
-            Stäng
-          </Button>
+    <CrmModal
+      onClose={submitted === 'saving' ? () => {} : onClose}
+      ariaLabel="Rapportera arbetstid"
+      maxWidth="sm:max-w-[640px]"
+      header={
+        <div className="flex items-center gap-2">
+          <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: 'var(--crm-primary)' }} />
+          <h2 className="text-base font-bold text-slate-900">Rapportera tid</h2>
         </div>
-        <div className={cn('relative flex-1 overflow-y-auto [overscroll-behavior:contain] [webkit-overflow-scrolling:touch]', isSmall ? 'grid gap-3 p-3 pb-3' : 'grid gap-3.5 p-3.5 pb-3')}>
-          {/* Submission overlay */}
-          {submitted === 'saving' && (
-            <div aria-hidden className="absolute inset-0 z-30 flex items-center justify-center bg-white/60 p-4">
-              <div className="flex flex-col items-center gap-2.5">
-                <span className="spinner dark spin h-10 w-10" aria-hidden />
-                <div className="text-[13px] text-slate-900">Sparar…</div>
-              </div>
+      }
+      footer={
+        <div className="flex items-center justify-between gap-3">
+          <div className="text-sm text-slate-600">
+            Beräknat: <strong className="text-slate-900">{hoursStr} h</strong>
+          </div>
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={!canSubmit}
+            className={cn(crm.formButton, 'min-w-[120px]')}
+            style={{ backgroundColor: 'var(--crm-primary)' }}
+          >
+            {submitted === 'saving' ? 'Sparar…' : 'Spara'}
+          </button>
+        </div>
+      }
+    >
+      <div className="grid gap-5">
+        {submitError && (
+          <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{submitError}</div>
+        )}
+
+        {/* Report type */}
+        <div className="grid gap-2">
+          <div role="tablist" aria-label="Rapporttyp" className="grid grid-cols-3 gap-1 rounded-xl border border-[#e0e8dc] bg-[#f9fbf7] p-1">
+            {([
+              { key: 'project', label: 'Projekt' },
+              { key: 'internal', label: 'Intern' },
+              { key: 'absence', label: 'Frånvaro' },
+            ] as const).map(opt => (
+              <button
+                key={opt.key}
+                type="button"
+                role="tab"
+                aria-selected={reportType === opt.key}
+                onClick={() => setReportType(opt.key)}
+                className={cn(
+                  'h-10 rounded-lg text-sm font-semibold transition sm:h-9',
+                  reportType === opt.key ? tabActiveClass[opt.key] : 'text-slate-500 hover:text-slate-700'
+                )}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          <p className={helperText}>{reportTypeHint}</p>
+        </div>
+
+        {/* Time */}
+        <div className="grid gap-2.5">
+          <p className={sectionTitle}>Tid</p>
+          <label className={fieldLabel}>
+            <span className={labelText}>Datum</span>
+            <input type="date" value={date} onChange={e => setDate(e.target.value)} className={inputCls} />
+          </label>
+          <div className="grid grid-cols-3 gap-2">
+            <label className={fieldLabel}>
+              <span className={labelText}>Start</span>
+              <input
+                ref={startRef}
+                type="time"
+                value={start}
+                onChange={e => setStart(e.target.value)}
+                placeholder="07:00"
+                className={cn(inputCls, validationError ? 'border-rose-300 focus:border-rose-400 focus:ring-rose-400/20' : '')}
+              />
+            </label>
+            <label className={fieldLabel}>
+              <span className={labelText}>Slut</span>
+              <input
+                type="time"
+                value={end}
+                onChange={e => setEnd(e.target.value)}
+                placeholder="16:00"
+                className={cn(inputCls, validationError ? 'border-rose-300 focus:border-rose-400 focus:ring-rose-400/20' : '')}
+              />
+            </label>
+            <label className={fieldLabel}>
+              <span className={labelText}>Rast (min)</span>
+              <input inputMode="numeric" pattern="[0-9]*" value={breakMin} onChange={e => setBreakMin(e.target.value)} placeholder="0" className={inputCls} />
+            </label>
+          </div>
+          {validationError ? (
+            <div role="alert" className="text-xs text-rose-700">{validationError}</div>
+          ) : (
+            <div className="flex items-center justify-end gap-1.5 text-sm">
+              <span className="text-slate-500">Beräknat</span>
+              <strong className="text-base font-bold text-emerald-700">{hoursStr} h</strong>
             </div>
           )}
-          <section className={modalSectionClass}>
-            <div className="flex flex-wrap items-start justify-between gap-2.5">
-              <div className="grid gap-1">
-                <strong className={modalSectionTitleClass}>1. Grunduppgifter</strong>
-                <span className={modalSectionHintClass}>Välj rapporttyp och fyll i tid först. Resten av formuläret anpassar sig efter valet.</span>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <span className={modalSummaryPillClass}>Typ: {reportType === 'project' ? 'Projekt' : reportType === 'internal' ? 'Intern' : 'Frånvaro'}</span>
-                <span className={modalSummaryPillClass}>Beräknat: {totalHours.toFixed(2)} h</span>
-              </div>
-            </div>
-            <div className="grid gap-2">
-              <div className="flex items-center gap-2">
-                <span className={cn('text-slate-700', isSmall ? 'text-[13px]' : 'text-xs')}>Typ:</span>
-                <div role="tablist" aria-label="Rapporttyp" className="inline-flex overflow-hidden rounded-[12px] border border-slate-300 bg-white shadow-[inset_0_1px_0_rgba(255,255,255,0.75)]">
-                  {([
-                    { key:'project', label:'Projekt' },
-                    { key:'internal', label:'Intern' },
-                    { key:'absence', label:'Frånvaro' },
-                  ] as const).map(opt => (
-                    <button
-                      key={opt.key}
-                      type="button"
-                      role="tab"
-                      aria-selected={reportType===opt.key}
-                      onClick={()=>setReportType(opt.key)}
-                      className={cn(
-                        'rounded-none border-r border-slate-300 font-medium first:rounded-l-[11px] last:rounded-r-[11px] last:border-r-0 transition-[background-color,color,box-shadow]',
-                        isSmall ? 'px-3 py-2 text-[13px]' : 'px-3 py-2 text-xs',
-                        reportType===opt.key
-                          ? opt.key === 'project'
-                            ? 'bg-green-600 text-white shadow-[0_4px_10px_rgba(22,163,74,0.18)]'
-                            : opt.key === 'internal'
-                              ? 'bg-blue-600 text-white shadow-[0_4px_10px_rgba(37,99,235,0.18)]'
-                              : 'bg-amber-500 text-slate-950 shadow-[0_4px_10px_rgba(245,158,11,0.22)]'
-                          : 'bg-white text-slate-900 hover:bg-slate-50'
-                      )}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <span className={cn(modalSummaryPillClass, reportTypeMeta.activeClass)}>{reportTypeMeta.pill}</span>
-                <span className={modalSectionHintClass}>{reportTypeMeta.hint}</span>
-              </div>
+        </div>
 
-              <div className={cn('grid items-start', isSmall ? 'grid-cols-1 gap-2.5' : 'grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,0.72fr)] gap-2.5')}>
-                <label className={modalFieldLabelClass}>
-                  <span>Datum</span>
-                  <Input type="date" value={date} onChange={e => setDate(e.target.value)} className={modalInputClass} />
-                </label>
-                <div className={cn('grid', isXS ? 'grid-cols-1 gap-2' : 'grid-cols-2 gap-2.5')}>
-                  <label className={modalFieldLabelClass}>
-                    <span>Start</span>
-                    <Input
-                      ref={startRef}
-                      type="time"
-                      value={start}
-                      onChange={e => setStart(e.target.value)}
-                      placeholder="07:00"
-                      className={cn(modalInputClass, validationError ? 'border-red-200 focus-visible:ring-red-200/40' : '')}
-                    />
-                  </label>
-                  <label className={modalFieldLabelClass}>
-                    <span>Slut</span>
-                    <Input
-                      type="time"
-                      value={end}
-                      onChange={e => setEnd(e.target.value)}
-                      placeholder="16:00"
-                      className={cn(modalInputClass, validationError ? 'border-red-200 focus-visible:ring-red-200/40' : '')}
-                    />
-                  </label>
-                </div>
-                <label className={modalFieldLabelClass}>
-                  <span>Rast (minuter)</span>
-                  <Input inputMode="numeric" pattern="[0-9]*" value={breakMin} onChange={e => setBreakMin(e.target.value)} placeholder="0" className={modalInputClass} />
-                </label>
-              </div>
-              {validationError && (
-                <div role="alert" className={cn('text-red-700', isSmall ? 'text-xs' : 'text-[11px]')}>{validationError}</div>
-              )}
-            </div>
-          </section>
+        {/* Connection */}
+        <div className="grid gap-2.5">
+          <p className={sectionTitle}>Koppling</p>
+          {reportType === 'project' && (
+            <label className={fieldLabel}>
+              <span className={labelText}>Projekt / ordernummer</span>
+              <input value={project} onChange={e => setProject(e.target.value)} placeholder="#1234 eller projektnamn" className={inputCls} />
+            </label>
+          )}
+          {reportType === 'internal' && (
+            <label className={fieldLabel}>
+              <span className={labelText}>Internprojekt</span>
+              <select value={selectedInternalId} onChange={(e) => setSelectedInternalId(e.target.value)} disabled={iLoading || internalProjects.length === 0} className={selectCls}>
+                <option value="">Välj internprojekt</option>
+                {internalProjects.map(p => (
+                  <option key={p.id} value={p.id}>{p.name || p.id}{p.active === false ? ' (inaktiv)' : ''}{p.commentRequired ? ' — kommentar krävs' : ''}</option>
+                ))}
+              </select>
+              {iLoading && <span className={helperText}>Laddar internprojekt…</span>}
+              {iError && <span className="text-[11px] text-rose-700">{iError}</span>}
+            </label>
+          )}
+          {reportType === 'absence' && (
+            <label className={fieldLabel}>
+              <span className={labelText}>Frånvaroprojekt</span>
+              <select value={selectedAbsenceId} onChange={(e) => setSelectedAbsenceId(e.target.value)} disabled={aLoading || absenceProjects.length === 0} className={selectCls}>
+                <option value="">Välj frånvaroprojekt</option>
+                {absenceProjects.map(p => (
+                  <option key={p.id} value={p.id}>{p.name || p.id}{p.active === false ? ' (inaktiv)' : ''}{p.commentRequired ? ' — kommentar krävs' : ''}</option>
+                ))}
+              </select>
+              {aLoading && <span className={helperText}>Laddar frånvaroprojekt…</span>}
+              {aError && <span className="text-[11px] text-rose-700">{aError}</span>}
+            </label>
+          )}
 
-          <section className={modalSectionClass}>
-            <div className="grid gap-1">
-              <strong className={modalSectionTitleClass}>2. Koppla rapporten</strong>
-              <span className={modalSectionHintClass}>Välj projekt eller intern/frånvarotyp och säkra därefter tidkod samt aktivitet.</span>
-            </div>
-            <div className={cn('grid items-start', isSmall ? 'grid-cols-1 gap-2.5' : 'grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3')}>
-              <div className="grid gap-1.5">
-              {reportType === 'project' && (
-                <label className={modalFieldLabelClass}>
-                  <span>Projekt / Ordernummer</span>
-                  <Input value={project} onChange={e => setProject(e.target.value)} placeholder="#1234 eller projektnamn" className={modalInputClass} />
-                </label>
-              )}
-              {reportType === 'internal' && (
-                <label className={modalFieldLabelClass}>
-                  <span>Internprojekt</span>
-                  <select value={selectedInternalId} onChange={(e)=>setSelectedInternalId(e.target.value)} disabled={iLoading || internalProjects.length===0} className={modalSelectClass}>
-                    <option value="">Välj internprojekt</option>
-                    {internalProjects.map(p => (
-                      <option key={p.id} value={p.id}>{p.name || p.id}{p.active===false ? ' (inaktiv)' : ''}{p.commentRequired ? ' — kommentar krävs' : ''}</option>
-                    ))}
-                  </select>
-                  <div className="flex items-center gap-2">
-                    {iLoading && <span className={cn(modalHelperTextClass, 'text-slate-500')}>Laddar internprojekt…</span>}
-                    {iError && <span className={cn(modalHelperTextClass, 'text-red-700')}>{iError}</span>}
-                  </div>
-                </label>
-              )}
-              {reportType === 'absence' && (
-                <label className={modalFieldLabelClass}>
-                  <span>Frånvaroprojekt</span>
-                  <select value={selectedAbsenceId} onChange={(e)=>setSelectedAbsenceId(e.target.value)} disabled={aLoading || absenceProjects.length===0} className={modalSelectClass}>
-                    <option value="">Välj frånvaroprojekt</option>
-                    {absenceProjects.map(p => (
-                      <option key={p.id} value={p.id}>{p.name || p.id}{p.active===false ? ' (inaktiv)' : ''}{p.commentRequired ? ' — kommentar krävs' : ''}</option>
-                    ))}
-                  </select>
-                  <div className="flex items-center gap-2">
-                    {aLoading && <span className={cn(modalHelperTextClass, 'text-slate-500')}>Laddar frånvaroprojekt…</span>}
-                    {aError && <span className={cn(modalHelperTextClass, 'text-red-700')}>{aError}</span>}
-                  </div>
-                </label>
-              )}
+          {reportType === 'project' && (
+            <div className="grid gap-1.5 rounded-xl border border-[#e0e8dc] bg-[#f9fbf7] p-2.5">
+              <div className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-600">
+                <span>Dagens jobb</span>
+                {jobsLoading && <span className="font-normal text-slate-400">Laddar…</span>}
+                {!jobsLoading && distinctProjects.length === 0 && !jobsError && <span className="font-normal text-slate-400">Inga hittades</span>}
+                {jobsError && <span className="font-medium text-rose-700">{jobsError}</span>}
               </div>
-              <div className="grid gap-1.5">
-              <label className={modalFieldLabelClass}>
-                <span>Tidkod</span>
-                <select value={selectedTimecode} onChange={(e) => setSelectedTimecode(e.target.value)} disabled={tcLoading || timecodes.length === 0} className={modalSelectClass}>
-                  <option value="">Välj tidkod</option>
-                  {timecodes.map(tc => {
-                    const label = [tc.code, tc.name].filter(Boolean).join(' — ');
-                    const extra = tc.billable == null ? '' : (tc.billable ? ' (debiterbar)' : ' (icke-debiterbar)');
-                    return <option key={tc.id} value={tc.id}>{label}{extra}</option>;
-                  })}
-                </select>
-                <div className="flex items-center gap-2">
-                  {tcLoading && <span className={cn(modalHelperTextClass, 'text-slate-500')}>Laddar tidkoder…</span>}
-                  {tcError && <span role="status" aria-live="polite" className={cn(modalHelperTextClass, 'text-red-700')}>{tcError}</span>}
-                </div>
-              </label>
-              <label className={modalFieldLabelClass}>
-                <span>Aktivitet</span>
-                <select value={selectedActivity} onChange={(e) => setSelectedActivity(e.target.value)} disabled={actLoading || activities.length === 0} className={modalSelectClass}>
-                  <option value="">Välj aktivitet</option>
-                  {activities.map(a => {
-                    const label = [a.code, a.name].filter(Boolean).join(' — ');
-                    const extras: string[] = [];
-                    if (a.billable != null) extras.push(a.billable ? 'debiterbar' : 'icke-debiterbar');
-                    if (a.active === false) extras.push('inaktiv');
-                    const suffix = extras.length ? ` (${extras.join(', ')})` : '';
-                    return <option key={a.id} value={a.id}>{label}{suffix}</option>;
-                  })}
-                </select>
-                <div className="flex items-center gap-2">
-                  {actLoading && <span className={cn(modalHelperTextClass, 'text-slate-500')}>Laddar aktiviteter…</span>}
-                  {actError && <span role="status" aria-live="polite" className={cn(modalHelperTextClass, 'text-red-700')}>{actError}</span>}
-                </div>
-              </label>
-            </div>
-            </div>
-            {reportType === 'project' && (
-              <div className="grid gap-1.5 rounded-[16px] border border-dashed border-slate-200 bg-slate-50/70 p-3">
-                <div className={cn('flex items-center gap-1.5 font-semibold text-slate-900', isSmall ? 'text-xs' : 'text-[11px]')}>
-                  <span>Dagens projekt</span>
-                  {jobsLoading && <span className={cn(modalHelperTextClass, 'font-normal text-slate-500')}>Laddar…</span>}
-                  {!jobsLoading && distinctProjects.length === 0 && !jobsError && <span className={cn(modalHelperTextClass, 'font-normal text-slate-500')}>Inga hittades</span>}
-                  {jobsError && <span className={cn(modalHelperTextClass, 'font-medium text-red-700')}>{jobsError}</span>}
-                </div>
-                <div className={cn('flex overflow-x-auto pb-1 [webkit-overflow-scrolling:touch]', isSmall ? 'gap-2' : 'gap-2.5')}>
+              {distinctProjects.length > 0 && (
+                <div className="flex gap-2 overflow-x-auto pb-1 [webkit-overflow-scrolling:touch]">
                   {distinctProjects.map(p => {
                     const labelParts = [p.order_number ? `#${p.order_number}` : (p.project_name || p.project_id)];
                     if (p.customer) labelParts.push(p.customer);
@@ -865,154 +751,133 @@ export default function TimeReportModal({ open, onClose, onSubmit, initialProjec
                         key={p.project_id}
                         type="button"
                         onClick={() => chooseProject(p)}
-                        className={cn(
-                          'min-h-11 min-w-[220px] max-w-[320px] flex-none rounded-[14px] border text-left leading-tight transition-[transform,border-color,box-shadow,background-color]',
-                          isSmall ? 'px-3 py-2.5 text-[13px]' : 'px-3 py-2.5 text-xs',
-                          active
-                            ? 'border-green-600 bg-green-600 text-white shadow-[0_10px_18px_rgba(16,185,129,0.24)]'
-                            : 'border-slate-300 bg-white text-slate-900 shadow-[0_6px_14px_rgba(15,23,42,0.05)] hover:-translate-y-0.5 hover:border-green-200 hover:shadow-[0_10px_18px_rgba(16,185,129,0.10)]'
-                        )}
                         aria-label={`Välj projekt ${label}`}
+                        className={cn(
+                          'h-10 min-w-[180px] max-w-[280px] flex-none rounded-lg border px-3 text-left text-[13px] leading-tight transition',
+                          active
+                            ? 'border-emerald-600 text-white'
+                            : 'border-[#dce4d8] bg-white text-slate-800 hover:border-emerald-300 hover:bg-emerald-50/40'
+                        )}
+                        style={active ? { backgroundColor: 'var(--crm-primary)' } : undefined}
                       >
                         <span className={cn('block truncate', active ? 'font-semibold' : 'font-medium')}>{label}</span>
                       </button>
                     );
                   })}
                 </div>
-              </div>
-            )}
-          </section>
+              )}
+            </div>
+          )}
 
-          <section className={modalSectionClass}>
-            <div className="grid gap-1">
-              <strong className={modalSectionTitleClass}>3. Beskriv arbetet</strong>
-              <span className={modalSectionHintClass}>Skriv kort vad som gjordes. Kommentaren blir obligatorisk när vald typ eller projekt kräver det.</span>
-            </div>
-            <label className={modalFieldLabelClass}>
-              <span>Beskrivning {requireComment ? <em className="not-italic text-red-700">(krävs)</em> : null}</span>
-              <Textarea value={desc} onChange={e => setDesc(e.target.value)} rows={3} placeholder="Vad gjordes?" className={cn('min-h-0', isSmall ? 'min-h-[88px] px-3.5 py-3 text-base' : 'min-h-16 rounded-[10px] px-2.5 py-2 text-sm')} />
-              {requireComment && !desc.trim() && (
-                <span role="alert" className={cn(isSmall ? 'text-xs' : 'text-[11px]', 'text-red-700')}>Kommentar krävs för vald typ/projekt.</span>
-              )}
+          <div className="grid gap-2.5 sm:grid-cols-2">
+            <label className={fieldLabel}>
+              <span className={labelText}>Tidkod</span>
+              <select value={selectedTimecode} onChange={(e) => setSelectedTimecode(e.target.value)} disabled={tcLoading || timecodes.length === 0} className={selectCls}>
+                <option value="">Välj tidkod</option>
+                {timecodes.map(tc => {
+                  const label = [tc.code, tc.name].filter(Boolean).join(' — ');
+                  const extra = tc.billable == null ? '' : (tc.billable ? ' (debiterbar)' : ' (icke-debiterbar)');
+                  return <option key={tc.id} value={tc.id}>{label}{extra}</option>;
+                })}
+              </select>
+              {tcLoading && <span className={helperText}>Laddar tidkoder…</span>}
+              {tcError && <span role="status" aria-live="polite" className="text-[11px] text-rose-700">{tcError}</span>}
             </label>
-          </section>
-          {/* Travel section placed at bottom, expands downward above the footer */}
-          <div className={modalSectionClass}>
-            <div className="grid gap-1">
-              <strong className={modalSectionTitleClass}>4. Reserapport</strong>
-              <span className={modalSectionHintClass}>Valfritt. Fyll bara i om resan ska rapporteras tillsammans med tiden.</span>
-            </div>
-            <button
-              type="button"
-              onClick={() => setShowTravel(v => !v)}
-              aria-expanded={showTravel}
-              className={cn(
-                'flex w-full items-center justify-between rounded-[12px] border border-slate-300 bg-white text-slate-900 shadow-[0_6px_14px_rgba(15,23,42,0.04)] transition-[border-color,box-shadow,background-color] hover:border-green-200 hover:bg-green-50/40 hover:shadow-[0_10px_18px_rgba(16,185,129,0.08)]',
-                isSmall ? 'px-3.5 py-3' : 'px-3 py-2.5'
-              )}
-            >
-              <span className="flex items-center gap-2">
-                <span className="h-4 w-4 rounded-full border-2 border-green-200 bg-green-500" />
-                <strong className={cn(isSmall ? 'text-sm' : 'text-[13px]')}>Reserapport (valfritt)</strong>
-              </span>
-              <span aria-hidden className={cn(isSmall ? 'text-lg' : 'text-base')}>{showTravel ? '▾' : '▸'}</span>
-            </button>
-            {showTravel && (
-              <div className={cn('grid rounded-[16px] border border-dashed border-slate-200 bg-slate-50/70', isSmall ? 'gap-3 p-3' : 'gap-2.5 p-3')}>
-                <label className={modalFieldLabelClass}>
-                  <span>Plats / Sträcka</span>
-                  <Input value={travelPlace} onChange={(e)=>setTravelPlace(e.target.value)} placeholder="Piteå–Luleå–Piteå" className={modalInputClass} />
-                </label>
-                <div className={cn('grid', isXS ? 'grid-cols-1 gap-2' : 'grid-cols-2 gap-2.5')}>
-                  <label className={modalFieldLabelClass}>
-                    <span>Km (faktiskt)</span>
-                    <Input type="number" min={0} value={travelDistance} onChange={(e)=>setTravelDistance(e.target.value)} placeholder="100" className={modalInputClass} />
-                  </label>
-                  <label className={modalFieldLabelClass}>
-                    <span>Km (debiterbart)</span>
-                    <Input type="number" min={0} value={travelInvoiceableDistance} onChange={(e)=>setTravelInvoiceableDistance(e.target.value)} placeholder="120" className={modalInputClass} />
-                  </label>
-                </div>
-                <label className={cn('inline-flex items-center gap-2 text-slate-700', isSmall ? 'text-[13px]' : 'text-xs')}>
-                  <input type="checkbox" checked={travelToSalary} onChange={(e)=>setTravelToSalary(e.target.checked)} className="h-4 w-4 rounded border-slate-300 text-green-600 focus:ring-green-200" />
-                  <span>Till lön</span>
-                </label>
-                <div className="grid gap-2">
-                  <span className={cn(isSmall ? 'text-xs' : 'text-[11px]', 'text-slate-500')}>Företagsbil (valfritt)</span>
-                  <div className={cn('grid', isXS ? 'grid-cols-1 gap-2' : 'grid-cols-2 gap-2.5')}>
-                    <label className={modalFieldLabelClass}>
-                      <span>Bil-ID</span>
-                      <Input value={companyCarId} onChange={(e)=>setCompanyCarId(e.target.value)} placeholder="1" className={modalInputClass} />
-                    </label>
-                    <label className={modalFieldLabelClass}>
-                      <span>Mätarstart</span>
-                      <Input type="number" min={0} value={tripStart} onChange={(e)=>setTripStart(e.target.value)} placeholder="15000" className={modalInputClass} />
-                    </label>
-                    <label className={modalFieldLabelClass}>
-                      <span>Mätarslut</span>
-                      <Input type="number" min={0} value={tripEnd} onChange={(e)=>setTripEnd(e.target.value)} placeholder="15100" className={modalInputClass} />
-                    </label>
-                  </div>
-                  <label className={modalFieldLabelClass}>
-                    <span>Adress start</span>
-                    <Input value={addressStart} onChange={(e)=>setAddressStart(e.target.value)} placeholder="Generalgatan 1" className={modalInputClass} />
-                  </label>
-                  <label className={modalFieldLabelClass}>
-                    <span>Adress mål</span>
-                    <Input value={addressGoal} onChange={(e)=>setAddressGoal(e.target.value)} placeholder="Generalgatan 2" className={modalInputClass} />
-                  </label>
-                  <label className={modalFieldLabelClass}>
-                    <span>Adress slut</span>
-                    <Input value={addressEnd} onChange={(e)=>setAddressEnd(e.target.value)} placeholder="Generalgatan 1" className={modalInputClass} />
-                  </label>
-                </div>
-              </div>
-            )}
+            <label className={fieldLabel}>
+              <span className={labelText}>Aktivitet</span>
+              <select value={selectedActivity} onChange={(e) => setSelectedActivity(e.target.value)} disabled={actLoading || activities.length === 0} className={selectCls}>
+                <option value="">Välj aktivitet</option>
+                {activities.map(a => {
+                  const label = [a.code, a.name].filter(Boolean).join(' — ');
+                  const extras: string[] = [];
+                  if (a.billable != null) extras.push(a.billable ? 'debiterbar' : 'icke-debiterbar');
+                  if (a.active === false) extras.push('inaktiv');
+                  const suffix = extras.length ? ` (${extras.join(', ')})` : '';
+                  return <option key={a.id} value={a.id}>{label}{suffix}</option>;
+                })}
+              </select>
+              {actLoading && <span className={helperText}>Laddar aktiviteter…</span>}
+              {actError && <span role="status" aria-live="polite" className="text-[11px] text-rose-700">{actError}</span>}
+            </label>
           </div>
-          {isXS ? (
-            <div className="relative grid gap-2 border-t border-dashed border-slate-200 bg-white px-3 pt-2" style={{ paddingBottom: 'max(10px, env(safe-area-inset-bottom))' }}>
-              <div className="flex items-center justify-between gap-2.5 text-[13px] text-slate-700">
-                <span>Beräknad tid:</span>
-                <strong className="text-base text-slate-900">{totalHours.toFixed(2)} h</strong>
+        </div>
+
+        {/* Description */}
+        <div className="grid gap-2">
+          <p className={sectionTitle}>Beskrivning</p>
+          <label className={fieldLabel}>
+            <span className={labelText}>Vad gjordes? {requireComment ? <em className="not-italic text-rose-700">(krävs)</em> : null}</span>
+            <textarea value={desc} onChange={e => setDesc(e.target.value)} rows={3} placeholder="Kort beskrivning av arbetet" className={textareaCls} />
+            {requireComment && !desc.trim() && (
+              <span role="alert" className="text-[11px] text-rose-700">Kommentar krävs för vald typ/projekt.</span>
+            )}
+          </label>
+        </div>
+
+        {/* Travel (optional) */}
+        <div className="grid gap-2">
+          <button
+            type="button"
+            onClick={() => setShowTravel(v => !v)}
+            aria-expanded={showTravel}
+            className="flex h-11 w-full items-center justify-between rounded-xl border border-[#e0e8dc] bg-[#f9fbf7] px-3 text-sm font-semibold text-slate-700 transition hover:border-emerald-300 sm:h-10"
+          >
+            <span>Reserapport (valfritt)</span>
+            <span aria-hidden className="text-slate-400">{showTravel ? '▾' : '▸'}</span>
+          </button>
+          {showTravel && (
+            <div className="grid gap-3 rounded-xl border border-[#e0e8dc] bg-[#f9fbf7] p-3">
+              <label className={fieldLabel}>
+                <span className={labelText}>Plats / sträcka</span>
+                <input value={travelPlace} onChange={(e) => setTravelPlace(e.target.value)} placeholder="Piteå–Luleå–Piteå" className={inputCls} />
+              </label>
+              <div className="grid grid-cols-2 gap-2.5">
+                <label className={fieldLabel}>
+                  <span className={labelText}>Km (faktiskt)</span>
+                  <input type="number" min={0} value={travelDistance} onChange={(e) => setTravelDistance(e.target.value)} placeholder="100" className={inputCls} />
+                </label>
+                <label className={fieldLabel}>
+                  <span className={labelText}>Km (debiterbart)</span>
+                  <input type="number" min={0} value={travelInvoiceableDistance} onChange={(e) => setTravelInvoiceableDistance(e.target.value)} placeholder="120" className={inputCls} />
+                </label>
               </div>
-              <Button
-                type="button"
-                onClick={handleSubmit}
-                disabled={!canSubmit}
-                fullWidth
-                size="lg"
-                className={cn('min-h-12 rounded-xl border-green-600 text-base text-white', canSubmit ? 'bg-green-600 shadow-[0_4px_8px_rgba(16,185,129,0.35)] hover:bg-green-700' : 'bg-green-200')}
-              >
-                {submitted === 'saving' ? <span className="inline-flex items-center gap-2"><span className="spinner spin h-4 w-4" aria-hidden style={{ borderTopColor:'#fff' }} /> Sparar…</span> : 'Spara'}
-              </Button>
-              <Button type="button" onClick={onClose} variant="secondary" size="lg" className="min-h-11 rounded-[10px] text-sm">Avbryt</Button>
-            </div>
-          ) : (
-            <div className="relative flex items-center justify-between gap-2.5 border-t border-dashed border-slate-200 bg-white pt-2" style={{ paddingBottom: 'max(15px, env(safe-area-inset-bottom))' }}>
-              <div className={cn('flex items-center gap-2.5 text-slate-700', isSmall ? 'text-[13px]' : 'text-xs')}>
-                <span>Beräknad tid:</span>
-                <strong className={cn('text-slate-900', isSmall ? 'text-base' : 'text-sm')}>{totalHours.toFixed(2)} h</strong>
-              </div>
-              <div className="flex gap-2">
-                <Button type="button" onClick={onClose} variant="secondary" size={isSmall ? 'md' : 'sm'} className={cn(isSmall ? 'min-h-10 px-3.5 text-sm' : 'rounded-lg px-3')}>Avbryt</Button>
-                <Button
-                  type="button"
-                  onClick={handleSubmit}
-                  disabled={!canSubmit}
-                  size={isSmall ? 'md' : 'sm'}
-                  className={cn(
-                    'border-green-600 text-white',
-                    isSmall ? 'min-h-10 px-3.5 text-sm' : 'rounded-lg px-3',
-                    canSubmit ? 'bg-green-600 shadow-[0_2px_4px_rgba(16,185,129,0.4)] hover:bg-green-700' : 'bg-green-200'
-                  )}
-                >
-                  {submitted === 'saving' ? <span className="inline-flex items-center gap-2"><span className="spinner spin h-4 w-4" aria-hidden style={{ borderTopColor:'#fff' }} /> Sparar…</span> : 'Spara'}
-                </Button>
+              <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+                <input type="checkbox" checked={travelToSalary} onChange={(e) => setTravelToSalary(e.target.checked)} className="h-4 w-4 rounded border-[#dce4d8] text-emerald-600 focus:ring-emerald-500/30" />
+                <span>Till lön</span>
+              </label>
+              <div className="grid gap-2.5">
+                <span className={labelText}>Företagsbil (valfritt)</span>
+                <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+                  <label className={fieldLabel}>
+                    <span className={labelText}>Bil-ID</span>
+                    <input value={companyCarId} onChange={(e) => setCompanyCarId(e.target.value)} placeholder="1" className={inputCls} />
+                  </label>
+                  <label className={fieldLabel}>
+                    <span className={labelText}>Mätarstart</span>
+                    <input type="number" min={0} value={tripStart} onChange={(e) => setTripStart(e.target.value)} placeholder="15000" className={inputCls} />
+                  </label>
+                  <label className={fieldLabel}>
+                    <span className={labelText}>Mätarslut</span>
+                    <input type="number" min={0} value={tripEnd} onChange={(e) => setTripEnd(e.target.value)} placeholder="15100" className={inputCls} />
+                  </label>
+                </div>
+                <label className={fieldLabel}>
+                  <span className={labelText}>Adress start</span>
+                  <input value={addressStart} onChange={(e) => setAddressStart(e.target.value)} placeholder="Generalgatan 1" className={inputCls} />
+                </label>
+                <label className={fieldLabel}>
+                  <span className={labelText}>Adress mål</span>
+                  <input value={addressGoal} onChange={(e) => setAddressGoal(e.target.value)} placeholder="Generalgatan 2" className={inputCls} />
+                </label>
+                <label className={fieldLabel}>
+                  <span className={labelText}>Adress slut</span>
+                  <input value={addressEnd} onChange={(e) => setAddressEnd(e.target.value)} placeholder="Generalgatan 1" className={inputCls} />
+                </label>
               </div>
             </div>
           )}
         </div>
       </div>
-    </div>
+    </CrmModal>
   );
 }
