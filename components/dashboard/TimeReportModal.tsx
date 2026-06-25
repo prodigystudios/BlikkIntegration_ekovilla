@@ -568,9 +568,9 @@ export default function TimeReportModal({ open, onClose, onSubmit, initialProjec
   }, []);
 
   const labelText = 'text-xs font-semibold text-slate-500';
-  const fieldLabel = 'grid gap-1';
-  const inputCls = cn(crm.input, 'h-11 text-base sm:h-9 sm:text-sm');
-  const selectCls = cn(crm.select, 'h-11 text-base sm:h-9 sm:text-sm');
+  const fieldLabel = 'grid gap-1 min-w-0';
+  const inputCls = cn(crm.input, 'h-11 min-w-0 text-base sm:h-9 sm:text-sm');
+  const selectCls = cn(crm.select, 'h-11 min-w-0 text-base sm:h-9 sm:text-sm');
   const textareaCls = 'w-full rounded-lg border border-[#dce4d8] bg-white px-3 py-2.5 text-base text-slate-900 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/15 sm:text-sm';
   const helperText = 'text-[11px] text-slate-500';
   const sectionTitle = 'text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400';
@@ -620,7 +620,7 @@ export default function TimeReportModal({ open, onClose, onSubmit, initialProjec
         </div>
       }
     >
-      <div className="grid gap-5">
+      <div className="grid grid-cols-1 gap-5">
         {submitError && (
           <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{submitError}</div>
         )}
