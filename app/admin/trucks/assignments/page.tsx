@@ -9,6 +9,7 @@ import PageShell from '../../../../components/ui/PageShell';
 import Select from '../../../../components/ui/Select';
 import SectionCard from '../../../../components/ui/SectionCard';
 import { useTruckAssignments } from '@/lib/TruckAssignmentsContext';
+import AdminPromptDialog from '../../components/AdminPromptDialog';
 
 type NewAssignment = {
   truck_id: string;
@@ -24,6 +25,7 @@ export default function TruckAssignmentsAdminPage() {
   const [form, setForm] = useState<NewAssignment>({ truck_id: '', start_day: '', end_day: '', team_member1_name: '', team_member2_name: '' });
   const [saving, setSaving] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
 
   useEffect(() => { reload(); }, [reload]);
 
@@ -54,7 +56,6 @@ export default function TruckAssignmentsAdminPage() {
   }
 
   async function deleteAssignment(id: string) {
-    if (!confirm('Ta bort tilldelningen?')) return;
     setSaving(true);
     setError(null);
     try {
@@ -66,6 +67,7 @@ export default function TruckAssignmentsAdminPage() {
       setError(e?.message ?? 'Unknown error');
     } finally {
       setSaving(false);
+      setPendingDeleteId(null);
     }
   }
 
@@ -86,8 +88,8 @@ export default function TruckAssignmentsAdminPage() {
   const list = assignments.filter(a => !filterTruck || a.truck_id === filterTruck);
 
   return (
-    <PageShell className="max-w-[1120px] gap-5 px-3 py-3 sm:px-4 lg:px-5">
-      <SectionCard className="grid gap-4 rounded-[24px] bg-[linear-gradient(180deg,#ffffff_0%,#f8fbff_100%)] p-5 shadow-[0_14px_36px_rgba(15,23,42,0.04)]">
+    <PageShell className="max-w-[1120px] gap-5">
+      <SectionCard className="grid gap-4 rounded-[24px] bg-[linear-gradient(180deg,#ffffff_0%,#f9fbf7_100%)] p-5 shadow-[0_14px_36px_rgba(15,23,42,0.04)]">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="grid max-w-[720px] gap-1.5">
             <div className="flex flex-wrap gap-2">
@@ -168,12 +170,24 @@ export default function TruckAssignmentsAdminPage() {
                 </Field>
               </div>
               <div>
-                <Button variant="secondary" size="sm" className="text-red-700 hover:bg-red-50" onClick={() => deleteAssignment(a.id)} disabled={saving}>Ta bort</Button>
+                <Button variant="secondary" size="sm" className="text-red-700 hover:bg-red-50" onClick={() => setPendingDeleteId(a.id)} disabled={saving}>Ta bort</Button>
               </div>
             </div>
           ))}
         </div>
       </SectionCard>
+
+      {pendingDeleteId && (
+        <AdminPromptDialog
+          title="Ta bort tilldelning"
+          message="Ta bort trucktilldelningen? Det går inte att ångra."
+          confirmLabel="Ta bort"
+          danger
+          busy={saving}
+          onConfirm={() => deleteAssignment(pendingDeleteId)}
+          onClose={() => setPendingDeleteId(null)}
+        />
+      )}
     </PageShell>
   );
 }

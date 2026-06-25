@@ -139,7 +139,7 @@ export default function AdminPermissions() {
         </div>
       ) : null}
 
-      <div className="rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+      <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
         Roller är knippen av behörigheter. Per-användar-overrides läggs <strong>ovanpå</strong> rollen
         (revoke vinner). Ändringar slår igenom direkt i både appen och databasen (RLS).
       </div>

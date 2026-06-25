@@ -85,10 +85,10 @@ export function TabsTrigger({ className, active = false, variant = 'pill', child
         'rounded-2xl border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ui-accent/20',
         variant === 'card' && 'grid justify-start gap-1 px-3.5 py-3 text-left text-slate-900',
         variant === 'pill' && 'inline-flex min-h-10 items-center justify-center px-3.5 text-sm font-semibold',
-        variant === 'card' && active && 'border-blue-200 bg-[linear-gradient(180deg,#eff6ff_0%,#dbeafe_100%)] shadow-[0_10px_24px_rgba(37,99,235,0.12)] hover:border-blue-300 hover:bg-[linear-gradient(180deg,#eff6ff_0%,#dbeafe_100%)]',
-        variant === 'card' && !active && 'border-ui-border bg-white hover:border-slate-300 hover:bg-slate-50',
-        variant === 'pill' && active && 'border-blue-200 bg-blue-50 text-blue-700 shadow-[0_8px_20px_rgba(37,99,235,0.08)] hover:border-blue-300 hover:bg-blue-50',
-        variant === 'pill' && !active && 'border-ui-border bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50',
+        variant === 'card' && active && 'border-emerald-200 bg-[linear-gradient(180deg,#f3f9f1_0%,#e0e8dc_100%)] shadow-[0_10px_24px_rgba(20,44,27,0.12)] hover:border-emerald-300 hover:bg-[linear-gradient(180deg,#f3f9f1_0%,#e0e8dc_100%)]',
+        variant === 'card' && !active && 'border-[#e0e8dc] bg-white hover:border-emerald-200 hover:bg-[#f9fbf7]',
+        variant === 'pill' && active && 'border-emerald-200 bg-emerald-50 text-emerald-700 shadow-[0_8px_20px_rgba(20,44,27,0.08)] hover:border-emerald-300 hover:bg-emerald-50',
+        variant === 'pill' && !active && 'border-[#e0e8dc] bg-white text-slate-700 hover:border-emerald-200 hover:bg-[#f9fbf7]',
         className,
       )}
       {...props}

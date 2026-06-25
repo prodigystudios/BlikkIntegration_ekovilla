@@ -33,7 +33,7 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
 
 function MessagePage({ title, body }: { title: string; body: string }) {
   return (
-    <PageShell className="max-w-[980px] gap-4 px-4 py-4">
+    <PageShell className="max-w-[980px] gap-4">
       <SectionCard className="grid gap-2 p-5">
         <h1 className="m-0 text-lg text-slate-900">{title}</h1>
         <p className="m-0 text-sm text-slate-500">{body}</p>
@@ -86,7 +86,7 @@ export default async function AdminOffertCustomerResponsePage({ params }: { para
   }
 
   return (
-    <PageShell className="max-w-[980px] gap-3 px-4 py-4">
+    <PageShell className="max-w-[980px] gap-3">
       <div className="grid gap-1">
         <h1 className="m-0 text-lg text-slate-900">Kunduppgifter (admin)</h1>
         <p className="m-0 text-xs text-slate-500">
@@ -162,7 +162,7 @@ export default async function AdminOffertCustomerResponsePage({ params }: { para
       </SectionCard>
 
       <div className="text-xs text-slate-500">
-        Snabböppna offert: <Link href={`/offert/kalkylator?load=${encodeURIComponent(offertId)}`} className="text-blue-700 underline underline-offset-2">/offert/kalkylator?load=…</Link>
+        Snabböppna offert: <Link href={`/offert/kalkylator?load=${encodeURIComponent(offertId)}`} className="text-emerald-700 underline underline-offset-2">/offert/kalkylator?load=…</Link>
       </div>
     </PageShell>
   );
