@@ -281,9 +281,11 @@ export default function AppSidebar({
         className="flex items-center gap-3 px-4 pb-2.5 lg:hidden"
         style={{ backgroundColor: 'var(--crm-sidebar-bg)', paddingTop: 'calc(0.625rem + env(safe-area-inset-top))' }}
       >
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/brand/Ekovilla_vit.png" alt="Ekovilla" className="h-5 w-auto" />
-        <span className="text-[11px] font-medium" style={{ color: 'var(--crm-sidebar-text-muted)' }}>{brandSub}</span>
+        <Link href="/" title="Till start" onClick={() => setPendingHref('/')} className="flex items-center gap-3 no-underline">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/brand/Ekovilla_vit.png" alt="Ekovilla" className="h-5 w-auto" />
+          <span className="text-[11px] font-medium" style={{ color: 'var(--crm-sidebar-text-muted)' }}>{brandSub}</span>
+        </Link>
         <button
           type="button"
           onClick={() => setMobileOpen(true)}
@@ -325,17 +327,25 @@ export default function AppSidebar({
       >
         {/* Logo + collapse toggle */}
         <div className={cn('flex items-center justify-between px-4 pb-3 [padding-top:calc(1.25rem+env(safe-area-inset-top))] lg:pt-5', collapsed && 'lg:flex-col lg:items-center lg:gap-2 lg:px-3')}>
-          <div className={cn('crm-fade-in', collapsed && 'lg:hidden')}>
+          <Link
+            href="/"
+            title="Till start"
+            onClick={() => setPendingHref('/')}
+            className={cn('crm-fade-in block no-underline', collapsed && 'lg:hidden')}
+          >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/brand/Ekovilla_vit.png" alt="Ekovilla" className="h-6 w-auto" />
             <p className="mt-1 text-[11px] font-medium" style={{ color: 'var(--crm-sidebar-text-muted)' }}>{brandSub}</p>
-          </div>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src="/brand/Ekovilla_logga_vit.png"
-            alt="Ekovilla"
-            className={cn('crm-fade-in hidden h-6 w-6 object-contain', collapsed ? 'lg:block' : 'lg:hidden')}
-          />
+          </Link>
+          <Link
+            href="/"
+            title="Till start"
+            onClick={() => setPendingHref('/')}
+            className={cn('crm-fade-in hidden', collapsed ? 'lg:block' : 'lg:hidden')}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/brand/Ekovilla_logga_vit.png" alt="Ekovilla" className="h-6 w-6 object-contain" />
+          </Link>
           <button
             type="button"
             onClick={toggleCollapsed}
