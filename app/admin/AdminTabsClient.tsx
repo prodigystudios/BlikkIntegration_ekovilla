@@ -69,23 +69,17 @@ export default function AdminTabsClient() {
           </div>
         </div>
 
-        <TabsList aria-label="Adminytor" className="gap-2.5">
-          {tabs.map((tabDef) => {
-            const active = tab === tabDef.id;
-
-            return (
-              <TabsTrigger
-                key={tabDef.id}
-                onClick={() => setTab(tabDef.id)}
-                active={active}
-                variant="card"
-                className="min-w-[168px]"
-              >
-                <span className="font-bold">{tabDef.label}</span>
-                <span className={active ? 'text-xs opacity-90' : 'text-xs opacity-75'}>{tabDef.summary}</span>
-              </TabsTrigger>
-            );
-          })}
+        <TabsList aria-label="Adminytor" className="gap-2">
+          {tabs.map((tabDef) => (
+            <TabsTrigger
+              key={tabDef.id}
+              onClick={() => setTab(tabDef.id)}
+              active={tab === tabDef.id}
+              title={tabDef.summary}
+            >
+              {tabDef.label}
+            </TabsTrigger>
+          ))}
         </TabsList>
       </section>
 
