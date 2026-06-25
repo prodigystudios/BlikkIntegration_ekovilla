@@ -130,11 +130,6 @@ const navIcons: Record<string, JSX.Element> = {
       <rect x="4" y="2" width="16" height="20" rx="2" /><line x1="8" y1="6" x2="16" y2="6" /><line x1="8" y1="10" x2="10" y2="10" /><line x1="14" y1="10" x2="16" y2="10" /><line x1="8" y1="14" x2="10" y2="14" /><line x1="14" y1="14" x2="16" y2="14" />
     </svg>
   ),
-  '/offert': (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M4 2h16a2 2 0 012 2v16a2 2 0 01-2 2H4a2 2 0 01-2-2V4a2 2 0 012-2z" /><line x1="8" y1="7" x2="16" y2="7" /><line x1="8" y1="11" x2="16" y2="11" /><line x1="8" y1="15" x2="12" y2="15" />
-    </svg>
-  ),
   '/egenkontroll': (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" />
@@ -329,7 +324,7 @@ export default function AppSidebar({
         style={{ backgroundColor: 'var(--crm-sidebar-bg)' }}
       >
         {/* Logo + collapse toggle */}
-        <div className={cn('flex items-center justify-between px-4 pb-3 [padding-top:calc(1.25rem+env(safe-area-inset-top))] lg:pt-5', collapsed && 'lg:px-3')}>
+        <div className={cn('flex items-center justify-between px-4 pb-3 [padding-top:calc(1.25rem+env(safe-area-inset-top))] lg:pt-5', collapsed && 'lg:flex-col lg:items-center lg:gap-2 lg:px-3')}>
           <div className={cn(collapsed && 'lg:hidden')}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/brand/Ekovilla_vit.png" alt="Ekovilla" className="h-6 w-auto" />
@@ -345,7 +340,7 @@ export default function AppSidebar({
             type="button"
             onClick={toggleCollapsed}
             aria-label={collapsed ? 'Visa meny' : 'Fäll ihop meny'}
-            className={cn('hidden h-8 w-8 shrink-0 place-items-center rounded-lg text-white/80 transition-colors hover:bg-white/10 hover:text-white lg:grid', collapsed && 'lg:absolute lg:right-2 lg:top-2')}
+            className="hidden h-8 w-8 shrink-0 place-items-center rounded-lg text-white/80 transition-colors hover:bg-white/10 hover:text-white lg:grid"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={cn('transition-transform', collapsed && 'rotate-180')}>
               <polyline points="15 18 9 12 15 6" />

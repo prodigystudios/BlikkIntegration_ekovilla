@@ -20,7 +20,6 @@ export const APP_NAV_ITEMS: AppNavItem[] = [
   { href: '/plannering', label: 'Planering', roles: ['sales', 'admin'] },
   { href: '/crm/korjournal', label: 'Körjournal', roles: ['sales', 'admin'] },
   { href: '/offert/kalkylator', label: 'Kalkylator', roles: ['sales', 'admin'] },
-  { href: '/offert', label: 'Skapa offert', roles: ['admin'] },
 
   // Installer / member block
   { href: '/egenkontroll', label: 'Egenkontroll', roles: ['member', 'admin'] },

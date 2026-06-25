@@ -87,14 +87,6 @@ const baseExtra: Record<string, Omit<QuickLink, 'href' | 'title'>> = {
       <path d="M19.4 15a1 1 0 0 0 .2-1l-.6-1.1a7 7 0 0 0 0-1.8l.6-1.1a1 1 0 0 0-.2-1l-1.2-1.2a1 1 0 0 0-1-.2l-1.1.6a7 7 0 0 0-1.8 0l-1.1-.6a1 1 0 0 0-1 .2L9.6 7a1 1 0 0 0-.2 1l.6 1.1a7 7 0 0 0 0 1.8L9.4 12a1 1 0 0 0 .2 1l1.2 1.2a1 1 0 0 0 1 .2l1.1-.6a7 7 0 0 0 1.8 0l1.1.6a1 1 0 0 0 1-.2Z" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   ) },
-  '/offert': { desc: 'Skapa offert', icon: (
-    <svg width="28" height="28" viewBox="0 0 24 24" strokeWidth={1.6} stroke="currentColor" fill="none" aria-hidden>
-      <path d="M4 2h16a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z"/>
-      <line x1="8" y1="6" x2="16" y2="6"/>
-      <line x1="8" y1="10" x2="16" y2="10"/>
-      <line x1="8" y1="14" x2="12" y2="14"/>
-    </svg>
-  ) },
   '/offert/kalkylator': { desc: 'Kalkylera offert (ROT, marginal, etablering)', icon: (
     <svg width="28" height="28" viewBox="0 0 24 24" strokeWidth={1.6} stroke="currentColor" fill="none" aria-hidden>
       <path d="M4 2h16a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z"/>
@@ -205,7 +197,6 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
         { href: '/mina-dokument', title: 'Mina dokument', ...baseExtra['/mina-dokument'] },
         { href: '/crm/dokument', title: 'Dokument', ...baseExtra['/crm/dokument'] },
         { href: '/admin', title: 'Admin', ...baseExtra['/admin'] },
-        { href: '/offert', title: 'Skapa offert', ...baseExtra['/offert'] },
         { href: '/offert/kalkylator', title: 'Kalkylator Försäljning Privat', ...baseExtra['/offert/kalkylator'] },
       ];
     }
