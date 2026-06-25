@@ -602,7 +602,6 @@ export default function EgenkontrollPage() {
   const totalOpenBags = sumOpenBags(etapperOpen);
   const totalClosedBags = sumClosedBags(etapperClosed);
   const totalBags = totalOpenBags + totalClosedBags;
-  const selectedPhotosCount = Number(Boolean(beforePhoto)) + Number(Boolean(afterPhoto));
 
   return (
     <div style={{ maxWidth: 1240, margin: '0 auto', display: 'grid', gap: 18, width: '100%', boxSizing: 'border-box', overflowX: 'clip' }}>
@@ -610,25 +609,7 @@ export default function EgenkontrollPage() {
         <InitOrderId orderId={orderId} setOrderId={setOrderId} />
       </Suspense>
 
-      <section style={heroCardStyle}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap', minWidth: 0 }}>
-          <div style={{ display: 'grid', gap: 8, maxWidth: 760, minWidth: 0, flex: '1 1 320px' }}>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-              <span style={heroEyebrowStyle}>Egenkontroll</span>
-              <span style={heroChipStyle}>{totalBags} säckar registrerade</span>
-              <span style={heroChipStyle}>{selectedPhotosCount} bilder valda</span>
-            </div>
-            <div style={{ display: 'grid', gap: 6, minWidth: 0 }}>
-              <h1 style={{ margin: 0, fontSize: isNarrow ? 30 : 38, lineHeight: 1.02, letterSpacing: -1, color: '#0f172a' }}>Skapa egenkontroll</h1>
-              <p style={{ margin: 0, color: '#475569', fontSize: 16, lineHeight: 1.5 }}>Fyll i detaljer, dokumentera med bilder och signatur, och generera en PDF-rapport att dela med kund och kollegor.</p>
-            </div>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: isNarrow ? 'repeat(2, minmax(0, 1fr))' : 'repeat(2, minmax(0, 1fr))', gap: 8, minWidth: 0, width: isNarrow ? '100%' : 340, maxWidth: '100%', flex: isNarrow ? '1 1 100%' : '0 1 340px' }}>
-            <div style={heroStatCardStyle}><span style={heroStatLabelStyle}>Öppna etapper</span><strong style={heroStatValueStyle}>{etapperOpen.length}</strong></div>
-            <div style={heroStatCardStyle}><span style={heroStatLabelStyle}>Slutna etapper</span><strong style={heroStatValueStyle}>{etapperClosed.length}</strong></div>
-          </div>
-        </div>
-      </section>
+      <h1 style={{ margin: 0, fontSize: 18, fontWeight: 700, letterSpacing: '-0.01em', color: '#0f172a' }}>Skapa egenkontroll</h1>
 
       <section style={sectionCardStyle}>
         <div style={{ display: 'grid', gap: 6 }}>
@@ -1254,66 +1235,6 @@ function ControlCard({ label, checked, onChange, comment, onCommentChange, place
     </div>
   );
 }
-
-const heroCardStyle: React.CSSProperties = {
-  border: '1px solid #e0e8dc',
-  borderRadius: 28,
-  padding: '20px 20px 18px',
-  background: '#f9fbf7',
-  boxShadow: '0 1px 3px rgba(20,44,27,0.06), 0 18px 36px -18px rgba(20,44,27,0.24)',
-  display: 'grid',
-  gap: 16,
-};
-
-const heroEyebrowStyle: React.CSSProperties = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  padding: '4px 10px',
-  borderRadius: 999,
-  background: '#d1fae5',
-  border: '1px solid #a7f3d0',
-  color: '#047857',
-  fontSize: 11,
-  fontWeight: 800,
-  letterSpacing: 0.35,
-  textTransform: 'uppercase',
-};
-
-const heroChipStyle: React.CSSProperties = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  padding: '4px 8px',
-  borderRadius: 999,
-  background: '#f8fafc',
-  border: '1px solid #e2e8f0',
-  color: '#475569',
-  fontSize: 12,
-  fontWeight: 700,
-};
-
-const heroStatCardStyle: React.CSSProperties = {
-  display: 'grid',
-  gap: 5,
-  minWidth: 0,
-  padding: '12px 12px 10px',
-  borderRadius: 16,
-  border: '1px solid #e0e8dc',
-  background: '#f9fbf7',
-};
-
-const heroStatLabelStyle: React.CSSProperties = {
-  fontSize: 11,
-  fontWeight: 800,
-  letterSpacing: 0.3,
-  textTransform: 'uppercase',
-  color: '#64748b',
-};
-
-const heroStatValueStyle: React.CSSProperties = {
-  fontSize: 22,
-  fontWeight: 800,
-  color: '#0f172a',
-};
 
 const sectionCardStyle: React.CSSProperties = {
   border: '1px solid #e0e8dc',
