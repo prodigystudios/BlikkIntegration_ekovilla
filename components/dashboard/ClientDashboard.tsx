@@ -260,8 +260,9 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
         {/* Installers (members) get the work schedule first — their most important view */}
         {isMember && scheduleSection}
 
-        {/* Quick links */}
-        <section className={cn(crm.cardInner)}>
+        {/* Quick links — only on phone/tablet; on desktop the sidebar is always open so
+            these would be redundant and just take space. */}
+        <section className={cn(crm.cardInner, 'lg:hidden')}>
           <p className={cn('mb-3', crm.sectionTitle)}>Snabba genvägar</p>
           <QuickLinksGrid links={links} compact={isSmall} />
         </section>
