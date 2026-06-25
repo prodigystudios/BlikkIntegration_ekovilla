@@ -519,7 +519,7 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
     compact ? 'min-w-[100px] px-2.5 py-[5px] text-[11px]' : 'min-w-[112px] px-3 py-1.5 text-xs'
   );
   const metaPillClass = cn(
-    'inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-[#dbe4ef] bg-[linear-gradient(180deg,#ffffff_0%,#f8fbff_100%)] font-semibold text-slate-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.78)]',
+    'inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-[#e0e8dc] bg-[linear-gradient(180deg,#ffffff_0%,#f9fbf7_100%)] font-semibold text-slate-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.78)]',
     compact ? 'px-[9px] py-[5px] text-[10.5px]' : 'px-[9px] py-[5px] text-[11.5px]'
   );
 
@@ -548,7 +548,7 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
           </div>
         </div>
 
-        <div className={cn('grid w-full box-border items-center gap-1.5 rounded-[16px] border border-slate-200 bg-[linear-gradient(180deg,#fdfefe_0%,#f4f8fc_100%)] shadow-[inset_0_1px_0_rgba(255,255,255,0.85)] [grid-template-columns:minmax(0,1fr)_auto_minmax(0,1fr)]', compact ? 'p-1.5' : 'p-2.5')}>
+        <div className={cn('grid w-full box-border items-center gap-1.5 rounded-[16px] border border-[#e0e8dc] bg-[linear-gradient(180deg,#ffffff_0%,#f9fbf7_100%)] shadow-[inset_0_1px_0_rgba(255,255,255,0.85)] [grid-template-columns:minmax(0,1fr)_auto_minmax(0,1fr)]', compact ? 'p-1.5' : 'p-2.5')}>
           <button
             type="button"
             onClick={()=>setWeekOffset(prev => prev - 1)}
@@ -572,7 +572,7 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
       </div>
 
       {/* Mon–Fri selector */}
-      <div className={cn('grid gap-2 rounded-[20px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#fbfdff_100%)] shadow-[0_10px_22px_rgba(15,23,42,0.05)]', compact ? 'px-2.5 pb-2 pt-2.5' : 'p-3.5')}>
+      <div className={cn('grid gap-2 rounded-[20px] border border-[#e0e8dc] bg-[linear-gradient(180deg,#ffffff_0%,#f9fbf7_100%)] shadow-[0_10px_22px_rgba(20,44,27,0.05)]', compact ? 'px-2.5 pb-2 pt-2.5' : 'p-3.5')}>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <span className="text-xs font-semibold text-slate-500">Visa dag</span>
           <span className={cn('text-slate-500', compact ? 'text-[10.5px]' : 'text-[11.5px]')}>{selectedDayLabel}</span>
@@ -619,7 +619,7 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
 
       {loading && <div className="px-0.5 pt-0 text-xs text-slate-500">Laddar…</div>}
       {!loading && grouped.length === 0 && (
-        <div className={cn('inline-flex w-fit items-center gap-2 rounded-full border border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#f8fafc_100%)] text-slate-500 shadow-[0_6px_14px_rgba(15,23,42,0.04)]', compact ? 'px-[11px] py-[9px] text-xs' : 'px-3 py-2.5 text-xs')}>
+        <div className={cn('inline-flex w-fit items-center gap-2 rounded-full border border-[#e0e8dc] bg-[#f9fbf7] text-slate-500 shadow-[0_6px_14px_rgba(20,44,27,0.04)]', compact ? 'px-[11px] py-[9px] text-xs' : 'px-3 py-2.5 text-xs')}>
           Inga jobb planerade för vald period.
         </div>
       )}
@@ -682,7 +682,7 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                       role="button"
                       tabIndex={0}
                       className={cn(
-                        'relative grid cursor-pointer rounded-[14px] border border-[#dbe4ef] bg-[linear-gradient(180deg,#ffffff_0%,#fcfdff_100%)] shadow-[0_8px_18px_rgba(15,23,42,0.05)]',
+                        'relative grid cursor-pointer rounded-[14px] border border-[#e0e8dc] bg-[linear-gradient(180deg,#ffffff_0%,#f9fbf7_100%)] shadow-[0_8px_18px_rgba(20,44,27,0.05)]',
                         compact ? 'gap-2 p-2.5' : 'gap-2.5 p-3'
                       )}
                       style={{ borderLeft: `3px solid ${theme.accent}` }}
@@ -874,13 +874,13 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
               aria-busy={detailLoading ? true : undefined}
               onClick={e => e.stopPropagation()}
               className={cn(
-                'grid min-w-0 overflow-x-hidden overflow-y-auto overscroll-contain border border-[#dbe4ef] bg-white shadow-[0_24px_60px_rgba(15,23,42,0.28)]',
+                'grid min-w-0 overflow-x-hidden overflow-y-auto overscroll-contain border border-[#e0e8dc] bg-white shadow-[0_24px_60px_rgba(15,23,42,0.28)]',
                 isDesktopModal ? 'w-[min(660px,88vw)] max-h-[78vh] gap-2.5 rounded-2xl p-3' : 'w-[min(760px,94vw)] max-h-[calc(100vh-env(safe-area-inset-top,0px)-env(safe-area-inset-bottom,0px)-104px)] gap-3.5 rounded-[20px] px-4 pb-[calc(env(safe-area-inset-bottom,0px)+24px)] pt-4'
               )}
             >
               <div
                 className={cn(
-                  'grid bg-[linear-gradient(180deg,#ffffff_0%,#f8fbff_100%)]',
+                  'grid bg-[linear-gradient(180deg,#ffffff_0%,#f9fbf7_100%)]',
                   isDesktopModal ? 'gap-2.5 rounded-[14px] px-3 py-2.5' : 'gap-3.5 rounded-[18px] px-[14px] py-[14px]'
                 )}
                 style={{ border: `1px solid ${detailTheme.accent}22` }}
@@ -1051,7 +1051,7 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                     {commentsExpanded && !commentsLoading && !commentsError && comments.length > 0 && (
                       <div className="grid min-w-0 gap-1.5">
                         {comments.slice(0,10).map(c => (
-                          <div key={c.id} className={cn('grid min-w-0 gap-1 rounded-[12px] border border-slate-200 bg-[#fbfdff]', isDesktopModal ? 'px-[9px] py-[7px]' : 'px-3 py-2.5')}>
+                          <div key={c.id} className={cn('grid min-w-0 gap-1 rounded-[12px] border border-[#e0e8dc] bg-[#f9fbf7]', isDesktopModal ? 'px-[9px] py-[7px]' : 'px-3 py-2.5')}>
                             <div className="flex min-w-0 flex-wrap items-center gap-2">
                               {c.userName && <span className="text-[11px] font-bold text-slate-600">{c.userName}</span>}
                               {c.createdAt && <span className="text-[10px] text-slate-500">{formatRelativeTime(c.createdAt)}</span>}
@@ -1065,7 +1065,7 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                   </div>
                 )}
                 {/* Rapportering UI for installers */}
-                <div className={cn('grid border border-[#dbe4ef] bg-[linear-gradient(180deg,#f8fafc_0%,#ffffff_100%)]', isDesktopModal ? 'gap-2 rounded-xl p-2.5' : 'gap-2.5 rounded-2xl p-[14px]')}>
+                <div className={cn('grid border border-[#e0e8dc] bg-[linear-gradient(180deg,#f9fbf7_0%,#ffffff_100%)]', isDesktopModal ? 'gap-2 rounded-xl p-2.5' : 'gap-2.5 rounded-2xl p-[14px]')}>
                   <div className="flex items-center gap-2">
                     <strong className={cn('text-slate-900', isDesktopModal ? 'text-xs' : 'text-sm')}>Rapportering</strong>
                     <div className="h-px flex-1 bg-slate-200" />
