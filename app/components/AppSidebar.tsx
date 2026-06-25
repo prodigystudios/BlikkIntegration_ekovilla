@@ -330,12 +330,12 @@ export default function AppSidebar({
             <img src="/brand/Ekovilla_vit.png" alt="Ekovilla" className="h-6 w-auto" />
             <p className="mt-1 text-[11px] font-medium" style={{ color: 'var(--crm-sidebar-text-muted)' }}>{brandSub}</p>
           </div>
-          <div
-            className={cn('hidden h-9 w-9 place-items-center rounded-lg text-sm font-extrabold text-white', collapsed ? 'lg:grid' : 'lg:hidden')}
-            style={{ backgroundColor: 'rgba(124,200,150,.18)', color: '#cfe8d6' }}
-          >
-            E
-          </div>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/brand/Ekovilla_logga_vit.png"
+            alt="Ekovilla"
+            className={cn('hidden h-9 w-9 object-contain', collapsed ? 'lg:block' : 'lg:hidden')}
+          />
           <button
             type="button"
             onClick={toggleCollapsed}
