@@ -205,6 +205,10 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
 
   const [timeModalOpen, setTimeModalOpen] = useState(false);
   const [timePrefill, setTimePrefill] = useState<{ project?: string; projectId?: string; date?: string } | null>(null);
+  // Hide the approvals / tasks cards entirely when there's nothing to show (the widgets
+  // report visibility = loading || error || has-items). Start true so they mount and report.
+  const [approvalsVisible, setApprovalsVisible] = useState(true);
+  const [tasksVisible, setTasksVisible] = useState(true);
   const toast = useToast();
 
   const todayMeta = useMemo(() => {
@@ -270,12 +274,16 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
         {/* Schedule below quick links for non-members (admin) */}
         {!isMember && scheduleSection}
 
-        <section className={cardClass}>
-          <DashboardDocumentApprovals compact={isSmall} />
-        </section>
-        <section className={cardClass}>
-          <DashboardTasks compact={isSmall} />
-        </section>
+        {approvalsVisible && (
+          <section className={cardClass}>
+            <DashboardDocumentApprovals compact={isSmall} hideWhenEmpty onVisibilityChange={setApprovalsVisible} />
+          </section>
+        )}
+        {tasksVisible && (
+          <section className={cardClass}>
+            <DashboardTasks compact={isSmall} hideWhenEmpty onVisibilityChange={setTasksVisible} />
+          </section>
+        )}
         <section className={cardClass}>
           <DashboardNotes compact={isSmall} />
         </section>
