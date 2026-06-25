@@ -242,7 +242,7 @@ export default function TimeReportsPage() {
   return (
     <div className="mx-auto grid w-full max-w-[1000px] grid-cols-1 gap-4 pb-[calc(env(safe-area-inset-bottom,0px)+24px)]">
       {/* Sticky header with week navigation for better mobile UX */}
-      <div className="sticky top-0 z-[5] -mt-4 grid gap-1 border-b border-[#e0e8dc] bg-[#e5ede5] pb-2 pt-4 lg:-mt-6 lg:pt-6">
+      <div className="sticky top-0 z-10 grid gap-1 border-b border-[#e0e8dc] bg-[#e5ede5] pb-2 pt-2 before:pointer-events-none before:absolute before:inset-x-0 before:bottom-full before:h-8 before:bg-[#e5ede5] before:content-['']">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="m-0 text-lg font-bold tracking-tight text-slate-900">Veckans rapporter</h1>
           <div className="flex flex-wrap items-center gap-1.5">
