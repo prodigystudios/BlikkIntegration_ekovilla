@@ -269,7 +269,7 @@ export default function AppSidebar({
         onMouseLeave={(e) => { if (!active) (e.currentTarget as HTMLElement).style.backgroundColor = ''; }}
       >
         {!isChild && <span className={cn('shrink-0', active ? 'text-emerald-300' : '')}>{icon}</span>}
-        <span className={cn('truncate', collapsed && 'lg:hidden')}>{node.label}</span>
+        <span className={cn('truncate crm-fade-in', collapsed && 'lg:hidden')}>{node.label}</span>
       </Link>
     );
   };
@@ -325,7 +325,7 @@ export default function AppSidebar({
       >
         {/* Logo + collapse toggle */}
         <div className={cn('flex items-center justify-between px-4 pb-3 [padding-top:calc(1.25rem+env(safe-area-inset-top))] lg:pt-5', collapsed && 'lg:flex-col lg:items-center lg:gap-2 lg:px-3')}>
-          <div className={cn(collapsed && 'lg:hidden')}>
+          <div className={cn('crm-fade-in', collapsed && 'lg:hidden')}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/brand/Ekovilla_vit.png" alt="Ekovilla" className="h-6 w-auto" />
             <p className="mt-1 text-[11px] font-medium" style={{ color: 'var(--crm-sidebar-text-muted)' }}>{brandSub}</p>
@@ -334,7 +334,7 @@ export default function AppSidebar({
           <img
             src="/brand/Ekovilla_logga_vit.png"
             alt="Ekovilla"
-            className={cn('hidden h-6 w-6 object-contain', collapsed ? 'lg:block' : 'lg:hidden')}
+            className={cn('crm-fade-in hidden h-6 w-6 object-contain', collapsed ? 'lg:block' : 'lg:hidden')}
           />
           <button
             type="button"
@@ -377,7 +377,7 @@ export default function AppSidebar({
                   <path d="M15 18l-6-6 6-6" />
                 </svg>
               </span>
-              <span className={cn('truncate', collapsed && 'lg:hidden')}>Till start</span>
+              <span className={cn('truncate crm-fade-in', collapsed && 'lg:hidden')}>Till start</span>
             </Link>
           </div>
         )}
@@ -409,7 +409,7 @@ export default function AppSidebar({
                       onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = ''; }}
                     >
                       <span className={cn('shrink-0', groupActive ? 'text-emerald-300' : '')}>{navIcons[item.href] ?? fallbackIcon}</span>
-                      <span className={cn('flex-1 truncate text-left', collapsed && 'lg:hidden')}>{item.label}</span>
+                      <span className={cn('flex-1 truncate text-left crm-fade-in', collapsed && 'lg:hidden')}>{item.label}</span>
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={cn('shrink-0 transition-transform', open && 'rotate-180', collapsed && 'lg:hidden')}>
                         <polyline points="6 9 12 15 18 9" />
                       </svg>

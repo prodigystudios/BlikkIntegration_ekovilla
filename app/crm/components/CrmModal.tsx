@@ -39,7 +39,7 @@ export default function CrmModal({
 
   return (
     <div
-      className="fixed inset-0 z-[2800] flex items-end justify-center bg-slate-950/50 [backdrop-filter:blur(4px)] sm:items-center sm:p-4"
+      className="crm-overlay-in fixed inset-0 z-[2800] flex items-end justify-center bg-slate-950/50 [backdrop-filter:blur(4px)] sm:items-center sm:p-4"
       onClick={onClose}
     >
       <div
@@ -48,7 +48,7 @@ export default function CrmModal({
         aria-label={ariaLabel}
         onClick={(e) => e.stopPropagation()}
         className={cn(
-          'flex h-[100dvh] max-h-[100dvh] w-full flex-col overflow-hidden rounded-none bg-white shadow-[0_-12px_50px_rgba(15,23,42,0.30)] sm:h-auto sm:max-h-[88vh] sm:rounded-2xl sm:shadow-[0_30px_80px_rgba(15,23,42,0.28)]',
+          'crm-sheet-in flex h-[100dvh] max-h-[100dvh] w-full flex-col overflow-hidden rounded-none bg-white shadow-[0_-12px_50px_rgba(15,23,42,0.30)] sm:h-auto sm:max-h-[88vh] sm:rounded-2xl sm:shadow-[0_30px_80px_rgba(15,23,42,0.28)]',
           maxWidth,
         )}
       >

@@ -298,6 +298,24 @@ select.select-field.status-select--lost {
   font-weight: 600;
 }
 
+/* Modal entrance (CrmModal): overlay fades in; the panel rises as a sheet on phones
+   and fades + scales in on desktop. Respects prefers-reduced-motion. */
+@keyframes crmOverlayIn { from { opacity: 0 } to { opacity: 1 } }
+@keyframes crmSheetIn { from { opacity: 0; transform: translateY(100%) } to { opacity: 1; transform: translateY(0) } }
+@keyframes crmDialogIn { from { opacity: 0; transform: translateY(8px) scale(.985) } to { opacity: 1; transform: translateY(0) scale(1) } }
+.crm-overlay-in { animation: crmOverlayIn .18s ease-out both; }
+.crm-sheet-in { animation: crmSheetIn .3s cubic-bezier(.22, 1, .36, 1) both; }
+@media (min-width: 640px) { .crm-sheet-in { animation: crmDialogIn .2s ease-out both; } }
+
+/* Soft fade-in for content that appears (e.g. sidebar logo/labels when expanding —
+   CSS animations restart when an element goes from display:none to shown). */
+@keyframes crmFadeIn { from { opacity: 0 } to { opacity: 1 } }
+.crm-fade-in { animation: crmFadeIn .2s ease-out both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .crm-overlay-in, .crm-sheet-in, .crm-fade-in { animation: none; }
+}
+
 /* Simple spinner utility */
 @keyframes spin { to { transform: rotate(360deg); } }
 .spin { animation: spin 1s linear infinite; }
