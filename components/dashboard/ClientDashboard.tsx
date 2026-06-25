@@ -216,6 +216,20 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
     return { greeting, weekday: weekday.charAt(0).toUpperCase() + weekday.slice(1), monthDay };
   }, []);
 
+  const isMember = effectiveRole === 'member';
+  const scheduleSection = effectiveRole !== 'sales' ? (
+    <section className={cardClass}>
+      <DashboardSchedule
+        compact={isSmall}
+        onReportTime={(info: { projectId?: string; projectName?: string; orderNumber?: string; day?: string }) => {
+          const label = info.orderNumber ? `#${info.orderNumber}` : (info.projectName || info.projectId || '');
+          setTimePrefill({ project: label, projectId: info.projectId, date: info.day });
+          setTimeModalOpen(true);
+        }}
+      />
+    </section>
+  ) : null;
+
   return (
     <>
       {newsItem && <NewsModal open={newsOpen} item={newsItem} onClose={closeNews} />}
@@ -243,25 +257,17 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
           </button>
         </div>
 
+        {/* Installers (members) get the work schedule first — their most important view */}
+        {isMember && scheduleSection}
+
         {/* Quick links */}
         <section className={cn(crm.cardInner)}>
           <p className={cn('mb-3', crm.sectionTitle)}>Snabba genvägar</p>
-          <QuickLinksGrid links={links} />
+          <QuickLinksGrid links={links} compact={isSmall} />
         </section>
 
-        {/* Schedule (not for sales) */}
-        {effectiveRole !== 'sales' && (
-          <section className={cardClass}>
-            <DashboardSchedule
-              compact={isSmall}
-              onReportTime={(info: { projectId?: string; projectName?: string; orderNumber?: string; day?: string }) => {
-                const label = info.orderNumber ? `#${info.orderNumber}` : (info.projectName || info.projectId || '');
-                setTimePrefill({ project: label, projectId: info.projectId, date: info.day });
-                setTimeModalOpen(true);
-              }}
-            />
-          </section>
-        )}
+        {/* Schedule below quick links for non-members (admin) */}
+        {!isMember && scheduleSection}
 
         <section className={cardClass}>
           <DashboardDocumentApprovals compact={isSmall} />
