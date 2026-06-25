@@ -634,7 +634,7 @@ export default function EgenkontrollPage() {
           <div style={{ marginTop: 8, color: '#6b7280', fontSize: 14 }}>Hämtar projektdetaljer…</div>
         )}
         {project && (
-          <div style={{ border: '1px solid #e0e8dc', borderRadius: 18, padding: 14, background: '#f8fafc' }}>
+          <div style={{ border: '1px solid #e0e8dc', borderRadius: 18, padding: 14, background: '#ffffff' }}>
             {project.error ? (
               <div style={{ color: 'crimson' }}>Error: {project.error}</div>
             ) : (
@@ -735,7 +735,7 @@ export default function EgenkontrollPage() {
               <input type="number" min={1} max={10} inputMode="numeric" value={klumpighet} onChange={(e) => { const v = e.target.value; if (v === '') return setKlumpighet(''); const num = Number(v); if (!Number.isNaN(num) && num >= 1 && num <= 10) setKlumpighet(String(num)); }} placeholder="-" style={textFieldStyle} />
             </label>
           </div>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 14px', borderRadius: 16, border: '1px solid #e2e8f0', background: '#f8fafc' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 14px', borderRadius: 16, border: '1px solid #e0e8dc', background: '#f9fbf7' }}>
             <input type="checkbox" checked={flufferUsed} onChange={(e) => setFlufferUsed(e.target.checked)} />
             <span style={{ fontSize: 13 }}>Fluffer använd</span>
           </label>
