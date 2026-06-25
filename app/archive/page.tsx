@@ -34,9 +34,12 @@ export default async function ArchivePage({ searchParams }: { searchParams: Reco
   }
   const { files } = await fetchFiles(sp.toString());
   return (
-    <main className="archive">
-      <h1>Egenkontroller</h1>
-  <ArchiveList initial={files as any} />
-    </main>
+    <div className="mx-auto grid w-full max-w-[900px] grid-cols-1 gap-4">
+      <div>
+        <h1 className="m-0 text-lg font-bold tracking-tight text-slate-900">Egenkontroller</h1>
+        <p className="m-0 mt-1 text-sm text-slate-500">Arkiverade egenkontroller — sök och ladda ned.</p>
+      </div>
+      <ArchiveList initial={files as any} />
+    </div>
   );
 }

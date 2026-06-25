@@ -7,7 +7,7 @@ export const badgeVariants = cva('inline-flex items-center rounded-full border p
     variant: {
       neutral: 'border-slate-200 bg-slate-50 text-slate-600',
       info: 'border-indigo-100 bg-indigo-50 text-indigo-700',
-      accent: 'border-blue-200 bg-blue-50 text-blue-700',
+      accent: 'border-emerald-200 bg-emerald-50 text-emerald-700',
       danger: 'border-red-200 bg-red-50 text-red-800',
     },
   },

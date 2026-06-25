@@ -5,16 +5,19 @@ type PageShellProps = HTMLAttributes<HTMLElement> & {
   children: ReactNode;
 };
 
+// Centering/max-width wrapper for full-page content. Renders a plain <div> — the
+// app shell already provides the page <main> and its padding, so nesting another
+// <main> here would be invalid and double-pad the content.
 export default function PageShell({ className, children, ...props }: PageShellProps) {
   return (
-    <main
+    <div
       className={cn(
-        'mx-auto box-border flex w-full max-w-[1680px] flex-col gap-4 px-4 py-4 text-ui-text-strong sm:px-5 lg:px-6',
+        'mx-auto box-border flex w-full max-w-[1680px] flex-col gap-4 text-ui-text-strong',
         className,
       )}
       {...props}
     >
       {children}
-    </main>
+    </div>
   );
 }

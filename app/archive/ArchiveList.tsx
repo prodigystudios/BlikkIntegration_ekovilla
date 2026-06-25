@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
+import { crm } from "@/app/crm/lib/crmTokens";
 
 type FileEntry = { path: string; name: string; url?: string; size?: number; updatedAt?: string };
 
@@ -21,6 +22,9 @@ function formatDateUTC(iso?: string) {
   return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
 }
 
+const ghostBtn =
+  'inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[13px] font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-800 disabled:opacity-50';
+
 export default function ArchiveList({ initial }: { initial?: FileEntry[] }) {
   const [files, setFiles] = useState<FileEntry[]>(initial ?? []);
   const [loading, setLoading] = useState(!initial);
@@ -32,12 +36,11 @@ export default function ArchiveList({ initial }: { initial?: FileEntry[] }) {
   useEffect(() => {
     let cancelled = false;
     async function run() {
-      if (initial) return; // already provided by server
+      if (initial) return;
       setLoading(true);
       try {
         const res = await fetch('/api/storage/list-all', { cache: 'no-store' });
         const data = await res.json();
-        console.log(data);
         if (!res.ok) throw new Error(data?.error || 'Kunde inte hämta filer');
         if (!cancelled) setFiles(data.files || []);
       } catch {
@@ -55,7 +58,6 @@ export default function ArchiveList({ initial }: { initial?: FileEntry[] }) {
     try {
       const res = await fetch(`/api/storage/list-all?ts=${Date.now()}`, { cache: 'no-store' });
       const data = await res.json();
-        console.log(data);
       if (!res.ok) throw new Error(data?.error || 'Kunde inte uppdatera');
       setFiles(data.files || []);
     } catch {
@@ -68,12 +70,11 @@ export default function ArchiveList({ initial }: { initial?: FileEntry[] }) {
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     let arr = files;
-    if (q) arr = arr.filter(f => f.name.toLowerCase().includes(q) || f.path.toLowerCase().includes(q));
+    if (q) arr = arr.filter((f) => f.name.toLowerCase().includes(q) || f.path.toLowerCase().includes(q));
     const modifier = dir === "asc" ? 1 : -1;
     const by = (a: FileEntry, b: FileEntry) => {
       if (sort === "name") return a.name.localeCompare(b.name) * modifier;
       if (sort === "size") return ((a.size ?? -1) - (b.size ?? -1)) * modifier;
-      // date default
       const ad = a.updatedAt ? Date.parse(a.updatedAt) : 0;
       const bd = b.updatedAt ? Date.parse(b.updatedAt) : 0;
       return (ad - bd) * modifier;
@@ -82,95 +83,72 @@ export default function ArchiveList({ initial }: { initial?: FileEntry[] }) {
   }, [files, query, sort, dir]);
 
   useEffect(() => {
-    // Keep desc for date/size, asc for name as a sensible default
     if (sort === "name") setDir("asc"); else setDir("desc");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sort]);
 
   return (
-    <div>
-      <div style={{ display: "grid", gap: 8, marginBottom: 12 }}>
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Sök filer (namn eller sökväg)…"
-          style={{ padding: 10, border: "1px solid #e5e7eb", borderRadius: 8 }}
-        />
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+    <div className="grid gap-3">
+      <div className="grid gap-2">
+        <input className={crm.input} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Sök filer (namn eller sökväg)…" />
+        <div className="flex items-center gap-2">
+          <label className="flex items-center gap-2 text-[13px] text-slate-600">
             <span>Sortera:</span>
-            <select className="select-field" value={sort} onChange={(e) => setSort(e.target.value as any)}>
+            <select className={crm.select} value={sort} onChange={(e) => setSort(e.target.value as any)}>
               <option value="date">Datum</option>
               <option value="name">Namn</option>
               <option value="size">Storlek</option>
             </select>
           </label>
-          <button className="btn--plain" type="button" onClick={() => setDir(d => d === "asc" ? "desc" : "asc")}>
+          <button className={ghostBtn} type="button" onClick={() => setDir((d) => (d === "asc" ? "desc" : "asc"))}>
             {dir === "asc" ? "⬆️" : "⬇️"}
           </button>
-          <div style={{ marginLeft: 'auto' }} />
-          <button className="btn--plain" type="button" onClick={refreshNow} disabled={refreshing}>
+          <div className="ml-auto" />
+          <button className={ghostBtn} type="button" onClick={refreshNow} disabled={refreshing}>
             {refreshing ? 'Uppdaterar…' : 'Uppdatera'}
           </button>
         </div>
       </div>
 
       {loading && (
-        <ul className="archive-list" aria-hidden style={{ opacity: 0.85 }}>
+        <div className="grid gap-2" aria-hidden>
           {Array.from({ length: 6 }).map((_, i) => (
-            <li key={i} className="archive-item" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-              <div className="archive-meta" style={{ flex: 1 }}>
-                <div style={{ height: 14, width: '50%', background: '#f3f4f6', borderRadius: 6, marginBottom: 6 }} />
-                <div style={{ height: 12, width: '35%', background: '#f3f4f6', borderRadius: 6, marginBottom: 6 }} />
-                <div style={{ height: 10, width: '25%', background: '#f3f4f6', borderRadius: 6 }} />
-              </div>
-              <div className="archive-actions">
-                <div style={{ height: 28, width: 100, background: '#e5e7eb', borderRadius: 6 }} />
-              </div>
-            </li>
+            <div key={i} className="h-16 animate-pulse rounded-xl border border-[#e3e9df] bg-[#f9fbf7]" />
           ))}
-        </ul>
+        </div>
       )}
-  <ul className="archive-list">
+
+      <ul className="grid list-none gap-2 p-0">
         {filtered.map((f) => (
-          <li key={f.path} className="archive-item">
-            <div className="archive-meta">
-              <div className="file-name" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                {/* PDF icon */}
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  xmlns="http://www.w3.org/2000/svg"
-                  aria-hidden
-                  focusable="false"
-                  style={{ color: '#dc2626' }}
-                >
-                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z" stroke="currentColor" strokeWidth="1.5"/>
-                  <path d="M14 2v6h6" stroke="currentColor" strokeWidth="1.5"/>
-                  <path d="M7 16h10M7 12h10" stroke="currentColor" strokeWidth="1.5"/>
+          <li key={f.path} className="flex items-center justify-between gap-3 rounded-xl border border-[#e3e9df] bg-[#f9fbf7] px-3.5 py-3">
+            <div className="grid min-w-0 gap-0.5">
+              <div className="flex items-center gap-2">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden focusable="false" className="shrink-0 text-rose-600">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z" stroke="currentColor" strokeWidth="1.5" />
+                  <path d="M14 2v6h6" stroke="currentColor" strokeWidth="1.5" />
+                  <path d="M7 16h10M7 12h10" stroke="currentColor" strokeWidth="1.5" />
                 </svg>
-                <span>{f.name}</span>
+                <span className="truncate text-[13px] font-semibold text-slate-900">{f.name}</span>
               </div>
-              <div className="file-path">{f.path}</div>
-              <div style={{ color: "#6b7280", fontSize: 12 }}>
+              <div className="truncate text-[11px] text-slate-400">{f.path}</div>
+              <div className="text-[11px] text-slate-500">
                 {formatDateUTC(f.updatedAt)}
                 {f.size != null ? ` · ${formatBytes(f.size)}` : ""}
               </div>
             </div>
-            <div className="archive-actions">
-              <a
-                className="btn--success btn--sm"
-                href={`/api/storage/download?path=${encodeURIComponent(f.path)}`}
-                download={f.name}
-              >
-                Ladda ned
-              </a>
-            </div>
+            <a
+              className="inline-flex shrink-0 items-center justify-center rounded-lg px-3 py-1.5 text-[13px] font-semibold text-white no-underline transition hover:opacity-90"
+              style={{ backgroundColor: 'var(--crm-primary)' }}
+              href={`/api/storage/download?path=${encodeURIComponent(f.path)}`}
+              download={f.name}
+            >
+              Ladda ned
+            </a>
           </li>
         ))}
-        {filtered.length === 0 && <li style={{ color: "#6b7280" }}>Inga matchande resultat.</li>}
+        {filtered.length === 0 && !loading && (
+          <li className="rounded-xl border border-dashed border-slate-200 px-4 py-10 text-center text-sm text-slate-400">Inga matchande resultat.</li>
+        )}
       </ul>
     </div>
   );

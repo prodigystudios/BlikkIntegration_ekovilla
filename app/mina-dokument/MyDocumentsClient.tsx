@@ -110,11 +110,11 @@ export default function MyDocumentsClient() {
   const completedItems = useMemo(() => items.filter(item => isCompleted(item)), [items]);
 
   return (
-    <section style={{ display: 'grid', gap: 18 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+    <section className="mx-auto grid w-full max-w-[900px] grid-cols-1 gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 style={{ margin: 0 }}>Mina dokument</h1>
-          <p style={{ margin: '6px 0 0', color: '#6b7280' }}>Dokument som du har blivit tilldelad att läsa och godkänna.</p>
+          <h1 className="m-0 text-lg font-bold tracking-tight text-slate-900">Mina dokument</h1>
+          <p className="m-0 mt-1 text-sm text-slate-500">Dokument som du har blivit tilldelad att läsa och godkänna.</p>
         </div>
         <button type="button" onClick={load} style={secondaryBtn}>Uppdatera</button>
       </div>
@@ -199,27 +199,28 @@ export default function MyDocumentsClient() {
 }
 
 const cardStyle: React.CSSProperties = {
-  border: '1px solid #e5e7eb',
+  border: '1px solid #e0e8dc',
   borderRadius: 16,
-  background: '#fff',
+  background: '#f9fbf7',
   padding: '18px 20px',
   display: 'grid',
   gap: 14,
+  boxShadow: '0 1px 3px rgba(20,44,27,0.06)',
 };
 
 const emptyBox: React.CSSProperties = {
-  border: '1px solid #e5e7eb',
+  border: '1px dashed #cbd5e1',
   borderRadius: 16,
-  background: '#fff',
+  background: '#ffffff',
   padding: '20px 22px',
-  color: '#6b7280',
+  color: '#94a3b8',
 };
 
 const primaryBtn: React.CSSProperties = {
   padding: '10px 14px',
   borderRadius: 10,
-  border: '1px solid #111827',
-  background: '#111827',
+  border: '1px solid var(--crm-primary)',
+  background: 'var(--crm-primary)',
   color: '#fff',
   fontWeight: 600,
   cursor: 'pointer',
@@ -228,9 +229,9 @@ const primaryBtn: React.CSSProperties = {
 const secondaryBtn: React.CSSProperties = {
   padding: '10px 14px',
   borderRadius: 10,
-  border: '1px solid #d1d5db',
+  border: '1px solid #dce4d8',
   background: '#fff',
-  color: '#111827',
+  color: '#334155',
   fontWeight: 600,
   cursor: 'pointer',
 };
@@ -240,8 +241,8 @@ const minorChip: React.CSSProperties = {
   alignItems: 'center',
   padding: '4px 8px',
   borderRadius: 999,
-  background: '#eef2ff',
-  color: '#4338ca',
+  background: '#f0f9ff',
+  color: '#0369a1',
   fontSize: 12,
   fontWeight: 700,
 };

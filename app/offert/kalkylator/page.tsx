@@ -79,7 +79,7 @@ function SectionCard({
   tone?: 'default' | 'muted' | 'accent';
 }) {
   const background = tone === 'accent'
-    ? 'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)'
+    ? '#f9fbf7'
     : tone === 'muted'
       ? 'linear-gradient(180deg, #fbfdff 0%, #f8fafc 100%)'
       : '#ffffff';
@@ -412,8 +412,8 @@ function OffertKalkylatorInner() {
         : 'Ingen länk';
 
   return (
-    <div style={{ padding: isNarrow ? 14 : 18, maxWidth: 1180, margin: '0 auto', display: 'grid', gap: 16 }}>
-      <div style={{ border: '1px solid #dbe4ef', borderRadius: 24, padding: isNarrow ? '16px 16px 14px' : '20px 22px 18px', background: 'linear-gradient(180deg, #ffffff 0%, #f7fbff 100%)', display: 'grid', gap: 14, boxShadow: '0 14px 36px rgba(15,23,42,0.05)' }}>
+    <div style={{ maxWidth: 1180, margin: '0 auto', width: '100%', display: 'grid', gap: 16 }}>
+      <div style={{ border: '1px solid #e0e8dc', borderRadius: 24, padding: isNarrow ? '16px 16px 14px' : '20px 22px 18px', background: '#f9fbf7', display: 'grid', gap: 14, boxShadow: '0 14px 36px rgba(15,23,42,0.05)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
           <div style={{ display: 'grid', gap: 6, maxWidth: 760 }}>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -425,7 +425,7 @@ function OffertKalkylatorInner() {
               Summerar valda rader, lägger på marginal och etableringskostnad och räknar ROT i en tydligare arbetsyta.
             </p>
           </div>
-          <Link className="btn--plain btn--sm" href="/offert/kalkylator/sparade" style={{ ...ghostLinkStyle, alignSelf: 'flex-start' }}>
+          <Link className="inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 transition hover:border-slate-300" href="/offert/kalkylator/sparade" style={{ ...ghostLinkStyle, alignSelf: 'flex-start' }}>
             Sparade offerter
           </Link>
         </div>
@@ -668,7 +668,7 @@ function OffertKalkylatorInner() {
             </div>
             <div style={{ ...resultStatCardStyle, background: 'linear-gradient(180deg, #eff6ff 0%, #dbeafe 100%)', border: '1px solid #bfdbfe' }}>
               <span style={resultStatLabelStyle}>Efter ROT</span>
-              <strong style={{ ...resultStatValueStyle, color: '#1d4ed8' }}>{formatKr(totals.totalAfterRot)}</strong>
+              <strong style={{ ...resultStatValueStyle, color: '#047857' }}>{formatKr(totals.totalAfterRot)}</strong>
             </div>
           </div>
 
@@ -690,7 +690,7 @@ function OffertKalkylatorInner() {
             </div>
           )}
 
-          <div style={{ display: 'grid', gap: 8, padding: '12px 12px 10px', borderRadius: 16, border: '1px solid #dbe4ef', background: '#ffffff' }}>
+          <div style={{ display: 'grid', gap: 8, padding: '12px 12px 10px', borderRadius: 16, border: '1px solid #e0e8dc', background: '#ffffff' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, gap: 10 }}>
               <div style={{ color: '#64748b' }}>Delsumma</div>
               <div style={{ whiteSpace: 'nowrap', color: '#0f172a', fontWeight: 700 }}>{formatKr(totals.subtotal)}</div>
@@ -719,10 +719,10 @@ function OffertKalkylatorInner() {
 
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, padding: '12px 12px', borderRadius: 14, background: 'linear-gradient(180deg, #eff6ff 0%, #dbeafe 100%)', border: '1px solid #bfdbfe' }}>
               <div style={{ display: 'grid', gap: 2 }}>
-                <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.25, textTransform: 'uppercase', color: '#1d4ed8' }}>Slutpris</span>
-                <strong style={{ fontSize: 13, color: '#1e3a8a' }}>Totalsumma efter ROT</strong>
+                <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.25, textTransform: 'uppercase', color: '#047857' }}>Slutpris</span>
+                <strong style={{ fontSize: 13, color: '#065f46' }}>Totalsumma efter ROT</strong>
               </div>
-              <div style={{ whiteSpace: 'nowrap', fontSize: 20, lineHeight: 1, fontWeight: 800, color: '#1d4ed8' }}>{formatKr(totals.totalAfterRot)}</div>
+              <div style={{ whiteSpace: 'nowrap', fontSize: 20, lineHeight: 1, fontWeight: 800, color: '#047857' }}>{formatKr(totals.totalAfterRot)}</div>
             </div>
           </div>
         </div>
@@ -752,7 +752,7 @@ function OffertKalkylatorInner() {
                 <span style={{ fontWeight: 700 }}>{saveNotice.kind === 'success' ? 'Sparat' : 'Fel'}</span>
                 <span>{saveNotice.message}</span>
               </div>
-              <Link className="btn--plain btn--sm" href="/offert/kalkylator/sparade">
+              <Link className="inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 transition hover:border-slate-300" href="/offert/kalkylator/sparade">
                 Visa sparade
               </Link>
             </div>
@@ -796,7 +796,7 @@ function OffertKalkylatorInner() {
                 />
                 <button
                   type="button"
-                  className="btn--plain btn--sm"
+                  className="inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 transition hover:border-slate-300"
                   onClick={fillQuoteAddress}
                   disabled={locatingAddress}
                   title="Hämta nuvarande plats"
@@ -860,11 +860,11 @@ function OffertKalkylatorInner() {
           </div>
 
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-            <button className="btn--success" disabled={saving || !canSave} onClick={save} style={{ minWidth: 160 }}>
+            <button className="inline-flex items-center justify-center rounded-lg bg-emerald-700 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-emerald-800" disabled={saving || !canSave} onClick={save} style={{ minWidth: 160 }}>
               {saving ? 'Sparar…' : hasLoadedOffer && activeId ? 'Uppdatera offert' : 'Spara'}
             </button>
             <button
-              className="btn--plain"
+              className="inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300"
               onClick={() => {
                 setState(OFFERT_KALKYLATOR_DEFAULT_STATE);
                 setQuoteName('');
@@ -902,7 +902,7 @@ const heroEyebrowStyle: React.CSSProperties = {
   borderRadius: 999,
   background: '#dbeafe',
   border: '1px solid #bfdbfe',
-  color: '#2563eb',
+  color: '#047857',
   fontSize: 11,
   fontWeight: 700,
   letterSpacing: 0.35,
@@ -915,7 +915,7 @@ const metaChipStyle: React.CSSProperties = {
   padding: '5px 9px',
   borderRadius: 999,
   background: '#ffffff',
-  border: '1px solid #dbe4ef',
+  border: '1px solid #e0e8dc',
   color: '#334155',
   fontSize: 12,
   fontWeight: 700,
@@ -927,7 +927,7 @@ const ghostLinkStyle: React.CSSProperties = {
   justifyContent: 'center',
   padding: '10px 12px',
   borderRadius: 12,
-  border: '1px solid #dbe4ef',
+  border: '1px solid #e0e8dc',
   background: '#fff',
   color: '#0f172a',
   fontWeight: 600,
@@ -937,7 +937,7 @@ const ghostLinkStyle: React.CSSProperties = {
 const textInputStyle: React.CSSProperties = {
   width: '100%',
   padding: '10px 12px',
-  border: '1px solid #dbe4ef',
+  border: '1px solid #e0e8dc',
   borderRadius: 12,
   background: '#fff',
   color: '#0f172a',
@@ -948,7 +948,7 @@ const textInputStyle: React.CSSProperties = {
 const selectFieldStyle: React.CSSProperties = {
   width: '100%',
   padding: '10px 12px',
-  border: '1px solid #dbe4ef',
+  border: '1px solid #e0e8dc',
   borderRadius: 12,
   background: '#fff',
   color: '#0f172a',
@@ -961,7 +961,7 @@ const resultStatCardStyle: React.CSSProperties = {
   gap: 6,
   padding: '12px 12px 10px',
   borderRadius: 14,
-  border: '1px solid #dbe4ef',
+  border: '1px solid #e0e8dc',
   background: '#ffffff',
 };
 

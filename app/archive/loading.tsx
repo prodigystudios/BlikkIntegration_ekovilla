@@ -1,26 +1,15 @@
 export default function Loading() {
   return (
-    <main className="archive">
-      <h1>Egenkontroller</h1>
-      <p aria-live="polite" style={{ color: '#6b7280', marginTop: 4 }}>Laddar arkiv…</p>
-      <div style={{ marginTop: 16, display: 'grid', gap: 8 }}>
+    <div className="mx-auto grid w-full max-w-[900px] grid-cols-1 gap-4">
+      <div>
+        <h1 className="m-0 text-lg font-bold tracking-tight text-slate-900">Egenkontroller</h1>
+        <p aria-live="polite" className="m-0 mt-1 text-sm text-slate-400">Laddar arkiv…</p>
+      </div>
+      <div className="grid gap-2">
         {Array.from({ length: 6 }).map((_, i) => (
-          <div key={i} style={{
-            display: 'grid',
-            gridTemplateColumns: '1fr 120px 120px',
-            gap: 8,
-            alignItems: 'center',
-            padding: '12px 12px',
-            border: '1px solid #e5e7eb',
-            borderRadius: 8,
-            background: '#fafafa'
-          }}>
-            <div style={{ height: 14, background: '#e5e7eb', borderRadius: 4, width: '70%' }} />
-            <div style={{ height: 12, background: '#e5e7eb', borderRadius: 4, width: '80%' }} />
-            <div style={{ height: 32, background: '#e5e7eb', borderRadius: 6 }} />
-          </div>
+          <div key={i} className="h-16 animate-pulse rounded-xl border border-[#e3e9df] bg-[#f9fbf7]" />
         ))}
       </div>
-    </main>
+    </div>
   );
 }

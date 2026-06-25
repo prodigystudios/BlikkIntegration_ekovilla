@@ -1,5 +1,6 @@
 "use client";
 import { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useToast } from '@/lib/Toast';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { useRouter } from 'next/navigation';
@@ -13,9 +14,12 @@ function IconUser(props: React.SVGProps<SVGSVGElement>) {
   );
 }
 
-export default function ProfileMenu({ fullName, role }: { fullName: string | null, role: 'member' | 'sales' | 'admin' | 'konsult' | null }) {
+export default function ProfileMenu({ fullName, role, placement = 'down' }: { fullName: string | null, role: 'member' | 'sales' | 'admin' | 'konsult' | null, placement?: 'down' | 'up' }) {
   const [open, setOpen] = useState(false);
-  const [alignRight, setAlignRight] = useState(false); // flip to right edge if near viewport edge
+  // Popover position is computed in viewport coords and rendered through a portal,
+  // so it escapes the sidebar's transform/overflow (which would otherwise clip it).
+  const [menuPos, setMenuPos] = useState<React.CSSProperties>({});
+  const [mounted, setMounted] = useState(false);
   const btnRef = useRef<HTMLButtonElement | null>(null);
   const popRef = useRef<HTMLDivElement | null>(null);
   const router = useRouter();
@@ -31,6 +35,8 @@ export default function ProfileMenu({ fullName, role }: { fullName: string | nul
   const [pwdError, setPwdError] = useState<string | null>(null);
   const [pwdLoading, setPwdLoading] = useState(false);
   const [pwdSuccess, setPwdSuccess] = useState(false);
+
+  useEffect(() => { setMounted(true); }, []);
 
   useEffect(() => {
     (async () => {
@@ -53,16 +59,30 @@ export default function ProfileMenu({ fullName, role }: { fullName: string | nul
       if (!open) return;
       if (e.key === 'Escape') { setOpen(false); btnRef.current?.focus(); }
     }
+    // The popover position is computed once (fixed viewport coords), so close it on
+    // scroll/resize instead of letting it float detached from the button.
+    function onReposition() { setOpen(false); }
     document.addEventListener('mousedown', onDoc);
     document.addEventListener('keydown', onKey);
     if (open && btnRef.current) {
       const rect = btnRef.current.getBoundingClientRect();
-      // If remaining space to right is less than popover width (220 incl padding) -> align right
-      const remaining = window.innerWidth - rect.left;
-      setAlignRight(remaining < 240);
+      const alignRight = (window.innerWidth - rect.left) < 240;
+      const pos: React.CSSProperties = { position: 'fixed', zIndex: 3000, minWidth: 200 };
+      if (placement === 'up') pos.bottom = Math.round(window.innerHeight - rect.top + 6);
+      else pos.top = Math.round(rect.bottom + 6);
+      if (alignRight) pos.right = Math.round(window.innerWidth - rect.right);
+      else pos.left = Math.round(rect.left);
+      setMenuPos(pos);
+      window.addEventListener('resize', onReposition);
+      window.addEventListener('scroll', onReposition, true);
     }
-    return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey); };
-  }, [open]);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+      window.removeEventListener('resize', onReposition);
+      window.removeEventListener('scroll', onReposition, true);
+    };
+  }, [open, placement]);
 
   // Removed client-side fetch; fullName is passed from server layout.
 
@@ -119,12 +139,12 @@ export default function ProfileMenu({ fullName, role }: { fullName: string | nul
       >
         <IconUser />
       </button>
-      {open && (
+      {open && mounted && createPortal(
         <div
           ref={popRef}
           role="menu"
           aria-label="Profilmeny"
-          style={{ position: 'absolute', top: 'calc(100% + 6px)', [alignRight ? 'right' : 'left']: 0, minWidth: 200, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 12, boxShadow: '0 8px 28px rgba(0,0,0,0.08)', padding: 8, zIndex: 40 }}
+          style={{ ...menuPos, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 12, boxShadow: '0 8px 28px rgba(0,0,0,0.18)', padding: 8 }}
         >
           <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.5, color: '#6b7280', padding: '4px 8px 6px' }}>Konto</div>
           <div style={{ padding: '0 8px 2px', fontSize: 14, fontWeight: 500, color: '#111827', lineHeight: 1.2 }}>
@@ -137,7 +157,7 @@ export default function ProfileMenu({ fullName, role }: { fullName: string | nul
           <button
             role="menuitem"
             onClick={() => { setOpen(false); router.push('/profil'); }}
-            className="btn--plain"
+            className="cursor-pointer border-0 bg-transparent text-slate-700 transition-colors hover:bg-slate-50"
             style={{ width: '100%', textAlign: 'left', padding: '8px 10px', borderRadius: 8 }}
           >
             Min profil
@@ -145,7 +165,7 @@ export default function ProfileMenu({ fullName, role }: { fullName: string | nul
           <button
             role="menuitem"
             onClick={logout}
-            className="btn--plain"
+            className="cursor-pointer border-0 bg-transparent text-slate-700 transition-colors hover:bg-slate-50"
             style={{ width: '100%', textAlign: 'left', padding: '8px 10px', borderRadius: 8 }}
           >
             Logga ut
@@ -153,14 +173,15 @@ export default function ProfileMenu({ fullName, role }: { fullName: string | nul
           <button
             role="menuitem"
             onClick={() => { setPwdOpen(true); setOpen(false); }}
-            className="btn--plain"
+            className="cursor-pointer border-0 bg-transparent text-slate-700 transition-colors hover:bg-slate-50"
             style={{ width: '100%', textAlign: 'left', padding: '8px 10px', borderRadius: 8 }}
           >
             Byt lösenord
           </button>
-        </div>
+        </div>,
+        document.body,
       )}
-      {pwdOpen && (
+      {pwdOpen && mounted && createPortal(
         <div style={modalBackdrop}>
           <div style={modalCard} role="dialog" aria-modal="true" aria-labelledby="pwd-title">
             <h2 id="pwd-title" style={modalTitle}>Byt lösenord</h2>
@@ -182,7 +203,8 @@ export default function ProfileMenu({ fullName, role }: { fullName: string | nul
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

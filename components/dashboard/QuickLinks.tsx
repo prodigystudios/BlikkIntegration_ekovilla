@@ -72,9 +72,8 @@ export function QuickLinksGrid({ links, compact, extraCompact }: { links: QuickL
               link.disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
             )}
             iconClassName={cn(
-              'inline-flex items-center justify-center rounded-xl',
-              extraCompact ? 'h-8 w-8' : 'h-9 w-9',
-              isDesktopy ? 'bg-blue-50 text-blue-600' : 'bg-indigo-50 text-indigo-600'
+              'inline-flex items-center justify-center rounded-xl bg-emerald-50 text-emerald-700',
+              extraCompact ? 'h-8 w-8' : 'h-9 w-9'
             )}
             titleClassName={cn(
               'text-center font-bold leading-tight tracking-[-0.2px] text-slate-900',
@@ -90,10 +89,10 @@ export function QuickLinksGrid({ links, compact, extraCompact }: { links: QuickL
           const wrapper = (
             <div
               className={cn(
-                'relative flex flex-col gap-2 rounded-2xl border border-slate-200 bg-[linear-gradient(145deg,#ffffff,#f8fafc)] px-4 pb-[18px] pt-4 text-slate-900 shadow-[0_10px_24px_rgba(15,23,42,0.05)] outline-none transition-[border-color,box-shadow,transform]',
+                'relative flex flex-col gap-2 rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] px-4 pb-[18px] pt-4 text-slate-900 shadow-[0_1px_3px_rgba(20,44,27,0.06)] outline-none transition-[border-color,box-shadow,transform]',
                 link.disabled
                   ? 'cursor-not-allowed opacity-70'
-                  : 'cursor-pointer hover:border-indigo-500 hover:shadow-[0_8px_18px_rgba(99,102,241,0.18)]'
+                  : 'cursor-pointer hover:border-[#cfdcc9] hover:shadow-[0_8px_20px_-10px_rgba(20,44,27,0.30)]'
               )}
             >
               {content}

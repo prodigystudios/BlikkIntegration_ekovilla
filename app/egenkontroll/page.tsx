@@ -4,6 +4,17 @@ import { useEffect, useMemo, useRef, useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { MATERIALS } from '@/lib/domains/crm/materials';
+import {
+  calculateOpenRowDensity,
+  calculateClosedRowDensity,
+  formatDensity,
+  installedThickness,
+  parseEtappRows,
+  sumOpenBags,
+  sumClosedBags,
+  type EtappOpenRow,
+  type EtappClosedRow,
+} from '@/lib/domains/egenkontroll/calculations';
 
 // Reconstructed Egenkontroll form (migrated from historical root page)
 // NOTE: Consider refactoring into smaller components later for maintainability.
@@ -78,16 +89,6 @@ export default function EgenkontrollPage() {
   const [dammighet, setDammighet] = useState<string>(''); // 1-10 (optional)
   const [klumpighet, setKlumpighet] = useState<string>(''); // 1-10 (optional)
 
-  type EtappOpenRow = {
-    etapp?: string;
-    ytaM2?: string;
-    bestalldTjocklek?: string; // ex sättningspåslag
-    sattningsprocent?: string; // %
-    installeradTjocklek?: string; // inkl sättningspåslag
-    installeradDensitet?: string; // kg/m2
-    antalSack?: string; // - kg/m2
-    lambdavarde?: string; // w/m2k
-  };
   const [etapperOpen, setEtapperOpen] = useState<EtappOpenRow[]>([]);
 
   const addEtappOpenRow = () =>
@@ -105,36 +106,15 @@ export default function EgenkontrollPage() {
       const row = next[idx];
       // Auto-calc installeradTjocklek = beställd tjocklek + (beställd * sättningsprocent/100)
       if (("bestalldTjocklek" in patch || "sattningsprocent" in patch) && !("installeradTjocklek" in patch)) {
-        const base = parseFloat(String(row.bestalldTjocklek ?? ''));
-        const perc = parseFloat(String(row.sattningsprocent ?? ''));
-        const installed = Number.isFinite(base) && Number.isFinite(perc)
-          ? base + (base * (perc / 100))
-          : NaN;
-        next[idx] = {
-          ...row,
-          installeradTjocklek: Number.isFinite(installed) && installed > 0 ? String(Math.round(installed)) : '',
-        };
+        next[idx] = { ...row, installeradTjocklek: installedThickness(row.bestalldTjocklek, row.sattningsprocent) };
       }
       // If any inputs affecting density changed (and user isn't directly typing density), update density using the helper
       if (("ytaM2" in patch || "bestalldTjocklek" in patch || "antalSack" in patch) && !("installeradDensitet" in patch)) {
-        const calc = CalculateDensityOnRow(row);
-        next[idx] = {
-          ...row,
-          installeradDensitet: Number.isFinite(calc) && calc > 0 ? String(Math.round(calc * 100) / 100) : '',
-        };
+        next[idx] = { ...row, installeradDensitet: formatDensity(CalculateDensityOnRow(row)) };
       }
       return next;
     });
 
-  type EtappClosedRow = {
-    etapp?: string; // Etapp(slutet)
-    ytaM2?: string;
-    bestalldTjocklek?: string; // Beställd tjocklek
-    uppmatTjocklek?: string;   // Uppmät tjocklek
-    installeradDensitet?: string; // Installerad densitet
-    antalSackKgPerSack?: string;  // Antal säck kg/säck
-    lambdavarde?: string; // Lamdavärde W/m2K
-  };
   const [etapperClosed, setEtapperClosed] = useState<EtappClosedRow[]>([]);
 
   const addEtappClosedRow = () =>
@@ -152,11 +132,7 @@ export default function EgenkontrollPage() {
       const row = next[idx];
       // Recalculate density when any contributing value changes. We now prefer uppmatTjocklek (measured) over bestalldTjocklek (ordered).
       if (("ytaM2" in patch || "uppmatTjocklek" in patch || "bestalldTjocklek" in patch || "antalSackKgPerSack" in patch) && !("installeradDensitet" in patch)) {
-        const calc = CalculateDensityOnClosedRow(row);
-        next[idx] = {
-          ...row,
-          installeradDensitet: Number.isFinite(calc) && calc > 0 ? String(Math.round(calc * 100) / 100) : '',
-        };
+        next[idx] = { ...row, installeradDensitet: formatDensity(CalculateDensityOnClosedRow(row)) };
       }
       return next;
     });
@@ -570,44 +546,7 @@ export default function EgenkontrollPage() {
   }, [project]);
 
   function parseDescriptionToRows(desc: string): { open: EtappOpenRow[]; closed: EtappClosedRow[] } {
-    const open: EtappOpenRow[] = [];
-    const closed: EtappClosedRow[] = [];
-    const re = /([A-Za-zÅÄÖåäö][A-Za-zÅÄÖåäö\s/()_-]*?)\s*-\s*(\d+[.,]?\d*)\s*m(?:2|²)\s*[x×]\s*(\d+[.,]?\d*)\s*mm\s*-\s*(\d+)\s*eko/gi;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(desc)) !== null) {
-      const rawName = (m[1] || '').trim();
-      const nameNorm = rawName.toLowerCase();
-      const areaStr = (m[2] || '').replace(',', '.');
-      const thickStr = (m[3] || '').replace(',', '.');
-      const sacksStr = (m[4] || '').trim();
-      const area = isFinite(Number(areaStr)) ? String(Number(areaStr)) : '';
-      const thickness = isFinite(Number(thickStr)) ? String(Number(thickStr)) : '';
-      const sacks = /^\d+$/.test(sacksStr) ? sacksStr : '';
-      const isVind = nameNorm === 'vind' || nameNorm.startsWith('vind');
-      if (isVind) {
-        open.push({
-          etapp: rawName,
-          ytaM2: area,
-          bestalldTjocklek: thickness,
-          sattningsprocent: '',
-          installeradTjocklek: '',
-          antalSack: sacks,
-          installeradDensitet: '',
-          lambdavarde: MATERIALS[materialUsed]?.lambda,
-        });
-      } else {
-        closed.push({
-          etapp: rawName,
-          ytaM2: area,
-          bestalldTjocklek: thickness,
-          uppmatTjocklek: '',
-          installeradDensitet: '',
-          antalSackKgPerSack: sacks,
-          lambdavarde: MATERIALS[materialUsed]?.lambda,
-        });
-      }
-    }
-    return { open, closed };
+    return parseEtappRows(desc, MATERIALS[materialUsed]?.lambda);
   }
 
   const [projectLoading, setProjectLoading] = useState(false);
@@ -636,88 +575,41 @@ export default function EgenkontrollPage() {
     }
   }, [orderId]);
   function CalculateDensityOnRow(etapp: EtappOpenRow): number {
-    const { ytaM2, bestalldTjocklek, antalSack } = etapp;
-    const bagWeight = MATERIALS[materialUsed]?.bagWeight ?? 0;
-    if (!ytaM2 || !bestalldTjocklek || !antalSack || !bagWeight) return 0;
-    const area = parseFloat(ytaM2);
-    const thicknessMm = parseFloat(bestalldTjocklek);
-    const bags = parseFloat(antalSack);
-    if (isNaN(area) || isNaN(thicknessMm) || isNaN(bags) || area === 0 || thicknessMm === 0) return 0;
-    const thicknessMeters = thicknessMm / 1000;
-    const volumeM3 = area * thicknessMeters;
-    const totalKg = bags * bagWeight;
-    return totalKg / volumeM3;
+    return calculateOpenRowDensity(etapp, MATERIALS[materialUsed]?.bagWeight ?? 0);
   }
   function CalculateDensityOnClosedRow(etapp: EtappClosedRow): number {
-    const { ytaM2, uppmatTjocklek, bestalldTjocklek, antalSackKgPerSack } = etapp;
-    const bagWeight = MATERIALS[materialUsed]?.bagWeight ?? 0;
-    // Prefer measured thickness (uppmatTjocklek). Fallback to ordered thickness if measurement missing.
-    const thicknessSource = (uppmatTjocklek && uppmatTjocklek.trim() !== '') ? uppmatTjocklek : bestalldTjocklek;
-    if (!ytaM2 || !thicknessSource || !antalSackKgPerSack || !bagWeight) return 0;
-    const area = parseFloat(ytaM2);
-    const thicknessMm = parseFloat(thicknessSource);
-    const bags = parseFloat(antalSackKgPerSack);
-    if (isNaN(area) || isNaN(thicknessMm) || isNaN(bags) || area === 0 || thicknessMm === 0) return 0;
-    const thicknessMeters = thicknessMm / 1000;
-    const volumeM3 = area * thicknessMeters;
-    const totalKg = bags * bagWeight;
-    return totalKg / volumeM3;
+    return calculateClosedRowDensity(etapp, MATERIALS[materialUsed]?.bagWeight ?? 0);
   }
 
   // Recalculate densities on material change
   useEffect(() => {
     const lambda = MATERIALS[materialUsed]?.lambda;
-    setEtapperOpen(rows => rows.map(r => {
-      const calc = CalculateDensityOnRow(r);
-      return {
-        ...r,
-        installeradDensitet: Number.isFinite(calc) && calc > 0 ? String(Math.round(calc * 100) / 100) : r.installeradDensitet || '',
-        lambdavarde: r.lambdavarde && r.lambdavarde.trim() !== '' ? r.lambdavarde : (lambda ?? r.lambdavarde),
-      };
-    }));
+    setEtapperOpen(rows => rows.map(r => ({
+      ...r,
+      installeradDensitet: formatDensity(CalculateDensityOnRow(r)) || r.installeradDensitet || '',
+      lambdavarde: r.lambdavarde && r.lambdavarde.trim() !== '' ? r.lambdavarde : (lambda ?? r.lambdavarde),
+    })));
   }, [materialUsed]);
   useEffect(() => {
     const lambda = MATERIALS[materialUsed]?.lambda;
-    setEtapperClosed(rows => rows.map(r => {
-      const calc = CalculateDensityOnClosedRow(r);
-      return {
-        ...r,
-        installeradDensitet: Number.isFinite(calc) && calc > 0 ? String(Math.round(calc * 100) / 100) : r.installeradDensitet || '',
-        lambdavarde: r.lambdavarde && r.lambdavarde.trim() !== '' ? r.lambdavarde : (lambda ?? r.lambdavarde),
-      };
-    }));
+    setEtapperClosed(rows => rows.map(r => ({
+      ...r,
+      installeradDensitet: formatDensity(CalculateDensityOnClosedRow(r)) || r.installeradDensitet || '',
+      lambdavarde: r.lambdavarde && r.lambdavarde.trim() !== '' ? r.lambdavarde : (lambda ?? r.lambdavarde),
+    })));
   }, [materialUsed]);
 
-  const totalOpenBags = etapperOpen.reduce((sum, row) => sum + (Number(row.antalSack) || 0), 0);
-  const totalClosedBags = etapperClosed.reduce((sum, row) => sum + (Number(row.antalSackKgPerSack) || 0), 0);
+  const totalOpenBags = sumOpenBags(etapperOpen);
+  const totalClosedBags = sumClosedBags(etapperClosed);
   const totalBags = totalOpenBags + totalClosedBags;
-  const selectedPhotosCount = Number(Boolean(beforePhoto)) + Number(Boolean(afterPhoto));
 
   return (
-    <main style={{ padding: isNarrow ? 14 : 22, maxWidth: 1240, margin: '0 auto', display: 'grid', gap: 18, background: '#f8fbff', width: '100%', boxSizing: 'border-box', overflowX: 'clip' }}>
+    <div style={{ maxWidth: 1240, margin: '0 auto', display: 'grid', gap: 18, width: '100%', boxSizing: 'border-box', overflowX: 'clip' }}>
       <Suspense fallback={null}>
         <InitOrderId orderId={orderId} setOrderId={setOrderId} />
       </Suspense>
 
-      <section style={heroCardStyle}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap', minWidth: 0 }}>
-          <div style={{ display: 'grid', gap: 8, maxWidth: 760, minWidth: 0, flex: '1 1 320px' }}>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-              <span style={heroEyebrowStyle}>Egenkontroll</span>
-              <span style={heroChipStyle}>{totalBags} säckar registrerade</span>
-              <span style={heroChipStyle}>{selectedPhotosCount} bilder valda</span>
-            </div>
-            <div style={{ display: 'grid', gap: 6, minWidth: 0 }}>
-              <h1 style={{ margin: 0, fontSize: isNarrow ? 30 : 38, lineHeight: 1.02, letterSpacing: -1, color: '#0f172a' }}>Skapa egenkontroll</h1>
-              <p style={{ margin: 0, color: '#475569', fontSize: 16, lineHeight: 1.5 }}>Fyll i detaljer, dokumentera med bilder och signatur, och generera en PDF-rapport att dela med kund och kollegor.</p>
-            </div>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: isNarrow ? 'repeat(2, minmax(0, 1fr))' : 'repeat(2, minmax(0, 1fr))', gap: 8, minWidth: 0, width: isNarrow ? '100%' : 340, maxWidth: '100%', flex: isNarrow ? '1 1 100%' : '0 1 340px' }}>
-            <div style={heroStatCardStyle}><span style={heroStatLabelStyle}>Öppna etapper</span><strong style={heroStatValueStyle}>{etapperOpen.length}</strong></div>
-            <div style={heroStatCardStyle}><span style={heroStatLabelStyle}>Slutna etapper</span><strong style={heroStatValueStyle}>{etapperClosed.length}</strong></div>
-          </div>
-        </div>
-      </section>
+      <h1 style={{ margin: 0, fontSize: 18, fontWeight: 700, letterSpacing: '-0.01em', color: '#0f172a' }}>Skapa egenkontroll</h1>
 
       <section style={sectionCardStyle}>
         <div style={{ display: 'grid', gap: 6 }}>
@@ -729,7 +621,7 @@ export default function EgenkontrollPage() {
           <input value={orderId} onChange={(e) => setOrderId(e.target.value)} placeholder="Ange ordernummer" style={textFieldStyle} />
           <button
             type="button"
-            className="btn--primary btn--med"
+            className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-700 px-3 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800"
             style={{ opacity: projectLoading ? 0.7 : 1, cursor: projectLoading ? 'not-allowed' : 'pointer', width: isNarrow ? '100%' : 'fit-content' }}
             onClick={onLookup}
             disabled={projectLoading}
@@ -742,7 +634,7 @@ export default function EgenkontrollPage() {
           <div style={{ marginTop: 8, color: '#6b7280', fontSize: 14 }}>Hämtar projektdetaljer…</div>
         )}
         {project && (
-          <div style={{ border: '1px solid #dbe4ef', borderRadius: 18, padding: 14, background: '#f8fafc' }}>
+          <div style={{ border: '1px solid #e0e8dc', borderRadius: 18, padding: 14, background: '#ffffff' }}>
             {project.error ? (
               <div style={{ color: 'crimson' }}>Error: {project.error}</div>
             ) : (
@@ -843,7 +735,7 @@ export default function EgenkontrollPage() {
               <input type="number" min={1} max={10} inputMode="numeric" value={klumpighet} onChange={(e) => { const v = e.target.value; if (v === '') return setKlumpighet(''); const num = Number(v); if (!Number.isNaN(num) && num >= 1 && num <= 10) setKlumpighet(String(num)); }} placeholder="-" style={textFieldStyle} />
             </label>
           </div>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 14px', borderRadius: 16, border: '1px solid #e2e8f0', background: '#f8fafc' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 14px', borderRadius: 16, border: '1px solid #e0e8dc', background: '#f9fbf7' }}>
             <input type="checkbox" checked={flufferUsed} onChange={(e) => setFlufferUsed(e.target.checked)} />
             <span style={{ fontSize: 13 }}>Fluffer använd</span>
           </label>
@@ -854,7 +746,7 @@ export default function EgenkontrollPage() {
         <div style={{ display: 'grid', gap: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <h3 style={subsectionTitleStyle}>Etapper (öppet)</h3>
-            <button className='btn--med' type="button" onClick={addEtappOpenRow} disabled={etapperOpen.length >= MAX_ETAPP_ROWS} title={etapperOpen.length >= MAX_ETAPP_ROWS ? `Max ${MAX_ETAPP_ROWS} rader` : ''} style={{ opacity: etapperOpen.length >= MAX_ETAPP_ROWS ? 0.5 : 1, cursor: etapperOpen.length >= MAX_ETAPP_ROWS ? 'not-allowed' : 'pointer' }}>
+            <button className='inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300' type="button" onClick={addEtappOpenRow} disabled={etapperOpen.length >= MAX_ETAPP_ROWS} title={etapperOpen.length >= MAX_ETAPP_ROWS ? `Max ${MAX_ETAPP_ROWS} rader` : ''} style={{ opacity: etapperOpen.length >= MAX_ETAPP_ROWS ? 0.5 : 1, cursor: etapperOpen.length >= MAX_ETAPP_ROWS ? 'not-allowed' : 'pointer' }}>
               + Lägg till rad
             </button>
           </div>
@@ -864,7 +756,7 @@ export default function EgenkontrollPage() {
                 <div key={idx} style={{ ...mobileRowCardStyle, border: openErrorIdxs.includes(idx) ? '1px solid #fca5a5' : mobileRowCardStyle.border, background: openErrorIdxs.includes(idx) ? '#fff1f2' : mobileRowCardStyle.background }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
                     <strong style={{ color: '#0f172a' }}>Rad {idx + 1}</strong>
-                    <button className='btn--danger btn--sm' type="button" onClick={() => removeEtappOpenRow(idx)}>Ta bort</button>
+                    <button className='inline-flex items-center rounded-lg border border-rose-200 bg-white px-2.5 py-1 text-xs font-semibold text-rose-700 transition hover:border-rose-300' type="button" onClick={() => removeEtappOpenRow(idx)}>Ta bort</button>
                   </div>
                   <div style={mobileFieldGridStyle}>
                     <MobileField label="Etapp"><input value={row.etapp || ''} onChange={(e) => updateEtappOpenRow(idx, { etapp: e.target.value })} placeholder="Etapp (öppet)" style={textFieldStyle} /></MobileField>
@@ -902,7 +794,7 @@ export default function EgenkontrollPage() {
                 <input value={row.installeradDensitet || ''} onChange={(e) => updateEtappOpenRow(idx, { installeradDensitet: e.target.value })} placeholder="kg/m³" style={{ padding: 6 }} />
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                   <input value={row.lambdavarde || ''} onChange={(e) => updateEtappOpenRow(idx, { lambdavarde: e.target.value })} placeholder="W/m²K" style={{ padding: 6, flex: 1 }} />
-                  <button className='btn--danger btn--sm' type="button" onClick={() => removeEtappOpenRow(idx)} style={{ whiteSpace: 'nowrap' }}>Ta bort</button>
+                  <button className='inline-flex items-center rounded-lg border border-rose-200 bg-white px-2.5 py-1 text-xs font-semibold text-rose-700 transition hover:border-rose-300' type="button" onClick={() => removeEtappOpenRow(idx)} style={{ whiteSpace: 'nowrap' }}>Ta bort</button>
                 </div>
               </div>
             ))}
@@ -913,7 +805,7 @@ export default function EgenkontrollPage() {
         <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: 12, display: 'grid', gap: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <h3 style={subsectionTitleStyle}>Etapper (slutet)</h3>
-            <button className='btn--med' type="button" onClick={addEtappClosedRow} disabled={etapperClosed.length >= MAX_ETAPP_ROWS} title={etapperClosed.length >= MAX_ETAPP_ROWS ? `Max ${MAX_ETAPP_ROWS} rader` : ''} style={{ opacity: etapperClosed.length >= MAX_ETAPP_ROWS ? 0.5 : 1, cursor: etapperClosed.length >= MAX_ETAPP_ROWS ? 'not-allowed' : 'pointer' }}>
+            <button className='inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300' type="button" onClick={addEtappClosedRow} disabled={etapperClosed.length >= MAX_ETAPP_ROWS} title={etapperClosed.length >= MAX_ETAPP_ROWS ? `Max ${MAX_ETAPP_ROWS} rader` : ''} style={{ opacity: etapperClosed.length >= MAX_ETAPP_ROWS ? 0.5 : 1, cursor: etapperClosed.length >= MAX_ETAPP_ROWS ? 'not-allowed' : 'pointer' }}>
               + Lägg till rad
             </button>
           </div>
@@ -923,7 +815,7 @@ export default function EgenkontrollPage() {
                 <div key={idx} style={{ ...mobileRowCardStyle, border: closedErrorIdxs.includes(idx) ? '1px solid #fca5a5' : mobileRowCardStyle.border, background: closedErrorIdxs.includes(idx) ? '#fff1f2' : mobileRowCardStyle.background }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
                     <strong style={{ color: '#0f172a' }}>Rad {idx + 1}</strong>
-                    <button className='btn--danger btn--sm' type="button" onClick={() => removeEtappClosedRow(idx)}>Ta bort</button>
+                    <button className='inline-flex items-center rounded-lg border border-rose-200 bg-white px-2.5 py-1 text-xs font-semibold text-rose-700 transition hover:border-rose-300' type="button" onClick={() => removeEtappClosedRow(idx)}>Ta bort</button>
                   </div>
                   <div style={mobileFieldGridStyle}>
                     <MobileField label="Etapp"><input value={row.etapp || ''} onChange={(e) => updateEtappClosedRow(idx, { etapp: e.target.value })} placeholder="Etapp (slutet)" style={textFieldStyle} /></MobileField>
@@ -958,7 +850,7 @@ export default function EgenkontrollPage() {
                 <input value={row.installeradDensitet || ''} onChange={(e) => updateEtappClosedRow(idx, { installeradDensitet: e.target.value })} placeholder="kg/m³" style={{ padding: 6 }} />
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                   <input value={row.lambdavarde || ''} onChange={(e) => updateEtappClosedRow(idx, { lambdavarde: e.target.value })} placeholder="W/m²K" style={{ padding: 6, flex: 1 }} />
-                  <button className='btn--danger btn--sm' type="button" onClick={() => removeEtappClosedRow(idx)} style={{ whiteSpace: 'nowrap' }}>Ta bort</button>
+                  <button className='inline-flex items-center rounded-lg border border-rose-200 bg-white px-2.5 py-1 text-xs font-semibold text-rose-700 transition hover:border-rose-300' type="button" onClick={() => removeEtappClosedRow(idx)} style={{ whiteSpace: 'nowrap' }}>Ta bort</button>
                 </div>
               </div>
             ))}
@@ -972,14 +864,14 @@ export default function EgenkontrollPage() {
         <h3 style={subsectionTitleStyle}>Projektbilder</h3>
         <div style={{ display: 'grid', gap: 12, maxWidth: 720 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            <button type="button" className="btn--primary btn--med" onClick={() => beforeInputRef.current?.click()}>Välj före-bild</button>
+            <button type="button" className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-700 px-3 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800" onClick={() => beforeInputRef.current?.click()}>Välj före-bild</button>
             <span style={{ color: beforePhoto ? '#111827' : '#6b7280', fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '60%' }}>
               {beforePhoto ? beforePhoto.name : 'Ingen fil vald'}
             </span>
             <input ref={beforeInputRef} type="file" accept="image/*" onChange={(e) => setBeforePhoto(e.target.files?.[0] ?? null)} style={{ display: 'none' }} />
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            <button type="button" className="btn--primary btn--med" onClick={() => afterInputRef.current?.click()}>Välj efter-bild</button>
+            <button type="button" className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-700 px-3 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800" onClick={() => afterInputRef.current?.click()}>Välj efter-bild</button>
             <span style={{ color: afterPhoto ? '#111827' : '#6b7280', fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '60%' }}>
               {afterPhoto ? afterPhoto.name : 'Ingen fil vald'}
             </span>
@@ -1012,7 +904,7 @@ export default function EgenkontrollPage() {
             />
           </div>
           <div style={{ marginTop: 8, marginBottom: 16, display: 'flex', gap: 8 }}>
-            <button className='btn--danger btn--sm' type="button" onClick={clearSignature}>Rensa signatur</button>
+            <button className='inline-flex items-center rounded-lg border border-rose-200 bg-white px-2.5 py-1 text-xs font-semibold text-rose-700 transition hover:border-rose-300' type="button" onClick={clearSignature}>Rensa signatur</button>
             {missing.signature && (
               <span className="text-error" style={{ fontSize: 12 }}>Rita signaturen i rutan</span>
             )}
@@ -1037,11 +929,11 @@ export default function EgenkontrollPage() {
               <div style={{ marginLeft: 'auto' }} />
               {previewUrl && (
                 <>
-                  <a href={previewUrl} download={`Egenkontroll_forhandsvisning.pdf`} className="btn--plain btn--sm">Ladda ner</a>
-                  <button className="btn--primary btn--sm" onClick={() => previewUrl && window.open(previewUrl, '_blank')}>Öppna i ny flik</button>
+                  <a href={previewUrl} download={`Egenkontroll_forhandsvisning.pdf`} className="inline-flex items-center rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 transition hover:border-slate-300">Ladda ner</a>
+                  <button className="inline-flex items-center rounded-lg bg-emerald-700 px-2.5 py-1 text-xs font-semibold text-white transition hover:bg-emerald-800" onClick={() => previewUrl && window.open(previewUrl, '_blank')}>Öppna i ny flik</button>
                 </>
               )}
-              <button className="btn--danger btn--sm" onClick={closePreview}>Stäng</button>
+              <button className="inline-flex items-center rounded-lg border border-rose-200 bg-white px-2.5 py-1 text-xs font-semibold text-rose-700 transition hover:border-rose-300" onClick={closePreview}>Stäng</button>
             </div>
             <div style={{ flex: 1, minHeight: 0 }}>
               {previewUrl ? (
@@ -1056,7 +948,7 @@ export default function EgenkontrollPage() {
 
       <section style={{ ...sectionCardStyle, position: 'sticky', bottom: 12, zIndex: 5, boxShadow: '0 18px 36px rgba(15,23,42,0.12)', width: '100%', boxSizing: 'border-box', overflow: 'hidden' }}>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexDirection: isNarrow ? 'column' : 'row', minWidth: 0 }}>
-          <button className="btn--plain btn--lg" disabled={isSaving} onClick={async () => {
+          <button className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-slate-300 disabled:opacity-50" disabled={isSaving} onClick={async () => {
             if (isSaving) return;
             setIsPreviewing(true);
             setMessage('Genererar förhandsvisning…');
@@ -1101,7 +993,7 @@ export default function EgenkontrollPage() {
               setToast({ text: e?.message || 'Misslyckades att förhandsvisa PDF', type: 'error' });
             } finally { setIsPreviewing(false); }
           }} style={{ flex: 1, width: isNarrow ? '100%' : undefined }}>{isPreviewing ? 'Genererar…' : 'Förhandsvisa'}</button>
-          <button className="btn--success btn--lg" disabled={isSaving} onClick={async () => {
+          <button className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:opacity-50" disabled={isSaving} onClick={async () => {
             if (isSaving) return;
             setMessage('Sparar…');
             const rowsOk = validateRows();
@@ -1319,7 +1211,7 @@ export default function EgenkontrollPage() {
           <span style={{ fontWeight: 500 }}>{toast.text}</span>
         </div>
       )}
-    </main>
+    </div>
   );
 }
 
@@ -1334,7 +1226,7 @@ function MobileField({ label, children }: { label: string; children: React.React
 
 function ControlCard({ label, checked, onChange, comment, onCommentChange, placeholder }: { label: string; checked: boolean; onChange: (next: boolean) => void; comment: string; onCommentChange: (next: string) => void; placeholder: string }) {
   return (
-    <div style={{ display: 'grid', gap: 10, padding: '14px 14px 12px', borderRadius: 18, border: '1px solid #dbe4ef', background: '#fff' }}>
+    <div style={{ display: 'grid', gap: 10, padding: '14px 14px 12px', borderRadius: 18, border: '1px solid #e0e8dc', background: '#fff' }}>
       <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
         <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
         <span style={{ fontWeight: 700, color: '#0f172a' }}>{label} OK?</span>
@@ -1344,74 +1236,14 @@ function ControlCard({ label, checked, onChange, comment, onCommentChange, place
   );
 }
 
-const heroCardStyle: React.CSSProperties = {
-  border: '1px solid #dbe4ef',
-  borderRadius: 28,
-  padding: '20px 20px 18px',
-  background: 'linear-gradient(180deg, #ffffff 0%, #f7fbff 100%)',
-  boxShadow: '0 18px 46px rgba(15,23,42,0.05)',
-  display: 'grid',
-  gap: 16,
-};
-
-const heroEyebrowStyle: React.CSSProperties = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  padding: '4px 10px',
-  borderRadius: 999,
-  background: '#d1fae5',
-  border: '1px solid #a7f3d0',
-  color: '#047857',
-  fontSize: 11,
-  fontWeight: 800,
-  letterSpacing: 0.35,
-  textTransform: 'uppercase',
-};
-
-const heroChipStyle: React.CSSProperties = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  padding: '4px 8px',
-  borderRadius: 999,
-  background: '#f8fafc',
-  border: '1px solid #e2e8f0',
-  color: '#475569',
-  fontSize: 12,
-  fontWeight: 700,
-};
-
-const heroStatCardStyle: React.CSSProperties = {
-  display: 'grid',
-  gap: 5,
-  minWidth: 0,
-  padding: '12px 12px 10px',
-  borderRadius: 16,
-  border: '1px solid #dbe4ef',
-  background: '#fff',
-};
-
-const heroStatLabelStyle: React.CSSProperties = {
-  fontSize: 11,
-  fontWeight: 800,
-  letterSpacing: 0.3,
-  textTransform: 'uppercase',
-  color: '#64748b',
-};
-
-const heroStatValueStyle: React.CSSProperties = {
-  fontSize: 22,
-  fontWeight: 800,
-  color: '#0f172a',
-};
-
 const sectionCardStyle: React.CSSProperties = {
-  border: '1px solid #dbe4ef',
+  border: '1px solid #e0e8dc',
   borderRadius: 24,
   padding: '18px 18px 16px',
   minWidth: 0,
   boxSizing: 'border-box',
-  background: '#fff',
-  boxShadow: '0 14px 32px rgba(15,23,42,0.04)',
+  background: '#f9fbf7',
+  boxShadow: '0 1px 3px rgba(20,44,27,0.06), 0 18px 36px -18px rgba(20,44,27,0.24)',
   display: 'grid',
   gap: 14,
 };
@@ -1447,7 +1279,7 @@ const textFieldStyle: React.CSSProperties = {
   width: '100%',
   boxSizing: 'border-box',
   padding: '11px 12px',
-  border: '1px solid #dbe4ef',
+  border: '1px solid #e0e8dc',
   borderRadius: 14,
   fontSize: 14,
   background: '#fff',
@@ -1458,7 +1290,7 @@ const selectFieldStyle: React.CSSProperties = {
   width: '100%',
   boxSizing: 'border-box',
   padding: '11px 12px',
-  border: '1px solid #dbe4ef',
+  border: '1px solid #e0e8dc',
   borderRadius: 14,
   fontSize: 14,
   background: '#fff',
@@ -1469,7 +1301,7 @@ const textAreaStyle: React.CSSProperties = {
   width: '100%',
   boxSizing: 'border-box',
   padding: '11px 12px',
-  border: '1px solid #dbe4ef',
+  border: '1px solid #e0e8dc',
   borderRadius: 14,
   fontSize: 14,
   lineHeight: 1.5,
@@ -1484,8 +1316,8 @@ const summaryCardStyle: React.CSSProperties = {
   minWidth: 0,
   padding: '12px 12px 10px',
   borderRadius: 16,
-  border: '1px solid #dbe4ef',
-  background: '#fff',
+  border: '1px solid #e0e8dc',
+  background: '#f9fbf7',
 };
 
 const summaryLabelStyle: React.CSSProperties = {
@@ -1507,8 +1339,8 @@ const mobileRowCardStyle: React.CSSProperties = {
   gap: 12,
   padding: '14px 14px 12px',
   borderRadius: 18,
-  border: '1px solid #dbe4ef',
-  background: '#fff',
+  border: '1px solid #e0e8dc',
+  background: '#f9fbf7',
 };
 
 const mobileFieldGridStyle: React.CSSProperties = {

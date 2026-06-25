@@ -2,6 +2,10 @@
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import TimeReportModal, { TimeReportModalProps } from "../../components/dashboard/TimeReportModal";
 import { useToast } from '@/lib/Toast';
+import { cn } from '@/lib/shared/cn';
+import { crm } from '@/app/crm/lib/crmTokens';
+import CrmModal from '@/app/crm/components/CrmModal';
+import { buildTimeReportBody } from '@/lib/domains/time-reports/payload';
 
 // Simple shape for time reports coming back from our API.
 interface TimeReportItem {
@@ -43,6 +47,7 @@ export default function TimeReportsPage() {
   const toast = useToast();
   const [refreshTick, setRefreshTick] = useState(0);
   const [deletingIds, setDeletingIds] = useState<string[]>([]);
+  const [pendingDelete, setPendingDelete] = useState<TimeReportItem | null>(null);
   // Weekly navigation state: store a Monday anchor date string (YYYY-MM-DD)
   const today = new Date();
   const calcMonday = (d: Date) => {
@@ -217,16 +222,33 @@ export default function TimeReportsPage() {
 
   const totalHours = useMemo(() => items.reduce((sum, r) => sum + (typeof r.hours === 'number' ? r.hours : 0), 0), [items]);
 
+  const performDelete = useCallback(async (item: TimeReportItem) => {
+    if (!item.id) return;
+    const idStr = String(item.id);
+    setDeletingIds((ids) => Array.from(new Set([...ids, idStr])));
+    try {
+      const res = await fetch(`/api/blikk/time-reports/${item.id}`, { method: 'DELETE' });
+      const j = await res.json().catch(() => ({ ok: false }));
+      if (!res.ok || !j.ok) toast.error((j as any).error || 'Kunde inte ta bort');
+      else { toast.success('Tidrapport borttagen'); setRefreshTick((t) => t + 1); }
+    } catch {
+      toast.error('Fel vid borttagning');
+    } finally {
+      setDeletingIds((ids) => ids.filter((x) => x !== idStr));
+      setPendingDelete(null);
+    }
+  }, [toast]);
+
   return (
-    <div className="grid gap-4 px-4 py-4 pb-[calc(env(safe-area-inset-bottom,0px)+24px)]">
+    <div className="mx-auto grid w-full max-w-[1000px] grid-cols-1 gap-4 pb-[calc(env(safe-area-inset-bottom,0px)+24px)]">
       {/* Sticky header with week navigation for better mobile UX */}
-      <div className="sticky top-0 z-[5] grid gap-1 border-b border-slate-200 bg-white/95 pb-2 pt-2 backdrop-blur">
+      <div className="sticky top-0 z-10 grid gap-1 border-b border-[#e0e8dc] bg-[#e5ede5] pb-2 pt-2 before:pointer-events-none before:absolute before:inset-x-0 before:bottom-full before:h-8 before:bg-[#e5ede5] before:content-['']">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h1 className="m-0 text-xl font-bold text-slate-900">Veckans rapporter</h1>
+          <h1 className="m-0 text-lg font-bold tracking-tight text-slate-900">Veckans rapporter</h1>
           <div className="flex flex-wrap items-center gap-1.5">
-            <button type="button" className='btn--primary btn--sm' onClick={goPrevWeek}>← Föregående</button>
-            <button type="button" className='btn--success btn--sm' onClick={goTodayWeek}>Denna vecka</button>
-            <button type="button" className='btn--primary btn--sm' onClick={goNextWeek}>Nästa →</button>
+            <button type="button" className="inline-flex items-center rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 transition hover:border-slate-300" onClick={goPrevWeek}>← Föregående</button>
+            <button type="button" className="inline-flex items-center rounded-lg px-2.5 py-1 text-xs font-semibold text-white transition hover:opacity-90" style={{ backgroundColor: 'var(--crm-primary)' }} onClick={goTodayWeek}>Denna vecka</button>
+            <button type="button" className="inline-flex items-center rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 transition hover:border-slate-300" onClick={goNextWeek}>Nästa →</button>
           </div>
         </div>
         <div className="text-xs text-slate-500">Vecka: <strong className="font-semibold text-slate-700">{formatDayLabel(dateFrom)} → {formatDayLabel(dateTo)}</strong></div>
@@ -274,12 +296,12 @@ export default function TimeReportsPage() {
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div className="text-[13px] font-semibold text-slate-900">{formatDayLabel(g.day)}</div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <div className={dayHours > 0 ? 'rounded-full border border-green-300 bg-green-100 px-2 py-1 text-xs text-green-800' : 'rounded-full border border-slate-200 bg-slate-100 px-2 py-1 text-xs text-slate-500'}>{dayHours > 0 ? `Summa: ${dayHours.toFixed(2)} h` : 'Inget rapporterat'}</div>
+                  <div className={dayHours > 0 ? 'rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs text-emerald-700' : 'rounded-full border border-slate-200 bg-slate-100 px-2 py-1 text-xs text-slate-500'}>{dayHours > 0 ? `Summa: ${dayHours.toFixed(2)} h` : 'Inget rapporterat'}</div>
                   <button
                     type="button"
                     aria-label={`Ny rapport för ${formatDayLabel(g.day)}`}
                     onClick={() => { setModalInitialDate(g.day); setTimeModalOpen(true); }}
-                    className="inline-flex min-h-8 items-center justify-center rounded-lg border border-green-600 bg-white px-2 py-1.5 text-xs font-semibold text-green-700"
+                    className="inline-flex min-h-8 items-center justify-center rounded-lg border border-emerald-600 bg-white px-2 py-1.5 text-xs font-semibold text-emerald-700"
                   >
                     ➕
                   </button>
@@ -309,35 +331,8 @@ export default function TimeReportsPage() {
                           <button
                             type="button"
                             aria-label="Ta bort"
-                            onClick={async () => {
-                              if (!r.id) return;
-                              const confirmDelete = window.confirm('Ta bort tidrapport?');
-                              if (!confirmDelete) return;
-                              const idStr = String(r.id);
-                              setDeletingIds(ids => Array.from(new Set([...ids, idStr])));
-                              try {
-                                const res = await fetch(`/api/blikk/time-reports/${r.id}`, { method:'DELETE' });
-                                const j = await res.json().catch(()=>({ ok:false }));
-                                if (!res.ok || !j.ok) {
-                                  toast.error((j as any).error || 'Kunde inte ta bort');
-                                } else {
-                                  toast.success('Tidrapport borttagen');
-                                  try {
-                                    const dbg = new URLSearchParams(window.location.search).get('debug') === '1';
-                                    if (dbg && (j as any).usedPath) {
-                                      // eslint-disable-next-line no-console
-                                      console.debug('Delete usedPath', (j as any).usedPath);
-                                    }
-                                  } catch {}
-                                  setRefreshTick(t=>t+1);
-                                }
-                              } catch (e:any) {
-                                toast.error('Fel vid borttagning');
-                              } finally {
-                                setDeletingIds(ids => ids.filter(x => x !== idStr));
-                              }
-                            }}
-                            className="inline-flex min-h-9 items-center justify-center rounded-lg border border-red-300 bg-white px-2.5 py-2 text-[11px] font-semibold text-red-700"
+                            onClick={() => setPendingDelete(r)}
+                            className="inline-flex min-h-9 items-center justify-center rounded-lg border border-rose-300 bg-white px-2.5 py-2 text-[11px] font-semibold text-rose-700 transition hover:border-rose-400"
                             disabled={deletingIds.includes(String(r.id))}
                           >
                             {deletingIds.includes(String(r.id)) ? <span className="spinner dark spin" style={{ width:16, height:16 }} aria-hidden /> : '🗑'}
@@ -363,16 +358,16 @@ export default function TimeReportsPage() {
                           }
                           // Priority for normal projects: projectNumber -> orderNumber -> projectName -> projectId
                           if (r.projectNumber) {
-                            return <span className="break-words rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[10.5px] text-indigo-800">#{r.projectNumber}{r.projectName ? ` – ${r.projectName}` : ''}</span>;
+                            return <span className="break-words rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10.5px] text-emerald-800">#{r.projectNumber}{r.projectName ? ` – ${r.projectName}` : ''}</span>;
                           }
                           if (r.orderNumber) {
-                            return <span className="break-words rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[10.5px] text-indigo-800">Order: #{r.orderNumber}{r.projectName ? ` – ${r.projectName}` : ''}</span>;
+                            return <span className="break-words rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10.5px] text-emerald-800">Order: #{r.orderNumber}{r.projectName ? ` – ${r.projectName}` : ''}</span>;
                           }
                           if (r.projectName) {
-                            return <span className="break-words rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[10.5px] text-indigo-800">Projekt – {r.projectName}</span>;
+                            return <span className="break-words rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10.5px] text-emerald-800">Projekt – {r.projectName}</span>;
                           }
                           if (r.projectId) {
-                            return <span className="break-words rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[10.5px] text-indigo-800">Projekt: {r.projectId}</span>;
+                            return <span className="break-words rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10.5px] text-emerald-800">Projekt: {r.projectId}</span>;
                           }
                           return null;
                         })()}
@@ -398,7 +393,7 @@ export default function TimeReportsPage() {
                     <button
                       type="button"
                       onClick={() => { setModalInitialDate(g.day); setTimeModalOpen(true); }}
-                      className="inline-flex items-center gap-2 rounded-[10px] border border-green-600 bg-green-600 px-3 py-2 text-xs font-semibold text-white shadow-[0_10px_18px_rgba(22,163,74,0.16)]"
+                      className="inline-flex items-center gap-2 rounded-[10px] border border-emerald-700 bg-emerald-700 px-3 py-2 text-xs font-semibold text-white"
                     >
                       Rapportera tid
                     </button>
@@ -415,7 +410,7 @@ export default function TimeReportsPage() {
           type="button"
           onClick={() => { setModalInitialDate(formatLocal(new Date())); setTimeModalOpen(true); }}
           aria-label="Ny tidrapport"
-          className="fixed right-4 z-10 inline-flex h-14 w-14 items-center justify-center rounded-full border border-green-600 bg-green-600 text-2xl text-white shadow-[0_8px_16px_rgba(16,185,129,0.35)]"
+          className="fixed right-4 z-10 inline-flex h-14 w-14 items-center justify-center rounded-full border border-emerald-700 bg-emerald-700 text-2xl text-white shadow-[0_8px_16px_rgba(20,44,27,0.30)]"
           style={{ bottom:'max(16px, env(safe-area-inset-bottom))' }}
         >+
         </button>
@@ -426,23 +421,7 @@ export default function TimeReportsPage() {
         initialDate={modalInitialDate}
         onSubmit={async (payload: Parameters<NonNullable<TimeReportModalProps['onSubmit']>>[0]) => {
           try {
-            const minutes = Math.round(payload.totalHours * 60);
-            const body: any = {
-              date: payload.date,
-              minutes,
-              breakMinutes: payload.breakMinutes,
-              start: payload.start,
-              end: payload.end,
-              // target id: exactly one of project/internal/absence
-              projectId: payload.reportType === 'project' && payload.projectId ? Number(payload.projectId) : undefined,
-              internalProjectId: payload.reportType === 'internal' && payload.internalProjectId ? Number(payload.internalProjectId) : undefined,
-              absenceProjectId: payload.reportType === 'absence' && payload.absenceProjectId ? Number(payload.absenceProjectId) : undefined,
-              activityId: payload.activityId ? Number(payload.activityId) : undefined,
-              timeCodeId: payload.timecodeId ? Number(payload.timecodeId) : undefined,
-              description: payload.description || undefined,
-            };
-            // Travel report is handled inside TimeReportModal and included in payload
-            if ((payload as any).travelReport) body.travelReport = (payload as any).travelReport;
+            const body = buildTimeReportBody(payload as any);
             const url = process.env.NODE_ENV !== 'production' ? '/api/blikk/time-reports?debug=1' : '/api/blikk/time-reports';
             const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
             const json = await res.json().catch(()=>({}));
@@ -483,20 +462,7 @@ export default function TimeReportsPage() {
         onSubmit={async (payload: Parameters<NonNullable<TimeReportModalProps['onSubmit']>>[0]) => {
           if (!payload.editId) return;
           try {
-            const minutes = Math.round(payload.totalHours * 60);
-            const body: any = {
-              date: payload.date,
-              minutes,
-              breakMinutes: payload.breakMinutes,
-              start: payload.start,
-              end: payload.end,
-              projectId: payload.reportType === 'project' && payload.projectId ? Number(payload.projectId) : undefined,
-              internalProjectId: payload.reportType === 'internal' && payload.internalProjectId ? Number(payload.internalProjectId) : undefined,
-              absenceProjectId: payload.reportType === 'absence' && payload.absenceProjectId ? Number(payload.absenceProjectId) : undefined,
-              activityId: payload.activityId ? Number(payload.activityId) : undefined,
-              timeCodeId: payload.timecodeId ? Number(payload.timecodeId) : undefined,
-              description: payload.description || undefined,
-            };
+            const body = buildTimeReportBody(payload as any);
             const url = process.env.NODE_ENV !== 'production' ? `/api/blikk/time-reports/${payload.editId}?debug=1` : `/api/blikk/time-reports/${payload.editId}`;
             const res = await fetch(url, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
             const json = await res.json().catch(()=>({}));
@@ -518,6 +484,37 @@ export default function TimeReportsPage() {
           }
         }}
       />
+
+      {pendingDelete ? (
+        <CrmModal
+          onClose={() => { if (!deletingIds.includes(String(pendingDelete.id))) setPendingDelete(null); }}
+          ariaLabel="Ta bort tidrapport"
+          maxWidth="sm:max-w-[420px]"
+          header={
+            <div className="grid gap-1">
+              <span className={crm.sectionTitle}>Ta bort</span>
+              <strong className="text-lg font-bold tracking-tight text-slate-900">Ta bort tidrapport</strong>
+            </div>
+          }
+          footer={
+            <>
+              <button type="button" onClick={() => setPendingDelete(null)} disabled={deletingIds.includes(String(pendingDelete.id))} className={cn(crm.ghostButton, 'flex-1 sm:flex-none')}>
+                Avbryt
+              </button>
+              <button
+                type="button"
+                onClick={() => performDelete(pendingDelete)}
+                disabled={deletingIds.includes(String(pendingDelete.id))}
+                className="inline-flex h-9 flex-1 items-center justify-center rounded-lg bg-rose-600 px-4 text-[13px] font-semibold text-white transition hover:bg-rose-700 disabled:opacity-50 sm:ml-auto sm:flex-none"
+              >
+                {deletingIds.includes(String(pendingDelete.id)) ? 'Tar bort…' : 'Ta bort'}
+              </button>
+            </>
+          }
+        >
+          <p className="m-0 text-sm leading-6 text-slate-600">Ta bort den här tidrapporten? Det går inte att ångra.</p>
+        </CrmModal>
+      ) : null}
     </div>
   );
 }

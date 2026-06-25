@@ -8,6 +8,13 @@ import ErrorState from '../../../components/ui/ErrorState';
 import Input from '../../../components/ui/Input';
 import { TabsList, TabsTrigger } from '../../../components/ui/Tabs';
 import { cn } from '../../../lib/shared/cn';
+import AdminPromptDialog from '../components/AdminPromptDialog';
+
+type ContactsDialog =
+  | { kind: 'deleteCategory'; id: string; name: string }
+  | { kind: 'renameCategory'; id: string; name: string }
+  | { kind: 'deleteContact'; id: string; name: string }
+  | { kind: 'deleteAddress'; id: string; name: string };
 
 interface Category { id: string; name: string; sort: number; }
 interface Contact { id: string; category_id: string; name: string; phone?: string | null; location?: string | null; role?: string | null; sort: number; }
@@ -22,6 +29,7 @@ export default function AdminContacts() {
   const [activeCat, setActiveCat] = useState<string | null>(null);
   const [view, setView] = useState<'contacts'|'addresses'>('contacts');
   const [search, setSearch] = useState('');
+  const [dialog, setDialog] = useState<ContactsDialog | null>(null);
 
   async function loadAll() {
     setLoading(true); setError(null);
@@ -71,7 +79,6 @@ export default function AdminContacts() {
     if (res.ok) { const j = await res.json(); const category = j.data?.category; if (!category) return; setCategories(list=>list.map(c=>c.id===id?category:c)); }
   }
   async function deleteCategory(id: string) {
-    if (!confirm('Ta bort kategori och alla dess kontakter?')) return;
     const res = await fetch(`/api/admin/contacts/categories/${id}`, { method: 'DELETE' });
     if (res.ok) { setCategories(c=>c.filter(x=>x.id!==id)); setContacts(p=>p.filter(x=>x.category_id!==id)); if (activeCat===id) setActiveCat(null); }
   }
@@ -84,7 +91,6 @@ export default function AdminContacts() {
     if (res.ok) { const j = await res.json(); const contact = j.data?.contact; if (!contact) return; setContacts(list=>list.map(c=>c.id===id?contact:c)); }
   }
   async function deleteContact(id: string) {
-    if (!confirm('Ta bort kontakt?')) return;
     const res = await fetch(`/api/admin/contacts/people/${id}`, { method: 'DELETE' });
     if (res.ok) setContacts(list=>list.filter(c=>c.id!==id));
   }
@@ -97,14 +103,24 @@ export default function AdminContacts() {
     if (res.ok) { const j = await res.json(); const address = j.data?.address; if (!address) return; setAddresses(list=>list.map(a=>a.id===id?address:a)); }
   }
   async function deleteAddress(id: string) {
-    if (!confirm('Ta bort adress?')) return;
     const res = await fetch(`/api/admin/contacts/addresses/${id}`, { method: 'DELETE' });
     if (res.ok) setAddresses(list=>list.filter(a=>a.id!==id));
   }
 
+  async function runDialogConfirm(value: string) {
+    if (!dialog) return;
+    switch (dialog.kind) {
+      case 'deleteCategory': await deleteCategory(dialog.id); break;
+      case 'renameCategory': if (value) await updateCategory(dialog.id, { name: value }); break;
+      case 'deleteContact': await deleteContact(dialog.id); break;
+      case 'deleteAddress': await deleteAddress(dialog.id); break;
+    }
+    setDialog(null);
+  }
+
   return (
-    <main className="mx-auto box-border grid w-full max-w-[1400px] gap-5 p-3">
-      <section className="grid gap-4 rounded-[24px] border border-ui-border bg-[linear-gradient(180deg,#ffffff_0%,#f8fbff_100%)] p-5 shadow-[0_14px_36px_rgba(15,23,42,0.04)]">
+    <div className="mx-auto box-border grid w-full max-w-[1400px] gap-5 p-3">
+      <section className="grid gap-4 rounded-[24px] border border-ui-border bg-[linear-gradient(180deg,#ffffff_0%,#f9fbf7_100%)] p-5 shadow-[0_14px_36px_rgba(15,23,42,0.04)]">
         <div className="flex flex-wrap items-start gap-4">
           <div className="grid max-w-[760px] gap-1.5">
             <div className="flex flex-wrap gap-2">
@@ -172,8 +188,8 @@ export default function AdminContacts() {
                 {categories.map(cat => (
                   <div key={cat.id} className="flex items-center gap-1.5">
                     <Button onClick={()=>setActiveCat(cat.id)} variant={activeCat===cat.id ? 'accent' : 'secondary'} size="sm" fullWidth className="justify-start">{cat.name}</Button>
-                    <Button onClick={()=>{ const name=prompt('Nytt namn', cat.name); if(name) updateCategory(cat.id,{ name }); }} variant="secondary" size="sm" className="min-h-8 px-2 text-xs" aria-label="Byt namn">✏️</Button>
-                    <Button onClick={()=>deleteCategory(cat.id)} variant="secondary" size="sm" className="min-h-8 px-2 text-xs text-red-700 hover:bg-red-50" aria-label="Ta bort">🗑️</Button>
+                    <Button onClick={()=>setDialog({ kind:'renameCategory', id:cat.id, name:cat.name })} variant="secondary" size="sm" className="min-h-8 px-2 text-xs" aria-label="Byt namn">✏️</Button>
+                    <Button onClick={()=>setDialog({ kind:'deleteCategory', id:cat.id, name:cat.name })} variant="secondary" size="sm" className="min-h-8 px-2 text-xs text-red-700 hover:bg-red-50" aria-label="Ta bort">🗑️</Button>
                   </div>
                 ))}
               </div>
@@ -195,7 +211,7 @@ export default function AdminContacts() {
                         <span className="text-base font-bold text-slate-900">{c.name}</span>
                         <span className="text-xs text-slate-500">Kontakt</span>
                       </div>
-                      <Button onClick={()=>deleteContact(c.id)} variant="secondary" size="sm" className="min-h-8 px-2 text-xs text-red-700 hover:bg-red-50">🗑️</Button>
+                      <Button onClick={()=>setDialog({ kind:'deleteContact', id:c.id, name:c.name })} variant="secondary" size="sm" className="min-h-8 px-2 text-xs text-red-700 hover:bg-red-50">🗑️</Button>
                     </div>
                     <div className="grid gap-3 sm:grid-cols-2">
                       <FieldBlock label="Namn"><Editable value={c.name} onSave={v=> updateContact(c.id,{ name:v })} /></FieldBlock>
@@ -220,7 +236,7 @@ export default function AdminContacts() {
                         <DataTableCell><Editable value={c.phone||''} placeholder="—" onSave={v=> updateContact(c.id,{ phone:v })} /></DataTableCell>
                         <DataTableCell><Editable value={c.location||''} placeholder="—" onSave={v=> updateContact(c.id,{ location:v })} /></DataTableCell>
                         <DataTableCell><Editable value={c.role||''} placeholder="—" onSave={v=> updateContact(c.id,{ role:v })} /></DataTableCell>
-                        <DataTableCell className="w-[50px] text-right"><Button onClick={()=>deleteContact(c.id)} variant="secondary" size="sm" className="min-h-8 px-2 text-xs text-red-700 hover:bg-red-50">🗑️</Button></DataTableCell>
+                        <DataTableCell className="w-[50px] text-right"><Button onClick={()=>setDialog({ kind:'deleteContact', id:c.id, name:c.name })} variant="secondary" size="sm" className="min-h-8 px-2 text-xs text-red-700 hover:bg-red-50">🗑️</Button></DataTableCell>
                       </tr>
                     ))}
                   </tbody>
@@ -253,7 +269,7 @@ export default function AdminContacts() {
                       <span className="text-base font-bold text-slate-900">{a.name}</span>
                       <span className="text-xs text-slate-500">Adresspost</span>
                     </div>
-                    <Button onClick={()=>deleteAddress(a.id)} variant="secondary" size="sm" className="min-h-8 px-2 text-xs text-red-700 hover:bg-red-50">🗑️</Button>
+                    <Button onClick={()=>setDialog({ kind:'deleteAddress', id:a.id, name:a.name })} variant="secondary" size="sm" className="min-h-8 px-2 text-xs text-red-700 hover:bg-red-50">🗑️</Button>
                   </div>
                   <div className="grid gap-3">
                     <FieldBlock label="Namn"><Editable value={a.name} onSave={v=> updateAddress(a.id,{ name:v })} /></FieldBlock>
@@ -270,7 +286,7 @@ export default function AdminContacts() {
                     <tr key={a.id} className="bg-white">
                       <DataTableCell><Editable value={a.name} onSave={v=> updateAddress(a.id,{ name:v })} /></DataTableCell>
                       <DataTableCell><Editable value={a.address} onSave={v=> updateAddress(a.id,{ address:v })} /></DataTableCell>
-                      <DataTableCell className="w-[50px] text-right"><Button onClick={()=>deleteAddress(a.id)} variant="secondary" size="sm" className="min-h-8 px-2 text-xs text-red-700 hover:bg-red-50">🗑️</Button></DataTableCell>
+                      <DataTableCell className="w-[50px] text-right"><Button onClick={()=>setDialog({ kind:'deleteAddress', id:a.id, name:a.name })} variant="secondary" size="sm" className="min-h-8 px-2 text-xs text-red-700 hover:bg-red-50">🗑️</Button></DataTableCell>
                     </tr>
                   ))}
                 </tbody>
@@ -285,7 +301,35 @@ export default function AdminContacts() {
           </div>
         )}
       </section>
-    </main>
+
+      {dialog && (dialog.kind === 'renameCategory' ? (
+        <AdminPromptDialog
+          title="Byt namn på kategori"
+          inputLabel="Nytt namn"
+          defaultValue={dialog.name}
+          confirmLabel="Spara"
+          onConfirm={runDialogConfirm}
+          onClose={() => setDialog(null)}
+        />
+      ) : (
+        <AdminPromptDialog
+          title={
+            dialog.kind === 'deleteCategory' ? 'Ta bort kategori'
+            : dialog.kind === 'deleteContact' ? 'Ta bort kontakt'
+            : 'Ta bort adress'
+          }
+          message={
+            dialog.kind === 'deleteCategory'
+              ? `Ta bort ”${dialog.name}” och alla dess kontakter? Det går inte att ångra.`
+              : `Ta bort ”${dialog.name}”? Det går inte att ångra.`
+          }
+          confirmLabel="Ta bort"
+          danger
+          onConfirm={runDialogConfirm}
+          onClose={() => setDialog(null)}
+        />
+      ))}
+    </div>
   );
 }
 

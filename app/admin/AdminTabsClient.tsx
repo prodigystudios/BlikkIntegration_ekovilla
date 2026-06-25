@@ -6,6 +6,8 @@ import AdminBlikkUsersMapping from './blikk/AdminBlikkUsersMapping';
 import Badge from '../../components/ui/Badge';
 import PageShell from '../../components/ui/PageShell';
 import { TabsList, TabsTrigger } from '../../components/ui/Tabs';
+import { crm } from '../crm/lib/crmTokens';
+import { cn } from '../../lib/shared/cn';
 
 const AdminContacts = dynamic(() => import('./contacts/AdminContacts'), { ssr: false });
 const AdminDepotUsage = dynamic(() => import('./depots/AdminDepotUsage'), { ssr: false });
@@ -49,58 +51,39 @@ export default function AdminTabsClient() {
     window.history.replaceState({}, '', url.toString());
   }, [hasResolvedInitialTab, tab]);
 
-  const currentTab = tabs.find((item) => item.id === tab) || tabs[0];
-
   return (
-    <PageShell className="max-w-[1460px] gap-5">
-      <section className="grid gap-4 rounded-[28px] border border-ui-border bg-[linear-gradient(180deg,#ffffff_0%,#f7fbff_100%)] p-5 shadow-[0_18px_46px_rgba(15,23,42,0.05)]">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="grid max-w-[760px] gap-2">
+    <PageShell className="max-w-[1460px]">
+      <section className={cn(crm.cardInner, 'grid gap-4')}>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="grid max-w-[760px] gap-1">
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant="accent" className="px-2.5 py-1 text-[11px] uppercase tracking-[0.35px]">
                 Admincenter
               </Badge>
               <Badge>{tabs.length} arbetsytor</Badge>
-              <Badge>Aktiv: {currentTab.label}</Badge>
             </div>
-            <div className="grid gap-1.5">
-              <h1 className="m-0 text-[34px] leading-[1.04] text-slate-900">Administration med bättre överblick</h1>
-              <p className="m-0 text-sm leading-[1.55] text-slate-600">
-                Hantera användare, kontakter, depåer, Blikk-matchning och nyheter från en tydligare gemensam adminyta.
-              </p>
-            </div>
-          </div>
-
-          <div className="grid min-w-[220px] gap-2">
-            <div className="grid gap-1.5 rounded-[18px] border border-ui-border bg-white px-3.5 py-3">
-              <span className="text-[11px] font-extrabold uppercase tracking-[0.3px] text-slate-500">Aktiv vy</span>
-              <strong className="text-lg font-extrabold text-slate-900">{currentTab.label}</strong>
-              <span className="text-xs text-slate-500">{currentTab.summary}</span>
-            </div>
+            <h1 className={crm.pageTitle}>Administration</h1>
+            <p className={crm.pageSubtitle}>
+              Hantera användare, behörigheter, kontakter, depåer, Blikk-matchning och nyheter från en gemensam adminyta.
+            </p>
           </div>
         </div>
 
-        <TabsList aria-label="Adminytor" className="gap-2.5">
-          {tabs.map((tabDef) => {
-            const active = tab === tabDef.id;
-
-            return (
-              <TabsTrigger
-                key={tabDef.id}
-                onClick={() => setTab(tabDef.id)}
-                active={active}
-                variant="card"
-                className="min-w-[168px]"
-              >
-                <span className="font-bold">{tabDef.label}</span>
-                <span className={active ? 'text-xs opacity-90' : 'text-xs opacity-75'}>{tabDef.summary}</span>
-              </TabsTrigger>
-            );
-          })}
+        <TabsList aria-label="Adminytor" className="gap-2">
+          {tabs.map((tabDef) => (
+            <TabsTrigger
+              key={tabDef.id}
+              onClick={() => setTab(tabDef.id)}
+              active={tab === tabDef.id}
+              title={tabDef.summary}
+            >
+              {tabDef.label}
+            </TabsTrigger>
+          ))}
         </TabsList>
       </section>
 
-      <section className="rounded-[30px] border border-slate-200 bg-[linear-gradient(180deg,#f8fbff_0%,#ffffff_100%)] shadow-[0_18px_44px_rgba(15,23,42,0.04)]">
+      <section className={crm.card}>
         {tab==='users' && <AdminUsers />}
         {tab==='permissions' && <AdminPermissions />}
         {tab==='contacts' && <AdminContacts />}

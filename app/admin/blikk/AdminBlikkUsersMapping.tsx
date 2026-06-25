@@ -81,7 +81,7 @@ export default function AdminBlikkUsersMapping() {
 
   return (
     <PageShell className="max-w-[1280px] gap-5 px-3 py-3 sm:px-4 lg:px-5">
-      <section className="grid gap-4 rounded-[24px] border border-ui-border bg-[linear-gradient(180deg,#ffffff_0%,#f8fbff_100%)] p-5 shadow-[0_14px_36px_rgba(15,23,42,0.04)]">
+      <section className="grid gap-4 rounded-[24px] border border-ui-border bg-[linear-gradient(180deg,#ffffff_0%,#f9fbf7_100%)] p-5 shadow-[0_14px_36px_rgba(15,23,42,0.04)]">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="grid max-w-[760px] gap-1.5">
             <div className="flex flex-wrap gap-2">
@@ -161,7 +161,7 @@ export default function AdminBlikkUsersMapping() {
                         onClick={() => setRows((list) => list.map((x) => (x.id === row.id ? { ...x, blikk_id: row.bestMatch!.id } : x)))}
                         variant="secondary"
                         size="sm"
-                        className="border-blue-200 text-blue-700 hover:bg-blue-50"
+                        className="border-emerald-200 text-emerald-700 hover:bg-emerald-50"
                       >
                         Använd förslag
                       </Button>
@@ -213,7 +213,7 @@ function roleBadgeClassName(role: string) {
   if (role === 'admin') return 'border-red-200 bg-red-50 text-red-800';
   if (role === 'sales') return 'border-emerald-200 bg-emerald-50 text-emerald-700';
   if (role === 'konsult') return 'border-amber-200 bg-amber-50 text-amber-800';
-  return 'border-blue-200 bg-blue-50 text-blue-700';
+  return 'border-slate-200 bg-slate-50 text-slate-600';
 }
 
 function statusBadgeClassName(status: string) {
