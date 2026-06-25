@@ -334,7 +334,7 @@ export default function AppSidebar({
           <img
             src="/brand/Ekovilla_logga_vit.png"
             alt="Ekovilla"
-            className={cn('hidden h-9 w-9 object-contain', collapsed ? 'lg:block' : 'lg:hidden')}
+            className={cn('hidden h-6 w-6 object-contain', collapsed ? 'lg:block' : 'lg:hidden')}
           />
           <button
             type="button"
