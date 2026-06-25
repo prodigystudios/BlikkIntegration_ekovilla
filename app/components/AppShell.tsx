@@ -5,14 +5,16 @@ import type { ReactNode } from 'react';
 import type { UserRole } from '@/lib/roles';
 import AppSidebar from './AppSidebar';
 
-// Single app shell for all authenticated pages. Public routes (auth + the public
-// customer quote-signing page) render bare, with no chrome. Everywhere else gets
-// the unified context-aware sidebar + content area. The `crm-shell` class carries
-// the sidebar/theme CSS variables app-wide.
-const PUBLIC_PREFIXES = ['/auth', '/kund/offert'];
+// Single app shell for all authenticated pages. A few routes render bare, with no
+// chrome: the public auth + customer quote-signing pages, and the installer
+// work-order field view (a focused mobile view opened via direct link; it's still
+// auth-gated in its own page.tsx, it just doesn't want the sidebar). Everywhere
+// else gets the unified context-aware sidebar + content area. The `crm-shell` class
+// carries the sidebar/theme CSS variables app-wide.
+const CHROMELESS_PREFIXES = ['/auth', '/kund/offert', '/arbetsorder'];
 
-function isPublicPath(pathname: string) {
-  return PUBLIC_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+function isChromelessPath(pathname: string) {
+  return CHROMELESS_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 }
 
 export default function AppShell({
@@ -28,7 +30,7 @@ export default function AppShell({
 }) {
   const pathname = usePathname() || '/';
 
-  if (isPublicPath(pathname)) {
+  if (isChromelessPath(pathname)) {
     return <>{children}</>;
   }
 
