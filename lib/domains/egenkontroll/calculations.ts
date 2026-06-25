@@ -5,6 +5,8 @@
 // lambda are passed in by the caller (from lib/domains/crm/materials.ts) so this
 // module stays free of UI/material coupling.
 
+import { parseDecimal } from '@/lib/shared/number';
+
 export type EtappOpenRow = {
   etapp?: string;
   ytaM2?: string;
@@ -30,9 +32,11 @@ export type EtappClosedRow = {
 // missing/zero input (matches the original guard behaviour).
 function density(area: string | undefined, thicknessMm: string | undefined, bags: string | undefined, bagWeight: number): number {
   if (!area || !thicknessMm || !bags || !bagWeight) return 0;
-  const a = parseFloat(area);
-  const t = parseFloat(thicknessMm);
-  const b = parseFloat(bags);
+  // parseDecimal handles sv-SE comma decimals ("50,5" → 50.5); raw parseFloat would
+  // truncate at the comma and silently corrupt density on this quality document.
+  const a = parseDecimal(area);
+  const t = parseDecimal(thicknessMm);
+  const b = parseDecimal(bags);
   if (isNaN(a) || isNaN(t) || isNaN(b) || a === 0 || t === 0) return 0;
   return (b * bagWeight) / (a * (t / 1000));
 }
@@ -54,8 +58,10 @@ export function formatDensity(calc: number): string {
 
 // installeradTjocklek = beställd + beställd × sättningsprocent/100 (rounded). '' when invalid.
 export function installedThickness(bestalld?: string, sattningsprocent?: string): string {
-  const base = parseFloat(String(bestalld ?? ''));
-  const perc = parseFloat(String(sattningsprocent ?? ''));
+  // NaN fallback so empty/invalid input stays blank (Number.isFinite check below),
+  // while sv-SE comma decimals ("12,5") parse correctly instead of truncating.
+  const base = parseDecimal(bestalld, NaN);
+  const perc = parseDecimal(sattningsprocent, NaN);
   const installed = Number.isFinite(base) && Number.isFinite(perc) ? base + base * (perc / 100) : NaN;
   return Number.isFinite(installed) && installed > 0 ? String(Math.round(installed)) : '';
 }

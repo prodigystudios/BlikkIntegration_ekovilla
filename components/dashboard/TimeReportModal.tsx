@@ -573,7 +573,7 @@ export default function TimeReportModal({ open, onClose, onSubmit, initialProjec
   const selectCls = cn(crm.select, 'h-11 min-w-0 text-base sm:h-9 sm:text-sm');
   const textareaCls = 'w-full rounded-lg border border-[#dce4d8] bg-white px-3 py-2.5 text-base text-slate-900 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/15 sm:text-sm';
   const helperText = 'text-[11px] text-slate-500';
-  const sectionTitle = 'text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400';
+  const sectionTitle = crm.sectionTitle;
   const hoursStr = totalHours.toFixed(2).replace('.', ',');
 
   const reportTypeHint = reportType === 'project'
@@ -620,7 +620,7 @@ export default function TimeReportModal({ open, onClose, onSubmit, initialProjec
         </div>
       }
     >
-      <div className="grid grid-cols-1 gap-5">
+      <div className={cn('grid grid-cols-1 gap-5', submitted === 'saving' && 'pointer-events-none opacity-60')} aria-busy={submitted === 'saving'}>
         {submitError && (
           <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{submitError}</div>
         )}

@@ -18,6 +18,11 @@ describe('calculateOpenRowDensity', () => {
     expect(calculateOpenRowDensity({ ytaM2: '', bestalldTjocklek: '500', antalSack: '10' }, 15)).toBe(0);
     expect(calculateOpenRowDensity({ ytaM2: '100', bestalldTjocklek: '500', antalSack: '10' }, 0)).toBe(0);
   });
+  it('hanterar svenska kommatecken i ytan (50,5 m², ej 50)', () => {
+    // 50.5 m² × 0.5 m = 25.25 m³; 50.5 säck × 15 kg = 757.5 kg → 30 kg/m³
+    expect(calculateOpenRowDensity({ ytaM2: '50,5', bestalldTjocklek: '500', antalSack: '50,5' }, 15)).toBe(30);
+    // raw parseFloat skulle ge ytaM2=50 → fel densitet
+  });
 });
 
 describe('calculateClosedRowDensity', () => {
@@ -44,6 +49,10 @@ describe('installedThickness', () => {
   it('tom vid ogiltig indata', () => {
     expect(installedThickness('', '30')).toBe('');
     expect(installedThickness('abc', '10')).toBe('');
+  });
+  it('hanterar svenskt kommatecken i sättningsprocent', () => {
+    // 200 + 200 × 12,5/100 = 225 (parseFloat hade gett 12 → 224)
+    expect(installedThickness('200', '12,5')).toBe('225');
   });
 });
 

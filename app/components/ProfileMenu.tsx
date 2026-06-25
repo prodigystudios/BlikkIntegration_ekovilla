@@ -59,6 +59,9 @@ export default function ProfileMenu({ fullName, role, placement = 'down' }: { fu
       if (!open) return;
       if (e.key === 'Escape') { setOpen(false); btnRef.current?.focus(); }
     }
+    // The popover position is computed once (fixed viewport coords), so close it on
+    // scroll/resize instead of letting it float detached from the button.
+    function onReposition() { setOpen(false); }
     document.addEventListener('mousedown', onDoc);
     document.addEventListener('keydown', onKey);
     if (open && btnRef.current) {
@@ -70,8 +73,15 @@ export default function ProfileMenu({ fullName, role, placement = 'down' }: { fu
       if (alignRight) pos.right = Math.round(window.innerWidth - rect.right);
       else pos.left = Math.round(rect.left);
       setMenuPos(pos);
+      window.addEventListener('resize', onReposition);
+      window.addEventListener('scroll', onReposition, true);
     }
-    return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey); };
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+      window.removeEventListener('resize', onReposition);
+      window.removeEventListener('scroll', onReposition, true);
+    };
   }, [open, placement]);
 
   // Removed client-side fetch; fullName is passed from server layout.
