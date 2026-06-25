@@ -67,11 +67,8 @@ export default function CrmModal({
           </button>
         </div>
 
-        {/* Scrollable body. overflow-x-hidden is deliberate: overflow-y-auto alone makes
-            the x-axis compute to auto too, so any slightly-too-wide content (e.g. native
-            date/time inputs on mobile) turns the sheet into a sideways-scrollable surface.
-            Inner areas that need horizontal scroll use their own overflow-x-auto. */}
-        <div className={cn('flex-1 overflow-y-auto overflow-x-hidden px-5 py-5', bodyClassName)}>{children}</div>
+        {/* Scrollable body */}
+        <div className={cn('flex-1 overflow-y-auto px-5 py-5', bodyClassName)}>{children}</div>
 
         {/* Sticky footer */}
         {footer ? (

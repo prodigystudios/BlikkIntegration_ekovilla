@@ -78,6 +78,11 @@ input, select, textarea { font-size: 16px; }
    Scoped to iOS via @supports so desktop/Android keep the compact 14px controls. */
 @supports (-webkit-touch-callout: none) {
   input:not([type='checkbox']):not([type='radio']), select, textarea { font-size: 16px !important; }
+  /* Native <input type="date|time"> have a fixed intrinsic width on iOS/WebKit that ignores
+     width/max-width/min-width — they overflow narrow containers so the page scrolls sideways.
+     appearance:none drops the native sizing so width:100% applies; the picker still opens on
+     tap. iOS-scoped, so desktop keeps the native control. */
+  input[type="date"], input[type="time"] { -webkit-appearance: none; appearance: none; }
 }
 /* Make text-like form controls fill their container and be consistent */
 input:not([type='checkbox']):not([type='radio']), select, textarea {
