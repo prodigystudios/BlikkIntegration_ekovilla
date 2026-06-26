@@ -18,3 +18,14 @@ export async function searchTicCompanies(q: string): Promise<TicLookupResult[]> 
     .filter((d): d is TicRawCompany => !!d)
     .map(mapTicCompany);
 }
+
+// Look up a single company by org.nr and return the mapped result (or null). Prefers an
+// exact registrationNumber match, falling back to the first hit. Used to enrich an existing
+// customer's company data on demand (e.g. Fortnox imports that never went through lookup).
+export async function getTicCompanyByOrgNumber(orgNumber: string): Promise<TicLookupResult | null> {
+  const normalized = orgNumber.replace(/\D/g, '');
+  if (!normalized) return null;
+  const results = await searchTicCompanies(normalized);
+  const exact = results.find((r) => (r.organization_number || '').replace(/\D/g, '') === normalized);
+  return exact ?? results[0] ?? null;
+}

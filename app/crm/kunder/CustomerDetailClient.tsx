@@ -241,6 +241,7 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
   const [editDraft, setEditDraft] = useState<EditDraft | null>(null);
   const [pushingFortnox, setPushingFortnox] = useState(false);
   const [fetchingCredit, setFetchingCredit] = useState(false);
+  const [enriching, setEnriching] = useState(false);
 
   const [contacts, setContacts] = useState<CustomerContact[]>([]);
   const [addingContact, setAddingContact] = useState(false);
@@ -433,6 +434,23 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
     finally { setPushingFortnox(false); }
   }
 
+  // Enrich the customer's company data from tic.io (fills only empty fields). Mainly for
+  // Fortnox-imported customers that never went through the create-form lookup.
+  async function fetchCompanyData() {
+    if (!customer) return;
+    setEnriching(true);
+    try {
+      const res = await fetch(`/api/crm/customers/${customer.id}/enrich`, { method: 'POST' });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte hämta företagsdata'); return; }
+      const updated: Customer = json.data?.item;
+      if (updated) { setCustomer(updated); setContacts(updated.contacts || []); }
+      const filled = json.data?.filled ?? 0;
+      toast.success(filled > 0 ? `Företagsdata hämtad (${filled} fält ifyllda)` : 'Inga nya fält att fylla – datan är redan komplett');
+    } catch { toast.error('Fel vid hämtning av företagsdata'); }
+    finally { setEnriching(false); }
+  }
+
   // Manually pull a tic.io credit report and persist the snapshot (writer-gated server-side).
   async function fetchCreditReport() {
     if (!customer) return;
@@ -517,6 +535,14 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
 
   const displayName = getDisplayName(customer);
   const isB2B = customer.customer_type === 'business';
+  const hasCompanyInfo = Boolean(
+    customer.legal_entity_type || customer.sni_code || customer.sni_name ||
+    customer.annual_revenue != null || customer.number_of_employees != null ||
+    customer.operating_profit != null || customer.profit_after_financial_items != null ||
+    customer.total_assets != null || customer.operating_margin != null ||
+    customer.equity_ratio != null || customer.financial_year != null ||
+    (customer.risk_indicators && customer.risk_indicators.length > 0)
+  );
 
   // ─── Sidebar (shared between read + edit views) ────────────────────────────
 
@@ -907,21 +933,32 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
           ) : null}
 
           {/* Företagsinformation (företag, från tic.io-uppslaget) */}
-          {isB2B && (
-            customer.legal_entity_type || customer.sni_code || customer.sni_name ||
-            customer.annual_revenue != null || customer.number_of_employees != null ||
-            customer.operating_profit != null || customer.profit_after_financial_items != null ||
-            customer.total_assets != null || customer.operating_margin != null ||
-            customer.equity_ratio != null || customer.financial_year != null ||
-            (customer.risk_indicators && customer.risk_indicators.length > 0)
-          ) ? (
+          {isB2B ? (
             <Card>
-              <SectionTitle>
-                Företagsinformation
-                {customer.financial_year != null ? (
-                  <span className="ml-2 text-xs font-normal normal-case tracking-normal text-slate-400">räkenskapsår {customer.financial_year}</span>
-                ) : null}
-              </SectionTitle>
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <SectionTitle>
+                  Företagsinformation
+                  {customer.financial_year != null ? (
+                    <span className="ml-2 text-xs font-normal normal-case tracking-normal text-slate-400">räkenskapsår {customer.financial_year}</span>
+                  ) : null}
+                </SectionTitle>
+                <button
+                  type="button"
+                  onClick={fetchCompanyData}
+                  disabled={enriching || !customer.organization_number}
+                  className={cn(crm.ghostButton, 'shrink-0 disabled:opacity-50')}
+                  title={!customer.organization_number ? 'Kräver organisationsnummer' : undefined}
+                >
+                  {enriching ? 'Hämtar…' : hasCompanyInfo ? 'Uppdatera' : 'Hämta företagsdata'}
+                </button>
+              </div>
+              {!hasCompanyInfo ? (
+                <p className="text-sm text-slate-500">
+                  {customer.organization_number
+                    ? 'Hämta bransch, bolagsform, ekonomi och risk från tic.io.'
+                    : 'Lägg till ett organisationsnummer för att kunna hämta företagsdata.'}
+                </p>
+              ) : (
               <div className="grid gap-5">
 
                 {/* Bransch & bolagsform */}
@@ -968,6 +1005,7 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
                 ) : null}
 
               </div>
+              )}
             </Card>
           ) : null}
 
