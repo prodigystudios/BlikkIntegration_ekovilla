@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { getCurrentWeekStartDate } from '@/lib/domains/crm/goals';
+import { getCurrentMonthStartDate } from '@/lib/domains/crm/goals';
 export { ok, routeError, validationError, requireCrmUser, requireCrmWriter, requireCrmAdmin } from '../_shared';
 
 function normalizeOptionalText(value: unknown) {
@@ -12,17 +12,17 @@ const nonNegativeIntSchema = z.coerce.number().int().min(0, 'Värdet kan inte va
 const nonNegativeNumberSchema = z.coerce.number().min(0, 'Värdet kan inte vara negativt');
 
 export const listCrmGoalsQuerySchema = z.object({
-  period_type: z.enum(['week']).optional().default('week'),
+  period_type: z.enum(['week', 'month']).optional().default('month'),
   period_start: z.preprocess(
-    (value) => normalizeOptionalText(value) || getCurrentWeekStartDate(),
+    (value) => normalizeOptionalText(value) || getCurrentMonthStartDate(),
     z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Ogiltigt perioddatum'),
   ),
 });
 
 export const upsertCrmGoalsSchema = z.object({
-  period_type: z.enum(['week']).optional().default('week'),
+  period_type: z.enum(['week', 'month']).optional().default('month'),
   period_start: z.preprocess(
-    (value) => normalizeOptionalText(value) || getCurrentWeekStartDate(),
+    (value) => normalizeOptionalText(value) || getCurrentMonthStartDate(),
     z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Ogiltigt perioddatum'),
   ),
   goals: z.array(z.object({
@@ -30,6 +30,8 @@ export const upsertCrmGoalsSchema = z.object({
     calls_target: nonNegativeIntSchema,
     quotes_target: nonNegativeIntSchema,
     quote_value_target: nonNegativeNumberSchema,
+    order_count_target: nonNegativeIntSchema,
+    order_value_target: nonNegativeNumberSchema,
   })).min(1, 'Minst ett mål krävs').max(50, 'För många mål i samma uppdatering'),
 });
 

@@ -1,7 +1,12 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
+// Budgets are set monthly; the leaderboard derives the weekly target as budget ÷ this.
+export const GOAL_WEEKS_PER_MONTH = 4;
+
+export type CrmGoalPeriodType = 'week' | 'month';
+
 export const crmGoalSelect =
-  'id, user_id, period_type, period_start, calls_target, quotes_target, quote_value_target, created_by, updated_by, created_at, updated_at, user:profiles!crm_goals_user_id_fkey(id, full_name, role)';
+  'id, user_id, period_type, period_start, calls_target, quotes_target, quote_value_target, order_count_target, order_value_target, created_by, updated_by, created_at, updated_at, user:profiles!crm_goals_user_id_fkey(id, full_name, role)';
 
 type GoalUserRow = {
   id: string;
@@ -12,11 +17,13 @@ type GoalUserRow = {
 export type CrmGoalRow = {
   id: string;
   user_id: string;
-  period_type: 'week';
+  period_type: CrmGoalPeriodType;
   period_start: string;
   calls_target: number;
   quotes_target: number;
   quote_value_target: number | string;
+  order_count_target: number;
+  order_value_target: number | string;
   created_by: string;
   updated_by: string;
   created_at: string;
@@ -29,17 +36,19 @@ export type CrmGoal = Omit<CrmGoalRow, 'user'> & {
 };
 
 type ListCrmGoalsArgs = {
-  periodType: 'week';
+  periodType: CrmGoalPeriodType;
   periodStart: string;
 };
 
 type UpsertCrmGoalInput = {
   user_id: string;
-  period_type: 'week';
+  period_type: CrmGoalPeriodType;
   period_start: string;
   calls_target: number;
   quotes_target: number;
   quote_value_target: number;
+  order_count_target: number;
+  order_value_target: number;
   created_by: string;
   updated_by: string;
 };
@@ -73,6 +82,18 @@ export function getCurrentWeekStartDate() {
   const mondayOffset = (start.getDay() + 6) % 7;
   start.setDate(start.getDate() - mondayOffset);
   return formatLocalDateOnly(start);
+}
+
+// First day of the current month (YYYY-MM-01) — the key for a monthly budget.
+export function getCurrentMonthStartDate() {
+  const now = new Date();
+  return formatLocalDateOnly(new Date(now.getFullYear(), now.getMonth(), 1));
+}
+
+// Derive the displayed weekly target from a monthly budget (budget ÷ 4, fixed).
+export function weeklyFromMonthly(monthly: number | string): number {
+  const numeric = typeof monthly === 'number' ? monthly : Number(String(monthly));
+  return Number.isFinite(numeric) ? numeric / GOAL_WEEKS_PER_MONTH : 0;
 }
 
 export function formatGoalCurrency(value: number | string) {

@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 import { getUserProfile } from '@/lib/getUserProfile';
-import { getCurrentWeekStartDate, mapCrmGoalRows, type CrmGoalRow } from '@/lib/domains/crm/goals';
+import { getCurrentMonthStartDate, mapCrmGoalRows, type CrmGoalRow } from '@/lib/domains/crm/goals';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { getFortnoxConnectionStatus } from '@/lib/domains/fortnox/auth';
 import CrmSettingsView from './CrmSettingsView';
@@ -12,7 +12,7 @@ export default async function CrmSettingsPage() {
   if (profile?.role !== 'admin') redirect('/crm');
 
   const supabase = getSupabaseAdmin();
-  const currentWeekStart = getCurrentWeekStartDate();
+  const currentMonthStart = getCurrentMonthStartDate();
 
   const [teamRes, goalsRes, unassignedProspectsRes, openTasksRes, quoteFollowUpsRes, fortnoxStatus] = await Promise.all([
     supabase
@@ -21,9 +21,9 @@ export default async function CrmSettingsPage() {
       .in('role', ['sales', 'admin', 'konsult']),
     supabase
       .from('crm_goals')
-      .select('id, user_id, period_type, period_start, calls_target, quotes_target, quote_value_target, created_by, updated_by, created_at, updated_at, user:profiles!crm_goals_user_id_fkey(id, full_name, role)')
-      .eq('period_type', 'week')
-      .eq('period_start', currentWeekStart),
+      .select('id, user_id, period_type, period_start, calls_target, quotes_target, quote_value_target, order_count_target, order_value_target, created_by, updated_by, created_at, updated_at, user:profiles!crm_goals_user_id_fkey(id, full_name, role)')
+      .eq('period_type', 'month')
+      .eq('period_start', currentMonthStart),
     supabase
       .from('crm_customers')
       .select('id', { count: 'exact', head: true })
@@ -121,7 +121,7 @@ export default async function CrmSettingsPage() {
       team={crmTeam}
       goalTeam={goalTeam}
       goals={currentGoals}
-      goalPeriodStart={currentWeekStart}
+      goalPeriodStart={currentMonthStart}
       stats={stats}
       integrations={integrations}
       fortnoxStatus={fortnoxStatus}

@@ -8,6 +8,7 @@ import type { UserRole } from '@/lib/roles';
 import { getVisibleCrmNavItems } from '../_lib/nav';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
+import { weeklyFromMonthly } from '@/lib/domains/crm/goals';
 
 type ProspectItem = {
   id: string;
@@ -88,6 +89,7 @@ type WorkOrderItem = {
   status: string;
   assigned_to: string;
   created_at: string;
+  fortnox_invoiced_at: string | null;
 };
 
 type LoadState = {
@@ -108,11 +110,13 @@ type GoalUser = {
 type GoalItem = {
   id: string;
   user_id: string;
-  period_type: 'week';
+  period_type: 'week' | 'month';
   period_start: string;
   calls_target: number;
   quotes_target: number;
   quote_value_target: number | string;
+  order_count_target: number;
+  order_value_target: number | string;
   user: GoalUser | GoalUser[] | null;
 };
 
@@ -176,7 +180,8 @@ function getGoalUser(value: GoalItem['user']) {
 }
 
 function hasActiveGoalTarget(goal: GoalItem) {
-  return goal.calls_target > 0 || goal.quotes_target > 0 || Number(goal.quote_value_target) > 0;
+  return goal.calls_target > 0 || goal.quotes_target > 0 || Number(goal.quote_value_target) > 0
+    || goal.order_count_target > 0 || Number(goal.order_value_target) > 0;
 }
 
 function isPipelineProspect(prospect: ProspectItem) {
@@ -219,6 +224,28 @@ function isWithinLastDays(value: string, days: number) {
   if (Number.isNaN(date.getTime())) return false;
   const from = addDays(startOfToday(), -days);
   return date >= from;
+}
+
+// Current ISO week range [Monday 00:00, next Monday 00:00) in local time. The leaderboard
+// scopes its actuals to this so weekly targets compare against the current week's activity.
+function currentWeekRange() {
+  const start = startOfToday();
+  const mondayOffset = (start.getDay() + 6) % 7;
+  start.setDate(start.getDate() - mondayOffset);
+  return { start, end: addDays(start, 7) };
+}
+
+// Parse a call_at/created_at timestamp OR a quote_date (date-only) consistently in local time.
+function parseActivityDate(value: string | null | undefined): Date | null {
+  if (!value) return null;
+  const iso = value.length === 10 ? `${value}T12:00:00` : value;
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function isWithin(value: string | null | undefined, range: { start: Date; end: Date }) {
+  const date = parseActivityDate(value);
+  return date != null && date >= range.start && date < range.end;
 }
 
 function isOverdue(task: TaskItem) {
@@ -286,7 +313,7 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
           fetch('/api/crm/calls', { cache: 'no-store' }),
           fetch('/api/crm/tasks', { cache: 'no-store' }),
           fetch('/api/crm/quotes', { cache: 'no-store' }),
-          fetch('/api/crm/goals?period_type=week', { cache: 'no-store' }),
+          fetch('/api/crm/goals?period_type=month', { cache: 'no-store' }),
           fetch('/api/crm/work-orders', { cache: 'no-store' }),
         ]);
 
@@ -353,9 +380,10 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
     const quotedProspects = state.prospects.filter((prospect) => prospect.status === 'quoted');
     const qualifiedProspects = state.prospects.filter((prospect) => prospect.status === 'qualified' || prospect.status === 'quoted');
     const wonProspects = state.prospects.filter((prospect) => prospect.status === 'won');
-    const callsTarget = state.goals.reduce((total, goal) => total + goal.calls_target, 0);
-    const quotesTarget = state.goals.reduce((total, goal) => total + goal.quotes_target, 0);
-    const quoteValueTarget = state.goals.reduce((total, goal) => total + Number(goal.quote_value_target || 0), 0);
+    // Monthly budgets → weekly targets (÷4) so the team summary compares against ~one week.
+    const callsTarget = Math.round(weeklyFromMonthly(state.goals.reduce((total, goal) => total + goal.calls_target, 0)));
+    const quotesTarget = Math.round(weeklyFromMonthly(state.goals.reduce((total, goal) => total + goal.quotes_target, 0)));
+    const quoteValueTarget = weeklyFromMonthly(state.goals.reduce((total, goal) => total + Number(goal.quote_value_target || 0), 0));
 
     return {
       prospectsTotal: state.prospects.length,
@@ -387,32 +415,41 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
   const nextTasks = useMemo(() => [...state.tasks].filter((task) => task.status === 'open').sort(sortTasks).slice(0, 3), [state.tasks]);
   const nextActions = buildOverviewActions({ overdueTasks: summary.overdueTasks, followUpCalls: summary.followUpCalls, newProspects: summary.newProspects, standaloneCalls: summary.standaloneCalls, quoteFollowUps: summary.quoteFollowUps });
   const teamLeaderboard = useMemo(() => {
+    // Goals are MONTHLY budgets; the leaderboard shows the weekly target (budget ÷ 4) against
+    // THIS WEEK's actuals — so every actual is scoped to the current ISO week.
+    const week = currentWeekRange();
     const callsByUser = new Map<string, number>();
     const quotesByUser = new Map<string, number>();
     const quoteValueByUser = new Map<string, number>();
+    const orderCountByUser = new Map<string, number>();
     const orderValueByUser = new Map<string, number>();
     const invoicedValueByUser = new Map<string, number>();
+    const add = (map: Map<string, number>, key: string, value: number) => map.set(key, (map.get(key) || 0) + value);
+    const numeric = (value: number | string) => {
+      const n = typeof value === 'number' ? value : Number(String(value));
+      return Number.isFinite(n) ? n : 0;
+    };
 
     for (const call of state.calls) {
-      callsByUser.set(call.user_id, (callsByUser.get(call.user_id) || 0) + 1);
+      if (isWithin(call.call_at, week)) add(callsByUser, call.user_id, 1);
     }
 
     for (const quote of state.quotes) {
-      quotesByUser.set(quote.assigned_to, (quotesByUser.get(quote.assigned_to) || 0) + 1);
-      const numericAmount = typeof quote.amount === 'number' ? quote.amount : Number(String(quote.amount));
-      quoteValueByUser.set(
-        quote.assigned_to,
-        (quoteValueByUser.get(quote.assigned_to) || 0) + (Number.isFinite(numericAmount) ? numericAmount : 0),
-      );
+      if (!isWithin(quote.quote_date, week)) continue;
+      add(quotesByUser, quote.assigned_to, 1);
+      add(quoteValueByUser, quote.assigned_to, numeric(quote.amount));
     }
 
     for (const workOrder of state.workOrders) {
-      const numericAmount = typeof workOrder.amount === 'number' ? workOrder.amount : Number(String(workOrder.amount));
-      const amount = Number.isFinite(numericAmount) ? numericAmount : 0;
-      orderValueByUser.set(workOrder.assigned_to, (orderValueByUser.get(workOrder.assigned_to) || 0) + amount);
-      // "Fakturerat" = order reached the terminal invoiced state (see work-order status flow).
-      if (workOrder.status === 'invoiced') {
-        invoicedValueByUser.set(workOrder.assigned_to, (invoicedValueByUser.get(workOrder.assigned_to) || 0) + amount);
+      const amount = numeric(workOrder.amount);
+      // Order count + value: orders created this week.
+      if (isWithin(workOrder.created_at, week)) {
+        add(orderCountByUser, workOrder.assigned_to, 1);
+        add(orderValueByUser, workOrder.assigned_to, amount);
+      }
+      // "Fakturerat": value of orders invoiced this week (by the Fortnox invoice date).
+      if (workOrder.status === 'invoiced' && isWithin(workOrder.fortnox_invoiced_at, week)) {
+        add(invoicedValueByUser, workOrder.assigned_to, amount);
       }
     }
 
@@ -420,15 +457,26 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
       .filter(hasActiveGoalTarget)
       .map((goal) => {
         const user = getGoalUser(goal.user);
+        // Weekly targets derived from the monthly budget (÷4). Count targets are rounded for
+        // a clean "x / y" display; value targets stay exact (formatted as currency).
+        const callsTarget = Math.round(weeklyFromMonthly(goal.calls_target));
+        const quotesTarget = Math.round(weeklyFromMonthly(goal.quotes_target));
+        const quoteValueTarget = weeklyFromMonthly(goal.quote_value_target);
+        const orderCountTarget = Math.round(weeklyFromMonthly(goal.order_count_target));
+        const orderValueTarget = weeklyFromMonthly(goal.order_value_target);
+
         const callsDone = callsByUser.get(goal.user_id) || 0;
         const quotesDone = quotesByUser.get(goal.user_id) || 0;
         const quoteValueDone = quoteValueByUser.get(goal.user_id) || 0;
+        const orderCountDone = orderCountByUser.get(goal.user_id) || 0;
         const orderValueDone = orderValueByUser.get(goal.user_id) || 0;
         const invoicedValueDone = invoicedValueByUser.get(goal.user_id) || 0;
         const progressValues = [
-          goal.calls_target > 0 ? callsDone / goal.calls_target : null,
-          goal.quotes_target > 0 ? quotesDone / goal.quotes_target : null,
-          Number(goal.quote_value_target) > 0 ? quoteValueDone / Number(goal.quote_value_target) : null,
+          callsTarget > 0 ? callsDone / callsTarget : null,
+          quotesTarget > 0 ? quotesDone / quotesTarget : null,
+          quoteValueTarget > 0 ? quoteValueDone / quoteValueTarget : null,
+          orderCountTarget > 0 ? orderCountDone / orderCountTarget : null,
+          orderValueTarget > 0 ? orderValueDone / orderValueTarget : null,
         ].filter((value): value is number => value != null);
         const progressScore = progressValues.length > 0
           ? progressValues.reduce((total, value) => total + value, 0) / progressValues.length
@@ -440,12 +488,15 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
           userName: user?.full_name || 'Okänd användare',
           role: user?.role || 'sales',
           callsDone,
-          callsTarget: goal.calls_target,
+          callsTarget,
           quotesDone,
-          quotesTarget: goal.quotes_target,
+          quotesTarget,
           quoteValueDone,
-          quoteValueTarget: Number(goal.quote_value_target) || 0,
+          quoteValueTarget,
+          orderCountDone,
+          orderCountTarget,
           orderValueDone,
+          orderValueTarget,
           invoicedValueDone,
           progressScore,
         };
@@ -751,7 +802,10 @@ function LeaderboardPanel({
     quotesTarget: number;
     quoteValueDone: number;
     quoteValueTarget: number;
+    orderCountDone: number;
+    orderCountTarget: number;
     orderValueDone: number;
+    orderValueTarget: number;
     invoicedValueDone: number;
     progressScore: number;
   }>;
@@ -788,7 +842,8 @@ function LeaderboardPanel({
                 <TeamProgressRow label="Samtal" value={entry.callsDone} target={entry.callsTarget} tone="sky" />
                 <TeamProgressRow label="Offerter" value={entry.quotesDone} target={entry.quotesTarget} tone="emerald" />
                 <TeamProgressRow label="Offertvärde" value={entry.quoteValueDone} target={entry.quoteValueTarget} tone="teal" currency />
-                <TeamProgressRow label="Ordervärde" value={entry.orderValueDone} tone="amber" currency />
+                <TeamProgressRow label="Antal ordrar" value={entry.orderCountDone} target={entry.orderCountTarget} tone="amber" />
+                <TeamProgressRow label="Ordervärde" value={entry.orderValueDone} target={entry.orderValueTarget} tone="amber" currency />
                 <TeamProgressRow label="Fakturerat ordervärde" value={entry.invoicedValueDone} tone="violet" currency />
               </div>
             </div>
