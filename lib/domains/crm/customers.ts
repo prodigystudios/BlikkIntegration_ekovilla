@@ -52,6 +52,9 @@ export const crmCustomerSelect = `
   equity_ratio,
   financial_year,
   risk_indicators,
+  tic_company_id,
+  credit_report,
+  credit_report_fetched_at,
   fortnox_customer_id,
   sync_status,
   last_synced_at,
@@ -116,6 +119,9 @@ export type CreateCrmCustomerInput = {
   equity_ratio?: number | null;
   financial_year?: number | null;
   risk_indicators?: CrmRiskIndicator[] | null;
+  tic_company_id?: number | null;
+  credit_report?: unknown;
+  credit_report_fetched_at?: string | null;
   fortnox_customer_id?: string | null;
   sync_status?: CrmCustomerSyncStatus;
   source?: string | null;
@@ -288,6 +294,17 @@ export async function createCrmCustomer(supabase: SupabaseClient, input: CreateC
 }
 
 export async function updateCrmCustomer(supabase: SupabaseClient, id: string, input: UpdateCrmCustomerInput) {
+  return supabase.from('crm_customers').update(input).eq('id', id).select(crmCustomerSelect).single();
+}
+
+// Persist a fetched tic.io credit report snapshot. Writes only the credit columns and is
+// meant to be called with an elevated (admin) client from the manual-fetch route, so any
+// CRM writer can pull a report regardless of the row's assigned_to (the route gates auth).
+export async function saveCrmCustomerCreditReport(
+  supabase: SupabaseClient,
+  id: string,
+  input: { tic_company_id: number; credit_report: unknown; credit_report_fetched_at: string }
+) {
   return supabase.from('crm_customers').update(input).eq('id', id).select(crmCustomerSelect).single();
 }
 

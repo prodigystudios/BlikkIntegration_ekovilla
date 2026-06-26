@@ -9,7 +9,9 @@ import { cn } from '@/lib/shared/cn';
 import { crm, customerStageLabel, customerStageClass, syncStatusLabel, syncStatusClass, workOrderStatusLabel } from '@/app/crm/lib/crmTokens';
 import { formatSwedishIdNumber, isValidSwedishOrgNumber, vatFromOrgNumber } from './customerNumbers';
 import { riskTypeLabel } from '@/lib/domains/tic/mappers';
+import type { TicCreditReport } from '@/lib/domains/tic/types';
 import { PhoneLink, EmailLink, AddressLink } from '@/app/crm/components/ContactLinks';
+import { CreditReportSummary } from '@/app/crm/components/CreditReport';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -58,6 +60,9 @@ type Customer = {
   equity_ratio: number | null;
   financial_year: number | null;
   risk_indicators: RiskIndicator[] | null;
+  tic_company_id: number | null;
+  credit_report: TicCreditReport | null;
+  credit_report_fetched_at: string | null;
   fortnox_customer_id: string | null;
   sync_status: 'not_synced' | 'pending' | 'synced' | 'failed';
   created_at: string;
@@ -235,6 +240,7 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
   const [saving, setSaving] = useState(false);
   const [editDraft, setEditDraft] = useState<EditDraft | null>(null);
   const [pushingFortnox, setPushingFortnox] = useState(false);
+  const [fetchingCredit, setFetchingCredit] = useState(false);
 
   const [contacts, setContacts] = useState<CustomerContact[]>([]);
   const [addingContact, setAddingContact] = useState(false);
@@ -425,6 +431,21 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
       }
     } catch { toast.error('Fel vid Fortnox-push'); }
     finally { setPushingFortnox(false); }
+  }
+
+  // Manually pull a tic.io credit report and persist the snapshot (writer-gated server-side).
+  async function fetchCreditReport() {
+    if (!customer) return;
+    setFetchingCredit(true);
+    try {
+      const res = await fetch(`/api/crm/customers/${customer.id}/credit`, { method: 'POST' });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte hämta kreditupplysning'); return; }
+      const updated: Customer = json.data?.item;
+      if (updated) { setCustomer(updated); setContacts(updated.contacts || []); }
+      toast.success('Kreditupplysning hämtad');
+    } catch { toast.error('Fel vid hämtning av kreditupplysning'); }
+    finally { setFetchingCredit(false); }
   }
 
   async function saveContact() {
@@ -947,6 +968,53 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
                 ) : null}
 
               </div>
+            </Card>
+          ) : null}
+
+          {/* Kreditupplysning (företag, tic.io /risks — manuellt hämtad) */}
+          {isB2B ? (
+            <Card>
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <SectionTitle>
+                  Kreditupplysning
+                  {customer.credit_report_fetched_at ? (
+                    <span className="ml-2 text-xs font-normal normal-case tracking-normal text-slate-400">
+                      hämtad {formatDateTime(customer.credit_report_fetched_at)}
+                    </span>
+                  ) : null}
+                </SectionTitle>
+                {customer.credit_report ? (
+                  <button
+                    type="button"
+                    onClick={fetchCreditReport}
+                    disabled={fetchingCredit}
+                    className={cn(crm.ghostButton, 'shrink-0')}
+                  >
+                    {fetchingCredit ? 'Hämtar…' : 'Uppdatera'}
+                  </button>
+                ) : null}
+              </div>
+
+              {customer.credit_report ? (
+                <CreditReportSummary report={customer.credit_report} />
+              ) : (
+                <div className="grid gap-3 py-2">
+                  <p className="text-sm text-slate-500">
+                    {customer.organization_number
+                      ? 'Hämta kreditbetyg, riskklass och eventuella betalningsanmärkningar från tic.io.'
+                      : 'Lägg till ett organisationsnummer för att kunna hämta en kreditupplysning.'}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={fetchCreditReport}
+                    disabled={fetchingCredit || !customer.organization_number}
+                    className={cn(crm.primaryButton, 'w-fit disabled:opacity-50')}
+                    style={{ backgroundColor: 'var(--crm-primary)' }}
+                  >
+                    {fetchingCredit ? 'Hämtar…' : 'Hämta kreditupplysning'}
+                  </button>
+                </div>
+              )}
             </Card>
           ) : null}
 

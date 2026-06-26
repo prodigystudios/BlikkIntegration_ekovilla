@@ -22,6 +22,27 @@ const riskIndicatorSchema = z.object({
   score: z.number().nullable().optional(),
 });
 
+// Credit report snapshot (tic.io /risks) — accepted on create so a report previewed in the
+// new-customer form persists with the row (avoids a second tic.io call on save). Mirrors
+// TicCreditReport; the writer who pulled it is trusted (route is writer-gated).
+const creditDebtorRecordSchema = z
+  .object({
+    number_of_cases: z.number(),
+    total_amount_sek: z.number(),
+    last_case_date: z.string().nullable(),
+  })
+  .nullable();
+
+const creditReportSchema = z.object({
+  credit_score: z.number().nullable(),
+  risk_forecast: z.number().nullable(),
+  risk_class: z.number().nullable(),
+  risk_description: z.string().nullable(),
+  payment_applications: creditDebtorRecordSchema,
+  non_payment: creditDebtorRecordSchema,
+  debt_balance_sek: z.number().nullable(),
+});
+
 const addressSchema = z
   .object({
     street: z.string().trim().nullable().optional().default(null),
@@ -78,6 +99,9 @@ export const createCrmCustomerSchema = z
     equity_ratio: z.coerce.number().nullable().optional().default(null),
     financial_year: z.coerce.number().int().nullable().optional().default(null),
     risk_indicators: z.array(riskIndicatorSchema).nullable().optional().default(null),
+    tic_company_id: z.coerce.number().int().nullable().optional().default(null),
+    credit_report: creditReportSchema.nullable().optional().default(null),
+    credit_report_fetched_at: z.string().nullable().optional().default(null),
     fortnox_customer_id: z.string().trim().nullable().optional().default(null),
     source: z.string().trim().nullable().optional().default(null),
     notes: z.string().trim().nullable().optional().default(null),

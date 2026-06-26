@@ -8,6 +8,9 @@ import type {
   TicLookupResult,
   TicLookupAddress,
   TicRiskIndicator,
+  TicRawCompanyRisk,
+  TicCreditReport,
+  TicCreditDebtorRecord,
 } from './types';
 
 // First non-empty trimmed string from the candidates, else undefined.
@@ -164,6 +167,43 @@ export function mapTicCompany(doc: TicRawCompany): TicLookupResult {
     equity_ratio: ratio(fin?.km_EquityAssetsRatio),
     financial_year: unixYear(fin?.periodEnd),
     risk_indicators: mapRiskIndicators(doc.intelligence),
+  };
+}
+
+// tic.io Unix epoch (seconds or ms) → ISO date string (date only), else null.
+function unixIsoDate(v: unknown): string | null {
+  const n = finiteNumber(v);
+  if (n == null || n <= 0) return null;
+  const ms = n > 1e12 ? n : n * 1000;
+  const d = new Date(ms);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+}
+
+function mapDebtorRecord(rec: { numberOfCases?: number; totalAmountInSEK?: number; lastCaseDate?: number } | undefined): TicCreditDebtorRecord | null {
+  if (!rec) return null;
+  const cases = finiteNumber(rec.numberOfCases);
+  const amount = finiteNumber(rec.totalAmountInSEK);
+  // Only surface a record when there is actually something on it.
+  if ((cases == null || cases <= 0) && (amount == null || amount <= 0)) return null;
+  return {
+    number_of_cases: cases != null ? Math.round(cases) : 0,
+    total_amount_sek: amount != null ? Math.round(amount) : 0,
+    last_case_date: unixIsoDate(rec.lastCaseDate),
+  };
+}
+
+// Normalize the raw /risks response into the snapshot we store + render. Pure + tested.
+export function mapTicCreditReport(raw: TicRawCompanyRisk): TicCreditReport {
+  const summary = raw.debtorSummary;
+  const debtBalance = finiteNumber(summary?.debtBalance?.totalAmountInSEK);
+  return {
+    credit_score: finiteNumber(raw.creditScore),
+    risk_forecast: ratio(raw.riskForecast),
+    risk_class: finiteNumber(raw.riskForecastClass),
+    risk_description: firstString(raw.riskForecastDescription) ?? null,
+    payment_applications: mapDebtorRecord(summary?.recordOfPaymentApplications),
+    non_payment: mapDebtorRecord(summary?.recordOfNonPayment),
+    debt_balance_sek: debtBalance != null && debtBalance > 0 ? Math.round(debtBalance) : null,
   };
 }
 
