@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { mapTicCompany, mapTicPerson, riskTypeLabel } from '@/lib/domains/tic/mappers';
-import type { TicRawCompany, TicRawPerson } from '@/lib/domains/tic/types';
+import { mapTicCompany, mapTicPerson, mapTicCreditReport, riskTypeLabel } from '@/lib/domains/tic/mappers';
+import type { TicRawCompany, TicRawPerson, TicRawCompanyRisk } from '@/lib/domains/tic/types';
 
 describe('mapTicCompany', () => {
   it('maps a full company document', () => {
@@ -174,5 +174,73 @@ describe('mapTicPerson', () => {
 
   it('falls back to a placeholder label when no name is present', () => {
     expect(mapTicPerson({}).label).toBe('Okänd person');
+  });
+});
+
+describe('mapTicCreditReport', () => {
+  it('maps the verified Volvo /risks shape (payment applications, no remarks)', () => {
+    // Exact response observed live for Aktiebolaget Volvo.
+    const raw: TicRawCompanyRisk = {
+      creditScore: 100,
+      riskForecast: 0,
+      riskForecastClass: 5,
+      riskForecastDescription: 'Mycket låg risk (riskklass 5)',
+      debtorSummary: {
+        recordOfPaymentApplications: { numberOfCases: 2, totalAmountInSEK: 12680, lastCaseDate: 1780610400 },
+      },
+    };
+    const r = mapTicCreditReport(raw);
+    expect(r.credit_score).toBe(100);
+    expect(r.risk_forecast).toBe(0);
+    expect(r.risk_class).toBe(5);
+    expect(r.risk_description).toBe('Mycket låg risk (riskklass 5)');
+    expect(r.payment_applications).toEqual({ number_of_cases: 2, total_amount_sek: 12680, last_case_date: '2026-06-04' });
+    expect(r.non_payment).toBeNull();
+    expect(r.debt_balance_sek).toBeNull();
+  });
+
+  it('maps non-payment remarks and a debt balance when present', () => {
+    const r = mapTicCreditReport({
+      creditScore: 18,
+      riskForecast: 12.5,
+      riskForecastClass: 1,
+      debtorSummary: {
+        recordOfNonPayment: { numberOfCases: 3, totalAmountInSEK: 45000, lastCaseDate: 1700000000 },
+        debtBalance: { totalAmountInSEK: 9000 },
+      },
+    });
+    expect(r.credit_score).toBe(18);
+    expect(r.risk_forecast).toBe(12.5);
+    expect(r.risk_class).toBe(1);
+    expect(r.non_payment).toEqual({ number_of_cases: 3, total_amount_sek: 45000, last_case_date: '2023-11-14' });
+    expect(r.debt_balance_sek).toBe(9000);
+  });
+
+  it('drops empty debtor records and tolerates a sparse response', () => {
+    const r = mapTicCreditReport({
+      creditScore: 60,
+      debtorSummary: {
+        recordOfPaymentApplications: { numberOfCases: 0, totalAmountInSEK: 0 },
+        debtBalance: { totalAmountInSEK: 0 },
+      },
+    });
+    expect(r.credit_score).toBe(60);
+    expect(r.risk_class).toBeNull();
+    expect(r.risk_description).toBeNull();
+    expect(r.payment_applications).toBeNull();
+    expect(r.debt_balance_sek).toBeNull();
+  });
+
+  it('returns all-null for an empty response', () => {
+    const r = mapTicCreditReport({});
+    expect(r).toEqual({
+      credit_score: null,
+      risk_forecast: null,
+      risk_class: null,
+      risk_description: null,
+      payment_applications: null,
+      non_payment: null,
+      debt_balance_sek: null,
+    });
   });
 });

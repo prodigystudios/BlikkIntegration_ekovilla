@@ -11,7 +11,8 @@ import { crm } from '@/app/crm/lib/crmTokens';
 import { cn } from '@/lib/shared/cn';
 import { formatSwedishIdNumber, isValidSwedishOrgNumber, vatFromOrgNumber } from './customerNumbers';
 import { riskTypeLabel } from '@/lib/domains/tic/mappers';
-import type { TicLookupResult, TicRiskIndicator } from '@/lib/domains/tic/types';
+import { CreditReportSummary } from '@/app/crm/components/CreditReport';
+import type { TicLookupResult, TicRiskIndicator, TicCreditReport } from '@/lib/domains/tic/types';
 
 type CustomerType = 'business' | 'private';
 
@@ -191,9 +192,43 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
   // "same address" case needs no typing. While this is on, the invoice fields mirror
   // the visit address and stay locked; unchecking seeds + unlocks them for editing.
   const [invoiceSameAsVisit, setInvoiceSameAsVisit] = useState(true);
+  // Credit report previewed before the customer exists; persisted with the row on save so
+  // we don't bill tic.io a second time.
+  const [creditReport, setCreditReport] = useState<TicCreditReport | null>(null);
+  const [creditCompanyId, setCreditCompanyId] = useState<number | null>(null);
+  const [creditFetchedAt, setCreditFetchedAt] = useState<string | null>(null);
+  const [fetchingCredit, setFetchingCredit] = useState(false);
 
   function set<K extends keyof Draft>(key: K, value: Draft[K]) {
     setDraft((c) => ({ ...c, [key]: value }));
+  }
+
+  // Drop a previewed report when the org number changes — it no longer matches the company.
+  function clearCreditReport() {
+    setCreditReport(null);
+    setCreditCompanyId(null);
+    setCreditFetchedAt(null);
+  }
+
+  // Pull a tic.io credit report for the typed org number (no customer row yet).
+  async function fetchCreditPreview() {
+    const org = draft.organization_number.trim();
+    if (!org) { toast.error('Ange organisationsnummer först'); return; }
+    setFetchingCredit(true);
+    try {
+      const res = await fetch('/api/tic/companies/credit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ organization_number: org }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte hämta kreditupplysning'); return; }
+      setCreditReport(json.data?.report ?? null);
+      setCreditCompanyId(json.data?.company_id ?? null);
+      setCreditFetchedAt(new Date().toISOString());
+      toast.success('Kreditupplysning hämtad');
+    } catch { toast.error('Fel vid hämtning av kreditupplysning'); }
+    finally { setFetchingCredit(false); }
   }
 
   function toggleInvoiceSame(same: boolean) {
@@ -215,6 +250,7 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
   // private customer never carries an org number / VAT / reverse VAT (all
   // business-only concepts) and a business customer never carries a personal number.
   function setCustomerType(type: CustomerType) {
+    if (type === 'private' && creditReport) clearCreditReport();
     setDraft((c) =>
       type === 'private'
         ? { ...c, customer_type: type, organization_number: '', vat_number: '', reverse_vat: false }
@@ -226,6 +262,7 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
   // but only while the VAT field is still empty so manual edits are preserved.
   function setOrganizationNumber(value: string) {
     const formatted = formatSwedishIdNumber(value);
+    if (creditReport) clearCreditReport();
     setDraft((c) => {
       const next = { ...c, organization_number: formatted };
       if (!c.vat_number.trim()) {
@@ -330,6 +367,12 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
       if (isB2B) {
         body.company_name = draft.company_name.trim();
         body.organization_number = draft.organization_number.trim() || null;
+        // Persist a previewed credit report with the new row (no re-fetch on save).
+        if (creditReport) {
+          body.tic_company_id = creditCompanyId;
+          body.credit_report = creditReport;
+          body.credit_report_fetched_at = creditFetchedAt;
+        }
       } else {
         body.first_name = draft.first_name.trim();
         body.last_name = draft.last_name.trim();
@@ -442,6 +485,30 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
                         <p className="mt-1 text-xs text-amber-600">Ogiltigt organisationsnummer – kontrollsiffran stämmer inte.</p>
                       ) : null}
                     </div>
+
+                    {/* Kreditupplysning — hämtas (och sparas med kunden) innan kunden finns */}
+                    <div className="rounded-xl border border-[#e0e8dc] bg-[#f3f6f1] p-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-slate-500">Kreditupplysning</p>
+                          <p className="mt-0.5 text-xs text-slate-400">Hämta kreditbetyg & risk från tic.io innan du sparar.</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={fetchCreditPreview}
+                          disabled={fetchingCredit || !draft.organization_number.trim()}
+                          className={cn(crm.ghostButton, 'shrink-0 disabled:opacity-50')}
+                        >
+                          {fetchingCredit ? 'Hämtar…' : creditReport ? 'Uppdatera' : 'Hämta'}
+                        </button>
+                      </div>
+                      {creditReport ? (
+                        <div className="mt-3 border-t border-[#e0e8dc] pt-3">
+                          <CreditReportSummary report={creditReport} />
+                        </div>
+                      ) : null}
+                    </div>
+
                     <div className="grid grid-cols-2 gap-2">
                       <div>
                         <FieldLabel>Omsättning (SEK)</FieldLabel>

@@ -59,6 +59,44 @@ export type TicSearchResponse<T> = {
   hits?: Array<{ document?: T }>;
 };
 
+// ── Credit report: GET /companies/{id}/risks (Pro tier, cached 4h by tic.io) ──
+// Raw shape verified live against Aktiebolaget Volvo. Modelled defensively — the
+// debtorSummary sub-objects are only present when the company has the relevant records.
+export type TicRawCompanyRisk = {
+  creditScore?: number; // 0–100
+  riskForecast?: number; // probability of default, %
+  riskForecastClass?: number; // 1–5 (5 = lowest risk)
+  riskForecastDescription?: string; // pre-formatted Swedish text
+  debtorSummary?: {
+    recordOfPaymentApplications?: TicRawDebtorRecord; // betalningsförelägganden
+    recordOfNonPayment?: TicRawDebtorRecord; // betalningsanmärkningar
+    debtBalance?: { totalAmountInSEK?: number; lastUpdatedDate?: number };
+  };
+};
+
+type TicRawDebtorRecord = {
+  numberOfCases?: number;
+  totalAmountInSEK?: number;
+  lastCaseDate?: number; // Unix epoch
+};
+
+// ── Normalized credit report stored as a snapshot on the customer (credit_report jsonb) ──
+export type TicCreditDebtorRecord = {
+  number_of_cases: number;
+  total_amount_sek: number;
+  last_case_date: string | null; // ISO date
+};
+
+export type TicCreditReport = {
+  credit_score: number | null; // 0–100
+  risk_forecast: number | null; // probability of default, %
+  risk_class: number | null; // 1–5 (5 = lowest risk)
+  risk_description: string | null; // Swedish, e.g. "Mycket låg risk (riskklass 5)"
+  payment_applications: TicCreditDebtorRecord | null; // betalningsförelägganden
+  non_payment: TicCreditDebtorRecord | null; // betalningsanmärkningar
+  debt_balance_sek: number | null; // skuldsaldo hos Kronofogden
+};
+
 // ── Normalized result handed to the client ──
 // One shape for both companies and persons; only the relevant fields are populated.
 export type TicLookupAddress = {

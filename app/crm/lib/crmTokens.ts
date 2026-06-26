@@ -112,26 +112,26 @@ export const workOrderStatusLabel: Record<WorkOrderStatus, string> = {
 };
 
 export const workOrderStatusClass: Record<WorkOrderStatus, string> = {
-  draft: 'border-slate-200 bg-slate-50 text-slate-600',
-  scheduled: 'border-sky-200 bg-sky-50 text-sky-700',
-  ready: 'border-sky-200 bg-sky-50 text-sky-700',
-  in_progress: 'border-violet-200 bg-violet-50 text-violet-700',
-  completed: 'border-emerald-200 bg-emerald-50 text-emerald-700',
-  partially_invoiced: 'border-amber-200 bg-amber-50 text-amber-700',
-  invoiced: 'border-teal-200 bg-teal-50 text-teal-700',
-  cancelled: 'border-rose-200 bg-rose-50 text-rose-700',
+  draft: 'border-yellow-200 bg-yellow-50 text-yellow-700', // Ej planerad — gul
+  scheduled: 'border-green-200 bg-green-50 text-green-700', // Planerad — ljusgrön
+  ready: 'border-green-200 bg-green-50 text-green-700',
+  in_progress: 'border-sky-200 bg-sky-50 text-sky-700', // Pågående — ljus blå
+  completed: 'border-purple-200 bg-purple-50 text-purple-700', // Fakturera — lila
+  partially_invoiced: 'border-fuchsia-200 bg-fuchsia-50 text-fuchsia-700', // Delfakturerad — ljuslila
+  invoiced: 'border-emerald-300 bg-emerald-100 text-emerald-800', // Avslutad — mörkgrön
+  cancelled: 'border-rose-200 bg-rose-50 text-rose-700', // Avbruten — röd
 };
 
 // Solid accent colour per status — used as a left rail on list rows for quick scanning.
 export const workOrderStatusAccent: Record<WorkOrderStatus, string> = {
-  draft: 'bg-slate-300',
-  scheduled: 'bg-sky-400',
-  ready: 'bg-sky-400',
-  in_progress: 'bg-violet-400',
-  completed: 'bg-emerald-500',
-  partially_invoiced: 'bg-amber-400',
-  invoiced: 'bg-teal-500',
-  cancelled: 'bg-rose-400',
+  draft: 'bg-yellow-400', // Ej planerad — gul
+  scheduled: 'bg-green-400', // Planerad — ljusgrön
+  ready: 'bg-green-400',
+  in_progress: 'bg-sky-400', // Pågående — ljus blå
+  completed: 'bg-purple-500', // Fakturera — lila
+  partially_invoiced: 'bg-fuchsia-400', // Delfakturerad — ljuslila
+  invoiced: 'bg-emerald-700', // Avslutad — mörkgrön
+  cancelled: 'bg-rose-500', // Avbruten — röd
 };
 
 // The forward flow shown as a stepper (ready retired; cancelled is off-flow).
