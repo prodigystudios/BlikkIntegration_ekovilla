@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Input from '../../../components/ui/Input';
 import { cn } from '@/lib/shared/cn';
@@ -52,51 +52,113 @@ function getInitials(item: CustomerItem): string {
   return (f + l).toUpperCase() || '?';
 }
 
+const PAGE_SIZE = 50;
+const EMPTY_COUNTS: Record<StageFilter, number> = { alla: 0, prospect: 0, customer: 0, fortnox_customer: 0 };
+
 export default function CustomersClient() {
   const router = useRouter();
   const [items, setItems] = useState<CustomerItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [filter, setFilter] = useState<StageFilter>('alla');
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [stageCounts, setStageCounts] = useState<Record<StageFilter, number>>(EMPTY_COUNTS);
+  const [hasMore, setHasMore] = useState(false);
 
+  // Refs let the infinite-scroll loader read the current offset / in-flight state without
+  // being recreated on every appended page (which would re-trigger the observer).
+  const itemsRef = useRef<CustomerItem[]>([]);
+  useEffect(() => { itemsRef.current = items; }, [items]);
+  const loadingMoreRef = useRef(false);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+
+  // Debounce the search box so each keystroke doesn't fire its own request.
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search.trim()), 300);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  const buildQuery = useCallback((offset: number) => {
+    const q = new URLSearchParams();
+    if (debouncedSearch) q.set('q', debouncedSearch);
+    if (filter !== 'alla') q.set('stage', filter);
+    q.set('limit', String(PAGE_SIZE));
+    q.set('offset', String(offset));
+    return q.toString();
+  }, [debouncedSearch, filter]);
+
+  // First page — runs on mount and whenever the search term or stage filter changes.
   useEffect(() => {
     let active = true;
-    async function load() {
-      setLoading(true);
-      setError(null);
+    setLoading(true);
+    setError(null);
+    (async () => {
       try {
-        const query = new URLSearchParams();
-        if (search.trim()) query.set('q', search.trim());
-        const res = await fetch(`/api/crm/customers${query.size > 0 ? `?${query.toString()}` : ''}`, { cache: 'no-store' });
+        const res = await fetch(`/api/crm/customers?${buildQuery(0)}`, { cache: 'no-store' });
         const json = await res.json().catch(() => ({}));
         if (!active) return;
-        if (!res.ok || !json.ok) { setError(json?.error || 'Kunde inte ladda kunder.'); setItems([]); return; }
-        setItems(Array.isArray(json?.data?.items) ? json.data.items : []);
+        if (!res.ok || !json.ok) {
+          setError(json?.error || 'Kunde inte ladda kunder.');
+          setItems([]); setHasMore(false); setStageCounts(EMPTY_COUNTS);
+          return;
+        }
+        const data = json.data ?? {};
+        setItems(Array.isArray(data.items) ? data.items : []);
+        setHasMore(!!data.hasMore);
+        if (data.stageCounts) {
+          setStageCounts({
+            alla: data.stageCounts.alla ?? 0,
+            prospect: data.stageCounts.prospect ?? 0,
+            customer: data.stageCounts.customer ?? 0,
+            fortnox_customer: data.stageCounts.fortnox_customer ?? 0,
+          });
+        }
       } catch {
         if (!active) return;
         setError('Kunde inte ladda kunder.');
-        setItems([]);
+        setItems([]); setHasMore(false);
       } finally {
         if (active) setLoading(false);
       }
-    }
-    load();
+    })();
     return () => { active = false; };
-  }, [search]);
+  }, [buildQuery]);
 
-  const visibleItems = useMemo(() => {
-    const filtered = filter === 'alla' ? items : items.filter((i) => i.customer_stage === filter);
-    return filtered.slice().sort((a, b) => b.updated_at.localeCompare(a.updated_at));
-  }, [filter, items]);
+  // Append the next page (used by the infinite-scroll sentinel).
+  const loadMore = useCallback(async () => {
+    if (loadingMoreRef.current) return;
+    loadingMoreRef.current = true;
+    setLoadingMore(true);
+    try {
+      const res = await fetch(`/api/crm/customers?${buildQuery(itemsRef.current.length)}`, { cache: 'no-store' });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.ok) { setHasMore(false); return; }
+      const data = json.data ?? {};
+      const next: CustomerItem[] = Array.isArray(data.items) ? data.items : [];
+      setItems((prev) => [...prev, ...next]);
+      setHasMore(!!data.hasMore);
+    } catch {
+      setHasMore(false);
+    } finally {
+      loadingMoreRef.current = false;
+      setLoadingMore(false);
+    }
+  }, [buildQuery]);
 
-  const filterCounts = useMemo<Record<StageFilter, number>>(() => ({
-    alla: items.length,
-    prospect: items.filter((i) => i.customer_stage === 'prospect').length,
-    customer: items.filter((i) => i.customer_stage === 'customer').length,
-    fortnox_customer: items.filter((i) => i.customer_stage === 'fortnox_customer').length,
-  }), [items]);
+  // Observe a sentinel near the end of the list; load the next page as it scrolls into view.
+  useEffect(() => {
+    const node = sentinelRef.current;
+    if (!node || !hasMore || loading) return;
+    const observer = new IntersectionObserver(
+      (entries) => { if (entries[0]?.isIntersecting) loadMore(); },
+      { rootMargin: '300px' },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [hasMore, loading, loadMore]);
 
   // Active filter count — shown as a badge on the mobile filter toggle.
   const activeFilterCount = filter !== 'alla' ? 1 : 0;
@@ -172,7 +234,7 @@ export default function CustomersClient() {
                     'rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums',
                     isActive ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500',
                   )}>
-                    {filterCounts[value]}
+                    {stageCounts[value]}
                   </span>
                 </button>
               );
@@ -181,7 +243,7 @@ export default function CustomersClient() {
         </div>
 
         {/* List header */}
-        {!loading && !error && visibleItems.length > 0 && (
+        {!loading && !error && items.length > 0 && (
           <div className="flex items-center border-b border-slate-100 px-4 py-1.5">
             <div className="mr-4 w-9 shrink-0" />
             <span className="flex-1 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">Kund</span>
@@ -209,17 +271,20 @@ export default function CustomersClient() {
                 </div>
               ))}
             </>
-          ) : visibleItems.length === 0 ? (
+          ) : items.length === 0 ? (
             <div className="px-5 py-12 text-center">
-              <strong className="block text-sm font-bold text-slate-800">Inga poster i det här filtret</strong>
+              <strong className="block text-sm font-bold text-slate-800">
+                {debouncedSearch ? 'Inga träffar' : 'Inga poster i det här filtret'}
+              </strong>
               <p className="mt-1 text-sm text-slate-500">
-                {filter === 'prospect' ? 'Lägg till ett prospekt med knappen ovan.'
+                {debouncedSearch ? 'Prova en annan sökterm.'
+                  : filter === 'prospect' ? 'Lägg till ett prospekt med knappen ovan.'
                   : filter === 'fortnox_customer' ? 'Fortnox-kunder visas här när integrationen är aktiv.'
                   : 'Prospekt konverteras till kunder när en offert vinns.'}
               </p>
             </div>
           ) : (
-            visibleItems.map((item) => (
+            items.map((item) => (
               <button
                 key={item.id}
                 type="button"
@@ -283,6 +348,22 @@ export default function CustomersClient() {
             ))
           )}
         </div>
+
+        {/* Infinite-scroll sentinel + "loading more" indicator */}
+        {!loading && !error && items.length > 0 && (
+          <div ref={sentinelRef} className="flex items-center justify-center px-4 py-3 text-[12px] text-slate-400">
+            {loadingMore ? (
+              <span className="inline-flex items-center gap-2">
+                <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-300 border-t-slate-500" />
+                Laddar fler…
+              </span>
+            ) : hasMore ? (
+              <span>&nbsp;</span>
+            ) : (
+              <span>Alla {stageCounts[filter]} kunder visade</span>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

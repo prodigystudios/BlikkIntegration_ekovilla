@@ -1,6 +1,6 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { createCrmCustomer, getCrmCustomer, listCrmCustomers } from '@/lib/domains/crm/customers';
+import { createCrmCustomer, getCrmCustomer, listCrmCustomers, getCrmCustomerStageCounts, CRM_CUSTOMERS_PAGE_SIZE } from '@/lib/domains/crm/customers';
 import { createFortnoxCustomer } from '@/lib/domains/fortnox/customers';
 import {
   createCrmCustomerSchema,
@@ -24,22 +24,42 @@ export async function GET(req: Request) {
       status: url.searchParams.get('status') || undefined,
       stage: url.searchParams.get('stage') || undefined,
       assigned_to: url.searchParams.get('assigned_to') || undefined,
+      limit: url.searchParams.get('limit') || undefined,
+      offset: url.searchParams.get('offset') || undefined,
     });
     if (!parsedQuery.success) return validationError(parsedQuery.error);
 
+    const search = parsedQuery.data.q;
+    const status = parsedQuery.data.status;
+    const stage = parsedQuery.data.stage as CrmCustomerStage | undefined;
+    const assignedTo = parsedQuery.data.assigned_to;
+    const limit = parsedQuery.data.limit ?? CRM_CUSTOMERS_PAGE_SIZE;
+    const offset = parsedQuery.data.offset ?? 0;
+
     const supabase = createRouteHandlerClient({ cookies });
-    const { data, error } = await listCrmCustomers(supabase, {
-      search: parsedQuery.data.q,
-      status: parsedQuery.data.status,
-      stage: parsedQuery.data.stage as CrmCustomerStage | undefined,
-      assignedTo: parsedQuery.data.assigned_to,
+    const { data, error, count } = await listCrmCustomers(supabase, {
+      search,
+      status,
+      stage,
+      assignedTo,
+      limit,
+      offset,
     });
 
     if (error) {
       return routeError(500, 'crm_customers_list_failed', error.message);
     }
 
-    return ok({ items: data || [] });
+    // Per-stage chip counts are only needed when (re)loading the first page; appended pages
+    // reuse the counts the client already has.
+    const stageCounts = offset === 0
+      ? await getCrmCustomerStageCounts(supabase, { search, status, assignedTo })
+      : undefined;
+
+    const total = count ?? 0;
+    const hasMore = offset + (data?.length ?? 0) < total;
+
+    return ok({ items: data || [], count: total, stageCounts, hasMore });
   } catch (e: any) {
     return routeError(500, 'crm_customers_unexpected', e?.message || 'Failed to list customers');
   }

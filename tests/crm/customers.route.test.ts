@@ -11,9 +11,11 @@ vi.mock('@/lib/auth/route', () => ({
 
 vi.mock('@/lib/domains/crm/customers', () => ({
   listCrmCustomers: vi.fn(),
+  getCrmCustomerStageCounts: vi.fn(),
   createCrmCustomer: vi.fn(),
   getCrmCustomer: vi.fn(),
   updateCrmCustomer: vi.fn(),
+  CRM_CUSTOMERS_PAGE_SIZE: 50,
 }));
 
 vi.mock('@supabase/auth-helpers-nextjs', () => ({
@@ -37,6 +39,7 @@ import { getCurrentUser } from '@/lib/auth/route';
 import { getEffectivePermissions } from '@/lib/auth/permissions';
 import {
   listCrmCustomers,
+  getCrmCustomerStageCounts,
   createCrmCustomer,
   getCrmCustomer,
   updateCrmCustomer,
@@ -48,6 +51,7 @@ const { GET: itemGET, PATCH } = await import('@/app/api/crm/customers/[id]/route
 
 const mockGetCurrentUser = vi.mocked(getCurrentUser);
 const mockList = vi.mocked(listCrmCustomers);
+const mockStageCounts = vi.mocked(getCrmCustomerStageCounts);
 const mockCreate = vi.mocked(createCrmCustomer);
 const mockGet = vi.mocked(getCrmCustomer);
 const mockUpdate = vi.mocked(updateCrmCustomer);
@@ -56,6 +60,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(getEffectivePermissions).mockImplementation(async () =>
     effectivePermissionsForRole((await vi.mocked(getCurrentUser)())?.role));
+  mockStageCounts.mockResolvedValue({ alla: 0, prospect: 0, customer: 0, fortnox_customer: 0 });
 });
 
 // ---------------------------------------------------------------------------
@@ -172,6 +177,35 @@ describe('GET /api/crm/customers — svar', () => {
         stage: 'prospect',
       })
     );
+  });
+
+  it('paginerar med limit/offset och returnerar count/stageCounts/hasMore', async () => {
+    mockGetCurrentUser.mockResolvedValue(salesUser);
+    mockList.mockResolvedValue({ data: [{ id: 'c1' }], error: null, count: 1200 } as any);
+    mockStageCounts.mockResolvedValue({ alla: 1200, prospect: 300, customer: 700, fortnox_customer: 200 });
+
+    const res = await collectionGET(makeRequest('/api/crm/customers?limit=50&offset=0'));
+    const body = await res.json();
+
+    expect(mockList).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ limit: 50, offset: 0 }),
+    );
+    expect(body.data.count).toBe(1200);
+    expect(body.data.hasMore).toBe(true);
+    expect(body.data.stageCounts.alla).toBe(1200);
+  });
+
+  it('hoppar över stageCounts på appendade sidor (offset > 0)', async () => {
+    mockGetCurrentUser.mockResolvedValue(salesUser);
+    mockList.mockResolvedValue({ data: [{ id: 'c51' }], error: null, count: 1200 } as any);
+
+    const res = await collectionGET(makeRequest('/api/crm/customers?limit=50&offset=50'));
+    const body = await res.json();
+
+    expect(mockStageCounts).not.toHaveBeenCalled();
+    expect(body.data.stageCounts).toBeUndefined();
+    expect(body.data.hasMore).toBe(true);
   });
 });
 

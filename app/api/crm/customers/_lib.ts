@@ -37,6 +37,8 @@ export const listCrmCustomersQuerySchema = z.object({
   status: customerStatusSchema.optional(),
   stage: customerStageSchema.optional(),
   assigned_to: z.string().uuid().optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+  offset: z.coerce.number().int().min(0).optional(),
 });
 
 export const searchCrmCustomersQuerySchema = z.object({

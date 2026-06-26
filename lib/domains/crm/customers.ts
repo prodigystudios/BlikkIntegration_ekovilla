@@ -182,24 +182,40 @@ export type UpdateCrmCustomerContactInput = {
   is_primary?: boolean;
 };
 
+// Default page size for the paginated customer list (infinite scroll appends pages).
+export const CRM_CUSTOMERS_PAGE_SIZE = 50;
+
 type ListCrmCustomersOptions = {
   search?: string;
   status?: CrmCustomerStatus;
   stage?: CrmCustomerStage;
   assignedTo?: string;
+  limit?: number;
+  offset?: number;
 };
 
+// Free-text search across the customer's identifying fields. `%term%` is a leading-wildcard
+// match (no index can serve it) — fine at the current scale; add a pg_trgm index if the table
+// grows into the tens of thousands.
+function customerSearchOr(search: string): string {
+  return `company_name.ilike.%${search}%,first_name.ilike.%${search}%,last_name.ilike.%${search}%,organization_number.ilike.%${search}%`;
+}
+
+// Paginated list. Returns rows for the requested page plus an exact `count` of the whole
+// filtered set (PostgREST caps a plain select at db.max_rows ~1000, so we page with .range()
+// instead of relying on a single large .limit()).
 export async function listCrmCustomers(supabase: SupabaseClient, options: ListCrmCustomersOptions = {}) {
+  const limit = Math.min(Math.max(options.limit ?? CRM_CUSTOMERS_PAGE_SIZE, 1), 100);
+  const offset = Math.max(options.offset ?? 0, 0);
+
   let query = supabase
     .from('crm_customers')
-    .select(crmCustomerSelect)
+    .select(crmCustomerSelect, { count: 'exact' })
     .order('updated_at', { ascending: false })
-    .limit(200);
+    .range(offset, offset + limit - 1);
 
   if (options.search) {
-    query = query.or(
-      `company_name.ilike.%${options.search}%,first_name.ilike.%${options.search}%,last_name.ilike.%${options.search}%,organization_number.ilike.%${options.search}%`
-    );
+    query = query.or(customerSearchOr(options.search));
   }
 
   if (options.status) {
@@ -215,6 +231,41 @@ export async function listCrmCustomers(supabase: SupabaseClient, options: ListCr
   }
 
   return query;
+}
+
+export type CrmCustomerStageCounts = {
+  alla: number;
+  prospect: number;
+  customer: number;
+  fortnox_customer: number;
+};
+
+// Exact per-stage counts for the filter chips. Applies search/status/assignedTo but NOT the
+// stage filter (so the chips always show the true totals you could switch to). Uses head-only
+// count queries (no rows transferred) run in parallel.
+export async function getCrmCustomerStageCounts(
+  supabase: SupabaseClient,
+  options: { search?: string; status?: CrmCustomerStatus; assignedTo?: string } = {}
+): Promise<CrmCustomerStageCounts> {
+  const stages: CrmCustomerStage[] = ['prospect', 'customer', 'fortnox_customer'];
+
+  const countFor = (stage?: CrmCustomerStage) => {
+    let q = supabase.from('crm_customers').select('id', { count: 'exact', head: true });
+    if (options.search) q = q.or(customerSearchOr(options.search));
+    if (options.status) q = q.eq('status', options.status);
+    if (options.assignedTo) q = q.eq('assigned_to', options.assignedTo);
+    if (stage) q = q.eq('customer_stage', stage);
+    return q;
+  };
+
+  const [total, ...perStage] = await Promise.all([countFor(), ...stages.map((s) => countFor(s))]);
+
+  return {
+    alla: total.count ?? 0,
+    prospect: perStage[0]?.count ?? 0,
+    customer: perStage[1]?.count ?? 0,
+    fortnox_customer: perStage[2]?.count ?? 0,
+  };
 }
 
 export async function searchCrmCustomers(supabase: SupabaseClient, query: string) {
