@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { cn } from '@/lib/shared/cn';
 import { useToast } from '@/lib/Toast';
-import { crm } from '@/app/crm/lib/crmTokens';
+import { crm, workOrderStatusAccent } from '@/app/crm/lib/crmTokens';
 import type { OpsSegment, OpsTruck, SchedulableWorkOrder } from '@/lib/domains/planning/types';
 import type { AssignablePerson, CrewMember } from '@/lib/domains/planning/crew';
 import type { DayNote } from '@/lib/domains/planning/dayNotes';
@@ -1000,9 +1000,9 @@ export default function PlanningClient({
         ))}
         <span className="h-3 w-px bg-[#e0e8dc]" />
         <span className="font-bold text-slate-600">Status:</span>
-        <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-sky-400" />Planerad</span>
-        <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-violet-400" />Pågående</span>
-        <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-emerald-500" />Fakturera</span>
+        <span className="inline-flex items-center gap-1.5"><span className={`h-2 w-2 rounded-full ${workOrderStatusAccent.scheduled}`} />Planerad</span>
+        <span className="inline-flex items-center gap-1.5"><span className={`h-2 w-2 rounded-full ${workOrderStatusAccent.in_progress}`} />Pågående</span>
+        <span className="inline-flex items-center gap-1.5"><span className={`h-2 w-2 rounded-full ${workOrderStatusAccent.completed}`} />Fakturera</span>
       </div>
       </>
       )}
