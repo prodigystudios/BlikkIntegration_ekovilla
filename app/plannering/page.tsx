@@ -31,6 +31,29 @@ interface Project {
   isManual: boolean;
 }
 
+// Supabase/PostgREST caps a single select at ~1000 rows (the "Max rows" API
+// setting) and returns them WITHOUT error. Once a planning table grows past
+// that, a plain `.select('*')` silently drops the overflow — newly created rows
+// can fall outside the window and never load. This pages through `.range()`
+// with a stable order so every row is fetched. `orderColumn` must be unique
+// (a PK) so pages never overlap or skip.
+async function fetchAllRows<T = any>(
+  makeRangeQuery: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: any }>,
+): Promise<{ data: T[]; error: any }> {
+  const PAGE = 1000;
+  const all: T[] = [];
+  let from = 0;
+  for (;;) {
+    const { data, error } = await makeRangeQuery(from, from + PAGE - 1);
+    if (error) return { data: all, error };
+    if (!data || data.length === 0) break;
+    all.push(...data);
+    if (data.length < PAGE) break; // last partial page
+    from += PAGE;
+  }
+  return { data: all, error: null };
+}
+
 function getVisibleCalendarRange(monthOffset: number) {
   const base = new Date();
   base.setDate(1);
@@ -59,6 +82,14 @@ interface ScheduledSegment {
   onHold?: boolean; // paused / on-hold (not shown in calendar)
   onHoldAt?: string | null;
   onHoldBy?: string | null;
+  // Denormalized project fields stored on the segment row. Used to render the
+  // card even when its project is absent from the loaded Blikk `projects` list
+  // (e.g. a scheduled order no longer returned by the backlog query) — without
+  // these the card would be silently dropped from the calendar.
+  projectName?: string | null;
+  projectCustomer?: string | null;
+  projectOrderNumber?: string | null;
+  projectIsManual?: boolean | null;
 }
 
 interface ProjectScheduleMeta {
@@ -1283,13 +1314,16 @@ export default function PlanneringPage() {
         }
       }
 
-      const { data: segs, error: segErr } = await supabase.from('planning_segments').select('*');
+      const { data: segs, error: segErr } = await fetchAllRows((from, to) =>
+        supabase.from('planning_segments').select('*').order('id', { ascending: true }).range(from, to));
       if (segErr) throw segErr;
-      const { data: metas, error: metaErr } = await supabase.from('planning_project_meta').select('*');
+      const { data: metas, error: metaErr } = await fetchAllRows((from, to) =>
+        supabase.from('planning_project_meta').select('*').order('project_id', { ascending: true }).range(from, to));
       if (metaErr) throw metaErr;
 
       try {
-        const { data: repRows, error: repErr } = await supabase.from('planning_segment_reports').select('*');
+        const { data: repRows, error: repErr } = await fetchAllRows((from, to) =>
+          supabase.from('planning_segment_reports').select('*').order('id', { ascending: true }).range(from, to));
         if (repErr) console.warn('[planning] segment reports load error', repErr);
         else if (Array.isArray(repRows)) {
           setSegmentReports(repRows.map((r: any) => ({ id: r.id, segmentId: r.segment_id, reportDay: r.report_day, amount: r.amount, createdBy: r.created_by ?? null, createdByName: r.created_by_name ?? null, createdAt: r.created_at || null, projectId: (r as any).project_id ?? null })));
@@ -1299,7 +1333,8 @@ export default function PlanneringPage() {
       }
 
       try {
-        const { data: crewRows, error: crewErr } = await supabase.from('planning_segment_team_members').select('*');
+        const { data: crewRows, error: crewErr } = await fetchAllRows((from, to) =>
+          supabase.from('planning_segment_team_members').select('*').order('id', { ascending: true }).range(from, to));
         if (crewErr) console.warn('[planning] segment crew load error', crewErr);
         else if (Array.isArray(crewRows)) {
           const map: Record<string, Array<{ id: string | null; name: string }>> = {};
@@ -1366,6 +1401,10 @@ export default function PlanneringPage() {
           onHold: (s as any).on_hold ?? false,
           onHoldAt: (s as any).on_hold_at ?? null,
           onHoldBy: (s as any).on_hold_by ?? null,
+          projectName: (s as any).project_name ?? null,
+          projectCustomer: (s as any).customer ?? null,
+          projectOrderNumber: (s as any).order_number ?? null,
+          projectIsManual: (s as any).is_manual ?? null,
         })));
         setProjects(prev => {
           const map = new Map(prev.map(p => [p.id, p]));
@@ -2174,6 +2213,10 @@ export default function PlanneringPage() {
             onHold: row.on_hold ?? false,
             onHoldAt: row.on_hold_at ?? null,
             onHoldBy: row.on_hold_by ?? null,
+            projectName: row.project_name ?? null,
+            projectCustomer: row.customer ?? null,
+            projectOrderNumber: row.order_number ?? null,
+            projectIsManual: row.is_manual ?? null,
           }]);
           setProjects(prev => prev.some(p => p.id === row.project_id) ? prev : [...prev, {
             id: row.project_id,
@@ -3478,8 +3521,27 @@ export default function PlanneringPage() {
     // Scheduled job segments → day instances
     for (const seg of scheduledSegments) {
       if (seg.onHold) continue;
-      const project = projects.find(p => p.id === seg.projectId);
-      if (!project) continue;
+      let project = projects.find(p => p.id === seg.projectId);
+      if (!project) {
+        // The project is missing from the loaded `projects` list (e.g. a
+        // scheduled order no longer returned by the Blikk backlog query). Rather
+        // than silently dropping the card, rebuild a project from the segment's
+        // own denormalized fields so it still renders on its day.
+        console.warn('[planning][itemsByDay] projekt saknas i listan — renderar kortet från segmentets egna fält', { segmentId: seg.id, projectId: seg.projectId, startDay: seg.startDay });
+        project = {
+          id: seg.projectId,
+          name: seg.projectName || seg.projectOrderNumber || 'Okänt projekt',
+          customer: seg.projectCustomer || '',
+          orderNumber: seg.projectOrderNumber || null,
+          createdAt: new Date().toISOString(),
+          status: seg.projectIsManual ? 'MANUELL' : 'unknown',
+          isManual: !!seg.projectIsManual,
+          customerId: null,
+          customerEmail: null,
+          customerPhone: null,
+          salesResponsible: null,
+        } as Project;
+      }
       const meta = scheduleMeta[seg.projectId] || { projectId: seg.projectId };
       const start = new Date(seg.startDay);
       const end = new Date(seg.endDay);
