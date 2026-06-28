@@ -1159,6 +1159,87 @@ export default function PlanneringPage() {
     return p;
   }
 
+  // Diagnostic: surface silent write failures on planning_segments.
+  // A write blocked by RLS — or run without a valid `authenticated` session —
+  // returns error=null AND 0 affected rows, so a "successful" save persists
+  // nothing and no error is ever shown. Pair every write with `.select('id')`
+  // and pass the result here: real errors and the silent 0-row drop both raise
+  // a visible toast and a labelled console error, so we can pinpoint which
+  // operation (and which trigger) is losing data. Returns true on success.
+  const surfaceWriteResult = useCallback(async (
+    label: string,
+    res: { data?: any; error: any },
+    probe?: { table: string; id: string },
+  ): Promise<boolean> => {
+    if (res.error) {
+      console.error(`[planning][write-fail] ${label}`, res.error);
+      try { toast.error(`Kunde inte spara (${label}): ${res.error.message || res.error.code || 'okänt fel'}`); } catch { /* toast unavailable */ }
+      return false;
+    }
+    if (Array.isArray(res.data) && res.data.length === 0) {
+      // 0 affected rows + no error. Disambiguate the two very different causes
+      // with a follow-up read: does the row exist at all?
+      //  - exists  → the row is there but the UPDATE/DELETE was blocked (RLS / lost session)
+      //  - missing → the row was never persisted (a dropped create, or a stale/local-only id)
+      let detail = '';
+      if (probe) {
+        try {
+          const check = await supabase.from(probe.table).select('id, created_by').eq('id', probe.id).maybeSingle();
+          if (check.data?.id) {
+            // Read succeeded and row exists → session is valid, write was blocked.
+            // Compare row owner to the current user: if blocked rows consistently
+            // belong to OTHER users, the live write policy is creator-scoped
+            // (created_by = auth.uid()) rather than the role guard in the repo.
+            const owner = (check.data as any).created_by ?? null;
+            const ownedByMe = owner != null && currentUserId != null && owner === currentUserId;
+            const ownerLabel = owner == null ? 'okänd skapare' : ownedByMe ? 'DIG' : `ANNAN användare (${owner})`;
+            detail = ` Raden FINNS (skapad av ${ownerLabel}) → skrivning blockerad av RLS.`;
+          } else {
+            // Row not returned. Could be genuinely missing, or the session is gone
+            // (SELECT also needs `authenticated`). Check the session to tell them apart.
+            const { data: sess } = await supabase.auth.getSession();
+            detail = sess?.session
+              ? ' Raden finns INTE i DB (sessionen är giltig) → skapandet tappades eller fel/stale id.'
+              : ' INGEN giltig session (utloggad) → token har löpt ut; skrivningar avvisas tyst.';
+          }
+          console.error(`[planning][write-dropped] ${label} — 0 rader.${detail}`, { res, check });
+        } catch (probeErr) {
+          console.error(`[planning][write-dropped] ${label} — 0 rader (existenskoll misslyckades)`, { res, probeErr });
+        }
+      } else {
+        console.error(`[planning][write-dropped] ${label} — 0 rader ändrade (RLS-block eller utloggad session?)`, res);
+      }
+      try { toast.error(`⚠️ Sparades INTE (${label}).${detail} Ladda om sidan och försök igen.`); } catch { /* toast unavailable */ }
+      return false;
+    }
+    return true;
+  }, [supabase, toast, currentUserId]);
+
+  // Runs a segment write that targets a single row, resilient to the benign
+  // race where the row's INSERT hasn't committed yet (the write queue has no
+  // ordering, so an UPDATE can overtake the create → 0 rows, no error). On a
+  // 0-row result we wait briefly and retry once; if it then succeeds the race
+  // self-heals silently. Only a write that STILL fails after the retry is
+  // surfaced (real RLS block / lost session / dropped create). `buildWrite`
+  // must construct a fresh query builder each call (builders are single-use).
+  const runSegmentWrite = useCallback(async (
+    label: string,
+    buildWrite: () => PromiseLike<{ data: any; error: any }>,
+    probe: { table: string; id: string },
+  ): Promise<void> => {
+    let res = await buildWrite();
+    const droppedNoError = !res.error && Array.isArray(res.data) && res.data.length === 0;
+    if (droppedNoError) {
+      await new Promise(r => setTimeout(r, 400));
+      res = await buildWrite();
+      if (!res.error && Array.isArray(res.data) && res.data.length > 0) {
+        console.debug(`[planning] ${label} ok efter retry (race självläkt)`);
+        return;
+      }
+    }
+    await surfaceWriteResult(label, res, probe);
+  }, [surfaceWriteResult]);
+
   // On-demand client email fetch: status map per project
   const [emailFetchStatus, setEmailFetchStatus] = useState<Record<string, 'idle' | 'loading' | 'error'>>({});
   const [emailToast, setEmailToast] = useState<{ pid: string; msg: string } | null>(null);
@@ -2122,7 +2203,14 @@ export default function PlanneringPage() {
             onHoldBy: row.on_hold_by ?? s.onHoldBy ?? null,
           } : s));
         } else if (payload.eventType === 'DELETE') {
-          setScheduledSegments(prev => prev.filter(s => s.id !== row.id));
+          // Visible by default: a card vanishing with no local action is almost
+          // always a realtime DELETE echo. Log which row + whether we had it.
+          setScheduledSegments(prev => {
+            if (prev.some(s => s.id === row.id)) {
+              console.warn('[rt] DELETE planning_segments — tog bort kort ur vyn', { id: row.id });
+            }
+            return prev.filter(s => s.id !== row.id);
+          });
         }
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'planning_segment_team_members' }, payload => {
@@ -2559,39 +2647,49 @@ export default function PlanneringPage() {
     return enqueue(
       supabase.from('planning_segments')
         .upsert(payload, { onConflict: 'id', ignoreDuplicates: true })
-        .then(({ data, error }) => {
+        .select('id')
+        .then(async ({ data, error }) => {
           if (error) {
             if ((error as any).code === '23505') {
-              // Duplicate: treat as success to avoid spam
+              // Duplicate: row already exists — treat as success to avoid spam.
               createdIdsRef.current.add(seg.id);
-            } else {
-              console.warn('[persist create seg] error', error, payload);
-              // Allow retry by not marking id as created
-              throw error;
+              return;
             }
-          } else {
+            console.error('[planning][write-fail] skapa segment', error, payload);
+            try { toast.error(`Kunde inte spara (skapa segment): ${error.message || (error as any).code || 'okänt fel'}`); } catch { /* toast unavailable */ }
+            // Not adding to createdIdsRef allows a later retry.
+            return;
+          }
+          if (Array.isArray(data) && data.length > 0) {
             createdIdsRef.current.add(seg.id);
             console.debug('[planning] upsert ok');
+            return;
+          }
+          // No error and 0 rows: ignoreDuplicates hides both "already existed"
+          // and "RLS silently blocked the insert". A read disambiguates the two.
+          const check = await supabase.from('planning_segments').select('id').eq('id', seg.id).maybeSingle();
+          if (check.data?.id) {
+            createdIdsRef.current.add(seg.id); // genuine duplicate — success
+          } else {
+            console.error('[planning][write-dropped] skapa segment — raden saknas efter upsert (RLS-block eller utloggad session?)', { payload, check });
+            try { toast.error('⚠️ Det nya segmentet sparades INTE (skapa segment). Trolig orsak: saknad behörighet eller utloggad session. Ladda om sidan och försök igen.'); } catch { /* toast unavailable */ }
+            // Not adding to createdIdsRef allows a later retry.
           }
         })
     );
-  }, [supabase, currentUserId, currentUserName]);
+  }, [supabase, currentUserId, currentUserName, toast]);
 
   const persistSegmentUpdate = useCallback((seg: ScheduledSegment) => {
-    return enqueue(
-      supabase
+    return enqueue(runSegmentWrite(
+      'flytta/uppdatera segment',
+      () => supabase
         .from('planning_segments')
         .update({ start_day: seg.startDay, end_day: seg.endDay, depot_id: seg.depotId ?? null, sort_index: seg.sortIndex ?? null, truck: seg.truck ?? null, job_type: seg.jobType ?? null })
         .eq('id', seg.id)
-        .then(({ error }) => {
-          if (error) {
-            console.warn('[persist update seg] error', error);
-            throw error;
-          }
-          console.debug('[planning] update ok');
-        })
-    );
-  }, [supabase]);
+        .select('id'),
+      { table: 'planning_segments', id: seg.id },
+    ));
+  }, [supabase, runSegmentWrite]);
 
   const deletedSegConfirmRef = useRef<Set<string>>(new Set());
   const persistSegmentDelete = useCallback((segmentId: string) => {
@@ -2609,9 +2707,22 @@ export default function PlanneringPage() {
         .delete()
         .eq('id', segmentId)
         .select('id')
-        .then(({ data, error }) => {
-          if (error) console.warn('[persist delete seg] error', error);
-          else console.debug('[planning] delete ok', data);
+        .then(async ({ data, error }) => {
+          if (error) {
+            console.error('[planning][write-fail] ta bort segment', error);
+            try { toast.error(`Kunde inte ta bort segment: ${error.message || (error as any).code || 'okänt fel'}`); } catch { /* toast unavailable */ }
+            return;
+          }
+          if (Array.isArray(data) && data.length === 0) {
+            // 0 rows: either already gone (benign) or RLS blocked the delete.
+            const check = await supabase.from('planning_segments').select('id').eq('id', segmentId).maybeSingle();
+            if (check.data?.id) {
+              console.error('[planning][write-dropped] ta bort segment — raden finns kvar → DELETE blockerad (RLS/session)', { segmentId, check });
+              try { toast.error('⚠️ Segmentet togs INTE bort (RLS/behörighet/session). Ladda om sidan och försök igen.'); } catch { /* toast unavailable */ }
+            }
+            return;
+          }
+          console.debug('[planning] delete ok', data);
         })
     );
     // Best-effort cleanup of per-segment crew
@@ -2622,7 +2733,7 @@ export default function PlanneringPage() {
         .eq('segment_id', segmentId)
         .then(({ error }) => { if (error) console.warn('[persist delete seg-crew] error', error); })
     );
-  }, [supabase]);
+  }, [supabase, toast]);
 
   // Depå helpers (admin guarded by RLS; UI also hides for non-admin)
   const upsertDepotTotals = useCallback((id: string, ekoStr?: string, vitStr?: string) => {
@@ -2963,19 +3074,15 @@ export default function PlanneringPage() {
 
   const updateSegmentSortIndex = useCallback((segmentId: string, sortIndex: number | null) => {
     setScheduledSegments(prev => prev.map(s => s.id === segmentId ? { ...s, sortIndex } : s));
-    return enqueue(
-      supabase.from('planning_segments')
+    return enqueue(runSegmentWrite(
+      'ordning (sort_index)',
+      () => supabase.from('planning_segments')
         .update({ sort_index: sortIndex })
         .eq('id', segmentId)
-        .select('id')
-        .then(({ error }) => {
-          if (error) {
-            console.warn('[planning] update segment sort_index error', error);
-            throw error;
-          }
-        })
-    );
-  }, [supabase]);
+        .select('id'),
+      { table: 'planning_segments', id: segmentId },
+    ));
+  }, [supabase, runSegmentWrite]);
 
   const updateSegmentOnHold = useCallback((segmentId: string, onHold: boolean) => {
     const ts = onHold ? new Date().toISOString() : null;
@@ -3247,8 +3354,15 @@ export default function PlanneringPage() {
         }
         prevMap.delete(seg.id);
       }
-      // Deletions
-      for (const segId of prevMap.keys()) persistSegmentDelete(segId);
+      // Deletions — any segment present in `prev` but absent from the returned
+      // array. A single id is a normal explicit removal; a burst means a caller
+      // returned a stale snapshot and we are about to delete live cards. Log it
+      // loudly so this silent path is never invisible again.
+      const inferredDeletes = Array.from(prevMap.keys());
+      if (inferredDeletes.length > 0) {
+        console.warn('[planning][applyScheduledSegments] inferred deletion of segment(s) missing from new state', inferredDeletes);
+      }
+      for (const segId of inferredDeletes) persistSegmentDelete(segId);
       return next;
     });
   }, [projects, persistSegmentCreate, persistSegmentDelete, persistSegmentUpdate]);
@@ -4290,7 +4404,15 @@ export default function PlanneringPage() {
         console.warn('[DragMove] corrected inverted range', { seg, newStartStr, attemptedEnd: newEndStr });
         newEndDate.setTime(newStartDate.getTime());
       }
-      console.debug('[DragMove] segment', { id: seg.id, oldStart: seg.startDay, oldEnd: seg.endDay, newStart: newStartStr, newEnd: newEndStr, lengthDays });
+      // console.info (not debug) so it is visible by default — a dropped card
+      // that "disappears" usually just moved to a date outside the current view.
+      const validDrop = !Number.isNaN(newStartDate.getTime()) && /^\d{4}-\d{2}-\d{2}$/.test(newStartStr);
+      console.info('[DragMove] segment', { id: seg.id, oldStart: seg.startDay, oldEnd: seg.endDay, newStart: newStartStr, newEnd: newEndStr, newTruck, lengthDays, validDrop });
+      if (!validDrop) {
+        console.warn('[DragMove] OGILTIGT släpp-datum — kortet kan hamna utanför vyn', { id: seg.id, day, newStartStr });
+        try { toast.error('Ogiltig släpp-position — kortet flyttades inte. Försök igen.'); } catch { /* toast unavailable */ }
+        return;
+      }
 
       const cmp = (a: any, b: any) => {
         const sa = (a.sortIndex ?? null) as number | null;
@@ -4318,7 +4440,19 @@ export default function PlanneringPage() {
       });
 
       // Update local state + persist start/end/truck change.
-      applyScheduledSegments(() => nextSegments);
+      // IMPORTANT: map over the LATEST `prev`, never replace state with a snapshot
+      // captured when this handler's closure was created. applyScheduledSegments
+      // infers deletions from any segment present in `prev` but missing from the
+      // returned array — so returning a stale `nextSegments` would silently
+      // persistSegmentDelete any card added concurrently (e.g. via realtime, or a
+      // card the user just placed) between render and drop. That is the silent
+      // "card just disappeared, no error" data loss.
+      applyScheduledSegments(prev => prev.map(s => {
+        if (s.id !== id) return s;
+        const moved: any = { ...s, startDay: newStartStr, endDay: newEndStr, truck: newTruck, onHold: false, onHoldAt: null, onHoldBy: null };
+        if (!newTruck) moved.sortIndex = null; // moving to unassigned clears stale ordering
+        return moved as ScheduledSegment;
+      }));
       // Ensure we persist truck changes too (applyScheduledSegments only diffs dates).
       setTimeout(() => {
         try {
