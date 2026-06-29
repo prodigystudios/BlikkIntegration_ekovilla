@@ -330,36 +330,89 @@ export async function createCrmWorkOrderFromQuote(supabase: SupabaseClient, quot
   };
 }
 
-export async function listCrmWorkOrdersWithFilters(
-  supabase: SupabaseClient,
-  options: { search?: string; status?: CrmWorkOrderStatus; workOrderId?: string; customerId?: string; limit?: number },
-) {
-  let query = supabase
-    .from('crm_work_orders')
-    .select(crmWorkOrderSelect)
-    .order('desired_installation_date', { ascending: true, nullsFirst: false })
-    .order('created_at', { ascending: false })
-    .limit(options.limit ?? 100);
+// Page size for the work-order board. The list is paginated server-side (range + exact
+// count) instead of an unbounded `.limit()`, so it can never silently truncate past the
+// PostgREST row cap once the company accumulates orders (see SUPABASE_CONVENTIONS.md).
+export const CRM_WORK_ORDERS_PAGE_SIZE = 100;
 
+// The board's composite status filters → the concrete statuses each one covers. Mirrors the
+// client's matchesFilter so server-side filtering and the chip labels agree. `all` = no status
+// filter (includes cancelled, exactly like the old client-side 'all'). Kept here so the list
+// query and the per-filter counts can never diverge.
+export type CrmWorkOrderBoardFilter = 'all' | 'draft' | 'scheduled' | 'active' | 'completed' | 'invoiced';
+export const CRM_WORK_ORDER_BOARD_FILTERS: CrmWorkOrderBoardFilter[] = ['all', 'draft', 'scheduled', 'active', 'completed', 'invoiced'];
+const BOARD_FILTER_STATUSES: Record<CrmWorkOrderBoardFilter, CrmWorkOrderStatus[] | null> = {
+  all: null,
+  draft: ['draft'],
+  scheduled: ['scheduled', 'ready'],
+  active: ['in_progress'],
+  // 'Fakturera' covers orders still in the invoicing stage — completed AND mid-delfakturering.
+  completed: ['completed', 'partially_invoiced'],
+  invoiced: ['invoiced'],
+};
+
+type WorkOrderListFilters = {
+  search?: string;
+  filter?: CrmWorkOrderBoardFilter;
+  status?: CrmWorkOrderStatus;
+  assignedToIn?: string[];
+  workOrderId?: string;
+  customerId?: string;
+};
+
+// Apply the shared WHERE clauses so the paginated list and the per-filter counts always use
+// the exact same predicates (search, status group, assignee, deep-link, customer scope).
+function applyWorkOrderListFilters<Q extends {
+  or: (f: string) => Q; eq: (c: string, v: string) => Q; in: (c: string, v: string[]) => Q;
+}>(query: Q, options: WorkOrderListFilters): Q {
   if (options.search) {
     query = query.or(
       `order_number.ilike.%${options.search}%,project_name.ilike.%${options.search}%,client_name.ilike.%${options.search}%,notes.ilike.%${options.search}%`,
     );
   }
-
-  if (options.status) {
-    query = query.eq('status', options.status);
-  }
-
-  if (options.workOrderId) {
-    query = query.eq('id', options.workOrderId);
-  }
-
-  if (options.customerId) {
-    query = query.eq('customer_id', options.customerId);
-  }
-
+  const statuses = options.filter ? BOARD_FILTER_STATUSES[options.filter] : null;
+  if (statuses) query = query.in('status', statuses);
+  if (options.status) query = query.eq('status', options.status);
+  if (options.assignedToIn && options.assignedToIn.length > 0) query = query.in('assigned_to', options.assignedToIn);
+  if (options.workOrderId) query = query.eq('id', options.workOrderId);
+  if (options.customerId) query = query.eq('customer_id', options.customerId);
   return query;
+}
+
+export async function listCrmWorkOrdersWithFilters(
+  supabase: SupabaseClient,
+  options: WorkOrderListFilters & { limit?: number; offset?: number },
+) {
+  const limit = options.limit ?? CRM_WORK_ORDERS_PAGE_SIZE;
+  const offset = options.offset ?? 0;
+  const query = supabase
+    .from('crm_work_orders')
+    .select(crmWorkOrderSelect, { count: 'exact' })
+    .order('desired_installation_date', { ascending: true, nullsFirst: false })
+    .order('created_at', { ascending: false })
+    .range(offset, offset + limit - 1);
+
+  return applyWorkOrderListFilters(query, options);
+}
+
+// Per-filter counts for the board chips. One head-count query per filter (count-only, no rows
+// transferred) so the chips stay accurate at any table size — same pattern as the customer
+// stage counts. The assignee/search scope is applied so the counts match the visible list.
+export async function getCrmWorkOrderFilterCounts(
+  supabase: SupabaseClient,
+  options: { search?: string; assignedToIn?: string[] },
+): Promise<Record<CrmWorkOrderBoardFilter, number>> {
+  const entries = await Promise.all(
+    CRM_WORK_ORDER_BOARD_FILTERS.map(async (filter) => {
+      const query = applyWorkOrderListFilters(
+        supabase.from('crm_work_orders').select('id', { count: 'exact', head: true }),
+        { search: options.search, filter, assignedToIn: options.assignedToIn },
+      );
+      const { count } = await query;
+      return [filter, count ?? 0] as const;
+    }),
+  );
+  return Object.fromEntries(entries) as Record<CrmWorkOrderBoardFilter, number>;
 }
 
 export async function updateCrmWorkOrder(supabase: SupabaseClient, id: string, input: Partial<WorkOrderUpdateInput>) {

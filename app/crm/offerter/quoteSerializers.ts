@@ -49,7 +49,7 @@ export function getEffectiveCustomerName(
 
 // Point-in-time snapshot of the customer details, stored on every quote regardless
 // of whether the customer is a saved record. Empty strings become null.
-export function buildCustomerSnapshot(d: QuoteCustomerFields) {
+export function buildCustomerSnapshot(d: QuoteCustomerFields, opts?: { reverseVat?: boolean | null }) {
   const effectiveCustomerName = getEffectiveCustomerName(d);
 
   // Work address: anchored on the STREET line — only stored when a street is entered AND
@@ -80,6 +80,12 @@ export function buildCustomerSnapshot(d: QuoteCustomerFields) {
     delivery_postal_code: hasWorkAddress ? d.delivery_postal_code || null : null,
     delivery_city: hasWorkAddress ? d.delivery_city || null : null,
     invoice_address: d.invoice_address || null,
+    // Point-in-time byggmoms (omvänd skattskyldighet). Stored on the snapshot so the Fortnox
+    // push (resolveReverseVat) can decide the 0 %-row VAT regime without depending on the live
+    // customer record — essential for snapshot-only quotes with no linked customer_id. `null`
+    // = unknown (legacy rows / callers that don't supply it) → resolver falls back to the
+    // customer. A boolean is authoritative.
+    reverse_vat: opts?.reverseVat ?? null,
   };
 }
 

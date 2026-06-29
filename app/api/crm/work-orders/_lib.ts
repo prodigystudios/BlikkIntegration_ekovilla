@@ -50,11 +50,18 @@ export const createWorkOrderCommentSchema = z.object({
 export const listCrmWorkOrdersQuerySchema = z.object({
   q: z.string().trim().optional(),
   status: workOrderStatusSchema.optional(),
+  // Board composite filter (status group). Server-side so the paginated list is correct.
+  filter: z.enum(['all', 'draft', 'scheduled', 'active', 'completed', 'invoiced']).optional(),
+  // Assignee scope — comma-separated user ids ('mine' is resolved to the current user id on
+  // the client before sending). Empty/absent = everyone.
+  assignee: z.string().trim().optional(),
   work_order_id: z.string().uuid('Ogiltig arbetsorder').optional(),
   customer_id: z.string().uuid('Ogiltig kund').optional(),
   // Optional cap override (default 100). Board views that index every work order's
   // Fortnox number pass a higher value so the lookup map isn't truncated.
   limit: z.coerce.number().int().min(1).max(2000).optional(),
+  // Pagination offset for the "Visa fler" board.
+  offset: z.coerce.number().int().min(0).optional(),
 });
 
 export const updateCrmWorkOrderSchema = z.object({

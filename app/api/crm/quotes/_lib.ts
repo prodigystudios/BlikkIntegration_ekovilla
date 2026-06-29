@@ -47,6 +47,8 @@ const customerSnapshotSchema = z.object({
   delivery_postal_code: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
   delivery_city: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
   invoice_address: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
+  // Point-in-time byggmoms flag (omvänd skattskyldighet). null = unknown (legacy rows).
+  reverse_vat: z.boolean().nullable().optional().default(null),
 });
 
 const pricingSummarySchema = z.object({
