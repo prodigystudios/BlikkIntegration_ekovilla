@@ -2,7 +2,7 @@ import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { parseDecimal } from '@/lib/shared/number';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
 import { fortnoxGet, fortnoxGetBinary, fortnoxPost, fortnoxPut, FortnoxApiError, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
-import { claimFortnoxPush, resolveOurReference, resolveReverseVat } from './helpers';
+import { buildEndContactNote, claimFortnoxPush, resolveOurReference, resolveReverseVat } from './helpers';
 import { DEFAULT_ROT_HOUSE_WORK_TYPE } from './types';
 
 type WorkOrderRow = {
@@ -18,6 +18,9 @@ type WorkOrderRow = {
     postal_code?: string | null;
     city?: string | null;
     reverse_vat?: boolean | null;
+    end_contact_name?: string | null;
+    end_contact_phone?: string | null;
+    end_contact_email?: string | null;
   } | null;
   project_name: string;
   client_name: string | null;
@@ -195,6 +198,9 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
         postal_code?: string | null;
         city?: string | null;
         reverse_vat?: boolean | null;
+        end_contact_name?: string | null;
+        end_contact_phone?: string | null;
+        end_contact_email?: string | null;
       } | null;
       rot_details: { enabled?: boolean | null } | null;
     };
@@ -280,6 +286,7 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
           // the customer card drives the VAT regime, and rows carry the matching VAT (0 % for
           // reverse charge, see buildOrderRows) so header and rows never diverge.
           ...(rotEnabled ? { TaxReductionType: 'rot' } : {}),
+          ...(buildEndContactNote(snapshot) ? { Remarks: buildEndContactNote(snapshot) } : {}),
           ...(deliveryAddress
             ? {
                 DeliveryAddress1: deliveryAddress,

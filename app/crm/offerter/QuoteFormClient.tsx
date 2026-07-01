@@ -88,6 +88,9 @@ type QuoteItem = {
     delivery_postal_code?: string | null;
     delivery_city?: string | null;
     invoice_address?: string | null;
+    end_contact_name?: string | null;
+    end_contact_phone?: string | null;
+    end_contact_email?: string | null;
   } | null;
   pricing_summary: { subtotal?: number; vat?: number; total?: number } | null;
   line_items: QuoteLineItem[] | null;
@@ -145,6 +148,10 @@ type QuoteDraft = {
   delivery_postal_code: string;
   delivery_city: string;
   invoice_address: string;
+  // Separate on-site contact (slutkund) outside the customer card — see buildCustomerSnapshot.
+  end_contact_name: string;
+  end_contact_phone: string;
+  end_contact_email: string;
   items: QuoteLineItem[];
   project_name: string;
   description: string;
@@ -351,6 +358,9 @@ const initialDraft: QuoteDraft = {
   delivery_postal_code: '',
   delivery_city: '',
   invoice_address: '',
+  end_contact_name: '',
+  end_contact_phone: '',
+  end_contact_email: '',
   items: [createEmptyLineItem()],
   project_name: '',
   description: '',
@@ -838,6 +848,8 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   // be filled. A deliberate toggle (vs silent prefill) so a wrong company address can't
   // slip through unnoticed.
   const [customWorkAddress, setCustomWorkAddress] = useState(false);
+  // Separate on-site contact (slutkund) outside the customer card, mirrors the work-address toggle.
+  const [customEndContact, setCustomEndContact] = useState(false);
   const restoredRef = useRef(false);
 
   const presetProspectId = searchParams.get('prospect_id') || '';
@@ -949,6 +961,9 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           delivery_postal_code: item.customer_snapshot?.delivery_postal_code || '',
           delivery_city: item.customer_snapshot?.delivery_city || '',
           invoice_address: item.customer_snapshot?.invoice_address || '',
+          end_contact_name: item.customer_snapshot?.end_contact_name || '',
+          end_contact_phone: item.customer_snapshot?.end_contact_phone || '',
+          end_contact_email: item.customer_snapshot?.end_contact_email || '',
           items: item.line_items?.length
             ? item.line_items.map((line) => ({ ...line, line_note: line.line_note || '', is_rot_work: line.is_rot_work ?? false, house_work_type: line.house_work_type || 'CONSTRUCTION', density: line.density || '' }))
             : [createEmptyLineItem()],
@@ -972,6 +987,9 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           create_follow_up_task: false,
         });
         setCustomWorkAddress(Boolean(item.customer_snapshot?.delivery_address));
+        setCustomEndContact(Boolean(
+          item.customer_snapshot?.end_contact_name || item.customer_snapshot?.end_contact_phone || item.customer_snapshot?.end_contact_email,
+        ));
 
         // Show the linked customer in the picker so editing doesn't look like no
         // customer is selected. Fetch the live row (silently ignored if it 404s).
@@ -1040,6 +1058,9 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           if (fresh) {
             setDraft(envelope.draft);
             setCustomWorkAddress(Boolean(envelope.draft?.delivery_address));
+            setCustomEndContact(Boolean(
+              envelope.draft?.end_contact_name || envelope.draft?.end_contact_phone || envelope.draft?.end_contact_email,
+            ));
           }
         }
       } catch { /* ignore malformed draft */ }
@@ -1499,6 +1520,62 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
                   </div>
                   <p className="text-[11px] leading-snug text-slate-400">
                     Blir arbetsorderns adress och Fortnox leveransadress. Kundadressen ligger kvar som fakturaadress.
+                  </p>
+                </div>
+              ) : null}
+            </div>
+
+            {/* Separat kontaktperson på arbetsplatsen (slutkund) — t.ex. en byggare beställer
+                jobbet men arbetet utförs åt en annan person som inte ligger på kundkortet.
+                Speglar arbetsadress-toggeln. Ordergivaren stannar som "Er referens". */}
+            <div className="grid gap-3">
+              <label className="flex cursor-pointer select-none items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50/60 px-3.5 py-2.5">
+                <span className="grid min-w-0 gap-0.5">
+                  <span className="text-sm font-medium text-slate-700">Annan kontaktperson på arbetsplatsen</span>
+                  <span className="text-[11px] text-slate-400">Slutkund utanför kundkortet (jobbet utförs åt någon annan än ordergivaren)</span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={customEndContact}
+                  onChange={(e) => {
+                    const on = e.target.checked;
+                    setCustomEndContact(on);
+                    if (!on) setDraft((d) => ({ ...d, end_contact_name: '', end_contact_phone: '', end_contact_email: '' }));
+                  }}
+                  className="h-4 w-4 shrink-0 rounded border-slate-300 accent-emerald-600"
+                />
+              </label>
+
+              {customEndContact ? (
+                <div className="grid gap-3 rounded-xl border border-[#e0e8dc] bg-white/60 p-3">
+                  <p className={crm.sectionTitle}>Kontaktperson på arbetsplatsen</p>
+                  <Field label="Namn">
+                    <Input
+                      value={draft.end_contact_name}
+                      onChange={(e) => setDraft((d) => ({ ...d, end_contact_name: e.target.value }))}
+                      placeholder="T.ex. fastighetsägaren"
+                    />
+                  </Field>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Field label="Telefon">
+                      <Input
+                        value={draft.end_contact_phone}
+                        onChange={(e) => setDraft((d) => ({ ...d, end_contact_phone: e.target.value }))}
+                        placeholder="070-123 45 67"
+                        inputMode="tel"
+                      />
+                    </Field>
+                    <Field label="E-post">
+                      <Input
+                        value={draft.end_contact_email}
+                        onChange={(e) => setDraft((d) => ({ ...d, end_contact_email: e.target.value }))}
+                        placeholder="namn@exempel.se"
+                        type="email"
+                      />
+                    </Field>
+                  </div>
+                  <p className="text-[11px] leading-snug text-slate-400">
+                    Visas för installatören på arbetsordern och som notering på Fortnox-dokumenten. Ordergivaren står kvar som Er referens.
                   </p>
                 </div>
               ) : null}

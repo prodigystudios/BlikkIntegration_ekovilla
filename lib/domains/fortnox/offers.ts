@@ -2,7 +2,7 @@ import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { parseDecimal } from '@/lib/shared/number';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
 import { fortnoxPost, fortnoxPut, fortnoxGet, fortnoxGetBinary, FortnoxApiError, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
-import { claimFortnoxPush, resolveOurReference, resolveReverseVat } from './helpers';
+import { buildEndContactNote, claimFortnoxPush, resolveOurReference, resolveReverseVat } from './helpers';
 import { buildFortnoxCustomerPayload, createFortnoxCustomer, splitSwedishName, buildFortnoxAddress, type FortnoxCustomerSource } from './customers';
 import { DEFAULT_ROT_HOUSE_WORK_TYPE } from './types';
 
@@ -52,6 +52,9 @@ type QuoteRow = {
     postal_code?: string | null;
     city?: string | null;
     reverse_vat?: boolean | null;
+    end_contact_name?: string | null;
+    end_contact_phone?: string | null;
+    end_contact_email?: string | null;
   } | null;
   assigned_to: string | null;
   rot_details: {
@@ -406,7 +409,7 @@ export async function pushQuoteToFortnox(quoteId: string): Promise<PushOfferResu
     const brfOrgNumber = rotEnabled && quote.rot_details?.brf_org_number
       ? `BRF org.nr: ${quote.rot_details.brf_org_number}`
       : null;
-    const remarks = [quote.description, propertyDesignation, brfOrgNumber].filter(Boolean).join('\n') || undefined;
+    const remarks = [quote.description, propertyDesignation, brfOrgNumber, buildEndContactNote(snapshot)].filter(Boolean).join('\n') || undefined;
 
     const offerBody = {
       Offer: {

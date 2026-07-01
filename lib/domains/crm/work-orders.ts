@@ -440,8 +440,26 @@ export async function listWorkOrderInvoiceRounds(supabase: SupabaseClient, workO
 // Returns { data: null } when the work order has no linked customer.
 export async function getWorkOrderCustomerContact(supabase: SupabaseClient, workOrderId: string) {
   const { data: wo, error: woError } = await supabase
-    .from('crm_work_orders').select('customer_id').eq('id', workOrderId).maybeSingle();
+    .from('crm_work_orders').select('customer_id, customer_snapshot').eq('id', workOrderId).maybeSingle();
   if (woError) return { data: null, error: woError };
+
+  // A separate on-site contact (slutkund, captured outside the customer card) is who the
+  // installer should reach at the job site — prefer it over the customer-card contact. Works
+  // even for a standalone order with no linked customer.
+  const snap = (wo?.customer_snapshot ?? null) as
+    { end_contact_name?: string | null; end_contact_phone?: string | null; end_contact_email?: string | null } | null;
+  if (snap && (snap.end_contact_name?.trim() || snap.end_contact_phone?.trim() || snap.end_contact_email?.trim())) {
+    return {
+      data: {
+        contactName: snap.end_contact_name || null,
+        phone: snap.end_contact_phone || null,
+        email: snap.end_contact_email || null,
+        isOnSiteContact: true,
+      },
+      error: null,
+    };
+  }
+
   if (!wo?.customer_id) return { data: null, error: null };
 
   const { data: c, error } = await supabase
@@ -459,6 +477,7 @@ export async function getWorkOrderCustomerContact(supabase: SupabaseClient, work
       contactName: primary?.name || null,
       phone: (c as any).phone || (c as any).mobile || primary?.phone || null,
       email: (c as any).email || primary?.email || null,
+      isOnSiteContact: false,
     },
     error: null,
   };
