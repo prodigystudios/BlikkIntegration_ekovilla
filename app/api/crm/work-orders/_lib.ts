@@ -81,5 +81,12 @@ export const updateCrmWorkOrderSchema = z.object({
     delivery_address: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
     invoice_address: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
   }).optional().default({}),
+  // Responsible contact override — merged into customer_snapshot by the route so a contact that
+  // changed between offer→order flows to the installer view and the Fortnox YourReference.
+  contact: z.object({
+    contact_name: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
+    email: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
+    phone: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
+  }).optional(),
 });
 

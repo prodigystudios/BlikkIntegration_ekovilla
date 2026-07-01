@@ -49,6 +49,21 @@ export async function PATCH(req: Request, context: RouteContext) {
     // change) doesn't wipe untouched columns (internal_handoff, work_address) with defaults.
     const updateInput = pickProvidedFields(parsedBody.data, rawBody);
 
+    // Contact override: merge into the (jsonb) customer_snapshot with a read-merge-write so the
+    // other snapshot fields (personnummer, addresses, reverse_vat, end-contact) are preserved.
+    // Lets a seller fix the responsible contact if it changed after the offer.
+    if (updateInput.contact) {
+      const { data: current } = await getCrmWorkOrder(supabase, context.params.id);
+      const snapshot = (current?.customer_snapshot ?? {}) as Record<string, unknown>;
+      (updateInput as Record<string, unknown>).customer_snapshot = {
+        ...snapshot,
+        contact_name: updateInput.contact.contact_name ?? null,
+        email: updateInput.contact.email ?? null,
+        phone: updateInput.contact.phone ?? null,
+      };
+      delete (updateInput as { contact?: unknown }).contact;
+    }
+
     // System-managed status guard (only when a status change is actually requested):
     if (updateInput.status) {
       // …can't be SET manually…
