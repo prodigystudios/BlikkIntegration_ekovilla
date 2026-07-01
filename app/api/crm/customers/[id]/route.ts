@@ -2,7 +2,7 @@ import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { getCrmCustomer, updateCrmCustomer } from '@/lib/domains/crm/customers';
 import { updateFortnoxCustomer, fortnoxCustomerFieldsChanged } from '@/lib/domains/fortnox/customers';
-import { ok, requireCrmUser, requirePermission, routeError, updateCrmCustomerSchema, validationError } from '../_lib';
+import { invalidUuidParam, ok, requireCrmUser, requirePermission, routeError, updateCrmCustomerSchema, validationError } from '../_lib';
 
 type RouteContext = { params: { id: string } };
 
@@ -10,6 +10,9 @@ export async function GET(_req: Request, context: RouteContext) {
   try {
     const crmUser = await requireCrmUser();
     if (crmUser.response) return crmUser.response;
+
+    const badId = invalidUuidParam(context.params.id);
+    if (badId) return badId;
 
     const supabase = createRouteHandlerClient({ cookies });
     const { data, error } = await getCrmCustomer(supabase, context.params.id);
@@ -28,6 +31,9 @@ export async function PATCH(req: Request, context: RouteContext) {
   try {
     const crmUser = await requirePermission('crm.customer.write');
     if (crmUser.response || !crmUser.currentUser) return crmUser.response;
+
+    const badId = invalidUuidParam(context.params.id);
+    if (badId) return badId;
 
     const parsedBody = updateCrmCustomerSchema.safeParse(await req.json().catch(() => null));
     if (!parsedBody.success) return validationError(parsedBody.error);

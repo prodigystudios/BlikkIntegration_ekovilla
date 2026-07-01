@@ -4,6 +4,7 @@ import { getCrmQuote, markCrmQuoteWon, updateCrmQuote, type UpdateCrmQuoteInput 
 import { pushQuoteToFortnox } from '@/lib/domains/fortnox/offers';
 import { FortnoxNotConnectedError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
 import {
+  isNoRowsError,
   ok,
   pickProvidedQuoteFields,
   requireCrmUser,
@@ -18,6 +19,18 @@ type RouteContext = {
     id: string;
   };
 };
+
+// A quote UPDATE that matched 0 rows: distinguish "not your quote" (visible via the open
+// SELECT policy → 403) from "gone" (404), so the caller gets a clear message not a raw 500.
+async function quoteForbiddenOrMissing(
+  supabase: Parameters<typeof getCrmQuote>[0],
+  id: string,
+) {
+  const { data: existing } = await getCrmQuote(supabase, id);
+  return existing
+    ? routeError(403, 'crm_quote_forbidden', 'Du kan bara redigera offerter du är ansvarig för.')
+    : routeError(404, 'crm_quote_not_found', 'Offerten hittades inte.');
+}
 
 export async function GET(_req: Request, context: RouteContext) {
   try {
@@ -63,11 +76,19 @@ export async function PATCH(req: Request, context: RouteContext) {
         crmUser.currentUser.id,
         updateInput
       );
-      if (result.error) return routeError(500, result.error.code, result.error.message);
+      if (result.error) {
+        if (isNoRowsError(result.error)) return quoteForbiddenOrMissing(supabase, context.params.id);
+        return routeError(500, result.error.code, result.error.message);
+      }
       data = result.data;
     } else {
       const result = await updateCrmQuote(supabase, context.params.id, updateInput);
-      if (result.error) return routeError(500, 'crm_quote_update_failed', result.error.message);
+      if (result.error) {
+        // 0 rows = the quote is missing OR the caller isn't its assigned owner (UPDATE RLS is
+        // owner/admin, SELECT is open to all CRM readers) — answer 403/404, not a raw 500.
+        if (isNoRowsError(result.error)) return quoteForbiddenOrMissing(supabase, context.params.id);
+        return routeError(500, 'crm_quote_update_failed', result.error.message);
+      }
       data = result.data;
     }
 

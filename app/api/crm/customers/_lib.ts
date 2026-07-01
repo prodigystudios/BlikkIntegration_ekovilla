@@ -1,5 +1,5 @@
 import { z } from 'zod';
-export { ok, routeError, validationError, requireCrmUser, requireCrmWriter, requirePermission } from '../_shared';
+export { ok, routeError, validationError, invalidUuidParam, requireCrmUser, requireCrmWriter, requirePermission } from '../_shared';
 
 // Zod's built-in .email() rejects Unicode domain names (e.g. byggmästaren.se).
 // This helper validates the structural shape of an email while accepting IDN domains.

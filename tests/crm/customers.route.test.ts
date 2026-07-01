@@ -327,8 +327,12 @@ describe('POST /api/crm/customers — framgång', () => {
 // GET /api/crm/customers/[id]
 // ---------------------------------------------------------------------------
 
+// Route [id] handlers now validate the path segment as a UUID (invalidUuidParam) before
+// touching the DB, so these fixtures use a real UUID instead of a placeholder like 'c1'.
+const CUSTOMER_ID = '11111111-1111-1111-1111-111111111111';
+
 describe('GET /api/crm/customers/[id]', () => {
-  const ctx = { params: { id: 'c1' } };
+  const ctx = { params: { id: CUSTOMER_ID } };
 
   it('returnerar 401 utan session', async () => {
     mockGetCurrentUser.mockResolvedValue(null);
@@ -347,7 +351,7 @@ describe('GET /api/crm/customers/[id]', () => {
 
     expect(res.status).toBe(200);
     expect(body.data.item).toEqual(customer);
-    expect(mockGet).toHaveBeenCalledWith(expect.anything(), 'c1');
+    expect(mockGet).toHaveBeenCalledWith(expect.anything(), CUSTOMER_ID);
   });
 
   it('returnerar 404 om kund inte hittas', async () => {
@@ -358,6 +362,16 @@ describe('GET /api/crm/customers/[id]', () => {
 
     expect(res.status).toBe(404);
   });
+
+  it('returnerar 400 vid ogiltigt (icke-UUID) id utan att röra DB', async () => {
+    mockGetCurrentUser.mockResolvedValue(salesUser);
+    mockGet.mockClear();
+
+    const res = await itemGET(makeRequest('/api/crm/customers/not-a-uuid'), { params: { id: 'not-a-uuid' } });
+
+    expect(res.status).toBe(400);
+    expect(mockGet).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -365,7 +379,7 @@ describe('GET /api/crm/customers/[id]', () => {
 // ---------------------------------------------------------------------------
 
 describe('PATCH /api/crm/customers/[id]', () => {
-  const ctx = { params: { id: 'c1' } };
+  const ctx = { params: { id: CUSTOMER_ID } };
 
   it('returnerar 401 utan session', async () => {
     mockGetCurrentUser.mockResolvedValue(null);
@@ -407,6 +421,6 @@ describe('PATCH /api/crm/customers/[id]', () => {
 
     expect(res.status).toBe(200);
     expect(body.data.item).toEqual(updated);
-    expect(mockUpdate).toHaveBeenCalledWith(expect.anything(), 'c1', expect.objectContaining({ status: 'inactive' }));
+    expect(mockUpdate).toHaveBeenCalledWith(expect.anything(), CUSTOMER_ID, expect.objectContaining({ status: 'inactive' }));
   });
 });
