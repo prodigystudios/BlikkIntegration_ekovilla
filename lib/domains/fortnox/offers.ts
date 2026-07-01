@@ -235,7 +235,28 @@ async function createCustomerInFortnox(quote: QuoteRow): Promise<string> {
 
   const supabase = getSupabaseAdmin();
 
-  // assigned_to/created_by are NOT NULL – use the quote's assigned user.
+  // Link the Fortnox customer number onto the quote FIRST — before the (optional) crm_customers
+  // row + contact inserts below. resolveFortnoxCustomerNumber keys off customer_source, so
+  // recording it immediately means a failure in any later step can't orphan the freshly-created
+  // Fortnox customer and duplicate it on the next push. If even this minimal write fails we throw,
+  // because a retry genuinely would create a second Fortnox customer.
+  const { error: linkError } = await supabase
+    .from('crm_quotes')
+    .update({
+      customer_source: {
+        kind: 'fortnox',
+        sync_intent: 'linked',
+        fortnox_customer_id: customerNumber,
+        fortnox_customer_name: name,
+      },
+    })
+    .eq('id', quote.id);
+  if (linkError) {
+    throw new Error(`[Fortnox] Kunde inte länka customer_source på offert ${quote.id}: ${linkError.message}`);
+  }
+
+  // assigned_to/created_by are NOT NULL – use the quote's assigned user. Without it we can't
+  // create the local mirror row, but the quote is already linked above so returning here is safe.
   if (!quote.assigned_to) {
     console.warn(`[Fortnox] Kan inte skapa crm_customers-rad för offert ${quote.id}: assigned_to saknas`);
     return customerNumber;
@@ -286,26 +307,18 @@ async function createCustomerInFortnox(quote: QuoteRow): Promise<string> {
         is_primary: true,
       });
     }
-  }
 
-  // Always link customer_source on the quote regardless of whether the DB insert succeeded.
-  // This ensures resolveFortnoxCustomerNumber finds the Fortnox number on the next push
-  // and skips createCustomerInFortnox – preventing duplicate Fortnox customers on retry.
-  const { error: quoteUpdateError } = await supabase
-    .from('crm_quotes')
-    .update({
-      ...(newCustomer?.id ? { customer_id: newCustomer.id } : {}),
-      customer_source: {
-        kind: 'fortnox',
-        sync_intent: 'linked',
-        fortnox_customer_id: customerNumber,
-        fortnox_customer_name: name,
-      },
-    })
-    .eq('id', quote.id);
-
-  if (quoteUpdateError) {
-    throw new Error(`[Fortnox] Kunde inte länka customer_source på offert ${quote.id}: ${quoteUpdateError.message}`);
+    // Enrich the quote with the local customer_id now that the mirror row exists. Best-effort:
+    // the anti-duplicate link (customer_source) is already persisted above, so a failure here
+    // only means the quote isn't joined to the local customer row — never a duplicate Fortnox
+    // customer.
+    const { error: customerIdError } = await supabase
+      .from('crm_quotes')
+      .update({ customer_id: newCustomer.id })
+      .eq('id', quote.id);
+    if (customerIdError) {
+      console.error(`[Fortnox] Kunde inte länka customer_id på offert ${quote.id}:`, customerIdError.message);
+    }
   }
 
   return customerNumber;
