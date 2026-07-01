@@ -11,6 +11,9 @@ import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
 import { crm } from '@/app/crm/lib/crmTokens';
 import AddressAutocompleteInput from '@/app/crm/components/AddressAutocompleteInput';
 import CrmModal from '@/app/crm/components/CrmModal';
+import { DndContext, closestCenter, PointerSensor, TouchSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
+import { SortableContext, verticalListSortingStrategy, arrayMove, useSortable } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import {
   getEffectiveCustomerName,
   buildCustomerSnapshot,
@@ -698,6 +701,34 @@ function SectionHeader({
 
 // ─── LineItemRow (one product/price row) ──────────────────────────────────────
 
+// Sortable wrapper for a line item (drag-and-drop reordering). Owns the sortable node ref +
+// transform; hands a drag-handle button (wired to the sensor listeners) to LineItemRow so the
+// row only reorders when the grip is dragged, not when a field is touched.
+function SortableLineItem({ id, children }: { id: string; children: (dragHandle: React.ReactNode) => React.ReactNode }) {
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id });
+  const handle = (
+    <button
+      type="button"
+      ref={setActivatorNodeRef}
+      {...attributes}
+      {...listeners}
+      aria-label="Dra för att ändra ordning"
+      className="shrink-0 cursor-grab touch-none rounded-md p-1 text-slate-300 transition-colors hover:text-slate-500 active:cursor-grabbing"
+    >
+      <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden>
+        <circle cx="3.5" cy="2.5" r="1" /><circle cx="8.5" cy="2.5" r="1" />
+        <circle cx="3.5" cy="6" r="1" /><circle cx="8.5" cy="6" r="1" />
+        <circle cx="3.5" cy="9.5" r="1" /><circle cx="8.5" cy="9.5" r="1" />
+      </svg>
+    </button>
+  );
+  return (
+    <div ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.6 : 1, zIndex: isDragging ? 20 : undefined }} className="relative">
+      {children(handle)}
+    </div>
+  );
+}
+
 function LineItemRow({
   row,
   index,
@@ -707,6 +738,7 @@ function LineItemRow({
   onSelectArticle,
   onClearArticle,
   onRemove,
+  dragHandle,
 }: {
   row: QuoteLineItem;
   index: number;
@@ -716,6 +748,7 @@ function LineItemRow({
   onSelectArticle: (article: ArticleLite) => void;
   onClearArticle: () => void;
   onRemove: () => void;
+  dragHandle?: React.ReactNode;
 }) {
   const isM3 = (row.pricing_mode ?? 'm3') === 'm3';
   // Collapsed by default once the row has an article; new/empty rows open for editing.
@@ -725,6 +758,7 @@ function LineItemRow({
   if (!expanded) {
     return (
       <div className="flex items-center gap-2 rounded-xl border border-slate-100 px-3.5 py-2.5 transition-colors hover:border-slate-200">
+        {dragHandle}
         <button type="button" onClick={() => setExpanded(true)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
           <span className="shrink-0 text-xs font-semibold tabular-nums text-slate-300">{index + 1}</span>
           <span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-800">
@@ -758,7 +792,7 @@ function LineItemRow({
   return (
     <div className="grid gap-3 rounded-xl border border-slate-200 bg-slate-50/40 p-4">
       <div className="flex items-center justify-between gap-3">
-        <span className="text-xs font-semibold text-slate-400">Rad {index + 1}</span>
+        <span className="flex items-center gap-2 text-xs font-semibold text-slate-400">{dragHandle}Rad {index + 1}</span>
         <div className="flex items-center gap-3">
           <button type="button" onClick={() => setExpanded(false)} className="text-xs font-medium text-slate-500 transition-colors hover:text-slate-800">
             Fäll ihop ▴
@@ -857,6 +891,23 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   const [customWorkAddress, setCustomWorkAddress] = useState(false);
   // Separate on-site contact (slutkund) outside the customer card, mirrors the work-address toggle.
   const [customEndContact, setCustomEndContact] = useState(false);
+
+  // Drag-and-drop reordering of the article rows. Pointer for mouse (small distance so a click
+  // still selects), Touch with a short press-delay so scrolling the form on mobile isn't hijacked.
+  const itemSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 160, tolerance: 8 } }),
+  );
+  function handleItemsDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    setDraft((d) => {
+      const oldIndex = d.items.findIndex((i) => i.id === active.id);
+      const newIndex = d.items.findIndex((i) => i.id === over.id);
+      if (oldIndex < 0 || newIndex < 0) return d;
+      return { ...d, items: arrayMove(d.items, oldIndex, newIndex) };
+    });
+  }
   const restoredRef = useRef(false);
 
   const presetProspectId = searchParams.get('prospect_id') || '';
@@ -1751,12 +1802,16 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
             </p>
           )}
 
+          <DndContext sensors={itemSensors} collisionDetection={closestCenter} onDragEnd={handleItemsDragEnd}>
+          <SortableContext items={draft.items.map((i) => i.id)} strategy={verticalListSortingStrategy}>
           <div className="grid gap-2">
             {draft.items.map((row, index) => (
+              <SortableLineItem key={row.id} id={row.id}>
+                {(dragHandle) => (
               <LineItemRow
-                key={row.id}
                 row={row}
                 index={index}
+                dragHandle={dragHandle}
                 metrics={effectiveRows.find((r) => r.id === row.id)}
                 rotEnabled={draft.rot_enabled}
                 onChange={(patch) => setDraft((d) => ({ ...d, items: d.items.map((item) => item.id === row.id ? { ...item, ...patch } : item) }))}
@@ -1790,8 +1845,12 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
                 }))}
                 onRemove={() => setDraft((d) => ({ ...d, items: d.items.length > 1 ? d.items.filter((item) => item.id !== row.id) : [createEmptyLineItem()] }))}
               />
+                )}
+              </SortableLineItem>
             ))}
           </div>
+          </SortableContext>
+          </DndContext>
 
           <button
             type="button"
