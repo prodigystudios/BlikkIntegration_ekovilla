@@ -325,7 +325,8 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
     const isB2B = draft.customer_type === 'business';
     if (isB2B && !draft.company_name.trim()) { toast.error('Företagsnamn krävs'); return; }
     if (!isB2B && (!draft.first_name.trim() || !draft.last_name.trim())) { toast.error('För- och efternamn krävs'); return; }
-    if (!isB2B && !draft.personal_number.trim()) { toast.error('Personnummer krävs för privatkund'); return; }
+    // Personnummer is optional at create — sales sometimes only get it once the job is booked.
+    // It is required later, when a work order is created for the customer.
 
     // When "same as visit address" is on, the invoice address + email follow the visit
     // address / contact email rather than the (locked, possibly stale) invoice fields.
@@ -533,8 +534,9 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
                       </div>
                     </div>
                     <div>
-                      <FieldLabel>Personnummer *</FieldLabel>
+                      <FieldLabel>Personnummer</FieldLabel>
                       <Input value={draft.personal_number} onChange={(e) => set('personal_number', formatSwedishIdNumber(e.target.value))} placeholder="ÅÅMMDD-XXXX" />
+                      <p className="mt-1 text-[11px] leading-snug text-slate-400">Kan fyllas i senare, men krävs innan en order kan skapas för kunden.</p>
                     </div>
                   </>
                 )}

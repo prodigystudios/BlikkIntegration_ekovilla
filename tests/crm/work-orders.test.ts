@@ -85,6 +85,22 @@ describe('createCrmWorkOrderFromQuote — fält-mappning', () => {
     expect(captured.insert!.notes).toBeNull();
   });
 
+  it('blockerar privatorder utan personnummer (varken snapshot eller kund)', async () => {
+    const { supabase } = makeSupabase(wonQuote({ quote_type: 'private', customer_id: null, customer_snapshot: { customer_name: 'Anna' } }));
+    const result = await createCrmWorkOrderFromQuote(supabase as any, 'q1', 'user-1');
+    expect(result.reason).toBe('missing_personal_number');
+    expect(result.data).toBeNull();
+  });
+
+  it('tillåter privatorder när snapshot har personnummer, och bevarar det på ordern', async () => {
+    const { supabase, captured } = makeSupabase(
+      wonQuote({ quote_type: 'private', customer_id: null, customer_snapshot: { customer_name: 'Anna', personal_number: '900101-1234' } }),
+    );
+    const result = await createCrmWorkOrderFromQuote(supabase as any, 'q1', 'user-1');
+    expect(result.error).toBeNull();
+    expect(captured.insert!.customer_snapshot.personal_number).toBe('900101-1234');
+  });
+
   it('seedar notes från offertens egna notes när de finns', async () => {
     const { supabase, captured } = makeSupabase(wonQuote({ notes: 'Internt orderunderlag' }));
 

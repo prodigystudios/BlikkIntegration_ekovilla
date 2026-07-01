@@ -44,16 +44,10 @@ export async function PATCH(req: Request, context: RouteContext) {
     // actually changed (avoids pushing to Fortnox on notes/status/owner-only edits).
     const { data: before } = await getCrmCustomer(supabase, context.params.id);
 
-    // Personnummer is mandatory for private customers (Fortnox uses it as
-    // OrganisationNumber for ROT). Guard the MERGED state so a PATCH can neither clear
-    // it nor flip a customer to private without one – the create schema enforces this
-    // on insert; this closes the same invariant on update.
-    const effectiveType = parsedBody.data.customer_type ?? before?.customer_type;
-    const effectivePersonalNumber =
-      'personal_number' in parsedBody.data ? parsedBody.data.personal_number : before?.personal_number;
-    if (effectiveType === 'private' && !effectivePersonalNumber) {
-      return routeError(400, 'crm_customer_personal_number_required', 'Personnummer krävs för privatkund');
-    }
+    // NOTE: a private customer may lack personal_number (sales sometimes get it only once the
+    // job is booked). It is no longer required here — it is enforced when a work order is
+    // created for the customer. This PATCH is also the path the "Ny order" / quote→order flows
+    // use to save the personnummer the seller supplies at that point.
 
     const { data, error } = await updateCrmCustomer(supabase, context.params.id, parsedBody.data);
 

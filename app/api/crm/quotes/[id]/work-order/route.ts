@@ -24,7 +24,7 @@ export async function POST(_req: Request, context: RouteContext) {
         return routeError(404, 'crm_quote_not_found', result.error?.message || 'Offerten hittades inte');
       }
 
-      if (result.reason === 'quote_not_won' || result.reason === 'already_created') {
+      if (result.reason === 'quote_not_won' || result.reason === 'already_created' || result.reason === 'missing_personal_number') {
         return routeError(409, result.reason, result.error?.message || 'Arbetsorder kunde inte skapas');
       }
 

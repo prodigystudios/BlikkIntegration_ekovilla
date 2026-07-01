@@ -10,6 +10,7 @@ import { parseDecimal } from '@/lib/shared/number';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
 import { crm } from '@/app/crm/lib/crmTokens';
 import AddressAutocompleteInput from '@/app/crm/components/AddressAutocompleteInput';
+import CrmModal from '@/app/crm/components/CrmModal';
 import {
   getEffectiveCustomerName,
   buildCustomerSnapshot,
@@ -316,7 +317,9 @@ function getValidationIssues(draft: QuoteDraft, effectiveRows: EffectiveRow[]) {
   if (!draft.prospect_id && !draft.customer_id && !effectiveCustomerName) issues.push('Kund måste anges');
   if (draft.customer_source.kind === 'prospect' && !draft.prospect_id) issues.push('Prospektkälla kräver valt prospekt');
   if (draft.customer_source.kind === 'fortnox' && !draft.customer_source.fortnox_customer_name.trim()) issues.push('Fortnox-kund behöver kundreferens');
-  if (draft.quote_type === 'private' && !draft.personal_number.trim()) issues.push('Personnummer krävs');
+  // Personnummer is only required on the quote when ROT is used (ROT can't be computed without
+  // it). Otherwise it's optional here and enforced when the work order is created.
+  if (draft.quote_type === 'private' && draft.rot_enabled && !draft.personal_number.trim()) issues.push('Personnummer krävs för ROT');
   if (draft.quote_type === 'business' && !draft.company_name.trim() && !draft.customer_name.trim()) issues.push('Företagsnamn krävs');
   // Er referens (kontaktperson) is required: it becomes YourReference on the Fortnox
   // offer and carries through offer → order → invoice. Enforced here so no quote leaves
@@ -840,6 +843,10 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   const [submitting, setSubmitting] = useState(false);
   const [submitAttempted, setSubmitAttempted] = useState(false);
   const [creatingWorkOrder, setCreatingWorkOrder] = useState(false);
+  // Private customer without personnummer (optional at create) → the work-order route rejects
+  // with 409; we prompt for it, save it on the customer, then retry the conversion.
+  const [pnPromptOpen, setPnPromptOpen] = useState(false);
+  const [pnValue, setPnValue] = useState('');
   const [draft, setDraft] = useState<QuoteDraft>(initialDraft);
   const [loadedQuote, setLoadedQuote] = useState<QuoteItem | null>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<CrmCustomerLite | null>(null);
@@ -1165,8 +1172,8 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     if (draft.quote_type === 'business' && !draft.company_name.trim() && !draft.customer_name.trim()) {
       errs.company_name = 'Företagsnamn krävs';
     }
-    if (draft.quote_type === 'private' && !draft.personal_number.trim()) {
-      errs.personal_number = 'Personnummer krävs';
+    if (draft.quote_type === 'private' && draft.rot_enabled && !draft.personal_number.trim()) {
+      errs.personal_number = 'Personnummer krävs för ROT';
     }
     if (!draft.contact_name.trim()) errs.contact_name = 'Er referens krävs';
     if (!draft.amount.trim() && !hasAnyRows) errs.amount = 'Ange belopp eller lägg till rader';
@@ -1180,7 +1187,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   const issueFieldIds: Record<string, string> = {
     'Kund måste anges': 'section-kund',
     'Företagsnamn krävs': 'section-kund',
-    'Personnummer krävs': 'section-kund',
+    'Personnummer krävs för ROT': 'section-kund',
     'Er referens krävs': 'field-contact-name',
     'Offertnamn saknas': 'field-project-name',
     'Ange belopp eller lägg till rader': 'field-amount',
@@ -1318,11 +1325,45 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     try {
       const res = await fetch(`/api/crm/quotes/${quoteId}/work-order`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
       const json = await res.json().catch(() => ({}));
-      if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte skapa arbetsorder'); return; }
+      if (!res.ok || !json.ok) {
+        if (json?.errorDetails?.code === 'crm_work_order_missing_personal_number') {
+          if (!loadedQuote.customer_id) {
+            toast.error('Privatkunden saknar personnummer. Lägg till det på kundkortet först.');
+            return;
+          }
+          setPnValue(draft.personal_number || '');
+          setPnPromptOpen(true);
+          return;
+        }
+        toast.error(json?.error || 'Kunde inte skapa arbetsorder');
+        return;
+      }
       const workOrder = json?.data?.workOrder as { id?: string; order_number?: string } | undefined;
       toast.success(workOrder?.order_number ? `Arbetsorder skapad: ${workOrder.order_number}` : 'Arbetsorder skapad');
       if (workOrder?.id) router.push(`/crm/arbetsorder?work_order_id=${workOrder.id}`);
     } catch { toast.error('Kunde inte skapa arbetsorder'); } finally { setCreatingWorkOrder(false); }
+  }
+
+  // Save the personnummer on the linked customer, then retry the quote→order conversion.
+  async function savePersonalNumberAndCreateOrder() {
+    if (!loadedQuote?.customer_id) return;
+    if (!pnValue.trim()) { toast.error('Fyll i personnummer'); return; }
+    setCreatingWorkOrder(true);
+    try {
+      const patch = await fetch(`/api/crm/customers/${loadedQuote.customer_id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ personal_number: pnValue.trim() }),
+      });
+      const pj = await patch.json().catch(() => ({}));
+      if (!patch.ok || !pj.ok) { toast.error(pj?.error || 'Kunde inte spara personnummer'); return; }
+      setDraft((d) => ({ ...d, personal_number: pnValue.trim() }));
+      setPnPromptOpen(false);
+    } finally {
+      setCreatingWorkOrder(false);
+    }
+    // Retry the conversion now that the customer has a personnummer.
+    await createWorkOrderFromQuote();
   }
 
   if (loading) {
@@ -2096,6 +2137,45 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           {submitting ? 'Sparar…' : isEditing ? 'Spara' : 'Skapa'}
         </button>
       </div>
+
+      {/* Personnummer-prompt vid order från privatkund utan personnr */}
+      {pnPromptOpen ? (
+        <CrmModal
+          onClose={() => setPnPromptOpen(false)}
+          ariaLabel="Personnummer krävs"
+          maxWidth="sm:max-w-[460px]"
+          header={
+            <>
+              <h2 className="text-lg font-bold text-slate-900">Personnummer krävs</h2>
+              <p className="m-0 mt-0.5 text-sm text-slate-500">Fortnox behöver privatkundens personnummer för att fakturera ordern. Det sparas på kundkortet.</p>
+            </>
+          }
+          footer={
+            <>
+              <button
+                type="button"
+                onClick={() => setPnPromptOpen(false)}
+                className="flex-1 rounded-xl border border-slate-200 bg-white py-2.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 sm:flex-none sm:px-5"
+              >
+                Avbryt
+              </button>
+              <button
+                type="button"
+                onClick={() => void savePersonalNumberAndCreateOrder()}
+                disabled={creatingWorkOrder || !pnValue.trim()}
+                className="flex-1 rounded-xl py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60 sm:ml-auto sm:flex-none sm:px-5"
+                style={{ backgroundColor: 'var(--crm-primary)' }}
+              >
+                {creatingWorkOrder ? 'Sparar…' : 'Spara och skapa order'}
+              </button>
+            </>
+          }
+        >
+          <Field label="Personnummer">
+            <Input value={pnValue} onChange={(e) => setPnValue(e.target.value)} placeholder="ÅÅMMDD-XXXX" autoFocus />
+          </Field>
+        </CrmModal>
+      ) : null}
     </div>
   );
 }

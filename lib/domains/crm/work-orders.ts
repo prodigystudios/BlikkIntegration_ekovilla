@@ -146,6 +146,13 @@ export async function createStandaloneCrmWorkOrder(supabase: SupabaseClient, inp
   if (custErr) return { data: null, error: custErr, reason: 'customer_fetch_failed' as const };
   if (!customer) return { data: null, error: { message: 'Kunden hittades inte' }, reason: 'customer_not_found' as const };
 
+  // Fortnox needs a private customer's personnummer (its OrganisationNumber) to invoice the
+  // order. It is optional at customer-create, so enforce it here: the caller collects it and
+  // saves it on the customer card before the order is created.
+  if (customer.customer_type === 'private' && !customer.personal_number) {
+    return { data: null, error: { message: 'Personnummer krävs för privatkund innan order kan skapas' }, reason: 'missing_personal_number' as const };
+  }
+
   const isBusiness = customer.customer_type === 'business';
   const clientName = isBusiness
     ? (customer.company_name || 'Okänd kund')
@@ -261,6 +268,24 @@ export async function createCrmWorkOrderFromQuote(supabase: SupabaseClient, quot
     return { data: null, error: { message: 'Arbetsorder finns redan för offerten' }, reason: 'already_created' as const };
   }
 
+  // Fortnox needs a private customer's personnummer to invoice the order. The quote snapshot may
+  // predate it (the quote was saved before the number was known), so fall back to the customer's
+  // current value and bake it into the order snapshot. If neither has it, block — the caller
+  // collects it and saves it on the customer before retrying.
+  let orderSnapshot = (quote.customer_snapshot || {}) as Record<string, unknown>;
+  if (quote.quote_type === 'private' && !orderSnapshot.personal_number) {
+    let personalNumber: string | null = null;
+    if (quote.customer_id) {
+      const { data: cust } = await supabase
+        .from('crm_customers').select('personal_number').eq('id', quote.customer_id).maybeSingle();
+      personalNumber = (cust as { personal_number?: string | null } | null)?.personal_number ?? null;
+    }
+    if (!personalNumber) {
+      return { data: null, error: { message: 'Personnummer krävs för privatkund innan order kan skapas' }, reason: 'missing_personal_number' as const };
+    }
+    orderSnapshot = { ...orderSnapshot, personal_number: personalNumber };
+  }
+
   const orderNumber = buildWorkOrderNumber(quote.id);
 
   const createResult = await supabase
@@ -273,7 +298,7 @@ export async function createCrmWorkOrderFromQuote(supabase: SupabaseClient, quot
       project_name: quote.project_name,
       client_name: getClientName(quote),
       quote_type: quote.quote_type,
-      customer_snapshot: quote.customer_snapshot || {},
+      customer_snapshot: orderSnapshot,
       work_address: getWorkAddress(quote),
       pricing_summary: quote.pricing_summary || {},
       line_items: quote.line_items || [],
