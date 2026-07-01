@@ -1,6 +1,6 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { listCrmWorkOrdersWithFilters, createStandaloneCrmWorkOrder } from '@/lib/domains/crm/work-orders';
+import { listCrmWorkOrdersWithFilters, getCrmWorkOrderFilterCounts, createStandaloneCrmWorkOrder, CRM_WORK_ORDERS_PAGE_SIZE } from '@/lib/domains/crm/work-orders';
 import { createStandaloneWorkOrderSchema, listCrmWorkOrdersQuerySchema, ok, requireCrmUser, requirePermission, routeError, validationError } from './_lib';
 
 export async function GET(req: Request) {
@@ -12,28 +12,51 @@ export async function GET(req: Request) {
     const parsedQuery = listCrmWorkOrdersQuerySchema.safeParse({
       q: url.searchParams.get('q') || undefined,
       status: url.searchParams.get('status') || undefined,
+      filter: url.searchParams.get('filter') || undefined,
+      assignee: url.searchParams.get('assignee') || undefined,
       work_order_id: url.searchParams.get('work_order_id') || undefined,
       customer_id: url.searchParams.get('customer_id') || undefined,
       limit: url.searchParams.get('limit') || undefined,
+      offset: url.searchParams.get('offset') || undefined,
     });
 
     if (!parsedQuery.success) return validationError(parsedQuery.error);
 
+    // Assignee scope: a comma-separated list of user ids (the client resolves 'mine' to the
+    // current user id before sending). Empty = everyone.
+    const assignedToIn = (parsedQuery.data.assignee || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const search = parsedQuery.data.q;
+    const filter = parsedQuery.data.filter;
+    const offset = parsedQuery.data.offset ?? 0;
+    const limit = parsedQuery.data.limit ?? CRM_WORK_ORDERS_PAGE_SIZE;
+
     const supabase = createRouteHandlerClient({ cookies });
     const query = await listCrmWorkOrdersWithFilters(supabase, {
-      search: parsedQuery.data.q,
+      search,
       status: parsedQuery.data.status,
+      filter,
+      assignedToIn,
       workOrderId: parsedQuery.data.work_order_id,
       customerId: parsedQuery.data.customer_id,
-      limit: parsedQuery.data.limit,
+      limit,
+      offset,
     });
-    const { data, error } = await query;
+    const { data, error, count } = await query;
 
     if (error) {
       return routeError(500, 'crm_work_orders_list_failed', error.message);
     }
 
-    return ok({ items: data || [] });
+    // Per-filter chip counts (scoped to the same search + assignee filter). Only the board
+    // requests them (counts=1, first page) — other consumers of this route (säljtavla, customer
+    // detail, overview) skip the extra count queries.
+    const wantCounts = url.searchParams.get('counts') === '1' && offset === 0;
+    const counts = wantCounts ? await getCrmWorkOrderFilterCounts(supabase, { search, assignedToIn }) : undefined;
+
+    return ok({ items: data || [], total: count ?? 0, offset, limit, counts });
   } catch (e: any) {
     return routeError(500, 'crm_work_orders_unexpected', e?.message || 'Failed to list work orders');
   }

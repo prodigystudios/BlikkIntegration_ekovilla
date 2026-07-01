@@ -1232,7 +1232,12 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           fortnox_customer_id: draft.customer_source.fortnox_customer_id || null,
           fortnox_customer_name: draft.customer_source.fortnox_customer_name || null,
         },
-        customer_snapshot: buildCustomerSnapshot(draft),
+        // Business quote at 0 % VAT = omvänd skattskyldighet (byggmoms) — the app's canonical
+        // signal (see quoteAmountDisplay). Captured point-in-time so the Fortnox push resolves
+        // the VAT regime even for snapshot-only quotes with no linked customer.
+        customer_snapshot: buildCustomerSnapshot(draft, {
+          reverseVat: draft.quote_type === 'business' && parseDecimal(draft.vat_percent) === 0,
+        }),
         pricing_summary: {
           subtotal: hasAnyLineItemInput ? totals.subtotal : amountNumber,
           vat: vatAmount,
@@ -1322,14 +1327,17 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   const summarySubtotal = hasAnyLineItemInput ? totals.subtotal : (draft.amount ? parseDecimal(draft.amount) : null);
   const summaryVat = summarySubtotal == null ? null : (hasAnyLineItemInput ? totals.vat : summarySubtotal * (vatPct / 100));
   const summaryTotal = summarySubtotal == null ? null : (hasAnyLineItemInput ? totals.total : summarySubtotal + (summaryVat ?? 0));
-  // VAT display convention (agreed with finance): private leads with the price to pay
-  // INCL moms; business leads with the EX-moms figure, the moms shown in the breakdown.
-  const headlineLabel = isPrivateQuote
-    ? (totals.rotDeduction > 0 ? 'Att betala' : 'Total inkl. moms')
-    : 'Belopp ex moms';
-  const headlineAmount = isPrivateQuote
-    ? (totals.rotDeduction > 0 ? totals.toPay : summaryTotal)
-    : summarySubtotal;
+  // VAT display convention (agreed with finance): private leads with the price INCL moms;
+  // business leads with the EX-moms figure, the moms shown in the breakdown.
+  //
+  // The headline is ALWAYS the gross offer value — the figure Fortnox shows as the offer
+  // total and the value we book the quote at (pricing_summary.total). A ROT deduction is NOT
+  // subtracted from the headline: ROT is settled between the customer and Skatteverket, so the
+  // company's value is still the gross. The customer's net-after-ROT (`toPay`) is shown as a
+  // clearly-labelled secondary line, never as the headline, so the displayed price matches
+  // Fortnox.
+  const headlineLabel = isPrivateQuote ? 'Total inkl. moms' : 'Belopp ex moms';
+  const headlineAmount = isPrivateQuote ? summaryTotal : summarySubtotal;
 
   // Single source of truth for the visible sections (in order). Drives both the
   // section header numbers and the sidebar nav so they can never drift apart.
@@ -1592,7 +1600,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
                   {formatCurrency(headlineAmount ?? totals.total, 'SEK')}
                 </span>
                 {isPrivateQuote && totals.rotDeduction > 0 ? (
-                  <span className="text-[11px] text-slate-400">Total inkl. moms {formatCurrency(totals.total, 'SEK')}</span>
+                  <span className="text-[11px] text-slate-400">Kund betalar efter ROT {formatCurrency(totals.toPay, 'SEK')}</span>
                 ) : !isPrivateQuote ? (
                   <span className="text-[11px] text-slate-400">Inkl. moms {formatCurrency(totals.total, 'SEK')}</span>
                 ) : null}
@@ -1835,16 +1843,6 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
                       <span>Moms ({vatPct} %)</span>
                       <span className="tabular-nums">{formatCurrency(totals.vat, 'SEK')}</span>
                     </div>
-                    <div className="flex items-center justify-between border-t border-slate-200/70 pt-1.5 text-xs font-medium text-slate-600">
-                      <span>Total inkl. moms</span>
-                      <span className="tabular-nums">{formatCurrency(totals.total, 'SEK')}</span>
-                    </div>
-                    {totals.rotDeduction > 0 ? (
-                      <div className="flex items-center justify-between text-xs font-medium text-emerald-700">
-                        <span>Avgår ROT</span>
-                        <span className="tabular-nums">−{formatCurrency(totals.rotDeduction, 'SEK')}</span>
-                      </div>
-                    ) : null}
                     <div className="mt-1 flex items-end justify-between border-t border-slate-200/70 pt-2">
                       <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">
                         {headlineLabel}
@@ -1853,6 +1851,18 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
                         {formatCurrency(headlineAmount ?? totals.total, 'SEK')}
                       </span>
                     </div>
+                    {totals.rotDeduction > 0 ? (
+                      <>
+                        <div className="flex items-center justify-between text-xs font-medium text-emerald-700">
+                          <span>Avgår ROT</span>
+                          <span className="tabular-nums">−{formatCurrency(totals.rotDeduction, 'SEK')}</span>
+                        </div>
+                        <div className="flex items-center justify-between text-xs text-slate-500">
+                          <span>Kund betalar efter ROT-avdrag</span>
+                          <span className="tabular-nums">{formatCurrency(totals.toPay, 'SEK')}</span>
+                        </div>
+                      </>
+                    ) : null}
                   </div>
                 ) : (
                   <>

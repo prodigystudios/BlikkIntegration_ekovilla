@@ -6,7 +6,7 @@ import Input from '../../../components/ui/Input';
 import { cn } from '@/lib/shared/cn';
 import { crm, syncStatusLabel, syncStatusClass, workOrderStatusLabel, workOrderStatusClass, workOrderStatusAccent } from '@/app/crm/lib/crmTokens';
 import { formatDate, formatCurrency, isWorkOrderOverdue, documentRef } from '@/app/crm/lib/format';
-import AssigneeFilter, { matchesAssignee, type AssigneeFilterValue, type AssigneeOption } from '@/app/crm/components/AssigneeFilter';
+import AssigneeFilter, { MINE, type AssigneeFilterValue, type AssigneeOption } from '@/app/crm/components/AssigneeFilter';
 import DocumentNumberBadge from '@/app/crm/components/DocumentNumberBadge';
 import CrmModal from '@/app/crm/components/CrmModal';
 import EntityCombobox, { type EntityResult } from '@/app/crm/components/EntityCombobox';
@@ -40,16 +40,10 @@ const FILTERS: Array<[WorkOrderFilter, string]> = [
   ['all', 'Alla'], ['draft', 'Ej planerade'], ['scheduled', 'Planerade'], ['active', 'Pågående'], ['completed', 'Fakturera'], ['invoiced', 'Avslutade'],
 ];
 
-function matchesFilter(item: WorkOrderItem, filter: WorkOrderFilter) {
-  if (filter === 'all') return true;
-  if (filter === 'draft') return item.status === 'draft';
-  if (filter === 'scheduled') return item.status === 'scheduled' || item.status === 'ready';
-  // 'Fakturera' covers orders still in the invoicing stage — completed AND mid-delfakturering,
-  // so a partially-invoiced order stays visible there until it's fully invoiced ('Avslutade').
-  if (filter === 'completed') return item.status === 'completed' || item.status === 'partially_invoiced';
-  if (filter === 'invoiced') return item.status === 'invoiced';
-  return item.status === 'in_progress';
-}
+// Status filtering and pagination are now server-side (see lib/domains/crm/work-orders.ts).
+// The board fetches one page per filter and accumulates via "Visa fler".
+const PAGE_SIZE = 100;
+const EMPTY_COUNTS: Record<WorkOrderFilter, number> = { all: 0, draft: 0, scheduled: 0, active: 0, completed: 0, invoiced: 0 };
 
 function initialsOf(name: string | null | undefined) {
   if (!name) return '–';
@@ -65,13 +59,52 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
   const toast = useToast();
   const searchParams = useSearchParams();
   const [workOrders, setWorkOrders] = useState<WorkOrderItem[]>([]);
+  const [total, setTotal] = useState(0);
+  const [counts, setCounts] = useState<Record<WorkOrderFilter, number>>(EMPTY_COUNTS);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<WorkOrderFilter>('all');
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [assigneeFilter, setAssigneeFilter] = useState<AssigneeFilterValue>([]);
   const [assignees, setAssignees] = useState<AssigneeOption[]>([]);
+
+  // 'mine' → the current user id, resolved before the request so status/assignee filtering and
+  // counts are all computed server-side (the list can exceed the PostgREST row cap).
+  const assigneeParam = useMemo(
+    () => assigneeFilter.map((v) => (v === MINE ? (currentUserId ?? '') : v)).filter(Boolean).join(','),
+    [assigneeFilter, currentUserId],
+  );
+
+  function buildListQuery(nextOffset: number) {
+    const query = new URLSearchParams();
+    if (search.trim()) query.set('q', search.trim());
+    query.set('filter', filter);
+    if (assigneeParam) query.set('assignee', assigneeParam);
+    query.set('offset', String(nextOffset));
+    query.set('limit', String(PAGE_SIZE));
+    // Chip counts only need recomputing on a fresh first page, not on "Visa fler".
+    if (nextOffset === 0) query.set('counts', '1');
+    return query.toString();
+  }
+
+  async function loadMore() {
+    if (loadingMore || workOrders.length >= total) return;
+    setLoadingMore(true);
+    try {
+      const res = await fetch(`/api/crm/work-orders?${buildListQuery(workOrders.length)}`, { cache: 'no-store' });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte ladda fler arbetsorder.'); return; }
+      const items = Array.isArray(json?.data?.items) ? json.data.items : [];
+      setWorkOrders((prev) => [...prev, ...items]);
+      setTotal(json?.data?.total ?? total);
+    } catch {
+      toast.error('Kunde inte ladda fler arbetsorder.');
+    } finally {
+      setLoadingMore(false);
+    }
+  }
 
   // "Ny order" (standalone, no quote) — requires a linked customer.
   const [newOrderOpen, setNewOrderOpen] = useState(false);
@@ -142,36 +175,29 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
     if (deepLinkId) router.replace(`/crm/arbetsorder/${deepLinkId}`);
   }, [deepLinkId, router]);
 
+  // Reset + first page whenever the search, status filter or assignee scope changes. The
+  // server filters and paginates; the chip counts come back on the first page (offset 0).
   useEffect(() => {
     let active = true;
     async function load() {
       setLoading(true); setError(null);
       try {
-        const query = new URLSearchParams();
-        if (search.trim()) query.set('q', search.trim());
-        const res = await fetch(`/api/crm/work-orders${query.size > 0 ? `?${query.toString()}` : ''}`, { cache: 'no-store' });
+        const res = await fetch(`/api/crm/work-orders?${buildListQuery(0)}`, { cache: 'no-store' });
         const json = await res.json().catch(() => ({}));
         if (!active) return;
-        if (!res.ok || !json.ok) { setError(json?.error || 'Kunde inte ladda arbetsorder.'); setWorkOrders([]); return; }
+        if (!res.ok || !json.ok) { setError(json?.error || 'Kunde inte ladda arbetsorder.'); setWorkOrders([]); setTotal(0); return; }
         setWorkOrders(Array.isArray(json?.data?.items) ? json.data.items : []);
-      } catch { if (active) { setError('Kunde inte ladda arbetsorder.'); setWorkOrders([]); } }
+        setTotal(json?.data?.total ?? 0);
+        if (json?.data?.counts) setCounts(json.data.counts);
+      } catch { if (active) { setError('Kunde inte ladda arbetsorder.'); setWorkOrders([]); setTotal(0); } }
       finally { if (active) setLoading(false); }
     }
     void load();
     return () => { active = false; };
-  }, [search]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, filter, assigneeParam]);
 
-  const filterCounts = useMemo(() => {
-    const counts = {} as Record<WorkOrderFilter, number>;
-    const scoped = workOrders.filter((item) => matchesAssignee(item.assigned_to, assigneeFilter, currentUserId));
-    for (const [value] of FILTERS) counts[value] = scoped.filter((item) => matchesFilter(item, value)).length;
-    return counts;
-  }, [workOrders, assigneeFilter, currentUserId]);
-
-  const visibleWorkOrders = useMemo(
-    () => workOrders.filter((item) => matchesFilter(item, filter) && matchesAssignee(item.assigned_to, assigneeFilter, currentUserId)),
-    [filter, workOrders, assigneeFilter, currentUserId],
-  );
+  const hasMore = workOrders.length < total;
 
   // Resolve the responsible user's name from the admin-sourced assignees list. The
   // work-order list is read with the session client, whose profiles RLS only returns the
@@ -257,7 +283,7 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
                 )}
                 style={filter === value ? { backgroundColor: 'var(--crm-primary)', borderColor: 'var(--crm-primary)' } : undefined}
               >
-                {label} <span className={cn('ml-0.5', filter === value ? 'text-white/70' : 'text-slate-400')}>{filterCounts[value]}</span>
+                {label} <span className={cn('ml-0.5', filter === value ? 'text-white/70' : 'text-slate-400')}>{counts[value]}</span>
               </button>
             ))}
           </div>
@@ -266,15 +292,15 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
 
         {/* List */}
         {loading ? <div className="py-4 text-sm text-slate-500">Laddar arbetsorder…</div> : null}
-          {!loading && visibleWorkOrders.length === 0 ? (
+          {!loading && workOrders.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-[#cfdcc9] bg-[#f1f5ee] px-4 py-8 text-center text-sm text-slate-500">
               Inga arbetsorder matchar just nu.
             </div>
           ) : null}
 
-          {!loading && visibleWorkOrders.length > 0 ? (
+          {!loading && workOrders.length > 0 ? (
             <div className="grid gap-1">
-              {visibleWorkOrders.map((item) => {
+              {workOrders.map((item) => {
                 const overdue = isWorkOrderOverdue(item.desired_installation_date, item.status);
                 const sellerName = item.assigned_to
                   ? (assigneeNameById.get(item.assigned_to) || item.assignee?.full_name || 'Okänd')
@@ -352,6 +378,21 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
                   </button>
                 );
               })}
+            </div>
+          ) : null}
+
+          {/* Visa fler — server-side pagination so the board never silently truncates */}
+          {!loading && hasMore ? (
+            <div className="flex flex-col items-center gap-1 pt-1">
+              <button
+                type="button"
+                onClick={() => void loadMore()}
+                disabled={loadingMore}
+                className="rounded-full border border-[#dce4d8] bg-white px-4 py-1.5 text-[13px] font-semibold text-slate-600 transition hover:border-[#c8d4c3] disabled:opacity-60"
+              >
+                {loadingMore ? 'Laddar…' : 'Visa fler'}
+              </button>
+              <span className="text-[11px] text-slate-400">Visar {workOrders.length} av {total}</span>
             </div>
           ) : null}
       </div>

@@ -131,9 +131,15 @@ describe('buildCustomerSnapshot', () => {
         'city', 'company_name', 'contact_name', 'customer_name', 'delivery_address',
         'delivery_city', 'delivery_postal_code',
         'email', 'invoice_address', 'organization_number', 'personal_number', 'phone',
-        'postal_code', 'street_address', 'visit_address',
+        'postal_code', 'reverse_vat', 'street_address', 'visit_address',
       ].sort(),
     );
+  });
+
+  it('reverse_vat: null när inget anges, speglar opts annars', () => {
+    expect(buildCustomerSnapshot(customer()).reverse_vat).toBeNull();
+    expect(buildCustomerSnapshot(customer(), { reverseVat: true }).reverse_vat).toBe(true);
+    expect(buildCustomerSnapshot(customer(), { reverseVat: false }).reverse_vat).toBe(false);
   });
 });
 
