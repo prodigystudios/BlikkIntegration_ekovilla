@@ -1600,6 +1600,27 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
               <Input value={draft.project_name} onChange={(e) => setDraft((d) => ({ ...d, project_name: e.target.value }))} placeholder="Ex. Takisolering villa Norrköping" />
             </Field>
             <Field fieldId="field-contact-name" label="Er referens (kontaktperson) *" className="md:col-span-2" error={fieldErrors.contact_name}>
+              {/* Contact picker — for a customer with several contacts, choose which one is
+                  responsible for this offer/order. Fills name/phone/email from the chosen
+                  contact; the free-text field below still allows a manual override. */}
+              {selectedCustomer && selectedCustomer.contacts.length > 0 ? (
+                <Select
+                  className="mb-2"
+                  aria-label="Välj kontaktperson"
+                  value={selectedCustomer.contacts.find((c) => c.name === draft.contact_name)?.id ?? ''}
+                  onChange={(e) => {
+                    const c = selectedCustomer.contacts.find((x) => x.id === e.target.value);
+                    if (c) setDraft((d) => ({ ...d, contact_name: c.name, phone: c.phone || '', email: c.email || '' }));
+                  }}
+                >
+                  <option value="">Skriv manuellt…</option>
+                  {selectedCustomer.contacts.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}{c.role ? ` (${c.role})` : ''}{c.is_primary ? ' – primär' : ''}
+                    </option>
+                  ))}
+                </Select>
+              ) : null}
               <Input
                 value={draft.contact_name}
                 onChange={(e) => setDraft((d) => ({ ...d, contact_name: e.target.value }))}
