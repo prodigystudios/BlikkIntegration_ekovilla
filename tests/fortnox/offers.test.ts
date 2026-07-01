@@ -48,6 +48,29 @@ describe('buildOfferRows', () => {
     expect(rows).toHaveLength(1);
   });
 
+  it('adds a separate text row for the per-row free text (Radtext) when an article is chosen', () => {
+    const rows = buildOfferRows([{ article_name: 'Lösull', unit_price: '100', quantity: '1', line_note: 'Extra tätning vid genomföringar' }], 25, false);
+    expect(rows).toHaveLength(2);
+    expect(rows[0].Description).toBe('Lösull');
+    expect(rows[1].Description).toBe('Extra tätning vid genomföringar');
+    expect(rows[1].Price).toBeUndefined();
+    expect(rows[1].Quantity).toBeUndefined();
+  });
+
+  it('does not duplicate the Radtext as a text row when it is already the row Description (no article name)', () => {
+    const rows = buildOfferRows([{ unit_price: '100', quantity: '1', line_note: 'Bara en fritextrad' }], 25, false);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].Description).toBe('Bara en fritextrad');
+  });
+
+  it('emits the article row, then measurement, then Radtext, in order', () => {
+    const rows = buildOfferRows(
+      [{ pricing_mode: 'm3', article_name: 'Lösull', m2: '100', thickness_mm: '200', unit_price: '700', line_note: 'Vindsbjälklag' }],
+      25, false,
+    );
+    expect(rows.map((r) => r.Description)).toEqual(['Lösull', 'Yta: 100 m², Tjocklek: 200 mm', 'Vindsbjälklag']);
+  });
+
   it('falls back to article_price when unit_price is empty', () => {
     const [row] = buildOfferRows([{ pricing_mode: 'item', unit_price: '', article_price: 900, quantity: '5' }], 25, false);
     expect(row.Price).toBe(900);

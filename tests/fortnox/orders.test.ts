@@ -53,6 +53,23 @@ describe('buildOrderRows', () => {
     expect((withoutRot as any).HouseWork).toBeUndefined();
   });
 
+  // The per-row free text (Radtext) reaches Fortnox as its own text row (no amounts) after
+  // the article row — otherwise it is dropped whenever an article is chosen.
+  it('adds a text-only row for the Radtext when an article name is present', () => {
+    const rows = buildOrderRows([{ article_name: 'Lösull', unit_price: '100', quantity: '1', line_note: 'Extra tätning' }], 25, false);
+    expect(rows).toHaveLength(2);
+    expect(rows[0].Description).toBe('Lösull');
+    expect(rows[1].Description).toBe('Extra tätning');
+    expect((rows[1] as any).OrderedQuantity).toBeUndefined();
+    expect((rows[1] as any).Price).toBeUndefined();
+  });
+
+  it('does not duplicate the Radtext when it is already the row Description (no article name)', () => {
+    const rows = buildOrderRows([{ unit_price: '100', quantity: '1', line_note: 'Bara fritext' }], 25, false);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].Description).toBe('Bara fritext');
+  });
+
   it('forces 0 % VAT on rows for reverse charge (byggmoms), else the passed vatPercent', () => {
     const [reverse] = buildOrderRows([{ pricing_mode: 'item', unit_price: '100', quantity: '1' }], 25, false, true);
     expect((reverse as any).VAT).toBe(0);

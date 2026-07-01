@@ -84,6 +84,12 @@ type FortnoxOfferRow = {
   HouseWorkType?: string;
 };
 
+// A text-only Fortnox row: carries a Description and no amounts, so Fortnox renders it as a
+// comment line under the article (used for measurements and the per-row free text / Radtext).
+export function offerTextRow(description: string): FortnoxOfferRow {
+  return { Description: description };
+}
+
 // Free-text description of a line item's measurements (m² + thickness), shown as its
 // own row on the Fortnox offer. Returns null when the item has no measurements.
 function buildMeasurementText(item: QuoteLineItem): string | null {
@@ -138,13 +144,17 @@ export function buildOfferRows(
       row.HouseWorkType = item.house_work_type || DEFAULT_ROT_HOUSE_WORK_TYPE;
     }
 
-    // Measurements (m² + thickness) get their own text row so they appear on the
-    // offer PDF below the article. Text rows carry only a Description (no amounts).
+    // Measurements (m² + thickness) and the per-row free text (Radtext) each get their own
+    // text row so they appear on the offer PDF below the article. Text rows carry only a
+    // Description (no amounts). Radtext is only added as a separate row when an article name
+    // is present — otherwise it is already the row Description (the fallback above), so a
+    // separate row would duplicate it.
+    const extraRows: FortnoxOfferRow[] = [];
     const measurement = buildMeasurementText(item);
-    if (measurement) {
-      return [row, { Description: measurement } as FortnoxOfferRow];
-    }
-    return [row];
+    if (measurement) extraRows.push(offerTextRow(measurement));
+    const lineNote = item.line_note?.trim();
+    if (lineNote && item.article_name?.trim()) extraRows.push(offerTextRow(lineNote));
+    return [row, ...extraRows];
   });
 }
 
