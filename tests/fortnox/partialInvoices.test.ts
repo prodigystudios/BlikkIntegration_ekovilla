@@ -103,9 +103,9 @@ describe('buildInvoiceRows', () => {
   it('marks HouseWork only when ROT is enabled and the row is rot work', () => {
     const on = buildInvoiceRows([itemLine({ is_rot_work: true })], new Map([[0, 1]]), 25, true);
     expect(on[0]).toMatchObject({ HouseWork: true, HouseWorkType: 'CONSTRUCTION' });
-    // Non-ROT → explicit false (overrides any article-level husarbete default; avoids 2004021).
+    // Non-ROT → HouseWork omitted (never false — that stamps EMPTYHOUSEWORK and 2004021).
     const off = buildInvoiceRows([itemLine({ is_rot_work: true })], new Map([[0, 1]]), 25, false);
-    expect((off[0] as any).HouseWork).toBe(false);
+    expect((off[0] as any).HouseWork).toBeUndefined();
   });
 
   it('forces 0 % VAT on rows for reverse charge (byggmoms), else the passed vatPercent', () => {
