@@ -49,6 +49,23 @@ export async function PATCH(req: Request, context: RouteContext) {
     // created for the customer. This PATCH is also the path the "Ny order" / quote→order flows
     // use to save the personnummer the seller supplies at that point.
 
+    // Guard: don't let a Fortnox-synced customer's identity number be EMPTIED — clearing the
+    // personnummer (private) or org.nr (business) would push an empty OrganisationNumber to
+    // Fortnox and break invoicing/ROT. Keyed off the MERGED type so a real business→private
+    // switch (which swaps which number applies) is still allowed; only clearing the number
+    // that stays relevant is blocked.
+    if (before?.fortnox_customer_id) {
+      const effectiveType = parsedBody.data.customer_type ?? before.customer_type;
+      const clearsPersonal = effectiveType === 'private'
+        && 'personal_number' in parsedBody.data && !parsedBody.data.personal_number && !!before.personal_number;
+      const clearsOrg = effectiveType === 'business'
+        && 'organization_number' in parsedBody.data && !parsedBody.data.organization_number && !!before.organization_number;
+      if (clearsPersonal || clearsOrg) {
+        return routeError(409, 'crm_customer_identity_locked',
+          'Personnummer/org.nr kan inte tömmas på en kund som är synkad med Fortnox.');
+      }
+    }
+
     const { data, error } = await updateCrmCustomer(supabase, context.params.id, parsedBody.data);
 
     if (error) {

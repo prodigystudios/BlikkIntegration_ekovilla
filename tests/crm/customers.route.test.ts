@@ -423,4 +423,37 @@ describe('PATCH /api/crm/customers/[id]', () => {
     expect(body.data.item).toEqual(updated);
     expect(mockUpdate).toHaveBeenCalledWith(expect.anything(), CUSTOMER_ID, expect.objectContaining({ status: 'inactive' }));
   });
+
+  it('blockerar tömning av personnummer på en Fortnox-synkad privatkund (409, ingen skrivning)', async () => {
+    mockGetCurrentUser.mockResolvedValue(salesUser);
+    mockGet.mockResolvedValue({
+      data: { id: CUSTOMER_ID, customer_type: 'private', personal_number: '900101-1234', fortnox_customer_id: '123' },
+      error: null,
+    } as any);
+
+    const res = await PATCH(
+      makeRequest('/api/crm/customers/c1', { method: 'PATCH', body: JSON.stringify({ personal_number: '' }) }),
+      ctx
+    );
+
+    expect(res.status).toBe(409);
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
+  it('tillåter att SÄTTA personnummer på en synkad kund (inte en tömning)', async () => {
+    mockGetCurrentUser.mockResolvedValue(salesUser);
+    mockGet.mockResolvedValue({
+      data: { id: CUSTOMER_ID, customer_type: 'private', personal_number: null, fortnox_customer_id: '123' },
+      error: null,
+    } as any);
+    mockUpdate.mockResolvedValue({ data: { id: CUSTOMER_ID }, error: null } as any);
+
+    const res = await PATCH(
+      makeRequest('/api/crm/customers/c1', { method: 'PATCH', body: JSON.stringify({ personal_number: '900101-1234' }) }),
+      ctx
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockUpdate).toHaveBeenCalled();
+  });
 });
