@@ -10,6 +10,7 @@ import AssigneeFilter, { MINE, type AssigneeFilterValue, type AssigneeOption } f
 import DocumentNumberBadge from '@/app/crm/components/DocumentNumberBadge';
 import CrmModal from '@/app/crm/components/CrmModal';
 import EntityCombobox, { type EntityResult } from '@/app/crm/components/EntityCombobox';
+import { formatSwedishIdNumber } from '@/app/crm/kunder/customerNumbers';
 import { useToast } from '@/lib/Toast';
 
 type WorkOrderStatus = 'draft' | 'scheduled' | 'ready' | 'in_progress' | 'completed' | 'partially_invoiced' | 'invoiced' | 'cancelled';
@@ -482,7 +483,7 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
                 <p className={cn('mb-1.5', crm.sectionTitle)}>Personnummer (privatkund)</p>
                 <Input
                   value={newOrderPersonalNumber}
-                  onChange={(e) => setNewOrderPersonalNumber(e.target.value)}
+                  onChange={(e) => setNewOrderPersonalNumber(formatSwedishIdNumber(e.target.value))}
                   placeholder="ÅÅMMDD-XXXX"
                   autoFocus
                 />

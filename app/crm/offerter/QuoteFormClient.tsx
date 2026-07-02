@@ -11,6 +11,7 @@ import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
 import { crm } from '@/app/crm/lib/crmTokens';
 import AddressAutocompleteInput from '@/app/crm/components/AddressAutocompleteInput';
 import CrmModal from '@/app/crm/components/CrmModal';
+import { formatSwedishIdNumber } from '@/app/crm/kunder/customerNumbers';
 import { DndContext, closestCenter, PointerSensor, TouchSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy, arrayMove, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -2231,7 +2232,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           }
         >
           <Field label="Personnummer">
-            <Input value={pnValue} onChange={(e) => setPnValue(e.target.value)} placeholder="ÅÅMMDD-XXXX" autoFocus />
+            <Input value={pnValue} onChange={(e) => setPnValue(formatSwedishIdNumber(e.target.value))} placeholder="ÅÅMMDD-XXXX" autoFocus />
           </Field>
         </CrmModal>
       ) : null}
