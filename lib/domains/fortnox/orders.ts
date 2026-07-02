@@ -104,7 +104,12 @@ export function buildOrderRows(lineItems: WorkOrderRow['line_items'], vatPercent
       // DiscountType:'PERCENT' is required — Fortnox defaults to AMOUNT (kronor), which would
       // book discount_percent as a kronor discount and diverge from the CRM total.
       ...(discount > 0 ? { Discount: discount, DiscountType: 'PERCENT' as const } : {}),
-      ...(rotEnabled && item.is_rot_work ? { HouseWork: true, HouseWorkType: item.house_work_type || DEFAULT_ROT_HOUSE_WORK_TYPE } : {}),
+      // Explicit HouseWork on every row (incl. false) overrides an article-level husarbete
+      // default in Fortnox — otherwise a non-ROT order rejects an inherited OTHERCOSTS row
+      // (error 2004021). See offers.ts for the full rationale.
+      ...(rotEnabled && item.is_rot_work
+        ? { HouseWork: true, HouseWorkType: item.house_work_type || DEFAULT_ROT_HOUSE_WORK_TYPE }
+        : { HouseWork: false }),
     };
     // The per-row free text (Radtext) gets its own text row — only when an article name is
     // present, since otherwise it is already the row Description (the fallback above).

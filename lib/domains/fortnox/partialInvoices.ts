@@ -124,9 +124,12 @@ export function buildInvoiceRows(
       VAT: reverseVat ? 0 : vatPercent,
       ...(item.article_unit_name ? { Unit: item.article_unit_name } : {}),
       ...(discount > 0 ? { Discount: discount, DiscountType: 'PERCENT' as const } : {}),
+      // Explicit HouseWork on every row (incl. false) overrides an article-level husarbete
+      // default in Fortnox — otherwise a non-ROT invoice rejects an inherited OTHERCOSTS row
+      // (error 2004021). See offers.ts for the full rationale.
       ...(rotEnabled && item.is_rot_work
         ? { HouseWork: true, HouseWorkType: item.house_work_type || DEFAULT_ROT_HOUSE_WORK_TYPE }
-        : {}),
+        : { HouseWork: false }),
     });
   });
   return rows;

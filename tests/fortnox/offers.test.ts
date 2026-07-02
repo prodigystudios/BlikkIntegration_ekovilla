@@ -107,16 +107,19 @@ describe('buildOfferRows', () => {
     expect(noDiscount.DiscountType).toBeUndefined();
   });
 
-  it('sets HouseWork only when ROT is enabled and the row is ROT work', () => {
+  it('sets HouseWork true only for ROT rows, and explicit false otherwise (overrides article default)', () => {
     const [rotRow] = buildOfferRows([{ unit_price: '100', quantity: '1', is_rot_work: true }], 25, true);
     expect(rotRow.HouseWork).toBe(true);
     expect(rotRow.HouseWorkType).toBe('CONSTRUCTION');
 
+    // Non-ROT row on a ROT document → explicit false (not omitted) so Fortnox doesn't inherit a
+    // husarbete-configured article's default and reject the row on a non-ROT document (2004021).
     const [notRot] = buildOfferRows([{ unit_price: '100', quantity: '1', is_rot_work: false }], 25, true);
-    expect(notRot.HouseWork).toBeUndefined();
+    expect(notRot.HouseWork).toBe(false);
+    expect(notRot.HouseWorkType).toBeUndefined();
 
     const [rotDisabled] = buildOfferRows([{ unit_price: '100', quantity: '1', is_rot_work: true }], 25, false);
-    expect(rotDisabled.HouseWork).toBeUndefined();
+    expect(rotDisabled.HouseWork).toBe(false);
   });
 
   it('uses each row\'s own HouseWorkType, defaulting to CONSTRUCTION', () => {

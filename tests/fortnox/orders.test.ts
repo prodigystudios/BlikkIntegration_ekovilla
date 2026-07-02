@@ -49,8 +49,9 @@ describe('buildOrderRows', () => {
   it('marks HouseWork only when ROT is enabled and the row is rot work', () => {
     const [withRot] = buildOrderRows([{ pricing_mode: 'item', unit_price: '100', quantity: '1', is_rot_work: true }], 25, true);
     expect((withRot as any).HouseWork).toBe(true);
+    // Non-ROT → explicit false (overrides any article-level husarbete default; avoids 2004021).
     const [withoutRot] = buildOrderRows([{ pricing_mode: 'item', unit_price: '100', quantity: '1', is_rot_work: true }], 25, false);
-    expect((withoutRot as any).HouseWork).toBeUndefined();
+    expect((withoutRot as any).HouseWork).toBe(false);
   });
 
   // The per-row free text (Radtext) reaches Fortnox as its own text row (no amounts) after

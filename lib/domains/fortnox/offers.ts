@@ -142,9 +142,16 @@ export function buildOfferRows(
       row.Discount = discount;
       row.DiscountType = 'PERCENT';
     }
+    // Send HouseWork explicitly on EVERY row — including `false`. Some Fortnox articles (e.g.
+    // etableringskostnad) are configured as husarbete/ROT articles at the article level; if we
+    // OMIT HouseWork, Fortnox inherits that default and stamps the row as husarbete (OTHERCOSTS),
+    // which a non-ROT document (TaxReductionType 'none') rejects with error 2004021. Explicit
+    // `false` overrides the article default so a non-ROT offer always syncs.
     if (rotEnabled && item.is_rot_work) {
       row.HouseWork = true;
       row.HouseWorkType = item.house_work_type || DEFAULT_ROT_HOUSE_WORK_TYPE;
+    } else {
+      row.HouseWork = false;
     }
 
     // Measurements (m² + thickness) and the per-row free text (Radtext) each get their own
