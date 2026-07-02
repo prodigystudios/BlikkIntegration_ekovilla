@@ -4,7 +4,7 @@ import { getCrmCustomer, saveCrmCustomerCreditReport } from '@/lib/domains/crm/c
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { fetchTicCreditReport, TicCompanyNotFoundError } from '@/lib/domains/tic/credit';
 import { ticRouteErrorInfo } from '@/lib/domains/tic/client';
-import { ok, requireCrmWriter, routeError } from '../../_lib';
+import { invalidUuidParam, ok, requireCrmWriter, routeError } from '../../_lib';
 
 type RouteContext = { params: { id: string } };
 
@@ -15,6 +15,9 @@ export async function POST(_req: Request, context: RouteContext) {
   try {
     const crmUser = await requireCrmWriter();
     if (crmUser.response) return crmUser.response;
+
+    const badId = invalidUuidParam(context.params.id);
+    if (badId) return badId;
 
     const supabase = createRouteHandlerClient({ cookies });
     const { data: existing, error } = await getCrmCustomer(supabase, context.params.id);

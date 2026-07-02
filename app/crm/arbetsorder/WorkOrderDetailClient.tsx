@@ -9,6 +9,7 @@ import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
 import { crm, syncStatusLabel, syncStatusClass, workOrderStatusLabel, workOrderStatusClass, WORK_ORDER_STATUS_FLOW, WORK_ORDER_STATUS_OPTIONS } from '@/app/crm/lib/crmTokens';
 import { PhoneLink, EmailLink, AddressLink } from '@/app/crm/components/ContactLinks';
+import AddressAutocompleteInput from '@/app/crm/components/AddressAutocompleteInput';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
 import { lineItemEffectiveUnitPrice } from '@/lib/domains/crm/pricing';
 import { inferMaterialFromArticle, sacksFor } from '@/lib/domains/crm/materials';
@@ -100,8 +101,9 @@ type WorkOrderDraft = {
   street_address: string;
   postal_code: string;
   city: string;
-  delivery_address: string;
-  invoice_address: string;
+  contact_name: string;
+  contact_phone: string;
+  contact_email: string;
   work_scope: string;
   handoff_notes: string;
   notes: string;
@@ -189,6 +191,20 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   const [assignees, setAssignees] = useState<AssignableUser[]>([]);
   const customerInfo = useCustomerContact(workOrderId);
 
+  // The linked customer's contacts, for the "change responsible contact" picker (in case the
+  // contact changed between offer→order). Empty for standalone orders with no linked customer.
+  const [customerContacts, setCustomerContacts] = useState<Array<{ id: string; name: string; role: string | null; phone: string | null; email: string | null; is_primary: boolean }>>([]);
+  useEffect(() => {
+    const cid = workOrder?.customer_id;
+    if (!cid) { setCustomerContacts([]); return; }
+    let active = true;
+    fetch(`/api/crm/customers/${cid}`, { cache: 'no-store' })
+      .then((r) => r.json().catch(() => ({})))
+      .then((json) => { if (active) setCustomerContacts(json?.ok && Array.isArray(json.data?.item?.contacts) ? json.data.item.contacts : []); })
+      .catch(() => { if (active) setCustomerContacts([]); });
+    return () => { active = false; };
+  }, [workOrder?.customer_id]);
+
   // Resolve the responsible user's name from the admin-sourced assignees list — the
   // joined `assignee` profile is null for colleagues' orders (session-client profiles RLS
   // only returns the current user's own profile). Same fix as the work-order list.
@@ -245,8 +261,9 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
       street_address: item.work_address?.street_address || '',
       postal_code: item.work_address?.postal_code || '',
       city: item.work_address?.city || '',
-      delivery_address: item.work_address?.delivery_address || '',
-      invoice_address: item.work_address?.invoice_address || '',
+      contact_name: item.customer_snapshot?.contact_name || '',
+      contact_phone: item.customer_snapshot?.phone || '',
+      contact_email: item.customer_snapshot?.email || '',
       work_scope: item.internal_handoff?.work_scope || '',
       handoff_notes: item.internal_handoff?.handoff_notes || '',
       notes: item.notes || '',
@@ -291,12 +308,19 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
             work_scope: draft.work_scope,
             handoff_notes: draft.handoff_notes,
           },
+          // Only the work address (where the job is performed) is edited here. Billing/other
+          // addresses live on the customer card, not on the order.
           work_address: {
             street_address: draft.street_address,
             postal_code: draft.postal_code,
             city: draft.city,
-            delivery_address: draft.delivery_address,
-            invoice_address: draft.invoice_address,
+          },
+          // Responsible contact (merged into the snapshot server-side) — lets us fix it if it
+          // changed between offer→order.
+          contact: {
+            contact_name: draft.contact_name,
+            phone: draft.contact_phone,
+            email: draft.contact_email,
           },
         }),
       });
@@ -441,10 +465,12 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
 
   const overdue = isWorkOrderOverdue(workOrder.desired_installation_date, workOrder.status);
   const snapshot = workOrder.customer_snapshot || {};
-  // Prefer the live customer record; fall back to the quote snapshot.
-  const customerPhone: string | null = customerInfo?.phone ?? (snapshot.phone || null);
-  const customerEmail: string | null = customerInfo?.email ?? (snapshot.email || null);
-  const customerContact: string | null = customerInfo?.contactName ?? (snapshot.contact_name || null);
+  // The order's own responsible contact (snapshot) is the source of truth here — it's what the
+  // picker below edits, so an edit reflects immediately. Fall back to the resolved customer
+  // contact for older orders that never captured one.
+  const customerPhone: string | null = (snapshot.phone || null) ?? customerInfo?.phone ?? null;
+  const customerEmail: string | null = (snapshot.email || null) ?? customerInfo?.email ?? null;
+  const customerContact: string | null = (snapshot.contact_name || null) ?? customerInfo?.contactName ?? null;
   const workAddressText = joinAddress([workOrder.work_address?.street_address, workOrder.work_address?.postal_code, workOrder.work_address?.city]);
   const rot = workOrder.rot_details || {};
   // Reverse charge (omvänd skattskyldighet / byggmoms): a business order whose VAT is 0. Detected
@@ -494,7 +520,12 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
               <span>·</span>
               <span>{workOrder.quote_type === 'private' ? 'Privatkund' : 'Företag'}</span>
               {workOrder.customer_id ? (
-                <a href={`/crm/kunder/${workOrder.customer_id}`} className="font-medium text-emerald-700 transition hover:text-emerald-800 hover:underline">Öppna kundkort →</a>
+                <a
+                  href={`/crm/kunder/${workOrder.customer_id}?returnTo=${encodeURIComponent(`/crm/arbetsorder/${workOrder.id}`)}`}
+                  className="font-medium text-emerald-700 transition hover:text-emerald-800 hover:underline"
+                >
+                  Öppna kundkort →
+                </a>
               ) : null}
             </div>
           </div>
@@ -610,7 +641,17 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                 <>
                   <label className="grid gap-1 text-sm text-slate-600">
                     <span className={crm.sectionTitle}>Gatuadress</span>
-                    <Input value={draft.street_address} onChange={(e) => setField('street_address', e.target.value)} placeholder="Gatuadress" />
+                    <AddressAutocompleteInput
+                      value={draft.street_address}
+                      onChange={(street) => setField('street_address', street)}
+                      onSelect={(s) => setDraft((d) => (d ? {
+                        ...d,
+                        street_address: s.street || d.street_address,
+                        postal_code: s.postal_code || d.postal_code,
+                        city: s.city || d.city,
+                      } : d))}
+                      placeholder="Sök adress, t.ex. Industrivägen 4 Södertälje"
+                    />
                   </label>
                   <div className="grid gap-4 sm:grid-cols-2">
                     <label className="grid gap-1 text-sm text-slate-600">
@@ -622,20 +663,11 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                       <Input value={draft.city} onChange={(e) => setField('city', e.target.value)} placeholder="Ort" />
                     </label>
                   </div>
-                  <label className="grid gap-1 text-sm text-slate-600">
-                    <span className={crm.sectionTitle}>Leveransadress</span>
-                    <Input value={draft.delivery_address} onChange={(e) => setField('delivery_address', e.target.value)} placeholder="Leveransadress" />
-                  </label>
-                  <label className="grid gap-1 text-sm text-slate-600">
-                    <span className={crm.sectionTitle}>Fakturaadress</span>
-                    <Input value={draft.invoice_address} onChange={(e) => setField('invoice_address', e.target.value)} placeholder="Fakturaadress" />
-                  </label>
+                  <p className="text-[11px] leading-snug text-slate-400">Adressen där arbetet utförs. Faktura- och övriga adresser ligger på kundkortet.</p>
                 </>
               ) : (
                 <div className="grid gap-3">
                   {readField('Gatuadress', joinAddress([workOrder.work_address?.street_address, joinAddress([workOrder.work_address?.postal_code, workOrder.work_address?.city])]))}
-                  {readField('Leveransadress', workOrder.work_address?.delivery_address)}
-                  {readField('Fakturaadress', workOrder.work_address?.invoice_address)}
                 </div>
               )}
             </Card>
@@ -677,7 +709,39 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
           <div className="grid gap-5 lg:content-start">
 
             {/* Customer contact */}
-            {(customerPhone || customerEmail || customerContact) ? (
+            {editingOverview ? (
+              <Card className="grid gap-3">
+                <p className={crm.sectionTitle}>Kundkontakt</p>
+                {/* Pick a different contact if the responsible person changed offer→order. */}
+                {customerContacts.length > 0 ? (
+                  <Select
+                    aria-label="Välj kontaktperson"
+                    value={customerContacts.find((c) => c.name === draft.contact_name)?.id ?? ''}
+                    onChange={(e) => {
+                      const c = customerContacts.find((x) => x.id === e.target.value);
+                      if (c) setDraft((d) => (d ? { ...d, contact_name: c.name, contact_phone: c.phone || '', contact_email: c.email || '' } : d));
+                    }}
+                  >
+                    <option value="">Skriv manuellt…</option>
+                    {customerContacts.map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}{c.role ? ` (${c.role})` : ''}{c.is_primary ? ' – primär' : ''}</option>
+                    ))}
+                  </Select>
+                ) : null}
+                <label className="grid gap-1 text-sm text-slate-600">
+                  <span className={crm.sectionTitle}>Namn</span>
+                  <Input value={draft.contact_name} onChange={(e) => setField('contact_name', e.target.value)} placeholder="Kontaktperson" />
+                </label>
+                <label className="grid gap-1 text-sm text-slate-600">
+                  <span className={crm.sectionTitle}>Telefon</span>
+                  <Input value={draft.contact_phone} onChange={(e) => setField('contact_phone', e.target.value)} placeholder="070-123 45 67" inputMode="tel" />
+                </label>
+                <label className="grid gap-1 text-sm text-slate-600">
+                  <span className={crm.sectionTitle}>E-post</span>
+                  <Input value={draft.contact_email} onChange={(e) => setField('contact_email', e.target.value)} placeholder="namn@exempel.se" type="email" />
+                </label>
+              </Card>
+            ) : (customerPhone || customerEmail || customerContact) ? (
               <Card className="grid gap-3">
                 <p className={crm.sectionTitle}>Kundkontakt</p>
                 <p className="text-sm font-semibold text-slate-900">{customerContact || workOrder.client_name}</p>

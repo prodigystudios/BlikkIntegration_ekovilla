@@ -124,6 +124,9 @@ export function buildInvoiceRows(
       VAT: reverseVat ? 0 : vatPercent,
       ...(item.article_unit_name ? { Unit: item.article_unit_name } : {}),
       ...(discount > 0 ? { Discount: discount, DiscountType: 'PERCENT' as const } : {}),
+      // Husarbete only on a ROT document. Do NOT send HouseWork:false on non-ROT rows — Fortnox
+      // stamps an empty husarbete type ('EMPTYHOUSEWORK') that a non-ROT document rejects
+      // (2004021). See offers.ts. A husarbete-configured article is fixed in Fortnox, not here.
       ...(rotEnabled && item.is_rot_work
         ? { HouseWork: true, HouseWorkType: item.house_work_type || DEFAULT_ROT_HOUSE_WORK_TYPE }
         : {}),

@@ -10,6 +10,7 @@ import AssigneeFilter, { MINE, type AssigneeFilterValue, type AssigneeOption } f
 import DocumentNumberBadge from '@/app/crm/components/DocumentNumberBadge';
 import CrmModal from '@/app/crm/components/CrmModal';
 import EntityCombobox, { type EntityResult } from '@/app/crm/components/EntityCombobox';
+import { formatSwedishIdNumber } from '@/app/crm/kunder/customerNumbers';
 import { useToast } from '@/lib/Toast';
 
 type WorkOrderStatus = 'draft' | 'scheduled' | 'ready' | 'in_progress' | 'completed' | 'partially_invoiced' | 'invoiced' | 'cancelled';
@@ -113,6 +114,11 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
   const [newOrderName, setNewOrderName] = useState('');
   const [newOrderDate, setNewOrderDate] = useState('');
   const [creatingOrder, setCreatingOrder] = useState(false);
+  // A private customer may lack a personnummer (optional at create); Fortnox needs it to invoice
+  // the order. The server rejects with 409 missing_personal_number — we then reveal a field and
+  // save it on the customer before retrying.
+  const [needsPersonalNumber, setNeedsPersonalNumber] = useState(false);
+  const [newOrderPersonalNumber, setNewOrderPersonalNumber] = useState('');
 
   async function searchCustomers(query: string): Promise<EntityResult[]> {
     const res = await fetch(`/api/crm/customers/search?q=${encodeURIComponent(query)}`, { cache: 'no-store' });
@@ -131,13 +137,27 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
     setNewOrderCustomerLabel('');
     setNewOrderName('');
     setNewOrderDate('');
+    setNeedsPersonalNumber(false);
+    setNewOrderPersonalNumber('');
   }
 
   async function createOrder() {
     if (!newOrderCustomerId) { toast.error('Välj en kund'); return; }
     if (!newOrderName.trim()) { toast.error('Ange ett ordernamn'); return; }
+    if (needsPersonalNumber && !newOrderPersonalNumber.trim()) { toast.error('Fyll i personnummer för privatkunden'); return; }
     setCreatingOrder(true);
     try {
+      // If a prior attempt flagged a missing personnummer, save it on the customer first so the
+      // order (and its Fortnox push) has it.
+      if (needsPersonalNumber && newOrderPersonalNumber.trim()) {
+        const patch = await fetch(`/api/crm/customers/${newOrderCustomerId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ personal_number: newOrderPersonalNumber.trim() }),
+        });
+        const pj = await patch.json().catch(() => ({}));
+        if (!patch.ok || !pj.ok) { toast.error(pj?.error || 'Kunde inte spara personnummer'); return; }
+      }
       const res = await fetch('/api/crm/work-orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -148,7 +168,15 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
         }),
       });
       const json = await res.json().catch(() => ({}));
-      if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte skapa order'); return; }
+      if (!res.ok || !json.ok) {
+        if (json?.errorDetails?.code === 'crm_work_order_missing_personal_number') {
+          setNeedsPersonalNumber(true);
+          toast.error('Privatkunden saknar personnummer – fyll i det för att skapa ordern.');
+          return;
+        }
+        toast.error(json?.error || 'Kunde inte skapa order');
+        return;
+      }
       const item = json?.data?.item as { id?: string; order_number?: string } | undefined;
       toast.success(item?.order_number ? `Order skapad: ${item.order_number}` : 'Order skapad');
       resetNewOrder();
@@ -450,6 +478,20 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
               <p className={cn('mb-1.5', crm.sectionTitle)}>Önskat installationsdatum (valfritt)</p>
               <Input value={newOrderDate} onChange={(e) => setNewOrderDate(e.target.value)} type="date" lang="sv-SE" />
             </div>
+            {needsPersonalNumber ? (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+                <p className={cn('mb-1.5', crm.sectionTitle)}>Personnummer (privatkund)</p>
+                <Input
+                  value={newOrderPersonalNumber}
+                  onChange={(e) => setNewOrderPersonalNumber(formatSwedishIdNumber(e.target.value))}
+                  placeholder="ÅÅMMDD-XXXX"
+                  autoFocus
+                />
+                <p className="mt-1.5 text-[11px] leading-snug text-amber-700">
+                  Privatkunden saknar personnummer. Fortnox behöver det för att fakturera ordern – det sparas på kundkortet.
+                </p>
+              </div>
+            ) : null}
           </div>
         </CrmModal>
       ) : null}

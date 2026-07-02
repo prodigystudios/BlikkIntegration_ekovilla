@@ -103,6 +103,7 @@ describe('buildInvoiceRows', () => {
   it('marks HouseWork only when ROT is enabled and the row is rot work', () => {
     const on = buildInvoiceRows([itemLine({ is_rot_work: true })], new Map([[0, 1]]), 25, true);
     expect(on[0]).toMatchObject({ HouseWork: true, HouseWorkType: 'CONSTRUCTION' });
+    // Non-ROT → HouseWork omitted (never false — that stamps EMPTYHOUSEWORK and 2004021).
     const off = buildInvoiceRows([itemLine({ is_rot_work: true })], new Map([[0, 1]]), 25, false);
     expect((off[0] as any).HouseWork).toBeUndefined();
   });

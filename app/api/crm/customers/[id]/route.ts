@@ -2,7 +2,7 @@ import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { getCrmCustomer, updateCrmCustomer } from '@/lib/domains/crm/customers';
 import { updateFortnoxCustomer, fortnoxCustomerFieldsChanged } from '@/lib/domains/fortnox/customers';
-import { ok, requireCrmUser, requirePermission, routeError, updateCrmCustomerSchema, validationError } from '../_lib';
+import { invalidUuidParam, ok, requireCrmUser, requirePermission, routeError, updateCrmCustomerSchema, validationError } from '../_lib';
 
 type RouteContext = { params: { id: string } };
 
@@ -10,6 +10,9 @@ export async function GET(_req: Request, context: RouteContext) {
   try {
     const crmUser = await requireCrmUser();
     if (crmUser.response) return crmUser.response;
+
+    const badId = invalidUuidParam(context.params.id);
+    if (badId) return badId;
 
     const supabase = createRouteHandlerClient({ cookies });
     const { data, error } = await getCrmCustomer(supabase, context.params.id);
@@ -29,6 +32,9 @@ export async function PATCH(req: Request, context: RouteContext) {
     const crmUser = await requirePermission('crm.customer.write');
     if (crmUser.response || !crmUser.currentUser) return crmUser.response;
 
+    const badId = invalidUuidParam(context.params.id);
+    if (badId) return badId;
+
     const parsedBody = updateCrmCustomerSchema.safeParse(await req.json().catch(() => null));
     if (!parsedBody.success) return validationError(parsedBody.error);
 
@@ -38,15 +44,26 @@ export async function PATCH(req: Request, context: RouteContext) {
     // actually changed (avoids pushing to Fortnox on notes/status/owner-only edits).
     const { data: before } = await getCrmCustomer(supabase, context.params.id);
 
-    // Personnummer is mandatory for private customers (Fortnox uses it as
-    // OrganisationNumber for ROT). Guard the MERGED state so a PATCH can neither clear
-    // it nor flip a customer to private without one – the create schema enforces this
-    // on insert; this closes the same invariant on update.
-    const effectiveType = parsedBody.data.customer_type ?? before?.customer_type;
-    const effectivePersonalNumber =
-      'personal_number' in parsedBody.data ? parsedBody.data.personal_number : before?.personal_number;
-    if (effectiveType === 'private' && !effectivePersonalNumber) {
-      return routeError(400, 'crm_customer_personal_number_required', 'Personnummer krävs för privatkund');
+    // NOTE: a private customer may lack personal_number (sales sometimes get it only once the
+    // job is booked). It is no longer required here — it is enforced when a work order is
+    // created for the customer. This PATCH is also the path the "Ny order" / quote→order flows
+    // use to save the personnummer the seller supplies at that point.
+
+    // Guard: don't let a Fortnox-synced customer's identity number be EMPTIED — clearing the
+    // personnummer (private) or org.nr (business) would push an empty OrganisationNumber to
+    // Fortnox and break invoicing/ROT. Keyed off the MERGED type so a real business→private
+    // switch (which swaps which number applies) is still allowed; only clearing the number
+    // that stays relevant is blocked.
+    if (before?.fortnox_customer_id) {
+      const effectiveType = parsedBody.data.customer_type ?? before.customer_type;
+      const clearsPersonal = effectiveType === 'private'
+        && 'personal_number' in parsedBody.data && !parsedBody.data.personal_number && !!before.personal_number;
+      const clearsOrg = effectiveType === 'business'
+        && 'organization_number' in parsedBody.data && !parsedBody.data.organization_number && !!before.organization_number;
+      if (clearsPersonal || clearsOrg) {
+        return routeError(409, 'crm_customer_identity_locked',
+          'Personnummer/org.nr kan inte tömmas på en kund som är synkad med Fortnox.');
+      }
     }
 
     const { data, error } = await updateCrmCustomer(supabase, context.params.id, parsedBody.data);

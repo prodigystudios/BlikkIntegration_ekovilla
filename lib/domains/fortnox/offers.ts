@@ -2,7 +2,7 @@ import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { parseDecimal } from '@/lib/shared/number';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
 import { fortnoxPost, fortnoxPut, fortnoxGet, fortnoxGetBinary, FortnoxApiError, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
-import { claimFortnoxPush, resolveOurReference, resolveReverseVat } from './helpers';
+import { buildEndContactNote, claimFortnoxPush, resolveOurReference, resolveReverseVat } from './helpers';
 import { buildFortnoxCustomerPayload, createFortnoxCustomer, splitSwedishName, buildFortnoxAddress, type FortnoxCustomerSource } from './customers';
 import { DEFAULT_ROT_HOUSE_WORK_TYPE } from './types';
 
@@ -52,6 +52,9 @@ type QuoteRow = {
     postal_code?: string | null;
     city?: string | null;
     reverse_vat?: boolean | null;
+    end_contact_name?: string | null;
+    end_contact_phone?: string | null;
+    end_contact_email?: string | null;
   } | null;
   assigned_to: string | null;
   rot_details: {
@@ -83,6 +86,12 @@ type FortnoxOfferRow = {
   HouseWork?: boolean;
   HouseWorkType?: string;
 };
+
+// A text-only Fortnox row: carries a Description and no amounts, so Fortnox renders it as a
+// comment line under the article (used for measurements and the per-row free text / Radtext).
+export function offerTextRow(description: string): FortnoxOfferRow {
+  return { Description: description };
+}
 
 // Free-text description of a line item's measurements (m² + thickness), shown as its
 // own row on the Fortnox offer. Returns null when the item has no measurements.
@@ -133,18 +142,30 @@ export function buildOfferRows(
       row.Discount = discount;
       row.DiscountType = 'PERCENT';
     }
+    // Mark a row as husarbete ONLY on a ROT document. Do NOT send `HouseWork: false` on non-ROT
+    // rows: Fortnox then stamps the row with an empty husarbete type ('EMPTYHOUSEWORK') and a
+    // non-ROT document (TaxReductionType 'none') rejects ANY husarbete type — even the empty one
+    // (error 2004021). Omitting it is the behaviour that syncs cleanly.
+    // NOTE: if an article is configured as a husarbete article in Fortnox, Fortnox inherits that
+    // on the row regardless — the only fix for that is to turn husarbete OFF on the article in
+    // Fortnox; it can't be overridden from the row here.
     if (rotEnabled && item.is_rot_work) {
       row.HouseWork = true;
       row.HouseWorkType = item.house_work_type || DEFAULT_ROT_HOUSE_WORK_TYPE;
     }
 
-    // Measurements (m² + thickness) get their own text row so they appear on the
-    // offer PDF below the article. Text rows carry only a Description (no amounts).
+    // Measurement (m² + thickness) and the per-row free text (Radtext) go into a SINGLE text row
+    // under the article — NOT two separate rows. Fortnox treats the first text row after an
+    // article as that article's comment, but a SECOND consecutive text row as a new (priced)
+    // product row (it stamped the Radtext as a bogus priced m³ row). One text row (like a lone
+    // measurement, which works) keeps them as plain description lines. Radtext is only included
+    // when an article name is present — otherwise it is already the row Description (above).
     const measurement = buildMeasurementText(item);
-    if (measurement) {
-      return [row, { Description: measurement } as FortnoxOfferRow];
-    }
-    return [row];
+    const lineNote = item.line_note?.trim();
+    const detail = [measurement, lineNote && item.article_name?.trim() ? lineNote : null]
+      .filter(Boolean)
+      .join('\n');
+    return detail ? [row, offerTextRow(detail)] : [row];
   });
 }
 
@@ -235,7 +256,28 @@ async function createCustomerInFortnox(quote: QuoteRow): Promise<string> {
 
   const supabase = getSupabaseAdmin();
 
-  // assigned_to/created_by are NOT NULL – use the quote's assigned user.
+  // Link the Fortnox customer number onto the quote FIRST — before the (optional) crm_customers
+  // row + contact inserts below. resolveFortnoxCustomerNumber keys off customer_source, so
+  // recording it immediately means a failure in any later step can't orphan the freshly-created
+  // Fortnox customer and duplicate it on the next push. If even this minimal write fails we throw,
+  // because a retry genuinely would create a second Fortnox customer.
+  const { error: linkError } = await supabase
+    .from('crm_quotes')
+    .update({
+      customer_source: {
+        kind: 'fortnox',
+        sync_intent: 'linked',
+        fortnox_customer_id: customerNumber,
+        fortnox_customer_name: name,
+      },
+    })
+    .eq('id', quote.id);
+  if (linkError) {
+    throw new Error(`[Fortnox] Kunde inte länka customer_source på offert ${quote.id}: ${linkError.message}`);
+  }
+
+  // assigned_to/created_by are NOT NULL – use the quote's assigned user. Without it we can't
+  // create the local mirror row, but the quote is already linked above so returning here is safe.
   if (!quote.assigned_to) {
     console.warn(`[Fortnox] Kan inte skapa crm_customers-rad för offert ${quote.id}: assigned_to saknas`);
     return customerNumber;
@@ -286,26 +328,18 @@ async function createCustomerInFortnox(quote: QuoteRow): Promise<string> {
         is_primary: true,
       });
     }
-  }
 
-  // Always link customer_source on the quote regardless of whether the DB insert succeeded.
-  // This ensures resolveFortnoxCustomerNumber finds the Fortnox number on the next push
-  // and skips createCustomerInFortnox – preventing duplicate Fortnox customers on retry.
-  const { error: quoteUpdateError } = await supabase
-    .from('crm_quotes')
-    .update({
-      ...(newCustomer?.id ? { customer_id: newCustomer.id } : {}),
-      customer_source: {
-        kind: 'fortnox',
-        sync_intent: 'linked',
-        fortnox_customer_id: customerNumber,
-        fortnox_customer_name: name,
-      },
-    })
-    .eq('id', quote.id);
-
-  if (quoteUpdateError) {
-    throw new Error(`[Fortnox] Kunde inte länka customer_source på offert ${quote.id}: ${quoteUpdateError.message}`);
+    // Enrich the quote with the local customer_id now that the mirror row exists. Best-effort:
+    // the anti-duplicate link (customer_source) is already persisted above, so a failure here
+    // only means the quote isn't joined to the local customer row — never a duplicate Fortnox
+    // customer.
+    const { error: customerIdError } = await supabase
+      .from('crm_quotes')
+      .update({ customer_id: newCustomer.id })
+      .eq('id', quote.id);
+    if (customerIdError) {
+      console.error(`[Fortnox] Kunde inte länka customer_id på offert ${quote.id}:`, customerIdError.message);
+    }
   }
 
   return customerNumber;
@@ -383,7 +417,7 @@ export async function pushQuoteToFortnox(quoteId: string): Promise<PushOfferResu
     const brfOrgNumber = rotEnabled && quote.rot_details?.brf_org_number
       ? `BRF org.nr: ${quote.rot_details.brf_org_number}`
       : null;
-    const remarks = [quote.description, propertyDesignation, brfOrgNumber].filter(Boolean).join('\n') || undefined;
+    const remarks = [quote.description, propertyDesignation, brfOrgNumber, buildEndContactNote(snapshot)].filter(Boolean).join('\n') || undefined;
 
     const offerBody = {
       Offer: {

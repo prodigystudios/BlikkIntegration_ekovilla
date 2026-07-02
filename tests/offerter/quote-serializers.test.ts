@@ -28,6 +28,9 @@ function customer(overrides: Partial<QuoteCustomerFields> = {}): QuoteCustomerFi
     delivery_postal_code: '22233',
     delivery_city: 'Göteborg',
     invoice_address: 'Faktura 4',
+    end_contact_name: '',
+    end_contact_phone: '',
+    end_contact_email: '',
     ...overrides,
   };
 }
@@ -130,10 +133,19 @@ describe('buildCustomerSnapshot', () => {
       [
         'city', 'company_name', 'contact_name', 'customer_name', 'delivery_address',
         'delivery_city', 'delivery_postal_code',
-        'email', 'invoice_address', 'organization_number', 'personal_number', 'phone',
+        'email', 'end_contact_email', 'end_contact_name', 'end_contact_phone',
+        'invoice_address', 'organization_number', 'personal_number', 'phone',
         'postal_code', 'reverse_vat', 'street_address', 'visit_address',
       ].sort(),
     );
+  });
+
+  it('end_contact_*: null när inget anges, speglar fälten annars', () => {
+    expect(buildCustomerSnapshot(customer()).end_contact_name).toBeNull();
+    const snap = buildCustomerSnapshot(customer({ end_contact_name: 'Fastighetsägaren', end_contact_phone: '070-1' }));
+    expect(snap.end_contact_name).toBe('Fastighetsägaren');
+    expect(snap.end_contact_phone).toBe('070-1');
+    expect(snap.end_contact_email).toBeNull();
   });
 
   it('reverse_vat: null när inget anges, speglar opts annars', () => {

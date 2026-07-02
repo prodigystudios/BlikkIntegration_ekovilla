@@ -68,13 +68,13 @@ describe('createCrmCustomerSchema', () => {
       expect(result.success).toBe(true);
     });
 
-    it('misslyckas utan personnummer', () => {
+    it('godkänner utan personnummer (krävs först vid orderskapande, inte vid kundskapande)', () => {
       const result = createCrmCustomerSchema.safeParse({
         customer_type: 'private',
         first_name: 'Anna',
         last_name: 'Svensson',
       });
-      expect(result.success).toBe(false);
+      expect(result.success).toBe(true);
     });
 
     it('misslyckas utan last_name', () => {

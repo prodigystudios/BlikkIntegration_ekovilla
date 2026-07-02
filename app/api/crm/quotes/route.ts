@@ -1,8 +1,8 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { createCrmQuote, listCrmQuotesWithFilters } from '@/lib/domains/crm/quotes';
+import { createCrmQuote, getCrmQuote, listCrmQuotesWithFilters } from '@/lib/domains/crm/quotes';
 import { pushQuoteToFortnox } from '@/lib/domains/fortnox/offers';
-import { FortnoxNotConnectedError } from '@/lib/domains/fortnox/client';
+import { FortnoxNotConnectedError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
 import {
   createCrmQuoteSchema,
   listCrmQuotesQuerySchema,
@@ -71,18 +71,26 @@ export async function POST(req: Request) {
       return routeError(500, 'crm_quote_create_failed', error.message);
     }
 
-    // Auto-push to Fortnox. Non-fatal: quote creation succeeds regardless.
+    // Auto-push to Fortnox. Non-fatal: quote creation always succeeds. A push failure (other
+    // than "not connected") is surfaced as fortnox_error so the seller sees the offer didn't
+    // reach Fortnox — mirroring the PATCH auto-sync — instead of it failing silently.
+    let fortnoxError: string | null = null;
+    let responseItem = data;
     if (data) {
       try {
         await pushQuoteToFortnox(data.id);
+        // Re-read so the response carries the fresh fortnox_offer_number / sync status.
+        const refreshed = await getCrmQuote(supabase, data.id);
+        if (refreshed.data) responseItem = refreshed.data;
       } catch (e) {
         if (!(e instanceof FortnoxNotConnectedError)) {
           console.error('[fortnox] Auto-push offert misslyckades:', (e as any)?.message);
+          fortnoxError = friendlyFortnoxMessage(e);
         }
       }
     }
 
-    return ok({ item: data }, 201);
+    return ok({ item: responseItem, fortnox_error: fortnoxError }, 201);
   } catch (e: any) {
     return routeError(500, 'crm_quote_unexpected', e?.message || 'Failed to create quote');
   }

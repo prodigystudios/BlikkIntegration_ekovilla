@@ -2,7 +2,7 @@ import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { getCrmCustomer } from '@/lib/domains/crm/customers';
 import { createFortnoxCustomer, updateFortnoxCustomer } from '@/lib/domains/fortnox/customers';
-import { ok, requirePermission, routeError } from '../../_lib';
+import { invalidUuidParam, ok, requirePermission, routeError } from '../../_lib';
 
 type RouteContext = { params: { id: string } };
 
@@ -12,6 +12,9 @@ export async function POST(_req: Request, context: RouteContext) {
   try {
     const crmUser = await requirePermission('fortnox.customer.sync');
     if (crmUser.response) return crmUser.response;
+
+    const badId = invalidUuidParam(context.params.id);
+    if (badId) return badId;
 
     const supabase = createRouteHandlerClient({ cookies });
     const { data: existing, error } = await getCrmCustomer(supabase, context.params.id);

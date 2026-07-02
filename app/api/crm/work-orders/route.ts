@@ -80,7 +80,9 @@ export async function POST(req: Request) {
     });
 
     if (result.error) {
-      const status = result.reason === 'customer_not_found' ? 404 : 500;
+      const status = result.reason === 'customer_not_found'
+        ? 404
+        : result.reason === 'missing_personal_number' ? 409 : 500;
       return routeError(status, `crm_work_order_${result.reason}`, result.error.message || 'Kunde inte skapa order');
     }
 

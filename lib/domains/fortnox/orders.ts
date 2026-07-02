@@ -2,7 +2,7 @@ import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { parseDecimal } from '@/lib/shared/number';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
 import { fortnoxGet, fortnoxGetBinary, fortnoxPost, fortnoxPut, FortnoxApiError, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
-import { claimFortnoxPush, resolveOurReference, resolveReverseVat } from './helpers';
+import { buildEndContactNote, claimFortnoxPush, resolveOurReference, resolveReverseVat } from './helpers';
 import { DEFAULT_ROT_HOUSE_WORK_TYPE } from './types';
 
 type WorkOrderRow = {
@@ -18,6 +18,9 @@ type WorkOrderRow = {
     postal_code?: string | null;
     city?: string | null;
     reverse_vat?: boolean | null;
+    end_contact_name?: string | null;
+    end_contact_phone?: string | null;
+    end_contact_email?: string | null;
   } | null;
   project_name: string;
   client_name: string | null;
@@ -50,12 +53,34 @@ export type CreateInvoiceResult = {
   fortnox_invoice_number: string;
 };
 
+type FortnoxOrderRow = {
+  ArticleNumber?: string;
+  Description: string;
+  OrderedQuantity?: number;
+  DeliveredQuantity?: number;
+  Price?: number;
+  VAT?: number;
+  Unit?: string;
+  Discount?: number;
+  DiscountType?: 'PERCENT' | 'AMOUNT';
+  HouseWork?: boolean;
+  HouseWorkType?: string;
+};
+
+// A text-only order row: Description with no article/quantities, so Fortnox renders it as a
+// comment line under the article (carries the per-row free text / Radtext).
+// NOTE: if a Fortnox test company rejects a text-only /orders row, the fallback is to append
+// the Radtext to the article row's Description instead — the offer side is unaffected.
+function orderTextRow(description: string): FortnoxOrderRow {
+  return { Description: description };
+}
+
 // Exported for tests. NOTE: Fortnox order rows use `OrderedQuantity` (offer rows use
 // `Quantity`, invoice rows use `DeliveredQuantity`) — sending `Quantity` to /orders
 // returns 400 "Felaktigt fältnamn (Quantity)".
-export function buildOrderRows(lineItems: WorkOrderRow['line_items'], vatPercent: number, rotEnabled: boolean, reverseVat = false) {
+export function buildOrderRows(lineItems: WorkOrderRow['line_items'], vatPercent: number, rotEnabled: boolean, reverseVat = false): FortnoxOrderRow[] {
   if (!lineItems?.length) return [];
-  return lineItems.map((item) => {
+  return lineItems.flatMap((item) => {
     // parseDecimal handles Swedish comma input ("1,5") that plain parseFloat truncates.
     const price = item.unit_price ? parseDecimal(item.unit_price) : (item.article_price ?? 0);
     // For m³ rows the quantity is the computed volume, not the (empty) quantity field.
@@ -63,7 +88,7 @@ export function buildOrderRows(lineItems: WorkOrderRow['line_items'], vatPercent
     // Clamp to [0,100] to match the CRM pricing (lib/domains/crm/pricing.ts); otherwise a
     // discount > 100 makes the Fortnox row total diverge from the stored CRM total.
     const discount = Math.min(100, Math.max(0, item.discount_percent ? parseDecimal(item.discount_percent) : 0));
-    return {
+    const row: FortnoxOrderRow = {
       ...(item.article_number ? { ArticleNumber: item.article_number } : {}),
       Description: item.article_name || item.line_note || 'Artikel',
       // Fortnox invoices the DELIVERED quantity. A work order is the basis for invoicing
@@ -79,8 +104,18 @@ export function buildOrderRows(lineItems: WorkOrderRow['line_items'], vatPercent
       // DiscountType:'PERCENT' is required — Fortnox defaults to AMOUNT (kronor), which would
       // book discount_percent as a kronor discount and diverge from the CRM total.
       ...(discount > 0 ? { Discount: discount, DiscountType: 'PERCENT' as const } : {}),
-      ...(rotEnabled && item.is_rot_work ? { HouseWork: true, HouseWorkType: item.house_work_type || DEFAULT_ROT_HOUSE_WORK_TYPE } : {}),
+      // Husarbete only on a ROT document. Do NOT send HouseWork:false on non-ROT rows — Fortnox
+      // stamps an empty husarbete type ('EMPTYHOUSEWORK') that a non-ROT document rejects
+      // (2004021). See offers.ts. A husarbete-configured article is fixed in Fortnox, not here.
+      ...(rotEnabled && item.is_rot_work
+        ? { HouseWork: true, HouseWorkType: item.house_work_type || DEFAULT_ROT_HOUSE_WORK_TYPE }
+        : {}),
     };
+    // The per-row free text (Radtext) gets its own text row — only when an article name is
+    // present, since otherwise it is already the row Description (the fallback above).
+    const lineNote = item.line_note?.trim();
+    if (lineNote && item.article_name?.trim()) return [row, orderTextRow(lineNote)];
+    return [row];
   });
 }
 
@@ -168,6 +203,9 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
         postal_code?: string | null;
         city?: string | null;
         reverse_vat?: boolean | null;
+        end_contact_name?: string | null;
+        end_contact_phone?: string | null;
+        end_contact_email?: string | null;
       } | null;
       rot_details: { enabled?: boolean | null } | null;
     };
@@ -253,6 +291,7 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
           // the customer card drives the VAT regime, and rows carry the matching VAT (0 % for
           // reverse charge, see buildOrderRows) so header and rows never diverge.
           ...(rotEnabled ? { TaxReductionType: 'rot' } : {}),
+          ...(buildEndContactNote(snapshot) ? { Remarks: buildEndContactNote(snapshot) } : {}),
           ...(deliveryAddress
             ? {
                 DeliveryAddress1: deliveryAddress,

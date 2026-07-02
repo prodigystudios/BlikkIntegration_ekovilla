@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { ROT_HOUSE_WORK_TYPES } from '@/lib/domains/fortnox/types';
-export { ok, routeError, validationError, requireCrmUser, requireCrmWriter, requirePermission } from '../_shared';
+export { ok, routeError, validationError, invalidUuidParam, isNoRowsError, requireCrmUser, requireCrmWriter, requirePermission } from '../_shared';
 
 function normalizeOptionalText(value: unknown) {
   if (value == null) return null;
@@ -47,6 +47,10 @@ const customerSnapshotSchema = z.object({
   delivery_postal_code: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
   delivery_city: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
   invoice_address: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
+  // Separate on-site contact (slutkund) outside the customer card. null unless entered.
+  end_contact_name: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
+  end_contact_phone: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
+  end_contact_email: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
   // Point-in-time byggmoms flag (omvänd skattskyldighet). null = unknown (legacy rows).
   reverse_vat: z.boolean().nullable().optional().default(null),
 });
@@ -137,11 +141,14 @@ export const createCrmQuoteSchema = z.object({
     });
   }
 
-  if (value.quote_type === 'private' && !value.customer_snapshot.personal_number) {
+  // Personnummer is required on the quote only when ROT is used (ROT can't be computed without
+  // it); otherwise it's optional here and enforced when the work order is created. Matches the
+  // client validation and the relaxed customer-create rule.
+  if (value.quote_type === 'private' && value.rot_details.enabled && !value.customer_snapshot.personal_number) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['customer_snapshot', 'personal_number'],
-      message: 'Personnummer krävs för privatkund',
+      message: 'Personnummer krävs för ROT',
     });
   }
 

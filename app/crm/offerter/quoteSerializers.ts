@@ -28,6 +28,12 @@ export type QuoteCustomerFields = {
   delivery_postal_code: string;
   delivery_city: string;
   invoice_address: string;
+  // Separate on-site contact (slutkund) OUTSIDE the customer card: e.g. a builder orders the
+  // job but the work is done for a different end customer. Independent of "Er referens"
+  // (contact_name), which stays the order-giver. Stored only when explicitly entered.
+  end_contact_name: string;
+  end_contact_phone: string;
+  end_contact_email: string;
 };
 
 // Two address strings are "the same place" if their trimmed, case-folded forms match.
@@ -64,6 +70,11 @@ export function buildCustomerSnapshot(d: QuoteCustomerFields, opts?: { reverseVa
     sameAddressPart(d.delivery_city, d.city);
   const hasWorkAddress = !workMatchesCustomer && Boolean(d.delivery_address.trim());
 
+  // Separate on-site contact: stored only when at least a name/phone/email was entered.
+  const hasEndContact = Boolean(
+    d.end_contact_name?.trim() || d.end_contact_phone?.trim() || d.end_contact_email?.trim(),
+  );
+
   return {
     customer_name: d.quote_type === 'private' ? d.customer_name || null : effectiveCustomerName || null,
     company_name: d.quote_type === 'business' ? d.company_name || null : null,
@@ -80,6 +91,10 @@ export function buildCustomerSnapshot(d: QuoteCustomerFields, opts?: { reverseVa
     delivery_postal_code: hasWorkAddress ? d.delivery_postal_code || null : null,
     delivery_city: hasWorkAddress ? d.delivery_city || null : null,
     invoice_address: d.invoice_address || null,
+    // Separate on-site contact (slutkund) — null unless explicitly entered.
+    end_contact_name: hasEndContact ? d.end_contact_name || null : null,
+    end_contact_phone: hasEndContact ? d.end_contact_phone || null : null,
+    end_contact_email: hasEndContact ? d.end_contact_email || null : null,
     // Point-in-time byggmoms (omvänd skattskyldighet). Stored on the snapshot so the Fortnox
     // push (resolveReverseVat) can decide the 0 %-row VAT regime without depending on the live
     // customer record — essential for snapshot-only quotes with no linked customer_id. `null`

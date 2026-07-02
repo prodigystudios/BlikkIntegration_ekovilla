@@ -222,14 +222,19 @@ function AddressEditColumn({
 export default function CustomerDetailClient({ customerId, fortnoxConnected }: { customerId: string; fortnoxConnected: boolean }) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  // When opened from the offer form, go back there (and re-select this customer so
-  // edited details flow into the quote). Otherwise back to the customer register.
+  // When opened from the offer or a work order, go back there. Only same-origin CRM paths are
+  // accepted (no open-redirect). The offer also re-selects this customer via created_customer_id
+  // so edited details flow into the quote; a work order just returns to where we were.
   const returnTo = (() => {
     const rt = searchParams.get('returnTo');
-    return rt && rt.startsWith('/crm/offerter/') ? rt : null;
+    return rt && (rt.startsWith('/crm/offerter/') || rt.startsWith('/crm/arbetsorder/')) ? rt : null;
   })();
-  const backTo = returnTo ? `${returnTo}?created_customer_id=${customerId}` : '/crm/kunder';
-  const backLabel = returnTo ? 'Tillbaka till offert' : 'Kundregister';
+  const isOfferReturn = returnTo?.startsWith('/crm/offerter/') ?? false;
+  const sep = returnTo?.includes('?') ? '&' : '?';
+  const backTo = returnTo
+    ? (isOfferReturn ? `${returnTo}${sep}created_customer_id=${customerId}` : returnTo)
+    : '/crm/kunder';
+  const backLabel = returnTo ? (isOfferReturn ? 'Tillbaka till offert' : 'Tillbaka till order') : 'Kundregister';
   const toast = useToast();
 
   const [customer, setCustomer] = useState<Customer | null>(null);

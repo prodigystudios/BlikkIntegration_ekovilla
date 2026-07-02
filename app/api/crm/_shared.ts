@@ -44,6 +44,14 @@ export function invalidUuidParam(id: string | undefined) {
   return id && UUID_RE.test(id) ? null : routeError(400, 'invalid_id', 'Ogiltigt id.');
 }
 
+// PostgREST returns PGRST116 from `.single()` when a statement matched no rows. For a mutation
+// that means the row is either missing OR hidden from this user by RLS — e.g. a non-owner
+// updating a row whose UPDATE policy is owner/admin while its SELECT policy is open to all CRM
+// readers. Callers use this to answer 403/404 deliberately instead of leaking a raw 500.
+export function isNoRowsError(error: { code?: string } | null | undefined): boolean {
+  return error?.code === 'PGRST116';
+}
+
 // Keep only the fields the client actually sent. Zod schemas inject defaults for absent
 // fields; persisting those on a partial PATCH would overwrite untouched columns with
 // empties. The schema still validates the full (defaulted) object — we just write the

@@ -10,6 +10,11 @@ import { parseDecimal } from '@/lib/shared/number';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
 import { crm } from '@/app/crm/lib/crmTokens';
 import AddressAutocompleteInput from '@/app/crm/components/AddressAutocompleteInput';
+import CrmModal from '@/app/crm/components/CrmModal';
+import { formatSwedishIdNumber } from '@/app/crm/kunder/customerNumbers';
+import { DndContext, closestCenter, PointerSensor, TouchSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
+import { SortableContext, verticalListSortingStrategy, arrayMove, useSortable } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import {
   getEffectiveCustomerName,
   buildCustomerSnapshot,
@@ -88,6 +93,9 @@ type QuoteItem = {
     delivery_postal_code?: string | null;
     delivery_city?: string | null;
     invoice_address?: string | null;
+    end_contact_name?: string | null;
+    end_contact_phone?: string | null;
+    end_contact_email?: string | null;
   } | null;
   pricing_summary: { subtotal?: number; vat?: number; total?: number } | null;
   line_items: QuoteLineItem[] | null;
@@ -145,6 +153,10 @@ type QuoteDraft = {
   delivery_postal_code: string;
   delivery_city: string;
   invoice_address: string;
+  // Separate on-site contact (slutkund) outside the customer card — see buildCustomerSnapshot.
+  end_contact_name: string;
+  end_contact_phone: string;
+  end_contact_email: string;
   items: QuoteLineItem[];
   project_name: string;
   description: string;
@@ -309,7 +321,9 @@ function getValidationIssues(draft: QuoteDraft, effectiveRows: EffectiveRow[]) {
   if (!draft.prospect_id && !draft.customer_id && !effectiveCustomerName) issues.push('Kund måste anges');
   if (draft.customer_source.kind === 'prospect' && !draft.prospect_id) issues.push('Prospektkälla kräver valt prospekt');
   if (draft.customer_source.kind === 'fortnox' && !draft.customer_source.fortnox_customer_name.trim()) issues.push('Fortnox-kund behöver kundreferens');
-  if (draft.quote_type === 'private' && !draft.personal_number.trim()) issues.push('Personnummer krävs');
+  // Personnummer is only required on the quote when ROT is used (ROT can't be computed without
+  // it). Otherwise it's optional here and enforced when the work order is created.
+  if (draft.quote_type === 'private' && draft.rot_enabled && !draft.personal_number.trim()) issues.push('Personnummer krävs för ROT');
   if (draft.quote_type === 'business' && !draft.company_name.trim() && !draft.customer_name.trim()) issues.push('Företagsnamn krävs');
   // Er referens (kontaktperson) is required: it becomes YourReference on the Fortnox
   // offer and carries through offer → order → invoice. Enforced here so no quote leaves
@@ -351,6 +365,9 @@ const initialDraft: QuoteDraft = {
   delivery_postal_code: '',
   delivery_city: '',
   invoice_address: '',
+  end_contact_name: '',
+  end_contact_phone: '',
+  end_contact_email: '',
   items: [createEmptyLineItem()],
   project_name: '',
   description: '',
@@ -685,6 +702,34 @@ function SectionHeader({
 
 // ─── LineItemRow (one product/price row) ──────────────────────────────────────
 
+// Sortable wrapper for a line item (drag-and-drop reordering). Owns the sortable node ref +
+// transform; hands a drag-handle button (wired to the sensor listeners) to LineItemRow so the
+// row only reorders when the grip is dragged, not when a field is touched.
+function SortableLineItem({ id, children }: { id: string; children: (dragHandle: React.ReactNode) => React.ReactNode }) {
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id });
+  const handle = (
+    <button
+      type="button"
+      ref={setActivatorNodeRef}
+      {...attributes}
+      {...listeners}
+      aria-label="Dra för att ändra ordning"
+      className="shrink-0 cursor-grab touch-none rounded-md p-1 text-slate-300 transition-colors hover:text-slate-500 active:cursor-grabbing"
+    >
+      <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden>
+        <circle cx="3.5" cy="2.5" r="1" /><circle cx="8.5" cy="2.5" r="1" />
+        <circle cx="3.5" cy="6" r="1" /><circle cx="8.5" cy="6" r="1" />
+        <circle cx="3.5" cy="9.5" r="1" /><circle cx="8.5" cy="9.5" r="1" />
+      </svg>
+    </button>
+  );
+  return (
+    <div ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.6 : 1, zIndex: isDragging ? 20 : undefined }} className="relative">
+      {children(handle)}
+    </div>
+  );
+}
+
 function LineItemRow({
   row,
   index,
@@ -694,6 +739,7 @@ function LineItemRow({
   onSelectArticle,
   onClearArticle,
   onRemove,
+  dragHandle,
 }: {
   row: QuoteLineItem;
   index: number;
@@ -703,6 +749,7 @@ function LineItemRow({
   onSelectArticle: (article: ArticleLite) => void;
   onClearArticle: () => void;
   onRemove: () => void;
+  dragHandle?: React.ReactNode;
 }) {
   const isM3 = (row.pricing_mode ?? 'm3') === 'm3';
   // Collapsed by default once the row has an article; new/empty rows open for editing.
@@ -712,6 +759,7 @@ function LineItemRow({
   if (!expanded) {
     return (
       <div className="flex items-center gap-2 rounded-xl border border-slate-100 px-3.5 py-2.5 transition-colors hover:border-slate-200">
+        {dragHandle}
         <button type="button" onClick={() => setExpanded(true)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
           <span className="shrink-0 text-xs font-semibold tabular-nums text-slate-300">{index + 1}</span>
           <span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-800">
@@ -745,7 +793,7 @@ function LineItemRow({
   return (
     <div className="grid gap-3 rounded-xl border border-slate-200 bg-slate-50/40 p-4">
       <div className="flex items-center justify-between gap-3">
-        <span className="text-xs font-semibold text-slate-400">Rad {index + 1}</span>
+        <span className="flex items-center gap-2 text-xs font-semibold text-slate-400">{dragHandle}Rad {index + 1}</span>
         <div className="flex items-center gap-3">
           <button type="button" onClick={() => setExpanded(false)} className="text-xs font-medium text-slate-500 transition-colors hover:text-slate-800">
             Fäll ihop ▴
@@ -830,6 +878,10 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   const [submitting, setSubmitting] = useState(false);
   const [submitAttempted, setSubmitAttempted] = useState(false);
   const [creatingWorkOrder, setCreatingWorkOrder] = useState(false);
+  // Private customer without personnummer (optional at create) → the work-order route rejects
+  // with 409; we prompt for it, save it on the customer, then retry the conversion.
+  const [pnPromptOpen, setPnPromptOpen] = useState(false);
+  const [pnValue, setPnValue] = useState('');
   const [draft, setDraft] = useState<QuoteDraft>(initialDraft);
   const [loadedQuote, setLoadedQuote] = useState<QuoteItem | null>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<CrmCustomerLite | null>(null);
@@ -838,6 +890,25 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   // be filled. A deliberate toggle (vs silent prefill) so a wrong company address can't
   // slip through unnoticed.
   const [customWorkAddress, setCustomWorkAddress] = useState(false);
+  // Separate on-site contact (slutkund) outside the customer card, mirrors the work-address toggle.
+  const [customEndContact, setCustomEndContact] = useState(false);
+
+  // Drag-and-drop reordering of the article rows. Pointer for mouse (small distance so a click
+  // still selects), Touch with a short press-delay so scrolling the form on mobile isn't hijacked.
+  const itemSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 160, tolerance: 8 } }),
+  );
+  function handleItemsDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    setDraft((d) => {
+      const oldIndex = d.items.findIndex((i) => i.id === active.id);
+      const newIndex = d.items.findIndex((i) => i.id === over.id);
+      if (oldIndex < 0 || newIndex < 0) return d;
+      return { ...d, items: arrayMove(d.items, oldIndex, newIndex) };
+    });
+  }
   const restoredRef = useRef(false);
 
   const presetProspectId = searchParams.get('prospect_id') || '';
@@ -949,6 +1020,9 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           delivery_postal_code: item.customer_snapshot?.delivery_postal_code || '',
           delivery_city: item.customer_snapshot?.delivery_city || '',
           invoice_address: item.customer_snapshot?.invoice_address || '',
+          end_contact_name: item.customer_snapshot?.end_contact_name || '',
+          end_contact_phone: item.customer_snapshot?.end_contact_phone || '',
+          end_contact_email: item.customer_snapshot?.end_contact_email || '',
           items: item.line_items?.length
             ? item.line_items.map((line) => ({ ...line, line_note: line.line_note || '', is_rot_work: line.is_rot_work ?? false, house_work_type: line.house_work_type || 'CONSTRUCTION', density: line.density || '' }))
             : [createEmptyLineItem()],
@@ -972,6 +1046,9 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           create_follow_up_task: false,
         });
         setCustomWorkAddress(Boolean(item.customer_snapshot?.delivery_address));
+        setCustomEndContact(Boolean(
+          item.customer_snapshot?.end_contact_name || item.customer_snapshot?.end_contact_phone || item.customer_snapshot?.end_contact_email,
+        ));
 
         // Show the linked customer in the picker so editing doesn't look like no
         // customer is selected. Fetch the live row (silently ignored if it 404s).
@@ -1040,6 +1117,9 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           if (fresh) {
             setDraft(envelope.draft);
             setCustomWorkAddress(Boolean(envelope.draft?.delivery_address));
+            setCustomEndContact(Boolean(
+              envelope.draft?.end_contact_name || envelope.draft?.end_contact_phone || envelope.draft?.end_contact_email,
+            ));
           }
         }
       } catch { /* ignore malformed draft */ }
@@ -1144,8 +1224,8 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     if (draft.quote_type === 'business' && !draft.company_name.trim() && !draft.customer_name.trim()) {
       errs.company_name = 'Företagsnamn krävs';
     }
-    if (draft.quote_type === 'private' && !draft.personal_number.trim()) {
-      errs.personal_number = 'Personnummer krävs';
+    if (draft.quote_type === 'private' && draft.rot_enabled && !draft.personal_number.trim()) {
+      errs.personal_number = 'Personnummer krävs för ROT';
     }
     if (!draft.contact_name.trim()) errs.contact_name = 'Er referens krävs';
     if (!draft.amount.trim() && !hasAnyRows) errs.amount = 'Ange belopp eller lägg till rader';
@@ -1159,7 +1239,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   const issueFieldIds: Record<string, string> = {
     'Kund måste anges': 'section-kund',
     'Företagsnamn krävs': 'section-kund',
-    'Personnummer krävs': 'section-kund',
+    'Personnummer krävs för ROT': 'section-kund',
     'Er referens krävs': 'field-contact-name',
     'Offertnamn saknas': 'field-project-name',
     'Ange belopp eller lägg till rader': 'field-amount',
@@ -1297,11 +1377,45 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     try {
       const res = await fetch(`/api/crm/quotes/${quoteId}/work-order`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
       const json = await res.json().catch(() => ({}));
-      if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte skapa arbetsorder'); return; }
+      if (!res.ok || !json.ok) {
+        if (json?.errorDetails?.code === 'crm_work_order_missing_personal_number') {
+          if (!loadedQuote.customer_id) {
+            toast.error('Privatkunden saknar personnummer. Lägg till det på kundkortet först.');
+            return;
+          }
+          setPnValue(draft.personal_number || '');
+          setPnPromptOpen(true);
+          return;
+        }
+        toast.error(json?.error || 'Kunde inte skapa arbetsorder');
+        return;
+      }
       const workOrder = json?.data?.workOrder as { id?: string; order_number?: string } | undefined;
       toast.success(workOrder?.order_number ? `Arbetsorder skapad: ${workOrder.order_number}` : 'Arbetsorder skapad');
       if (workOrder?.id) router.push(`/crm/arbetsorder?work_order_id=${workOrder.id}`);
     } catch { toast.error('Kunde inte skapa arbetsorder'); } finally { setCreatingWorkOrder(false); }
+  }
+
+  // Save the personnummer on the linked customer, then retry the quote→order conversion.
+  async function savePersonalNumberAndCreateOrder() {
+    if (!loadedQuote?.customer_id) return;
+    if (!pnValue.trim()) { toast.error('Fyll i personnummer'); return; }
+    setCreatingWorkOrder(true);
+    try {
+      const patch = await fetch(`/api/crm/customers/${loadedQuote.customer_id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ personal_number: pnValue.trim() }),
+      });
+      const pj = await patch.json().catch(() => ({}));
+      if (!patch.ok || !pj.ok) { toast.error(pj?.error || 'Kunde inte spara personnummer'); return; }
+      setDraft((d) => ({ ...d, personal_number: pnValue.trim() }));
+      setPnPromptOpen(false);
+    } finally {
+      setCreatingWorkOrder(false);
+    }
+    // Retry the conversion now that the customer has a personnummer.
+    await createWorkOrderFromQuote();
   }
 
   if (loading) {
@@ -1503,6 +1617,62 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
                 </div>
               ) : null}
             </div>
+
+            {/* Separat kontaktperson på arbetsplatsen (slutkund) — t.ex. en byggare beställer
+                jobbet men arbetet utförs åt en annan person som inte ligger på kundkortet.
+                Speglar arbetsadress-toggeln. Ordergivaren stannar som "Er referens". */}
+            <div className="grid gap-3">
+              <label className="flex cursor-pointer select-none items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50/60 px-3.5 py-2.5">
+                <span className="grid min-w-0 gap-0.5">
+                  <span className="text-sm font-medium text-slate-700">Annan kontaktperson på arbetsplatsen</span>
+                  <span className="text-[11px] text-slate-400">Slutkund utanför kundkortet (jobbet utförs åt någon annan än ordergivaren)</span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={customEndContact}
+                  onChange={(e) => {
+                    const on = e.target.checked;
+                    setCustomEndContact(on);
+                    if (!on) setDraft((d) => ({ ...d, end_contact_name: '', end_contact_phone: '', end_contact_email: '' }));
+                  }}
+                  className="h-4 w-4 shrink-0 rounded border-slate-300 accent-emerald-600"
+                />
+              </label>
+
+              {customEndContact ? (
+                <div className="grid gap-3 rounded-xl border border-[#e0e8dc] bg-white/60 p-3">
+                  <p className={crm.sectionTitle}>Kontaktperson på arbetsplatsen</p>
+                  <Field label="Namn">
+                    <Input
+                      value={draft.end_contact_name}
+                      onChange={(e) => setDraft((d) => ({ ...d, end_contact_name: e.target.value }))}
+                      placeholder="T.ex. fastighetsägaren"
+                    />
+                  </Field>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Field label="Telefon">
+                      <Input
+                        value={draft.end_contact_phone}
+                        onChange={(e) => setDraft((d) => ({ ...d, end_contact_phone: e.target.value }))}
+                        placeholder="070-123 45 67"
+                        inputMode="tel"
+                      />
+                    </Field>
+                    <Field label="E-post">
+                      <Input
+                        value={draft.end_contact_email}
+                        onChange={(e) => setDraft((d) => ({ ...d, end_contact_email: e.target.value }))}
+                        placeholder="namn@exempel.se"
+                        type="email"
+                      />
+                    </Field>
+                  </div>
+                  <p className="text-[11px] leading-snug text-slate-400">
+                    Visas för installatören på arbetsordern och som notering på Fortnox-dokumenten. Ordergivaren står kvar som Er referens.
+                  </p>
+                </div>
+              ) : null}
+            </div>
           </div>
           </div>
 
@@ -1523,6 +1693,27 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
               <Input value={draft.project_name} onChange={(e) => setDraft((d) => ({ ...d, project_name: e.target.value }))} placeholder="Ex. Takisolering villa Norrköping" />
             </Field>
             <Field fieldId="field-contact-name" label="Er referens (kontaktperson) *" className="md:col-span-2" error={fieldErrors.contact_name}>
+              {/* Contact picker — for a customer with several contacts, choose which one is
+                  responsible for this offer/order. Fills name/phone/email from the chosen
+                  contact; the free-text field below still allows a manual override. */}
+              {selectedCustomer && selectedCustomer.contacts.length > 0 ? (
+                <Select
+                  className="mb-2"
+                  aria-label="Välj kontaktperson"
+                  value={selectedCustomer.contacts.find((c) => c.name === draft.contact_name)?.id ?? ''}
+                  onChange={(e) => {
+                    const c = selectedCustomer.contacts.find((x) => x.id === e.target.value);
+                    if (c) setDraft((d) => ({ ...d, contact_name: c.name, phone: c.phone || '', email: c.email || '' }));
+                  }}
+                >
+                  <option value="">Skriv manuellt…</option>
+                  {selectedCustomer.contacts.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}{c.role ? ` (${c.role})` : ''}{c.is_primary ? ' – primär' : ''}
+                    </option>
+                  ))}
+                </Select>
+              ) : null}
               <Input
                 value={draft.contact_name}
                 onChange={(e) => setDraft((d) => ({ ...d, contact_name: e.target.value }))}
@@ -1612,12 +1803,16 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
             </p>
           )}
 
+          <DndContext sensors={itemSensors} collisionDetection={closestCenter} onDragEnd={handleItemsDragEnd}>
+          <SortableContext items={draft.items.map((i) => i.id)} strategy={verticalListSortingStrategy}>
           <div className="grid gap-2">
             {draft.items.map((row, index) => (
+              <SortableLineItem key={row.id} id={row.id}>
+                {(dragHandle) => (
               <LineItemRow
-                key={row.id}
                 row={row}
                 index={index}
+                dragHandle={dragHandle}
                 metrics={effectiveRows.find((r) => r.id === row.id)}
                 rotEnabled={draft.rot_enabled}
                 onChange={(patch) => setDraft((d) => ({ ...d, items: d.items.map((item) => item.id === row.id ? { ...item, ...patch } : item) }))}
@@ -1651,8 +1846,12 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
                 }))}
                 onRemove={() => setDraft((d) => ({ ...d, items: d.items.length > 1 ? d.items.filter((item) => item.id !== row.id) : [createEmptyLineItem()] }))}
               />
+                )}
+              </SortableLineItem>
             ))}
           </div>
+          </SortableContext>
+          </DndContext>
 
           <button
             type="button"
@@ -1998,6 +2197,45 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           {submitting ? 'Sparar…' : isEditing ? 'Spara' : 'Skapa'}
         </button>
       </div>
+
+      {/* Personnummer-prompt vid order från privatkund utan personnr */}
+      {pnPromptOpen ? (
+        <CrmModal
+          onClose={() => setPnPromptOpen(false)}
+          ariaLabel="Personnummer krävs"
+          maxWidth="sm:max-w-[460px]"
+          header={
+            <>
+              <h2 className="text-lg font-bold text-slate-900">Personnummer krävs</h2>
+              <p className="m-0 mt-0.5 text-sm text-slate-500">Fortnox behöver privatkundens personnummer för att fakturera ordern. Det sparas på kundkortet.</p>
+            </>
+          }
+          footer={
+            <>
+              <button
+                type="button"
+                onClick={() => setPnPromptOpen(false)}
+                className="flex-1 rounded-xl border border-slate-200 bg-white py-2.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 sm:flex-none sm:px-5"
+              >
+                Avbryt
+              </button>
+              <button
+                type="button"
+                onClick={() => void savePersonalNumberAndCreateOrder()}
+                disabled={creatingWorkOrder || !pnValue.trim()}
+                className="flex-1 rounded-xl py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60 sm:ml-auto sm:flex-none sm:px-5"
+                style={{ backgroundColor: 'var(--crm-primary)' }}
+              >
+                {creatingWorkOrder ? 'Sparar…' : 'Spara och skapa order'}
+              </button>
+            </>
+          }
+        >
+          <Field label="Personnummer">
+            <Input value={pnValue} onChange={(e) => setPnValue(formatSwedishIdNumber(e.target.value))} placeholder="ÅÅMMDD-XXXX" autoFocus />
+          </Field>
+        </CrmModal>
+      ) : null}
     </div>
   );
 }

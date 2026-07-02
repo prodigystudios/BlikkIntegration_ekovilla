@@ -48,6 +48,35 @@ describe('buildOfferRows', () => {
     expect(rows).toHaveLength(1);
   });
 
+  it('adds a separate text row for the per-row free text (Radtext) when an article is chosen', () => {
+    const rows = buildOfferRows([{ article_name: 'Lösull', unit_price: '100', quantity: '1', line_note: 'Extra tätning vid genomföringar' }], 25, false);
+    expect(rows).toHaveLength(2);
+    expect(rows[0].Description).toBe('Lösull');
+    expect(rows[1].Description).toBe('Extra tätning vid genomföringar');
+    expect(rows[1].Price).toBeUndefined();
+    expect(rows[1].Quantity).toBeUndefined();
+  });
+
+  it('does not duplicate the Radtext as a text row when it is already the row Description (no article name)', () => {
+    const rows = buildOfferRows([{ unit_price: '100', quantity: '1', line_note: 'Bara en fritextrad' }], 25, false);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].Description).toBe('Bara en fritextrad');
+  });
+
+  it('combines measurement + Radtext into ONE text row under the article (not two)', () => {
+    // Two separate text rows make Fortnox treat the second as a priced product row, so the
+    // measurement and Radtext must share a single text row (newline-separated).
+    const rows = buildOfferRows(
+      [{ pricing_mode: 'm3', article_name: 'Lösull', m2: '100', thickness_mm: '200', unit_price: '700', line_note: 'Vindsbjälklag' }],
+      25, false,
+    );
+    expect(rows).toHaveLength(2);
+    expect(rows[0].Description).toBe('Lösull');
+    expect(rows[1].Description).toBe('Yta: 100 m², Tjocklek: 200 mm\nVindsbjälklag');
+    expect(rows[1].Quantity).toBeUndefined();
+    expect(rows[1].Price).toBeUndefined();
+  });
+
   it('falls back to article_price when unit_price is empty', () => {
     const [row] = buildOfferRows([{ pricing_mode: 'item', unit_price: '', article_price: 900, quantity: '5' }], 25, false);
     expect(row.Price).toBe(900);
@@ -84,13 +113,16 @@ describe('buildOfferRows', () => {
     expect(noDiscount.DiscountType).toBeUndefined();
   });
 
-  it('sets HouseWork only when ROT is enabled and the row is ROT work', () => {
+  it('sets HouseWork only for ROT rows, and OMITS it otherwise (never sends false)', () => {
     const [rotRow] = buildOfferRows([{ unit_price: '100', quantity: '1', is_rot_work: true }], 25, true);
     expect(rotRow.HouseWork).toBe(true);
     expect(rotRow.HouseWorkType).toBe('CONSTRUCTION');
 
+    // A non-ROT row must NOT carry HouseWork at all — sending false makes Fortnox stamp an empty
+    // husarbete type ('EMPTYHOUSEWORK') that a non-ROT document rejects (2004021).
     const [notRot] = buildOfferRows([{ unit_price: '100', quantity: '1', is_rot_work: false }], 25, true);
     expect(notRot.HouseWork).toBeUndefined();
+    expect(notRot.HouseWorkType).toBeUndefined();
 
     const [rotDisabled] = buildOfferRows([{ unit_price: '100', quantity: '1', is_rot_work: true }], 25, false);
     expect(rotDisabled.HouseWork).toBeUndefined();

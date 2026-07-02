@@ -224,7 +224,9 @@ export async function markCrmQuoteWon(
   // Already won, or no prospect to convert — just update
   if (current.status === 'won' || !current.prospect_id) {
     const { data, error } = await updateCrmQuote(supabase, quoteId, updateInput);
-    if (error) return { data: null, error: { code: 'crm_quote_update_failed', message: error.message } };
+    // Preserve PGRST116 (0 rows) so the route can answer 403/404 for a non-owner instead of a
+    // raw 500 (RLS scopes the UPDATE to the owner while SELECT is open) — mirrors the plain path.
+    if (error) return { data: null, error: { code: error.code === 'PGRST116' ? 'PGRST116' : 'crm_quote_update_failed', message: error.message } };
     return { data, error: null };
   }
 

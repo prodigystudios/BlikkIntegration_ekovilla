@@ -1,5 +1,5 @@
 import { z } from 'zod';
-export { ok, routeError, validationError, requireCrmUser, requireCrmWriter, requirePermission } from '../_shared';
+export { ok, routeError, validationError, invalidUuidParam, requireCrmUser, requireCrmWriter, requirePermission } from '../_shared';
 
 // Zod's built-in .email() rejects Unicode domain names (e.g. byggmästaren.se).
 // This helper validates the structural shape of an email while accepting IDN domains.
@@ -111,13 +111,12 @@ export const createCrmCustomerSchema = z
     (d) =>
       d.customer_type === 'business' ? !!d.company_name : !!(d.first_name && d.last_name),
     { message: 'Företagsnamn krävs för företagskund, för- och efternamn krävs för privatkund' }
-  )
-  // Personal number is required for private customers – it is the OrganisationNumber
-  // Fortnox uses to compute ROT deductions, so a private customer must never lack it.
-  .refine(
-    (d) => d.customer_type !== 'private' || !!d.personal_number,
-    { message: 'Personnummer krävs för privatkund', path: ['personal_number'] }
   );
+  // NOTE: personal_number is intentionally NOT required for a private customer at create.
+  // Sales sometimes only get it once the job is booked, so a private customer can be created
+  // without it; it is instead enforced when a WORK ORDER is created for the customer (Fortnox
+  // needs it as OrganisationNumber for invoicing/ROT) — see createStandaloneCrmWorkOrder /
+  // createCrmWorkOrderFromQuote in lib/domains/crm/work-orders.ts.
 
 export const updateCrmCustomerSchema = z
   .object({

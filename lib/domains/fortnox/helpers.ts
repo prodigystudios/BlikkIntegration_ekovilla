@@ -73,6 +73,20 @@ export async function resolveReverseVat(
   return (data as { reverse_vat?: boolean | null } | null)?.reverse_vat === true;
 }
 
+// Builds the Fortnox Remarks line for a separate on-site contact (slutkund) captured on the
+// quote/order outside the customer card. Returns null when no on-site contact was entered, so
+// the caller can conditionally include it. Kept document-level (Remarks) rather than a line-item
+// row — it's not a priced row and reads better as a note.
+export function buildEndContactNote(
+  snapshot: { end_contact_name?: string | null; end_contact_phone?: string | null; end_contact_email?: string | null } | null | undefined,
+): string | null {
+  const name = snapshot?.end_contact_name?.trim();
+  const phone = snapshot?.end_contact_phone?.trim();
+  const email = snapshot?.end_contact_email?.trim();
+  const parts = [name, phone, email].filter(Boolean);
+  return parts.length ? `Kontaktperson på arbetsplatsen: ${parts.join(', ')}` : null;
+}
+
 // Looks up the assigned user's full name for use as OurReference in Fortnox documents.
 export async function resolveOurReference(
   userId: string | null,
