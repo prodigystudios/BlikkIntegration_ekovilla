@@ -101,6 +101,23 @@ describe('createCrmQuoteSchema', () => {
     ).toBe(false);
   });
 
+  it('godkänner privatkund UTAN personnummer när ROT inte används (krävs först vid order)', () => {
+    const result = createCrmQuoteSchema.safeParse({
+      ...validQuoteBase, quote_type: 'private', customer_name: 'Anna Svensson',
+      customer_snapshot: { customer_name: 'Anna Svensson' },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('kräver personnummer för privatkund NÄR ROT är på', () => {
+    const result = createCrmQuoteSchema.safeParse({
+      ...validQuoteBase, quote_type: 'private', customer_name: 'Anna Svensson',
+      customer_snapshot: { customer_name: 'Anna Svensson' },
+      rot_details: { enabled: true, property_designation: 'Kv 1', personal_number: '' },
+    });
+    expect(result.success).toBe(false);
+  });
+
   it('misslyckas med ogiltigt datumformat i quote_date', () => {
     expect(
       createCrmQuoteSchema.safeParse({ ...validQuoteBase, quote_date: '04-06-2026' }).success

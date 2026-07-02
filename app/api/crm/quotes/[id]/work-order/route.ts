@@ -24,7 +24,13 @@ export async function POST(_req: Request, context: RouteContext) {
         return routeError(404, 'crm_quote_not_found', result.error?.message || 'Offerten hittades inte');
       }
 
-      if (result.reason === 'quote_not_won' || result.reason === 'already_created' || result.reason === 'missing_personal_number') {
+      // Emit the same code the standalone route uses so the client's personnummer prompt
+      // (which keys off crm_work_order_missing_personal_number) fires on both order paths.
+      if (result.reason === 'missing_personal_number') {
+        return routeError(409, 'crm_work_order_missing_personal_number', result.error?.message || 'Personnummer krävs för privatkund innan order kan skapas');
+      }
+
+      if (result.reason === 'quote_not_won' || result.reason === 'already_created') {
         return routeError(409, result.reason, result.error?.message || 'Arbetsorder kunde inte skapas');
       }
 

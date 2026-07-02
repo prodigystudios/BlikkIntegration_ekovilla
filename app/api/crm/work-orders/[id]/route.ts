@@ -49,11 +49,17 @@ export async function PATCH(req: Request, context: RouteContext) {
     // change) doesn't wipe untouched columns (internal_handoff, work_address) with defaults.
     const updateInput = pickProvidedFields(parsedBody.data, rawBody);
 
+    // Load the current row once — both the contact-snapshot merge and the status guard need it.
+    type WoCurrent = { status?: string | null; customer_snapshot?: Record<string, unknown> | null };
+    let current: WoCurrent | null = null;
+    if (updateInput.contact || updateInput.status) {
+      current = (await getCrmWorkOrder(supabase, context.params.id)).data as WoCurrent | null;
+    }
+
     // Contact override: merge into the (jsonb) customer_snapshot with a read-merge-write so the
     // other snapshot fields (personnummer, addresses, reverse_vat, end-contact) are preserved.
     // Lets a seller fix the responsible contact if it changed after the offer.
     if (updateInput.contact) {
-      const { data: current } = await getCrmWorkOrder(supabase, context.params.id);
       const snapshot = (current?.customer_snapshot ?? {}) as Record<string, unknown>;
       (updateInput as Record<string, unknown>).customer_snapshot = {
         ...snapshot,
@@ -64,16 +70,17 @@ export async function PATCH(req: Request, context: RouteContext) {
       delete (updateInput as { contact?: unknown }).contact;
     }
 
-    // System-managed status guard (only when a status change is actually requested):
-    if (updateInput.status) {
-      // …can't be SET manually…
+    // System-managed status guard — only a real TRANSITION is blocked. The client always sends
+    // the current status alongside a contact/address/notes edit; re-sending it is a no-op, so
+    // those edits still work on a billed order (they'd otherwise be wrongly rejected).
+    if (updateInput.status && updateInput.status !== current?.status) {
+      // Fakturastatus is set by the invoicing flow, never chosen manually…
       if (SYSTEM_MANAGED_WO_STATUSES.includes(updateInput.status)) {
         return routeError(409, 'crm_work_order_status_system_managed',
           'Fakturastatus sätts automatiskt vid fakturering och kan inte väljas manuellt.');
       }
       // …and a billed order can't be regressed to a manual status either.
-      const { data: current } = await getCrmWorkOrder(supabase, context.params.id);
-      if (current && SYSTEM_MANAGED_WO_STATUSES.includes(current.status)) {
+      if (current?.status && SYSTEM_MANAGED_WO_STATUSES.includes(current.status)) {
         return routeError(409, 'crm_work_order_locked',
           'Ordern är fakturerad och statusen kan inte ändras manuellt.');
       }

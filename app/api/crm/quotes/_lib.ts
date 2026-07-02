@@ -141,11 +141,14 @@ export const createCrmQuoteSchema = z.object({
     });
   }
 
-  if (value.quote_type === 'private' && !value.customer_snapshot.personal_number) {
+  // Personnummer is required on the quote only when ROT is used (ROT can't be computed without
+  // it); otherwise it's optional here and enforced when the work order is created. Matches the
+  // client validation and the relaxed customer-create rule.
+  if (value.quote_type === 'private' && value.rot_details.enabled && !value.customer_snapshot.personal_number) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['customer_snapshot', 'personal_number'],
-      message: 'Personnummer krävs för privatkund',
+      message: 'Personnummer krävs för ROT',
     });
   }
 

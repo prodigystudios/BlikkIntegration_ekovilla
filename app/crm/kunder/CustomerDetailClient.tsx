@@ -230,8 +230,9 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
     return rt && (rt.startsWith('/crm/offerter/') || rt.startsWith('/crm/arbetsorder/')) ? rt : null;
   })();
   const isOfferReturn = returnTo?.startsWith('/crm/offerter/') ?? false;
+  const sep = returnTo?.includes('?') ? '&' : '?';
   const backTo = returnTo
-    ? (isOfferReturn ? `${returnTo}?created_customer_id=${customerId}` : returnTo)
+    ? (isOfferReturn ? `${returnTo}${sep}created_customer_id=${customerId}` : returnTo)
     : '/crm/kunder';
   const backLabel = returnTo ? (isOfferReturn ? 'Tillbaka till offert' : 'Tillbaka till order') : 'Kundregister';
   const toast = useToast();
