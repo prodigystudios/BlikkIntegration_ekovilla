@@ -160,11 +160,16 @@ export function buildOfferRows(
     // product row (it stamped the Radtext as a bogus priced m³ row). One text row (like a lone
     // measurement, which works) keeps them as plain description lines. Radtext is only included
     // when an article name is present — otherwise it is already the row Description (above).
+    // Separate the measurement and the free text with a double space. Fortnox STRIPS newlines in
+    // a row Description (they render as nothing — "145 mm" + "\n" + "text" comes out glued as
+    // "145 mmtext") AND rejects punctuation like an em-dash (code 2000359 "otillåtna tecken"), so
+    // plain whitespace is the safe separator. Still a single Description string → one text row, so
+    // the "second text row → priced row" quirk doesn't apply.
     const measurement = buildMeasurementText(item);
     const lineNote = item.line_note?.trim();
     const detail = [measurement, lineNote && item.article_name?.trim() ? lineNote : null]
       .filter(Boolean)
-      .join('\n');
+      .join('  ');
     return detail ? [row, offerTextRow(detail)] : [row];
   });
 }
