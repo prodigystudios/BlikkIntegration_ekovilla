@@ -63,12 +63,18 @@ describe('buildOfferRows', () => {
     expect(rows[0].Description).toBe('Bara en fritextrad');
   });
 
-  it('emits the article row, then measurement, then Radtext, in order', () => {
+  it('combines measurement + Radtext into ONE text row under the article (not two)', () => {
+    // Two separate text rows make Fortnox treat the second as a priced product row, so the
+    // measurement and Radtext must share a single text row (newline-separated).
     const rows = buildOfferRows(
       [{ pricing_mode: 'm3', article_name: 'Lösull', m2: '100', thickness_mm: '200', unit_price: '700', line_note: 'Vindsbjälklag' }],
       25, false,
     );
-    expect(rows.map((r) => r.Description)).toEqual(['Lösull', 'Yta: 100 m², Tjocklek: 200 mm', 'Vindsbjälklag']);
+    expect(rows).toHaveLength(2);
+    expect(rows[0].Description).toBe('Lösull');
+    expect(rows[1].Description).toBe('Yta: 100 m², Tjocklek: 200 mm\nVindsbjälklag');
+    expect(rows[1].Quantity).toBeUndefined();
+    expect(rows[1].Price).toBeUndefined();
   });
 
   it('falls back to article_price when unit_price is empty', () => {

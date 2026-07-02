@@ -154,17 +154,18 @@ export function buildOfferRows(
       row.HouseWorkType = item.house_work_type || DEFAULT_ROT_HOUSE_WORK_TYPE;
     }
 
-    // Measurements (m² + thickness) and the per-row free text (Radtext) each get their own
-    // text row so they appear on the offer PDF below the article. Text rows carry only a
-    // Description (no amounts). Radtext is only added as a separate row when an article name
-    // is present — otherwise it is already the row Description (the fallback above), so a
-    // separate row would duplicate it.
-    const extraRows: FortnoxOfferRow[] = [];
+    // Measurement (m² + thickness) and the per-row free text (Radtext) go into a SINGLE text row
+    // under the article — NOT two separate rows. Fortnox treats the first text row after an
+    // article as that article's comment, but a SECOND consecutive text row as a new (priced)
+    // product row (it stamped the Radtext as a bogus priced m³ row). One text row (like a lone
+    // measurement, which works) keeps them as plain description lines. Radtext is only included
+    // when an article name is present — otherwise it is already the row Description (above).
     const measurement = buildMeasurementText(item);
-    if (measurement) extraRows.push(offerTextRow(measurement));
     const lineNote = item.line_note?.trim();
-    if (lineNote && item.article_name?.trim()) extraRows.push(offerTextRow(lineNote));
-    return [row, ...extraRows];
+    const detail = [measurement, lineNote && item.article_name?.trim() ? lineNote : null]
+      .filter(Boolean)
+      .join('\n');
+    return detail ? [row, offerTextRow(detail)] : [row];
   });
 }
 
