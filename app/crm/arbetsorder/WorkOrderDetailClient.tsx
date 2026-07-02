@@ -520,7 +520,12 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
               <span>·</span>
               <span>{workOrder.quote_type === 'private' ? 'Privatkund' : 'Företag'}</span>
               {workOrder.customer_id ? (
-                <a href={`/crm/kunder/${workOrder.customer_id}`} className="font-medium text-emerald-700 transition hover:text-emerald-800 hover:underline">Öppna kundkort →</a>
+                <a
+                  href={`/crm/kunder/${workOrder.customer_id}?returnTo=${encodeURIComponent(`/crm/arbetsorder/${workOrder.id}`)}`}
+                  className="font-medium text-emerald-700 transition hover:text-emerald-800 hover:underline"
+                >
+                  Öppna kundkort →
+                </a>
               ) : null}
             </div>
           </div>
