@@ -96,6 +96,7 @@ type QuoteItem = {
     end_contact_name?: string | null;
     end_contact_phone?: string | null;
     end_contact_email?: string | null;
+    label?: string | null;
   } | null;
   pricing_summary: { subtotal?: number; vat?: number; total?: number } | null;
   line_items: QuoteLineItem[] | null;
@@ -157,6 +158,8 @@ type QuoteDraft = {
   end_contact_name: string;
   end_contact_phone: string;
   end_contact_email: string;
+  // Free-text märkning (företag) → Fortnox "Ert referensnummer".
+  label: string;
   items: QuoteLineItem[];
   project_name: string;
   description: string;
@@ -368,6 +371,7 @@ const initialDraft: QuoteDraft = {
   end_contact_name: '',
   end_contact_phone: '',
   end_contact_email: '',
+  label: '',
   items: [createEmptyLineItem()],
   project_name: '',
   description: '',
@@ -1023,6 +1027,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           end_contact_name: item.customer_snapshot?.end_contact_name || '',
           end_contact_phone: item.customer_snapshot?.end_contact_phone || '',
           end_contact_email: item.customer_snapshot?.end_contact_email || '',
+          label: item.customer_snapshot?.label || '',
           items: item.line_items?.length
             ? item.line_items.map((line) => ({ ...line, line_note: line.line_note || '', is_rot_work: line.is_rot_work ?? false, house_work_type: line.house_work_type || 'CONSTRUCTION', density: line.density || '' }))
             : [createEmptyLineItem()],
@@ -1723,6 +1728,18 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
                 Obligatoriskt. Personen hos kunden som offerten gäller. Förifylls från kundkortet men kan ändras per offert – visas som ”Er referens” på Fortnox-offerten och följer med till order och faktura.
               </p>
             </Field>
+            {draft.quote_type === 'business' ? (
+              <Field label="Märkning" className="md:col-span-2">
+                <Input
+                  value={draft.label}
+                  onChange={(e) => setDraft((d) => ({ ...d, label: e.target.value }))}
+                  placeholder="Ex. projekt-/beställningsnr hos kunden"
+                />
+                <p className="mt-1 text-[11px] leading-snug text-slate-400">
+                  Valfri. Visas som ”Ert referensnummer” på Fortnox-offerten och följer med till order och faktura. (Motsvarar fastighetsbeteckningen för privat ROT-kund – samma fält.)
+                </p>
+              </Field>
+            ) : null}
             <Field label="Beskrivning" className="md:col-span-2">
               <Textarea value={draft.description} onChange={(e) => setDraft((d) => ({ ...d, description: e.target.value }))} rows={3} placeholder="Kort om omfattning eller vad som offereras" />
             </Field>

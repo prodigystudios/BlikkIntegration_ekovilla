@@ -2,7 +2,7 @@ import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { parseDecimal } from '@/lib/shared/number';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
 import { fortnoxGet, fortnoxGetBinary, fortnoxPost, fortnoxPut, FortnoxApiError, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
-import { buildEndContactNote, claimFortnoxPush, resolveOurReference, resolveReverseVat } from './helpers';
+import { appendFortnoxTextNote, buildEndContactNote, buildRotPropertyNote, claimFortnoxPush, resolveOurReference, resolveReverseVat } from './helpers';
 import { DEFAULT_ROT_HOUSE_WORK_TYPE } from './types';
 
 type WorkOrderRow = {
@@ -21,6 +21,7 @@ type WorkOrderRow = {
     end_contact_name?: string | null;
     end_contact_phone?: string | null;
     end_contact_email?: string | null;
+    label?: string | null;
   } | null;
   project_name: string;
   client_name: string | null;
@@ -78,9 +79,9 @@ function orderTextRow(description: string): FortnoxOrderRow {
 // Exported for tests. NOTE: Fortnox order rows use `OrderedQuantity` (offer rows use
 // `Quantity`, invoice rows use `DeliveredQuantity`) — sending `Quantity` to /orders
 // returns 400 "Felaktigt fältnamn (Quantity)".
-export function buildOrderRows(lineItems: WorkOrderRow['line_items'], vatPercent: number, rotEnabled: boolean, reverseVat = false): FortnoxOrderRow[] {
+export function buildOrderRows(lineItems: WorkOrderRow['line_items'], vatPercent: number, rotEnabled: boolean, reverseVat = false, rotPropertyNote: string | null = null): FortnoxOrderRow[] {
   if (!lineItems?.length) return [];
-  return lineItems.flatMap((item) => {
+  const rows = lineItems.flatMap((item) => {
     // parseDecimal handles Swedish comma input ("1,5") that plain parseFloat truncates.
     const price = item.unit_price ? parseDecimal(item.unit_price) : (item.article_price ?? 0);
     // For m³ rows the quantity is the computed volume, not the (empty) quantity field.
@@ -117,6 +118,11 @@ export function buildOrderRows(lineItems: WorkOrderRow['line_items'], vatPercent
     if (lineNote && item.article_name?.trim()) return [row, orderTextRow(lineNote)];
     return [row];
   });
+
+  // ROT property note (Fastighetsbeteckning / BRF org.nr) as a trailing text row — Fortnox has no
+  // API field for it. Only relevant for a standalone order with ROT (the offer→order path inherits
+  // the offer's rows, which already carry it); the caller passes null otherwise.
+  return appendFortnoxTextNote(rows, rotPropertyNote);
 }
 
 // Resolves the Fortnox customer number from an already-fetched linked quote.
@@ -206,8 +212,9 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
         end_contact_name?: string | null;
         end_contact_phone?: string | null;
         end_contact_email?: string | null;
+        label?: string | null;
       } | null;
-      rot_details: { enabled?: boolean | null } | null;
+      rot_details: { enabled?: boolean | null; property_designation?: string | null; brf_org_number?: string | null } | null;
     };
 
     const linkedQuote: LinkedQuote | null = workOrder.quote_id
@@ -279,7 +286,17 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
         linkedQuote?.customer_id ?? workOrder.customer_id,
       );
       const rotEnabled = linkedQuote?.rot_details?.enabled === true && !reverseVat;
-      const orderRows = buildOrderRows(workOrder.line_items, vatPercent, rotEnabled, reverseVat);
+      // "Ert referensnummer" (order field = YourOrderNumber): ROT villa fastighetsbeteckning, else
+      // the företag märkning (snapshot.label). Mirrors offers.ts; standalone ROT is a rare path.
+      // Bostadsrätt (BRF) can't use one field → text row via buildRotPropertyNote.
+      const hasProperty = rotEnabled && !!linkedQuote?.rot_details?.property_designation?.trim();
+      const hasBrf = rotEnabled && !!linkedQuote?.rot_details?.brf_org_number?.trim();
+      const propertyAsRef = hasProperty && !hasBrf;
+      const referenceNumber = propertyAsRef
+        ? linkedQuote!.rot_details!.property_designation!.trim()
+        : (snapshot?.label?.trim() || null);
+      const rotPropertyNote = propertyAsRef ? null : (rotEnabled ? buildRotPropertyNote(linkedQuote?.rot_details) : null);
+      const orderRows = buildOrderRows(workOrder.line_items, vatPercent, rotEnabled, reverseVat, rotPropertyNote);
 
       const response = await fortnoxPost<{ Order: { DocumentNumber: string } }>('/orders', {
         Order: {
@@ -287,6 +304,8 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
           OrderDate: new Date().toISOString().slice(0, 10),
           ...(ourReference ? { OurReference: ourReference } : {}),
           ...(snapshot?.contact_name ? { YourReference: snapshot.contact_name } : {}),
+          // "Ert referensnummer" — order field is YourOrderNumber (offer uses YourReferenceNumber).
+          ...(referenceNumber ? { YourOrderNumber: referenceNumber } : {}),
           // No VATType on the payload (Fortnox rejects it on offers; we keep orders consistent):
           // the customer card drives the VAT regime, and rows carry the matching VAT (0 % for
           // reverse charge, see buildOrderRows) so header and rows never diverge.
@@ -439,16 +458,25 @@ export async function updateWorkOrderInFortnox(workOrderId: string): Promise<Pus
     .eq('id', workOrderId);
 
   try {
+    type EditRotDetails = { enabled?: boolean | null; property_designation?: string | null; brf_org_number?: string | null };
     const { data: linkedQuote } = workOrder.quote_id
       ? await supabase.from('crm_quotes').select('rot_details').eq('id', workOrder.quote_id).maybeSingle()
-      : { data: null as { rot_details: { enabled?: boolean | null } | null } | null };
+      : { data: null as { rot_details: EditRotDetails | null } | null };
 
     const vatPercent = typeof workOrder.vat_percent === 'number' ? workOrder.vat_percent : 25;
     // Reverse charge (byggmoms) must be honoured on the edit-resync too, else editing an article
     // re-PUTs the order at 25 % VAT and silently un-does the 0 %-rate push. ROT is excluded then.
     const reverseVat = await resolveReverseVat(supabase, workOrder.customer_snapshot?.reverse_vat, workOrder.customer_id);
-    const rotEnabled = (linkedQuote as any)?.rot_details?.enabled === true && !reverseVat;
-    const orderRows = buildOrderRows(workOrder.line_items, vatPercent, rotEnabled, reverseVat);
+    const rotDetails = (linkedQuote as { rot_details?: EditRotDetails | null } | null)?.rot_details ?? null;
+    const rotEnabled = rotDetails?.enabled === true && !reverseVat;
+    // This PUT replaces ALL OrderRows, so a ROT property note that rides as a text ROW (bostadsrätt)
+    // would be WIPED unless we regenerate it here. Villa/företag put it in YourOrderNumber (header),
+    // which this rows-only PUT doesn't touch, so their note stays null here. Mirrors the create path.
+    const hasProperty = rotEnabled && !!rotDetails?.property_designation?.trim();
+    const hasBrf = rotEnabled && !!rotDetails?.brf_org_number?.trim();
+    const propertyAsRef = hasProperty && !hasBrf;
+    const rotPropertyNote = propertyAsRef ? null : (rotEnabled ? buildRotPropertyNote(rotDetails) : null);
+    const orderRows = buildOrderRows(workOrder.line_items, vatPercent, rotEnabled, reverseVat, rotPropertyNote);
 
     await fortnoxPut(`/orders/${workOrder.fortnox_order_number}`, { Order: { OrderRows: orderRows } });
 

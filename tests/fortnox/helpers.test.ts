@@ -4,7 +4,7 @@ import { describe, it, expect, vi } from 'vitest';
 // '@/lib/supabase/server' (i typposition). Mocka den så testet inte drar in env-beroenden.
 vi.mock('@/lib/supabase/server', () => ({ getSupabaseAdmin: vi.fn() }));
 
-import { claimFortnoxPush } from '@/lib/domains/fortnox/helpers';
+import { claimFortnoxPush, buildRotPropertyNote, appendFortnoxTextNote } from '@/lib/domains/fortnox/helpers';
 
 // Mock av supabase-kedjan. claimFortnoxPush gör upp till TVÅ försök, vart och ett:
 //   .from().update().eq().neq()/.eq().lt().select() → { data, error }
@@ -66,5 +66,50 @@ describe('claimFortnoxPush', () => {
     const builder = supabase.from.mock.results[0].value;
     expect('or' in builder).toBe(false);
     expect(builder.neq).toHaveBeenCalledWith('fortnox_sync_status', 'pending');
+  });
+});
+
+describe('buildRotPropertyNote', () => {
+  it('combines property designation and BRF org number on one line (double-space separated)', () => {
+    expect(buildRotPropertyNote({ property_designation: 'Haggården 6:3', brf_org_number: '769600-1234' }))
+      .toBe('Fastighetsbeteckning: Haggården 6:3  BRF org.nr: 769600-1234');
+  });
+
+  it('handles property designation only', () => {
+    expect(buildRotPropertyNote({ property_designation: 'Haggården 6:3' }))
+      .toBe('Fastighetsbeteckning: Haggården 6:3');
+  });
+
+  it('handles BRF org number only', () => {
+    expect(buildRotPropertyNote({ brf_org_number: '769600-1234' })).toBe('BRF org.nr: 769600-1234');
+  });
+
+  it('returns null when nothing is entered (incl. blanks/null)', () => {
+    expect(buildRotPropertyNote(null)).toBeNull();
+    expect(buildRotPropertyNote({})).toBeNull();
+    expect(buildRotPropertyNote({ property_designation: '   ', brf_org_number: '' })).toBeNull();
+  });
+});
+
+describe('appendFortnoxTextNote', () => {
+  it('adds a new text row when the last row is a priced article row', () => {
+    const rows = [{ Description: 'Lösull', Price: 100, Quantity: 1 }];
+    const out = appendFortnoxTextNote(rows, 'Fastighetsbeteckning: Haggården 6:3');
+    expect(out).toHaveLength(2);
+    expect(out[1]).toEqual({ Description: 'Fastighetsbeteckning: Haggården 6:3' });
+  });
+
+  it('MERGES into the last row when it is already a text row (no two consecutive text rows)', () => {
+    // Two consecutive text rows make Fortnox turn the second into a bogus priced row.
+    const rows = [{ Description: 'Lösull', Price: 100 }, { Description: 'Vindsbjälklag' }];
+    const out = appendFortnoxTextNote(rows, 'Fastighetsbeteckning: Haggården 6:3');
+    expect(out).toHaveLength(2);
+    expect(out[1].Description).toBe('Vindsbjälklag  Fastighetsbeteckning: Haggården 6:3');
+  });
+
+  it('is a no-op when the note is null/empty', () => {
+    const rows = [{ Description: 'Lösull', Price: 100 }];
+    expect(appendFortnoxTextNote(rows, null)).toHaveLength(1);
+    expect(appendFortnoxTextNote(rows, '')).toHaveLength(1);
   });
 });

@@ -2,7 +2,7 @@ import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
 import { lineItemUnitPrice, lineItemDiscountPercent, lineItemEffectiveUnitPrice } from '@/lib/domains/crm/pricing';
 import { fortnoxGet, fortnoxPost, fortnoxPut, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
-import { claimFortnoxPush, resolveReverseVat } from './helpers';
+import { appendFortnoxTextNote, buildRotPropertyNote, claimFortnoxPush, resolveReverseVat } from './helpers';
 import { pushWorkOrderToFortnox } from './orders';
 import { DEFAULT_ROT_HOUSE_WORK_TYPE } from './types';
 
@@ -108,8 +108,9 @@ export function buildInvoiceRows(
   vatPercent: number,
   rotEnabled: boolean,
   reverseVat = false,
+  rotPropertyNote: string | null = null,
 ) {
-  const rows: Array<Record<string, unknown>> = [];
+  const rows: Array<Record<string, unknown> & { Description: string }> = [];
   (lineItems ?? []).forEach((item, index) => {
     const qty = requestByIndex.get(index) ?? 0;
     if (qty <= 0) return;
@@ -132,7 +133,10 @@ export function buildInvoiceRows(
         : {}),
     });
   });
-  return rows;
+  // ROT property note (Fastighetsbeteckning / BRF org.nr) as a trailing text row — Fortnox has no
+  // API field for it. A partial invoice builds its own rows (not copied from the order), so it's
+  // appended here per round. Only set on a ROT order (the caller passes null otherwise).
+  return appendFortnoxTextNote(rows, rotPropertyNote);
 }
 
 // This round's subtotal ex VAT (quantity × discounted unit price), matching pricing_summary.subtotal.
@@ -157,7 +161,7 @@ type WorkOrderRow = {
   line_items_invoicing_snapshot: PartialInvoiceLineItem[] | null;
   partial_invoicing_started_at: string | null;
   fortnox_order_number: string | null;
-  rot_details: { enabled?: boolean | null } | null;
+  rot_details: { enabled?: boolean | null; property_designation?: string | null; brf_org_number?: string | null } | null;
 };
 
 type FortnoxOrderHeader = {
@@ -232,7 +236,8 @@ export async function createPartialInvoice(
     const header = order.Order ?? {};
     if (header.CustomerNumber == null) throw new Error('Fortnox-ordern saknar kundkoppling');
 
-    const invoiceRows = buildInvoiceRows(basis, requestByIndex, vatPercent, rotEnabled, reverseVat);
+    const rotPropertyNote = rotEnabled ? buildRotPropertyNote(workOrder.rot_details) : null;
+    const invoiceRows = buildInvoiceRows(basis, requestByIndex, vatPercent, rotEnabled, reverseVat, rotPropertyNote);
     if (!invoiceRows.length) throw new PartialInvoiceError('Inget antal att fakturera angavs.');
 
     // A partial invoice is a STANDALONE Fortnox invoice (it can't use the order's createinvoice,

@@ -77,4 +77,14 @@ describe('buildOrderRows', () => {
     const [normal] = buildOrderRows([{ pricing_mode: 'item', unit_price: '100', quantity: '1' }], 25, false, false);
     expect((normal as any).VAT).toBe(25);
   });
+
+  it('appends the ROT property note as a trailing text row (standalone-order path)', () => {
+    const rows = buildOrderRows(
+      [{ article_name: 'Lösull', unit_price: '100', quantity: '1' }],
+      25, true, false, 'Fastighetsbeteckning: Haggården 6:3  BRF org.nr: 769600-1234',
+    );
+    expect(rows).toHaveLength(2);
+    expect(rows[1].Description).toBe('Fastighetsbeteckning: Haggården 6:3  BRF org.nr: 769600-1234');
+    expect((rows[1] as any).OrderedQuantity).toBeUndefined();
+  });
 });

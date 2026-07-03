@@ -2,7 +2,7 @@ import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { parseDecimal } from '@/lib/shared/number';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
 import { fortnoxPost, fortnoxPut, fortnoxGet, fortnoxGetBinary, FortnoxApiError, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
-import { buildEndContactNote, claimFortnoxPush, resolveOurReference, resolveReverseVat } from './helpers';
+import { appendFortnoxTextNote, buildEndContactNote, buildRotPropertyNote, claimFortnoxPush, resolveOurReference, resolveReverseVat } from './helpers';
 import { buildFortnoxCustomerPayload, createFortnoxCustomer, splitSwedishName, buildFortnoxAddress, type FortnoxCustomerSource } from './customers';
 import { DEFAULT_ROT_HOUSE_WORK_TYPE } from './types';
 
@@ -55,6 +55,7 @@ type QuoteRow = {
     end_contact_name?: string | null;
     end_contact_phone?: string | null;
     end_contact_email?: string | null;
+    label?: string | null;
   } | null;
   assigned_to: string | null;
   rot_details: {
@@ -114,10 +115,11 @@ export function buildOfferRows(
   vatPercent: number,
   rotEnabled: boolean,
   reverseVat = false,
+  rotPropertyNote: string | null = null,
 ): FortnoxOfferRow[] {
   if (!lineItems.length) return [];
 
-  return lineItems.flatMap((item) => {
+  const rows = lineItems.flatMap((item) => {
     // parseDecimal handles Swedish comma input ("1,5") that plain parseFloat truncates.
     const price = item.unit_price ? parseDecimal(item.unit_price) : (item.article_price ?? 0);
     // For m³ rows the quantity is the computed volume, not the (empty) quantity field.
@@ -172,6 +174,11 @@ export function buildOfferRows(
       .join('  ');
     return detail ? [row, offerTextRow(detail)] : [row];
   });
+
+  // ROT property note (Fastighetsbeteckning / BRF org.nr) as a trailing text row — Fortnox has no
+  // API field for it, so it rides along as a comment for whoever fills the husarbete dialog. Only
+  // set on ROT documents (the caller passes null otherwise). Propagates offer → order → invoice.
+  return appendFortnoxTextNote(rows, rotPropertyNote);
 }
 
 // Resolves the Fortnox customer number for a quote.
@@ -402,7 +409,21 @@ export async function pushQuoteToFortnox(quoteId: string): Promise<PushOfferResu
     // charge applies, rows go out at 0 % VAT (the customer card supplies the SEREVERSEDVAT regime).
     const reverseVat = await resolveReverseVat(supabase, quote.customer_snapshot?.reverse_vat, quote.customer_id);
     const rotEnabled = quote.rot_details?.enabled === true && !reverseVat;
-    const offerRows = buildOfferRows(lineItems, vatPercent, rotEnabled, reverseVat);
+    // "Ert referensnummer" (offer field = YourReferenceNumber; orders/invoices use YourOrderNumber —
+    // offers REJECT YourOrderNumber with 2001399, like VATType). Two sources feed the SAME field,
+    // and they never collide (ROT = private, märkning = företag):
+    // - ROT villa (fastighetsbeteckning, no BRF): the property IS the customer's house reference.
+    // - Otherwise (företag): the free-text märkning (customer_snapshot.label).
+    // Bostadsrätt (BRF org.nr) can't use it — two values (org.nr + lägenhetsnr) — so it rides as a
+    // text row (buildRotPropertyNote / appendFortnoxTextNote). Never in Remarks (overwrites offerttext).
+    const hasProperty = rotEnabled && !!quote.rot_details?.property_designation?.trim();
+    const hasBrf = rotEnabled && !!quote.rot_details?.brf_org_number?.trim();
+    const propertyAsRef = hasProperty && !hasBrf;
+    const referenceNumber = propertyAsRef
+      ? quote.rot_details!.property_designation!.trim()
+      : (quote.customer_snapshot?.label?.trim() || null);
+    const rotPropertyNote = propertyAsRef ? null : (rotEnabled ? buildRotPropertyNote(quote.rot_details) : null);
+    const offerRows = buildOfferRows(lineItems, vatPercent, rotEnabled, reverseVat, rotPropertyNote);
 
     const ourReference = await resolveOurReference(quote.assigned_to, supabase);
 
@@ -414,15 +435,11 @@ export async function pushQuoteToFortnox(quoteId: string): Promise<PushOfferResu
     const deliveryZip = snapshot?.delivery_postal_code;
     const deliveryCity = snapshot?.delivery_city;
 
-    // Build Remarks: description first, then ROT property designation / BRF org number
-    // on their own lines (Fortnox offers have no structured field for these).
-    const propertyDesignation = rotEnabled && quote.rot_details?.property_designation
-      ? `Fastighetsbeteckning: ${quote.rot_details.property_designation}`
-      : null;
-    const brfOrgNumber = rotEnabled && quote.rot_details?.brf_org_number
-      ? `BRF org.nr: ${quote.rot_details.brf_org_number}`
-      : null;
-    const remarks = [quote.description, propertyDesignation, brfOrgNumber, buildEndContactNote(snapshot)].filter(Boolean).join('\n') || undefined;
+    // Remarks now carries ONLY the on-site contact note. The quote's free-text `description` and
+    // the ROT property designation / BRF org.nr are deliberately kept OUT of Remarks — Fortnox's
+    // Remarks field renders as the offer's body text and would overwrite the company's standard
+    // offerttext. Description stays CRM-internal; the ROT property info rides as a text row instead.
+    const remarks = buildEndContactNote(snapshot) || undefined;
 
     const offerBody = {
       Offer: {
@@ -431,6 +448,8 @@ export async function pushQuoteToFortnox(quoteId: string): Promise<PushOfferResu
         ...(quote.valid_until ? { ExpireDate: quote.valid_until } : {}),
         ...(ourReference ? { OurReference: ourReference } : {}),
         ...(snapshot?.contact_name ? { YourReference: snapshot.contact_name } : {}),
+        // "Ert referensnummer": ROT villa fastighetsbeteckning or företag märkning (offer field name).
+        ...(referenceNumber ? { YourReferenceNumber: referenceNumber } : {}),
         // NOTE: do NOT send VATType on offers — Fortnox rejects it (400 "Felaktigt fältnamn
         // (VATType)", offers have no such field). The document's VAT regime is taken from the
         // customer card (kept in sync with our reverse_vat), and we send rows at the MATCHING VAT

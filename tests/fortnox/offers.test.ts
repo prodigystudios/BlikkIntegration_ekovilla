@@ -78,6 +78,27 @@ describe('buildOfferRows', () => {
     expect(rows[1].Price).toBeUndefined();
   });
 
+  it('appends the ROT property note as a trailing text row (after a priced article row)', () => {
+    const rows = buildOfferRows(
+      [{ pricing_mode: 'item', article_name: 'Lösull', unit_price: '100', quantity: '1' }],
+      25, false, false, 'Fastighetsbeteckning: Haggården 6:3',
+    );
+    expect(rows).toHaveLength(2);
+    expect(rows[1]).toEqual({ Description: 'Fastighetsbeteckning: Haggården 6:3' });
+  });
+
+  it('MERGES the ROT note into the measurement/Radtext row so there are never two consecutive text rows', () => {
+    // The last item already emits a measurement+Radtext text row; the ROT note must join it, not
+    // become a second consecutive text row (which Fortnox turns into a bogus priced row).
+    const rows = buildOfferRows(
+      [{ pricing_mode: 'm3', article_name: 'Lösull', m2: '100', thickness_mm: '200', unit_price: '700', line_note: 'Vindsbjälklag' }],
+      25, false, false, 'Fastighetsbeteckning: Haggården 6:3',
+    );
+    expect(rows).toHaveLength(2);
+    expect(rows[1].Description).toBe('Yta: 100 m², Tjocklek: 200 mm  Vindsbjälklag  Fastighetsbeteckning: Haggården 6:3');
+    expect(rows[1].Price).toBeUndefined();
+  });
+
   it('falls back to article_price when unit_price is empty', () => {
     const [row] = buildOfferRows([{ pricing_mode: 'item', unit_price: '', article_price: 900, quantity: '5' }], 25, false);
     expect(row.Price).toBe(900);

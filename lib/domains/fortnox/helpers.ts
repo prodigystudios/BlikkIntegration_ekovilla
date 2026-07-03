@@ -87,6 +87,41 @@ export function buildEndContactNote(
   return parts.length ? `Kontaktperson på arbetsplatsen: ${parts.join(', ')}` : null;
 }
 
+// Builds a ROT property note (Fastighetsbeteckning + BRF org.nr) for a text row on the
+// offer/order/invoice. Fortnox has NO API field for the ROT property designation — it must be
+// typed manually into the husarbete dialog — so we surface it as a plain comment line for whoever
+// finalizes the invoice. Returns null when nothing was entered. Both values share ONE line
+// (double-space separated) so they never become two consecutive text rows (which Fortnox turns
+// into a bogus priced row). Newlines are stripped by Fortnox, so whitespace is the separator.
+export function buildRotPropertyNote(
+  rot: { property_designation?: string | null; brf_org_number?: string | null } | null | undefined,
+): string | null {
+  const property = rot?.property_designation?.trim();
+  const brf = rot?.brf_org_number?.trim();
+  const parts: string[] = [];
+  if (property) parts.push(`Fastighetsbeteckning: ${property}`);
+  if (brf) parts.push(`BRF org.nr: ${brf}`);
+  return parts.length ? parts.join('  ') : null;
+}
+
+// Appends a document-level text note to a Fortnox row list WITHOUT creating two consecutive
+// text rows — Fortnox treats a second consecutive text row (Description only, no amounts) as a
+// new priced product row. If the last row is already a text row we merge the note into it
+// (double-space separated); otherwise we push a new text row. Mutates and returns `rows`.
+export function appendFortnoxTextNote<T extends { Description: string }>(
+  rows: T[], note: string | null | undefined,
+): T[] {
+  if (!note) return rows;
+  const last = rows[rows.length - 1];
+  const lastIsTextRow = !!last && Object.keys(last).length === 1 && 'Description' in last;
+  if (lastIsTextRow) {
+    last.Description = `${last.Description}  ${note}`;
+  } else {
+    rows.push({ Description: note } as T);
+  }
+  return rows;
+}
+
 // Looks up the assigned user's full name for use as OurReference in Fortnox documents.
 export async function resolveOurReference(
   userId: string | null,

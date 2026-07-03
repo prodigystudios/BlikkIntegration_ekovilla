@@ -31,6 +31,7 @@ function customer(overrides: Partial<QuoteCustomerFields> = {}): QuoteCustomerFi
     end_contact_name: '',
     end_contact_phone: '',
     end_contact_email: '',
+    label: '',
     ...overrides,
   };
 }
@@ -134,10 +135,15 @@ describe('buildCustomerSnapshot', () => {
         'city', 'company_name', 'contact_name', 'customer_name', 'delivery_address',
         'delivery_city', 'delivery_postal_code',
         'email', 'end_contact_email', 'end_contact_name', 'end_contact_phone',
-        'invoice_address', 'organization_number', 'personal_number', 'phone',
+        'invoice_address', 'label', 'organization_number', 'personal_number', 'phone',
         'postal_code', 'reverse_vat', 'street_address', 'visit_address',
       ].sort(),
     );
+  });
+
+  it('label (märkning): null när inget anges, trimmad text annars', () => {
+    expect(buildCustomerSnapshot(customer()).label).toBeNull();
+    expect(buildCustomerSnapshot(customer({ label: '  Projekt 42  ' })).label).toBe('Projekt 42');
   });
 
   it('end_contact_*: null när inget anges, speglar fälten annars', () => {

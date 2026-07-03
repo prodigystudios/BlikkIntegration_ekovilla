@@ -51,6 +51,8 @@ const customerSnapshotSchema = z.object({
   end_contact_name: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
   end_contact_phone: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
   end_contact_email: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
+  // Free-text märkning (företag) → Fortnox "Ert referensnummer". null unless entered.
+  label: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
   // Point-in-time byggmoms flag (omvänd skattskyldighet). null = unknown (legacy rows).
   reverse_vat: z.boolean().nullable().optional().default(null),
 });

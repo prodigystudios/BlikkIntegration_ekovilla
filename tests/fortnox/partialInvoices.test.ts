@@ -114,6 +114,13 @@ describe('buildInvoiceRows', () => {
     const [normal] = buildInvoiceRows([itemLine()], new Map([[0, 10]]), 25, false, false);
     expect((normal as any).VAT).toBe(25);
   });
+
+  it('appends the ROT property note as a trailing text row on the partial invoice', () => {
+    const rows = buildInvoiceRows([itemLine()], new Map([[0, 10]]), 25, true, false, 'Fastighetsbeteckning: Haggården 6:3');
+    expect(rows).toHaveLength(2);
+    expect(rows[1]).toEqual({ Description: 'Fastighetsbeteckning: Haggården 6:3' });
+    expect((rows[1] as any).DeliveredQuantity).toBeUndefined();
+  });
 });
 
 describe('roundSubtotal', () => {

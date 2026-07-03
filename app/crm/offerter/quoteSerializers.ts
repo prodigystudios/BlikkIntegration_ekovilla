@@ -34,6 +34,10 @@ export type QuoteCustomerFields = {
   end_contact_name: string;
   end_contact_phone: string;
   end_contact_email: string;
+  // Free-text marking/reference (företag) → Fortnox "Ert referensnummer" (YourReferenceNumber on
+  // the offer, YourOrderNumber on order/invoice). The business counterpart of a private ROT
+  // customer's fastighetsbeteckning, which uses the same Fortnox field.
+  label: string;
 };
 
 // Two address strings are "the same place" if their trimmed, case-folded forms match.
@@ -95,6 +99,8 @@ export function buildCustomerSnapshot(d: QuoteCustomerFields, opts?: { reverseVa
     end_contact_name: hasEndContact ? d.end_contact_name || null : null,
     end_contact_phone: hasEndContact ? d.end_contact_phone || null : null,
     end_contact_email: hasEndContact ? d.end_contact_email || null : null,
+    // Märkning (företag) → Fortnox "Ert referensnummer". null unless entered.
+    label: d.label?.trim() || null,
     // Point-in-time byggmoms (omvänd skattskyldighet). Stored on the snapshot so the Fortnox
     // push (resolveReverseVat) can decide the 0 %-row VAT regime without depending on the live
     // customer record — essential for snapshot-only quotes with no linked customer_id. `null`
