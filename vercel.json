@@ -4,6 +4,10 @@
     {
       "path": "/api/dashboard-notes/reminders/dispatch",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/notifications/cleanup",
+      "schedule": "0 3 * * *"
     }
   ]
 }
