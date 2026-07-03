@@ -45,6 +45,10 @@ Miljövariabler:
 - MAIL_FROM
 - OFFERT_CUSTOMER_NOTIFY_TO — mottagare (Andreas)
 - OFFERT_CUSTOMER_TOKEN_PEPPER — (valfri) extra “pepper” för token-hash
+- FELANMALAN_NOTIFY_TO — (valfri) extra e-postmottagare för felanmälan, kommaseparerat. Primära mottagare styrs av tabellen `fault_report_recipients`; denna env är bara fallback/override.
+- NEXT_PUBLIC_APP_URL — (valfri) absolut app-URL för djuplänkar i felanmälan-mejl (annars request-origin)
+
+Felanmälan-uppsättning (efter migrationer): kör `supabase/sql/20260703_notifications.sql` och sedan `supabase/sql/20260703_fault_reports.sql`, och seeda arbetsledarna i `fault_report_recipients` (se seed-blocket i slutet av fault_reports-filen, eller lägg till via admin senare).
 
 Supabase migrering:
 

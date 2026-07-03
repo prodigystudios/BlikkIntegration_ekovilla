@@ -1,56 +1,10 @@
-import { NextResponse } from 'next/server';
-import { z } from 'zod';
 import { getCurrentUser } from '@/lib/auth/route';
 import { can, getEffectivePermissions, type PermissionKey } from '@/lib/auth/permissions';
+// Generic HTTP response helpers live in one place; re-exported here so the existing CRM route
+// imports (`from '../_shared'`) keep working unchanged.
+import { ok, routeError, validationError, invalidUuidParam, isNoRowsError } from '@/lib/api/responses';
 
-export function ok<T>(data: T, status = 200) {
-  return NextResponse.json({ ok: true, data }, { status, headers: { 'Cache-Control': 'no-store' } });
-}
-
-export function routeError(status: number, code: string, message: string, details?: unknown) {
-  return NextResponse.json(
-    {
-      ok: false,
-      error: message,
-      errorDetails: { code, message, ...(details !== undefined ? { details } : {}) },
-    },
-    { status, headers: { 'Cache-Control': 'no-store' } },
-  );
-}
-
-function getFirstValidationMessage(parsedError: z.ZodError) {
-  const flattened = parsedError.flatten();
-  const fieldErrorGroups = Object.values(flattened.fieldErrors);
-
-  for (const messages of fieldErrorGroups) {
-    const firstMessage = messages?.find(Boolean);
-    if (firstMessage) return firstMessage;
-  }
-
-  return flattened.formErrors.find(Boolean) || 'Invalid request';
-}
-
-export function validationError(parsedError: z.ZodError) {
-  return routeError(400, 'validation_error', getFirstValidationMessage(parsedError), parsedError.flatten());
-}
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-// Validates a dynamic [id] path segment as a UUID before it reaches a `.eq('id', …)` query.
-// A non-UUID id otherwise makes Postgres throw 22P02 ("invalid input syntax for type uuid"),
-// which surfaces as a 500 with a raw DB string. Returns the 400 response to return early, or
-// null when the id is valid.
-export function invalidUuidParam(id: string | undefined) {
-  return id && UUID_RE.test(id) ? null : routeError(400, 'invalid_id', 'Ogiltigt id.');
-}
-
-// PostgREST returns PGRST116 from `.single()` when a statement matched no rows. For a mutation
-// that means the row is either missing OR hidden from this user by RLS — e.g. a non-owner
-// updating a row whose UPDATE policy is owner/admin while its SELECT policy is open to all CRM
-// readers. Callers use this to answer 403/404 deliberately instead of leaking a raw 500.
-export function isNoRowsError(error: { code?: string } | null | undefined): boolean {
-  return error?.code === 'PGRST116';
-}
+export { ok, routeError, validationError, invalidUuidParam, isNoRowsError };
 
 // Keep only the fields the client actually sent. Zod schemas inject defaults for absent
 // fields; persisting those on a partial PATCH would overwrite untouched columns with

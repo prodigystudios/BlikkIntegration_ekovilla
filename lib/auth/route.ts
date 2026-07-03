@@ -43,6 +43,30 @@ export async function requireAdminUser() {
   return currentUser;
 }
 
+// Fault-report supervisor guard. Reads the SAME source as the fault_reports RLS
+// (is_fault_report_recipient) via the session client, so the route check and RLS agree. Returns
+// the { currentUser, response } shape the CRM guards use.
+export async function requireFaultReportRecipient() {
+  const currentUser = await getCurrentUser();
+  if (!currentUser) {
+    return { currentUser: null, response: NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 }) };
+  }
+
+  const supabase = createRouteHandlerClient({ cookies });
+  const { data, error } = await supabase
+    .from('fault_report_recipients')
+    .select('user_id')
+    .eq('user_id', currentUser.id)
+    .eq('active', true)
+    .maybeSingle();
+
+  if (error || !data) {
+    return { currentUser: null, response: NextResponse.json({ ok: false, error: 'Forbidden' }, { status: 403 }) };
+  }
+
+  return { currentUser, response: null as null };
+}
+
 export async function forbidIfReadonly() {
   const currentUser = await getCurrentUser();
   if (!currentUser) {

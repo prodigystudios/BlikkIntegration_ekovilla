@@ -29,6 +29,7 @@ export const APP_NAV_ITEMS: AppNavItem[] = [
   { href: '/material-kvalitet', label: 'Materialkvalitet', roles: ['member', 'sales', 'admin'] },
 
   // Shared
+  { href: '/felanmalan', label: 'Felanmälan' },
   { href: '/mina-dokument', label: 'Mina dokument', roles: ['member', 'sales', 'admin'] },
   { href: '/crm/dokument', label: 'Dokument', roles: ['sales', 'admin'] },
   { href: '/kontakt-lista', label: 'Kontakt & adresser' },

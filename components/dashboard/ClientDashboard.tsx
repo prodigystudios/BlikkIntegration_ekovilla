@@ -110,6 +110,12 @@ const baseExtra: Record<string, Omit<QuickLink, 'href' | 'title'>> = {
       <path d="M8 9h8M8 12h8M8 15h5" strokeLinecap="round" />
     </svg>
   ) },
+  '/felanmalan': { desc: 'Anmäl trasig utrustning', icon: (
+    <svg width="28" height="28" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor" fill="none" aria-hidden>
+      <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M12 9v4M12 17h.01" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  ) },
 };
 
 const cardClass = cn(crm.cardInner, 'min-h-0');
@@ -162,11 +168,13 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
         { href: '/offert/kalkylator', title: 'Kalkylator Försäljning Privat', ...baseExtra['/offert/kalkylator'] },
         { href: '/crm/dokument', title: 'Dokument', ...baseExtra['/crm/dokument'] },
         { href: '/kontakt-lista', title: 'Kontakt', ...baseExtra['/kontakt-lista'] },
+        { href: '/felanmalan', title: 'Felanmälan', ...baseExtra['/felanmalan'] },
       ];
     }
     if (effectiveRole === 'member') {
       return [
         { href: '/egenkontroll', title: 'Skapa egenkontroll', ...baseExtra['/egenkontroll'] },
+        { href: '/felanmalan', title: 'Felanmälan', ...baseExtra['/felanmalan'] },
         { href: '/bestallning-klader', title: 'Beställ kläder & annat', ...baseExtra['/bestallning-klader'] },
         { href: '/tidrapport', title: 'Tidrapport', ...baseExtra['/tidrapport'] },
         { href: '/kontakt-lista', title: 'Kontakt', ...baseExtra['/kontakt-lista'] },
@@ -184,6 +192,7 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
         { href: '/mina-dokument', title: 'Mina dokument', ...baseExtra['/mina-dokument'] },
         { href: '/crm/dokument', title: 'Dokument', ...baseExtra['/crm/dokument'] },
         { href: '/offert/kalkylator', title: 'Kalkylator Försäljning Privat', ...baseExtra['/offert/kalkylator'] },
+        { href: '/felanmalan', title: 'Felanmälan', ...baseExtra['/felanmalan'] },
       ];
     }
     if (effectiveRole === 'admin') {
@@ -198,9 +207,13 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
         { href: '/crm/dokument', title: 'Dokument', ...baseExtra['/crm/dokument'] },
         { href: '/admin', title: 'Admin', ...baseExtra['/admin'] },
         { href: '/offert/kalkylator', title: 'Kalkylator Försäljning Privat', ...baseExtra['/offert/kalkylator'] },
+        { href: '/felanmalan', title: 'Felanmälan', ...baseExtra['/felanmalan'] },
       ];
     }
-    return [{ href: '/egenkontroll', title: 'Egenkontroll', ...baseExtra['/egenkontroll'] }];
+    return [
+      { href: '/egenkontroll', title: 'Egenkontroll', ...baseExtra['/egenkontroll'] },
+      { href: '/felanmalan', title: 'Felanmälan', ...baseExtra['/felanmalan'] },
+    ];
   }, [effectiveRole, role]);
 
   const [timeModalOpen, setTimeModalOpen] = useState(false);
