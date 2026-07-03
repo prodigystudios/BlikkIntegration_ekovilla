@@ -45,6 +45,7 @@ function caretCoordinates(el: HTMLTextAreaElement, index: number): { top: number
 export default function MentionTextarea({
   value,
   onChange,
+  onMention,
   users,
   rows,
   placeholder,
@@ -52,6 +53,9 @@ export default function MentionTextarea({
 }: {
   value: string;
   onChange: (next: string) => void;
+  // Fires when a user is picked from the autocomplete, so the caller can collect mentioned ids
+  // (the id is otherwise discarded — the body only carries the plain "@Name" text).
+  onMention?: (user: MentionUser) => void;
   users: MentionUser[];
   rows?: number;
   placeholder?: string;
@@ -102,6 +106,7 @@ export default function MentionTextarea({
     const after = value.slice(caret);
     const insert = `@${name} `;
     onChange(`${before}${insert}${after}`);
+    onMention?.(user);
     setOpen(false);
     const nextCaret = before.length + insert.length;
     requestAnimationFrame(() => {

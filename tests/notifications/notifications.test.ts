@@ -5,6 +5,7 @@ import { expandNotificationToRecipients } from '@/lib/domains/notifications/muta
 import {
   buildFaultReportCreatedNotification,
   buildFaultReportUpdatedNotification,
+  buildWorkOrderCommentMentionNotification,
 } from '@/lib/domains/notifications/payload';
 import type { NotificationRow } from '@/lib/domains/notifications/types';
 
@@ -69,6 +70,31 @@ describe('fault report notification payload builders', () => {
     expect(n.title).toContain('Pågår');
     expect(n.href).toContain('r1');
     expect(n.href).not.toContain('scope=inbox');
+  });
+});
+
+describe('buildWorkOrderCommentMentionNotification', () => {
+  it('links to the work order and carries the entity ref + order number', () => {
+    const n = buildWorkOrderCommentMentionNotification({
+      workOrderId: 'wo1',
+      orderNumber: 'AO-1042',
+      projectName: 'Villa Ek',
+      commenterName: 'Kalle',
+    });
+    expect(n.type).toBe('work_order.mention');
+    expect(n.entity_type).toBe('work_order');
+    expect(n.entity_id).toBe('wo1');
+    expect(n.href).toBe('/crm/arbetsorder/wo1');
+    expect(n.title).toContain('Kalle');
+    expect(n.body).toContain('AO-1042');
+    expect(n.body).toContain('Villa Ek');
+  });
+
+  it('degrades gracefully when order number / project / commenter are missing', () => {
+    const n = buildWorkOrderCommentMentionNotification({ workOrderId: 'wo2' });
+    expect(n.href).toBe('/crm/arbetsorder/wo2');
+    expect(n.title).toContain('Någon');
+    expect(n.body).toContain('en arbetsorder');
   });
 });
 

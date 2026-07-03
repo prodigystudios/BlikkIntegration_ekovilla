@@ -45,6 +45,8 @@ export const createWorkOrderTimeEntrySchema = z.object({
 
 export const createWorkOrderCommentSchema = z.object({
   body: z.string().trim().min(1, 'Kommentar krävs'),
+  // Ids of users @-mentioned in the body (client-supplied; validated server-side before notifying).
+  mentioned_user_ids: z.array(z.string().uuid()).optional().default([]),
 });
 
 export const listCrmWorkOrdersQuerySchema = z.object({
