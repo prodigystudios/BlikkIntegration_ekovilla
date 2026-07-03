@@ -83,12 +83,12 @@ export function useWorkOrderActivity(workOrderId: string) {
     } catch { toast.error('Kunde inte ta bort tidrad'); return false; }
   }
 
-  async function createComment(body: string): Promise<boolean> {
+  async function createComment(body: string, mentionedUserIds: string[] = []): Promise<boolean> {
     if (!body.trim()) { toast.error('Kommentar krävs'); return false; }
     try {
       const res = await fetch(`/api/crm/work-orders/${workOrderId}/comments`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ body }),
+        body: JSON.stringify({ body, mentioned_user_ids: mentionedUserIds }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte spara kommentar'); return false; }

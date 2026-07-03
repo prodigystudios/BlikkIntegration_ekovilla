@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 import { formatDateTime } from '@/app/crm/lib/format';
@@ -20,7 +20,7 @@ type Props = {
   loading: boolean;
   currentUserId: string | null;
   mentionUsers: MentionUser[];
-  onCreate: (body: string) => Promise<boolean>;
+  onCreate: (body: string, mentionedUserIds: string[]) => Promise<boolean>;
   onUpdate: (id: string, body: string) => Promise<boolean>;
   onDelete: (id: string) => Promise<boolean>;
 };
@@ -28,6 +28,9 @@ type Props = {
 export default function WorkOrderCommentsTab({ comments, loading, currentUserId, mentionUsers, onCreate, onUpdate, onDelete }: Props) {
   const [draft, setDraft] = useState('');
   const [creating, setCreating] = useState(false);
+  // Ids picked from the @-autocomplete for the new comment (id → full_name). The id is otherwise
+  // lost (the body only has plain "@Name" text); at submit we keep only those still present.
+  const mentionedRef = useRef<Map<string, string>>(new Map());
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editBody, setEditBody] = useState('');
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -35,8 +38,15 @@ export default function WorkOrderCommentsTab({ comments, loading, currentUserId,
 
   async function submitCreate() {
     setCreating(true);
-    const ok = await onCreate(draft);
-    if (ok) setDraft('');
+    // Only notify people whose @mention is still in the text (a removed mention shouldn't notify).
+    const mentionedIds = [...mentionedRef.current.entries()]
+      .filter(([, name]) => draft.includes(`@${name}`))
+      .map(([id]) => id);
+    const ok = await onCreate(draft, mentionedIds);
+    if (ok) {
+      setDraft('');
+      mentionedRef.current.clear();
+    }
     setCreating(false);
   }
 
@@ -113,7 +123,14 @@ export default function WorkOrderCommentsTab({ comments, loading, currentUserId,
 
       <div className={cn(crm.cardInner, 'grid gap-3 lg:content-start')}>
         <p className={crm.sectionTitle}>Ny kommentar</p>
-        <MentionTextarea value={draft} onChange={setDraft} users={mentionUsers} rows={8} placeholder="Skriv en kommentar… använd @ för att tagga någon" />
+        <MentionTextarea
+          value={draft}
+          onChange={setDraft}
+          onMention={(u) => { if (u.full_name) mentionedRef.current.set(u.id, u.full_name); }}
+          users={mentionUsers}
+          rows={8}
+          placeholder="Skriv en kommentar… använd @ för att tagga någon"
+        />
         <button type="button" onClick={submitCreate} disabled={creating} className={crm.saveButton}>
           {creating ? 'Sparar kommentar…' : 'Spara kommentar'}
         </button>

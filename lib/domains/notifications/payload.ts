@@ -22,6 +22,25 @@ export function buildFaultReportCreatedNotification(input: FaultReportNotificati
   };
 }
 
+// Sent to each user @-mentioned in a work order comment.
+export function buildWorkOrderCommentMentionNotification(input: {
+  workOrderId: string;
+  orderNumber?: string | null;
+  projectName?: string | null;
+  commenterName?: string | null;
+}): NotificationContent {
+  const ref = input.orderNumber ? `#${input.orderNumber}` : 'en arbetsorder';
+  const where = input.projectName ? `${ref} · ${input.projectName}` : ref;
+  return {
+    type: 'work_order.mention',
+    title: `${input.commenterName || 'Någon'} nämnde dig i en kommentar`,
+    body: `Arbetsorder ${where}`,
+    href: `/crm/arbetsorder/${input.workOrderId}`,
+    entity_type: 'work_order',
+    entity_id: input.workOrderId,
+  };
+}
+
 // Sent to the reporter when a supervisor updates status / writes a reply.
 export function buildFaultReportUpdatedNotification(input: FaultReportNotificationInput): NotificationContent {
   const status = input.statusLabel ? ` (${input.statusLabel})` : '';
