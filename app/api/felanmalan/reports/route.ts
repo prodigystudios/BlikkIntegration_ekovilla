@@ -15,7 +15,8 @@ import { listActiveRecipients, resolveRecipientEmails, dedupeEmails } from '@/li
 import { buildFaultReportEmail } from '@/lib/domains/fault-reports/email';
 import type { FaultReportRow, FaultReportView } from '@/lib/domains/fault-reports/types';
 import { buildFaultReportCreatedNotification } from '@/lib/domains/notifications/payload';
-import { createNotifications, expandNotificationToRecipients } from '@/lib/domains/notifications/mutations';
+import { expandNotificationToRecipients } from '@/lib/domains/notifications/mutations';
+import { deliverNotifications } from '@/lib/domains/notifications/delivery';
 
 export async function GET(req: Request) {
   try {
@@ -85,7 +86,7 @@ async function fanOutNewReport(report: FaultReportView, req: Request) {
       categoryLabel: report.category_label,
       reporterName: report.reporter_name,
     });
-    await createNotifications(admin, expandNotificationToRecipients(content, notifyIds));
+    await deliverNotifications(admin, expandNotificationToRecipients(content, notifyIds));
   }
 
   // Email: resolved supervisor addresses + the FELANMALAN_NOTIFY_TO fallback/override. Runs even

@@ -23,19 +23,27 @@ export function buildFaultReportCreatedNotification(input: FaultReportNotificati
 }
 
 // Sent to each user @-mentioned in a work order comment.
+//
+// `audience` routes the link to a view the recipient can actually open: office roles (sales/admin/
+// konsult) get the full CRM detail view; everyone else (installers = member, leader, readonly) gets
+// the open field view at /arbetsorder/<id>. Both mount the same comments tab, so the mention is
+// readable either way. Without this split an installer would land on /crm/* and be bounced to '/'
+// by the CRM access gate. Defaults to 'crm' for callers that don't distinguish.
 export function buildWorkOrderCommentMentionNotification(input: {
   workOrderId: string;
   orderNumber?: string | null;
   projectName?: string | null;
   commenterName?: string | null;
+  audience?: 'crm' | 'field';
 }): NotificationContent {
   const ref = input.orderNumber ? `#${input.orderNumber}` : 'en arbetsorder';
   const where = input.projectName ? `${ref} · ${input.projectName}` : ref;
+  const basePath = input.audience === 'field' ? '/arbetsorder' : '/crm/arbetsorder';
   return {
     type: 'work_order.mention',
     title: `${input.commenterName || 'Någon'} nämnde dig i en kommentar`,
     body: `Arbetsorder ${where}`,
-    href: `/crm/arbetsorder/${input.workOrderId}`,
+    href: `${basePath}/${input.workOrderId}`,
     entity_type: 'work_order',
     entity_id: input.workOrderId,
   };

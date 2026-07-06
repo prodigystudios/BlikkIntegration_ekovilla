@@ -7,6 +7,7 @@ import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { cn } from '@/lib/shared/cn';
 import { mapNotificationRow } from '@/lib/domains/notifications/mappers';
 import type { NotificationRow, NotificationView } from '@/lib/domains/notifications/types';
+import { usePushSubscription } from './usePushSubscription';
 
 // App-shell notification bell. Self-contained: fetches its own user + data, subscribes to
 // Realtime so the badge and list stay live. Reusable for any notification type. Rendered in
@@ -28,6 +29,8 @@ export default function NotificationBell({ className, collapsed = false }: { cla
   // Panelen visar OLÄSTA som standard; "Visa lästa" växlar till hela historiken (30 senaste).
   const [showRead, setShowRead] = useState(false);
   const showReadRef = useRef(false);
+  // Per-enhet push opt-in (samma /api/push-flöde som dashboardens påminnelser).
+  const push = usePushSubscription();
 
   useEffect(() => setMounted(true), []);
   useEffect(() => { showReadRef.current = showRead; }, [showRead]);
@@ -221,6 +224,41 @@ export default function NotificationBell({ className, collapsed = false }: { cla
                 </ul>
               )}
             </div>
+
+            {push.supported && (
+              <div className="border-t border-slate-100 px-4 py-3">
+                {push.enabled ? (
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="flex items-center gap-1.5 text-[12px] font-semibold text-emerald-700">
+                      <span className="h-2 w-2 rounded-full bg-emerald-500" aria-hidden />
+                      Notiser på för den här enheten
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => push.disable()}
+                      disabled={push.loading}
+                      className="text-[12px] font-semibold text-slate-500 hover:text-slate-700 disabled:opacity-50"
+                    >
+                      Stäng av
+                    </button>
+                  </div>
+                ) : push.permission === 'denied' ? (
+                  <p className="m-0 text-[12px] text-slate-500">
+                    Notiser är blockerade i enhetens inställningar. Tillåt dem där för att få notiser hit.
+                  </p>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => push.enable()}
+                    disabled={push.loading}
+                    className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[12px] font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-50"
+                  >
+                    {push.loading ? 'Aktiverar…' : 'Aktivera notiser på den här enheten'}
+                  </button>
+                )}
+                {push.error && <p className="m-0 mt-1.5 text-[11px] text-red-600">{push.error}</p>}
+              </div>
+            )}
           </div>
         </div>,
         document.body,

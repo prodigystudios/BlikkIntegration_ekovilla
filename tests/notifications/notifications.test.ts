@@ -96,6 +96,16 @@ describe('buildWorkOrderCommentMentionNotification', () => {
     expect(n.title).toContain('Någon');
     expect(n.body).toContain('en arbetsorder');
   });
+
+  it('routes the field audience to the open installer view (not the office-only /crm route)', () => {
+    const n = buildWorkOrderCommentMentionNotification({ workOrderId: 'wo3', audience: 'field' });
+    expect(n.href).toBe('/arbetsorder/wo3');
+  });
+
+  it('routes the crm audience to the CRM detail view', () => {
+    const n = buildWorkOrderCommentMentionNotification({ workOrderId: 'wo4', audience: 'crm' });
+    expect(n.href).toBe('/crm/arbetsorder/wo4');
+  });
 });
 
 describe('expandNotificationToRecipients', () => {

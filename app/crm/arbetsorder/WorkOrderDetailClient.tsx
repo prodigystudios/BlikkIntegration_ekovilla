@@ -26,7 +26,7 @@ import { openFortnoxPdf, postFortnoxEmail } from '@/app/crm/lib/fortnoxDoc';
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 type WorkOrderStatus = 'draft' | 'scheduled' | 'ready' | 'in_progress' | 'completed' | 'partially_invoiced' | 'invoiced' | 'cancelled';
-type WorkOrderTab = 'overview' | 'economy' | 'articles' | 'time' | 'comments';
+type WorkOrderTab = 'overview' | 'economy' | 'articles' | 'time';
 type FortnoxSyncStatus = 'not_synced' | 'pending' | 'synced' | 'failed';
 
 // One delfakturering round: the per-article quantities billed + the Fortnox invoice it produced.
@@ -480,8 +480,10 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   const ecoSubtotal = Number(workOrder.pricing_summary?.subtotal ?? 0);
   const ecoVat = Number(workOrder.pricing_summary?.vat ?? 0);
   const reverseCharge = workOrder.quote_type === 'business' && ecoVat === 0 && ecoSubtotal > 0;
+  // Comments live at the bottom of the overview (not a separate tab), so an @-mention notification
+  // lands you straight on the thread without hunting for a tab.
   const tabs: Array<[WorkOrderTab, string]> = [
-    ['overview', 'Översikt'], ['economy', 'Ekonomi'], ['articles', 'Artiklar'], ['time', 'Tid'], ['comments', 'Kommentarer'],
+    ['overview', 'Översikt'], ['economy', 'Ekonomi'], ['articles', 'Artiklar'], ['time', 'Tid'],
   ];
 
   // Read-only field display used when the overview is locked.
@@ -816,6 +818,19 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
         </div>
       ) : null}
 
+      {/* ─── Comments (on the overview, full width below the columns) ─── */}
+      {activeTab === 'overview' ? (
+        <WorkOrderCommentsTab
+          comments={comments}
+          loading={commentsLoading}
+          currentUserId={currentUserId}
+          mentionUsers={mentionUsers}
+          onCreate={createComment}
+          onUpdate={updateComment}
+          onDelete={deleteComment}
+        />
+      ) : null}
+
       {/* ─── Economy ─── */}
       {activeTab === 'economy' ? (
         <div className="grid gap-4">
@@ -970,19 +985,6 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
           onCreate={createTimeEntry}
           onUpdate={updateTimeEntry}
           onDelete={deleteTimeEntry}
-        />
-      ) : null}
-
-      {/* ─── Comments ─── */}
-      {activeTab === 'comments' ? (
-        <WorkOrderCommentsTab
-          comments={comments}
-          loading={commentsLoading}
-          currentUserId={currentUserId}
-          mentionUsers={mentionUsers}
-          onCreate={createComment}
-          onUpdate={updateComment}
-          onDelete={deleteComment}
         />
       ) : null}
 

@@ -35,7 +35,7 @@ type InstallerWorkOrder = {
   status: WorkOrderStatus;
 };
 
-type InstallerTab = 'info' | 'articles' | 'time' | 'comments';
+type InstallerTab = 'info' | 'articles' | 'time';
 
 export default function WorkOrderInstallerClient({ workOrderId, currentUserId }: { workOrderId: string; currentUserId: string | null }) {
   const router = useRouter();
@@ -91,8 +91,10 @@ export default function WorkOrderInstallerClient({ workOrderId, currentUserId }:
   const workScope = workOrder.internal_handoff?.work_scope || '';
   const handoffNotes = workOrder.internal_handoff?.handoff_notes || '';
 
+  // Comments render at the bottom of the Info tab (not a separate tab) so an @-mention notification
+  // lands straight on the thread.
   const tabs: Array<[InstallerTab, string]> = [
-    ['info', 'Info'], ['articles', 'Artiklar'], ['time', 'Tid'], ['comments', 'Kommentarer'],
+    ['info', 'Info'], ['articles', 'Artiklar'], ['time', 'Tid'],
   ];
 
   return (
@@ -155,6 +157,17 @@ export default function WorkOrderInstallerClient({ workOrderId, currentUserId }:
               <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-700">{handoffNotes}</p>
             ) : (!workScope ? <p className="text-sm text-slate-400">Ingen arbetsbeskrivning angiven.</p> : null)}
           </div>
+
+          {/* Comments (write) — at the bottom of Info, no longer a separate tab */}
+          <WorkOrderCommentsTab
+            comments={activity.comments}
+            loading={activity.commentsLoading}
+            currentUserId={currentUserId}
+            mentionUsers={activity.mentionUsers}
+            onCreate={activity.createComment}
+            onUpdate={activity.updateComment}
+            onDelete={activity.deleteComment}
+          />
         </div>
       ) : null}
 
@@ -186,18 +199,6 @@ export default function WorkOrderInstallerClient({ workOrderId, currentUserId }:
         />
       ) : null}
 
-      {/* Comments (write) */}
-      {activeTab === 'comments' ? (
-        <WorkOrderCommentsTab
-          comments={activity.comments}
-          loading={activity.commentsLoading}
-          currentUserId={currentUserId}
-          mentionUsers={activity.mentionUsers}
-          onCreate={activity.createComment}
-          onUpdate={activity.updateComment}
-          onDelete={activity.deleteComment}
-        />
-      ) : null}
     </div>
   );
 }
