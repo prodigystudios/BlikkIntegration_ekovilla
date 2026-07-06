@@ -71,9 +71,26 @@ export default function WorkOrderCommentsTab({ comments, loading, currentUserId,
   }
 
   return (
-    <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start">
-      <div className={cn(crm.cardInner, 'grid gap-3')}>
-        <p className={crm.sectionTitle}>Projektkommentarer</p>
+    <div className={cn(crm.cardInner, 'grid gap-4')}>
+      <p className={crm.sectionTitle}>Projektkommentarer</p>
+
+      {/* Composer — inline at the top of the same card as the thread. */}
+      <div className="grid gap-2">
+        <MentionTextarea
+          value={draft}
+          onChange={setDraft}
+          onMention={(u) => { if (u.full_name) mentionedRef.current.set(u.id, u.full_name); }}
+          users={mentionUsers}
+          rows={3}
+          placeholder="Skriv en kommentar… använd @ för att tagga någon"
+        />
+        <button type="button" onClick={submitCreate} disabled={creating || !draft.trim()} className={cn(crm.saveButton, 'h-9 w-auto justify-self-end px-5')}>
+          {creating ? 'Sparar kommentar…' : 'Spara kommentar'}
+        </button>
+      </div>
+
+      {/* Thread */}
+      <div className="grid gap-2 border-t border-[#e0e8dc] pt-4">
         {loading ? <div className="text-sm text-slate-500">Laddar kommentarer…</div> : null}
         {!loading && comments.length === 0 ? (
           <div className="rounded-xl border border-dashed border-[#cfdcc9] bg-[#f1f5ee] px-4 py-6 text-sm text-slate-500">Inga kommentarer ännu.</div>
@@ -119,21 +136,6 @@ export default function WorkOrderCommentsTab({ comments, loading, currentUserId,
             </div>
           );
         }) : null}
-      </div>
-
-      <div className={cn(crm.cardInner, 'grid gap-3 lg:content-start')}>
-        <p className={crm.sectionTitle}>Ny kommentar</p>
-        <MentionTextarea
-          value={draft}
-          onChange={setDraft}
-          onMention={(u) => { if (u.full_name) mentionedRef.current.set(u.id, u.full_name); }}
-          users={mentionUsers}
-          rows={8}
-          placeholder="Skriv en kommentar… använd @ för att tagga någon"
-        />
-        <button type="button" onClick={submitCreate} disabled={creating} className={crm.saveButton}>
-          {creating ? 'Sparar kommentar…' : 'Spara kommentar'}
-        </button>
       </div>
     </div>
   );
