@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildFortnoxArticlePayload } from '@/lib/domains/fortnox/articles';
+import { articleSearchTokens, matchesArticleSearch } from '@/lib/domains/fortnox/articleSearch';
 import {
   fortnoxArticleInputSchema,
   toFortnoxArticleInput,
@@ -23,6 +24,64 @@ function input(overrides: Partial<FortnoxArticleInput> = {}): FortnoxArticleInpu
     ...overrides,
   };
 }
+
+describe('articleSearchTokens', () => {
+  it('splits multi-word queries into separate tokens (AND-across-tokens matching)', () => {
+    expect(articleSearchTokens('cellulosa lösull')).toEqual(['cellulosa', 'lösull']);
+    expect(articleSearchTokens('lösull 15')).toEqual(['lösull', '15']);
+  });
+
+  it('collapses extra whitespace and trims', () => {
+    expect(articleSearchTokens('  lösull   15kg  ')).toEqual(['lösull', '15kg']);
+  });
+
+  it('strips characters that would corrupt the PostgREST filter or act as LIKE wildcards', () => {
+    // comma, parens, percent, underscore, backslash, quote, asterisk
+    expect(articleSearchTokens('15,5')).toEqual(['155']);
+    expect(articleSearchTokens('lösull (25%)')).toEqual(['lösull', '25']);
+    expect(articleSearchTokens('a_b*c')).toEqual(['abc']);
+  });
+
+  it('single token behaves like the old contains-match (no regression)', () => {
+    expect(articleSearchTokens('lösull')).toEqual(['lösull']);
+  });
+
+  it('empty / whitespace / null → no tokens (falls back to default list)', () => {
+    expect(articleSearchTokens('')).toEqual([]);
+    expect(articleSearchTokens('   ')).toEqual([]);
+    expect(articleSearchTokens(undefined)).toEqual([]);
+    expect(articleSearchTokens(null)).toEqual([]);
+    expect(articleSearchTokens('%%% ,,,')).toEqual([]);
+  });
+});
+
+describe('matchesArticleSearch (client-side register filter)', () => {
+  const article = { article_number: 'EK-1042', description: 'Cellulosa lösull 15kg säck' };
+
+  it('matches multi-word queries regardless of word order', () => {
+    expect(matchesArticleSearch(article, 'lösull cellulosa')).toBe(true);
+    expect(matchesArticleSearch(article, 'lösull 15')).toBe(true);
+    expect(matchesArticleSearch(article, '15 säck')).toBe(true);
+  });
+
+  it('matches across number and description', () => {
+    expect(matchesArticleSearch(article, '1042 lösull')).toBe(true);
+  });
+
+  it('requires every token to appear (AND)', () => {
+    expect(matchesArticleSearch(article, 'lösull glasull')).toBe(false);
+  });
+
+  it('empty query matches everything', () => {
+    expect(matchesArticleSearch(article, '')).toBe(true);
+    expect(matchesArticleSearch(article, '   ')).toBe(true);
+  });
+
+  it('tolerates null fields', () => {
+    expect(matchesArticleSearch({ article_number: null, description: null }, 'x')).toBe(false);
+    expect(matchesArticleSearch({ article_number: 'EK-9', description: null }, 'ek-9')).toBe(true);
+  });
+});
 
 describe('buildFortnoxArticlePayload', () => {
   it('never sends SalesPrice – it is read-only on price-list accounts (regression for Fortnox 2000321)', () => {

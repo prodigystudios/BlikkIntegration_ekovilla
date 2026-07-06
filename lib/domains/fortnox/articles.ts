@@ -1,5 +1,6 @@
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { fortnoxGet, fortnoxPost, fortnoxPut, fortnoxDelete, FortnoxApiError } from './client';
+import { articleSearchTokens } from './articleSearch';
 import { listFortnoxPriceLists } from './customers';
 import type {
   FortnoxArticle,
@@ -94,10 +95,10 @@ export async function listCachedFortnoxArticles(opts?: {
     query = query.eq('active', true);
   }
 
-  if (opts?.search) {
-    query = query.or(
-      `article_number.ilike.%${opts.search}%,description.ilike.%${opts.search}%`,
-    );
+  // Each token adds an AND group: (number~token OR description~token). Multi-word queries thus
+  // match regardless of word order/adjacency; a single token behaves exactly as before.
+  for (const token of articleSearchTokens(opts?.search)) {
+    query = query.or(`article_number.ilike.%${token}%,description.ilike.%${token}%`);
   }
 
   if (opts?.limit) {

@@ -8,6 +8,7 @@ import Input from '@/components/ui/Input';
 import Badge from '@/components/ui/Badge';
 import EmptyState from '@/components/ui/EmptyState';
 import type { CachedFortnoxArticle } from '@/lib/domains/fortnox/types';
+import { matchesArticleSearch } from '@/lib/domains/fortnox/articleSearch';
 
 type ArticlesClientProps = {
   initialArticles: CachedFortnoxArticle[];
@@ -38,13 +39,9 @@ export default function ArticlesClient({ initialArticles, fortnoxConnected }: Ar
   const [syncing, setSyncing] = useState(false);
 
   const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return articles;
-    return articles.filter(
-      (a) =>
-        a.article_number.toLowerCase().includes(q) ||
-        (a.description ?? '').toLowerCase().includes(q),
-    );
+    if (!search.trim()) return articles;
+    // Tokenised AND-across-words match, shared with the offer/quote article search.
+    return articles.filter((a) => matchesArticleSearch(a, search));
   }, [articles, search]);
 
   async function handleSync() {
