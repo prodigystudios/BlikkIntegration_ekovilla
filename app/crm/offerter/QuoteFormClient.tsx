@@ -197,6 +197,7 @@ type ArticleLite = {
   articleNumber?: string;
   price?: number | null;
   unit?: string | { name?: string | null; objectiveName?: string | null } | null;
+  isFavorite?: boolean;
 };
 
 type CrmCustomerLite = {
@@ -412,6 +413,24 @@ function ArticlePicker({ value, articleNumber, price, unit, onSelect, onClear }:
   // "Byt" flips into search mode; selecting or cancelling returns to the card.
   const [searching, setSearching] = useState(false);
 
+  // Toggle a global favorite (shared across sellers). Optimistic; floats favorites to the top.
+  // onMouseDown + preventDefault so the star click doesn't blur the search input (which would
+  // close the dropdown before the toggle registers), and doesn't select the article.
+  async function toggleFavorite(item: ArticleLite, e: React.MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    const articleNumber = item.articleNumber;
+    if (!articleNumber) return;
+    const next = !item.isFavorite;
+    setItems((prev) => {
+      const updated = prev.map((a) => (a.articleNumber === articleNumber ? { ...a, isFavorite: next } : a));
+      return [...updated.filter((a) => a.isFavorite), ...updated.filter((a) => !a.isFavorite)];
+    });
+    try {
+      await fetch(`/api/fortnox/articles/${encodeURIComponent(articleNumber)}/favorite`, { method: next ? 'POST' : 'DELETE' });
+    } catch { /* best-effort — keep the optimistic state */ }
+  }
+
   useEffect(() => {
     // Open with no query → default list (recent articles); typed query → search.
     if (!open) { setItems([]); return; }
@@ -429,7 +448,7 @@ function ArticlePicker({ value, articleNumber, price, unit, onSelect, onClear }:
         .then((r) => r.json().catch(() => ({})))
         .then((json) => {
           if (!cancelled) {
-            const raw: Array<{ article_number: string; description: string | null; sales_price: number | null; unit: string | null }> =
+            const raw: Array<{ article_number: string; description: string | null; sales_price: number | null; unit: string | null; is_favorite?: boolean }> =
               Array.isArray(json?.data?.items) ? json.data.items : [];
             setItems(raw.map((a) => ({
               id: a.article_number,
@@ -437,6 +456,7 @@ function ArticlePicker({ value, articleNumber, price, unit, onSelect, onClear }:
               articleNumber: a.article_number,
               price: a.sales_price,
               unit: a.unit ?? undefined,
+              isFavorite: a.is_favorite ?? false,
             })));
           }
         })
@@ -507,19 +527,33 @@ function ArticlePicker({ value, articleNumber, price, unit, onSelect, onClear }:
             <p className="px-4 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Senaste artiklar</p>
           ) : null}
           {!loading && !error ? items.map((item) => (
-            <button
+            <div
               key={item.id || item.articleNumber || item.name}
-              type="button"
-              onClick={() => { onSelect(item); setOpen(false); setQuery(''); setSearching(false); }}
-              className="flex w-full flex-col items-start gap-0.5 border-b border-slate-100 px-4 py-2.5 text-left transition last:border-b-0 hover:bg-slate-50"
+              className="flex items-center gap-1 border-b border-slate-100 pr-2 transition last:border-b-0 hover:bg-slate-50"
             >
-              <span className="text-sm font-medium text-slate-900">{item.name || 'Artikel'}</span>
-              <span className="text-xs text-slate-400">
-                {item.articleNumber || 'Utan artikelnummer'}
-                {typeof item.price === 'number' ? ` · ${item.price.toFixed(2)} kr` : ''}
-                {getArticleUnitName(item.unit) ? ` · ${getArticleUnitName(item.unit)}` : ''}
-              </span>
-            </button>
+              <button
+                type="button"
+                aria-label={item.isFavorite ? 'Ta bort favorit' : 'Markera som favorit'}
+                aria-pressed={item.isFavorite}
+                title={item.isFavorite ? 'Favorit — visas överst' : 'Markera som favorit'}
+                onMouseDown={(e) => toggleFavorite(item, e)}
+                className="shrink-0 rounded-md px-2 py-2 text-lg leading-none transition-colors hover:bg-amber-50"
+              >
+                <span className={item.isFavorite ? 'text-amber-400' : 'text-slate-300'}>{item.isFavorite ? '★' : '☆'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => { onSelect(item); setOpen(false); setQuery(''); setSearching(false); }}
+                className="flex min-w-0 flex-1 flex-col items-start gap-0.5 py-2.5 pr-2 text-left"
+              >
+                <span className="truncate text-sm font-medium text-slate-900">{item.name || 'Artikel'}</span>
+                <span className="text-xs text-slate-400">
+                  {item.articleNumber || 'Utan artikelnummer'}
+                  {typeof item.price === 'number' ? ` · ${item.price.toFixed(2)} kr` : ''}
+                  {getArticleUnitName(item.unit) ? ` · ${getArticleUnitName(item.unit)}` : ''}
+                </span>
+              </button>
+            </div>
           )) : null}
         </div>
       ) : null}

@@ -101,6 +101,8 @@ export type CachedFortnoxArticle = {
   article_type: string | null;
   active: boolean;
   last_fetched_at: string;
+  // Global favorite flag, joined from fortnox_article_favorites (not stored on the cache row).
+  is_favorite?: boolean;
 };
 
 // Valid Fortnox HouseWorkType values for ROT work (the subset relevant to our

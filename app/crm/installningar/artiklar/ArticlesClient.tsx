@@ -8,7 +8,7 @@ import Input from '@/components/ui/Input';
 import Badge from '@/components/ui/Badge';
 import EmptyState from '@/components/ui/EmptyState';
 import type { CachedFortnoxArticle } from '@/lib/domains/fortnox/types';
-import { matchesArticleSearch } from '@/lib/domains/fortnox/articleSearch';
+import { matchesArticleSearch, sortArticlesFavoritesFirst } from '@/lib/domains/fortnox/articleSearch';
 
 type ArticlesClientProps = {
   initialArticles: CachedFortnoxArticle[];
@@ -37,12 +37,34 @@ export default function ArticlesClient({ initialArticles, fortnoxConnected }: Ar
   const [articles, setArticles] = useState<CachedFortnoxArticle[]>(initialArticles);
   const [search, setSearch] = useState('');
   const [syncing, setSyncing] = useState(false);
+  const [favBusy, setFavBusy] = useState<string | null>(null);
 
   const filtered = useMemo(() => {
     if (!search.trim()) return articles;
     // Tokenised AND-across-words match, shared with the offer/quote article search.
     return articles.filter((a) => matchesArticleSearch(a, search));
   }, [articles, search]);
+
+  // Toggle a global favorite (shared across all sellers). Optimistic; re-sorts favorites to the top.
+  async function toggleFavorite(articleNumber: string, next: boolean) {
+    setFavBusy(articleNumber);
+    setArticles((prev) =>
+      sortArticlesFavoritesFirst(prev.map((a) => (a.article_number === articleNumber ? { ...a, is_favorite: next } : a))),
+    );
+    try {
+      const res = await fetch(`/api/fortnox/articles/${encodeURIComponent(articleNumber)}/favorite`, { method: next ? 'POST' : 'DELETE' });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json?.ok) throw new Error(json?.error || 'Kunde inte uppdatera favorit');
+    } catch (e) {
+      // Revert on failure.
+      setArticles((prev) =>
+        sortArticlesFavoritesFirst(prev.map((a) => (a.article_number === articleNumber ? { ...a, is_favorite: !next } : a))),
+      );
+      toast.error(e instanceof Error ? e.message : 'Kunde inte uppdatera favorit');
+    } finally {
+      setFavBusy(null);
+    }
+  }
 
   async function handleSync() {
     setSyncing(true);
@@ -118,6 +140,7 @@ export default function ArticlesClient({ initialArticles, fortnoxConnected }: Ar
             <table className="w-full border-collapse text-sm">
               <thead>
                 <tr className="border-b border-slate-200 text-left text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  <th className="py-2 pr-2 text-center" aria-label="Favorit"></th>
                   <th className="py-2 pr-3">Artikelnr</th>
                   <th className="py-2 pr-3">Beskrivning</th>
                   <th className="py-2 pr-3">Typ</th>
@@ -131,6 +154,19 @@ export default function ArticlesClient({ initialArticles, fortnoxConnected }: Ar
               <tbody>
                 {filtered.map((a) => (
                   <tr key={a.article_number} className="border-b border-slate-100 last:border-0">
+                    <td className="py-2.5 pr-2 text-center">
+                      <button
+                        type="button"
+                        onClick={() => toggleFavorite(a.article_number, !a.is_favorite)}
+                        disabled={favBusy === a.article_number}
+                        aria-label={a.is_favorite ? 'Ta bort favorit' : 'Markera som favorit'}
+                        aria-pressed={a.is_favorite}
+                        title={a.is_favorite ? 'Favorit — visas överst' : 'Markera som favorit'}
+                        className="rounded-md px-1.5 py-1 text-lg leading-none transition-colors hover:bg-amber-50 disabled:opacity-50"
+                      >
+                        <span className={a.is_favorite ? 'text-amber-400' : 'text-slate-300'}>{a.is_favorite ? '★' : '☆'}</span>
+                      </button>
+                    </td>
                     <td className="py-2.5 pr-3 font-semibold text-slate-900">{a.article_number}</td>
                     <td className="py-2.5 pr-3 text-slate-700">{a.description ?? '–'}</td>
                     <td className="py-2.5 pr-3 text-slate-500">{a.article_type === 'SERVICE' ? 'Tjänst' : 'Material'}</td>

@@ -1,6 +1,6 @@
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { fortnoxGet, fortnoxPost, fortnoxPut, fortnoxDelete, FortnoxApiError } from './client';
-import { articleSearchTokens } from './articleSearch';
+import { articleSearchTokens, sortArticlesFavoritesFirst } from './articleSearch';
 import { listFortnoxPriceLists } from './customers';
 import type {
   FortnoxArticle,
@@ -79,35 +79,54 @@ export async function syncFortnoxArticles(): Promise<ArticleSyncResult> {
 }
 
 // Read articles from local cache. Fast, no external API call.
+const ARTICLE_CACHE_SELECT =
+  'article_number, description, sales_price, purchase_price, unit, article_type, active, last_fetched_at';
+
+// The global favorite article numbers (shared, not per-user). Small curated set.
+export async function listFavoriteArticleNumbers(): Promise<Set<string>> {
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase.from('fortnox_article_favorites').select('article_number');
+  if (error) return new Set();
+  return new Set((data ?? []).map((r: { article_number: string }) => r.article_number));
+}
+
 export async function listCachedFortnoxArticles(opts?: {
   activeOnly?: boolean;
   search?: string;
   limit?: number;
 }): Promise<CachedFortnoxArticle[]> {
   const supabase = getSupabaseAdmin();
+  const favorites = await listFavoriteArticleNumbers();
 
-  let query = supabase
-    .from('fortnox_articles_cache')
-    .select('article_number, description, sales_price, purchase_price, unit, article_type, active, last_fetched_at')
-    .order('article_number', { ascending: true });
+  const tokens = articleSearchTokens(opts?.search);
+  // Fresh builder each call — a builder can't be reused after it's awaited.
+  const buildQuery = () => {
+    let q = supabase.from('fortnox_articles_cache').select(ARTICLE_CACHE_SELECT).order('article_number', { ascending: true });
+    if (opts?.activeOnly !== false) q = q.eq('active', true);
+    // Each token adds an AND group: (number~token OR description~token) — multi-word order-independent.
+    for (const token of tokens) q = q.or(`article_number.ilike.%${token}%,description.ilike.%${token}%`);
+    return q;
+  };
+  const mark = (rows: unknown[]): CachedFortnoxArticle[] =>
+    (rows as CachedFortnoxArticle[]).map((r) => ({ ...r, is_favorite: favorites.has(r.article_number) }));
 
-  if (opts?.activeOnly !== false) {
-    query = query.eq('active', true);
+  // No limit (e.g. the register loads everything): fetch all matches, favorites floated up.
+  if (!opts?.limit) {
+    const { data, error } = await buildQuery();
+    if (error) throw new Error(`Kunde inte läsa artikelcache: ${error.message}`);
+    return sortArticlesFavoritesFirst(mark(data ?? []));
   }
 
-  // Each token adds an AND group: (number~token OR description~token). Multi-word queries thus
-  // match regardless of word order/adjacency; a single token behaves exactly as before.
-  for (const token of articleSearchTokens(opts?.search)) {
-    query = query.or(`article_number.ilike.%${token}%,description.ilike.%${token}%`);
-  }
-
-  if (opts?.limit) {
-    query = query.limit(opts.limit);
-  }
-
-  const { data, error } = await query;
+  // Limited (e.g. the offer picker's 20-row dropdown): fetch matching favorites (unbounded — the
+  // set is tiny) separately so they're never cut off by the limit, then fill with the rest.
+  const favMatches = favorites.size > 0
+    ? mark((await buildQuery().in('article_number', [...favorites])).data ?? [])
+    : [];
+  const { data: restData, error } = await buildQuery().limit(opts.limit + favorites.size);
   if (error) throw new Error(`Kunde inte läsa artikelcache: ${error.message}`);
-  return (data ?? []) as CachedFortnoxArticle[];
+  const favSet = new Set(favMatches.map((f) => f.article_number));
+  const rest = mark(restData ?? []).filter((r) => !favSet.has(r.article_number));
+  return [...favMatches, ...rest].slice(0, opts.limit);
 }
 
 // Build the Fortnox Article payload from our input. Field names must match the

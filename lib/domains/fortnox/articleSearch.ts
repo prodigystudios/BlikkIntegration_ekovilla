@@ -14,6 +14,14 @@ export function articleSearchTokens(search: string | undefined | null): string[]
     .filter((t) => t.length > 0);
 }
 
+// Stable partition that floats global favorites to the top, preserving each group's existing
+// order. Shared by the server query and the client-side re-sort after a star toggle.
+export function sortArticlesFavoritesFirst<T extends { is_favorite?: boolean | null }>(rows: T[]): T[] {
+  const favorites = rows.filter((r) => r.is_favorite);
+  const rest = rows.filter((r) => !r.is_favorite);
+  return [...favorites, ...rest];
+}
+
 // Client-side AND-across-tokens match over an article's number + description. Mirrors the server
 // predicate `(number ILIKE %t% OR description ILIKE %t%) AND …` for every token.
 export function matchesArticleSearch(

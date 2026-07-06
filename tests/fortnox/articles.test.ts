@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildFortnoxArticlePayload } from '@/lib/domains/fortnox/articles';
-import { articleSearchTokens, matchesArticleSearch } from '@/lib/domains/fortnox/articleSearch';
+import { articleSearchTokens, matchesArticleSearch, sortArticlesFavoritesFirst } from '@/lib/domains/fortnox/articleSearch';
 import {
   fortnoxArticleInputSchema,
   toFortnoxArticleInput,
@@ -80,6 +80,26 @@ describe('matchesArticleSearch (client-side register filter)', () => {
   it('tolerates null fields', () => {
     expect(matchesArticleSearch({ article_number: null, description: null }, 'x')).toBe(false);
     expect(matchesArticleSearch({ article_number: 'EK-9', description: null }, 'ek-9')).toBe(true);
+  });
+});
+
+describe('sortArticlesFavoritesFirst', () => {
+  it('floats favorites to the top, preserving order within each group (stable)', () => {
+    const rows = [
+      { article_number: 'A', is_favorite: false },
+      { article_number: 'B', is_favorite: true },
+      { article_number: 'C', is_favorite: false },
+      { article_number: 'D', is_favorite: true },
+    ];
+    expect(sortArticlesFavoritesFirst(rows).map((r) => r.article_number)).toEqual(['B', 'D', 'A', 'C']);
+  });
+
+  it('no favorites → order unchanged', () => {
+    const rows = [
+      { article_number: 'A', is_favorite: false },
+      { article_number: 'B', is_favorite: false },
+    ];
+    expect(sortArticlesFavoritesFirst(rows).map((r) => r.article_number)).toEqual(['A', 'B']);
   });
 });
 
