@@ -5,6 +5,7 @@ import { UserProfileProvider } from '../lib/UserProfileContext';
 import { ToastProvider } from '../lib/Toast';
 import { TruckAssignmentsProvider } from '../lib/TruckAssignmentsContext';
 import AppShell from './components/AppShell';
+import InstallPrompt from '../components/pwa/InstallPrompt';
 
 export const viewport = {
   width: 'device-width',
@@ -43,6 +44,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             <AppShell role={role} fullName={fullName} userInitial={userInitial}>
               {children}
             </AppShell>
+            <InstallPrompt loggedIn={!!profile} />
           </TruckAssignmentsProvider>
         </ToastProvider>
       </UserProfileProvider>
