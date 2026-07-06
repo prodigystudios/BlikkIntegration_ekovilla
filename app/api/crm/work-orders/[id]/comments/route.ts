@@ -3,7 +3,8 @@ import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { createCrmWorkOrderComment, listCrmWorkOrderComments } from '@/lib/domains/crm/work-orders';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { buildWorkOrderCommentMentionNotification } from '@/lib/domains/notifications/payload';
-import { createNotifications, expandNotificationToRecipients } from '@/lib/domains/notifications/mutations';
+import { expandNotificationToRecipients } from '@/lib/domains/notifications/mutations';
+import { deliverNotifications } from '@/lib/domains/notifications/delivery';
 import { createWorkOrderCommentSchema, ok, requireSignedInUser, routeError, validationError } from '../../_lib';
 
 type RouteContext = {
@@ -104,5 +105,5 @@ async function fanOutMentions(input: {
     ...expandNotificationToRecipients(buildWorkOrderCommentMentionNotification({ ...base, audience: 'crm' }), crmIds),
     ...expandNotificationToRecipients(buildWorkOrderCommentMentionNotification({ ...base, audience: 'field' }), fieldIds),
   ];
-  if (rows.length > 0) await createNotifications(admin, rows);
+  if (rows.length > 0) await deliverNotifications(admin, rows);
 }

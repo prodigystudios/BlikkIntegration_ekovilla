@@ -9,7 +9,8 @@ import { updateFaultReport, addFaultReportUpdate } from '@/lib/domains/fault-rep
 import { mapFaultReportRow, mapFaultReportUpdateRows } from '@/lib/domains/fault-reports/mappers';
 import { statusLabel, type FaultReportRow, type FaultReportUpdateRow, type FaultReportView } from '@/lib/domains/fault-reports/types';
 import { buildFaultReportUpdatedNotification } from '@/lib/domains/notifications/payload';
-import { createNotifications, expandNotificationToRecipients } from '@/lib/domains/notifications/mutations';
+import { expandNotificationToRecipients } from '@/lib/domains/notifications/mutations';
+import { deliverNotifications } from '@/lib/domains/notifications/delivery';
 
 export async function GET(_req: Request, { params }: { params: { id: string } }) {
   try {
@@ -85,5 +86,5 @@ async function notifyReporter(report: FaultReportView) {
     reporterName: report.reporter_name,
     statusLabel: statusLabel[report.status],
   });
-  await createNotifications(admin, expandNotificationToRecipients(content, [report.reporter_id]));
+  await deliverNotifications(admin, expandNotificationToRecipients(content, [report.reporter_id]));
 }
