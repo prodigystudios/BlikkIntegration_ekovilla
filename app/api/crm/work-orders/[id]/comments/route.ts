@@ -75,10 +75,11 @@ async function fanOutMentions(input: {
 
   const admin = getSupabaseAdmin();
   // Validate the client-supplied ids are real profiles: recipient_user_id FKs to profiles, so one
-  // bogus id would otherwise fail the whole batch insert and nobody would be notified.
-  const { data: profs } = await admin.from('profiles').select('id').in('id', ids);
-  const validIds = (profs || []).map((p: { id: string }) => p.id);
-  if (validIds.length === 0) return;
+  // bogus id would otherwise fail the whole batch insert and nobody would be notified. We also read
+  // `role` to route each recipient's notification to a view they can open (see below).
+  const { data: profs } = await admin.from('profiles').select('id, role').in('id', ids);
+  const validProfiles = (profs || []) as { id: string; role: string | null }[];
+  if (validProfiles.length === 0) return;
 
   const { data: wo } = await admin
     .from('crm_work_orders')
@@ -86,11 +87,22 @@ async function fanOutMentions(input: {
     .eq('id', input.workOrderId)
     .maybeSingle();
 
-  const content = buildWorkOrderCommentMentionNotification({
+  // Split recipients by CRM access (mirrors the /crm layout gate: konsult == sales). Office roles
+  // link to the CRM detail view; everyone else to the open field view, so an installer isn't sent
+  // to a /crm/* page that would bounce them to '/'.
+  const hasCrmAccess = (role: string | null) => role === 'admin' || role === 'sales' || role === 'konsult';
+  const crmIds = validProfiles.filter((p) => hasCrmAccess(p.role)).map((p) => p.id);
+  const fieldIds = validProfiles.filter((p) => !hasCrmAccess(p.role)).map((p) => p.id);
+
+  const base = {
     workOrderId: input.workOrderId,
     orderNumber: (wo as { order_number?: string | null } | null)?.order_number ?? null,
     projectName: (wo as { project_name?: string | null } | null)?.project_name ?? null,
     commenterName: input.authorName,
-  });
-  await createNotifications(admin, expandNotificationToRecipients(content, validIds));
+  };
+  const rows = [
+    ...expandNotificationToRecipients(buildWorkOrderCommentMentionNotification({ ...base, audience: 'crm' }), crmIds),
+    ...expandNotificationToRecipients(buildWorkOrderCommentMentionNotification({ ...base, audience: 'field' }), fieldIds),
+  ];
+  if (rows.length > 0) await createNotifications(admin, rows);
 }
