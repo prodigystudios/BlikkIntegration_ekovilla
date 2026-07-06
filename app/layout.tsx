@@ -5,6 +5,7 @@ import { UserProfileProvider } from '../lib/UserProfileContext';
 import { ToastProvider } from '../lib/Toast';
 import { TruckAssignmentsProvider } from '../lib/TruckAssignmentsContext';
 import AppShell from './components/AppShell';
+import InstallPrompt from '../components/pwa/InstallPrompt';
 
 export const viewport = {
   width: 'device-width',
@@ -25,13 +26,15 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     <html lang="en">
     <head>
       <link rel="icon" href="/favicon.ico" sizes="any" />
+      <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+      <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
       <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes='180x180'/>
       <link rel="manifest" href="/manifest.webmanifest" />
-  <meta name="theme-color" content="#ffffff" />
+  <meta name="theme-color" content="#1f7a3d" />
       <meta name="mobile-web-app-capable" content="yes" />
       <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-      <meta name="apple-mobile-web-app-title" content="Egenkontroll" />
+      <meta name="apple-mobile-web-app-title" content="Ekovilla" />
   <meta name="color-scheme" content="light" />
     </head>
     <body style={{ fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif', margin: 0, width: '100%', overflowX: 'hidden', minHeight: '100dvh', background: '#fff', paddingBottom: 'env(safe-area-inset-bottom)' }} data-has-user={!!profile}>
@@ -41,6 +44,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             <AppShell role={role} fullName={fullName} userInitial={userInitial}>
               {children}
             </AppShell>
+            <InstallPrompt loggedIn={!!profile} />
           </TruckAssignmentsProvider>
         </ToastProvider>
       </UserProfileProvider>
