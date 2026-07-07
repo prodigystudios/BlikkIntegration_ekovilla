@@ -859,7 +859,9 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
                               <>
                                 {/* Click-away backdrop */}
                                 <div className="fixed inset-0 z-40" onClick={() => setEmailMenuOpenId(null)} aria-hidden />
-                                <div role="menu" className="absolute right-0 top-full z-50 mt-1.5 w-72 overflow-hidden rounded-xl border border-slate-200 bg-white p-1 shadow-[0_12px_32px_rgba(15,23,42,0.16)]">
+                                {/* Öppnas uppåt (bottom-full) så menyn inte trycks under modalens
+                                    nederkant och skapar scroll — knappen sitter längst ned i kortet. */}
+                                <div role="menu" className="absolute bottom-full right-0 z-50 mb-1.5 w-72 overflow-hidden rounded-xl border border-slate-200 bg-white p-1 shadow-[0_-12px_32px_rgba(15,23,42,0.16)]">
                                   <button
                                     type="button"
                                     role="menuitem"
