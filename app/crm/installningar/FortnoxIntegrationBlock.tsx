@@ -23,6 +23,7 @@ export default function FortnoxIntegrationBlock({
   const [articleSync, setArticleSync] = useState<SyncResult>(defaultSync);
   const [customerSync, setCustomerSync] = useState<SyncResult>(defaultSync);
   const [verifySync, setVerifySync] = useState<SyncResult>(defaultSync);
+  const [blikkManagerSync, setBlikkManagerSync] = useState<SyncResult>(defaultSync);
 
   async function handleDisconnect() {
     if (!confirm('Är du säker på att du vill koppla från Fortnox?')) return;
@@ -98,6 +99,55 @@ export default function FortnoxIntegrationBlock({
     }
   }
 
+  // Backfill av kundansvarig från Blikk. Endpointen bearbetar en Blikk-listsida per anrop
+  // och returnerar nextPage, så vi loopar sida för sida tills nextPage === null. Endast
+  // företagskunder berörs; ansvarig skrivs över med Blikks värde.
+  async function runBlikkManagers() {
+    setBlikkManagerSync({ label: '', state: 'loading', message: 'Startar import...' });
+    let updated = 0;
+    let processed = 0;
+    let unmappedSellers = 0;
+    let unmatched = 0;
+    let page: number | null = 1;
+    try {
+      for (let guard = 0; guard < 2000 && page != null; guard++) {
+        const res = await fetch('/api/crm/customers/sync-blikk-managers', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ page }),
+        });
+        const json = await res.json();
+        if (!res.ok || !json.ok) {
+          setBlikkManagerSync({ label: '', state: 'error', message: json.error || 'Okänt fel' });
+          return;
+        }
+        const d = json.data as {
+          updated: number; processed: number; nextPage: number | null;
+          unmappedSeller: unknown[]; unmatchedCustomer: unknown[];
+        };
+        updated += d.updated;
+        processed += d.processed;
+        unmappedSellers += d.unmappedSeller.length;
+        unmatched += d.unmatchedCustomer.length;
+        page = d.nextPage;
+        if (page == null) {
+          setBlikkManagerSync({
+            label: '', state: 'success',
+            message: `Klart – ${updated} kundansvariga satta (${processed} kontakter). ${unmappedSellers} omappade säljare, ${unmatched} utan CRM-kund.`,
+          });
+          return;
+        }
+        setBlikkManagerSync({
+          label: '', state: 'loading',
+          message: `${updated} satta, ${unmappedSellers} omappade säljare... (sida ${page})`,
+        });
+      }
+      setBlikkManagerSync({ label: '', state: 'success', message: `Pausat efter ${processed} kontakter – kör igen för resten.` });
+    } catch {
+      setBlikkManagerSync({ label: '', state: 'error', message: 'Nätverksfel' });
+    }
+  }
+
   const connectedAt = status.connected_at
     ? new Date(status.connected_at).toLocaleDateString('sv-SE', {
         year: 'numeric',
@@ -164,6 +214,15 @@ export default function FortnoxIntegrationBlock({
             state={verifySync.state}
             message={verifySync.message}
             onSync={runVerifyTypes}
+          />
+
+          {/* Kundansvarig från Blikk (backfill, endast företagskunder) */}
+          <SyncRow
+            label="Hämta kundansvarig från Blikk"
+            description="Matchar företagskunder mot Blikk via kundnummer och sätter ansvarig säljare. Skriver över befintlig kundansvarig. Säljare utan Blikk-koppling rapporteras."
+            state={blikkManagerSync.state}
+            message={blikkManagerSync.message}
+            onSync={runBlikkManagers}
           />
 
           <div className="mt-1 border-t border-slate-100 pt-3">

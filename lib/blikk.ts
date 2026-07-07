@@ -1607,6 +1607,75 @@ export class BlikkClient {
     }
     throw lastErr || new Error('Failed to delete time report');
   }
+
+  // List contacts (customers) with tolerant paths + paging. Returns the raw list payload;
+  // callers extract fields tolerantly (kundnummer / contactType / ansvarig kan variera per tenant).
+  // Mirrors listUsers()/listProjectsWithMeta() heuristics.
+  async listContactsWithMeta(opts?: { page?: number; pageSize?: number; query?: string }): Promise<{ data: any; usedUrl: string; attempts: string[] }> {
+    const page = opts?.page ?? 1;
+    // Blikk PageSize must be 1..100
+    const pageSize = Math.min(100, Math.max(1, opts?.pageSize ?? 100));
+    const envPath = process.env.BLIKK_CONTACTS_PATH || null;
+    const bases = envPath ? [envPath] : [
+      '/v1/Core/Contacts',
+      '/v1/Contacts',
+      '/v1/Core/Customers',
+      '/v1/Customers',
+    ];
+    const queryKeys = ['filter.query', 'query', 'q'];
+    const pagingVariants: Array<Record<string, string>> = [
+      { page: String(page), pageSize: String(pageSize) },
+      { page: String(page), limit: String(pageSize) },
+    ];
+
+    const attempts: string[] = [];
+    let lastErr: any = null;
+    for (const base of bases) {
+      for (const paging of pagingVariants) {
+        const qs = new URLSearchParams(paging);
+        if (opts?.query) for (const k of queryKeys) qs.set(k, opts.query);
+        const url = `${base}?${qs.toString()}`;
+        attempts.push(url);
+        try {
+          const data = await this.request(url);
+          return { data, usedUrl: url, attempts };
+        } catch (e: any) {
+          lastErr = e;
+          console.warn('Blikk listContacts failed, trying next combination', { url, error: String(e?.message || e) });
+        }
+      }
+    }
+    throw lastErr || new Error('Failed to list contacts');
+  }
+
+  async listContacts(opts?: { page?: number; pageSize?: number; query?: string }) {
+    const { data } = await this.listContactsWithMeta(opts);
+    return data;
+  }
+
+  // Diagnostic (Step 0): compare the fields available on the LIST object vs the DETAIL object
+  // for the first few contacts, so we can confirm which field carries kundnummer / contactType
+  // (företag vs privat) / ansvarig säljare, and whether a per-contact detail fetch is needed.
+  async probeContacts(opts?: { pageSize?: number; sample?: number }): Promise<any> {
+    const pageSize = Math.min(100, Math.max(1, opts?.pageSize ?? 5));
+    const sample = Math.min(pageSize, Math.max(1, opts?.sample ?? 3));
+    const { data, usedUrl } = await this.listContactsWithMeta({ page: 1, pageSize });
+    const items: any[] = Array.isArray(data) ? data : (data?.items || data?.data || []);
+    const listKeys = items[0] && typeof items[0] === 'object' ? Object.keys(items[0]) : [];
+    const details: any[] = [];
+    for (const item of items.slice(0, sample)) {
+      const id = Number(item?.id ?? item?.Id ?? item?.contactId);
+      if (!Number.isFinite(id)) continue;
+      try {
+        const detail = await this.getContactById(id);
+        const raw = (detail as any)?.contact?.raw ?? detail;
+        details.push({ id, listItem: item, detailKeys: raw && typeof raw === 'object' ? Object.keys(raw) : [], detailSample: raw });
+      } catch (e: any) {
+        details.push({ id, error: String(e?.message || e) });
+      }
+    }
+    return { usedUrl, count: items.length, listKeys, listSample: items.slice(0, sample), details };
+  }
 }
 
 export function getBlikk() {

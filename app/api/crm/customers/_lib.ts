@@ -105,6 +105,7 @@ export const createCrmCustomerSchema = z
     fortnox_customer_id: z.string().trim().nullable().optional().default(null),
     source: z.string().trim().nullable().optional().default(null),
     notes: z.string().trim().nullable().optional().default(null),
+    account_manager_id: z.string().uuid().nullable().optional().default(null),
     create_in_fortnox: z.boolean().optional().default(false),
   })
   .refine(
@@ -156,6 +157,7 @@ export const updateCrmCustomerSchema = z
     source: z.string().trim().nullable().optional(),
     notes: z.string().trim().nullable().optional(),
     assigned_to: z.string().uuid().optional(),
+    account_manager_id: z.string().uuid().nullable().optional(),
   });
 
 export const createCrmCustomerContactSchema = z.object({

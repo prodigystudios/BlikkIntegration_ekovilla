@@ -62,6 +62,7 @@ export const crmCustomerSelect = `
   source,
   notes,
   assigned_to,
+  account_manager_id,
   created_by,
   created_at,
   updated_at,
@@ -127,6 +128,8 @@ export type CreateCrmCustomerInput = {
   source?: string | null;
   notes?: string | null;
   assigned_to: string;
+  // Kundansvarig säljare (FK profiles). Fristående från assigned_to (ägare/RLS-synlighet).
+  account_manager_id?: string | null;
   created_by: string;
 };
 
@@ -169,6 +172,7 @@ export type UpdateCrmCustomerInput = {
   source?: string | null;
   notes?: string | null;
   assigned_to?: string;
+  account_manager_id?: string | null;
 };
 
 export type CreateCrmCustomerContactInput = {
@@ -365,6 +369,21 @@ export async function convertProspectToCustomer(
   }
 
   return { customerId: updated.id, error: null };
+}
+
+// Säljare som kan vara kundansvarig: profiles med role sales/admin. konsult är
+// READONLY och utesluts. Läs-modell över hela teamet → kör med en elevated klient
+// (profiles-RLS är self-only), samma mönster som reports.ts/ringlists.ts.
+export type CrmSeller = { id: string; full_name: string | null; role: string };
+
+export async function listCrmSellers(supabase: SupabaseClient): Promise<CrmSeller[]> {
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('id, full_name, role')
+    .in('role', ['sales', 'admin'])
+    .order('full_name', { ascending: true });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as CrmSeller[];
 }
 
 export function getCrmCustomerDisplayName(customer: {

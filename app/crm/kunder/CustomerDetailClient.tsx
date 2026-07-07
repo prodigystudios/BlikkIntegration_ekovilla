@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Input from '../../../components/ui/Input';
+import Select from '../../../components/ui/Select';
 import FortnoxCodeSelect from './FortnoxCodeSelect';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
@@ -65,10 +66,13 @@ type Customer = {
   credit_report_fetched_at: string | null;
   fortnox_customer_id: string | null;
   sync_status: 'not_synced' | 'pending' | 'synced' | 'failed';
+  account_manager_id: string | null;
   created_at: string;
   updated_at: string;
   contacts: CustomerContact[];
 };
+
+type Seller = { id: string; full_name: string | null; role: string };
 
 type RelatedQuote = { id: string; project_name: string; amount: number; currency_code: string; status: string; quote_date: string };
 type RelatedWorkOrder = { id: string; order_number: string; project_name: string; status: string; desired_installation_date: string | null };
@@ -89,6 +93,7 @@ type EditDraft = {
   legal_entity_type: string; sni_code: string; sni_name: string;
   operating_profit: string; profit_after_financial_items: string; total_assets: string;
   operating_margin: string; equity_ratio: string; financial_year: string;
+  account_manager_id: string;
 };
 
 type ContactDraft = { name: string; role: string; phone: string; email: string; is_primary: boolean };
@@ -253,6 +258,8 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
   const [savingContact, setSavingContact] = useState(false);
   const [contactDraft, setContactDraft] = useState<ContactDraft>({ name: '', role: '', phone: '', email: '', is_primary: false });
 
+  const [sellers, setSellers] = useState<Seller[]>([]);
+
   const [quotes, setQuotes] = useState<RelatedQuote[]>([]);
   const [workOrders, setWorkOrders] = useState<RelatedWorkOrder[]>([]);
   const [calls, setCalls] = useState<RelatedCall[]>([]);
@@ -276,6 +283,19 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
     load();
     return () => { active = false; };
   }, [customerId]);
+
+  // Säljare för kundansvarig-väljaren (profiles sales/admin, läs-katalog).
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const res = await fetch('/api/crm/sellers', { cache: 'no-store' });
+        const json = await res.json().catch(() => ({}));
+        if (active && res.ok && json.ok) setSellers(json.data?.sellers || []);
+      } catch { /* icke-kritiskt: väljaren visar bara id-fallback */ }
+    })();
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     if (!customer) return;
@@ -343,6 +363,7 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
       operating_margin: customer.operating_margin != null ? String(customer.operating_margin) : '',
       equity_ratio: customer.equity_ratio != null ? String(customer.equity_ratio) : '',
       financial_year: customer.financial_year != null ? String(customer.financial_year) : '',
+      account_manager_id: customer.account_manager_id || '',
     });
     setEditing(true);
   }
@@ -403,6 +424,7 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
         operating_margin: editDraft.operating_margin.trim() ? Number(editDraft.operating_margin) : null,
         equity_ratio: editDraft.equity_ratio.trim() ? Number(editDraft.equity_ratio) : null,
         financial_year: editDraft.financial_year.trim() ? Number(editDraft.financial_year) : null,
+        account_manager_id: editDraft.account_manager_id || null,
       };
       const res = await fetch(`/api/crm/customers/${customer.id}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
@@ -558,6 +580,14 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
       <Card>
         <SectionTitle>Metadata</SectionTitle>
         <div className="grid gap-3">
+          <InfoField
+            label="Kundansvarig"
+            value={
+              customer.account_manager_id
+                ? (sellers.find((s) => s.id === customer.account_manager_id)?.full_name || 'Okänd säljare')
+                : '–'
+            }
+          />
           <InfoField label="Skapad" value={formatDateTime(customer.created_at)} />
           <InfoField label="Senast ändrad" value={formatDateTime(customer.updated_at)} />
           {customer.fortnox_customer_id ? (
@@ -747,6 +777,15 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
                   <div>
                     <FieldLabel>Mobil</FieldLabel>
                     <Input value={editDraft.mobile} onChange={(e) => setField('mobile', e.target.value)} placeholder="070-123 456 78" />
+                  </div>
+                  <div>
+                    <FieldLabel>Kundansvarig</FieldLabel>
+                    <Select value={editDraft.account_manager_id} onChange={(e) => setField('account_manager_id', e.target.value)}>
+                      <option value="">— Ingen —</option>
+                      {sellers.map((s) => (
+                        <option key={s.id} value={s.id}>{s.full_name || s.id}</option>
+                      ))}
+                    </Select>
                   </div>
                 </div>
               </Card>
