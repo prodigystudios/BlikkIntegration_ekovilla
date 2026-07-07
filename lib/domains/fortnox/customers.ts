@@ -381,7 +381,9 @@ export function buildFortnoxCustomerPayload(customer: FortnoxCustomerSource) {
     OrganisationNumber: organisationNumber ?? undefined,
     Email: customer.email ?? undefined,
     Phone1: customer.phone ?? undefined,
-    Mobile: customer.mobile ?? undefined,
+    // Fortnox Customer har inget Mobile-fält (POST/PUT ger 400 "Felaktigt fältnamn (Mobile)",
+    // kod 2001399). Mobil lagras i Phone2 – symmetriskt med importen som läser c.Phone2 → mobile.
+    Phone2: customer.mobile ?? undefined,
     Address1: customer.invoice_address?.street ?? undefined,
     ZipCode: customer.invoice_address?.postal_code ?? undefined,
     City: customer.invoice_address?.city ?? undefined,

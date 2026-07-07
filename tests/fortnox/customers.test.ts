@@ -79,10 +79,12 @@ describe('buildFortnoxCustomerPayload', () => {
     expect(payload.OrganisationNumber).toBe('900101-1234');
   });
 
-  it('skickar mobil i det dedikerade Mobile-fältet (inte Phone2)', () => {
+  // Fortnox Customer saknar Mobile-fält (POST/PUT → 400 kod 2001399). Mobil ska in i Phone2,
+  // symmetriskt med importen (mapFortnoxCustomerToRow läser c.Phone2 → mobile).
+  it('skickar mobil i Phone2 (Fortnox har inget Mobile-fält)', () => {
     const payload = buildFortnoxCustomerPayload(source({ mobile: '070-123' }));
-    expect(payload.Mobile).toBe('070-123');
-    expect(payload).not.toHaveProperty('Phone2');
+    expect(payload.Phone2).toBe('070-123');
+    expect(payload).not.toHaveProperty('Mobile');
   });
 
   it('mappar besöksadress till Visiting* utan att röra Address1 (fakturaadress)', () => {
