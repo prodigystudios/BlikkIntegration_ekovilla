@@ -416,12 +416,13 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
     // Best-effort: drop the PDF in Downloads so it can be attached to the draft.
     const pdfOk = await downloadFortnoxPdf(`/api/fortnox/offers/${quote.id}/pdf`, `offert-${ref}.pdf`, toast.error);
     setEmailingId(null);
-
-    // Open the mail client with the draft (recipient/subject/body pre-filled) regardless –
-    // the PDF download is a convenience, not a hard dependency.
-    const mailto = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-    window.location.href = mailto;
     if (pdfOk) toast.success('Offert-PDF nedladdad – bifoga den i mejlet som öppnades.');
+
+    // Open the mail client with the draft (recipient/subject/body pre-filled). Deferred so
+    // the just-started blob download commits first — setting location.href immediately can
+    // otherwise cancel the in-flight download. The mailto is a convenience, not required.
+    const mailto = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    setTimeout(() => { window.location.href = mailto; }, pdfOk ? 800 : 0);
   }
 
   async function openOrderPdf(workOrderId: string) {
