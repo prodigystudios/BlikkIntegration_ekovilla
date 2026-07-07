@@ -93,7 +93,6 @@ type EditDraft = {
   legal_entity_type: string; sni_code: string; sni_name: string;
   operating_profit: string; profit_after_financial_items: string; total_assets: string;
   operating_margin: string; equity_ratio: string; financial_year: string;
-  account_manager_id: string;
 };
 
 type ContactDraft = { name: string; role: string; phone: string; email: string; is_primary: boolean };
@@ -364,7 +363,6 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
       operating_margin: customer.operating_margin != null ? String(customer.operating_margin) : '',
       equity_ratio: customer.equity_ratio != null ? String(customer.equity_ratio) : '',
       financial_year: customer.financial_year != null ? String(customer.financial_year) : '',
-      account_manager_id: customer.account_manager_id || '',
     });
     setEditing(true);
   }
@@ -425,7 +423,6 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
         operating_margin: editDraft.operating_margin.trim() ? Number(editDraft.operating_margin) : null,
         equity_ratio: editDraft.equity_ratio.trim() ? Number(editDraft.equity_ratio) : null,
         financial_year: editDraft.financial_year.trim() ? Number(editDraft.financial_year) : null,
-        account_manager_id: editDraft.account_manager_id || null,
       };
       const res = await fetch(`/api/crm/customers/${customer.id}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
@@ -807,15 +804,9 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
                     <FieldLabel>Mobil</FieldLabel>
                     <Input value={editDraft.mobile} onChange={(e) => setField('mobile', e.target.value)} placeholder="070-123 456 78" />
                   </div>
-                  <div>
-                    <FieldLabel>Kundansvarig</FieldLabel>
-                    <Select value={editDraft.account_manager_id} onChange={(e) => setField('account_manager_id', e.target.value)}>
-                      <option value="">— Ingen —</option>
-                      {sellers.map((s) => (
-                        <option key={s.id} value={s.id}>{s.full_name || s.id}</option>
-                      ))}
-                    </Select>
-                  </div>
+                  {/* Kundansvarig redigeras via inline-väljaren i Metadata (sparas direkt, gäller
+                      i både läs- och redigeringsläget) — inte här, för att inte "Spara ändringar"
+                      ska skriva över ett direktsatt värde med ett inaktuellt utkast. */}
                 </div>
               </Card>
             </div>

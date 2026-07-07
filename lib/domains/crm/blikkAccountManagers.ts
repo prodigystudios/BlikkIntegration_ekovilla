@@ -116,6 +116,11 @@ export function resolveAccountManagerUpdates(
     updates: [], unmappedSeller: [], unmatchedCustomer: [], skippedPrivate: 0, noSeller: [],
   };
 
+  // Deduplicera per kund: två Blikk-kontakter kan dela kundnummer (samma företag, flera
+  // kontaktrader). Utan detta skulle samma rad skrivas två gånger (icke-deterministisk
+  // sist-vinner) och `updated` räknas dubbelt. Första träffen vinner.
+  const seenCustomer = new Set<string>();
+
   for (const c of contacts) {
     if (!c.isCompany) { res.skippedPrivate++; continue; }
     if (!c.customerNumber) continue; // inget att matcha på
@@ -124,6 +129,8 @@ export function resolveAccountManagerUpdates(
     if (c.sellerBlikkId == null) { res.noSeller.push(c.customerNumber); continue; }
     const profileId = blikkIdToProfile.get(c.sellerBlikkId);
     if (!profileId) { res.unmappedSeller.push({ customerNumber: c.customerNumber, sellerBlikkId: c.sellerBlikkId }); continue; }
+    if (seenCustomer.has(customerId)) continue; // redan schemalagd på denna sida
+    seenCustomer.add(customerId);
     res.updates.push({ customerId, accountManagerId: profileId });
   }
 
@@ -207,7 +214,7 @@ export async function syncBlikkAccountManagersPage(
   let detailFetches = 0;
   const needsDetail = normalized.filter(
     (c) => c.isCompany && c.customerNumber && customerNumberToId.has(c.customerNumber)
-      && c.sellerBlikkId == null && c.id != null,
+      && c.sellerBlikkId == null && c.id != null && c.id > 0,
   );
   for (const c of needsDetail) {
     try {
@@ -252,8 +259,10 @@ export async function syncBlikkAccountManagersPage(
     })),
   ];
 
-  // En full sida ⇒ troligen fler sidor. Kortare sida ⇒ klart.
-  const nextPage = items.length >= pageSize ? page + 1 : null;
+  // Fortsätt så länge sidan har rader; stanna först vid en TOM sida. (Att stanna på en
+  // kort sida vore fel — Blikk/proxy kan returnera färre än pageSize på en icke-sista sida,
+  // vilket tyst skulle hoppa över resten. Priset är ett extra tomt anrop i slutet.)
+  const nextPage = items.length > 0 ? page + 1 : null;
 
   return {
     page,

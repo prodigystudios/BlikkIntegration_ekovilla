@@ -107,6 +107,15 @@ describe('resolveAccountManagerUpdates', () => {
     expect(r.unmatchedCustomer).toHaveLength(0);
   });
 
+  it('dedups two contacts sharing a customer number to a single update (first wins)', () => {
+    const batch = [
+      c({ customerNumber: '1001', sellerBlikkId: 42 }), // → profile-a
+      c({ customerNumber: '1001', sellerBlikkId: 43 }), // same customer, would be profile-b
+    ];
+    const r = resolveAccountManagerUpdates(batch, blikkIdToProfile, customerNumberToId);
+    expect(r.updates).toEqual([{ customerId: 'cust-1', accountManagerId: 'profile-a' }]);
+  });
+
   it('handles a mixed batch and buckets each contact once', () => {
     const batch = [
       c({ customerNumber: '1001', sellerBlikkId: 42 }),      // → update

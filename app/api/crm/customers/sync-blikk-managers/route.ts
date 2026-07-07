@@ -4,6 +4,11 @@ import { syncBlikkAccountManagersPage } from '@/lib/domains/crm/blikkAccountMana
 
 // Backfill av kundansvarig från Blikk (endast företagskunder, matchat på kundnummer).
 // Resum-bar per Blikk-listsida: UI:t loopar page 1,2,3… tills nextPage === null.
+//
+// En sida kan trigga upp till pageSize strypta detalj-anrop (~300 ms styck) när ansvarig
+// bara finns på kund-detaljen, så ge routen gott om tid innan serverless-timeout.
+export const maxDuration = 300;
+
 const bodySchema = z.object({
   page: z.coerce.number().int().min(1).optional().default(1),
   pageSize: z.coerce.number().int().min(1).max(100).optional().default(100),
