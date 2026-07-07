@@ -543,7 +543,11 @@ function ArticlePicker({ value, articleNumber, price, unit, onSelect, onClear }:
               </button>
               <button
                 type="button"
-                onClick={() => { onSelect(item); setOpen(false); setQuery(''); setSearching(false); }}
+                // onMouseDown (not onClick) so the selection commits on press — before the
+                // input's blur-timeout closes the list and before a pending debounce refetch
+                // swaps the row out from under the click. Mirrors CustomerSearchPicker and the
+                // favorite star above. preventDefault keeps input focus so no blur fires.
+                onMouseDown={(e) => { e.preventDefault(); onSelect(item); setOpen(false); setQuery(''); setSearching(false); }}
                 className="flex min-w-0 flex-1 flex-col items-start gap-0.5 py-2.5 pr-2 text-left"
               >
                 <span className="truncate text-sm font-medium text-slate-900">{item.name || 'Artikel'}</span>
@@ -850,6 +854,20 @@ function LineItemRow({
         onSelect={onSelectArticle}
         onClear={onClearArticle}
       />
+
+      {/* Editable display name (Description) for the picked article — e.g. rename a generic
+          "Övrigt" article to something descriptive. Only the row's Description changes; the
+          article number/price/unit stay intact, and this text is what buildOfferRows sends to
+          Fortnox as the row Description. Shown once an article is selected. */}
+      {row.article_name ? (
+        <Field label="Benämning på offerten">
+          <Input
+            value={row.article_name}
+            onChange={(e) => onChange({ article_name: e.target.value })}
+            placeholder="Namn som visas på offerten"
+          />
+        </Field>
+      ) : null}
 
       <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
         {isM3 ? (
