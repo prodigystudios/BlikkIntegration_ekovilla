@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Input from '../../../components/ui/Input';
 import Select from '../../../components/ui/Select';
@@ -53,7 +53,10 @@ type Draft = {
   equity_ratio: string;
   financial_year: string;
   risk_indicators: TicRiskIndicator[];
+  account_manager_id: string;
 };
+
+type Seller = { id: string; full_name: string | null; role: string };
 
 const initial: Draft = {
   customer_type: 'business',
@@ -92,6 +95,7 @@ const initial: Draft = {
   equity_ratio: '',
   financial_year: '',
   risk_indicators: [],
+  account_manager_id: '',
 };
 
 function buildAddress(street: string, postalCode: string, city: string) {
@@ -198,6 +202,20 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
   const [creditCompanyId, setCreditCompanyId] = useState<number | null>(null);
   const [creditFetchedAt, setCreditFetchedAt] = useState<string | null>(null);
   const [fetchingCredit, setFetchingCredit] = useState(false);
+  const [sellers, setSellers] = useState<Seller[]>([]);
+
+  // Säljare för kundansvarig-väljaren (profiles sales/admin, läs-katalog).
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const res = await fetch('/api/crm/sellers', { cache: 'no-store' });
+        const json = await res.json().catch(() => ({}));
+        if (active && res.ok && json.ok) setSellers(json.data?.sellers || []);
+      } catch { /* icke-kritiskt */ }
+    })();
+    return () => { active = false; };
+  }, []);
 
   function set<K extends keyof Draft>(key: K, value: Draft[K]) {
     setDraft((c) => ({ ...c, [key]: value }));
@@ -364,6 +382,7 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
         equity_ratio: draft.equity_ratio.trim() ? Number(draft.equity_ratio) : null,
         financial_year: draft.financial_year.trim() ? Number(draft.financial_year) : null,
         risk_indicators: draft.risk_indicators.length > 0 ? draft.risk_indicators : null,
+        account_manager_id: draft.account_manager_id || null,
       };
       if (isB2B) {
         body.company_name = draft.company_name.trim();
@@ -726,6 +745,18 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
 
         {/* Right: sidebar */}
         <div className="grid gap-4 lg:sticky lg:top-6">
+
+          {/* Kundansvarig */}
+          <div className={crm.cardInner}>
+            <p className={cn('mb-3', crm.sectionTitle)}>Kundansvarig</p>
+            <Select value={draft.account_manager_id} onChange={(e) => set('account_manager_id', e.target.value)}>
+              <option value="">— Ingen —</option>
+              {sellers.map((s) => (
+                <option key={s.id} value={s.id}>{s.full_name || s.id}</option>
+              ))}
+            </Select>
+            <p className="mt-1.5 text-xs text-slate-400">Säljaren som äger kundrelationen. Kan sättas senare.</p>
+          </div>
 
           {/* Fortnox */}
           {fortnoxConnected ? (
