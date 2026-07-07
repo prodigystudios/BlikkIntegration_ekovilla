@@ -777,6 +777,8 @@ function LineItemRow({
   index,
   metrics,
   rotEnabled,
+  expanded,
+  onToggle,
   onChange,
   onSelectArticle,
   onClearArticle,
@@ -787,6 +789,9 @@ function LineItemRow({
   index: number;
   metrics: EffectiveRow | undefined;
   rotEnabled: boolean;
+  // Accordion: which row is open is owned by the parent so opening one collapses the rest.
+  expanded: boolean;
+  onToggle: (next: boolean) => void;
   onChange: (patch: Partial<QuoteLineItem>) => void;
   onSelectArticle: (article: ArticleLite) => void;
   onClearArticle: () => void;
@@ -794,15 +799,13 @@ function LineItemRow({
   dragHandle?: React.ReactNode;
 }) {
   const isM3 = (row.pricing_mode ?? 'm3') === 'm3';
-  // Collapsed by default once the row has an article; new/empty rows open for editing.
-  const [expanded, setExpanded] = useState(!row.article_name);
 
   // ── Collapsed: single overview line ──────────────────────────────────────────
   if (!expanded) {
     return (
       <div className="flex items-center gap-2 rounded-xl border border-slate-100 px-3.5 py-2.5 transition-colors hover:border-slate-200">
         {dragHandle}
-        <button type="button" onClick={() => setExpanded(true)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
+        <button type="button" onClick={() => onToggle(true)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
           <span className="shrink-0 text-xs font-semibold tabular-nums text-slate-300">{index + 1}</span>
           <span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-800">
             {row.article_name || <span className="text-slate-400">Välj artikel…</span>}
@@ -837,7 +840,7 @@ function LineItemRow({
       <div className="flex items-center justify-between gap-3">
         <span className="flex items-center gap-2 text-xs font-semibold text-slate-400">{dragHandle}Rad {index + 1}</span>
         <div className="flex items-center gap-3">
-          <button type="button" onClick={() => setExpanded(false)} className="text-xs font-medium text-slate-500 transition-colors hover:text-slate-800">
+          <button type="button" onClick={() => onToggle(false)} className="text-xs font-medium text-slate-500 transition-colors hover:text-slate-800">
             Fäll ihop ▴
           </button>
           <button type="button" onClick={onRemove} className="text-xs text-slate-400 transition-colors hover:text-rose-600">
@@ -939,6 +942,12 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   const [pnPromptOpen, setPnPromptOpen] = useState(false);
   const [pnValue, setPnValue] = useState('');
   const [draft, setDraft] = useState<QuoteDraft>(initialDraft);
+  // Accordion: id of the single open article row. Starts on the empty starter row; adding
+  // or manually opening a row makes it the only open one (others collapse). A stale id
+  // (e.g. after loading a saved quote with different rows) simply leaves every row collapsed.
+  const [expandedRowId, setExpandedRowId] = useState<string | null>(
+    () => (initialDraft.items[0] && !initialDraft.items[0].article_name ? initialDraft.items[0].id : null),
+  );
   const [loadedQuote, setLoadedQuote] = useState<QuoteItem | null>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<CrmCustomerLite | null>(null);
   // Whether the job is performed at a different address than the customer's. Off → the
@@ -1884,6 +1893,8 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
                 dragHandle={dragHandle}
                 metrics={effectiveRows.find((r) => r.id === row.id)}
                 rotEnabled={draft.rot_enabled}
+                expanded={expandedRowId === row.id}
+                onToggle={(next) => setExpandedRowId(next ? row.id : null)}
                 onChange={(patch) => setDraft((d) => ({ ...d, items: d.items.map((item) => item.id === row.id ? { ...item, ...patch } : item) }))}
                 onSelectArticle={(article) => {
                   const construction = inferConstructionFromArticle(article.name);
@@ -1924,7 +1935,12 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
 
           <button
             type="button"
-            onClick={() => setDraft((d) => ({ ...d, items: [...d.items, createEmptyLineItem()] }))}
+            onClick={() => {
+              // Accordion: open the new row as the only expanded one (collapses the rest).
+              const newItem = createEmptyLineItem();
+              setDraft((d) => ({ ...d, items: [...d.items, newItem] }));
+              setExpandedRowId(newItem.id);
+            }}
             className="mt-4 inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
           >
             + Lägg till rad

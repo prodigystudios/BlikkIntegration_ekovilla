@@ -5,7 +5,7 @@ import Input from '../../../components/ui/Input';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
 import AssigneeFilter, { matchesAssignee, type AssigneeFilterValue, type AssigneeOption } from '@/app/crm/components/AssigneeFilter';
-import { openFortnoxPdf, postFortnoxEmail } from '@/app/crm/lib/fortnoxDoc';
+import { openFortnoxPdf, postFortnoxEmail, downloadFortnoxPdf } from '@/app/crm/lib/fortnoxDoc';
 import { documentRef } from '@/app/crm/lib/format';
 import DocumentNumberBadge from '@/app/crm/components/DocumentNumberBadge';
 import { resolveQuoteVatBreakdown, quoteAmountDisplay } from '@/lib/domains/crm/pricing';
@@ -25,6 +25,7 @@ type QuoteItem = {
   customer_snapshot: {
     customer_name?: string | null;
     company_name?: string | null;
+    email?: string | null;
   } | null;
   pricing_summary: { subtotal?: number; vat?: number; total?: number } | null;
   prospect: { id: string; company_name: string; contact_name: string | null; city: string | null; status: string } | Array<{ id: string; company_name: string; contact_name: string | null; city: string | null; status: string }> | null;
@@ -141,6 +142,8 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
   const [pushingFortnoxId, setPushingFortnoxId] = useState<string | null>(null);
   const [pdfLoadingId, setPdfLoadingId] = useState<string | null>(null);
   const [emailingId, setEmailingId] = useState<string | null>(null);
+  // Which offer's "Mejla offert" choice menu (eget mejlprogram / Fortnox) is open.
+  const [emailMenuOpenId, setEmailMenuOpenId] = useState<string | null>(null);
   const [orderPdfId, setOrderPdfId] = useState<string | null>(null);
   const [orderEmailingId, setOrderEmailingId] = useState<string | null>(null);
   // Map of work_order_id → its Fortnox order number, so the offer list AO-chip and the
@@ -391,6 +394,34 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
       toast.success('Offerten mejlad till kunden via Fortnox');
     }
     setEmailingId(null);
+  }
+
+  // "Eget mejlprogram": open a pre-filled draft in the user's mail client. mailto can't
+  // attach files, so we download the offer PDF to disk first for the user to attach.
+  async function emailOfferViaMailClient(quote: QuoteItem) {
+    const ref = documentRef(quote.fortnox_offer_number, quote.quote_number);
+    const to = quote.customer_snapshot?.email?.trim() || '';
+    const subject = `Offert ${ref}${quote.project_name ? ` – ${quote.project_name}` : ''}`;
+    const body = [
+      'Hej,',
+      '',
+      `Här kommer offert ${ref}${quote.project_name ? ` gällande ${quote.project_name}` : ''}. Offerten bifogas som PDF.`,
+      '',
+      'Hör gärna av dig vid frågor.',
+      '',
+      'Med vänliga hälsningar',
+    ].join('\n');
+
+    setEmailingId(quote.id);
+    // Best-effort: drop the PDF in Downloads so it can be attached to the draft.
+    const pdfOk = await downloadFortnoxPdf(`/api/fortnox/offers/${quote.id}/pdf`, `offert-${ref}.pdf`, toast.error);
+    setEmailingId(null);
+
+    // Open the mail client with the draft (recipient/subject/body pre-filled) regardless –
+    // the PDF download is a convenience, not a hard dependency.
+    const mailto = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    window.location.href = mailto;
+    if (pdfOk) toast.success('Offert-PDF nedladdad – bifoga den i mejlet som öppnades.');
   }
 
   async function openOrderPdf(workOrderId: string) {
@@ -810,14 +841,50 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
                           >
                             {pdfLoadingId === detailQuote.id ? 'Hämtar…' : 'Hämta PDF'}
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => void sendOfferEmail(detailQuote.id)}
-                            disabled={emailingId === detailQuote.id}
-                            className="rounded-lg border border-indigo-600 bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            {emailingId === detailQuote.id ? 'Mejlar…' : 'Mejla offert'}
-                          </button>
+                          <div className="relative">
+                            <button
+                              type="button"
+                              onClick={() => setEmailMenuOpenId((o) => (o === detailQuote.id ? null : detailQuote.id))}
+                              disabled={emailingId === detailQuote.id}
+                              aria-haspopup="menu"
+                              aria-expanded={emailMenuOpenId === detailQuote.id}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-600 bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {emailingId === detailQuote.id ? 'Mejlar…' : 'Mejla offert'}
+                              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden className={cn('transition-transform', emailMenuOpenId === detailQuote.id && 'rotate-180')}>
+                                <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+                              </svg>
+                            </button>
+                            {emailMenuOpenId === detailQuote.id ? (
+                              <>
+                                {/* Click-away backdrop */}
+                                <div className="fixed inset-0 z-40" onClick={() => setEmailMenuOpenId(null)} aria-hidden />
+                                <div role="menu" className="absolute right-0 top-full z-50 mt-1.5 w-72 overflow-hidden rounded-xl border border-slate-200 bg-white p-1 shadow-[0_12px_32px_rgba(15,23,42,0.16)]">
+                                  <button
+                                    type="button"
+                                    role="menuitem"
+                                    onClick={() => { setEmailMenuOpenId(null); void emailOfferViaMailClient(detailQuote); }}
+                                    className="flex w-full flex-col items-start gap-0.5 rounded-lg px-3 py-2 text-left transition hover:bg-slate-50"
+                                  >
+                                    <span className="flex items-center gap-2 text-sm font-semibold text-slate-800">
+                                      Eget mejlprogram
+                                      <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700">Standard</span>
+                                    </span>
+                                    <span className="text-xs text-slate-500">Öppnar ditt mejlprogram – PDF:en laddas ner att bifoga.</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    role="menuitem"
+                                    onClick={() => { setEmailMenuOpenId(null); void sendOfferEmail(detailQuote.id); }}
+                                    className="flex w-full flex-col items-start gap-0.5 rounded-lg px-3 py-2 text-left transition hover:bg-slate-50"
+                                  >
+                                    <span className="text-sm font-semibold text-slate-800">Via Fortnox</span>
+                                    <span className="text-xs text-slate-500">Fortnox mejlar offerten med PDF direkt till kunden.</span>
+                                  </button>
+                                </div>
+                              </>
+                            ) : null}
+                          </div>
                         </>
                       ) : null}
                       {/* Sync/re-sync hidden once a work order locks the offer in Fortnox
