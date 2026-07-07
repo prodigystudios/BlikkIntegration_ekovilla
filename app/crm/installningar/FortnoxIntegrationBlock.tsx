@@ -24,6 +24,9 @@ export default function FortnoxIntegrationBlock({
   const [customerSync, setCustomerSync] = useState<SyncResult>(defaultSync);
   const [verifySync, setVerifySync] = useState<SyncResult>(defaultSync);
   const [blikkManagerSync, setBlikkManagerSync] = useState<SyncResult>(defaultSync);
+  // Kunder som matchades mot CRM men inte fick ansvarig (med namn + orsak), ackumuleras över sidorna.
+  type UnresolvedCustomer = { customerNumber: string; customerName: string; reason: 'unmapped_seller' | 'no_seller'; sellerBlikkId?: number };
+  const [blikkUnresolved, setBlikkUnresolved] = useState<UnresolvedCustomer[]>([]);
 
   async function handleDisconnect() {
     if (!confirm('Är du säker på att du vill koppla från Fortnox?')) return;
@@ -104,10 +107,11 @@ export default function FortnoxIntegrationBlock({
   // företagskunder berörs; ansvarig skrivs över med Blikks värde.
   async function runBlikkManagers() {
     setBlikkManagerSync({ label: '', state: 'loading', message: 'Startar import...' });
+    setBlikkUnresolved([]);
     let updated = 0;
     let processed = 0;
-    let unmappedSellers = 0;
     let unmatched = 0;
+    const unresolved: UnresolvedCustomer[] = [];
     let page: number | null = 1;
     try {
       for (let guard = 0; guard < 2000 && page != null; guard++) {
@@ -123,23 +127,24 @@ export default function FortnoxIntegrationBlock({
         }
         const d = json.data as {
           updated: number; processed: number; nextPage: number | null;
-          unmappedSeller: unknown[]; unmatchedCustomer: unknown[];
+          unresolved: UnresolvedCustomer[]; unmatchedCustomer: unknown[];
         };
         updated += d.updated;
         processed += d.processed;
-        unmappedSellers += d.unmappedSeller.length;
         unmatched += d.unmatchedCustomer.length;
+        unresolved.push(...d.unresolved);
+        setBlikkUnresolved([...unresolved]);
         page = d.nextPage;
         if (page == null) {
           setBlikkManagerSync({
             label: '', state: 'success',
-            message: `Klart – ${updated} kundansvariga satta (${processed} kontakter). ${unmappedSellers} omappade säljare, ${unmatched} utan CRM-kund.`,
+            message: `Klart – ${updated} kundansvariga satta (${processed} kontakter). ${unresolved.length} kunder utan ansvarig, ${unmatched} Blikk-kunder saknar CRM-motsvarighet.`,
           });
           return;
         }
         setBlikkManagerSync({
           label: '', state: 'loading',
-          message: `${updated} satta, ${unmappedSellers} omappade säljare... (sida ${page})`,
+          message: `${updated} satta, ${unresolved.length} utan ansvarig... (sida ${page})`,
         });
       }
       setBlikkManagerSync({ label: '', state: 'success', message: `Pausat efter ${processed} kontakter – kör igen för resten.` });
@@ -224,6 +229,34 @@ export default function FortnoxIntegrationBlock({
             message={blikkManagerSync.message}
             onSync={runBlikkManagers}
           />
+
+          {/* Vilka kunder som matchades men inte fick ansvarig (så admin kan åtgärda) */}
+          {blikkUnresolved.length > 0 ? (
+            <details className="rounded-xl border border-amber-200 bg-amber-50/50 px-3 py-2">
+              <summary className="cursor-pointer text-xs font-semibold text-amber-800">
+                {blikkUnresolved.length} kunder utan ansvarig – visa vilka
+              </summary>
+              <p className="mt-2 mb-1 text-[11px] text-amber-700">
+                <strong>Omappad säljare</strong> = Blikk-säljaren är inte kopplad under Admin → Blikk-koppling
+                (mappa den och kör om). <strong>Ingen ansvarig i Blikk</strong> = kunden saknar ansvarig säljare i Blikk.
+              </p>
+              <ul className="mt-1 grid gap-1">
+                {blikkUnresolved.map((u) => (
+                  <li key={`${u.customerNumber}-${u.reason}`} className="flex items-center justify-between gap-3 rounded-lg bg-white/70 px-2.5 py-1.5 text-xs">
+                    <span className="min-w-0 truncate text-slate-700">
+                      <span className="font-semibold">{u.customerName}</span>
+                      <span className="text-slate-400"> · #{u.customerNumber}</span>
+                    </span>
+                    <span className="shrink-0 text-[11px] font-semibold text-amber-700">
+                      {u.reason === 'unmapped_seller'
+                        ? `Omappad säljare${u.sellerBlikkId ? ` (Blikk-id ${u.sellerBlikkId})` : ''}`
+                        : 'Ingen ansvarig i Blikk'}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          ) : null}
 
           <div className="mt-1 border-t border-slate-100 pt-3">
             <button

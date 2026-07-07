@@ -2,7 +2,7 @@ import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { getCrmCustomer, updateCrmCustomer } from '@/lib/domains/crm/customers';
 import { updateFortnoxCustomer, fortnoxCustomerFieldsChanged } from '@/lib/domains/fortnox/customers';
-import { invalidUuidParam, ok, requireCrmUser, requirePermission, routeError, updateCrmCustomerSchema, validationError } from '../_lib';
+import { invalidUuidParam, ok, pickProvidedFields, requireCrmUser, requirePermission, routeError, updateCrmCustomerSchema, validationError } from '../_lib';
 
 type RouteContext = { params: { id: string } };
 
@@ -35,10 +35,16 @@ export async function PATCH(req: Request, context: RouteContext) {
     const badId = invalidUuidParam(context.params.id);
     if (badId) return badId;
 
-    const parsedBody = updateCrmCustomerSchema.safeParse(await req.json().catch(() => null));
+    const rawBody = await req.json().catch(() => null);
+    const parsedBody = updateCrmCustomerSchema.safeParse(rawBody);
     if (!parsedBody.success) return validationError(parsedBody.error);
 
     const supabase = createRouteHandlerClient({ cookies });
+
+    // Persist only fields the client actually sent, so a partial PATCH (e.g. an
+    // account-manager-only or personnummer-only change) doesn't wipe untouched columns
+    // (addresses default to null in the schema) — mirrors the work-order PATCH route.
+    const updateInput = pickProvidedFields(parsedBody.data, rawBody);
 
     // Snapshot the pre-update row so we can tell whether any Fortnox-relevant field
     // actually changed (avoids pushing to Fortnox on notes/status/owner-only edits).
@@ -55,18 +61,18 @@ export async function PATCH(req: Request, context: RouteContext) {
     // switch (which swaps which number applies) is still allowed; only clearing the number
     // that stays relevant is blocked.
     if (before?.fortnox_customer_id) {
-      const effectiveType = parsedBody.data.customer_type ?? before.customer_type;
+      const effectiveType = updateInput.customer_type ?? before.customer_type;
       const clearsPersonal = effectiveType === 'private'
-        && 'personal_number' in parsedBody.data && !parsedBody.data.personal_number && !!before.personal_number;
+        && 'personal_number' in updateInput && !updateInput.personal_number && !!before.personal_number;
       const clearsOrg = effectiveType === 'business'
-        && 'organization_number' in parsedBody.data && !parsedBody.data.organization_number && !!before.organization_number;
+        && 'organization_number' in updateInput && !updateInput.organization_number && !!before.organization_number;
       if (clearsPersonal || clearsOrg) {
         return routeError(409, 'crm_customer_identity_locked',
           'Personnummer/org.nr kan inte tömmas på en kund som är synkad med Fortnox.');
       }
     }
 
-    const { data, error } = await updateCrmCustomer(supabase, context.params.id, parsedBody.data);
+    const { data, error } = await updateCrmCustomer(supabase, context.params.id, updateInput);
 
     if (error) {
       return routeError(500, 'crm_customer_update_failed', error.message);

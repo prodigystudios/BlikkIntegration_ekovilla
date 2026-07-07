@@ -98,7 +98,7 @@ describe('resolveAccountManagerUpdates', () => {
   it('leaves a company with no seller on the Blikk contact untouched', () => {
     const r = resolveAccountManagerUpdates([c({ sellerBlikkId: null })], blikkIdToProfile, customerNumberToId);
     expect(r.updates).toHaveLength(0);
-    expect(r.noSeller).toBe(1);
+    expect(r.noSeller).toEqual(['1001']);
   });
 
   it('skips a contact missing a customer number', () => {

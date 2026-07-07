@@ -99,10 +99,10 @@ export function normalizeBlikkContact(raw: any): NormalizedBlikkContact {
 
 export type AccountManagerResolution = {
   updates: { customerId: string; accountManagerId: string }[];
-  unmappedSeller: { customerNumber: string; sellerBlikkId: number }[];
+  unmappedSeller: { customerNumber: string; sellerBlikkId: number }[]; // säljare saknar blikk_id-koppling
   unmatchedCustomer: string[]; // företagskund i Blikk med kundnummer men ingen CRM-motsvarighet
   skippedPrivate: number;      // privatkontakter som filtrerats bort
-  noSeller: number;            // företagskund utan ansvarig säljare i Blikk (rörs ej)
+  noSeller: string[];          // företagskund (kundnummer) utan ansvarig säljare i Blikk (rörs ej)
 };
 
 // Ren, testbar matchning. Ingen I/O. Filtrerar privat, matchar kundnummer → CRM-kund och
@@ -113,7 +113,7 @@ export function resolveAccountManagerUpdates(
   customerNumberToId: Map<string, string>,
 ): AccountManagerResolution {
   const res: AccountManagerResolution = {
-    updates: [], unmappedSeller: [], unmatchedCustomer: [], skippedPrivate: 0, noSeller: 0,
+    updates: [], unmappedSeller: [], unmatchedCustomer: [], skippedPrivate: 0, noSeller: [],
   };
 
   for (const c of contacts) {
@@ -121,7 +121,7 @@ export function resolveAccountManagerUpdates(
     if (!c.customerNumber) continue; // inget att matcha på
     const customerId = customerNumberToId.get(c.customerNumber);
     if (!customerId) { res.unmatchedCustomer.push(c.customerNumber); continue; }
-    if (c.sellerBlikkId == null) { res.noSeller++; continue; }
+    if (c.sellerBlikkId == null) { res.noSeller.push(c.customerNumber); continue; }
     const profileId = blikkIdToProfile.get(c.sellerBlikkId);
     if (!profileId) { res.unmappedSeller.push({ customerNumber: c.customerNumber, sellerBlikkId: c.sellerBlikkId }); continue; }
     res.updates.push({ customerId, accountManagerId: profileId });
@@ -138,14 +138,21 @@ async function runInBatches<T, R>(items: T[], batchSize: number, fn: (item: T) =
   return out;
 }
 
+// Kund vi kunde matcha mot CRM men INTE sätta ansvarig på — med namn så admin ser vilka.
+export type UnresolvedCustomer = {
+  customerNumber: string;
+  customerName: string;
+  reason: 'unmapped_seller' | 'no_seller';
+  sellerBlikkId?: number; // endast för unmapped_seller
+};
+
 export type BlikkAccountManagerPageResult = {
   page: number;
   processed: number;              // antal Blikk-kontakter på sidan
   updated: number;                // antal kunder som fick account_manager_id satt
-  unmappedSeller: { customerNumber: string; sellerBlikkId: number }[];
-  unmatchedCustomer: string[];
+  unresolved: UnresolvedCustomer[]; // matchade CRM-kunder som inte fick ansvarig (med namn + orsak)
+  unmatchedCustomer: string[];    // Blikk-företagskunder utan CRM-motsvarighet (bara kundnummer)
   skippedPrivate: number;
-  noSeller: number;
   detailFetches: number;          // antal detalj-anrop som behövdes (0 om list bär ansvarig)
   nextPage: number | null;        // cursor för nästa körning, null när klart
 };
@@ -179,14 +186,19 @@ export async function syncBlikkAccountManagersPage(
     normalized.filter((c) => c.isCompany && c.customerNumber).map((c) => c.customerNumber as string),
   ));
   const customerNumberToId = new Map<string, string>();
+  const customerNumberToName = new Map<string, string>();
   if (companyNumbers.length > 0) {
     const { data: crmRows, error: crmErr } = await supabase
       .from('crm_customers')
-      .select('id, fortnox_customer_id')
+      .select('id, fortnox_customer_id, company_name, first_name, last_name')
       .in('fortnox_customer_id', companyNumbers);
     if (crmErr) throw new Error(`Kunde inte läsa kunder: ${crmErr.message}`);
     for (const r of crmRows ?? []) {
-      if (r.fortnox_customer_id) customerNumberToId.set(String(r.fortnox_customer_id), r.id);
+      if (!r.fortnox_customer_id) continue;
+      const key = String(r.fortnox_customer_id);
+      customerNumberToId.set(key, r.id);
+      const name = r.company_name || [r.first_name, r.last_name].filter(Boolean).join(' ') || `Kund ${key}`;
+      customerNumberToName.set(key, name);
     }
   }
 
@@ -228,6 +240,18 @@ export async function syncBlikkAccountManagersPage(
     updated = results.filter(Boolean).length;
   }
 
+  // Berika de icke-lösta (matchade) kunderna med namn + orsak så admin ser exakt vilka.
+  const nameOf = (num: string) => customerNumberToName.get(num) || `Kund ${num}`;
+  const unresolved: UnresolvedCustomer[] = [
+    ...resolution.unmappedSeller.map((u) => ({
+      customerNumber: u.customerNumber, customerName: nameOf(u.customerNumber),
+      reason: 'unmapped_seller' as const, sellerBlikkId: u.sellerBlikkId,
+    })),
+    ...resolution.noSeller.map((num) => ({
+      customerNumber: num, customerName: nameOf(num), reason: 'no_seller' as const,
+    })),
+  ];
+
   // En full sida ⇒ troligen fler sidor. Kortare sida ⇒ klart.
   const nextPage = items.length >= pageSize ? page + 1 : null;
 
@@ -235,10 +259,9 @@ export async function syncBlikkAccountManagersPage(
     page,
     processed: items.length,
     updated,
-    unmappedSeller: resolution.unmappedSeller,
+    unresolved,
     unmatchedCustomer: resolution.unmatchedCustomer,
     skippedPrivate: resolution.skippedPrivate,
-    noSeller: resolution.noSeller,
     detailFetches,
     nextPage,
   };

@@ -259,6 +259,7 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
   const [contactDraft, setContactDraft] = useState<ContactDraft>({ name: '', role: '', phone: '', email: '', is_primary: false });
 
   const [sellers, setSellers] = useState<Seller[]>([]);
+  const [savingManager, setSavingManager] = useState(false);
 
   const [quotes, setQuotes] = useState<RelatedQuote[]>([]);
   const [workOrders, setWorkOrders] = useState<RelatedWorkOrder[]>([]);
@@ -443,6 +444,25 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
     finally { setSaving(false); }
   }
 
+  // Inline-byte av kundansvarig utan att gå in i redigeringsläget (vanligt när en säljare
+  // slutar och kunden ska tilldelas en ny). Partiell PATCH — routen skriver bara detta fält.
+  async function saveAccountManager(accountManagerId: string) {
+    if (!customer) return;
+    const value = accountManagerId || null;
+    setSavingManager(true);
+    try {
+      const res = await fetch(`/api/crm/customers/${customer.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ account_manager_id: value }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte ändra kundansvarig'); return; }
+      setCustomer((c) => c ? { ...c, account_manager_id: value } : c);
+      toast.success('Kundansvarig uppdaterad');
+    } catch { toast.error('Fel vid ändring av kundansvarig'); }
+    finally { setSavingManager(false); }
+  }
+
   async function pushToFortnox() {
     if (!customer) return;
     setPushingFortnox(true);
@@ -580,14 +600,23 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
       <Card>
         <SectionTitle>Metadata</SectionTitle>
         <div className="grid gap-3">
-          <InfoField
-            label="Kundansvarig"
-            value={
-              customer.account_manager_id
-                ? (sellers.find((s) => s.id === customer.account_manager_id)?.full_name || 'Okänd säljare')
-                : '–'
-            }
-          />
+          <div className="grid gap-1">
+            <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">Kundansvarig</p>
+            <Select
+              value={customer.account_manager_id || ''}
+              onChange={(e) => saveAccountManager(e.target.value)}
+              disabled={savingManager}
+            >
+              <option value="">— Ingen —</option>
+              {/* Behåll nuvarande värde valbart även om säljaren fallit ur listan (t.ex. slutat). */}
+              {customer.account_manager_id && !sellers.some((s) => s.id === customer.account_manager_id) ? (
+                <option value={customer.account_manager_id}>Okänd säljare</option>
+              ) : null}
+              {sellers.map((s) => (
+                <option key={s.id} value={s.id}>{s.full_name || s.id}</option>
+              ))}
+            </Select>
+          </div>
           <InfoField label="Skapad" value={formatDateTime(customer.created_at)} />
           <InfoField label="Senast ändrad" value={formatDateTime(customer.updated_at)} />
           {customer.fortnox_customer_id ? (
