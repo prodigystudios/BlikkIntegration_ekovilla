@@ -24,9 +24,12 @@ type CustomerItem = {
   fortnox_customer_id: string | null;
   sync_status: 'not_synced' | 'pending' | 'synced' | 'failed';
   status: CustomerStatus;
+  account_manager_id: string | null;
   updated_at: string;
   contacts: { id: string }[];
 };
+
+type Seller = { id: string; full_name: string | null; role: string };
 
 type StageFilter = 'alla' | CustomerStage;
 
@@ -67,6 +70,8 @@ export default function CustomersClient() {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [stageCounts, setStageCounts] = useState<Record<StageFilter, number>>(EMPTY_COUNTS);
   const [hasMore, setHasMore] = useState(false);
+  // Kundansvarig visas per rad; namnet slås upp ur säljarkatalogen (account_manager_id → namn).
+  const [sellersById, setSellersById] = useState<Map<string, string>>(new Map());
 
   // Refs let the infinite-scroll loader read the current offset / in-flight state without
   // being recreated on every appended page (which would re-trigger the observer).
@@ -80,6 +85,26 @@ export default function CustomersClient() {
     const t = setTimeout(() => setDebouncedSearch(search.trim()), 300);
     return () => clearTimeout(t);
   }, [search]);
+
+  // Säljarkatalog för att visa kundansvarigs namn per rad (id → namn). Icke-kritisk:
+  // saknas den visas ändå "Ingen ansvarig"-flaggan korrekt och satta värden faller
+  // tillbaka på "Ansvarig satt".
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const res = await fetch('/api/crm/sellers', { cache: 'no-store' });
+        const json = await res.json().catch(() => ({}));
+        if (!active || !res.ok || !json.ok) return;
+        const map = new Map<string, string>();
+        for (const s of (json.data?.sellers ?? []) as Seller[]) {
+          if (s.full_name) map.set(s.id, s.full_name);
+        }
+        setSellersById(map);
+      } catch { /* icke-kritiskt */ }
+    })();
+    return () => { active = false; };
+  }, []);
 
   const buildQuery = useCallback((offset: number) => {
     const q = new URLSearchParams();
@@ -321,8 +346,25 @@ export default function CustomersClient() {
                     </div>
                   </div>
 
-                  {/* Stage + sync badges */}
+                  {/* Kundansvarig: namn (desktop) eller tydlig flagga när ingen är satt */}
                   <div className="flex shrink-0 items-center gap-2">
+                    {item.account_manager_id ? (
+                      <span className="hidden items-center gap-1 whitespace-nowrap rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-[11px] font-semibold text-slate-600 sm:inline-flex">
+                        <svg width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden>
+                          <circle cx="8" cy="5" r="2.75" stroke="currentColor" strokeWidth="1.4" />
+                          <path d="M3 13.5c0-2.2 2.24-3.75 5-3.75s5 1.55 5 3.75" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+                        </svg>
+                        {sellersById.get(item.account_manager_id) || 'Ansvarig satt'}
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-amber-300 bg-amber-50 px-2.5 py-0.5 text-[11px] font-semibold text-amber-700" title="Kunden saknar kundansvarig">
+                        <svg width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden>
+                          <path d="M8 1.5l6.5 11.5H1.5L8 1.5z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+                          <path d="M8 6.5v3M8 11.2v.05" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+                        </svg>
+                        Ingen ansvarig
+                      </span>
+                    )}
                     <span className={cn(
                       crm.badge,
                       customerStageClass[item.customer_stage],
