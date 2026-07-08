@@ -1,4 +1,5 @@
 import { getSupabaseAdmin } from '@/lib/supabase/server';
+import { parseDecimal } from '@/lib/shared/number';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
 import { lineItemUnitPrice, lineItemDiscountPercent, lineItemEffectiveUnitPrice } from '@/lib/domains/crm/pricing';
 import { fortnoxGet, fortnoxPost, fortnoxPut, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
@@ -36,9 +37,21 @@ export type PartialInvoiceLineItem = {
   line_note?: string | null;
   is_rot_work?: boolean | null;
   house_work_type?: string | null;
+  // Labour carved out of a material row for ROT. NOT yet supported in partial invoicing — see
+  // hasCarvedRotLabor below.
+  labor_cost?: string | null;
 };
 
 export type PartialRequestLine = { index: number; quantity: number };
+
+// Delfakturering does not yet proportion carved-out ROT labour (each material row's `labor_cost`)
+// across partially-invoiced quantities, so a ROT order that used the material→labour split can't be
+// partial-invoiced without silently under- or mis-billing the labour. We block it with a clear
+// message instead (Phase 2). Rows flagged fully as ROT work (is_rot_work) are unaffected — they
+// invoice per row exactly as before.
+function hasCarvedRotLabor(lineItems: PartialInvoiceLineItem[] | null): boolean {
+  return (lineItems ?? []).some((i) => !i.is_rot_work && parseDecimal(i.labor_cost) > 0);
+}
 export type InvoiceRound = { line_quantities: PartialRequestLine[] | null };
 export type LineInvoiceState = { index: number; total: number; invoiced: number; remaining: number };
 
@@ -200,6 +213,12 @@ export async function createPartialInvoice(
   // Frozen basis: the snapshot taken at the first round (falls back to current line_items before
   // any round exists). Per-article remaining is always measured against this, never the live rows.
   const basis = workOrder.line_items_invoicing_snapshot ?? workOrder.line_items;
+
+  // Phase 2 guard: carved-out ROT labour isn't proportioned across partial rounds yet — block rather
+  // than silently mis-bill. Checked before claiming so it can't leave the sync status stuck pending.
+  if (workOrder.rot_details?.enabled === true && hasCarvedRotLabor(basis)) {
+    throw new PartialInvoiceError('Delfakturering av en ROT-order med utbruten arbetskostnad stöds inte än. Fakturera hela ordern i ett svep, eller hantera delfaktureringen i Fortnox.');
+  }
 
   // Validate BEFORE claiming so a bad request doesn't flip the sync status to pending.
   const { data: priorRoundsData } = await supabase

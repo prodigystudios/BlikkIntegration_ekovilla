@@ -2,7 +2,7 @@ import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { parseDecimal } from '@/lib/shared/number';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
 import { fortnoxGet, fortnoxGetBinary, fortnoxPost, fortnoxPut, FortnoxApiError, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
-import { appendFortnoxTextNote, buildEndContactNote, buildRotPropertyNote, claimFortnoxPush, resolveOurReference, resolveReverseVat } from './helpers';
+import { appendFortnoxTextNote, buildEndContactNote, buildRotPropertyNote, claimFortnoxPush, resolveOurReference, resolveReverseVat, rotLaborRow, rowRotLaborCarveout } from './helpers';
 import { DEFAULT_ROT_HOUSE_WORK_TYPE } from './types';
 
 type WorkOrderRow = {
@@ -43,6 +43,8 @@ type WorkOrderRow = {
     line_note?: string | null;
     is_rot_work?: boolean | null;
     house_work_type?: string | null;
+    // Labour carved out of a material row for ROT — summed onto the aggregated "Arbetskostnad ROT" row.
+    labor_cost?: string | null;
   }> | null;
 };
 
@@ -81,6 +83,11 @@ function orderTextRow(description: string): FortnoxOrderRow {
 // returns 400 "Felaktigt fältnamn (Quantity)".
 export function buildOrderRows(lineItems: WorkOrderRow['line_items'], vatPercent: number, rotEnabled: boolean, reverseVat = false, rotPropertyNote: string | null = null): FortnoxOrderRow[] {
   if (!lineItems?.length) return [];
+
+  // Accumulates the labour carved out of material rows (kr, ex VAT), emitted as one aggregated
+  // "Arbetskostnad ROT" row after the loop. Mirrors buildOfferRows so offer→order stays consistent.
+  let carvedLaborTotal = 0;
+
   const rows = lineItems.flatMap((item) => {
     // parseDecimal handles Swedish comma input ("1,5") that plain parseFloat truncates.
     const price = item.unit_price ? parseDecimal(item.unit_price) : (item.article_price ?? 0);
@@ -89,6 +96,14 @@ export function buildOrderRows(lineItems: WorkOrderRow['line_items'], vatPercent
     // Clamp to [0,100] to match the CRM pricing (lib/domains/crm/pricing.ts); otherwise a
     // discount > 100 makes the Fortnox row total diverge from the stored CRM total.
     const discount = Math.min(100, Math.max(0, item.discount_percent ? parseDecimal(item.discount_percent) : 0));
+
+    // ROT labour carved out of THIS material row — removed from the row and re-booked onto the
+    // aggregated husarbete row below, leaving the order total unchanged. See buildOfferRows.
+    const rowNet = quantity * Math.max(0, price) * (1 - discount / 100);
+    const carve = rowRotLaborCarveout(item, rowNet, rotEnabled);
+    carvedLaborTotal += carve;
+    const materialNet = rowNet - carve;
+
     const row: FortnoxOrderRow = {
       ...(item.article_number ? { ArticleNumber: item.article_number } : {}),
       Description: item.article_name || item.line_note || 'Artikel',
@@ -97,18 +112,23 @@ export function buildOrderRows(lineItems: WorkOrderRow['line_items'], vatPercent
       // stale on new or edited rows).
       OrderedQuantity: quantity,
       DeliveredQuantity: quantity,
-      Price: price,
+      // When labour is carved out this row is material only: the unit price becomes the reduced
+      // material net (discount baked in) so quantity × price nets exactly to it; otherwise the raw
+      // price + a separate Discount % line, as before.
+      Price: carve > 0 ? (quantity > 0 ? materialNet / quantity : Math.max(0, materialNet)) : price,
       // Reverse charge (omvänd skattskyldighet / byggmoms) → 0 % output VAT on rows; the document's
       // VAT regime comes from the customer card (synced from reverse_vat), so matching rows here.
       VAT: reverseVat ? 0 : vatPercent,
       ...(item.article_unit_name ? { Unit: item.article_unit_name } : {}),
       // DiscountType:'PERCENT' is required — Fortnox defaults to AMOUNT (kronor), which would
-      // book discount_percent as a kronor discount and diverge from the CRM total.
-      ...(discount > 0 ? { Discount: discount, DiscountType: 'PERCENT' as const } : {}),
-      // Husarbete only on a ROT document. Do NOT send HouseWork:false on non-ROT rows — Fortnox
+      // book discount_percent as a kronor discount and diverge from the CRM total. Dropped on a
+      // carved material row (baked into the price above).
+      ...(carve === 0 && discount > 0 ? { Discount: discount, DiscountType: 'PERCENT' as const } : {}),
+      // Husarbete only on a ROT document, and only for rows flagged fully as ROT work (a carved
+      // material row is NOT husarbete). Do NOT send HouseWork:false on non-ROT rows — Fortnox
       // stamps an empty husarbete type ('EMPTYHOUSEWORK') that a non-ROT document rejects
       // (2004021). See offers.ts. A husarbete-configured article is fixed in Fortnox, not here.
-      ...(rotEnabled && item.is_rot_work
+      ...(carve === 0 && rotEnabled && item.is_rot_work
         ? { HouseWork: true, HouseWorkType: item.house_work_type || DEFAULT_ROT_HOUSE_WORK_TYPE }
         : {}),
     };
@@ -118,6 +138,11 @@ export function buildOrderRows(lineItems: WorkOrderRow['line_items'], vatPercent
     if (lineNote && item.article_name?.trim()) return [row, orderTextRow(lineNote)];
     return [row];
   });
+
+  // One aggregated "Arbetskostnad ROT" husarbete row for all carved labour (kept out of line_items —
+  // synthesised only at push time). ROT and reverse charge never co-occur, so VAT is just vatPercent.
+  const laborRow = rotLaborRow(carvedLaborTotal, reverseVat ? 0 : vatPercent);
+  if (laborRow) rows.push({ ...laborRow, OrderedQuantity: 1, DeliveredQuantity: 1 });
 
   // ROT property note (Fastighetsbeteckning / BRF org.nr) as a trailing text row — Fortnox has no
   // API field for it. Only relevant for a standalone order with ROT (the offer→order path inherits

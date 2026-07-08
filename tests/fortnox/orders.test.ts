@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildOrderRows } from '@/lib/domains/fortnox/orders';
+import { ROT_LABOR_ARTICLE_NUMBER } from '@/lib/domains/fortnox/helpers';
 
 describe('buildOrderRows', () => {
   it('returns an empty array for no line items', () => {
@@ -86,5 +87,36 @@ describe('buildOrderRows', () => {
     expect(rows).toHaveLength(2);
     expect(rows[1].Description).toBe('Fastighetsbeteckning: Haggården 6:3  BRF org.nr: 769600-1234');
     expect((rows[1] as any).OrderedQuantity).toBeUndefined();
+  });
+});
+
+describe('buildOrderRows – ROT labour carve-out', () => {
+  it('carves labor_cost out of a material row into one aggregated Arbetskostnad ROT row', () => {
+    const rows = buildOrderRows(
+      [{ pricing_mode: 'item', article_name: 'Lösull', unit_price: '200', quantity: '100', labor_cost: '8000' }],
+      25, true,
+    );
+    expect(rows).toHaveLength(2);
+    const [material, labor] = rows as any[];
+    expect(material.Price).toBeCloseTo(120, 6); // 12000 material over 100 units
+    expect(material.OrderedQuantity).toBe(100);
+    expect(material.DeliveredQuantity).toBe(100);
+    expect(material.HouseWork).toBeUndefined();
+    expect(labor.ArticleNumber).toBe(ROT_LABOR_ARTICLE_NUMBER);
+    expect(labor.Price).toBe(8000);
+    expect(labor.OrderedQuantity).toBe(1);
+    expect(labor.DeliveredQuantity).toBe(1);
+    expect(labor.HouseWork).toBe(true);
+    expect(labor.HouseWorkType).toBe('CONSTRUCTION');
+  });
+
+  it('leaves fully-flagged ROT rows untouched and emits no aggregated row', () => {
+    const rows = buildOrderRows(
+      [{ pricing_mode: 'item', unit_price: '100', quantity: '10', is_rot_work: true, labor_cost: '500' }],
+      25, true,
+    );
+    expect(rows).toHaveLength(1);
+    expect((rows[0] as any).Price).toBe(100);
+    expect((rows[0] as any).HouseWork).toBe(true);
   });
 });

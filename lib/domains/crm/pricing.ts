@@ -17,6 +17,9 @@ export type PricingLineItem = {
   article_price?: number | null;
   discount_percent?: string | null;
   is_rot_work?: boolean | null;
+  // Labour carved out of a material row for ROT (kr, ex VAT). Summed onto a single
+  // "Arbetskostnad ROT" row at Fortnox-push time; here it only feeds the ROT deduction base.
+  labor_cost?: string | null;
 };
 
 export type RotPricingInput = {
@@ -71,9 +74,19 @@ export function computePricing(
 
   // ROT (private only): tax-reduction % of the husarbete rows' amount INCL VAT, capped at
   // the max deduction, floored to whole krona (matches Fortnox/Skatteverket — see quotes).
+  // The ROT base is labour: a row flagged fully as ROT work contributes its whole total, while an
+  // unflagged material row contributes only its carved-out `labor_cost` (clamped to the row total).
+  // Mirrors the Fortnox push, where the same split becomes the single "Arbetskostnad ROT" row plus
+  // the fully-flagged rows' husarbete flags.
   const rotActive = Boolean(opts?.isPrivate && opts?.rot?.enabled);
   const rotBaseInclVat = rotActive
-    ? items.filter((i) => i.is_rot_work).reduce((sum, i) => sum + lineItemRowTotal(i) * (1 + vatPercent / 100), 0)
+    ? items.reduce((sum, i) => {
+        const rowTotal = lineItemRowTotal(i);
+        const labourBase = i.is_rot_work
+          ? rowTotal
+          : Math.min(Math.max(0, parseDecimal(i.labor_cost)), rowTotal);
+        return sum + labourBase * (1 + vatPercent / 100);
+      }, 0)
     : 0;
   const rotPercent = parseDecimal(opts?.rot?.rot_percent ?? 30, 30);
   const maxDeduction = parseDecimal(opts?.rot?.max_deduction ?? 50000, 50000);

@@ -66,6 +66,9 @@ type QuoteLineItem = {
   line_note: string;
   is_rot_work: boolean;
   house_work_type: string;
+  // Labour carved out of a material row for ROT (kr, ex VAT). Summed onto a single "Arbetskostnad
+  // ROT" row on the Fortnox document; the material row is reduced by it so the total is unchanged.
+  labor_cost: string;
   density: string;
 };
 
@@ -245,6 +248,7 @@ function createEmptyLineItem(): QuoteLineItem {
     line_note: '',
     is_rot_work: false,
     house_work_type: 'CONSTRUCTION',
+    labor_cost: '',
     density: '',
   };
 }
@@ -799,6 +803,9 @@ function LineItemRow({
   dragHandle?: React.ReactNode;
 }) {
   const isM3 = (row.pricing_mode ?? 'm3') === 'm3';
+  // The ROT labour carve-out field sits on the economy row next to A-pris/Rabatt, but only when ROT
+  // is on and the row isn't already flagged as full ROT work (its whole price is then the labour).
+  const showLaborField = rotEnabled && !row.is_rot_work;
 
   // ── Collapsed: single overview line ──────────────────────────────────────────
   if (!expanded) {
@@ -872,7 +879,8 @@ function LineItemRow({
         </Field>
       ) : null}
 
-      <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
+      {/* Mätning: area/thickness/density (m³) or quantity (styckepris). */}
+      <div className="grid gap-3 sm:grid-cols-3">
         {isM3 ? (
           <>
             <Field label="m²"><Input value={row.m2} onChange={(e) => onChange({ m2: e.target.value })} inputMode="decimal" placeholder="0" /></Field>
@@ -882,6 +890,10 @@ function LineItemRow({
         ) : (
           <Field label="Antal"><Input value={row.quantity} onChange={(e) => onChange({ quantity: e.target.value })} inputMode="decimal" placeholder="1" /></Field>
         )}
+      </div>
+
+      {/* Ekonomi: A-pris, (ROT-arbetskostnad), rabatt on one straight row. */}
+      <div className={cn('grid gap-3', showLaborField ? 'sm:grid-cols-3' : 'sm:grid-cols-2')}>
         <Field label="A-pris">
           <Input
             value={row.auto_price ? String(metrics?.unit ?? row.article_price ?? '') : row.unit_price}
@@ -891,6 +903,13 @@ function LineItemRow({
             disabled={row.auto_price}
           />
         </Field>
+        {/* Carve out the labour portion of a material row for ROT: the amount here is moved onto the
+            separate "Arbetskostnad ROT" row and deducted from this row (total unchanged). */}
+        {showLaborField ? (
+          <Field label="Varav arbetskostnad (ROT, kr)">
+            <Input value={row.labor_cost} onChange={(e) => onChange({ labor_cost: e.target.value })} inputMode="decimal" placeholder="0" />
+          </Field>
+        ) : null}
         <Field label="Rabatt %"><Input value={row.discount_percent} onChange={(e) => onChange({ discount_percent: e.target.value })} inputMode="decimal" placeholder="0" /></Field>
       </div>
 
@@ -1090,7 +1109,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           end_contact_email: item.customer_snapshot?.end_contact_email || '',
           label: item.customer_snapshot?.label || '',
           items: item.line_items?.length
-            ? item.line_items.map((line) => ({ ...line, line_note: line.line_note || '', is_rot_work: line.is_rot_work ?? false, house_work_type: line.house_work_type || 'CONSTRUCTION', density: line.density || '' }))
+            ? item.line_items.map((line) => ({ ...line, line_note: line.line_note || '', is_rot_work: line.is_rot_work ?? false, house_work_type: line.house_work_type || 'CONSTRUCTION', labor_cost: line.labor_cost || '', density: line.density || '' }))
             : [createEmptyLineItem()],
           project_name: item.project_name,
           description: item.description || '',
@@ -1239,19 +1258,30 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     // INCL VAT, capped at the max deduction. Floored to whole krona to match Fortnox /
     // Skatteverket (ROT reductions drop the öre), e.g. 393,75 → 393. Flooring is also
     // the safe direction for the business: the deduction is never overstated.
+    // The ROT base is labour: a row flagged fully as ROT work contributes its whole total, an
+    // unflagged material row only its carved-out `labor_cost` (clamped to the row total). Mirrors
+    // lib/domains/crm/pricing.ts and the Fortnox push (flagged rows + the "Arbetskostnad ROT" row).
     const rotActive = draft.quote_type === 'private' && draft.rot_enabled;
-    const rotBaseInclVat = rotActive
-      ? effectiveRows
-          .filter((r) => r.is_rot_work)
-          .reduce((sum, r) => sum + r.rowTotal * (1 + vatPercent / 100), 0)
+    const rotLaborBase = rotActive
+      ? effectiveRows.reduce((sum, r) => {
+          const base = r.is_rot_work ? r.rowTotal : Math.min(Math.max(0, parseDecimal(r.labor_cost)), r.rowTotal);
+          return sum + base;
+        }, 0)
       : 0;
+    const rotBaseInclVat = rotLaborBase * (1 + vatPercent / 100);
     const rotPercent = parseDecimal(draft.rot_percent, 30);
     const maxDeduction = parseDecimal(draft.rot_max_deduction, 50000);
     const rotDeduction = rotActive
       ? Math.min(maxDeduction, Math.floor(rotBaseInclVat * (rotPercent / 100)))
       : 0;
 
-    return { subtotal, vat, total, rotDeduction, toPay: total - rotDeduction };
+    // Carved-out labour only (excludes fully-flagged ROT rows) — surfaced in the ROT section so the
+    // seller sees what becomes the separate "Arbetskostnad ROT" row.
+    const carvedLabor = rotActive
+      ? effectiveRows.reduce((sum, r) => (r.is_rot_work ? sum : sum + Math.min(Math.max(0, parseDecimal(r.labor_cost)), r.rowTotal)), 0)
+      : 0;
+
+    return { subtotal, vat, total, rotDeduction, toPay: total - rotDeduction, carvedLabor };
   }, [draft.vat_percent, draft.quote_type, draft.rot_enabled, draft.rot_percent, draft.rot_max_deduction, effectiveRows]);
 
   // Prefill the work description with a grouped measurement block (material headline →
@@ -1801,6 +1831,23 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
                 </p>
               </Field>
             ) : null}
+            {/* ROT toggle — only relevant for private customers. Lives here with the offer settings
+                (private counterpart to the business-only "Märkning" above); enabling it reveals the
+                ROT-avdrag section and the per-row "Varav arbetskostnad" field. */}
+            {draft.quote_type === 'private' ? (
+              <label className="flex cursor-pointer select-none items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50/60 px-4 py-3 md:col-span-2">
+                <span className="grid gap-0.5">
+                  <span className="text-sm font-medium text-slate-700">ROT-avdrag</span>
+                  <span className="text-[11px] leading-snug text-slate-400">Slå på för ROT-uppgifter och för att bryta ut arbetskostnad på raderna.</span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={draft.rot_enabled}
+                  onChange={(e) => setDraft((d) => ({ ...d, rot_enabled: e.target.checked }))}
+                  className="h-4 w-4 rounded border-slate-300 accent-emerald-600"
+                />
+              </label>
+            ) : null}
             <Field label="Beskrivning" className="md:col-span-2">
               <Textarea value={draft.description} onChange={(e) => setDraft((d) => ({ ...d, description: e.target.value }))} rows={3} placeholder="Kort om omfattning eller vad som offereras" />
             </Field>
@@ -1855,6 +1902,15 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
                 <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Rader</span>
                 <span className="text-sm font-semibold text-slate-900">{configuredRows.length} st</span>
               </div>
+              {/* Labour carved out of the material rows (each row's "Varav arbetskostnad"), which is
+                  summed into one "Arbetskostnad ROT" row (art. 10058) on the Fortnox offer. Shown here
+                  with the other line totals so all prices sit in one place. */}
+              {totals.carvedLabor > 0 ? (
+                <div className="grid gap-0.5">
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Arbetskostnad ROT</span>
+                  <span className="text-sm font-semibold text-emerald-700">{formatCurrency(totals.carvedLabor, 'SEK')}</span>
+                </div>
+              ) : null}
               {totals.rotDeduction > 0 ? (
                 <div className="grid gap-0.5">
                   <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Avgår ROT</span>
@@ -2184,19 +2240,6 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
               <Field label="Följ upp senast">
                 <Input value={draft.follow_up_date} onChange={(e) => setDraft((d) => ({ ...d, follow_up_date: e.target.value }))} type="date" lang="sv-SE" />
               </Field>
-
-              {/* ROT toggle — only relevant for private customers */}
-              {draft.quote_type === 'private' ? (
-                <label className="flex cursor-pointer select-none items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50/60 px-3.5 py-2.5">
-                  <span className="text-sm font-medium text-slate-700">ROT-avdrag</span>
-                  <input
-                    type="checkbox"
-                    checked={draft.rot_enabled}
-                    onChange={(e) => setDraft((d) => ({ ...d, rot_enabled: e.target.checked }))}
-                    className="h-4 w-4 rounded border-slate-300 accent-emerald-600"
-                  />
-                </label>
-              ) : null}
             </div>
 
             {/* Divider */}
