@@ -284,6 +284,16 @@ function formatDate(value: string | null | undefined) {
   return new Intl.DateTimeFormat('sv-SE', { dateStyle: 'medium' }).format(date);
 }
 
+// An offer is valid for one month by default — "Giltig till" is derived as the offer date + 30 days
+// (and re-derived when the offer date changes). Noon avoids DST edge cases on the date-only string.
+const OFFER_VALIDITY_DAYS = 30;
+function addDaysIso(iso: string, days: number): string {
+  const date = new Date(`${iso}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return iso;
+  date.setDate(date.getDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
 function getDefaultDraftCustomerSource(prospectId?: string | null): QuoteDraft['customer_source'] {
   return {
     kind: prospectId ? 'prospect' : 'local',
@@ -353,6 +363,8 @@ function getValidationIssues(draft: QuoteDraft, effectiveRows: EffectiveRow[]) {
   return issues;
 }
 
+const initialQuoteDate = new Date().toISOString().slice(0, 10);
+
 const initialDraft: QuoteDraft = {
   customer_id: null,
   prospect_id: '',
@@ -382,7 +394,7 @@ const initialDraft: QuoteDraft = {
   description: '',
   amount: '',
   vat_percent: '25',
-  valid_until: new Date(Date.now() + 14 * 864e5).toISOString().slice(0, 10),
+  valid_until: addDaysIso(initialQuoteDate, OFFER_VALIDITY_DAYS),
   rot_enabled: false,
   rot_property_designation: '',
   rot_percent: '30',
@@ -392,7 +404,7 @@ const initialDraft: QuoteDraft = {
   handoff_notes: '',
   work_scope: '',
   status: 'draft',
-  quote_date: new Date().toISOString().slice(0, 10),
+  quote_date: initialQuoteDate,
   follow_up_date: '',
   notes: '',
   create_follow_up_task: true,
@@ -1860,7 +1872,9 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
                 ) : null}
               </Field>
               <Field label="Offertdatum">
-                <Input value={draft.quote_date} onChange={(e) => setDraft((d) => ({ ...d, quote_date: e.target.value }))} type="date" lang="sv-SE" />
+                {/* Changing the offer date re-derives "Giltig till" to offer date + 30 days (set a
+                    custom validity afterwards if needed). */}
+                <Input value={draft.quote_date} onChange={(e) => setDraft((d) => ({ ...d, quote_date: e.target.value, valid_until: e.target.value ? addDaysIso(e.target.value, OFFER_VALIDITY_DAYS) : d.valid_until }))} type="date" lang="sv-SE" />
               </Field>
               <Field label="Giltig till">
                 <Input value={draft.valid_until} onChange={(e) => setDraft((d) => ({ ...d, valid_until: e.target.value }))} type="date" lang="sv-SE" />
