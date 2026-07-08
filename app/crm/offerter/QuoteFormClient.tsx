@@ -955,6 +955,11 @@ function LineItemRow({
 // How long a stashed draft survives the "create customer" round-trip before it's
 // considered stale and ignored.
 const DRAFT_TTL_MS = 30 * 60 * 1000;
+// How long an auto-saved draft stays offer-able in the "resume unsaved draft" banner. Longer than
+// the customer round-trip window above — you might come back the next day after closing the tab.
+const DRAFT_RECOVERY_TTL_MS = 24 * 60 * 60 * 1000;
+// Debounce before an edited draft is written to localStorage (a keystroke shouldn't hit storage).
+const DRAFT_AUTOSAVE_DEBOUNCE_MS = 800;
 
 export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   const router = useRouter();
@@ -969,6 +974,10 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   // Private customer without personnummer (optional at create) → the work-order route rejects
   // with 409; we prompt for it, save it on the customer, then retry the conversion.
   const [pnPromptOpen, setPnPromptOpen] = useState(false);
+  // Custom "leave with unsaved changes?" confirm for in-app navigation (the browser's own
+  // beforeunload text can't be customised, so we show our own dialog where we can). Holds the
+  // intended destination so the same dialog serves the back button AND intercepted link clicks.
+  const [pendingLeaveHref, setPendingLeaveHref] = useState<string | null>(null);
   const [pnValue, setPnValue] = useState('');
   const [draft, setDraft] = useState<QuoteDraft>(initialDraft);
   // Accordion: id of the single open article row. Starts on the empty starter row; adding
@@ -1004,6 +1013,16 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     });
   }
   const restoredRef = useRef(false);
+  // Local draft recovery: the "clean" draft JSON captured after the form's starting state settles
+  // (initial draft for a new quote, loaded quote for an edit). Anything that differs from it is
+  // unsaved work → auto-saved to localStorage and guarded on unload.
+  const baselineRef = useRef<string | null>(null);
+  const recoveryCheckedRef = useRef(false);
+  // A fresh auto-saved draft found on mount, offered via the "resume?" banner (not auto-applied,
+  // so a returning user is never surprised by content they don't expect).
+  const [recoverableDraft, setRecoverableDraft] = useState<QuoteDraft | null>(null);
+  // JSON snapshot of the current draft — the single comparison key for dirty detection + autosave.
+  const draftJson = useMemo(() => JSON.stringify(draft), [draft]);
 
   const presetProspectId = searchParams.get('prospect_id') || '';
 
@@ -1026,6 +1045,16 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
 
   function clearPersistedDraft() {
     try { localStorage.removeItem(draftStorageKey); } catch { /* ignore */ }
+  }
+
+  // Load a stashed draft back into the form, re-deriving the two UI toggles that aren't part of the
+  // draft object. Shared by the customer round-trip restore and the "resume draft?" banner.
+  function applyRestoredDraft(restored: QuoteDraft) {
+    setDraft(restored);
+    setCustomWorkAddress(Boolean(restored.delivery_address));
+    setCustomEndContact(Boolean(
+      restored.end_contact_name || restored.end_contact_phone || restored.end_contact_email,
+    ));
   }
 
   // Populate the draft from a chosen customer. Shared by the search picker and the
@@ -1237,6 +1266,90 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading]);
 
+  // Capture the clean baseline once the form's starting state has settled: the initial draft for a
+  // new quote (available immediately), or the loaded quote for an edit (after the load finishes).
+  // Everything is compared against this to decide what counts as unsaved work.
+  useEffect(() => {
+    if (baselineRef.current !== null) return;
+    if (isEditing && !loadedQuote) return;
+    baselineRef.current = draftJson;
+  }, [isEditing, loadedQuote, draftJson]);
+
+  // On mount, detect a fresh auto-saved draft and offer to resume it (unless we're in the customer
+  // round-trip, which owns the stash). Never auto-applies — the banner lets the user choose.
+  useEffect(() => {
+    if (recoveryCheckedRef.current || loading || baselineRef.current === null) return;
+    if (searchParams.get('created_customer_id') || searchParams.get('restore_quote')) return;
+    recoveryCheckedRef.current = true;
+    try {
+      const raw = localStorage.getItem(draftStorageKey);
+      if (!raw) return;
+      const envelope = JSON.parse(raw);
+      const fresh = envelope && typeof envelope.savedAt === 'number'
+        && Date.now() - envelope.savedAt < DRAFT_RECOVERY_TTL_MS && envelope.draft;
+      // Only offer it when it actually differs from the clean baseline — otherwise there's nothing
+      // to recover and a stale/no-op stash is just cleared.
+      if (!fresh || JSON.stringify(envelope.draft) === baselineRef.current) { clearPersistedDraft(); return; }
+      setRecoverableDraft(envelope.draft as QuoteDraft);
+    } catch { clearPersistedDraft(); }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading]);
+
+  // Auto-save the draft to localStorage while it differs from the clean baseline (debounced). Paused
+  // while the resume banner is open so we never overwrite the very stash the user is deciding on.
+  useEffect(() => {
+    if (loading || submitting || recoverableDraft) return;
+    if (baselineRef.current === null || draftJson === baselineRef.current) return;
+    const timer = setTimeout(persistDraft, DRAFT_AUTOSAVE_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftJson, loading, submitting, recoverableDraft]);
+
+  // Browser "leave site?" guard on unsaved work. Also flushes the latest draft to storage first, so
+  // closing the tab mid-debounce still preserves everything (the resume banner catches it next time).
+  useEffect(() => {
+    const dirty = baselineRef.current !== null && draftJson !== baselineRef.current;
+    if (!dirty || submitting || recoverableDraft) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      persistDraft();
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftJson, submitting, recoverableDraft]);
+
+  // Intercept in-app link navigation (sidebar/header/any <Link>) while there are unsaved changes.
+  // The App Router has no built-in navigation guard, so we catch the anchor click in the capture
+  // phase — before Next's Link handler runs — cancel it, and route the intent through our confirm
+  // dialog instead. Programmatic navigations (e.g. the customer round-trip) aren't anchor clicks and
+  // are intentional, so they pass through untouched. The browser back/forward buttons (popstate)
+  // can't be intercepted cleanly here; autosave + the resume banner cover that case.
+  useEffect(() => {
+    const dirty = baselineRef.current !== null && draftJson !== baselineRef.current;
+    if (!dirty || submitting || recoverableDraft || pendingLeaveHref) return;
+    function onClick(e: MouseEvent) {
+      // Let modified / non-primary clicks (new tab, middle-click) and already-handled events be.
+      if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      const anchor = (e.target as HTMLElement | null)?.closest?.('a');
+      if (!anchor || anchor.target === '_blank' || anchor.hasAttribute('download')) return;
+      const rawHref = anchor.getAttribute('href');
+      if (!rawHref || rawHref.startsWith('#')) return;
+      let url: URL;
+      try { url = new URL(anchor.href, window.location.href); } catch { return; }
+      // Cross-origin leaves the app entirely → beforeunload handles it. Same-path (or hash-only) is
+      // not really leaving the form → ignore.
+      if (url.origin !== window.location.origin || url.pathname === window.location.pathname) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setPendingLeaveHref(url.pathname + url.search);
+    }
+    document.addEventListener('click', onClick, true); // capture phase → runs before Next's Link
+    return () => document.removeEventListener('click', onClick, true);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftJson, submitting, recoverableDraft, pendingLeaveHref]);
+
   const effectiveRows = useMemo<EffectiveRow[]>(() => {
     return draft.items.map((item) => {
       const baseUnit = item.auto_price
@@ -1356,8 +1469,21 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   }
 
   function handleBack() {
+    // Going back is a possible accident too. With unsaved work, show our own informative confirm
+    // (the native beforeunload text isn't customisable); with nothing to keep, just leave.
+    const dirty = baselineRef.current !== null && draftJson !== baselineRef.current;
+    if (dirty) { setPendingLeaveHref('/crm/offerter'); return; }
     clearPersistedDraft();
     router.push('/crm/offerter');
+  }
+
+  // Confirmed leaving with unsaved changes: flush the draft so it's recoverable, then navigate to
+  // whatever destination triggered the dialog (back button or an intercepted link).
+  function confirmLeave() {
+    const href = pendingLeaveHref ?? '/crm/offerter';
+    persistDraft();
+    setPendingLeaveHref(null);
+    router.push(href);
   }
 
   async function createFollowUpTask(quote: QuoteItem) {
@@ -1453,6 +1579,10 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
       }
 
       clearPersistedDraft();
+      // Saved → the current draft is now the clean baseline. Prevents the autosave effect from
+      // re-creating the stash (and thus a phantom "resume?" banner) in the brief window between
+      // `submitting` flipping back to false and the navigation unmounting the form.
+      baselineRef.current = draftJson;
       const fortnoxError = json?.data?.fortnox_error as string | undefined;
       if (fortnoxError) {
         toast.error(`Offerten sparades, men kunde inte synkas till Fortnox: ${fortnoxError}`);
@@ -1593,6 +1723,37 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           {isEditing ? 'Uppdatera offertens uppgifter och status.' : 'Fyll i uppgifterna nedan för att skapa en ny offert.'}
         </p>
       </div>
+
+      {/* ── Resume unsaved draft ── */}
+      {recoverableDraft ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <svg width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true" className="shrink-0 text-amber-600">
+              <path d="M10 6.5v4M10 13.5h.01M10 2.5 2.5 16h15L10 2.5Z" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-amber-900">Osparat utkast hittades</p>
+              <p className="text-xs text-amber-700">Du har en påbörjad offert som inte hann sparas. Vill du återuppta den?</p>
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              onClick={() => { applyRestoredDraft(recoverableDraft); setRecoverableDraft(null); }}
+              className="rounded-lg bg-amber-600 px-3.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-amber-700"
+            >
+              Återuppta
+            </button>
+            <button
+              type="button"
+              onClick={() => { clearPersistedDraft(); setRecoverableDraft(null); }}
+              className="rounded-lg border border-amber-300 bg-white px-3.5 py-1.5 text-xs font-medium text-amber-800 transition-colors hover:border-amber-400"
+            >
+              Börja om
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {/* ── Two-column layout ── */}
       <div className="grid gap-5 lg:grid-cols-[1fr_304px] lg:items-start">
@@ -2334,6 +2495,43 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
       </div>
 
       {/* Personnummer-prompt vid order från privatkund utan personnr */}
+      {pendingLeaveHref ? (
+        <CrmModal
+          onClose={() => setPendingLeaveHref(null)}
+          ariaLabel="Osparad offert"
+          maxWidth="sm:max-w-[460px]"
+          header={
+            <>
+              <h2 className="text-lg font-bold text-slate-900">Du har en osparad offert</h2>
+              <p className="m-0 mt-0.5 text-sm text-slate-500">Vill du verkligen lämna sidan?</p>
+            </>
+          }
+          footer={
+            <>
+              <button
+                type="button"
+                onClick={() => setPendingLeaveHref(null)}
+                className="flex-1 rounded-xl border border-slate-200 bg-white py-2.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 sm:flex-none sm:px-5"
+              >
+                Stanna kvar
+              </button>
+              <button
+                type="button"
+                onClick={confirmLeave}
+                className="flex-1 rounded-xl border border-slate-200 bg-white py-2.5 text-sm font-semibold text-slate-600 transition hover:border-rose-300 hover:text-rose-600 sm:ml-auto sm:flex-none sm:px-5"
+              >
+                Lämna sidan
+              </button>
+            </>
+          }
+        >
+          <p className="text-sm leading-relaxed text-slate-600">
+            Din påbörjade offert har inte sparats som en färdig offert. Ändringarna sparas automatiskt som ett
+            utkast, så du kan återuppta dem nästa gång du öppnar offertsidan.
+          </p>
+        </CrmModal>
+      ) : null}
+
       {pnPromptOpen ? (
         <CrmModal
           onClose={() => setPnPromptOpen(false)}
