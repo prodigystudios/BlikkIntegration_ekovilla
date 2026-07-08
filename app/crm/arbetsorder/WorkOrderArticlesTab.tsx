@@ -26,6 +26,8 @@ export type ArticleLineItem = {
   discount_percent?: string;
   is_rot_work?: boolean;
   house_work_type?: string;
+  // Labour carved out of a material row for ROT — summed onto the "Arbetskostnad ROT" Fortnox row.
+  labor_cost?: string;
 };
 
 type FortnoxArticle = { article_number: string; description: string | null; sales_price: number | null; unit: string | null };
@@ -270,6 +272,16 @@ export default function WorkOrderArticlesTab({ items, currencyCode, vatPercent, 
                     ) : <span />}
                     <span className="text-sm font-semibold text-slate-900">{formatCurrency(rowTotal, currencyCode)}</span>
                   </div>
+
+                  {/* Carve out the labour portion of a material row → the aggregated "Arbetskostnad
+                      ROT" Fortnox row (row reduced by it, total unchanged). Hidden when the whole row
+                      is flagged as ROT-arbete. */}
+                  {rotEnabled && !row.is_rot_work ? (
+                    <label className="grid gap-1">
+                      <span className="text-[10px] font-bold uppercase tracking-[0.1em] text-slate-400">Varav arbetskostnad (ROT, kr)</span>
+                      <Input value={row.labor_cost || ''} onChange={(e) => updateRow(row.id, { labor_cost: e.target.value })} inputMode="decimal" placeholder="0" />
+                    </label>
+                  ) : null}
                 </div>
               );
             })}

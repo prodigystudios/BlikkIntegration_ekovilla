@@ -97,6 +97,9 @@ export const quoteLineItemSchema = z.object({
   line_note: z.preprocess((value) => normalizeOptionalText(value) ?? '', z.string()).optional().default(''),
   is_rot_work: z.boolean().optional().default(false),
   house_work_type: z.preprocess((value) => normalizeOptionalText(value) ?? 'CONSTRUCTION', z.enum(ROT_HOUSE_WORK_TYPES)).optional().default('CONSTRUCTION'),
+  // Labour carved out of a material row for ROT (kr, ex VAT). Summed onto the "Arbetskostnad ROT"
+  // Fortnox row at push time; stored as entered so the split can be recomputed on edit.
+  labor_cost: z.preprocess((value) => normalizeOptionalText(value) ?? '', z.string()).optional().default(''),
   density: z.preprocess((value) => normalizeOptionalText(value) ?? '', z.string()).optional().default(''),
 });
 

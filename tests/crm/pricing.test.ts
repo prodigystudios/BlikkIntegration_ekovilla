@@ -73,6 +73,30 @@ describe('computePricing', () => {
     );
     expect(p.rotDeduction).toBe(393);
   });
+
+  it('ROT base includes carved-out labor_cost from unflagged material rows (not the whole row)', () => {
+    // Material row 10000 with 4000 labour carved out: only the 4000 is the ROT base.
+    // 4000 incl 25% moms = 5000; 30% = 1500. The 6000 material must NOT count.
+    const p = computePricing(
+      [{ pricing_mode: 'item', quantity: '1', unit_price: '10000', labor_cost: '4000' }],
+      25,
+      { isPrivate: true, rot: { enabled: true, rot_percent: 30, max_deduction: 50000 } },
+    );
+    expect(p.rotDeduction).toBe(1500);
+    // Total is unchanged by the split — still the full row.
+    expect(p.subtotal).toBe(10000);
+  });
+
+  it('ROT base clamps labor_cost to the row total', () => {
+    // labor_cost 99999 on a 1000 row → base is the 1000 row, not 99999.
+    // 1000 incl 25% = 1250; 30% = 375.
+    const p = computePricing(
+      [{ pricing_mode: 'item', quantity: '1', unit_price: '1000', labor_cost: '99999' }],
+      25,
+      { isPrivate: true, rot: { enabled: true, rot_percent: 30, max_deduction: 50000 } },
+    );
+    expect(p.rotDeduction).toBe(375);
+  });
 });
 
 describe('resolveQuoteVatBreakdown', () => {

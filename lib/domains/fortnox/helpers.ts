@@ -1,4 +1,76 @@
 import { getSupabaseAdmin } from '@/lib/supabase/server';
+import { parseDecimal } from '@/lib/shared/number';
+import { DEFAULT_ROT_HOUSE_WORK_TYPE } from './types';
+
+// The standing Fortnox article that aggregated per-row ROT labour is booked to. A ROT deduction
+// may only be claimed on the LABOUR portion, not material — so labour carved out of material rows
+// (each row's `labor_cost`) is summed onto this single husarbete row instead of flagging the
+// material rows themselves. Rows a seller marks fully as ROT work (is_rot_work) keep their own
+// article/price/type and are NOT folded in here.
+export const ROT_LABOR_ARTICLE_NUMBER = '10058';
+export const ROT_LABOR_DESCRIPTION = 'Arbetskostnad ROT';
+
+// The ROT labour carved out of a single row (kr, ex VAT), clamped to the row's own net so the
+// remaining material can never go negative. Returns 0 when it's not a ROT document, when the row is
+// already fully flagged as ROT work (is_rot_work — its whole amount is labour, handled separately),
+// or when no labour was entered. `rowNet` is the row's discounted total (lineItemRowTotal).
+export function rowRotLaborCarveout(
+  item: { labor_cost?: string | null; is_rot_work?: boolean | null },
+  rowNet: number,
+  rotEnabled: boolean,
+): number {
+  if (!rotEnabled || item.is_rot_work) return 0;
+  const labor = item.labor_cost ? parseDecimal(item.labor_cost) : 0;
+  if (!(labor > 0)) return 0;
+  return Math.min(labor, Math.max(0, rowNet));
+}
+
+// Split a carved ROT material row so the two resulting rows' ROUNDED totals still sum to the row's
+// rounded total — no drift versus the CRM total. Fortnox stores a row Price at 2 decimals and
+// re-multiplies by the quantity, so we (a) round the reduced material unit price to 2 dp, then
+// (b) let the aggregated labour absorb whatever rounding residual that leaves. Returns the unit
+// price to send on the material row and the labour amount to add to the aggregated husarbete row.
+export function splitRotMaterialRow(
+  rowNet: number,
+  quantity: number,
+  carve: number,
+): { materialUnitPrice: number; labour: number } {
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+  const targetTotal = round2(rowNet);
+  const materialNet = Math.max(0, rowNet - carve);
+  const materialUnitPrice = quantity > 0 ? round2(materialNet / quantity) : round2(materialNet);
+  const materialShown = quantity > 0 ? round2(quantity * materialUnitPrice) : materialUnitPrice;
+  // Residual (rowNet rounding + material-unit rounding) rides on the labour row, so material +
+  // labour is exact to the öre. Clamp at 0: for an absurd sub-öre carve the material rounding can
+  // exceed the carve and drive this negative, which must never pollute the aggregated labour total.
+  const labour = Math.max(0, round2(targetTotal - materialShown));
+  return { materialUnitPrice, labour };
+}
+
+// The aggregated "Arbetskostnad ROT" husarbete row appended to a ROT document once material rows
+// have carved out labour. Returns null when nothing was carved (so no empty row is emitted). The
+// shape is quantity-agnostic: each builder spreads the quantity key it needs (offers → Quantity,
+// orders → OrderedQuantity/DeliveredQuantity, invoices → DeliveredQuantity). `vat` is the row VAT
+// already resolved by the caller (0 % under reverse charge, though that never co-occurs with ROT).
+export function rotLaborRow(total: number, vat: number): {
+  ArticleNumber: string;
+  Description: string;
+  Price: number;
+  VAT: number;
+  HouseWork: true;
+  HouseWorkType: string;
+} | null {
+  const price = Math.round(total * 100) / 100;
+  if (!(price > 0)) return null;
+  return {
+    ArticleNumber: ROT_LABOR_ARTICLE_NUMBER,
+    Description: ROT_LABOR_DESCRIPTION,
+    Price: price,
+    VAT: vat,
+    HouseWork: true,
+    HouseWorkType: DEFAULT_ROT_HOUSE_WORK_TYPE,
+  };
+}
 
 // A Fortnox push completes well within this window; a 'pending' claim older than this is
 // treated as abandoned (a crashed/timed-out request) and may be re-claimed, so the guard

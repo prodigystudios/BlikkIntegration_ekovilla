@@ -66,6 +66,9 @@ type QuoteLineItem = {
   line_note: string;
   is_rot_work: boolean;
   house_work_type: string;
+  // Labour carved out of a material row for ROT (kr, ex VAT). Summed onto a single "Arbetskostnad
+  // ROT" row on the Fortnox document; the material row is reduced by it so the total is unchanged.
+  labor_cost: string;
   density: string;
 };
 
@@ -163,7 +166,6 @@ type QuoteDraft = {
   items: QuoteLineItem[];
   project_name: string;
   description: string;
-  amount: string;
   vat_percent: string;
   valid_until: string;
   rot_enabled: boolean;
@@ -245,6 +247,7 @@ function createEmptyLineItem(): QuoteLineItem {
     line_note: '',
     is_rot_work: false,
     house_work_type: 'CONSTRUCTION',
+    labor_cost: '',
     density: '',
   };
 }
@@ -278,6 +281,16 @@ function formatDate(value: string | null | undefined) {
   const date = new Date(`${value}T12:00:00`);
   if (Number.isNaN(date.getTime())) return '–';
   return new Intl.DateTimeFormat('sv-SE', { dateStyle: 'medium' }).format(date);
+}
+
+// An offer is valid for one month by default — "Giltig till" is derived as the offer date + 30 days
+// (and re-derived when the offer date changes). Noon avoids DST edge cases on the date-only string.
+const OFFER_VALIDITY_DAYS = 30;
+function addDaysIso(iso: string, days: number): string {
+  const date = new Date(`${iso}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return iso;
+  date.setDate(date.getDate() + days);
+  return date.toISOString().slice(0, 10);
 }
 
 function getDefaultDraftCustomerSource(prospectId?: string | null): QuoteDraft['customer_source'] {
@@ -334,20 +347,20 @@ function getValidationIssues(draft: QuoteDraft, effectiveRows: EffectiveRow[]) {
   // without it.
   if (!draft.contact_name.trim()) issues.push('Er referens krävs');
   if (draft.quote_type === 'business' && draft.rot_enabled) issues.push('ROT är bara tillåtet för privatkund');
-  // The ROT applicant is the customer – their personal number is already required for
-  // every private customer above. Here we only need the property designation.
-  if (draft.quote_type === 'private' && draft.rot_enabled && !draft.rot_property_designation.trim()) {
-    issues.push('ROT kräver fastighetsbeteckning');
-  }
-  if (!draft.amount.trim() || parseDecimal(draft.amount) < 0) {
-    if (!hasAnyLineItemInput) issues.push('Ange belopp eller lägg till rader');
-  }
+  // Fastighetsbeteckning is NOT required on the quote — it's only mandatory once the offer becomes a
+  // work order (customer-approved), so it's enforced at order creation, not here. The field stays
+  // available so it can be filled early when known.
+  // Every offer is built from article rows (there is no manual lump-sum amount field), so at least
+  // one configured row is required.
+  if (!hasAnyLineItemInput) issues.push('Lägg till minst en rad');
   if (hasAnyLineItemInput) {
     const hasInvalidRow = effectiveRows.some((item) => item.isConfigured && (!(item.amount > 0) || !(item.effectiveUnit >= 0)));
     if (hasInvalidRow) issues.push('Ofullständiga rader — mängd och pris krävs');
   }
   return issues;
 }
+
+const initialQuoteDate = new Date().toISOString().slice(0, 10);
 
 const initialDraft: QuoteDraft = {
   customer_id: null,
@@ -376,9 +389,8 @@ const initialDraft: QuoteDraft = {
   items: [createEmptyLineItem()],
   project_name: '',
   description: '',
-  amount: '',
   vat_percent: '25',
-  valid_until: new Date(Date.now() + 14 * 864e5).toISOString().slice(0, 10),
+  valid_until: addDaysIso(initialQuoteDate, OFFER_VALIDITY_DAYS),
   rot_enabled: false,
   rot_property_designation: '',
   rot_percent: '30',
@@ -388,7 +400,7 @@ const initialDraft: QuoteDraft = {
   handoff_notes: '',
   work_scope: '',
   status: 'draft',
-  quote_date: new Date().toISOString().slice(0, 10),
+  quote_date: initialQuoteDate,
   follow_up_date: '',
   notes: '',
   create_follow_up_task: true,
@@ -799,6 +811,9 @@ function LineItemRow({
   dragHandle?: React.ReactNode;
 }) {
   const isM3 = (row.pricing_mode ?? 'm3') === 'm3';
+  // The ROT labour carve-out field sits on the economy row next to A-pris/Rabatt, but only when ROT
+  // is on and the row isn't already flagged as full ROT work (its whole price is then the labour).
+  const showLaborField = rotEnabled && !row.is_rot_work;
 
   // ── Collapsed: single overview line ──────────────────────────────────────────
   if (!expanded) {
@@ -872,7 +887,8 @@ function LineItemRow({
         </Field>
       ) : null}
 
-      <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
+      {/* Mätning: area/thickness/density (m³) or quantity (styckepris). */}
+      <div className="grid gap-3 sm:grid-cols-3">
         {isM3 ? (
           <>
             <Field label="m²"><Input value={row.m2} onChange={(e) => onChange({ m2: e.target.value })} inputMode="decimal" placeholder="0" /></Field>
@@ -882,6 +898,10 @@ function LineItemRow({
         ) : (
           <Field label="Antal"><Input value={row.quantity} onChange={(e) => onChange({ quantity: e.target.value })} inputMode="decimal" placeholder="1" /></Field>
         )}
+      </div>
+
+      {/* Ekonomi: A-pris, (ROT-arbetskostnad), rabatt on one straight row. */}
+      <div className={cn('grid gap-3', showLaborField ? 'sm:grid-cols-3' : 'sm:grid-cols-2')}>
         <Field label="A-pris">
           <Input
             value={row.auto_price ? String(metrics?.unit ?? row.article_price ?? '') : row.unit_price}
@@ -891,6 +911,13 @@ function LineItemRow({
             disabled={row.auto_price}
           />
         </Field>
+        {/* Carve out the labour portion of a material row for ROT: the amount here is moved onto the
+            separate "Arbetskostnad ROT" row and deducted from this row (total unchanged). */}
+        {showLaborField ? (
+          <Field label="Varav arbetskostnad (ROT, kr)">
+            <Input value={row.labor_cost} onChange={(e) => onChange({ labor_cost: e.target.value })} inputMode="decimal" placeholder="0" />
+          </Field>
+        ) : null}
         <Field label="Rabatt %"><Input value={row.discount_percent} onChange={(e) => onChange({ discount_percent: e.target.value })} inputMode="decimal" placeholder="0" /></Field>
       </div>
 
@@ -925,7 +952,12 @@ function LineItemRow({
 
 // How long a stashed draft survives the "create customer" round-trip before it's
 // considered stale and ignored.
-const DRAFT_TTL_MS = 30 * 60 * 1000;
+// How long an auto-saved draft stays recoverable — both for the customer round-trip restore and the
+// "resume unsaved draft" banner. A full day so a long detour (or coming back the next morning after
+// closing the tab) still restores the work rather than silently discarding it.
+const DRAFT_RECOVERY_TTL_MS = 24 * 60 * 60 * 1000;
+// Debounce before an edited draft is written to localStorage (a keystroke shouldn't hit storage).
+const DRAFT_AUTOSAVE_DEBOUNCE_MS = 800;
 
 export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   const router = useRouter();
@@ -940,6 +972,10 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   // Private customer without personnummer (optional at create) → the work-order route rejects
   // with 409; we prompt for it, save it on the customer, then retry the conversion.
   const [pnPromptOpen, setPnPromptOpen] = useState(false);
+  // Custom "leave with unsaved changes?" confirm for in-app navigation (the browser's own
+  // beforeunload text can't be customised, so we show our own dialog where we can). Holds the
+  // intended destination so the same dialog serves the back button AND intercepted link clicks.
+  const [pendingLeaveHref, setPendingLeaveHref] = useState<string | null>(null);
   const [pnValue, setPnValue] = useState('');
   const [draft, setDraft] = useState<QuoteDraft>(initialDraft);
   // Accordion: id of the single open article row. Starts on the empty starter row; adding
@@ -975,6 +1011,18 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     });
   }
   const restoredRef = useRef(false);
+  // Local draft recovery: the "clean" draft JSON captured after the form's starting state settles
+  // (initial draft for a new quote, loaded quote for an edit). Anything that differs from it is
+  // unsaved work → auto-saved to localStorage and guarded on unload.
+  const baselineRef = useRef<string | null>(null);
+  const recoveryCheckedRef = useRef(false);
+  // A fresh auto-saved draft found on mount, offered via the "resume?" banner (not auto-applied,
+  // so a returning user is never surprised by content they don't expect).
+  const [recoverableDraft, setRecoverableDraft] = useState<QuoteDraft | null>(null);
+  // JSON snapshot of the current draft — the single comparison key for dirty detection + autosave.
+  const draftJson = useMemo(() => JSON.stringify(draft), [draft]);
+  // Unsaved work: the draft differs from the captured clean baseline (null until it's captured).
+  const isDirty = baselineRef.current !== null && draftJson !== baselineRef.current;
 
   const presetProspectId = searchParams.get('prospect_id') || '';
 
@@ -997,6 +1045,19 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
 
   function clearPersistedDraft() {
     try { localStorage.removeItem(draftStorageKey); } catch { /* ignore */ }
+  }
+
+  // Load a stashed draft back into the form, re-deriving the two UI toggles that aren't part of the
+  // draft object. Shared by the customer round-trip restore and the "resume draft?" banner.
+  function applyRestoredDraft(restored: QuoteDraft) {
+    // Backfill any fields absent from an older-shaped stash (e.g. saved before `labor_cost` existed)
+    // from the initial draft / an empty line item, so every field/Input stays controlled.
+    const items = (restored.items ?? []).map((line) => ({ ...createEmptyLineItem(), ...line }));
+    setDraft({ ...initialDraft, ...restored, items: items.length ? items : [createEmptyLineItem()] });
+    setCustomWorkAddress(Boolean(restored.delivery_address));
+    setCustomEndContact(Boolean(
+      restored.end_contact_name || restored.end_contact_phone || restored.end_contact_email,
+    ));
   }
 
   // Populate the draft from a chosen customer. Shared by the search picker and the
@@ -1063,7 +1124,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           return;
         }
         setLoadedQuote(item);
-        setDraft({
+        const loadedDraft: QuoteDraft = {
           customer_id: item.customer_id || null,
           prospect_id: item.prospect_id || '',
           quote_type: item.quote_type || 'business',
@@ -1090,11 +1151,10 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           end_contact_email: item.customer_snapshot?.end_contact_email || '',
           label: item.customer_snapshot?.label || '',
           items: item.line_items?.length
-            ? item.line_items.map((line) => ({ ...line, line_note: line.line_note || '', is_rot_work: line.is_rot_work ?? false, house_work_type: line.house_work_type || 'CONSTRUCTION', density: line.density || '' }))
+            ? item.line_items.map((line) => ({ ...line, line_note: line.line_note || '', is_rot_work: line.is_rot_work ?? false, house_work_type: line.house_work_type || 'CONSTRUCTION', labor_cost: line.labor_cost || '', density: line.density || '' }))
             : [createEmptyLineItem()],
           project_name: item.project_name,
           description: item.description || '',
-          amount: String(item.amount ?? ''),
           vat_percent: String(item.vat_percent ?? 25),
           valid_until: item.valid_until || '',
           rot_enabled: Boolean(item.rot_details?.enabled),
@@ -1110,7 +1170,11 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           follow_up_date: item.follow_up_date || '',
           notes: item.notes || '',
           create_follow_up_task: false,
-        });
+        };
+        setDraft(loadedDraft);
+        // The loaded quote IS the clean baseline for an edit — unsaved-change detection compares
+        // against it, so editing an untouched loaded offer isn't flagged dirty.
+        baselineRef.current = JSON.stringify(loadedDraft);
         setCustomWorkAddress(Boolean(item.customer_snapshot?.delivery_address));
         setCustomEndContact(Boolean(
           item.customer_snapshot?.end_contact_name || item.customer_snapshot?.end_contact_phone || item.customer_snapshot?.end_contact_email,
@@ -1153,11 +1217,15 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   // Apply URL presets (create mode only)
   useEffect(() => {
     if (isEditing || !presetProspectId) return;
-    setDraft((current) => ({
-      ...current,
+    const presetDraft: QuoteDraft = {
+      ...initialDraft,
       prospect_id: presetProspectId,
       customer_source: getDefaultDraftCustomerSource(presetProspectId),
-    }));
+    };
+    setDraft(presetDraft);
+    // Fold the preset into the clean baseline so a prospect-sourced form isn't mis-flagged as
+    // unsaved work (which would trigger phantom autosave / leave-modal / resume-banner).
+    baselineRef.current = JSON.stringify(presetDraft);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1179,13 +1247,11 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
         if (raw) {
           const envelope = JSON.parse(raw);
           const fresh = envelope && typeof envelope.savedAt === 'number'
-            && Date.now() - envelope.savedAt < DRAFT_TTL_MS && envelope.draft;
+            && Date.now() - envelope.savedAt < DRAFT_RECOVERY_TTL_MS && envelope.draft;
           if (fresh) {
-            setDraft(envelope.draft);
-            setCustomWorkAddress(Boolean(envelope.draft?.delivery_address));
-            setCustomEndContact(Boolean(
-              envelope.draft?.end_contact_name || envelope.draft?.end_contact_phone || envelope.draft?.end_contact_email,
-            ));
+            // Route through applyRestoredDraft so an older-shaped stash gets the same per-item/field
+            // backfill as the resume banner (keeps every Input controlled).
+            applyRestoredDraft(envelope.draft as QuoteDraft);
           }
         }
       } catch { /* ignore malformed draft */ }
@@ -1207,6 +1273,94 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     router.replace(offerSelfUrl);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading]);
+
+  // Fallback baseline for a plain new quote (no URL preset, no round-trip). The preset effect and
+  // edit-load capture their own baselines first (guarded by the null check); this runs before the
+  // round-trip restore applies, so a restored draft is correctly seen as unsaved work to protect.
+  useEffect(() => {
+    if (baselineRef.current !== null || isEditing) return;
+    baselineRef.current = JSON.stringify(initialDraft);
+  }, [isEditing]);
+
+  // On mount, detect a fresh auto-saved draft and offer to resume it (unless we're in the customer
+  // round-trip, which owns the stash). Never auto-applies — the banner lets the user choose.
+  useEffect(() => {
+    if (recoveryCheckedRef.current || loading || baselineRef.current === null) return;
+    if (searchParams.get('created_customer_id') || searchParams.get('restore_quote')) return;
+    recoveryCheckedRef.current = true;
+    try {
+      const raw = localStorage.getItem(draftStorageKey);
+      if (!raw) return;
+      const envelope = JSON.parse(raw);
+      const fresh = envelope && typeof envelope.savedAt === 'number'
+        && Date.now() - envelope.savedAt < DRAFT_RECOVERY_TTL_MS && envelope.draft;
+      // Only offer it when it actually differs from the clean baseline — otherwise there's nothing
+      // to recover and a stale/no-op stash is just cleared.
+      if (!fresh || JSON.stringify(envelope.draft) === baselineRef.current) { clearPersistedDraft(); return; }
+      setRecoverableDraft(envelope.draft as QuoteDraft);
+    } catch { clearPersistedDraft(); }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading]);
+
+  // Starting to type while the resume banner is open means "start fresh" → dismiss it so the guards
+  // (autosave / leave-guard / interceptor, all paused while it's open) re-engage and protect the new
+  // work instead of silently discarding it.
+  useEffect(() => {
+    if (recoverableDraft && isDirty) setRecoverableDraft(null);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftJson, recoverableDraft]);
+
+  // Auto-save the draft to localStorage while it differs from the clean baseline (debounced). Paused
+  // while the resume banner is open so we never overwrite the very stash the user is deciding on.
+  useEffect(() => {
+    if (loading || submitting || recoverableDraft || !isDirty) return;
+    const timer = setTimeout(persistDraft, DRAFT_AUTOSAVE_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftJson, loading, submitting, recoverableDraft]);
+
+  // Browser "leave site?" guard on unsaved work. Also flushes the latest draft to storage first, so
+  // closing the tab mid-debounce still preserves everything (the resume banner catches it next time).
+  useEffect(() => {
+    if (!isDirty || submitting || recoverableDraft) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      persistDraft();
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftJson, submitting, recoverableDraft]);
+
+  // Intercept in-app link navigation (sidebar/header/any <Link>) while there are unsaved changes.
+  // The App Router has no built-in navigation guard, so we catch the anchor click in the capture
+  // phase — before Next's Link handler runs — cancel it, and route the intent through our confirm
+  // dialog instead. Programmatic navigations (e.g. the customer round-trip) aren't anchor clicks and
+  // are intentional, so they pass through untouched. The browser back/forward buttons (popstate)
+  // can't be intercepted cleanly here; autosave + the resume banner cover that case.
+  useEffect(() => {
+    if (!isDirty || submitting || recoverableDraft || pendingLeaveHref) return;
+    function onClick(e: MouseEvent) {
+      // Let modified / non-primary clicks (new tab, middle-click) and already-handled events be.
+      if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      const anchor = (e.target as HTMLElement | null)?.closest?.('a');
+      if (!anchor || anchor.target === '_blank' || anchor.hasAttribute('download')) return;
+      const rawHref = anchor.getAttribute('href');
+      if (!rawHref || rawHref.startsWith('#')) return;
+      let url: URL;
+      try { url = new URL(anchor.href, window.location.href); } catch { return; }
+      // Cross-origin leaves the app entirely → beforeunload handles it. Same-path (or hash-only) is
+      // not really leaving the form → ignore.
+      if (url.origin !== window.location.origin || url.pathname === window.location.pathname) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setPendingLeaveHref(url.pathname + url.search);
+    }
+    document.addEventListener('click', onClick, true); // capture phase → runs before Next's Link
+    return () => document.removeEventListener('click', onClick, true);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftJson, submitting, recoverableDraft, pendingLeaveHref]);
 
   const effectiveRows = useMemo<EffectiveRow[]>(() => {
     return draft.items.map((item) => {
@@ -1239,19 +1393,30 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     // INCL VAT, capped at the max deduction. Floored to whole krona to match Fortnox /
     // Skatteverket (ROT reductions drop the öre), e.g. 393,75 → 393. Flooring is also
     // the safe direction for the business: the deduction is never overstated.
+    // The ROT base is labour: a row flagged fully as ROT work contributes its whole total, an
+    // unflagged material row only its carved-out `labor_cost` (clamped to the row total). Mirrors
+    // lib/domains/crm/pricing.ts and the Fortnox push (flagged rows + the "Arbetskostnad ROT" row).
     const rotActive = draft.quote_type === 'private' && draft.rot_enabled;
-    const rotBaseInclVat = rotActive
-      ? effectiveRows
-          .filter((r) => r.is_rot_work)
-          .reduce((sum, r) => sum + r.rowTotal * (1 + vatPercent / 100), 0)
+    const rotLaborBase = rotActive
+      ? effectiveRows.reduce((sum, r) => {
+          const base = r.is_rot_work ? r.rowTotal : Math.min(Math.max(0, parseDecimal(r.labor_cost)), r.rowTotal);
+          return sum + base;
+        }, 0)
       : 0;
+    const rotBaseInclVat = rotLaborBase * (1 + vatPercent / 100);
     const rotPercent = parseDecimal(draft.rot_percent, 30);
     const maxDeduction = parseDecimal(draft.rot_max_deduction, 50000);
     const rotDeduction = rotActive
       ? Math.min(maxDeduction, Math.floor(rotBaseInclVat * (rotPercent / 100)))
       : 0;
 
-    return { subtotal, vat, total, rotDeduction, toPay: total - rotDeduction };
+    // Carved-out labour only (excludes fully-flagged ROT rows) — surfaced in the ROT section so the
+    // seller sees what becomes the separate "Arbetskostnad ROT" row.
+    const carvedLabor = rotActive
+      ? effectiveRows.reduce((sum, r) => (r.is_rot_work ? sum : sum + Math.min(Math.max(0, parseDecimal(r.labor_cost)), r.rowTotal)), 0)
+      : 0;
+
+    return { subtotal, vat, total, rotDeduction, toPay: total - rotDeduction, carvedLabor };
   }, [draft.vat_percent, draft.quote_type, draft.rot_enabled, draft.rot_percent, draft.rot_max_deduction, effectiveRows]);
 
   // Prefill the work description with a grouped measurement block (material headline →
@@ -1279,7 +1444,6 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
 
   const fieldErrors = useMemo(() => {
     if (!submitAttempted) return {} as Record<string, string>;
-    const hasAnyRows = draft.items.some((item) => item.article_name || item.m2 || item.quantity || item.unit_price);
     const effectiveCustomerName = getEffectiveCustomerName(draft);
     const errs: Record<string, string> = {};
     if (!draft.project_name.trim()) errs.project_name = 'Offertnamn saknas';
@@ -1294,10 +1458,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
       errs.personal_number = 'Personnummer krävs för ROT';
     }
     if (!draft.contact_name.trim()) errs.contact_name = 'Er referens krävs';
-    if (!draft.amount.trim() && !hasAnyRows) errs.amount = 'Ange belopp eller lägg till rader';
-    if (draft.quote_type === 'private' && draft.rot_enabled && !draft.rot_property_designation.trim()) {
-      errs.rot_property_designation = 'ROT kräver fastighetsbeteckning';
-    }
+    // Fastighetsbeteckning is enforced at order creation, not on the quote — no field error here.
     return errs;
   }, [submitAttempted, draft, effectiveRows]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1308,8 +1469,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     'Personnummer krävs för ROT': 'section-kund',
     'Er referens krävs': 'field-contact-name',
     'Offertnamn saknas': 'field-project-name',
-    'Ange belopp eller lägg till rader': 'field-amount',
-    'ROT kräver fastighetsbeteckning': 'field-rot-property',
+    'Lägg till minst en rad': 'section-rader',
   };
 
   function scrollToField(fieldId: string) {
@@ -1321,8 +1481,20 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   }
 
   function handleBack() {
+    // Going back is a possible accident too. With unsaved work, show our own informative confirm
+    // (the native beforeunload text isn't customisable); with nothing to keep, just leave.
+    if (isDirty) { setPendingLeaveHref('/crm/offerter'); return; }
     clearPersistedDraft();
     router.push('/crm/offerter');
+  }
+
+  // Confirmed leaving with unsaved changes: flush the draft so it's recoverable, then navigate to
+  // whatever destination triggered the dialog (back button or an intercepted link).
+  function confirmLeave() {
+    const href = pendingLeaveHref ?? '/crm/offerter';
+    persistDraft();
+    setPendingLeaveHref(null);
+    router.push(href);
   }
 
   async function createFollowUpTask(quote: QuoteItem) {
@@ -1360,12 +1532,12 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     setSubmitting(true);
 
     try {
-      const hasAnyLineItemInput = draft.items.some((item) => item.article_name || item.m2 || item.quantity || item.unit_price);
       const effectiveCustomerName = getEffectiveCustomerName(draft);
 
-      const amountNumber = hasAnyLineItemInput ? totals.total : parseDecimal(draft.amount);
+      // The offer's amount/summary always derive from the article rows — there is no manual amount
+      // field, and validation requires at least one row.
+      const amountNumber = totals.total;
       const vatPercentNumber = parseDecimal(draft.vat_percent);
-      const vatAmount = hasAnyLineItemInput ? totals.vat : (Number.isFinite(vatPercentNumber) ? amountNumber * (vatPercentNumber / 100) : 0);
 
       const payload = {
         prospect_id: draft.prospect_id || null,
@@ -1385,9 +1557,9 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           reverseVat: draft.quote_type === 'business' && parseDecimal(draft.vat_percent) === 0,
         }),
         pricing_summary: {
-          subtotal: hasAnyLineItemInput ? totals.subtotal : amountNumber,
-          vat: vatAmount,
-          total: hasAnyLineItemInput ? totals.total : amountNumber + vatAmount,
+          subtotal: totals.subtotal,
+          vat: totals.vat,
+          total: totals.total,
         },
         line_items: draft.items,
         rot_details: buildRotDetails(draft),
@@ -1418,6 +1590,10 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
       }
 
       clearPersistedDraft();
+      // Saved → the current draft is now the clean baseline. Prevents the autosave effect from
+      // re-creating the stash (and thus a phantom "resume?" banner) in the brief window between
+      // `submitting` flipping back to false and the navigation unmounting the form.
+      baselineRef.current = draftJson;
       const fortnoxError = json?.data?.fortnox_error as string | undefined;
       if (fortnoxError) {
         toast.error(`Offerten sparades, men kunde inte synkas till Fortnox: ${fortnoxError}`);
@@ -1499,14 +1675,14 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   const sidebarDisplayName = draft.quote_type === 'business'
     ? (draft.company_name || draft.customer_name)
     : draft.customer_name;
-  // Unified amount breakdown for the summary UI — mirrors the save payload's
-  // pricing_summary exactly (line-item path uses `totals`; manual path treats the
-  // entered Grundbelopp as ex moms and adds moms on top).
+  // Unified amount breakdown for the summary UI — mirrors the save payload's pricing_summary
+  // exactly. The offer is always built from article rows (no manual amount field), so the figures
+  // come from `totals`; before any row is configured they're null and the summary shows "—".
   const vatPct = parseDecimal(draft.vat_percent, 25);
   const isPrivateQuote = draft.quote_type === 'private';
-  const summarySubtotal = hasAnyLineItemInput ? totals.subtotal : (draft.amount ? parseDecimal(draft.amount) : null);
-  const summaryVat = summarySubtotal == null ? null : (hasAnyLineItemInput ? totals.vat : summarySubtotal * (vatPct / 100));
-  const summaryTotal = summarySubtotal == null ? null : (hasAnyLineItemInput ? totals.total : summarySubtotal + (summaryVat ?? 0));
+  const summarySubtotal = hasAnyLineItemInput ? totals.subtotal : null;
+  const summaryVat = summarySubtotal == null ? null : totals.vat;
+  const summaryTotal = summarySubtotal == null ? null : totals.total;
   // VAT display convention (agreed with finance): private leads with the price INCL moms;
   // business leads with the EX-moms figure, the moms shown in the breakdown.
   //
@@ -1525,9 +1701,9 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   const sections: { id: string; label: string; done?: boolean }[] = [
     { id: 'section-kund', label: 'Kund', done: Boolean(draft.quote_type === 'business' ? (draft.company_name || draft.customer_name) : draft.customer_name) },
     { id: 'section-offert', label: 'Offert', done: Boolean(draft.project_name.trim()) },
-    { id: 'section-rader', label: 'Produkter & priser', done: hasAnyLineItemInput || Boolean(draft.amount.trim()) },
+    { id: 'section-rader', label: 'Produkter & priser', done: hasAnyLineItemInput },
     ...(draft.quote_type === 'private' && draft.rot_enabled
-      ? [{ id: 'section-rot', label: 'ROT-avdrag', done: Boolean(draft.personal_number.trim() && draft.rot_property_designation.trim()) }]
+      ? [{ id: 'section-rot', label: 'ROT-avdrag', done: Boolean(draft.personal_number.trim()) }]
       : []),
     { id: 'section-handoff', label: 'Intern handoff' },
     ...(isEditing && loadedQuote ? [{ id: 'section-arbetsorder', label: 'Arbetsorder' }] : []),
@@ -1558,6 +1734,37 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           {isEditing ? 'Uppdatera offertens uppgifter och status.' : 'Fyll i uppgifterna nedan för att skapa en ny offert.'}
         </p>
       </div>
+
+      {/* ── Resume unsaved draft ── */}
+      {recoverableDraft ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <svg width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true" className="shrink-0 text-amber-600">
+              <path d="M10 6.5v4M10 13.5h.01M10 2.5 2.5 16h15L10 2.5Z" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-amber-900">Osparat utkast hittades</p>
+              <p className="text-xs text-amber-700">Du har en påbörjad offert som inte hann sparas. Vill du återuppta den?</p>
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              onClick={() => { applyRestoredDraft(recoverableDraft); setRecoverableDraft(null); }}
+              className="rounded-lg bg-amber-600 px-3.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-amber-700"
+            >
+              Återuppta
+            </button>
+            <button
+              type="button"
+              onClick={() => { clearPersistedDraft(); setRecoverableDraft(null); }}
+              className="rounded-lg border border-amber-300 bg-white px-3.5 py-1.5 text-xs font-medium text-amber-800 transition-colors hover:border-amber-400"
+            >
+              Börja om
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {/* ── Two-column layout ── */}
       <div className="grid gap-5 lg:grid-cols-[1fr_304px] lg:items-start">
@@ -1801,26 +2008,55 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
                 </p>
               </Field>
             ) : null}
+            {/* ROT toggle — only relevant for private customers. Lives here with the offer settings
+                (private counterpart to the business-only "Märkning" above); enabling it reveals the
+                ROT-avdrag section and the per-row "Varav arbetskostnad" field. */}
+            {draft.quote_type === 'private' ? (
+              <label className="flex cursor-pointer select-none items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50/60 px-4 py-3 md:col-span-2">
+                <span className="grid gap-0.5">
+                  <span className="text-sm font-medium text-slate-700">ROT-avdrag</span>
+                  <span className="text-[11px] leading-snug text-slate-400">Slå på för ROT-uppgifter och för att bryta ut arbetskostnad på raderna.</span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={draft.rot_enabled}
+                  onChange={(e) => setDraft((d) => ({ ...d, rot_enabled: e.target.checked }))}
+                  className="h-4 w-4 rounded border-slate-300 accent-emerald-600"
+                />
+              </label>
+            ) : null}
             <Field label="Beskrivning" className="md:col-span-2">
               <Textarea value={draft.description} onChange={(e) => setDraft((d) => ({ ...d, description: e.target.value }))} rows={3} placeholder="Kort om omfattning eller vad som offereras" />
             </Field>
-            <Field fieldId="field-amount" label="Belopp" error={fieldErrors.amount}>
-              <Input value={draft.amount} onChange={(e) => setDraft((d) => ({ ...d, amount: e.target.value }))} inputMode="decimal" placeholder="0" />
-            </Field>
-            <Field label="Moms %">
-              <Input value={draft.vat_percent} onChange={(e) => setDraft((d) => ({ ...d, vat_percent: e.target.value }))} inputMode="decimal" placeholder="25" />
-              {selectedCustomer?.reverse_vat ? (
-                <p className="mt-1 text-[11px] leading-snug text-amber-700">
-                  Kunden har <strong>omvänd skattskyldighet</strong> – moms sätts till 0 %. Köparen redovisar momsen själv.
-                </p>
-              ) : null}
-            </Field>
-            <Field label="Offertdatum">
-              <Input value={draft.quote_date} onChange={(e) => setDraft((d) => ({ ...d, quote_date: e.target.value }))} type="date" lang="sv-SE" />
-            </Field>
-            <Field label="Giltig till">
-              <Input value={draft.valid_until} onChange={(e) => setDraft((d) => ({ ...d, valid_until: e.target.value }))} type="date" lang="sv-SE" />
-            </Field>
+            {/* Moms + the two dates on one even 3-column row. */}
+            <div className="grid gap-4 sm:grid-cols-3 md:col-span-2">
+              <Field label="Moms %">
+                <Input value={draft.vat_percent} onChange={(e) => setDraft((d) => ({ ...d, vat_percent: e.target.value }))} inputMode="decimal" placeholder="25" />
+                {selectedCustomer?.reverse_vat ? (
+                  <p className="mt-1 text-[11px] leading-snug text-amber-700">
+                    Kunden har <strong>omvänd skattskyldighet</strong> – moms sätts till 0 %. Köparen redovisar momsen själv.
+                  </p>
+                ) : null}
+              </Field>
+              <Field label="Offertdatum">
+                {/* Changing the offer date re-derives "Giltig till" to offer date + 30 days — but only
+                    while the validity is still the default. A validity the user set by hand (e.g. a
+                    negotiated 60-day offer) is preserved when the offer date changes. */}
+                <Input
+                  value={draft.quote_date}
+                  onChange={(e) => setDraft((d) => {
+                    const next = e.target.value;
+                    const wasDefault = !d.valid_until || d.valid_until === addDaysIso(d.quote_date, OFFER_VALIDITY_DAYS);
+                    return { ...d, quote_date: next, valid_until: next && wasDefault ? addDaysIso(next, OFFER_VALIDITY_DAYS) : d.valid_until };
+                  })}
+                  type="date"
+                  lang="sv-SE"
+                />
+              </Field>
+              <Field label="Giltig till">
+                <Input value={draft.valid_until} onChange={(e) => setDraft((d) => ({ ...d, valid_until: e.target.value }))} type="date" lang="sv-SE" />
+              </Field>
+            </div>
           </div>
 
           {!isEditing ? (
@@ -1855,6 +2091,15 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
                 <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Rader</span>
                 <span className="text-sm font-semibold text-slate-900">{configuredRows.length} st</span>
               </div>
+              {/* Labour carved out of the material rows (each row's "Varav arbetskostnad"), which is
+                  summed into one "Arbetskostnad ROT" row (art. 10058) on the Fortnox offer. Shown here
+                  with the other line totals so all prices sit in one place. */}
+              {totals.carvedLabor > 0 ? (
+                <div className="grid gap-0.5">
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Arbetskostnad ROT</span>
+                  <span className="text-sm font-semibold text-emerald-700">{formatCurrency(totals.carvedLabor, 'SEK')}</span>
+                </div>
+              ) : null}
               {totals.rotDeduction > 0 ? (
                 <div className="grid gap-0.5">
                   <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Avgår ROT</span>
@@ -2184,19 +2429,6 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
               <Field label="Följ upp senast">
                 <Input value={draft.follow_up_date} onChange={(e) => setDraft((d) => ({ ...d, follow_up_date: e.target.value }))} type="date" lang="sv-SE" />
               </Field>
-
-              {/* ROT toggle — only relevant for private customers */}
-              {draft.quote_type === 'private' ? (
-                <label className="flex cursor-pointer select-none items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50/60 px-3.5 py-2.5">
-                  <span className="text-sm font-medium text-slate-700">ROT-avdrag</span>
-                  <input
-                    type="checkbox"
-                    checked={draft.rot_enabled}
-                    onChange={(e) => setDraft((d) => ({ ...d, rot_enabled: e.target.checked }))}
-                    className="h-4 w-4 rounded border-slate-300 accent-emerald-600"
-                  />
-                </label>
-              ) : null}
             </div>
 
             {/* Divider */}
@@ -2284,6 +2516,43 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
       </div>
 
       {/* Personnummer-prompt vid order från privatkund utan personnr */}
+      {pendingLeaveHref ? (
+        <CrmModal
+          onClose={() => setPendingLeaveHref(null)}
+          ariaLabel="Osparad offert"
+          maxWidth="sm:max-w-[460px]"
+          header={
+            <>
+              <h2 className="text-lg font-bold text-slate-900">Du har en osparad offert</h2>
+              <p className="m-0 mt-0.5 text-sm text-slate-500">Vill du verkligen lämna sidan?</p>
+            </>
+          }
+          footer={
+            <>
+              <button
+                type="button"
+                onClick={() => setPendingLeaveHref(null)}
+                className="flex-1 rounded-xl border border-slate-200 bg-white py-2.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 sm:flex-none sm:px-5"
+              >
+                Stanna kvar
+              </button>
+              <button
+                type="button"
+                onClick={confirmLeave}
+                className="flex-1 rounded-xl border border-slate-200 bg-white py-2.5 text-sm font-semibold text-slate-600 transition hover:border-rose-300 hover:text-rose-600 sm:ml-auto sm:flex-none sm:px-5"
+              >
+                Lämna sidan
+              </button>
+            </>
+          }
+        >
+          <p className="text-sm leading-relaxed text-slate-600">
+            Din påbörjade offert har inte sparats som en färdig offert. Ändringarna sparas automatiskt som ett
+            utkast, så du kan återuppta dem nästa gång du öppnar offertsidan.
+          </p>
+        </CrmModal>
+      ) : null}
+
       {pnPromptOpen ? (
         <CrmModal
           onClose={() => setPnPromptOpen(false)}
