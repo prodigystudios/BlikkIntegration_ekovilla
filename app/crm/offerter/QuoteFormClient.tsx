@@ -343,9 +343,9 @@ function getValidationIssues(draft: QuoteDraft, effectiveRows: EffectiveRow[]) {
   if (draft.quote_type === 'private' && draft.rot_enabled && !draft.rot_property_designation.trim()) {
     issues.push('ROT kräver fastighetsbeteckning');
   }
-  if (!draft.amount.trim() || parseDecimal(draft.amount) < 0) {
-    if (!hasAnyLineItemInput) issues.push('Ange belopp eller lägg till rader');
-  }
+  // Every offer is built from article rows (there is no manual lump-sum amount field), so at least
+  // one configured row is required.
+  if (!hasAnyLineItemInput) issues.push('Lägg till minst en rad');
   if (hasAnyLineItemInput) {
     const hasInvalidRow = effectiveRows.some((item) => item.isConfigured && (!(item.amount > 0) || !(item.effectiveUnit >= 0)));
     if (hasInvalidRow) issues.push('Ofullständiga rader — mängd och pris krävs');
@@ -1309,7 +1309,6 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
 
   const fieldErrors = useMemo(() => {
     if (!submitAttempted) return {} as Record<string, string>;
-    const hasAnyRows = draft.items.some((item) => item.article_name || item.m2 || item.quantity || item.unit_price);
     const effectiveCustomerName = getEffectiveCustomerName(draft);
     const errs: Record<string, string> = {};
     if (!draft.project_name.trim()) errs.project_name = 'Offertnamn saknas';
@@ -1324,7 +1323,6 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
       errs.personal_number = 'Personnummer krävs för ROT';
     }
     if (!draft.contact_name.trim()) errs.contact_name = 'Er referens krävs';
-    if (!draft.amount.trim() && !hasAnyRows) errs.amount = 'Ange belopp eller lägg till rader';
     if (draft.quote_type === 'private' && draft.rot_enabled && !draft.rot_property_designation.trim()) {
       errs.rot_property_designation = 'ROT kräver fastighetsbeteckning';
     }
@@ -1338,7 +1336,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     'Personnummer krävs för ROT': 'section-kund',
     'Er referens krävs': 'field-contact-name',
     'Offertnamn saknas': 'field-project-name',
-    'Ange belopp eller lägg till rader': 'field-amount',
+    'Lägg till minst en rad': 'section-rader',
     'ROT kräver fastighetsbeteckning': 'field-rot-property',
   };
 
@@ -1390,12 +1388,12 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     setSubmitting(true);
 
     try {
-      const hasAnyLineItemInput = draft.items.some((item) => item.article_name || item.m2 || item.quantity || item.unit_price);
       const effectiveCustomerName = getEffectiveCustomerName(draft);
 
-      const amountNumber = hasAnyLineItemInput ? totals.total : parseDecimal(draft.amount);
+      // The offer's amount/summary always derive from the article rows — there is no manual amount
+      // field, and validation requires at least one row.
+      const amountNumber = totals.total;
       const vatPercentNumber = parseDecimal(draft.vat_percent);
-      const vatAmount = hasAnyLineItemInput ? totals.vat : (Number.isFinite(vatPercentNumber) ? amountNumber * (vatPercentNumber / 100) : 0);
 
       const payload = {
         prospect_id: draft.prospect_id || null,
@@ -1415,9 +1413,9 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           reverseVat: draft.quote_type === 'business' && parseDecimal(draft.vat_percent) === 0,
         }),
         pricing_summary: {
-          subtotal: hasAnyLineItemInput ? totals.subtotal : amountNumber,
-          vat: vatAmount,
-          total: hasAnyLineItemInput ? totals.total : amountNumber + vatAmount,
+          subtotal: totals.subtotal,
+          vat: totals.vat,
+          total: totals.total,
         },
         line_items: draft.items,
         rot_details: buildRotDetails(draft),
@@ -1529,14 +1527,14 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   const sidebarDisplayName = draft.quote_type === 'business'
     ? (draft.company_name || draft.customer_name)
     : draft.customer_name;
-  // Unified amount breakdown for the summary UI — mirrors the save payload's
-  // pricing_summary exactly (line-item path uses `totals`; manual path treats the
-  // entered Grundbelopp as ex moms and adds moms on top).
+  // Unified amount breakdown for the summary UI — mirrors the save payload's pricing_summary
+  // exactly. The offer is always built from article rows (no manual amount field), so the figures
+  // come from `totals`; before any row is configured they're null and the summary shows "—".
   const vatPct = parseDecimal(draft.vat_percent, 25);
   const isPrivateQuote = draft.quote_type === 'private';
-  const summarySubtotal = hasAnyLineItemInput ? totals.subtotal : (draft.amount ? parseDecimal(draft.amount) : null);
-  const summaryVat = summarySubtotal == null ? null : (hasAnyLineItemInput ? totals.vat : summarySubtotal * (vatPct / 100));
-  const summaryTotal = summarySubtotal == null ? null : (hasAnyLineItemInput ? totals.total : summarySubtotal + (summaryVat ?? 0));
+  const summarySubtotal = hasAnyLineItemInput ? totals.subtotal : null;
+  const summaryVat = summarySubtotal == null ? null : totals.vat;
+  const summaryTotal = summarySubtotal == null ? null : totals.total;
   // VAT display convention (agreed with finance): private leads with the price INCL moms;
   // business leads with the EX-moms figure, the moms shown in the breakdown.
   //
@@ -1555,7 +1553,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   const sections: { id: string; label: string; done?: boolean }[] = [
     { id: 'section-kund', label: 'Kund', done: Boolean(draft.quote_type === 'business' ? (draft.company_name || draft.customer_name) : draft.customer_name) },
     { id: 'section-offert', label: 'Offert', done: Boolean(draft.project_name.trim()) },
-    { id: 'section-rader', label: 'Produkter & priser', done: hasAnyLineItemInput || Boolean(draft.amount.trim()) },
+    { id: 'section-rader', label: 'Produkter & priser', done: hasAnyLineItemInput },
     ...(draft.quote_type === 'private' && draft.rot_enabled
       ? [{ id: 'section-rot', label: 'ROT-avdrag', done: Boolean(draft.personal_number.trim() && draft.rot_property_designation.trim()) }]
       : []),
@@ -1850,9 +1848,6 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
             ) : null}
             <Field label="Beskrivning" className="md:col-span-2">
               <Textarea value={draft.description} onChange={(e) => setDraft((d) => ({ ...d, description: e.target.value }))} rows={3} placeholder="Kort om omfattning eller vad som offereras" />
-            </Field>
-            <Field fieldId="field-amount" label="Belopp" error={fieldErrors.amount}>
-              <Input value={draft.amount} onChange={(e) => setDraft((d) => ({ ...d, amount: e.target.value }))} inputMode="decimal" placeholder="0" />
             </Field>
             <Field label="Moms %">
               <Input value={draft.vat_percent} onChange={(e) => setDraft((d) => ({ ...d, vat_percent: e.target.value }))} inputMode="decimal" placeholder="25" />
