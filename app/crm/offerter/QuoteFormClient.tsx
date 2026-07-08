@@ -348,11 +348,9 @@ function getValidationIssues(draft: QuoteDraft, effectiveRows: EffectiveRow[]) {
   // without it.
   if (!draft.contact_name.trim()) issues.push('Er referens krävs');
   if (draft.quote_type === 'business' && draft.rot_enabled) issues.push('ROT är bara tillåtet för privatkund');
-  // The ROT applicant is the customer – their personal number is already required for
-  // every private customer above. Here we only need the property designation.
-  if (draft.quote_type === 'private' && draft.rot_enabled && !draft.rot_property_designation.trim()) {
-    issues.push('ROT kräver fastighetsbeteckning');
-  }
+  // Fastighetsbeteckning is NOT required on the quote — it's only mandatory once the offer becomes a
+  // work order (customer-approved), so it's enforced at order creation, not here. The field stays
+  // available so it can be filled early when known.
   // Every offer is built from article rows (there is no manual lump-sum amount field), so at least
   // one configured row is required.
   if (!hasAnyLineItemInput) issues.push('Lägg till minst en rad');
@@ -1335,9 +1333,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
       errs.personal_number = 'Personnummer krävs för ROT';
     }
     if (!draft.contact_name.trim()) errs.contact_name = 'Er referens krävs';
-    if (draft.quote_type === 'private' && draft.rot_enabled && !draft.rot_property_designation.trim()) {
-      errs.rot_property_designation = 'ROT kräver fastighetsbeteckning';
-    }
+    // Fastighetsbeteckning is enforced at order creation, not on the quote — no field error here.
     return errs;
   }, [submitAttempted, draft, effectiveRows]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1349,7 +1345,6 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     'Er referens krävs': 'field-contact-name',
     'Offertnamn saknas': 'field-project-name',
     'Lägg till minst en rad': 'section-rader',
-    'ROT kräver fastighetsbeteckning': 'field-rot-property',
   };
 
   function scrollToField(fieldId: string) {
@@ -1567,7 +1562,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     { id: 'section-offert', label: 'Offert', done: Boolean(draft.project_name.trim()) },
     { id: 'section-rader', label: 'Produkter & priser', done: hasAnyLineItemInput },
     ...(draft.quote_type === 'private' && draft.rot_enabled
-      ? [{ id: 'section-rot', label: 'ROT-avdrag', done: Boolean(draft.personal_number.trim() && draft.rot_property_designation.trim()) }]
+      ? [{ id: 'section-rot', label: 'ROT-avdrag', done: Boolean(draft.personal_number.trim()) }]
       : []),
     { id: 'section-handoff', label: 'Intern handoff' },
     ...(isEditing && loadedQuote ? [{ id: 'section-arbetsorder', label: 'Arbetsorder' }] : []),
