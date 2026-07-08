@@ -1,8 +1,8 @@
 import { getSupabaseAdmin } from '@/lib/supabase/server';
-import { parseDecimal } from '@/lib/shared/number';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
+import { lineItemUnitPrice, lineItemDiscountPercent, lineItemRowTotal } from '@/lib/domains/crm/pricing';
 import { fortnoxGet, fortnoxGetBinary, fortnoxPost, fortnoxPut, FortnoxApiError, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
-import { appendFortnoxTextNote, buildEndContactNote, buildRotPropertyNote, claimFortnoxPush, resolveOurReference, resolveReverseVat, rotLaborRow, rowRotLaborCarveout } from './helpers';
+import { appendFortnoxTextNote, buildEndContactNote, buildRotPropertyNote, claimFortnoxPush, resolveOurReference, resolveReverseVat, rotLaborRow, rowRotLaborCarveout, splitRotMaterialRow } from './helpers';
 import { DEFAULT_ROT_HOUSE_WORK_TYPE } from './types';
 
 type WorkOrderRow = {
@@ -89,20 +89,21 @@ export function buildOrderRows(lineItems: WorkOrderRow['line_items'], vatPercent
   let carvedLaborTotal = 0;
 
   const rows = lineItems.flatMap((item) => {
-    // parseDecimal handles Swedish comma input ("1,5") that plain parseFloat truncates.
-    const price = item.unit_price ? parseDecimal(item.unit_price) : (item.article_price ?? 0);
+    // Shared CRM pricing helpers (single source of truth) — identical parse/clamp/total logic as the
+    // quote form, work-order editor and partialInvoices, so the order row can never drift from them.
+    const price = lineItemUnitPrice(item);
     // For m³ rows the quantity is the computed volume, not the (empty) quantity field.
     const quantity = lineItemQuantity(item);
-    // Clamp to [0,100] to match the CRM pricing (lib/domains/crm/pricing.ts); otherwise a
-    // discount > 100 makes the Fortnox row total diverge from the stored CRM total.
-    const discount = Math.min(100, Math.max(0, item.discount_percent ? parseDecimal(item.discount_percent) : 0));
+    const discount = lineItemDiscountPercent(item);
 
     // ROT labour carved out of THIS material row — removed from the row and re-booked onto the
-    // aggregated husarbete row below, leaving the order total unchanged. See buildOfferRows.
-    const rowNet = quantity * Math.max(0, price) * (1 - discount / 100);
+    // aggregated husarbete row below, leaving the order total unchanged. See buildOfferRows. The
+    // split rounds the material unit price and lets the labour absorb the residual so the two rows'
+    // rounded totals still sum to the row total (no drift on non-divisible quantities).
+    const rowNet = lineItemRowTotal(item);
     const carve = rowRotLaborCarveout(item, rowNet, rotEnabled);
-    carvedLaborTotal += carve;
-    const materialNet = rowNet - carve;
+    const split = carve > 0 ? splitRotMaterialRow(rowNet, quantity, carve) : null;
+    if (split) carvedLaborTotal += split.labour;
 
     const row: FortnoxOrderRow = {
       ...(item.article_number ? { ArticleNumber: item.article_number } : {}),
@@ -113,9 +114,9 @@ export function buildOrderRows(lineItems: WorkOrderRow['line_items'], vatPercent
       OrderedQuantity: quantity,
       DeliveredQuantity: quantity,
       // When labour is carved out this row is material only: the unit price becomes the reduced
-      // material net (discount baked in) so quantity × price nets exactly to it; otherwise the raw
-      // price + a separate Discount % line, as before.
-      Price: carve > 0 ? (quantity > 0 ? materialNet / quantity : Math.max(0, materialNet)) : price,
+      // material net (discount baked in) so quantity × price nets to it; otherwise the raw price +
+      // a separate Discount % line, as before.
+      Price: split ? split.materialUnitPrice : price,
       // Reverse charge (omvänd skattskyldighet / byggmoms) → 0 % output VAT on rows; the document's
       // VAT regime comes from the customer card (synced from reverse_vat), so matching rows here.
       VAT: reverseVat ? 0 : vatPercent,

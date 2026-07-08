@@ -25,6 +25,28 @@ export function rowRotLaborCarveout(
   return Math.min(labor, Math.max(0, rowNet));
 }
 
+// Split a carved ROT material row so the two resulting rows' ROUNDED totals still sum to the row's
+// rounded total — no drift versus the CRM total. Fortnox stores a row Price at 2 decimals and
+// re-multiplies by the quantity, so we (a) round the reduced material unit price to 2 dp, then
+// (b) let the aggregated labour absorb whatever rounding residual that leaves. Returns the unit
+// price to send on the material row and the labour amount to add to the aggregated husarbete row.
+export function splitRotMaterialRow(
+  rowNet: number,
+  quantity: number,
+  carve: number,
+): { materialUnitPrice: number; labour: number } {
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+  const targetTotal = round2(rowNet);
+  const materialNet = Math.max(0, rowNet - carve);
+  const materialUnitPrice = quantity > 0 ? round2(materialNet / quantity) : round2(materialNet);
+  const materialShown = quantity > 0 ? round2(quantity * materialUnitPrice) : materialUnitPrice;
+  // Residual (rowNet rounding + material-unit rounding) rides on the labour row, so material +
+  // labour is exact to the öre. Clamp at 0: for an absurd sub-öre carve the material rounding can
+  // exceed the carve and drive this negative, which must never pollute the aggregated labour total.
+  const labour = Math.max(0, round2(targetTotal - materialShown));
+  return { materialUnitPrice, labour };
+}
+
 // The aggregated "Arbetskostnad ROT" husarbete row appended to a ROT document once material rows
 // have carved out labour. Returns null when nothing was carved (so no empty row is emitted). The
 // shape is quantity-agnostic: each builder spreads the quantity key it needs (offers → Quantity,

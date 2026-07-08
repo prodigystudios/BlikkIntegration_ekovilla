@@ -1,8 +1,8 @@
 import { getSupabaseAdmin } from '@/lib/supabase/server';
-import { parseDecimal } from '@/lib/shared/number';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
+import { lineItemUnitPrice, lineItemDiscountPercent, lineItemRowTotal } from '@/lib/domains/crm/pricing';
 import { fortnoxPost, fortnoxPut, fortnoxGet, fortnoxGetBinary, FortnoxApiError, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
-import { appendFortnoxTextNote, buildEndContactNote, buildRotPropertyNote, claimFortnoxPush, resolveOurReference, resolveReverseVat, rotLaborRow, rowRotLaborCarveout } from './helpers';
+import { appendFortnoxTextNote, buildEndContactNote, buildRotPropertyNote, claimFortnoxPush, resolveOurReference, resolveReverseVat, rotLaborRow, rowRotLaborCarveout, splitRotMaterialRow } from './helpers';
 import { buildFortnoxCustomerPayload, createFortnoxCustomer, splitSwedishName, buildFortnoxAddress, type FortnoxCustomerSource } from './customers';
 import { DEFAULT_ROT_HOUSE_WORK_TYPE } from './types';
 
@@ -126,20 +126,19 @@ export function buildOfferRows(
   let carvedLaborTotal = 0;
 
   const rows = lineItems.flatMap((item) => {
-    // parseDecimal handles Swedish comma input ("1,5") that plain parseFloat truncates.
-    const price = item.unit_price ? parseDecimal(item.unit_price) : (item.article_price ?? 0);
+    // Shared CRM pricing helpers (single source of truth): explicit unit_price else article price,
+    // discount clamped to [0,100], and the discounted row total — identical to what the quote form,
+    // the work-order editor and partialInvoices compute, so the Fortnox row can never drift from it.
+    const price = lineItemUnitPrice(item);
     // For m³ rows the quantity is the computed volume, not the (empty) quantity field.
     const quantity = lineItemQuantity(item);
-    // Clamp to [0,100] to match the CRM pricing (lib/domains/crm/pricing.ts); a discount
-    // > 100 would make the Fortnox offer row diverge from the quote's stored total.
-    const discount = Math.min(100, Math.max(0, item.discount_percent ? parseDecimal(item.discount_percent) : 0));
+    const discount = lineItemDiscountPercent(item);
 
     // ROT labour carved out of THIS material row (0 unless it's a ROT doc with a labor_cost and the
     // row isn't already flagged is_rot_work). What's carved is removed from the material row below
     // and re-booked onto the aggregated husarbete row, keeping the document total unchanged.
-    const rowNet = quantity * Math.max(0, price) * (1 - discount / 100);
+    const rowNet = lineItemRowTotal(item);
     const carve = rowRotLaborCarveout(item, rowNet, rotEnabled);
-    carvedLaborTotal += carve;
 
     const row: FortnoxOfferRow = {
       Description: item.article_name || item.line_note || 'Artikel',
@@ -158,8 +157,11 @@ export function buildOfferRows(
       // Labour was moved to the aggregated ROT row → this row now carries material only. Rewrite the
       // unit price to the reduced material net (discount baked in, so the % line is dropped) and keep
       // the quantity/unit so the row still reads "X m³ × à-pris". A material row is never husarbete.
-      const materialNet = rowNet - carve;
-      row.Price = quantity > 0 ? materialNet / quantity : Math.max(0, materialNet);
+      // The split rounds the material unit price and lets the labour absorb the residual, so the two
+      // rows' rounded totals still sum to the row total (no drift on non-divisible quantities).
+      const { materialUnitPrice, labour } = splitRotMaterialRow(rowNet, quantity, carve);
+      row.Price = materialUnitPrice;
+      carvedLaborTotal += labour;
     } else {
       if (discount > 0) {
         row.Discount = discount;

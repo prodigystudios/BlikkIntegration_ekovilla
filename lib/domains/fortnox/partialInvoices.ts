@@ -49,7 +49,7 @@ export type PartialRequestLine = { index: number; quantity: number };
 // partial-invoiced without silently under- or mis-billing the labour. We block it with a clear
 // message instead (Phase 2). Rows flagged fully as ROT work (is_rot_work) are unaffected — they
 // invoice per row exactly as before.
-function hasCarvedRotLabor(lineItems: PartialInvoiceLineItem[] | null): boolean {
+export function hasCarvedRotLabor(lineItems: PartialInvoiceLineItem[] | null): boolean {
   return (lineItems ?? []).some((i) => !i.is_rot_work && parseDecimal(i.labor_cost) > 0);
 }
 export type InvoiceRound = { line_quantities: PartialRequestLine[] | null };

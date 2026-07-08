@@ -166,7 +166,6 @@ type QuoteDraft = {
   items: QuoteLineItem[];
   project_name: string;
   description: string;
-  amount: string;
   vat_percent: string;
   valid_until: string;
   rot_enabled: boolean;
@@ -390,7 +389,6 @@ const initialDraft: QuoteDraft = {
   items: [createEmptyLineItem()],
   project_name: '',
   description: '',
-  amount: '',
   vat_percent: '25',
   valid_until: addDaysIso(initialQuoteDate, OFFER_VALIDITY_DAYS),
   rot_enabled: false,
@@ -954,9 +952,9 @@ function LineItemRow({
 
 // How long a stashed draft survives the "create customer" round-trip before it's
 // considered stale and ignored.
-const DRAFT_TTL_MS = 30 * 60 * 1000;
-// How long an auto-saved draft stays offer-able in the "resume unsaved draft" banner. Longer than
-// the customer round-trip window above — you might come back the next day after closing the tab.
+// How long an auto-saved draft stays recoverable — both for the customer round-trip restore and the
+// "resume unsaved draft" banner. A full day so a long detour (or coming back the next morning after
+// closing the tab) still restores the work rather than silently discarding it.
 const DRAFT_RECOVERY_TTL_MS = 24 * 60 * 60 * 1000;
 // Debounce before an edited draft is written to localStorage (a keystroke shouldn't hit storage).
 const DRAFT_AUTOSAVE_DEBOUNCE_MS = 800;
@@ -1023,6 +1021,8 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   const [recoverableDraft, setRecoverableDraft] = useState<QuoteDraft | null>(null);
   // JSON snapshot of the current draft — the single comparison key for dirty detection + autosave.
   const draftJson = useMemo(() => JSON.stringify(draft), [draft]);
+  // Unsaved work: the draft differs from the captured clean baseline (null until it's captured).
+  const isDirty = baselineRef.current !== null && draftJson !== baselineRef.current;
 
   const presetProspectId = searchParams.get('prospect_id') || '';
 
@@ -1050,7 +1050,10 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   // Load a stashed draft back into the form, re-deriving the two UI toggles that aren't part of the
   // draft object. Shared by the customer round-trip restore and the "resume draft?" banner.
   function applyRestoredDraft(restored: QuoteDraft) {
-    setDraft(restored);
+    // Backfill any fields absent from an older-shaped stash (e.g. saved before `labor_cost` existed)
+    // from the initial draft / an empty line item, so every field/Input stays controlled.
+    const items = (restored.items ?? []).map((line) => ({ ...createEmptyLineItem(), ...line }));
+    setDraft({ ...initialDraft, ...restored, items: items.length ? items : [createEmptyLineItem()] });
     setCustomWorkAddress(Boolean(restored.delivery_address));
     setCustomEndContact(Boolean(
       restored.end_contact_name || restored.end_contact_phone || restored.end_contact_email,
@@ -1121,7 +1124,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           return;
         }
         setLoadedQuote(item);
-        setDraft({
+        const loadedDraft: QuoteDraft = {
           customer_id: item.customer_id || null,
           prospect_id: item.prospect_id || '',
           quote_type: item.quote_type || 'business',
@@ -1152,7 +1155,6 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
             : [createEmptyLineItem()],
           project_name: item.project_name,
           description: item.description || '',
-          amount: String(item.amount ?? ''),
           vat_percent: String(item.vat_percent ?? 25),
           valid_until: item.valid_until || '',
           rot_enabled: Boolean(item.rot_details?.enabled),
@@ -1168,7 +1170,11 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           follow_up_date: item.follow_up_date || '',
           notes: item.notes || '',
           create_follow_up_task: false,
-        });
+        };
+        setDraft(loadedDraft);
+        // The loaded quote IS the clean baseline for an edit — unsaved-change detection compares
+        // against it, so editing an untouched loaded offer isn't flagged dirty.
+        baselineRef.current = JSON.stringify(loadedDraft);
         setCustomWorkAddress(Boolean(item.customer_snapshot?.delivery_address));
         setCustomEndContact(Boolean(
           item.customer_snapshot?.end_contact_name || item.customer_snapshot?.end_contact_phone || item.customer_snapshot?.end_contact_email,
@@ -1211,11 +1217,15 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   // Apply URL presets (create mode only)
   useEffect(() => {
     if (isEditing || !presetProspectId) return;
-    setDraft((current) => ({
-      ...current,
+    const presetDraft: QuoteDraft = {
+      ...initialDraft,
       prospect_id: presetProspectId,
       customer_source: getDefaultDraftCustomerSource(presetProspectId),
-    }));
+    };
+    setDraft(presetDraft);
+    // Fold the preset into the clean baseline so a prospect-sourced form isn't mis-flagged as
+    // unsaved work (which would trigger phantom autosave / leave-modal / resume-banner).
+    baselineRef.current = JSON.stringify(presetDraft);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1237,13 +1247,11 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
         if (raw) {
           const envelope = JSON.parse(raw);
           const fresh = envelope && typeof envelope.savedAt === 'number'
-            && Date.now() - envelope.savedAt < DRAFT_TTL_MS && envelope.draft;
+            && Date.now() - envelope.savedAt < DRAFT_RECOVERY_TTL_MS && envelope.draft;
           if (fresh) {
-            setDraft(envelope.draft);
-            setCustomWorkAddress(Boolean(envelope.draft?.delivery_address));
-            setCustomEndContact(Boolean(
-              envelope.draft?.end_contact_name || envelope.draft?.end_contact_phone || envelope.draft?.end_contact_email,
-            ));
+            // Route through applyRestoredDraft so an older-shaped stash gets the same per-item/field
+            // backfill as the resume banner (keeps every Input controlled).
+            applyRestoredDraft(envelope.draft as QuoteDraft);
           }
         }
       } catch { /* ignore malformed draft */ }
@@ -1266,14 +1274,13 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading]);
 
-  // Capture the clean baseline once the form's starting state has settled: the initial draft for a
-  // new quote (available immediately), or the loaded quote for an edit (after the load finishes).
-  // Everything is compared against this to decide what counts as unsaved work.
+  // Fallback baseline for a plain new quote (no URL preset, no round-trip). The preset effect and
+  // edit-load capture their own baselines first (guarded by the null check); this runs before the
+  // round-trip restore applies, so a restored draft is correctly seen as unsaved work to protect.
   useEffect(() => {
-    if (baselineRef.current !== null) return;
-    if (isEditing && !loadedQuote) return;
-    baselineRef.current = draftJson;
-  }, [isEditing, loadedQuote, draftJson]);
+    if (baselineRef.current !== null || isEditing) return;
+    baselineRef.current = JSON.stringify(initialDraft);
+  }, [isEditing]);
 
   // On mount, detect a fresh auto-saved draft and offer to resume it (unless we're in the customer
   // round-trip, which owns the stash). Never auto-applies — the banner lets the user choose.
@@ -1295,11 +1302,18 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading]);
 
+  // Starting to type while the resume banner is open means "start fresh" → dismiss it so the guards
+  // (autosave / leave-guard / interceptor, all paused while it's open) re-engage and protect the new
+  // work instead of silently discarding it.
+  useEffect(() => {
+    if (recoverableDraft && isDirty) setRecoverableDraft(null);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftJson, recoverableDraft]);
+
   // Auto-save the draft to localStorage while it differs from the clean baseline (debounced). Paused
   // while the resume banner is open so we never overwrite the very stash the user is deciding on.
   useEffect(() => {
-    if (loading || submitting || recoverableDraft) return;
-    if (baselineRef.current === null || draftJson === baselineRef.current) return;
+    if (loading || submitting || recoverableDraft || !isDirty) return;
     const timer = setTimeout(persistDraft, DRAFT_AUTOSAVE_DEBOUNCE_MS);
     return () => clearTimeout(timer);
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1308,8 +1322,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   // Browser "leave site?" guard on unsaved work. Also flushes the latest draft to storage first, so
   // closing the tab mid-debounce still preserves everything (the resume banner catches it next time).
   useEffect(() => {
-    const dirty = baselineRef.current !== null && draftJson !== baselineRef.current;
-    if (!dirty || submitting || recoverableDraft) return;
+    if (!isDirty || submitting || recoverableDraft) return;
     const handler = (e: BeforeUnloadEvent) => {
       persistDraft();
       e.preventDefault();
@@ -1327,8 +1340,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   // are intentional, so they pass through untouched. The browser back/forward buttons (popstate)
   // can't be intercepted cleanly here; autosave + the resume banner cover that case.
   useEffect(() => {
-    const dirty = baselineRef.current !== null && draftJson !== baselineRef.current;
-    if (!dirty || submitting || recoverableDraft || pendingLeaveHref) return;
+    if (!isDirty || submitting || recoverableDraft || pendingLeaveHref) return;
     function onClick(e: MouseEvent) {
       // Let modified / non-primary clicks (new tab, middle-click) and already-handled events be.
       if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
@@ -1471,8 +1483,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   function handleBack() {
     // Going back is a possible accident too. With unsaved work, show our own informative confirm
     // (the native beforeunload text isn't customisable); with nothing to keep, just leave.
-    const dirty = baselineRef.current !== null && draftJson !== baselineRef.current;
-    if (dirty) { setPendingLeaveHref('/crm/offerter'); return; }
+    if (isDirty) { setPendingLeaveHref('/crm/offerter'); return; }
     clearPersistedDraft();
     router.push('/crm/offerter');
   }
@@ -2028,9 +2039,19 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
                 ) : null}
               </Field>
               <Field label="Offertdatum">
-                {/* Changing the offer date re-derives "Giltig till" to offer date + 30 days (set a
-                    custom validity afterwards if needed). */}
-                <Input value={draft.quote_date} onChange={(e) => setDraft((d) => ({ ...d, quote_date: e.target.value, valid_until: e.target.value ? addDaysIso(e.target.value, OFFER_VALIDITY_DAYS) : d.valid_until }))} type="date" lang="sv-SE" />
+                {/* Changing the offer date re-derives "Giltig till" to offer date + 30 days — but only
+                    while the validity is still the default. A validity the user set by hand (e.g. a
+                    negotiated 60-day offer) is preserved when the offer date changes. */}
+                <Input
+                  value={draft.quote_date}
+                  onChange={(e) => setDraft((d) => {
+                    const next = e.target.value;
+                    const wasDefault = !d.valid_until || d.valid_until === addDaysIso(d.quote_date, OFFER_VALIDITY_DAYS);
+                    return { ...d, quote_date: next, valid_until: next && wasDefault ? addDaysIso(next, OFFER_VALIDITY_DAYS) : d.valid_until };
+                  })}
+                  type="date"
+                  lang="sv-SE"
+                />
               </Field>
               <Field label="Giltig till">
                 <Input value={draft.valid_until} onChange={(e) => setDraft((d) => ({ ...d, valid_until: e.target.value }))} type="date" lang="sv-SE" />

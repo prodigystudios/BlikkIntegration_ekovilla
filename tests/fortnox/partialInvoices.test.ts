@@ -4,6 +4,7 @@ import {
   validatePartialRequest,
   buildInvoiceRows,
   roundSubtotal,
+  hasCarvedRotLabor,
   PartialInvoiceError,
   type PartialInvoiceLineItem,
 } from '@/lib/domains/fortnox/partialInvoices';
@@ -130,5 +131,20 @@ describe('roundSubtotal', () => {
 
   it('applies the line discount', () => {
     expect(roundSubtotal([itemLine({ unit_price: '100', discount_percent: '25' })], new Map([[0, 10]]))).toBe(750);
+  });
+});
+
+describe('hasCarvedRotLabor (partial-invoice Phase-2 guard)', () => {
+  it('detects a material row with carved-out labour', () => {
+    expect(hasCarvedRotLabor([itemLine({ labor_cost: '500' })])).toBe(true);
+  });
+
+  it('ignores labour on a row flagged fully as ROT work (whole row is the labour, invoiced per row)', () => {
+    expect(hasCarvedRotLabor([itemLine({ is_rot_work: true, labor_cost: '500' })])).toBe(false);
+  });
+
+  it('returns false when nothing is carved (empty / zero / missing / null)', () => {
+    expect(hasCarvedRotLabor([itemLine({ labor_cost: '' }), itemLine({ labor_cost: '0' }), itemLine()])).toBe(false);
+    expect(hasCarvedRotLabor(null)).toBe(false);
   });
 });

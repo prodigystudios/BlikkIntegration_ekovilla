@@ -246,6 +246,22 @@ describe('buildOfferRows – ROT labour carve-out', () => {
     expect(rows[0].Discount).toBeUndefined();
     expect(rows[rows.length - 1].Price).toBe(200);
   });
+
+  it('keeps material + aggregated labour summing EXACTLY to the row total on a non-divisible quantity', () => {
+    // rowNet = 300, carve 10 → material 290 / 3 = 96.6667 → Fortnox would round the unit price and
+    // drift. The split rounds material to 96.67 and lets the labour absorb the 0.01 residual so the
+    // two rows' rounded totals still tie back to 300.00 (regression for the rounding-drift finding).
+    const rows = buildOfferRows(
+      [{ pricing_mode: 'item', unit_price: '100', quantity: '3', labor_cost: '10' }],
+      25, true,
+    );
+    const material = rows[0];
+    const labor = rows.find((r) => r.ArticleNumber === ROT_LABOR_ARTICLE_NUMBER)!;
+    expect(material.Price).toBe(96.67);
+    const materialTotal = Math.round(material.Quantity! * material.Price! * 100) / 100; // 290.01
+    const total = Math.round((materialTotal + labor.Quantity! * labor.Price!) * 100) / 100;
+    expect(total).toBe(300);
+  });
 });
 
 // The quote auto-create path must produce the SAME Fortnox customer payload as the
