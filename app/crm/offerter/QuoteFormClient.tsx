@@ -1849,20 +1849,23 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
             <Field label="Beskrivning" className="md:col-span-2">
               <Textarea value={draft.description} onChange={(e) => setDraft((d) => ({ ...d, description: e.target.value }))} rows={3} placeholder="Kort om omfattning eller vad som offereras" />
             </Field>
-            <Field label="Moms %">
-              <Input value={draft.vat_percent} onChange={(e) => setDraft((d) => ({ ...d, vat_percent: e.target.value }))} inputMode="decimal" placeholder="25" />
-              {selectedCustomer?.reverse_vat ? (
-                <p className="mt-1 text-[11px] leading-snug text-amber-700">
-                  Kunden har <strong>omvänd skattskyldighet</strong> – moms sätts till 0 %. Köparen redovisar momsen själv.
-                </p>
-              ) : null}
-            </Field>
-            <Field label="Offertdatum">
-              <Input value={draft.quote_date} onChange={(e) => setDraft((d) => ({ ...d, quote_date: e.target.value }))} type="date" lang="sv-SE" />
-            </Field>
-            <Field label="Giltig till">
-              <Input value={draft.valid_until} onChange={(e) => setDraft((d) => ({ ...d, valid_until: e.target.value }))} type="date" lang="sv-SE" />
-            </Field>
+            {/* Moms + the two dates on one even 3-column row. */}
+            <div className="grid gap-4 sm:grid-cols-3 md:col-span-2">
+              <Field label="Moms %">
+                <Input value={draft.vat_percent} onChange={(e) => setDraft((d) => ({ ...d, vat_percent: e.target.value }))} inputMode="decimal" placeholder="25" />
+                {selectedCustomer?.reverse_vat ? (
+                  <p className="mt-1 text-[11px] leading-snug text-amber-700">
+                    Kunden har <strong>omvänd skattskyldighet</strong> – moms sätts till 0 %. Köparen redovisar momsen själv.
+                  </p>
+                ) : null}
+              </Field>
+              <Field label="Offertdatum">
+                <Input value={draft.quote_date} onChange={(e) => setDraft((d) => ({ ...d, quote_date: e.target.value }))} type="date" lang="sv-SE" />
+              </Field>
+              <Field label="Giltig till">
+                <Input value={draft.valid_until} onChange={(e) => setDraft((d) => ({ ...d, valid_until: e.target.value }))} type="date" lang="sv-SE" />
+              </Field>
+            </div>
           </div>
 
           {!isEditing ? (
