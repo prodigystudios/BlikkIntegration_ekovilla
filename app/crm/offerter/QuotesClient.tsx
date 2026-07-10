@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import Link from 'next/link';
 import Input from '../../../components/ui/Input';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
@@ -646,7 +647,23 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
                   ) : null}
                 </div>
                 <strong className="truncate text-lg font-bold tracking-tight text-slate-950">{detailQuote.project_name}</strong>
-                <p className="m-0 truncate text-sm text-slate-500">{getQuoteCustomerName(detailQuote)}</p>
+                {/* Link to the customer card when the quote is tied to a saved CRM customer; a
+                    prospect/snapshot-only quote (no customer_id) keeps a plain name. returnTo points
+                    back at the list WITH ?quote_id so the detail modal re-opens on return (same
+                    open-then-return workflow as the offer form). */}
+                {detailQuote.customer_id ? (
+                  <Link
+                    href={`/crm/kunder/${detailQuote.customer_id}?returnTo=${encodeURIComponent(`/crm/offerter?quote_id=${detailQuote.id}`)}`}
+                    className="m-0 inline-flex max-w-full items-center gap-1 text-sm text-slate-500 transition-colors hover:text-emerald-700"
+                  >
+                    <span className="truncate underline-offset-2 hover:underline">{getQuoteCustomerName(detailQuote)}</span>
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden className="shrink-0">
+                      <path d="M4.5 2.5L8 6l-3.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </Link>
+                ) : (
+                  <p className="m-0 truncate text-sm text-slate-500">{getQuoteCustomerName(detailQuote)}</p>
+                )}
               </div>
               <button
                 type="button"
