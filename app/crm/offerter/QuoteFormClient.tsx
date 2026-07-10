@@ -4,6 +4,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Input from '../../../components/ui/Input';
 import Select from '../../../components/ui/Select';
 import Textarea from '../../../components/ui/Textarea';
+import DatePicker from '../../../components/ui/DatePicker';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
 import { parseDecimal } from '@/lib/shared/number';
@@ -700,19 +701,25 @@ function Field({
   className,
   error,
   fieldId,
+  plain,
 }: {
   label: string;
   children: React.ReactNode;
   className?: string;
   error?: string | null;
   fieldId?: string;
+  // `plain` wraps the label + control in a <div> instead of a <label>. Use it for composite widgets
+  // (e.g. DatePicker: a button + popover) where a wrapping <label> would forward clicks to the
+  // button and mis-associate. Such controls carry their own aria-label instead.
+  plain?: boolean;
 }) {
+  const Wrapper = plain ? 'div' : 'label';
   return (
     <div className={cn('grid gap-1.5', className)} id={fieldId}>
-      <label className="grid gap-1.5">
+      <Wrapper className="grid gap-1.5">
         <span className="text-xs font-semibold text-slate-600">{label}</span>
         {children}
-      </label>
+      </Wrapper>
       {error ? (
         <p className="text-xs font-medium text-rose-600">{error}</p>
       ) : null}
@@ -2038,23 +2045,22 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
                   </p>
                 ) : null}
               </Field>
-              <Field label="Offertdatum">
+              <Field label="Offertdatum" plain>
                 {/* Changing the offer date re-derives "Giltig till" to offer date + 30 days — but only
                     while the validity is still the default. A validity the user set by hand (e.g. a
                     negotiated 60-day offer) is preserved when the offer date changes. */}
-                <Input
+                <DatePicker
                   value={draft.quote_date}
-                  onChange={(e) => setDraft((d) => {
-                    const next = e.target.value;
+                  clearable={false}
+                  aria-label="Offertdatum"
+                  onChange={(next) => setDraft((d) => {
                     const wasDefault = !d.valid_until || d.valid_until === addDaysIso(d.quote_date, OFFER_VALIDITY_DAYS);
                     return { ...d, quote_date: next, valid_until: next && wasDefault ? addDaysIso(next, OFFER_VALIDITY_DAYS) : d.valid_until };
                   })}
-                  type="date"
-                  lang="sv-SE"
                 />
               </Field>
-              <Field label="Giltig till">
-                <Input value={draft.valid_until} onChange={(e) => setDraft((d) => ({ ...d, valid_until: e.target.value }))} type="date" lang="sv-SE" />
+              <Field label="Giltig till" plain>
+                <DatePicker value={draft.valid_until} onChange={(v) => setDraft((d) => ({ ...d, valid_until: v }))} aria-label="Giltig till" />
               </Field>
             </div>
           </div>
@@ -2238,8 +2244,8 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           <div id="section-handoff" className={cn('scroll-mt-6', crm.cardInner)}>
             <SectionHeader step={stepOf('section-handoff')} title="Intern handoff" muted />
             <div className="grid gap-4 md:grid-cols-2">
-              <Field label="Önskat installationsdatum">
-                <Input value={draft.desired_installation_date} onChange={(e) => setDraft((d) => ({ ...d, desired_installation_date: e.target.value }))} type="date" />
+              <Field label="Önskat installationsdatum" plain>
+                <DatePicker value={draft.desired_installation_date} onChange={(v) => setDraft((d) => ({ ...d, desired_installation_date: v }))} placeholder="Inget datum satt" aria-label="Önskat installationsdatum" />
               </Field>
               <Field label="Arbetets scope">
                 <Input value={draft.work_scope} onChange={(e) => setDraft((d) => ({ ...d, work_scope: e.target.value }))} placeholder="Kort operativt scope" />
@@ -2426,8 +2432,8 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
                 </Select>
               </Field>
 
-              <Field label="Följ upp senast">
-                <Input value={draft.follow_up_date} onChange={(e) => setDraft((d) => ({ ...d, follow_up_date: e.target.value }))} type="date" lang="sv-SE" />
+              <Field label="Följ upp senast" plain>
+                <DatePicker value={draft.follow_up_date} onChange={(v) => setDraft((d) => ({ ...d, follow_up_date: v }))} placeholder="Inget datum" aria-label="Följ upp senast" />
               </Field>
             </div>
 
