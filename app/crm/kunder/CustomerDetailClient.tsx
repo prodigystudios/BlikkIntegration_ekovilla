@@ -231,12 +231,18 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
   // so edited details flow into the quote; a work order just returns to where we were.
   const returnTo = (() => {
     const rt = searchParams.get('returnTo');
-    return rt && (rt.startsWith('/crm/offerter/') || rt.startsWith('/crm/arbetsorder/')) ? rt : null;
+    if (!rt) return null;
+    const isOfferPath = rt === '/crm/offerter' || rt.startsWith('/crm/offerter/') || rt.startsWith('/crm/offerter?');
+    return isOfferPath || rt.startsWith('/crm/arbetsorder/') ? rt : null;
   })();
-  const isOfferReturn = returnTo?.startsWith('/crm/offerter/') ?? false;
+  // The offer FORM (/crm/offerter/ny · /[id]/redigera) re-selects this customer via
+  // created_customer_id so edited details flow into the draft. The offer LIST (/crm/offerter?quote_id=,
+  // opened from a quote's detail modal) just returns to reopen the modal — no customer injection.
+  const isOfferFormReturn = returnTo?.startsWith('/crm/offerter/') ?? false;
+  const isOfferReturn = returnTo === '/crm/offerter' || returnTo?.startsWith('/crm/offerter/') || returnTo?.startsWith('/crm/offerter?') || false;
   const sep = returnTo?.includes('?') ? '&' : '?';
   const backTo = returnTo
-    ? (isOfferReturn ? `${returnTo}${sep}created_customer_id=${customerId}` : returnTo)
+    ? (isOfferFormReturn ? `${returnTo}${sep}created_customer_id=${customerId}` : returnTo)
     : '/crm/kunder';
   const backLabel = returnTo ? (isOfferReturn ? 'Tillbaka till offert' : 'Tillbaka till order') : 'Kundregister';
   const toast = useToast();
