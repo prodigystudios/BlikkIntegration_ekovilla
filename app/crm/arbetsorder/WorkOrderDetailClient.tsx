@@ -21,7 +21,8 @@ import WorkOrderPartialInvoiceModal, { type PartialInvoiceLine } from './WorkOrd
 import { useWorkOrderActivity } from './useWorkOrderActivity';
 import { useCustomerContact } from './useCustomerContact';
 import { formatDate, formatDateTime, formatCurrency, joinAddress, isWorkOrderOverdue, documentRef } from '@/app/crm/lib/format';
-import { openFortnoxPdf, postFortnoxEmail } from '@/app/crm/lib/fortnoxDoc';
+import { openFortnoxPdf } from '@/app/crm/lib/fortnoxDoc';
+import useDocumentEmail from '@/app/crm/components/useDocumentEmail';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -183,7 +184,8 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
     });
   }
   const [orderPdfLoading, setOrderPdfLoading] = useState(false);
-  const [orderEmailing, setOrderEmailing] = useState(false);
+  // Order-confirmation e-mail (own mail client, with recipient resolution).
+  const documentEmail = useDocumentEmail();
   const [editingOverview, setEditingOverview] = useState(false); // overview fields locked until unlocked
   const [activeTab, setActiveTab] = useState<WorkOrderTab>('overview');
   const [draft, setDraft] = useState<WorkOrderDraft | null>(null);
@@ -427,15 +429,6 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
     setOrderPdfLoading(false);
   }
 
-  async function sendOrderEmail() {
-    if (!workOrder) return;
-    if (!window.confirm('Mejla orderbekräftelsen till kunden via Fortnox?')) return;
-    setOrderEmailing(true);
-    if (await postFortnoxEmail(`/api/crm/work-orders/${workOrder.id}/fortnox/email`, toast.error)) {
-      toast.success('Orderbekräftelsen mejlad till kunden via Fortnox');
-    }
-    setOrderEmailing(false);
-  }
 
   // ─── Loading / error ──────────────────────────────────────────────────────
 
@@ -790,13 +783,22 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                     </button>
                     <button
                       type="button"
-                      onClick={sendOrderEmail}
-                      disabled={orderEmailing}
+                      onClick={() => documentEmail.start({
+                        id: workOrder.id,
+                        kind: 'order',
+                        ref: documentRef(workOrder.fortnox_order_number, workOrder.order_number),
+                        projectName: workOrder.project_name,
+                        customerName: workOrder.client_name,
+                        snapshotEmail: snapshot.email,
+                        customerId: workOrder.customer_id,
+                        pdfUrl: `/api/crm/work-orders/${workOrder.id}/fortnox/pdf`,
+                      })}
+                      disabled={documentEmail.sendingId === workOrder.id}
                       className="rounded-lg border border-indigo-600 bg-indigo-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      {orderEmailing ? 'Mejlar…' : 'Mejla order'}
+                      {documentEmail.sendingId === workOrder.id ? 'Mejlar…' : 'Mejla order'}
                     </button>
-                    <p className="col-span-2 text-[11px] leading-4 text-slate-400">Orderbekräftelse från Fortnox.</p>
+                    <p className="col-span-2 text-[11px] leading-4 text-slate-400">Orderbekräftelse från Fortnox. Mejlet öppnas i ditt eget mejlprogram – PDF:en laddas ner att bifoga.</p>
                   </div>
                 ) : null}
               </Card>
@@ -999,6 +1001,8 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
           onSubmit={submitPartialInvoice}
         />
       ) : null}
+
+      {documentEmail.modal}
     </div>
   );
 }

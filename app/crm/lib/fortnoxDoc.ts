@@ -1,6 +1,10 @@
-// Shared client helpers for fetching/sending Fortnox-generated documents (offer &
-// order PDFs + e-mails). Centralised so the popup-safe PDF open and the email POST
-// behave identically everywhere (offer modal, order detail) and a fix lands in one place.
+// Shared client helpers for fetching Fortnox-generated document PDFs (offer & order
+// confirmation). Centralised so the popup-safe open and the to-disk download behave
+// identically everywhere (offer modal, order detail) and a fix lands in one place.
+//
+// Sending is NOT here: documents are e-mailed from the user's own mail client — see
+// `useDocumentEmail`. Fortnox's own send endpoints were removed (2026-07-27) because they
+// picked the recipient themselves.
 
 // Fetch a Fortnox PDF (GET endpoint returning application/pdf) and open it in a new tab.
 // The tab is opened synchronously (before the await) so it isn't blocked as a
@@ -53,25 +57,6 @@ export async function downloadFortnoxPdf(
     return true;
   } catch {
     onError('Kunde inte hämta PDF:en');
-    return false;
-  }
-}
-
-// POST a Fortnox "email this document to the customer" endpoint. Returns true on success.
-export async function postFortnoxEmail(
-  url: string,
-  onError: (message: string) => void,
-): Promise<boolean> {
-  try {
-    const res = await fetch(url, { method: 'POST' });
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok || !json.ok) {
-      onError(json?.error || 'Kunde inte mejla dokumentet');
-      return false;
-    }
-    return true;
-  } catch {
-    onError('Kunde inte mejla dokumentet');
     return false;
   }
 }
