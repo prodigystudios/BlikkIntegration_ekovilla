@@ -11,6 +11,7 @@ import { documentRef } from '@/app/crm/lib/format';
 import DocumentNumberBadge from '@/app/crm/components/DocumentNumberBadge';
 import { resolveQuoteVatBreakdown, quoteAmountDisplay } from '@/lib/domains/crm/pricing';
 import { quoteStatusMeta } from '@/app/crm/lib/crmTokens';
+import { resolveQuoteContactFields } from './quoteSerializers';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -86,6 +87,20 @@ function initialsOf(name: string | null | undefined) {
   if (parts.length === 0) return '–';
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+// Look up a linked customer's e-mail (primary contact, else the card's own address — same
+// precedence as the quote form). Best-effort: any failure resolves to '' so the mail draft
+// still opens, just without a prefilled recipient.
+async function fetchCustomerEmail(customerId: string): Promise<string> {
+  try {
+    const res = await fetch(`/api/crm/customers/${customerId}`, { cache: 'no-store' });
+    const json = await res.json().catch(() => ({}));
+    const customer = json?.data?.item;
+    return customer ? resolveQuoteContactFields(customer).email : '';
+  } catch {
+    return '';
+  }
 }
 
 function getQuoteCustomerName(item: QuoteItem) {
@@ -401,7 +416,14 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
   // attach files, so we download the offer PDF to disk first for the user to attach.
   async function emailOfferViaMailClient(quote: QuoteItem) {
     const ref = documentRef(quote.fortnox_offer_number, quote.quote_number);
-    const to = quote.customer_snapshot?.email?.trim() || '';
+    setEmailingId(quote.id);
+    // The snapshot is the point-in-time truth and wins. Quotes saved before the customer-card
+    // e-mail fallback landed have none (the form only read contact rows, which most customers
+    // don't have), so fall back to the linked customer's live address — otherwise every older
+    // offer keeps opening the draft with an empty recipient. Best-effort: still empty just
+    // means the seller fills the address in themselves.
+    let to = quote.customer_snapshot?.email?.trim() || '';
+    if (!to && quote.customer_id) to = await fetchCustomerEmail(quote.customer_id);
     const subject = `Offert ${ref}${quote.project_name ? ` – ${quote.project_name}` : ''}`;
     const body = [
       'Hej,',
@@ -413,7 +435,6 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
       'Med vänliga hälsningar',
     ].join('\n');
 
-    setEmailingId(quote.id);
     // Best-effort: drop the PDF in Downloads so it can be attached to the draft.
     const pdfOk = await downloadFortnoxPdf(`/api/fortnox/offers/${quote.id}/pdf`, `offert-${ref}.pdf`, toast.error);
     setEmailingId(null);

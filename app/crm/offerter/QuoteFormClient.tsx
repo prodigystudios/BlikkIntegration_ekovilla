@@ -22,6 +22,7 @@ import {
   buildRotDetails,
   buildInternalHandoff,
   buildMeasurementLines,
+  resolveQuoteContactFields,
 } from './quoteSerializers';
 import { ROT_HOUSE_WORK_TYPES } from '@/lib/domains/fortnox/types';
 
@@ -212,6 +213,12 @@ type CrmCustomerLite = {
   organization_number: string | null;
   personal_number: string | null;
   fortnox_customer_id: string | null;
+  // The customer card's own contact details. Most customers have NO contact rows (neither the
+  // customer form nor the Fortnox import creates any), so these are the only e-mail/phone that
+  // exist for them — see resolveQuoteContactFields.
+  email: string | null;
+  phone: string | null;
+  mobile: string | null;
   // Omvänd skattskyldighet (reverse charge). Business-only; drives the offer's moms to 0 %.
   reverse_vat: boolean | null;
   visit_address: { street: string | null; postal_code: string | null; city: string | null } | null;
@@ -1071,7 +1078,9 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   // post-create round-trip so both paths fill identical fields.
   function applySelectedCustomer(customer: CrmCustomerLite) {
     setSelectedCustomer(customer);
-    const primary = customer.contacts.find((c) => c.is_primary) || customer.contacts[0] || null;
+    // Primary contact first, then the customer card's own e-mail/phone — a customer with no
+    // contact rows (the common case) would otherwise leave both fields empty.
+    const contact = resolveQuoteContactFields(customer);
     // Smart default: if the card already carries a delivery address that differs from the
     // visit address, turn the toggle on and prefill it. Otherwise off (= same as customer).
     const del = customer.delivery_address;
@@ -1096,9 +1105,9 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
       customer_name: customer.company_name || `${customer.first_name || ''} ${customer.last_name || ''}`.trim(),
       organization_number: customer.organization_number || '',
       personal_number: customer.personal_number || '',
-      contact_name: primary?.name || '',
-      phone: primary?.phone || '',
-      email: primary?.email || '',
+      contact_name: contact.contact_name,
+      phone: contact.phone,
+      email: contact.email,
       street_address: customer.visit_address?.street || '',
       postal_code: customer.visit_address?.postal_code || '',
       city: customer.visit_address?.city || '',
@@ -1205,6 +1214,9 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
                 organization_number: c.organization_number ?? null,
                 personal_number: c.personal_number ?? null,
                 fortnox_customer_id: c.fortnox_customer_id ?? null,
+                email: c.email ?? null,
+                phone: c.phone ?? null,
+                mobile: c.mobile ?? null,
                 reverse_vat: c.reverse_vat ?? null,
                 visit_address: c.visit_address ?? null,
                 delivery_address: c.delivery_address ?? null,

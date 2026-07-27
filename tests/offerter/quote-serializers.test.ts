@@ -5,6 +5,7 @@ import {
   buildRotDetails,
   buildInternalHandoff,
   buildMeasurementLines,
+  resolveQuoteContactFields,
   type QuoteCustomerFields,
   type QuoteRotFields,
   type QuoteHandoffFields,
@@ -49,6 +50,52 @@ describe('getEffectiveCustomerName', () => {
   });
   it('private → personnamn', () => {
     expect(getEffectiveCustomerName({ quote_type: 'private', company_name: 'Acme AB', customer_name: 'Anna Svensson' })).toBe('Anna Svensson');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveQuoteContactFields — regression guard: the mail draft must get a recipient
+// ---------------------------------------------------------------------------
+
+describe('resolveQuoteContactFields', () => {
+  it('primär kontakt vinner över kundkortet', () => {
+    expect(resolveQuoteContactFields({
+      email: 'kort@acme.se',
+      phone: '08-000',
+      contacts: [
+        { name: 'Bo', email: 'bo@acme.se', phone: '08-222', is_primary: false },
+        { name: 'Anna', email: 'anna@acme.se', phone: '08-111', is_primary: true },
+      ],
+    })).toEqual({ contact_name: 'Anna', email: 'anna@acme.se', phone: '08-111' });
+  });
+
+  it('utan primärflagga används första kontakten', () => {
+    expect(resolveQuoteContactFields({
+      contacts: [{ name: 'Bo', email: 'bo@acme.se', phone: '08-222' }],
+    })).toEqual({ contact_name: 'Bo', email: 'bo@acme.se', phone: '08-222' });
+  });
+
+  // Kärnan i buggen: kunder skapade via kundformuläret eller Fortnox-importen har INGA
+  // kontaktrader — bara kundkortets egen e-post/telefon.
+  it('utan kontaktrader faller tillbaka på kundkortets e-post och telefon', () => {
+    expect(resolveQuoteContactFields({ email: 'kort@acme.se', phone: '08-000', contacts: [] }))
+      .toEqual({ contact_name: '', email: 'kort@acme.se', phone: '08-000' });
+  });
+
+  it('kontakt utan e-post faller tillbaka på kundkortet fält för fält', () => {
+    expect(resolveQuoteContactFields({
+      email: 'kort@acme.se',
+      phone: '08-000',
+      contacts: [{ name: 'Anna', email: null, phone: '08-111', is_primary: true }],
+    })).toEqual({ contact_name: 'Anna', email: 'kort@acme.se', phone: '08-111' });
+  });
+
+  it('mobil används när telefon saknas', () => {
+    expect(resolveQuoteContactFields({ email: null, phone: '  ', mobile: '070-123' }).phone).toBe('070-123');
+  });
+
+  it('helt tom kund → tomma strängar, aldrig undefined', () => {
+    expect(resolveQuoteContactFields({})).toEqual({ contact_name: '', email: '', phone: '' });
   });
 });
 
