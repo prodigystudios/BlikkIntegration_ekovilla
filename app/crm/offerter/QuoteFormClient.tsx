@@ -23,7 +23,7 @@ import {
   buildInternalHandoff,
   buildMeasurementLines,
 } from './quoteSerializers';
-import { resolveCrmContact, primaryCrmContact } from '@/lib/domains/crm/contacts';
+import { resolveCrmContact } from '@/lib/domains/crm/contacts';
 import { ROT_HOUSE_WORK_TYPES } from '@/lib/domains/fortnox/types';
 
 // Swedish labels for the Fortnox ROT HouseWorkType codes shown in the ROT section.

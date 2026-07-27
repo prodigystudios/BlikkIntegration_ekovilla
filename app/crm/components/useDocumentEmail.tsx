@@ -36,6 +36,12 @@ export type EmailableDocument = {
 // still be the selected option (deriving it from the text meant the row could never be picked).
 const CUSTOM_RECIPIENT = '__custom__';
 
+// What the document's own stored address is called in the picker.
+const DOCUMENT_SNAPSHOT_LABEL: Record<CrmDocumentKind, string> = {
+  offer: 'Från offerten',
+  order: 'Från ordern',
+};
+
 type PickerState = {
   doc: EmailableDocument;
   options: Array<{ email: string; label: string }>;
@@ -112,7 +118,7 @@ export default function useDocumentEmail(): {
     const customer = await fetchCustomer(doc.customerId);
     setSendingId(null);
 
-    const options = documentRecipients(snapshotEmail, customer);
+    const options = documentRecipients(snapshotEmail, customer, DOCUMENT_SNAPSHOT_LABEL[doc.kind]);
     if (options.length > 1) {
       // Hand over to the picker — the overlay must not sit on top of it.
       setProgress(null);
@@ -222,7 +228,7 @@ export default function useDocumentEmail(): {
     modal: (
       <>
         {modal}
-        {progress ? <DocumentEmailProgress steps={progress.steps} phase={progress.phase} /> : null}
+        {progress ? <DocumentEmailProgress steps={progress.steps} phase={progress.phase} onDismiss={() => setProgress(null)} /> : null}
       </>
     ),
   };

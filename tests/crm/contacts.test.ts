@@ -134,7 +134,7 @@ describe('documentRecipients', () => {
   };
 
   it('snapshotadressen leder', () => {
-    expect(documentRecipients('gammal@acme.se', customer)).toEqual([
+    expect(documentRecipients('gammal@acme.se', customer, 'Från offerten')).toEqual([
       { email: 'gammal@acme.se', label: 'Från offerten' },
       { email: 'anna@acme.se', label: 'Anna' },
       { email: 'info@acme.se', label: 'Kundens adress' },
@@ -164,12 +164,18 @@ describe('documentRecipients', () => {
 
   // Kunduppslaget är best-effort — misslyckas det ska snapshoten fortfarande gå fram.
   it('utan kund används enbart snapshotadressen', () => {
-    expect(documentRecipients('kund@acme.se', null)).toEqual([{ email: 'kund@acme.se', label: 'Från offerten' }]);
+    expect(documentRecipients('kund@acme.se', null, 'Från offerten')).toEqual([{ email: 'kund@acme.se', label: 'Från offerten' }]);
     expect(documentRecipients('', null)).toEqual([]);
   });
 
   // En enda kandidat betyder att UI:t hoppar över mottagarvalet helt — privatkunden
   // ska aldrig få en extra klick.
+  // Etiketten måste följa dokumenttypen — "Från offerten" på en orderbekräftelse är fel.
+  it('snapshotetiketten är styrbar och har en neutral default', () => {
+    expect(documentRecipients('x@y.se', null, 'Från ordern')[0].label).toBe('Från ordern');
+    expect(documentRecipients('x@y.se', null)[0].label).toBe('Från dokumentet');
+  });
+
   it('kund utan kontaktrader ger exakt en kandidat', () => {
     expect(documentRecipients('info@acme.se', { email: 'info@acme.se', contacts: [] })).toHaveLength(1);
   });

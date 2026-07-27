@@ -110,6 +110,8 @@ export function crmContactRecipients(
 export function documentRecipients(
   snapshotEmail: string | null | undefined,
   customer: CrmContactSource | null,
+  /** What to call the snapshot address, e.g. "Från offerten". */
+  snapshotLabel = 'Från dokumentet',
 ): Array<{ email: string; label: string }> {
   const fromCustomer = customer ? crmContactRecipients(customer) : [];
   const snapshot = snapshotEmail?.trim();
@@ -119,5 +121,5 @@ export function documentRecipients(
   const known = fromCustomer.find((r) => r.email.toLowerCase() === snapshot.toLowerCase());
   return known
     ? [known, ...fromCustomer.filter((r) => r !== known)]
-    : [{ email: snapshot, label: 'Från offerten' }, ...fromCustomer];
+    : [{ email: snapshot, label: snapshotLabel }, ...fromCustomer];
 }
