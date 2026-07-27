@@ -1,7 +1,7 @@
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
 import { lineItemUnitPrice, lineItemDiscountPercent, lineItemRowTotal } from '@/lib/domains/crm/pricing';
-import { fortnoxPost, fortnoxPut, fortnoxGet, fortnoxGetBinary, FortnoxApiError, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
+import { fortnoxPost, fortnoxPut, fortnoxGetBinary, FortnoxApiError, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
 import { appendFortnoxTextNote, buildEndContactNote, buildRotPropertyNote, claimFortnoxPush, resolveOurReference, resolveReverseVat, rotLaborRow, rowRotLaborCarveout, splitRotMaterialRow } from './helpers';
 import { buildFortnoxCustomerPayload, createFortnoxCustomer, splitSwedishName, buildFortnoxAddress, type FortnoxCustomerSource } from './customers';
 import { DEFAULT_ROT_HOUSE_WORK_TYPE } from './types';
@@ -570,12 +570,4 @@ export async function getFortnoxOfferPdf(quoteId: string): Promise<{ bytes: Uint
     throw new FortnoxApiError(502, `Fortnox returnerade inte en PDF för offert ${offerNumber}: ${text}`, undefined, 'Fortnox kunde inte skapa en PDF av offerten. Försök igen om en stund.');
   }
   return { bytes, contentType, offerNumber };
-}
-
-// Ask Fortnox to e-mail the offer to the customer (GET /offers/{n}/email). Uses the
-// offer's EmailInformation in Fortnox; returns the offer number on success.
-export async function emailFortnoxOffer(quoteId: string): Promise<{ offerNumber: string }> {
-  const offerNumber = await requireOfferNumber(quoteId);
-  await fortnoxGet(`/offers/${offerNumber}/email`);
-  return { offerNumber };
 }

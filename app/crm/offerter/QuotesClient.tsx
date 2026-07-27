@@ -161,8 +161,6 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
   const [pushingFortnoxId, setPushingFortnoxId] = useState<string | null>(null);
   const [pdfLoadingId, setPdfLoadingId] = useState<string | null>(null);
   const [emailingId, setEmailingId] = useState<string | null>(null);
-  // Which offer's "Mejla offert" choice menu (eget mejlprogram / Fortnox) is open.
-  const [emailMenuOpenId, setEmailMenuOpenId] = useState<string | null>(null);
   // Recipient picker for "Eget mejlprogram" — only opened when the customer has more than one
   // address to choose between. `custom` holds a hand-typed address (wins when non-empty).
   const [recipientPicker, setRecipientPicker] = useState<
@@ -409,15 +407,6 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
     setPdfLoadingId(quoteId);
     await openFortnoxPdf(`/api/fortnox/offers/${quoteId}/pdf`, toast.error);
     setPdfLoadingId(null);
-  }
-
-  async function sendOfferEmail(quoteId: string) {
-    if (!window.confirm('Mejla offerten till kunden via Fortnox?')) return;
-    setEmailingId(quoteId);
-    if (await postFortnoxEmail(`/api/fortnox/offers/${quoteId}/email`, toast.error)) {
-      toast.success('Offerten mejlad till kunden via Fortnox');
-    }
-    setEmailingId(null);
   }
 
   // "Eget mejlprogram": open a pre-filled draft in the user's mail client. mailto can't
@@ -912,52 +901,17 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
                           >
                             {pdfLoadingId === detailQuote.id ? 'Hämtar…' : 'Hämta PDF'}
                           </button>
-                          <div className="relative">
-                            <button
-                              type="button"
-                              onClick={() => setEmailMenuOpenId((o) => (o === detailQuote.id ? null : detailQuote.id))}
-                              disabled={emailingId === detailQuote.id}
-                              aria-haspopup="menu"
-                              aria-expanded={emailMenuOpenId === detailQuote.id}
-                              className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-600 bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                              {emailingId === detailQuote.id ? 'Mejlar…' : 'Mejla offert'}
-                              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden className={cn('transition-transform', emailMenuOpenId === detailQuote.id && 'rotate-180')}>
-                                <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
-                              </svg>
-                            </button>
-                            {emailMenuOpenId === detailQuote.id ? (
-                              <>
-                                {/* Click-away backdrop */}
-                                <div className="fixed inset-0 z-40" onClick={() => setEmailMenuOpenId(null)} aria-hidden />
-                                {/* Öppnas uppåt (bottom-full) så menyn inte trycks under modalens
-                                    nederkant och skapar scroll — knappen sitter längst ned i kortet. */}
-                                <div role="menu" className="absolute bottom-full right-0 z-50 mb-1.5 w-72 overflow-hidden rounded-xl border border-slate-200 bg-white p-1 shadow-[0_-12px_32px_rgba(15,23,42,0.16)]">
-                                  <button
-                                    type="button"
-                                    role="menuitem"
-                                    onClick={() => { setEmailMenuOpenId(null); void startOfferEmail(detailQuote); }}
-                                    className="flex w-full flex-col items-start gap-0.5 rounded-lg px-3 py-2 text-left transition hover:bg-slate-50"
-                                  >
-                                    <span className="flex items-center gap-2 text-sm font-semibold text-slate-800">
-                                      Eget mejlprogram
-                                      <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700">Standard</span>
-                                    </span>
-                                    <span className="text-xs text-slate-500">Öppnar ditt mejlprogram – PDF:en laddas ner att bifoga.</span>
-                                  </button>
-                                  <button
-                                    type="button"
-                                    role="menuitem"
-                                    onClick={() => { setEmailMenuOpenId(null); void sendOfferEmail(detailQuote.id); }}
-                                    className="flex w-full flex-col items-start gap-0.5 rounded-lg px-3 py-2 text-left transition hover:bg-slate-50"
-                                  >
-                                    <span className="text-sm font-semibold text-slate-800">Via Fortnox</span>
-                                    <span className="text-xs text-slate-500">Fortnox mejlar offerten med PDF direkt till kundens adress på kundkortet – mottagaren går inte att välja här.</span>
-                                  </button>
-                                </div>
-                              </>
-                            ) : null}
-                          </div>
+                          {/* Ett enda mejlsätt: eget mejlprogram. Fortnox egen offertutskick är
+                              borttaget — mottagaren gick inte att styra därifrån och används inte. */}
+                          <button
+                            type="button"
+                            onClick={() => void startOfferEmail(detailQuote)}
+                            disabled={emailingId === detailQuote.id}
+                            title="Öppnar ditt mejlprogram – PDF:en laddas ner att bifoga."
+                            className="inline-flex items-center rounded-lg border border-indigo-600 bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {emailingId === detailQuote.id ? 'Mejlar…' : 'Mejla offert'}
+                          </button>
                         </>
                       ) : null}
                       {/* Sync/re-sync hidden once a work order locks the offer in Fortnox
