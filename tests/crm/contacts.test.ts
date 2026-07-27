@@ -3,6 +3,7 @@ import {
   primaryCrmContact,
   resolveCrmContact,
   crmContactRecipients,
+  documentRecipients,
   type CrmContactSource,
 } from '@/lib/domains/crm/contacts';
 
@@ -123,5 +124,53 @@ describe('crmContactRecipients', () => {
 
   it('kund utan adresser → tom lista', () => {
     expect(crmContactRecipients({ contacts: [] })).toEqual([]);
+  });
+});
+
+describe('documentRecipients', () => {
+  const customer: CrmContactSource = {
+    email: 'info@acme.se',
+    contacts: [{ name: 'Anna', email: 'anna@acme.se', is_primary: true }],
+  };
+
+  it('snapshotadressen leder', () => {
+    expect(documentRecipients('gammal@acme.se', customer)).toEqual([
+      { email: 'gammal@acme.se', label: 'Från offerten' },
+      { email: 'anna@acme.se', label: 'Anna' },
+      { email: 'info@acme.se', label: 'Kundens adress' },
+    ]);
+  });
+
+  // Annars skulle samma adress dyka upp två gånger, en gång med sämre etikett.
+  it('snapshotadress som redan är känd dubbleras inte och behåller kundens etikett', () => {
+    expect(documentRecipients('anna@acme.se', customer)).toEqual([
+      { email: 'anna@acme.se', label: 'Anna' },
+      { email: 'info@acme.se', label: 'Kundens adress' },
+    ]);
+  });
+
+  it('matchar skiftlägesokänsligt', () => {
+    expect(documentRecipients('Anna@Acme.se', customer)[0]).toEqual({ email: 'anna@acme.se', label: 'Anna' });
+  });
+
+  // Gamla offerter sparade före kortfallbacken har ingen adress på snapshoten alls.
+  it('utan snapshotadress används kundens adresser', () => {
+    expect(documentRecipients('', customer)).toEqual([
+      { email: 'anna@acme.se', label: 'Anna' },
+      { email: 'info@acme.se', label: 'Kundens adress' },
+    ]);
+    expect(documentRecipients(null, customer)).toHaveLength(2);
+  });
+
+  // Kunduppslaget är best-effort — misslyckas det ska snapshoten fortfarande gå fram.
+  it('utan kund används enbart snapshotadressen', () => {
+    expect(documentRecipients('kund@acme.se', null)).toEqual([{ email: 'kund@acme.se', label: 'Från offerten' }]);
+    expect(documentRecipients('', null)).toEqual([]);
+  });
+
+  // En enda kandidat betyder att UI:t hoppar över mottagarvalet helt — privatkunden
+  // ska aldrig få en extra klick.
+  it('kund utan kontaktrader ger exakt en kandidat', () => {
+    expect(documentRecipients('info@acme.se', { email: 'info@acme.se', contacts: [] })).toHaveLength(1);
   });
 });

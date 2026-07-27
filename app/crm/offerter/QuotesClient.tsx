@@ -9,9 +9,10 @@ import AssigneeFilter, { matchesAssignee, type AssigneeFilterValue, type Assigne
 import { openFortnoxPdf, postFortnoxEmail, downloadFortnoxPdf } from '@/app/crm/lib/fortnoxDoc';
 import { documentRef } from '@/app/crm/lib/format';
 import DocumentNumberBadge from '@/app/crm/components/DocumentNumberBadge';
+import CrmModal from '@/app/crm/components/CrmModal';
 import { resolveQuoteVatBreakdown, quoteAmountDisplay } from '@/lib/domains/crm/pricing';
 import { quoteStatusMeta } from '@/app/crm/lib/crmTokens';
-import { resolveCrmContact, crmContactRecipients } from '@/lib/domains/crm/contacts';
+import { documentRecipients, type CrmContactSource } from '@/lib/domains/crm/contacts';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -89,19 +90,21 @@ function initialsOf(name: string | null | undefined) {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
-// Look up a linked customer's e-mail (primary contact, else the card's own address — same
-// precedence as the quote form). Best-effort: any failure resolves to '' so the mail draft
-// still opens, just without a prefilled recipient.
-async function fetchCustomerEmail(customerId: string): Promise<string> {
+// Fetch the linked customer record. Best-effort: any failure resolves to null and the mail
+// flow carries on with whatever the quote snapshot holds.
+async function fetchCustomer(customerId: string): Promise<CrmContactSource | null> {
   try {
     const res = await fetch(`/api/crm/customers/${customerId}`, { cache: 'no-store' });
     const json = await res.json().catch(() => ({}));
-    const customer = json?.data?.item;
-    return customer ? resolveCrmContact(customer).email : '';
+    return (json?.data?.item as CrmContactSource | undefined) ?? null;
   } catch {
-    return '';
+    return null;
   }
 }
+
+// Radio value for the hand-typed address — an explicit sentinel, so an empty text field can
+// still be the selected option (deriving it from the text meant the row could never be picked).
+const CUSTOM_RECIPIENT = '__custom__';
 
 function getQuoteCustomerName(item: QuoteItem) {
   return getProspectFromQuote(item)?.company_name
@@ -160,6 +163,11 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
   const [emailingId, setEmailingId] = useState<string | null>(null);
   // Which offer's "Mejla offert" choice menu (eget mejlprogram / Fortnox) is open.
   const [emailMenuOpenId, setEmailMenuOpenId] = useState<string | null>(null);
+  // Recipient picker for "Eget mejlprogram" — only opened when the customer has more than one
+  // address to choose between. `custom` holds a hand-typed address (wins when non-empty).
+  const [recipientPicker, setRecipientPicker] = useState<
+    { quote: QuoteItem; options: Array<{ email: string; label: string }>; selected: string; custom: string } | null
+  >(null);
   const [orderPdfId, setOrderPdfId] = useState<string | null>(null);
   const [orderEmailingId, setOrderEmailingId] = useState<string | null>(null);
   // Map of work_order_id → its Fortnox order number, so the offer list AO-chip and the
@@ -414,16 +422,40 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
 
   // "Eget mejlprogram": open a pre-filled draft in the user's mail client. mailto can't
   // attach files, so we download the offer PDF to disk first for the user to attach.
-  async function emailOfferViaMailClient(quote: QuoteItem) {
+  const pickedRecipientEmail = !recipientPicker
+    ? ''
+    : recipientPicker.selected === CUSTOM_RECIPIENT
+      ? recipientPicker.custom.trim()
+      : recipientPicker.selected;
+
+  // Entry point for "Eget mejlprogram". Resolves who the offer can go to and only asks when
+  // there is a genuine choice: a private customer (no contact rows) has exactly one address
+  // and goes straight through, while a company where the invoice address and the salesperson
+  // differ gets the picker.
+  async function startOfferEmail(quote: QuoteItem) {
+    const snapshotEmail = quote.customer_snapshot?.email?.trim() || '';
+    // Skip the lookup when the quote has no linked customer — the snapshot is all there is.
+    if (!quote.customer_id) {
+      void emailOfferViaMailClient(quote, snapshotEmail);
+      return;
+    }
+
+    setEmailingId(quote.id);
+    const customer = await fetchCustomer(quote.customer_id);
+    setEmailingId(null);
+
+    const options = documentRecipients(snapshotEmail, customer);
+    if (options.length > 1) {
+      setRecipientPicker({ quote, options, selected: options[0].email, custom: '' });
+      return;
+    }
+    // One candidate (or none — then the seller fills it in themselves).
+    void emailOfferViaMailClient(quote, options[0]?.email || '');
+  }
+
+  async function emailOfferViaMailClient(quote: QuoteItem, to: string) {
     const ref = documentRef(quote.fortnox_offer_number, quote.quote_number);
     setEmailingId(quote.id);
-    // The snapshot is the point-in-time truth and wins. Quotes saved before the customer-card
-    // e-mail fallback landed have none (the form only read contact rows, which most customers
-    // don't have), so fall back to the linked customer's live address — otherwise every older
-    // offer keeps opening the draft with an empty recipient. Best-effort: still empty just
-    // means the seller fills the address in themselves.
-    let to = quote.customer_snapshot?.email?.trim() || '';
-    if (!to && quote.customer_id) to = await fetchCustomerEmail(quote.customer_id);
     const subject = `Offert ${ref}${quote.project_name ? ` – ${quote.project_name}` : ''}`;
     const body = [
       'Hej,',
@@ -904,7 +936,7 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
                                   <button
                                     type="button"
                                     role="menuitem"
-                                    onClick={() => { setEmailMenuOpenId(null); void emailOfferViaMailClient(detailQuote); }}
+                                    onClick={() => { setEmailMenuOpenId(null); void startOfferEmail(detailQuote); }}
                                     className="flex w-full flex-col items-start gap-0.5 rounded-lg px-3 py-2 text-left transition hover:bg-slate-50"
                                   >
                                     <span className="flex items-center gap-2 text-sm font-semibold text-slate-800">
@@ -920,7 +952,7 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
                                     className="flex w-full flex-col items-start gap-0.5 rounded-lg px-3 py-2 text-left transition hover:bg-slate-50"
                                   >
                                     <span className="text-sm font-semibold text-slate-800">Via Fortnox</span>
-                                    <span className="text-xs text-slate-500">Fortnox mejlar offerten med PDF direkt till kunden.</span>
+                                    <span className="text-xs text-slate-500">Fortnox mejlar offerten med PDF direkt till kundens adress på kundkortet – mottagaren går inte att välja här.</span>
                                   </button>
                                 </div>
                               </>
@@ -989,6 +1021,99 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
             </div>
           </div>
         </div>
+      ) : null}
+
+      {/* Mottagarval — visas bara när kunden har fler än en adress att välja mellan, så
+          privatkunden (en adress) går rakt igenom utan extra klick. */}
+      {recipientPicker ? (
+        <CrmModal
+          onClose={() => setRecipientPicker(null)}
+          ariaLabel="Välj mottagare"
+          maxWidth="sm:max-w-[460px]"
+          header={
+            <div className="grid gap-0.5">
+              <h2 className="m-0 text-base font-bold text-slate-900">Vem ska ha offerten?</h2>
+              <p className="m-0 text-xs text-slate-500">
+                {getQuoteCustomerName(recipientPicker.quote)} har flera adresser.
+              </p>
+            </div>
+          }
+          footer={
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setRecipientPicker(null)}
+                className="flex-1 rounded-xl border border-slate-200 bg-white py-2.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 sm:flex-none sm:px-5"
+              >
+                Avbryt
+              </button>
+              <button
+                type="button"
+                disabled={!pickedRecipientEmail}
+                onClick={() => {
+                  const { quote } = recipientPicker;
+                  const to = pickedRecipientEmail;
+                  setRecipientPicker(null);
+                  void emailOfferViaMailClient(quote, to);
+                }}
+                className="flex-1 rounded-xl py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50 sm:ml-auto sm:flex-none sm:px-5"
+                style={{ backgroundColor: 'var(--crm-primary)' }}
+              >
+                Öppna mejl
+              </button>
+            </div>
+          }
+        >
+          <div className="grid gap-1.5">
+            {recipientPicker.options.map((option) => (
+              <label
+                key={option.email}
+                className={cn(
+                  'flex cursor-pointer items-center gap-3 rounded-xl border px-3.5 py-2.5 transition',
+                  recipientPicker.selected === option.email
+                    ? 'border-emerald-300 bg-emerald-50'
+                    : 'border-slate-200 bg-white hover:border-slate-300',
+                )}
+              >
+                <input
+                  type="radio"
+                  name="offer-recipient"
+                  checked={recipientPicker.selected === option.email}
+                  onChange={() => setRecipientPicker((p) => (p ? { ...p, selected: option.email } : p))}
+                  className="h-4 w-4 shrink-0 accent-emerald-600"
+                />
+                <span className="grid min-w-0 gap-0.5">
+                  <span className="truncate text-sm font-semibold text-slate-900">{option.email}</span>
+                  <span className="text-[11px] text-slate-500">{option.label}</span>
+                </span>
+              </label>
+            ))}
+
+            <label
+              className={cn(
+                'grid cursor-pointer gap-2 rounded-xl border px-3.5 py-2.5 transition',
+                recipientPicker.selected === CUSTOM_RECIPIENT ? 'border-emerald-300 bg-emerald-50' : 'border-slate-200 bg-white',
+              )}
+            >
+              <span className="flex items-center gap-3">
+                <input
+                  type="radio"
+                  name="offer-recipient"
+                  checked={recipientPicker.selected === CUSTOM_RECIPIENT}
+                  onChange={() => setRecipientPicker((p) => (p ? { ...p, selected: CUSTOM_RECIPIENT } : p))}
+                  className="h-4 w-4 shrink-0 accent-emerald-600"
+                />
+                <span className="text-sm font-semibold text-slate-900">Annan adress</span>
+              </span>
+              <Input
+                type="email"
+                value={recipientPicker.custom}
+                onChange={(e) => setRecipientPicker((p) => (p ? { ...p, selected: CUSTOM_RECIPIENT, custom: e.target.value } : p))}
+                placeholder="namn@foretag.se"
+              />
+            </label>
+          </div>
+        </CrmModal>
       ) : null}
     </div>
   );

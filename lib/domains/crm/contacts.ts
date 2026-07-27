@@ -98,3 +98,26 @@ export function crmContactRecipients(
 
   return recipients;
 }
+
+/**
+ * Where a saved document (offer, order confirmation) can be e-mailed, most likely first.
+ *
+ * The address stored on the document's own snapshot is the point-in-time truth and leads —
+ * but it is not the only option, because the snapshot freezes when the document is created:
+ * a contact added afterwards, or a locked offer whose snapshot can no longer be edited, would
+ * otherwise be unreachable. The customer's current addresses follow, de-duplicated.
+ */
+export function documentRecipients(
+  snapshotEmail: string | null | undefined,
+  customer: CrmContactSource | null,
+): Array<{ email: string; label: string }> {
+  const fromCustomer = customer ? crmContactRecipients(customer) : [];
+  const snapshot = snapshotEmail?.trim();
+  if (!snapshot) return fromCustomer;
+
+  // Prefer the customer's own label ("Anna") over the generic one when it's the same address.
+  const known = fromCustomer.find((r) => r.email.toLowerCase() === snapshot.toLowerCase());
+  return known
+    ? [known, ...fromCustomer.filter((r) => r !== known)]
+    : [{ email: snapshot, label: 'Från offerten' }, ...fromCustomer];
+}
