@@ -110,38 +110,6 @@ export function buildCustomerSnapshot(d: QuoteCustomerFields, opts?: { reverseVa
   };
 }
 
-// A customer as far as the quote form's contact fields are concerned: the card's own
-// email/phone/mobile plus its contact rows.
-export type QuoteContactSource = {
-  email?: string | null;
-  phone?: string | null;
-  mobile?: string | null;
-  contacts?: Array<{ name?: string | null; phone?: string | null; email?: string | null; is_primary?: boolean }> | null;
-};
-
-// Resolve the quote's "Er referens" contact details from a chosen customer. The primary
-// contact wins when one exists; otherwise we fall back to the customer card's own fields.
-//
-// The fallback is not an edge case: `crm_customers` carries its own email/phone, and neither
-// the CRM customer form (`createCrmCustomer`) nor the Fortnox customer import creates contact
-// rows — those are added separately from the customer card. So a perfectly normal customer has
-// an empty `contacts` array, and reading only the primary contact left the snapshot's e-mail
-// null, which in turn opened the "eget mejlprogram" draft with no recipient.
-// Same precedence as the work-order resolver in `lib/domains/crm/work-orders.ts`.
-export function resolveQuoteContactFields(customer: QuoteContactSource): {
-  contact_name: string;
-  email: string;
-  phone: string;
-} {
-  const contacts = customer.contacts ?? [];
-  const primary = contacts.find((c) => c.is_primary) || contacts[0] || null;
-  return {
-    contact_name: primary?.name?.trim() || '',
-    email: primary?.email?.trim() || customer.email?.trim() || '',
-    phone: primary?.phone?.trim() || customer.phone?.trim() || customer.mobile?.trim() || '',
-  };
-}
-
 export type QuoteRotFields = {
   quote_type: 'private' | 'business';
   rot_enabled: boolean;

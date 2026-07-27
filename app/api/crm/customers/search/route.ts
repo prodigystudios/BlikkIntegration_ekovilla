@@ -1,6 +1,7 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { searchCrmCustomers, getCrmCustomerDisplayName } from '@/lib/domains/crm/customers';
+import { resolveCrmContact, type CrmContactSource } from '@/lib/domains/crm/contacts';
 import { ok, requireCrmUser, routeError, validationError, searchCrmCustomersQuerySchema } from '../_lib';
 
 export async function GET(req: Request) {
@@ -18,8 +19,9 @@ export async function GET(req: Request) {
     if (error) return routeError(500, 'crm_customers_search_failed', error.message);
 
     const results = (data ?? []).map((c) => {
-      const contacts = Array.isArray(c.contacts) ? c.contacts : [];
-      const primary = contacts.find((ct: Record<string, unknown>) => ct.is_primary) || contacts[0] || null;
+      // Shared rule (resolveCrmContact) — reading the contact rows alone showed no phone at
+      // all for the many customers whose number sits on the card.
+      const contact = resolveCrmContact(c as CrmContactSource);
       const addr = c.visit_address as Record<string, string | null> | null;
       return {
         id: c.id,
@@ -27,8 +29,8 @@ export async function GET(req: Request) {
         customer_type: c.customer_type,
         display_name: getCrmCustomerDisplayName(c as Parameters<typeof getCrmCustomerDisplayName>[0]),
         organization_number: c.organization_number ?? null,
-        primary_contact_name: primary?.name ?? null,
-        primary_contact_phone: primary?.phone ?? null,
+        primary_contact_name: contact.name || null,
+        primary_contact_phone: contact.phone || null,
         city: addr?.city ?? null,
       };
     });

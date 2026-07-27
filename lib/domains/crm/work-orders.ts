@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { crmQuoteSelect } from './quotes';
+import { resolveCrmContact, type CrmContactSource } from './contacts';
 
 export const crmWorkOrderSelect = `
   id,
@@ -139,7 +140,7 @@ type StandaloneWorkOrderInput = {
 export async function createStandaloneCrmWorkOrder(supabase: SupabaseClient, input: StandaloneWorkOrderInput) {
   const { data: customer, error: custErr } = await supabase
     .from('crm_customers')
-    .select('id, customer_type, company_name, organization_number, first_name, last_name, personal_number, email, phone, visit_address, delivery_address, invoice_address, reverse_vat, contacts:crm_customer_contacts(name, is_primary)')
+    .select('id, customer_type, company_name, organization_number, first_name, last_name, personal_number, email, phone, mobile, visit_address, delivery_address, invoice_address, reverse_vat, contacts:crm_customer_contacts(name, phone, email, is_primary)')
     .eq('id', input.customerId)
     .maybeSingle();
 
@@ -157,8 +158,9 @@ export async function createStandaloneCrmWorkOrder(supabase: SupabaseClient, inp
   const clientName = isBusiness
     ? (customer.company_name || 'Okänd kund')
     : ([customer.first_name, customer.last_name].filter(Boolean).join(' ') || 'Okänd kund');
-  const contacts = Array.isArray(customer.contacts) ? customer.contacts : [];
-  const primaryContact = contacts.find((c: { is_primary?: boolean }) => c.is_primary) || contacts[0] || null;
+  // Shared rule (resolveCrmContact) so a standalone order lands on the same address as an
+  // order created from a quote — the card alone used to decide here.
+  const contact = resolveCrmContact(customer as CrmContactSource);
   const visit = (customer.visit_address || {}) as Record<string, string | null>;
 
   const customerSnapshot = {
@@ -166,9 +168,9 @@ export async function createStandaloneCrmWorkOrder(supabase: SupabaseClient, inp
     company_name: isBusiness ? (customer.company_name || null) : null,
     organization_number: isBusiness ? (customer.organization_number || null) : null,
     personal_number: !isBusiness ? (customer.personal_number || null) : null,
-    contact_name: (primaryContact as { name?: string | null } | null)?.name || null,
-    email: customer.email || null,
-    phone: customer.phone || null,
+    contact_name: contact.name || null,
+    email: contact.email || null,
+    phone: contact.phone || null,
     street_address: visit.street || visit.street_address || null,
     postal_code: visit.postal_code || null,
     city: visit.city || null,
@@ -495,13 +497,15 @@ export async function getWorkOrderCustomerContact(supabase: SupabaseClient, work
   if (error) return { data: null, error };
   if (!c) return { data: null, error: null };
 
-  const contacts = ((c as any).contacts || []) as Array<{ name?: string | null; phone?: string | null; email?: string | null; is_primary?: boolean }>;
-  const primary = contacts.find((x) => x.is_primary) || contacts[0] || null;
+  // Shared rule (resolveCrmContact): the named contact person wins, the card fills the gaps.
+  // This used to read the card first, which meant a customer with both could get the offer at
+  // one address and the order confirmation at another.
+  const contact = resolveCrmContact(c as CrmContactSource);
   return {
     data: {
-      contactName: primary?.name || null,
-      phone: (c as any).phone || (c as any).mobile || primary?.phone || null,
-      email: (c as any).email || primary?.email || null,
+      contactName: contact.name || null,
+      phone: contact.phone || null,
+      email: contact.email || null,
       isOnSiteContact: false,
     },
     error: null,

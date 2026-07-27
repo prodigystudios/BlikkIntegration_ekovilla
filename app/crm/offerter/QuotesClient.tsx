@@ -11,7 +11,7 @@ import { documentRef } from '@/app/crm/lib/format';
 import DocumentNumberBadge from '@/app/crm/components/DocumentNumberBadge';
 import { resolveQuoteVatBreakdown, quoteAmountDisplay } from '@/lib/domains/crm/pricing';
 import { quoteStatusMeta } from '@/app/crm/lib/crmTokens';
-import { resolveQuoteContactFields } from './quoteSerializers';
+import { resolveCrmContact, crmContactRecipients } from '@/lib/domains/crm/contacts';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -97,7 +97,7 @@ async function fetchCustomerEmail(customerId: string): Promise<string> {
     const res = await fetch(`/api/crm/customers/${customerId}`, { cache: 'no-store' });
     const json = await res.json().catch(() => ({}));
     const customer = json?.data?.item;
-    return customer ? resolveQuoteContactFields(customer).email : '';
+    return customer ? resolveCrmContact(customer).email : '';
   } catch {
     return '';
   }

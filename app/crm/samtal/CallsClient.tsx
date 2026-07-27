@@ -8,6 +8,7 @@ import CrmModal from '../components/CrmModal';
 import Textarea from '../../../components/ui/Textarea';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
+import { resolveCrmContact } from '@/lib/domains/crm/contacts';
 import { crm, customerStageLabel as stageLabel, customerStageClass as stageClass } from '@/app/crm/lib/crmTokens';
 
 type EntitySearchResult = {
@@ -29,6 +30,10 @@ type LinkedCustomer = {
   first_name: string | null;
   last_name: string | null;
   organization_number: string | null;
+  // The card's own channel — most customers have no contact rows at all.
+  email: string | null;
+  phone: string | null;
+  mobile: string | null;
   contacts: Array<{ name: string; phone: string | null; email: string | null; is_primary: boolean }>;
 };
 
@@ -123,9 +128,11 @@ function formatDateTime(value: string | null | undefined) {
 function getLinkedEntityFromCall(item: CallItem): { company_name: string | null; contact_name: string | null; phone: string | null; email: string | null; city: string | null; source: string | null; stage?: string } | null {
   if (item.customer) {
     const c = item.customer;
-    const primary = Array.isArray(c.contacts) ? (c.contacts.find((ct) => ct.is_primary) || c.contacts[0]) : null;
+    // Shared rule (resolveCrmContact): a call list without phone numbers is useless, and
+    // reading the contact rows alone showed nothing for card-only customers.
+    const contact = resolveCrmContact(c);
     const name = c.customer_type === 'business' ? c.company_name : [c.first_name, c.last_name].filter(Boolean).join(' ');
-    return { company_name: name || null, contact_name: primary?.name ?? null, phone: primary?.phone ?? null, email: primary?.email ?? null, city: null, source: null, stage: c.customer_stage };
+    return { company_name: name || null, contact_name: contact.name || null, phone: contact.phone || null, email: contact.email || null, city: null, source: null, stage: c.customer_stage };
   }
   if (item.prospect) {
     const p = Array.isArray(item.prospect) ? item.prospect[0] : item.prospect;

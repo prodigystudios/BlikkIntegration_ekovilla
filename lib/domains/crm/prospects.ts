@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { resolveCrmContact, type CrmContactSource } from './contacts';
 
 // Prospects är crm_customers med customer_stage = 'prospect'.
 // Dessa funktioner proxar mot crm_customers och returnerar data i det gamla
@@ -8,6 +9,9 @@ const prospectFromCustomerSelect = `
   id,
   company_name,
   organization_number,
+  email,
+  phone,
+  mobile,
   visit_address,
   source,
   notes,
@@ -20,16 +24,18 @@ const prospectFromCustomerSelect = `
 `;
 
 function mapCustomerToProspect(customer: Record<string, unknown>) {
-  const contacts = Array.isArray(customer.contacts) ? customer.contacts : [];
-  const primary = contacts.find((c: Record<string, unknown>) => c.is_primary) || contacts[0] || null;
+  // Shared rule (resolveCrmContact): a prospect created from the prospect form has its
+  // e-mail/phone on a contact row, one converted from a customer has them on the card. Reading
+  // contacts alone left the list blank for the latter.
+  const contact = resolveCrmContact(customer as CrmContactSource);
   const addr = customer.visit_address as Record<string, string | null> | null;
   return {
     id: customer.id,
     company_name: customer.company_name,
     organization_number: customer.organization_number,
-    contact_name: primary?.name ?? null,
-    phone: primary?.phone ?? null,
-    email: primary?.email ?? null,
+    contact_name: contact.name || null,
+    phone: contact.phone || null,
+    email: contact.email || null,
     street_address: addr?.street ?? null,
     postal_code: addr?.postal_code ?? null,
     city: addr?.city ?? null,

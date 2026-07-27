@@ -22,8 +22,8 @@ import {
   buildRotDetails,
   buildInternalHandoff,
   buildMeasurementLines,
-  resolveQuoteContactFields,
 } from './quoteSerializers';
+import { resolveCrmContact, primaryCrmContact } from '@/lib/domains/crm/contacts';
 import { ROT_HOUSE_WORK_TYPES } from '@/lib/domains/fortnox/types';
 
 // Swedish labels for the Fortnox ROT HouseWorkType codes shown in the ROT section.
@@ -660,7 +660,8 @@ function CustomerSearchPicker({
               const name = customer.customer_type === 'business'
                 ? (customer.company_name || 'Okänt företag')
                 : `${customer.first_name || ''} ${customer.last_name || ''}`.trim() || 'Okänd kund';
-              const primary = customer.contacts.find((c) => c.is_primary) || customer.contacts[0] || null;
+              // Shared rule — the row showed no phone at all for card-only customers.
+              const contact = resolveCrmContact(customer);
               return (
                 <button
                   key={customer.id}
@@ -673,7 +674,7 @@ function CustomerSearchPicker({
                     {customer.fortnox_customer_id ? <span className="rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[10px] font-semibold text-sky-700">Fortnox</span> : null}
                   </div>
                   <span className="text-xs text-slate-400">
-                    {[customer.organization_number, customer.visit_address?.city, primary?.phone].filter(Boolean).join(' · ')}
+                    {[customer.organization_number, customer.visit_address?.city, contact.phone].filter(Boolean).join(' · ')}
                   </span>
                 </button>
               );
@@ -1080,7 +1081,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     setSelectedCustomer(customer);
     // Primary contact first, then the customer card's own e-mail/phone — a customer with no
     // contact rows (the common case) would otherwise leave both fields empty.
-    const contact = resolveQuoteContactFields(customer);
+    const contact = resolveCrmContact(customer);
     // Smart default: if the card already carries a delivery address that differs from the
     // visit address, turn the toggle on and prefill it. Otherwise off (= same as customer).
     const del = customer.delivery_address;
@@ -1105,7 +1106,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
       customer_name: customer.company_name || `${customer.first_name || ''} ${customer.last_name || ''}`.trim(),
       organization_number: customer.organization_number || '',
       personal_number: customer.personal_number || '',
-      contact_name: contact.contact_name,
+      contact_name: contact.name,
       phone: contact.phone,
       email: contact.email,
       street_address: customer.visit_address?.street || '',
