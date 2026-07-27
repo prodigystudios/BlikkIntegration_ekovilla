@@ -8,6 +8,7 @@ import { cn } from '@/lib/shared/cn';
 import { downloadFortnoxPdf } from '@/app/crm/lib/fortnoxDoc';
 import { documentRecipients, type CrmContactSource } from '@/lib/domains/crm/contacts';
 import { buildDocumentEmailDraft, buildMailtoUrl, type CrmDocumentKind } from '@/lib/domains/crm/documentEmail';
+import DocumentEmailProgress, { type DocumentEmailPhase } from '@/app/crm/components/DocumentEmailProgress';
 
 // Mailing a CRM document (offer / order confirmation) from the user's own mail client, with
 // the recipient resolved — and only asked for when there is a genuine choice.
@@ -63,6 +64,9 @@ export default function useDocumentEmail(): {
   const toast = useToast();
   const [sendingId, setSendingId] = useState<string | null>(null);
   const [picker, setPicker] = useState<PickerState | null>(null);
+  // Which step of the prepare-the-draft sequence is running, and which steps this run has.
+  // The contact lookup is skipped for a document with no linked customer.
+  const [progress, setProgress] = useState<{ steps: DocumentEmailPhase[]; phase: DocumentEmailPhase } | null>(null);
 
   const pickedEmail = !picker
     ? ''
@@ -70,10 +74,11 @@ export default function useDocumentEmail(): {
       ? picker.custom.trim()
       : picker.selected;
 
-  async function openMailDraft(doc: EmailableDocument, to: string) {
+  async function openMailDraft(doc: EmailableDocument, to: string, steps: DocumentEmailPhase[]) {
     const draft = buildDocumentEmailDraft(doc);
 
     setSendingId(doc.id);
+    setProgress({ steps, phase: 'pdf' });
     // Best-effort: drop the PDF in Downloads so it can be attached to the draft.
     const pdfOk = await downloadFortnoxPdf(doc.pdfUrl, draft.filename, toast.error);
     setSendingId(null);
@@ -82,8 +87,14 @@ export default function useDocumentEmail(): {
     // Open the mail client with the draft (recipient/subject/body pre-filled). Deferred so
     // the just-started blob download commits first — setting location.href immediately can
     // otherwise cancel the in-flight download. The mailto is a convenience, not required.
+    setProgress({ steps, phase: 'mail' });
     const mailto = buildMailtoUrl(to, draft);
-    setTimeout(() => { window.location.href = mailto; }, pdfOk ? 800 : 0);
+    setTimeout(() => {
+      window.location.href = mailto;
+      // mailto hands off to an external app without unloading the page, so the overlay has
+      // to be dismissed explicitly — otherwise it would sit there for good.
+      setProgress(null);
+    }, pdfOk ? 800 : 0);
   }
 
   // Resolves who the document can go to and only asks when there is more than one candidate,
@@ -91,21 +102,25 @@ export default function useDocumentEmail(): {
   async function start(doc: EmailableDocument) {
     const snapshotEmail = doc.snapshotEmail?.trim() || '';
     if (!doc.customerId) {
-      void openMailDraft(doc, snapshotEmail);
+      void openMailDraft(doc, snapshotEmail, ['pdf', 'mail']);
       return;
     }
 
+    const steps: DocumentEmailPhase[] = ['contact', 'pdf', 'mail'];
     setSendingId(doc.id);
+    setProgress({ steps, phase: 'contact' });
     const customer = await fetchCustomer(doc.customerId);
     setSendingId(null);
 
     const options = documentRecipients(snapshotEmail, customer);
     if (options.length > 1) {
+      // Hand over to the picker — the overlay must not sit on top of it.
+      setProgress(null);
       setPicker({ doc, options, selected: options[0].email, custom: '' });
       return;
     }
     // One candidate (or none — then the seller fills it in themselves).
-    void openMailDraft(doc, options[0]?.email || '');
+    void openMailDraft(doc, options[0]?.email || '', steps);
   }
 
   const modal = picker ? (
@@ -128,7 +143,7 @@ export default function useDocumentEmail(): {
           <button
             type="button"
             onClick={() => setPicker(null)}
-            className="flex-1 rounded-xl border border-slate-200 bg-white py-2.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 sm:flex-none sm:px-5"
+            className="flex-1 rounded-xl border border-solid border-slate-200 bg-white py-2.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 sm:flex-none sm:px-5"
           >
             Avbryt
           </button>
@@ -139,7 +154,7 @@ export default function useDocumentEmail(): {
               const { doc } = picker;
               const to = pickedEmail;
               setPicker(null);
-              void openMailDraft(doc, to);
+              void openMailDraft(doc, to, ['pdf', 'mail']);
             }}
             className="flex-1 rounded-xl py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50 sm:ml-auto sm:flex-none sm:px-5"
             style={{ backgroundColor: 'var(--crm-primary)' }}
@@ -154,7 +169,7 @@ export default function useDocumentEmail(): {
           <label
             key={option.email}
             className={cn(
-              'flex cursor-pointer items-center gap-3 rounded-xl border px-3.5 py-2.5 transition',
+              'flex cursor-pointer items-center gap-3 rounded-xl border border-solid px-3.5 py-2.5 transition',
               picker.selected === option.email
                 ? 'border-emerald-300 bg-emerald-50'
                 : 'border-slate-200 bg-white hover:border-slate-300',
@@ -176,7 +191,7 @@ export default function useDocumentEmail(): {
 
         <label
           className={cn(
-            'grid cursor-pointer gap-2 rounded-xl border px-3.5 py-2.5 transition',
+            'grid cursor-pointer gap-2 rounded-xl border border-solid px-3.5 py-2.5 transition',
             picker.selected === CUSTOM_RECIPIENT ? 'border-emerald-300 bg-emerald-50' : 'border-slate-200 bg-white',
           )}
         >
@@ -201,5 +216,14 @@ export default function useDocumentEmail(): {
     </CrmModal>
   ) : null;
 
-  return { sendingId, start, modal };
+  return {
+    sendingId,
+    start,
+    modal: (
+      <>
+        {modal}
+        {progress ? <DocumentEmailProgress steps={progress.steps} phase={progress.phase} /> : null}
+      </>
+    ),
+  };
 }
