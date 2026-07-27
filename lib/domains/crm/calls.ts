@@ -31,6 +31,9 @@ export const crmCallSelect = `
     first_name,
     last_name,
     organization_number,
+    email,
+    phone,
+    mobile,
     contacts:crm_customer_contacts(name, phone, email, is_primary)
   )
 `;

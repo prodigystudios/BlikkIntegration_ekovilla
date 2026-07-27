@@ -6,11 +6,12 @@ import Input from '../../../components/ui/Input';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
 import AssigneeFilter, { matchesAssignee, type AssigneeFilterValue, type AssigneeOption } from '@/app/crm/components/AssigneeFilter';
-import { openFortnoxPdf, postFortnoxEmail, downloadFortnoxPdf } from '@/app/crm/lib/fortnoxDoc';
+import { openFortnoxPdf } from '@/app/crm/lib/fortnoxDoc';
 import { documentRef } from '@/app/crm/lib/format';
 import DocumentNumberBadge from '@/app/crm/components/DocumentNumberBadge';
 import { resolveQuoteVatBreakdown, quoteAmountDisplay } from '@/lib/domains/crm/pricing';
 import { quoteStatusMeta } from '@/app/crm/lib/crmTokens';
+import useDocumentEmail from '@/app/crm/components/useDocumentEmail';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -142,11 +143,9 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
   const [creatingWorkOrderId, setCreatingWorkOrderId] = useState<string | null>(null);
   const [pushingFortnoxId, setPushingFortnoxId] = useState<string | null>(null);
   const [pdfLoadingId, setPdfLoadingId] = useState<string | null>(null);
-  const [emailingId, setEmailingId] = useState<string | null>(null);
-  // Which offer's "Mejla offert" choice menu (eget mejlprogram / Fortnox) is open.
-  const [emailMenuOpenId, setEmailMenuOpenId] = useState<string | null>(null);
+  // Offer + order-confirmation e-mail (own mail client, with recipient resolution).
+  const documentEmail = useDocumentEmail();
   const [orderPdfId, setOrderPdfId] = useState<string | null>(null);
-  const [orderEmailingId, setOrderEmailingId] = useState<string | null>(null);
   // Map of work_order_id → its Fortnox order number, so the offer list AO-chip and the
   // modal's work-order reference can lead with the Fortnox number (the quote row itself
   // doesn't carry it). Fetched once from the work-orders list (one request, no per-row
@@ -388,58 +387,12 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
     setPdfLoadingId(null);
   }
 
-  async function sendOfferEmail(quoteId: string) {
-    if (!window.confirm('Mejla offerten till kunden via Fortnox?')) return;
-    setEmailingId(quoteId);
-    if (await postFortnoxEmail(`/api/fortnox/offers/${quoteId}/email`, toast.error)) {
-      toast.success('Offerten mejlad till kunden via Fortnox');
-    }
-    setEmailingId(null);
-  }
-
-  // "Eget mejlprogram": open a pre-filled draft in the user's mail client. mailto can't
-  // attach files, so we download the offer PDF to disk first for the user to attach.
-  async function emailOfferViaMailClient(quote: QuoteItem) {
-    const ref = documentRef(quote.fortnox_offer_number, quote.quote_number);
-    const to = quote.customer_snapshot?.email?.trim() || '';
-    const subject = `Offert ${ref}${quote.project_name ? ` – ${quote.project_name}` : ''}`;
-    const body = [
-      'Hej,',
-      '',
-      `Här kommer offert ${ref}${quote.project_name ? ` gällande ${quote.project_name}` : ''}. Offerten bifogas som PDF.`,
-      '',
-      'Hör gärna av dig vid frågor.',
-      '',
-      'Med vänliga hälsningar',
-    ].join('\n');
-
-    setEmailingId(quote.id);
-    // Best-effort: drop the PDF in Downloads so it can be attached to the draft.
-    const pdfOk = await downloadFortnoxPdf(`/api/fortnox/offers/${quote.id}/pdf`, `offert-${ref}.pdf`, toast.error);
-    setEmailingId(null);
-    if (pdfOk) toast.success('Offert-PDF nedladdad – bifoga den i mejlet som öppnades.');
-
-    // Open the mail client with the draft (recipient/subject/body pre-filled). Deferred so
-    // the just-started blob download commits first — setting location.href immediately can
-    // otherwise cancel the in-flight download. The mailto is a convenience, not required.
-    const mailto = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-    setTimeout(() => { window.location.href = mailto; }, pdfOk ? 800 : 0);
-  }
-
   async function openOrderPdf(workOrderId: string) {
     setOrderPdfId(workOrderId);
     await openFortnoxPdf(`/api/crm/work-orders/${workOrderId}/fortnox/pdf`, toast.error);
     setOrderPdfId(null);
   }
 
-  async function sendOrderEmail(workOrderId: string) {
-    if (!window.confirm('Mejla orderbekräftelsen till kunden via Fortnox?')) return;
-    setOrderEmailingId(workOrderId);
-    if (await postFortnoxEmail(`/api/crm/work-orders/${workOrderId}/fortnox/email`, toast.error)) {
-      toast.success('Orderbekräftelsen mejlad till kunden via Fortnox');
-    }
-    setOrderEmailingId(null);
-  }
 
   return (
     <div className="grid grid-cols-1 gap-4">
@@ -807,11 +760,20 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
                       </button>
                       <button
                         type="button"
-                        onClick={() => void sendOrderEmail(detailQuote.work_order_id!)}
-                        disabled={orderEmailingId === detailQuote.work_order_id}
+                        onClick={() => documentEmail.start({
+                          id: detailQuote.work_order_id!,
+                          kind: 'order',
+                          ref: documentRef(workOrderFortnoxById.get(detailQuote.work_order_id!) ?? null, detailQuote.work_order_number),
+                          projectName: detailQuote.project_name,
+                          customerName: getQuoteCustomerName(detailQuote),
+                          snapshotEmail: detailQuote.customer_snapshot?.email,
+                          customerId: detailQuote.customer_id,
+                          pdfUrl: `/api/crm/work-orders/${detailQuote.work_order_id}/fortnox/pdf`,
+                        })}
+                        disabled={documentEmail.sendingId === detailQuote.work_order_id}
                         className="rounded-lg border border-indigo-600 bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
                       >
-                        {orderEmailingId === detailQuote.work_order_id ? 'Mejlar…' : 'Mejla order'}
+                        {documentEmail.sendingId === detailQuote.work_order_id ? 'Mejlar…' : 'Mejla order'}
                       </button>
                     </div>
                   ) : null}
@@ -859,52 +821,26 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
                           >
                             {pdfLoadingId === detailQuote.id ? 'Hämtar…' : 'Hämta PDF'}
                           </button>
-                          <div className="relative">
-                            <button
-                              type="button"
-                              onClick={() => setEmailMenuOpenId((o) => (o === detailQuote.id ? null : detailQuote.id))}
-                              disabled={emailingId === detailQuote.id}
-                              aria-haspopup="menu"
-                              aria-expanded={emailMenuOpenId === detailQuote.id}
-                              className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-600 bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                              {emailingId === detailQuote.id ? 'Mejlar…' : 'Mejla offert'}
-                              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden className={cn('transition-transform', emailMenuOpenId === detailQuote.id && 'rotate-180')}>
-                                <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
-                              </svg>
-                            </button>
-                            {emailMenuOpenId === detailQuote.id ? (
-                              <>
-                                {/* Click-away backdrop */}
-                                <div className="fixed inset-0 z-40" onClick={() => setEmailMenuOpenId(null)} aria-hidden />
-                                {/* Öppnas uppåt (bottom-full) så menyn inte trycks under modalens
-                                    nederkant och skapar scroll — knappen sitter längst ned i kortet. */}
-                                <div role="menu" className="absolute bottom-full right-0 z-50 mb-1.5 w-72 overflow-hidden rounded-xl border border-slate-200 bg-white p-1 shadow-[0_-12px_32px_rgba(15,23,42,0.16)]">
-                                  <button
-                                    type="button"
-                                    role="menuitem"
-                                    onClick={() => { setEmailMenuOpenId(null); void emailOfferViaMailClient(detailQuote); }}
-                                    className="flex w-full flex-col items-start gap-0.5 rounded-lg px-3 py-2 text-left transition hover:bg-slate-50"
-                                  >
-                                    <span className="flex items-center gap-2 text-sm font-semibold text-slate-800">
-                                      Eget mejlprogram
-                                      <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700">Standard</span>
-                                    </span>
-                                    <span className="text-xs text-slate-500">Öppnar ditt mejlprogram – PDF:en laddas ner att bifoga.</span>
-                                  </button>
-                                  <button
-                                    type="button"
-                                    role="menuitem"
-                                    onClick={() => { setEmailMenuOpenId(null); void sendOfferEmail(detailQuote.id); }}
-                                    className="flex w-full flex-col items-start gap-0.5 rounded-lg px-3 py-2 text-left transition hover:bg-slate-50"
-                                  >
-                                    <span className="text-sm font-semibold text-slate-800">Via Fortnox</span>
-                                    <span className="text-xs text-slate-500">Fortnox mejlar offerten med PDF direkt till kunden.</span>
-                                  </button>
-                                </div>
-                              </>
-                            ) : null}
-                          </div>
+                          {/* Ett enda mejlsätt: eget mejlprogram. Fortnox egen offertutskick är
+                              borttaget — mottagaren gick inte att styra därifrån och används inte. */}
+                          <button
+                            type="button"
+                            onClick={() => documentEmail.start({
+                              id: detailQuote.id,
+                              kind: 'offer',
+                              ref: documentRef(detailQuote.fortnox_offer_number, detailQuote.quote_number),
+                              projectName: detailQuote.project_name,
+                              customerName: getQuoteCustomerName(detailQuote),
+                              snapshotEmail: detailQuote.customer_snapshot?.email,
+                              customerId: detailQuote.customer_id,
+                              pdfUrl: `/api/fortnox/offers/${detailQuote.id}/pdf`,
+                            })}
+                            disabled={documentEmail.sendingId === detailQuote.id}
+                            title="Öppnar ditt mejlprogram – PDF:en laddas ner att bifoga."
+                            className="inline-flex items-center rounded-lg border border-indigo-600 bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {documentEmail.sendingId === detailQuote.id ? 'Mejlar…' : 'Mejla offert'}
+                          </button>
                         </>
                       ) : null}
                       {/* Sync/re-sync hidden once a work order locks the offer in Fortnox
@@ -969,6 +905,8 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
           </div>
         </div>
       ) : null}
+
+      {documentEmail.modal}
     </div>
   );
 }

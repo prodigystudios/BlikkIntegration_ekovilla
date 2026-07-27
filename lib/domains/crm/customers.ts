@@ -84,6 +84,9 @@ const crmCustomerSearchSelect = `
   first_name,
   last_name,
   organization_number,
+  email,
+  phone,
+  mobile,
   visit_address,
   contacts:crm_customer_contacts(name, phone, email, is_primary)
 `;

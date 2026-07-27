@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 import { crmCallSelect } from './calls';
 import { crmQuoteSelect } from './quotes';
+import { primaryCrmContact } from './contacts';
 
 type CoachContextRef = {
   type: 'prospect' | 'call' | 'quote';
@@ -134,8 +135,8 @@ function getQuoteLabel(item: QuoteRow) {
 }
 
 function buildProspectContext(item: ProspectRow): CoachContextSummary {
-  const contacts = Array.isArray(item.contacts) ? item.contacts : [];
-  const primary = contacts.find((c) => c.is_primary) || contacts[0] || null;
+  // Name only — a card has no contact-person name to fall back to.
+  const primary = primaryCrmContact(item);
   const city = item.visit_address?.city;
   return {
     type: 'prospect',

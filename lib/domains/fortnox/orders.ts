@@ -547,10 +547,3 @@ export async function getFortnoxOrderPdf(workOrderId: string): Promise<{ bytes: 
   }
   return { bytes, contentType, orderNumber };
 }
-
-// Ask Fortnox to e-mail the order confirmation to the customer (GET /orders/{n}/email).
-export async function emailFortnoxOrder(workOrderId: string): Promise<{ orderNumber: string }> {
-  const orderNumber = await requireOrderNumber(workOrderId);
-  await fortnoxGet(`/orders/${orderNumber}/email`);
-  return { orderNumber };
-}
