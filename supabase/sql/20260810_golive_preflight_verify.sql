@@ -156,11 +156,40 @@ testability as (
     count(*)::text || ' schemalagda jobb i fönstret som feeden frågar efter'
   from schedulable
   union all
+  -- Not a blocker on its own. Some lanes carry no crew by design ("Leveranser" is a display lane
+  -- for things that need shipping, not a vehicle with a team), and a delivery correctly stays out
+  -- of the installers' feed. It only matters if lanes that SHOULD have crew are showing zero —
+  -- which the fleet check below answers.
   select 7, 'Testdata', '…varav någon faktiskt ser',
-    case when count(*) filter (where has_crew) = 0 then 'BLOCKERARE' else 'OK' end,
+    case when count(*) filter (where has_crew) = 0 then 'VARNING' else 'OK' end,
     count(*) filter (where has_crew)::text || ' av ' || count(*)::text ||
-    ' har besättning som går att matcha mot en användare. Är detta 0 visar /mina-jobb inga CRM-jobb för någon — sätt besättning i /crm/planering först.'
+    ' har besättning som går att matcha mot en användare. Är detta 0 visar /mina-jobb inga CRM-jobb'
+    || ' — kontrollera mot bilarna nedan om det är väntat (bara leveranser schemalagda) eller ett glapp.'
   from schedulable
+),
+
+-- ── Fleet readiness ─────────────────────────────────────────────────────────
+-- Which lanes will actually produce a visible job. Answers the question the count above cannot:
+-- is "nobody sees anything" because only deliveries are booked, or because a real truck lost its
+-- crew? Lanes with no crew at all are listed by name so they can be eyeballed.
+fleet as (
+  select
+    t.name,
+    (select count(*) from public.ops_truck_default_crew dc where dc.truck_id = t.id and dc.member_id is not null)
+    + (select count(*) from public.ops_truck_crew tc where tc.truck_id = t.id and tc.member_id is not null
+         and tc.end_day >= current_date and tc.start_day <= current_date + 30) as crew_count
+  from public.ops_trucks t
+  where t.active
+),
+fleet_checks as (
+  select 8, 'Bilar', 'aktiva bilar med besättning',
+    case when count(*) filter (where crew_count > 0) = 0 then 'BLOCKERARE' else 'INFO' end,
+    count(*) filter (where crew_count > 0)::text || ' av ' || count(*)::text || ' aktiva banor har besättning'
+    || case when count(*) filter (where crew_count = 0) > 0
+         then '. Utan besättning: ' || (select string_agg(name, ', ' order by name) from fleet where crew_count = 0)
+              || ' (leveransbanor väntas ligga här)'
+         else '' end
+  from fleet
 ),
 
 all_checks as (
@@ -171,6 +200,7 @@ all_checks as (
   union all select * from blikk_mapping
   union all select * from freetext_crew
   union all select * from testability
+  union all select * from fleet_checks
 )
 select
   status,
