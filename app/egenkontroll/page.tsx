@@ -562,14 +562,18 @@ export default function EgenkontrollPage() {
   const [projectLoading, setProjectLoading] = useState(false);
   // CRM first, Blikk as fallback. Both worlds are live during the cutover, so the number written
   // on the job may belong to either; the installer should not have to know which.
-  const onLookup = async () => {
+  const onLookup = async ({ skipCrm = false }: { skipCrm?: boolean } = {}) => {
     setProject(null);
     const number = orderId.trim();
     if (!number) return;
     setProjectLoading(true);
     try {
-      const crmRes = await fetch(`/api/crm/work-orders/lookup?orderNumber=${encodeURIComponent(number)}`);
-      if (crmRes.ok) {
+      // skipCrm is the escape hatch for a number collision: Fortnox order numbers are numeric like
+      // Blikk's, so the same digits can exist in both worlds and CRM always answers first. Without
+      // a way to force the Blikk branch, an installer shown the wrong job has nothing to do but
+      // retype the same number and get the same wrong answer.
+      const crmRes = skipCrm ? null : await fetch(`/api/crm/work-orders/lookup?orderNumber=${encodeURIComponent(number)}`);
+      if (crmRes?.ok) {
         const crmJson = await crmRes.json().catch(() => null);
         const item = crmJson?.data?.item ?? crmJson?.item;
         if (item) {
@@ -579,7 +583,7 @@ export default function EgenkontrollPage() {
       }
       // 404 = not a CRM order (yet). Anything else is logged but still falls through to Blikk —
       // a CRM outage must not block paperwork on a job that lives in the legacy planning.
-      if (!crmRes.ok && crmRes.status !== 404) {
+      if (crmRes && !crmRes.ok && crmRes.status !== 404) {
         console.warn('[egenkontroll] CRM lookup failed, falling back to Blikk', crmRes.status);
       }
 
@@ -653,7 +657,7 @@ export default function EgenkontrollPage() {
             type="button"
             className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-700 px-3 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800"
             style={{ opacity: projectLoading ? 0.7 : 1, cursor: projectLoading ? 'not-allowed' : 'pointer', width: isNarrow ? '100%' : 'fit-content' }}
-            onClick={onLookup}
+            onClick={() => onLookup()}
             disabled={projectLoading}
             aria-busy={projectLoading}
           >
@@ -697,8 +701,20 @@ export default function EgenkontrollPage() {
                   </div>
                   <div style={{ fontSize: 13, color: '#64748b', lineHeight: 1.45 }}>{foundProject.description || '—'}</div>
                 </div>
-                <div style={{ fontSize: 12, color: '#92400e', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 12, padding: '8px 12px' }}>
-                  Stämmer kund och adress? Rapporten hamnar på {foundProject.source === 'crm' ? 'den här arbetsordern i CRM' : 'det här projektet i Blikk'}.
+                <div style={{ fontSize: 12, color: '#92400e', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 12, padding: '8px 12px', display: 'grid', gap: 8 }}>
+                  <span>Stämmer kund och adress? Rapporten hamnar på {foundProject.source === 'crm' ? 'den här arbetsordern i CRM' : 'det här projektet i Blikk'}.</span>
+                  {/* Recovery path for a number that exists in both worlds — CRM always answers
+                      first, so without this the only option is to retype and get the same job. */}
+                  {foundProject.source === 'crm' && (
+                    <button
+                      type="button"
+                      onClick={() => onLookup({ skipCrm: true })}
+                      disabled={projectLoading}
+                      style={{ justifySelf: 'start', border: '1px solid #fde68a', background: '#ffffff', color: '#92400e', borderRadius: 10, padding: '5px 10px', fontSize: 12, fontWeight: 600, cursor: projectLoading ? 'not-allowed' : 'pointer' }}
+                    >
+                      Fel jobb? Sök samma nummer i Blikk
+                    </button>
+                  )}
                 </div>
               </div>
             ) : null}

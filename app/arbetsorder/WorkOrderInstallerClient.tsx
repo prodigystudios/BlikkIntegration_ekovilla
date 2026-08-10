@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/shared/cn';
 import { crm, workOrderStatusLabel, workOrderStatusClass } from '@/app/crm/lib/crmTokens';
@@ -44,7 +44,8 @@ export default function WorkOrderInstallerClient({ workOrderId, currentUserId }:
   const [activeTab, setActiveTab] = useState<InstallerTab>('info');
   const customerInfo = useCustomerContact(workOrderId);
 
-  const activity = useWorkOrderActivity(workOrderId);
+  // No time tab here (see the tabs comment below), so don't pay for the time-entries request.
+  const activity = useWorkOrderActivity(workOrderId, { includeTimeEntries: false });
 
   useEffect(() => {
     let active = true;

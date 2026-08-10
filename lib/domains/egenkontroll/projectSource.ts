@@ -45,6 +45,12 @@ export type CrmWorkOrderLookupRow = {
   fortnox_order_number?: string | null;
   project_name?: string | null;
   client_name?: string | null;
+  // The day the job is actually scheduled for (ops_segments.start_day), resolved by the lookup
+  // route. Takes precedence over desired_installation_date, which is what the customer ASKED for
+  // when the order was written and is never updated when the planner moves the job. The egenkontroll
+  // is a signed quality document — dating it from a stale wish rather than the day the work
+  // happened would put the wrong date on a compliance artefact.
+  scheduled_day?: string | null;
   desired_installation_date?: string | null;
   work_address?: Record<string, unknown> | null;
   customer_snapshot?: Record<string, unknown> | null;
@@ -83,7 +89,7 @@ export function mapCrmWorkOrderToEgenkontrollProject(row: CrmWorkOrderLookupRow)
     orderNumber: str(row.fortnox_order_number) || str(row.order_number) || null,
     customerName: str(row.client_name),
     address,
-    installationDate: isoDay(row.desired_installation_date),
+    installationDate: isoDay(row.scheduled_day) || isoDay(row.desired_installation_date),
     description: [str(row.project_name), str(handoff.work_scope)].filter(Boolean).join(' — '),
     lineItems: Array.isArray(row.line_items) ? row.line_items : [],
   };
@@ -93,13 +99,18 @@ export function mapCrmWorkOrderToEgenkontrollProject(row: CrmWorkOrderLookupRow)
 
 export function mapBlikkProjectToEgenkontrollProject(raw: Record<string, any> | null | undefined): EgenkontrollProject | null {
   if (!raw) return null;
+  // No id is NOT a failure: /api/projects/lookup deliberately returns the list summary when the
+  // matched project has no id, and the form has always been fillable from that. blikkProjectId
+  // stays null and the submit step simply skips the Blikk comment — same as before this refactor.
+  // Requiring an id here would turn a supported case into "Ordern hittades inte".
   const id = str(raw.id) || str(raw.projectId);
-  if (!id) return null;
   const location = (raw.workSiteAddress || raw.location || {}) as Record<string, unknown>;
   return {
     source: 'blikk',
     workOrderId: null,
-    blikkProjectId: id,
+    // null, not '' — the submit step tests this to decide whether to post the Blikk comment, and
+    // the type promises null for "no project to comment on".
+    blikkProjectId: id || null,
     orderNumber: str(raw.orderNumber) || null,
     customerName: str(raw?.customer?.name),
     address: {
@@ -114,6 +125,20 @@ export function mapBlikkProjectToEgenkontrollProject(raw: Record<string, any> | 
 }
 
 // ── Etapp rows from CRM line items ──────────────────────────────────────────
+
+// The quote form stores the construction type as a slug. The egenkontroll is printed and handed to
+// the customer, so 'vagg' must not appear where "Vägg" belongs. Mirrors the labels the quote form
+// shows the seller (app/crm/offerter/QuoteFormClient.tsx).
+const CONSTRUCTION_LABELS: Record<string, string> = {
+  vagg: 'Vägg',
+  snedtak: 'Snedtak',
+  vind: 'Vind',
+};
+
+function constructionLabel(value: unknown): string {
+  const slug = str(value).toLowerCase();
+  return CONSTRUCTION_LABELS[slug] ?? str(value);
+}
 
 // A CRM order already knows each row's area, thickness and density as fields, so the etapp rows
 // are mapped straight across. (The Blikk path has to regex them back out of a free-text project
@@ -135,9 +160,13 @@ export function etappRowsFromLineItems(
     // Rows without a measured area/thickness are articles, not construction stages (travel,
     // equipment, the carved-out ROT labour row) — they have no place in an egenkontroll.
     if (!area || !thickness) continue;
+    // Item-priced rows must be skipped even when measurements linger: lineItemQuantity returns the
+    // piece count for pricing_mode 'item', so lineItemSacks would read "quantity 1" as 1 m³ and
+    // print a sack count invented from nothing onto a signed document.
+    if (str(item.pricing_mode).toLowerCase() === 'item') continue;
 
     const construction = str(item.construction).toLowerCase();
-    const label = str(item.line_note) || str(item.construction) || str(item.article_name);
+    const label = str(item.line_note) || constructionLabel(item.construction) || str(item.article_name);
     const sacks = lineItemSacks(item);
     const sacksStr = sacks > 0 ? String(sacks) : '';
     const density = str(item.density);

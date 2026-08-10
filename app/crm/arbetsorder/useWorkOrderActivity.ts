@@ -10,7 +10,11 @@ import type { MentionUser } from '@/app/crm/components/MentionTextarea';
 // order. Used by both the full editor (/crm) and the installer field view (/arbetsorder)
 // so the write logic lives in one place. Handlers return a boolean so callers can reset
 // their own form/edit state on success.
-export function useWorkOrderActivity(workOrderId: string) {
+// `includeTimeEntries: false` skips the time-entries request entirely. The installer field view has
+// no time tab during the CRM cutover (Blikk still owns payroll), so fetching a list nothing renders
+// costs an extra round trip on a phone in a field, every time a job is opened.
+export function useWorkOrderActivity(workOrderId: string, options?: { includeTimeEntries?: boolean }) {
+  const includeTimeEntries = options?.includeTimeEntries !== false;
   const toast = useToast();
   const [timeEntries, setTimeEntries] = useState<TimeEntryItem[]>([]);
   const [comments, setComments] = useState<CommentItem[]>([]);
@@ -24,15 +28,16 @@ export function useWorkOrderActivity(workOrderId: string) {
       setTimeEntriesLoading(true); setCommentsLoading(true);
       try {
         const [timeRes, commentRes, mentionRes] = await Promise.all([
-          fetch(`/api/crm/work-orders/${workOrderId}/time-entries`, { cache: 'no-store' }),
+          includeTimeEntries ? fetch(`/api/crm/work-orders/${workOrderId}/time-entries`, { cache: 'no-store' }) : null,
           fetch(`/api/crm/work-orders/${workOrderId}/comments`, { cache: 'no-store' }),
           fetch('/api/crm/work-orders/mention-users', { cache: 'no-store' }),
         ]);
         const [timeJson, commentJson, mentionJson] = await Promise.all([
-          timeRes.json().catch(() => ({})), commentRes.json().catch(() => ({})), mentionRes.json().catch(() => ({})),
+          timeRes ? timeRes.json().catch(() => ({})) : Promise.resolve({}),
+          commentRes.json().catch(() => ({})), mentionRes.json().catch(() => ({})),
         ]);
         if (!active) return;
-        setTimeEntries(timeRes.ok && timeJson.ok ? timeJson.data?.items || [] : []);
+        setTimeEntries(timeRes?.ok && timeJson.ok ? timeJson.data?.items || [] : []);
         setComments(commentRes.ok && commentJson.ok ? commentJson.data?.items || [] : []);
         setMentionUsers(mentionRes.ok && mentionJson.ok ? mentionJson.data?.items || [] : []);
       } catch { /* non-fatal */ }
@@ -40,7 +45,7 @@ export function useWorkOrderActivity(workOrderId: string) {
     }
     load();
     return () => { active = false; };
-  }, [workOrderId]);
+  }, [workOrderId, includeTimeEntries]);
 
   async function createTimeEntry(data: TimeDraft): Promise<boolean> {
     if (!data.work_date || !data.hours.trim()) { toast.error('Datum och timmar krävs'); return false; }

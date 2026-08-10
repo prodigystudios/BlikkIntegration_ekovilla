@@ -25,10 +25,17 @@
 -- cannot read the ops_* crew tables under their own RLS. Kept `stable` so PostgreSQL can reuse
 -- the result per (uid, work_order) within a statement when it appears in a row-level predicate.
 --
--- Crew resolution mirrors the planning board exactly (crewForTruckInRange in
--- app/crm/planering/WeekBoard.tsx): a weekly crew on the truck OVERRIDES the standing default
--- crew for that period. Getting this backwards would show a job to someone who was replaced
--- for the week, so the default-crew branch is explicitly gated on "no weekly crew exists".
+-- Crew resolution mirrors the planning board: a weekly crew on the truck OVERRIDES the standing
+-- default crew. Getting this backwards would show a job to someone who was replaced for the week,
+-- so the default-crew branch is explicitly gated on "no weekly crew exists".
+--
+-- RESOLVED PER WEEK, NOT PER SEGMENT. The board asks crewForTruckInRange(crew, truck, weekStart,
+-- weekEnd) (app/crm/planering/WeekBoard.tsx) — the ISO week it is rendering, not the job's days.
+-- Weekly crew rows may cover only part of a week (copyTruckCrewWeek supports that), so matching on
+-- the segment's own days diverges from what the planner sees: a Mon–Wed crew row on a Thu–Fri job
+-- would be denied here while the board shows that person on the lane all week, and the standing
+-- crew would be let in instead. Both directions are wrong, so the segment is widened to whole
+-- ISO weeks (date_trunc('week') is Monday-based) before the overlap test.
 create or replace function public.is_user_on_work_order(p_uid uuid, p_wo uuid)
 returns boolean
 language sql
@@ -39,6 +46,11 @@ as $$
   select exists (
     select 1
     from public.ops_segments s
+    cross join lateral (
+      select
+        date_trunc('week', s.start_day)::date                          as week_start,
+        (date_trunc('week', s.end_day) + interval '6 days')::date      as week_end
+    ) w
     where s.work_order_id = p_wo
       and p_uid is not null
       and (
@@ -49,24 +61,24 @@ as $$
           where c.segment_id = s.id
             and c.member_id = p_uid
         )
-        -- 2) on the truck's weekly crew, overlapping the segment's days
+        -- 2) on the truck's weekly crew for the week(s) the job falls in
         or exists (
           select 1
           from public.ops_truck_crew tc
           where tc.truck_id = s.truck_id
             and tc.member_id = p_uid
-            and tc.start_day <= s.end_day
-            and tc.end_day   >= s.start_day
+            and tc.start_day <= w.week_end
+            and tc.end_day   >= w.week_start
         )
-        -- 3) on the truck's standing crew — ONLY when no weekly crew overrides that truck for
-        --    the segment's period (weekly wins, same as the board)
+        -- 3) on the truck's standing crew — ONLY when no weekly crew overrides that truck in
+        --    those weeks (weekly wins, same as the board)
         or (
           not exists (
             select 1
             from public.ops_truck_crew tc2
             where tc2.truck_id = s.truck_id
-              and tc2.start_day <= s.end_day
-              and tc2.end_day   >= s.start_day
+              and tc2.start_day <= w.week_end
+              and tc2.end_day   >= w.week_start
           )
           and exists (
             select 1

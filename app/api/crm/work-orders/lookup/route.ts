@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
+import { forbidIfReadonly } from '@/lib/auth/route';
+import { lookupCrmWorkOrderByNumber } from '@/lib/domains/crm/work-orders';
 import { mapCrmWorkOrderToEgenkontrollProject, type CrmWorkOrderLookupRow } from '@/lib/domains/egenkontroll/projectSource';
 import { ok, requireSignedInUser, routeError, validationError } from '../_lib';
 
@@ -15,10 +17,16 @@ import { ok, requireSignedInUser, routeError, validationError } from '../_lib';
 //
 // The elevation is kept narrow and deliberate:
 //   • authorization is explicit below (signed in, and not a read-only role)
-//   • the projection is fixed and minimal — no pricing_summary, no rot_details, and from
-//     customer_snapshot only the address fields, so personnummer never leaves the server
+//   • the projection is fixed in the domain module (lookupCrmWorkOrderByNumber): address fields
+//     only from customer_snapshot — personnummer never leaves the server — and line items reduced
+//     to geometry, so no unit_price / discount / labour cost either
 //   • read-only; there is no write path here
 // Same shape as the existing service-role + explicit-gate route /api/planning/consume-bags.
+//
+// KNOWN LIMITATION: filing the finished report still goes through RLS (POST …/comments), which
+// requires crew or assignee. Someone covering a shift they were never scheduled on can fill the
+// egenkontroll in and archive the PDF, but the comment on the order will fail. Revisit if that
+// turns out to happen in practice.
 
 export const dynamic = 'force-dynamic';
 
@@ -26,69 +34,27 @@ const QuerySchema = z.object({
   orderNumber: z.string().trim().min(1, 'orderNumber is required').max(64),
 });
 
-// Everything the egenkontroll form needs, and nothing else.
-const LOOKUP_SELECT =
-  'id, order_number, fortnox_order_number, project_name, client_name, desired_installation_date, work_address, customer_snapshot, internal_handoff, line_items';
-
-const ADDRESS_KEYS = [
-  'street_address', 'postal_code', 'city',
-  'delivery_address', 'delivery_postal_code', 'delivery_city',
-] as const;
-
 export async function GET(req: Request) {
   try {
     const currentUser = await requireSignedInUser();
-    if (currentUser.response || !currentUser.currentUser) return currentUser.response;
+    if (currentUser.response) return currentUser.response;
 
-    // Read-only roles have no business producing field paperwork.
-    if (currentUser.currentUser.role === 'konsult') {
-      return routeError(403, 'forbidden', 'Read-only role cannot look up work orders');
-    }
+    // Shared helper — covers BOTH 'konsult' and 'readonly'. A hand-rolled role check here drifted
+    // from it once already.
+    const readonly = await forbidIfReadonly();
+    if (readonly) return readonly;
 
     const { searchParams } = new URL(req.url);
     const parsed = QuerySchema.safeParse({ orderNumber: searchParams.get('orderNumber') ?? '' });
     if (!parsed.success) return validationError(parsed.error);
-    const orderNumber = parsed.data.orderNumber;
 
-    const supabase = getSupabaseAdmin();
-
-    // The number on the job may be either reference: Fortnox's once the order is synced, or the
-    // internal AO number before that. Try Fortnox first — that is what the customer paperwork
-    // shows and therefore what gets written down.
-    const byFortnox = await supabase
-      .from('crm_work_orders')
-      .select(LOOKUP_SELECT)
-      .eq('fortnox_order_number', orderNumber)
-      .limit(1)
-      .maybeSingle();
-    if (byFortnox.error) return routeError(500, 'crm_work_order_lookup_failed', byFortnox.error.message);
-
-    let row = byFortnox.data as CrmWorkOrderLookupRow | null;
-
-    if (!row) {
-      const byOrderNumber = await supabase
-        .from('crm_work_orders')
-        .select(LOOKUP_SELECT)
-        .eq('order_number', orderNumber)
-        .limit(1)
-        .maybeSingle();
-      if (byOrderNumber.error) return routeError(500, 'crm_work_order_lookup_failed', byOrderNumber.error.message);
-      row = byOrderNumber.data as CrmWorkOrderLookupRow | null;
-    }
+    const { data, error } = await lookupCrmWorkOrderByNumber(getSupabaseAdmin(), parsed.data.orderNumber);
+    if (error) return routeError(500, 'crm_work_order_lookup_failed', error.message);
 
     // Not an error — the caller falls back to Blikk for jobs still in the legacy planning.
-    if (!row) return routeError(404, 'crm_work_order_not_found', 'No CRM work order with that number');
+    if (!data) return routeError(404, 'crm_work_order_not_found', 'No CRM work order with that number');
 
-    // Strip customer_snapshot down to address fields before it leaves the server. Belt and braces
-    // with LOOKUP_SELECT: the mapper only reads addresses, but a future edit to the mapper must
-    // not be able to widen what this route exposes.
-    const snapshot = (row.customer_snapshot ?? {}) as Record<string, unknown>;
-    const safeRow: CrmWorkOrderLookupRow = {
-      ...row,
-      customer_snapshot: Object.fromEntries(ADDRESS_KEYS.map((k) => [k, snapshot[k] ?? null])),
-    };
-
-    return ok({ item: mapCrmWorkOrderToEgenkontrollProject(safeRow) });
+    return ok({ item: mapCrmWorkOrderToEgenkontrollProject(data as unknown as CrmWorkOrderLookupRow) });
   } catch (e: any) {
     return routeError(500, 'crm_work_order_lookup_unexpected', e?.message || 'Failed to look up work order');
   }

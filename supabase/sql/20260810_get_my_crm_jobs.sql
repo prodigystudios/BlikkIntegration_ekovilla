@@ -9,7 +9,8 @@
 -- range), security definer, locked down to `authenticated`.
 --
 -- DEPLOY ORDER: run AFTER 20260810_crm_work_order_crew_access.sql (this calls
--- is_user_on_work_order). Run in the Supabase SQL editor. Idempotent.
+-- is_user_on_work_order). Run in the Supabase SQL editor. Idempotent — safe to re-run to pick up
+-- a revision (it drops and recreates).
 
 -- Drop first: the return type changes if this file is ever revised, and CREATE OR REPLACE
 -- cannot change a function's OUT columns.
@@ -74,6 +75,12 @@ as $$
   cross join lateral generate_series(s.start_day, s.end_day, interval '1 day') as gs(d)
   where (start_date is null or gs.d::date >= start_date)
     and (end_date   is null or gs.d::date <= end_date)
+    -- A paused segment stays on the board (dimmed, badged "Pausad") because the planner still wants
+    -- the slot — but it is not a job to drive to. Without this the crew reads it as an ordinary
+    -- booking under tomorrow's heading and shows up to a job that was called off.
+    and not s.on_hold
+    -- Same for a cancelled order whose segment nobody removed.
+    and wo.status <> 'cancelled'
     -- THE security boundary: security definer bypasses RLS on ops_*/crm_work_orders, so
     -- membership is what scopes the result. Same helper the RLS policies use, so the feed and
     -- the work order it links to can never disagree about who is on a job.

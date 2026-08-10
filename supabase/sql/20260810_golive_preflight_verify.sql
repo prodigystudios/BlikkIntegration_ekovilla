@@ -8,6 +8,14 @@
 -- separate SELECTs silently hides everything but the final one. Everything is folded into a single
 -- consolidated table instead: run it once, read one list.
 --
+-- LIMITATION, know this before trusting a failure: the query READS the tables and columns it also
+-- reports on (profiles.blikk_id, ops_segment_crew, permissions, …). PostgreSQL resolves every
+-- reference before executing anything, so if one of those is genuinely missing the whole statement
+-- errors out ("column … does not exist") instead of printing a BLOCKERARE row. An ERROR is
+-- therefore also a result: it names what is missing. Guarding this properly needs dynamic SQL
+-- (plpgsql + execute), which is not worth the unreadability — the schema was confirmed complete on
+-- 2026-08-10 and this file is now a regression check, not a discovery tool.
+--
 -- Read the `status` column:
 --   BLOCKERARE — fas 1 must not be deployed until fixed
 --   VARNING    — deployable, but something will not work as intended
