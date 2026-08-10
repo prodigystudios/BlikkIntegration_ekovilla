@@ -1193,18 +1193,25 @@ export default function EgenkontrollPage() {
                   } catch {}
                   const commentText = commentPieces.join('\n');
                   const isCrm = foundProject.source === 'crm';
-                  const commentRes = isCrm
-                    ? await fetch(`/api/crm/work-orders/${foundProject.workOrderId}/comments`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ body: commentText }),
-                      })
-                    : await fetch('/api/blikk/project/comment', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ projectId: blikkProjectId, text: commentText }),
-                      });
-                  if (!commentRes.ok) {
+                  // Only file the report where there is somewhere to file it. A Blikk project can
+                  // legitimately arrive without an id (/api/projects/lookup returns the list summary
+                  // in that case) — posting a comment with projectId null would fail and show the
+                  // installer an error for something that has always been silently skipped.
+                  const commentTarget = isCrm ? foundProject.workOrderId : blikkProjectId;
+                  const commentRes = !commentTarget
+                    ? null
+                    : isCrm
+                      ? await fetch(`/api/crm/work-orders/${foundProject.workOrderId}/comments`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ body: commentText }),
+                        })
+                      : await fetch('/api/blikk/project/comment', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ projectId: blikkProjectId, text: commentText }),
+                        });
+                  if (commentRes && !commentRes.ok) {
                     try { console.warn('Egenkontroll report failed:', await commentRes.json()); } catch {}
                     setToast({
                       text: isCrm ? 'Rapporten till arbetsordern misslyckades' : 'Kommentaren till Blikk misslyckades',
