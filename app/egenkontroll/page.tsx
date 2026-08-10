@@ -644,7 +644,7 @@ export default function EgenkontrollPage() {
       <section style={sectionCardStyle}>
         <div style={{ display: 'grid', gap: 6 }}>
           <h2 style={sectionTitleStyle}>Hämta projekt</h2>
-          <p style={sectionIntroStyle}>Sök efter order med ordernummer från Blikk och kontrollera att projektdetaljerna stämmer innan du fortsätter.</p>
+          <p style={sectionIntroStyle}>Sök på ordernumret för jobbet — vi letar i CRM först och i Blikk om ordern ligger kvar i den äldre planeringen. Kontrollera att kund och adress stämmer innan du fortsätter.</p>
         </div>
         <label style={{ display: 'grid', gap: 8 }}>
           <div style={fieldLabelStyle}>Ordernummer</div>
@@ -668,12 +668,38 @@ export default function EgenkontrollPage() {
             {'error' in project && project.error ? (
               <div style={{ color: 'crimson' }}>Error: {project.error}</div>
             ) : foundProject ? (
-              <div style={{ display: 'grid', gridTemplateColumns: isNarrow ? '1fr' : 'repeat(2, minmax(0, 1fr))', gap: 12 }}>
-                <div style={summaryCardStyle}><span style={summaryLabelStyle}>Ordernummer</span><strong style={summaryValueStyle}>{foundProject.orderNumber || '—'}</strong></div>
-                {/* Which system the job was found in — it decides where the report is filed. */}
-                <div style={summaryCardStyle}><span style={summaryLabelStyle}>Källa</span><strong style={summaryValueStyle}>{foundProject.source === 'crm' ? 'CRM-arbetsorder' : 'Blikk (äldre planering)'}</strong></div>
-                <div style={summaryCardStyle}><span style={summaryLabelStyle}>Kund/Beställare</span><strong style={summaryValueStyle}>{foundProject.customerName || '—'}</strong></div>
-                <div style={summaryCardStyle}><span style={summaryLabelStyle}>Beskrivning</span><strong style={{ ...summaryValueStyle, fontSize: 14, lineHeight: 1.45 }}>{foundProject.description || '—'}</strong></div>
+              <div style={{ display: 'grid', gap: 12 }}>
+                {/* Confirmation line, not a data dump. Two worlds are live and Fortnox order
+                    numbers are numeric just like Blikk's, so the same number can exist in both —
+                    the wrong job has to be obvious at a glance, before anyone starts measuring. */}
+                <div style={{ display: 'grid', gap: 6, borderLeft: '3px solid #15803d', paddingLeft: 12 }}>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+                    <strong style={{ fontSize: 17, fontWeight: 700, color: '#0f172a' }}>{foundProject.customerName || 'Okänd kund'}</strong>
+                    <span
+                      style={{
+                        whiteSpace: 'nowrap', borderRadius: 999, border: '1px solid', padding: '2px 10px',
+                        fontSize: 11, fontWeight: 700,
+                        ...(foundProject.source === 'crm'
+                          ? { borderColor: '#bbf7d0', background: '#f0fdf4', color: '#15803d' }
+                          : { borderColor: '#e2e8f0', background: '#f1f5f9', color: '#64748b' }),
+                      }}
+                    >
+                      {foundProject.source === 'crm' ? 'CRM-arbetsorder' : 'Blikk (äldre planering)'}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 13, color: '#475569' }}>
+                    Order {foundProject.orderNumber || '—'}
+                    {foundProject.installationDate ? ` · Installation ${foundProject.installationDate}` : ''}
+                  </div>
+                  <div style={{ fontSize: 13, color: '#475569' }}>
+                    {[foundProject.address.streetAddress, foundProject.address.postalCode, foundProject.address.city]
+                      .filter(Boolean).join(', ') || 'Ingen arbetsadress angiven'}
+                  </div>
+                  <div style={{ fontSize: 13, color: '#64748b', lineHeight: 1.45 }}>{foundProject.description || '—'}</div>
+                </div>
+                <div style={{ fontSize: 12, color: '#92400e', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 12, padding: '8px 12px' }}>
+                  Stämmer kund och adress? Rapporten hamnar på {foundProject.source === 'crm' ? 'den här arbetsordern i CRM' : 'det här projektet i Blikk'}.
+                </div>
               </div>
             ) : null}
           </div>
@@ -1359,30 +1385,6 @@ const textAreaStyle: React.CSSProperties = {
   background: '#fff',
   color: '#0f172a',
   resize: 'vertical',
-};
-
-const summaryCardStyle: React.CSSProperties = {
-  display: 'grid',
-  gap: 5,
-  minWidth: 0,
-  padding: '12px 12px 10px',
-  borderRadius: 16,
-  border: '1px solid #e0e8dc',
-  background: '#f9fbf7',
-};
-
-const summaryLabelStyle: React.CSSProperties = {
-  fontSize: 11,
-  fontWeight: 800,
-  letterSpacing: 0.3,
-  textTransform: 'uppercase',
-  color: '#64748b',
-};
-
-const summaryValueStyle: React.CSSProperties = {
-  fontSize: 16,
-  fontWeight: 800,
-  color: '#0f172a',
 };
 
 const mobileRowCardStyle: React.CSSProperties = {
