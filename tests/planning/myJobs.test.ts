@@ -24,6 +24,7 @@ const crm = (over: Partial<CrmJobRow> = {}): CrmJobRow => ({
   customer: 'Villa Ek',
   job_day: '2026-08-11',
   start_day: '2026-08-11',
+  end_day: '2026-08-11',
   truck: 'Bil 2',
   truck_color: '#16a34a',
   job_type: 'Vitull',

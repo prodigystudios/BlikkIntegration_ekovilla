@@ -5,6 +5,12 @@ import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { cn } from '@/lib/shared/cn';
 import Input from '../ui/Input';
 import Textarea from '../ui/Textarea';
+import { crmJobToScheduleItem, type CrmJobRow } from '@/lib/domains/planning/myJobs';
+
+// A CRM-planned job carries source: 'crm'; legacy rows from get_my_jobs have no source field.
+// The enrichment queries, the detail modal and time reporting all assume the legacy world, so
+// every one of them has to skip these rows.
+const isCrmItem = (it: { source?: string } | null | undefined) => it?.source === 'crm';
 
 function startOfISOWeek(d: Date) {
   const day = d.getDay(); // 0..6, 1=Mon
@@ -103,6 +109,14 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
   }, []);
 
   const openDetail = useCallback(async (it: any) => {
+    // A CRM job has its own field view; this modal is built for the legacy world. Letting it run
+    // would be worse than useless: it enriches by looking a Blikk project up BY ORDER NUMBER, and
+    // Fortnox numbers are numeric like Blikk's — so a CRM job could pull up an unrelated project's
+    // details, and the segment reports/comments below belong to legacy tables entirely.
+    if (isCrmItem(it) && it.work_order_id) {
+      window.location.href = `/arbetsorder/${it.work_order_id}`;
+      return;
+    }
     setDetailOpen(true);
     setDetailBase(it);
     setDetailError(null);
@@ -212,15 +226,23 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
     (async () => {
       setLoading(true);
       try {
-        const { data, error } = await supabase.rpc('get_my_jobs', { start_date: range.startISO, end_date: range.endISO });
-        if (!cancelled) {
-          if (error) {
-            console.warn('[dashboard schedule] get_my_jobs error', error);
-            setItems([]);
-          } else {
-            setItems(Array.isArray(data) ? data : []);
-          }
-        }
+        // Two planning worlds during the cutover. allSettled, not all: one source failing must not
+        // blank the other — an installer's week is a week either way.
+        const [legacy, crm] = await Promise.allSettled([
+          supabase.rpc('get_my_jobs', { start_date: range.startISO, end_date: range.endISO }),
+          supabase.rpc('get_my_crm_jobs', { start_date: range.startISO, end_date: range.endISO }),
+        ]);
+        if (cancelled) return;
+
+        const unwrap = (r: PromiseSettledResult<{ data: unknown; error: unknown }>, label: string) => {
+          if (r.status !== 'fulfilled') { console.warn(`[dashboard schedule] ${label} rejected`, r.reason); return []; }
+          if (r.value.error) { console.warn(`[dashboard schedule] ${label} error`, r.value.error); return []; }
+          return Array.isArray(r.value.data) ? r.value.data : [];
+        };
+
+        const legacyRows = unwrap(legacy, 'get_my_jobs');
+        const crmRows = (unwrap(crm, 'get_my_crm_jobs') as CrmJobRow[]).map(crmJobToScheduleItem);
+        setItems([...legacyRows, ...crmRows]);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -230,7 +252,7 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
 
   // Enrich items with per-segment sort_index (used for ordering, same as Planning page)
   useEffect(() => {
-    const ids = Array.from(new Set((items.map(it => it.segment_id) as Array<unknown>)
+    const ids = Array.from(new Set((items.filter(it => !isCrmItem(it)).map(it => it.segment_id) as Array<unknown>)
       .filter((v): v is string => typeof v === 'string' && v.length > 0)));
     if (ids.length === 0) return;
 
@@ -273,7 +295,7 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
 
   // When items change, fetch reports for listed segments
   useEffect(() => {
-    const ids = Array.from(new Set((items.map(it => it.segment_id) as Array<unknown>)
+    const ids = Array.from(new Set((items.filter(it => !isCrmItem(it)).map(it => it.segment_id) as Array<unknown>)
       .filter((v): v is string => typeof v === 'string' && v.length > 0)));
     if (ids.length === 0) return;
     (async () => {
@@ -296,7 +318,7 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
 
   // When items change, fetch extra crew for listed segments
   useEffect(() => {
-    const ids = Array.from(new Set((items.map(it => it.segment_id) as Array<unknown>)
+    const ids = Array.from(new Set((items.filter(it => !isCrmItem(it)).map(it => it.segment_id) as Array<unknown>)
       .filter((v): v is string => typeof v === 'string' && v.length > 0)));
     if (ids.length === 0) return;
     (async () => {
@@ -703,7 +725,10 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                           )}
                         </div>
                         <div className="grid justify-items-end gap-2">
-                          {onReportTime && (
+                          {/* The time button prefills a Blikk project — a CRM job has none, so it
+                              would open an empty form. CRM rows lead to the work order instead;
+                              their time is reported as internal time in Blikk (see the field view). */}
+                          {onReportTime && !isCrmItem(it) && (
                             <button
                               type="button"
                               onClick={(e) => { e.stopPropagation(); onReportTime({ projectId: String(it.project_id || ''), projectName: it.project_name, orderNumber: it.order_number ? String(it.order_number) : undefined, day: (it.job_day || it.start_day) ? String(it.job_day || it.start_day) : undefined }); }}
@@ -713,6 +738,13 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                               <svg width={12} height={12} viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" fill="none"><path d="M12 5v14M5 12h14" strokeLinecap="round" strokeLinejoin="round"/></svg>
                               Tid
                             </button>
+                          )}
+                          {isCrmItem(it) && (
+                            <span
+                              className={cn('inline-flex items-center gap-[5px] rounded-[10px] border border-[#1a3f26] bg-[#1a3f26] text-white shadow-[0_8px_16px_rgba(26,63,38,0.16)]', compact ? 'px-2.5 py-1.5 text-[10.5px]' : 'px-[11px] py-[7px] text-[11px]')}
+                            >
+                              Öppna order
+                            </span>
                           )}
                           <div className="inline-flex items-center gap-2">
                             <svg width={16} height={16} viewBox="0 0 24 24" aria-hidden="true" focusable="false" className="text-slate-400">

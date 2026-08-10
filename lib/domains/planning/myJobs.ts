@@ -33,6 +33,7 @@ export type CrmJobRow = {
   customer: string | null;
   job_day: string | null;
   start_day: string | null;
+  end_day: string | null;
   truck: string | null;
   truck_color: string | null;
   job_type: string | null;
@@ -118,6 +119,50 @@ function fromCrm(row: CrmJobRow): MyJob | null {
     bagCount: null,
     workOrderId: row.work_order_id,
     projectId: null,
+  };
+}
+
+// The dashboard's week schedule (components/dashboard/DashboardSchedule.tsx) is built around the
+// legacy get_my_jobs row shape and renders it in ~500 lines of card markup. Rather than rework
+// that, a CRM job is adapted INTO that shape so it renders through the same path — with a `source`
+// marker so the three places that must behave differently can branch:
+//   • the enrichment queries hit legacy tables by segment_id (a CRM uuid matches nothing)
+//   • opening the card looks a Blikk project up BY ORDER NUMBER — which, given Fortnox numbers are
+//     numeric like Blikk's, could pull up an unrelated project for a CRM job
+//   • time reporting has no Blikk project to attach a CRM job to
+export type ScheduleItem = {
+  segment_id: string;
+  project_id: string | null;
+  project_name: string | null;
+  customer: string | null;
+  order_number: string | null;
+  start_day: string | null;
+  end_day: string | null;
+  job_day: string | null;
+  truck: string | null;
+  job_type: string | null;
+  bag_count: number | null;
+  source: 'crm';
+  work_order_id: string;
+};
+
+export function crmJobToScheduleItem(row: CrmJobRow): ScheduleItem {
+  const { ref } = workOrderRef(row.fortnox_order_number, row.order_number);
+  return {
+    segment_id: row.segment_id,
+    project_id: null,
+    project_name: str(row.project_name),
+    customer: str(row.customer),
+    order_number: ref,
+    start_day: str(row.start_day),
+    end_day: str(row.end_day),
+    job_day: dayOf(row),
+    truck: str(row.truck),
+    job_type: str(row.job_type),
+    // Not in the v1 RPC (derived from line_items jsonb); the work order view has them.
+    bag_count: null,
+    source: 'crm',
+    work_order_id: row.work_order_id,
   };
 }
 
