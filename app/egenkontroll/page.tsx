@@ -15,6 +15,11 @@ import {
   type EtappOpenRow,
   type EtappClosedRow,
 } from '@/lib/domains/egenkontroll/calculations';
+import {
+  etappRowsFromLineItems,
+  mapBlikkProjectToEgenkontrollProject,
+  type EgenkontrollProject,
+} from '@/lib/domains/egenkontroll/projectSource';
 
 // Reconstructed Egenkontroll form (migrated from historical root page)
 // NOTE: Consider refactoring into smaller components later for maintainability.
@@ -179,7 +184,10 @@ export default function EgenkontrollPage() {
     // run only on mount
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const [project, setProject] = useState<any | null>(null);
+  // The job this egenkontroll is for, normalised from whichever world it was found in
+  // (lib/domains/egenkontroll/projectSource.ts). `error` is the lookup-failed state.
+  const [project, setProject] = useState<(EgenkontrollProject & { error?: string }) | { error: string } | null>(null);
+  const foundProject = project && !('error' in project && project.error) ? (project as EgenkontrollProject) : null;
   const [openErrorIdxs, setOpenErrorIdxs] = useState<number[]>([]);
   const [closedErrorIdxs, setClosedErrorIdxs] = useState<number[]>([]);
 
@@ -526,39 +534,61 @@ export default function EgenkontrollPage() {
 
   // Prefill when project loaded
   useEffect(() => {
-    if (!project || project.error) return;
-    const location = project.workSiteAddress || project.location || {};
-    setClientName(project?.customer?.name || '');
-    setWorkStreet(location?.streetAddress || '');
-    setWorkPostalCode(location?.postalCode || '');
-    setWorkCity(location?.city || '');
-    const iso = (project?.startDate || project?.created || '').toString();
-    const d = iso ? (iso.substring(0, 10) as string) : '';
-    setInstallationDate(d);
+    if (!foundProject) return;
+    setClientName(foundProject.customerName);
+    setWorkStreet(foundProject.address.streetAddress);
+    setWorkPostalCode(foundProject.address.postalCode);
+    setWorkCity(foundProject.address.city);
+    setInstallationDate(foundProject.installationDate);
     try {
-      const desc: string = String(project?.description ?? '').trim();
-      if (desc && etapperOpen.length === 0 && etapperClosed.length === 0) {
-        const parsed = parseDescriptionToRows(desc);
-        if (parsed.open.length) setEtapperOpen(parsed.open.slice(0, MAX_ETAPP_ROWS));
-        if (parsed.closed.length) setEtapperClosed(parsed.closed.slice(0, MAX_ETAPP_ROWS));
-      }
+      if (etapperOpen.length !== 0 || etapperClosed.length !== 0) return;
+      // A CRM order carries area/thickness/density as real fields, so the stages map straight
+      // across. Blikk only has a free-text description, which has to be parsed back out.
+      const parsed = foundProject.source === 'crm'
+        ? etappRowsFromLineItems(foundProject.lineItems, MATERIALS[materialUsed]?.lambda)
+        : foundProject.description
+          ? parseDescriptionToRows(foundProject.description)
+          : null;
+      if (!parsed) return;
+      if (parsed.open.length) setEtapperOpen(parsed.open.slice(0, MAX_ETAPP_ROWS));
+      if (parsed.closed.length) setEtapperClosed(parsed.closed.slice(0, MAX_ETAPP_ROWS));
     } catch {}
-  }, [project]);
+  }, [foundProject]);
 
   function parseDescriptionToRows(desc: string): { open: EtappOpenRow[]; closed: EtappClosedRow[] } {
     return parseEtappRows(desc, MATERIALS[materialUsed]?.lambda);
   }
 
   const [projectLoading, setProjectLoading] = useState(false);
+  // CRM first, Blikk as fallback. Both worlds are live during the cutover, so the number written
+  // on the job may belong to either; the installer should not have to know which.
   const onLookup = async () => {
     setProject(null);
-    if (!orderId.trim()) return;
+    const number = orderId.trim();
+    if (!number) return;
     setProjectLoading(true);
     try {
-      const res = await fetch(`/api/projects/lookup?orderId=${encodeURIComponent(orderId.trim())}`);
+      const crmRes = await fetch(`/api/crm/work-orders/lookup?orderNumber=${encodeURIComponent(number)}`);
+      if (crmRes.ok) {
+        const crmJson = await crmRes.json().catch(() => null);
+        const item = crmJson?.data?.item ?? crmJson?.item;
+        if (item) {
+          setProject(item as EgenkontrollProject);
+          return;
+        }
+      }
+      // 404 = not a CRM order (yet). Anything else is logged but still falls through to Blikk —
+      // a CRM outage must not block paperwork on a job that lives in the legacy planning.
+      if (!crmRes.ok && crmRes.status !== 404) {
+        console.warn('[egenkontroll] CRM lookup failed, falling back to Blikk', crmRes.status);
+      }
+
+      const res = await fetch(`/api/projects/lookup?orderId=${encodeURIComponent(number)}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || 'Lookup failed');
-      setProject(data);
+      const mapped = mapBlikkProjectToEgenkontrollProject(data);
+      if (!mapped) throw new Error('Ordern hittades inte');
+      setProject(mapped);
     } catch (e: any) {
       setProject({ error: e.message });
     } finally {
@@ -635,16 +665,17 @@ export default function EgenkontrollPage() {
         )}
         {project && (
           <div style={{ border: '1px solid #e0e8dc', borderRadius: 18, padding: 14, background: '#ffffff' }}>
-            {project.error ? (
+            {'error' in project && project.error ? (
               <div style={{ color: 'crimson' }}>Error: {project.error}</div>
-            ) : (
+            ) : foundProject ? (
               <div style={{ display: 'grid', gridTemplateColumns: isNarrow ? '1fr' : 'repeat(2, minmax(0, 1fr))', gap: 12 }}>
-                <div style={summaryCardStyle}><span style={summaryLabelStyle}>Ordernummer</span><strong style={summaryValueStyle}>{project.orderNumber || '—'}</strong></div>
-                <div style={summaryCardStyle}><span style={summaryLabelStyle}>Projekt-ID</span><strong style={summaryValueStyle}>{project.id || '—'}</strong></div>
-                <div style={summaryCardStyle}><span style={summaryLabelStyle}>Kund/Beställare</span><strong style={summaryValueStyle}>{project?.customer?.name || '—'}</strong></div>
-                <div style={summaryCardStyle}><span style={summaryLabelStyle}>Beskrivning</span><strong style={{ ...summaryValueStyle, fontSize: 14, lineHeight: 1.45 }}>{String(project.description || '—')}</strong></div>
+                <div style={summaryCardStyle}><span style={summaryLabelStyle}>Ordernummer</span><strong style={summaryValueStyle}>{foundProject.orderNumber || '—'}</strong></div>
+                {/* Which system the job was found in — it decides where the report is filed. */}
+                <div style={summaryCardStyle}><span style={summaryLabelStyle}>Källa</span><strong style={summaryValueStyle}>{foundProject.source === 'crm' ? 'CRM-arbetsorder' : 'Blikk (äldre planering)'}</strong></div>
+                <div style={summaryCardStyle}><span style={summaryLabelStyle}>Kund/Beställare</span><strong style={summaryValueStyle}>{foundProject.customerName || '—'}</strong></div>
+                <div style={summaryCardStyle}><span style={summaryLabelStyle}>Beskrivning</span><strong style={{ ...summaryValueStyle, fontSize: 14, lineHeight: 1.45 }}>{foundProject.description || '—'}</strong></div>
               </div>
-            )}
+            ) : null}
           </div>
         )}
       </section>
@@ -1085,8 +1116,10 @@ export default function EgenkontrollPage() {
                 fetch('/api/material-quality/ingest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(ingestPayload) }).catch(() => {});
               } catch {}
               try {
-                const blikkProjectId = project?.id || project?.projectId;
-                if (blikkProjectId) {
+                // File the finished egenkontroll back on the job — as an arbetsorder comment for a
+                // CRM order, as a project comment for a job still in the legacy Blikk planning.
+                const blikkProjectId = foundProject?.source === 'blikk' ? foundProject.blikkProjectId : null;
+                if (foundProject) {
                   const today = new Date();
                   const yyyy = today.getFullYear();
                   const mm = String(today.getMonth() + 1).padStart(2, '0');
@@ -1117,19 +1150,37 @@ export default function EgenkontrollPage() {
                     }
                   } catch {}
                   const commentText = commentPieces.join('\n');
-                  const commentRes = await fetch('/api/blikk/project/comment', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId: blikkProjectId, text: commentText }) });
+                  const isCrm = foundProject.source === 'crm';
+                  const commentRes = isCrm
+                    ? await fetch(`/api/crm/work-orders/${foundProject.workOrderId}/comments`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ body: commentText }),
+                      })
+                    : await fetch('/api/blikk/project/comment', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ projectId: blikkProjectId, text: commentText }),
+                      });
                   if (!commentRes.ok) {
-                    try { console.warn('Blikk comment failed:', await commentRes.json()); } catch {}
-                    setToast({ text: 'Kommentaren till Blikk misslyckades', type: 'error' });
+                    try { console.warn('Egenkontroll report failed:', await commentRes.json()); } catch {}
+                    setToast({
+                      text: isCrm ? 'Rapporten till arbetsordern misslyckades' : 'Kommentaren till Blikk misslyckades',
+                      type: 'error',
+                    });
                   }
-                  // Persist actual_bags_used to planning_project_meta so planner updates automatically
+                  // Persist actual_bags_used to planning_project_meta so planner updates automatically.
+                  // Legacy depot only: a CRM job's consumption belongs in the new depot ledger
+                  // (ops_depot_deliveries), which is fas 3. Until then a CRM egenkontroll records the
+                  // sack count on the order (the comment above) without touching either stock — better
+                  // than writing it into the legacy ledger, where the planning board would never see it.
                   try {
                     const openRows2 = etapperOpen.filter(r => Object.values(r).some(v => String(v ?? '').trim() !== ''));
                     const closedRows2 = etapperClosed.filter(r => Object.values(r).some(v => String(v ?? '').trim() !== ''));
                     const sumOpen2 = openRows2.reduce((acc, r: any) => acc + (Number(r.antalSack) || 0), 0);
                     const sumClosed2 = closedRows2.reduce((acc, r: any) => acc + (Number(r.antalSackKgPerSack) || 0), 0);
                     const totalBags2 = sumOpen2 + sumClosed2;
-                    if (Number.isFinite(totalBags2) && totalBags2 > 0) {
+                    if (blikkProjectId && Number.isFinite(totalBags2) && totalBags2 > 0) {
                       const { error: bagsErr } = await supabase.from('planning_project_meta').upsert({
                         project_id: String(blikkProjectId),
                         actual_bags_used: totalBags2,
@@ -1152,7 +1203,7 @@ export default function EgenkontrollPage() {
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
                               projectId: String(blikkProjectId),
-                              orderNumber: project?.orderNumber || undefined,
+                              orderNumber: foundProject.orderNumber || undefined,
                               installationDate: installationDate || undefined,
                               totalBags: totalBags2,
                               reportKey,
