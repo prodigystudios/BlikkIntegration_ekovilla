@@ -1,6 +1,6 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { getCrmWorkOrder, updateCrmWorkOrder, listWorkOrderInvoiceRounds } from '@/lib/domains/crm/work-orders';
+import { getCrmWorkOrder, updateCrmWorkOrder, listWorkOrderInvoiceRounds, redactWorkOrderForField } from '@/lib/domains/crm/work-orders';
 import { isNoRowsError, ok, pickProvidedFields, requireCrmUser, requirePermission, requireSignedInUser, routeError, updateCrmWorkOrderSchema, validationError } from '../_lib';
 
 // Fakturastatus is system-managed (set by the invoice/delfakturering flow), never chosen
@@ -24,6 +24,13 @@ export async function GET(_req: Request, context: RouteContext) {
     const { data, error } = await getCrmWorkOrder(supabase, context.params.id);
 
     if (error) return routeError(404, 'crm_work_order_not_found', error.message);
+
+    // Installers reach this through the crew RLS policy, which is row-level and therefore cannot
+    // keep personnummer or order economics out of the payload — that line is drawn here instead.
+    // Office roles (sales/admin/konsult) get the full row as before.
+    if (currentUser.currentUser?.role === 'member') {
+      return ok({ item: redactWorkOrderForField(data as Record<string, unknown>), rounds: [] });
+    }
 
     // Delfakturering rounds (empty for orders never partially invoiced) so the detail page can
     // render the invoice history on load.

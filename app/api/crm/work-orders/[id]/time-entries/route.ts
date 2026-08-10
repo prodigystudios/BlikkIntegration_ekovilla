@@ -3,6 +3,11 @@ import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { createCrmWorkOrderTimeEntry, listCrmWorkOrderTimeEntries } from '@/lib/domains/crm/work-orders';
 import { createWorkOrderTimeEntrySchema, ok, requireSignedInUser, routeError, validationError } from '../../_lib';
 
+// NOTE: the installer field view has no time tab during the CRM cutover — Blikk is still the
+// payroll system of record and CRM cannot hand hours over yet (fas 4). This endpoint stays live
+// for the office view (/crm/arbetsorder/[id]), where time logged is internal follow-up rather
+// than payroll input. See app/arbetsorder/WorkOrderInstallerClient.tsx.
+
 type RouteContext = {
   params: {
     id: string;

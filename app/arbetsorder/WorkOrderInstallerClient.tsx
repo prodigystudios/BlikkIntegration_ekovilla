@@ -1,11 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/shared/cn';
 import { crm, workOrderStatusLabel, workOrderStatusClass } from '@/app/crm/lib/crmTokens';
 import { PhoneLink, EmailLink, AddressLink } from '@/app/crm/components/ContactLinks';
-import WorkOrderTimeTab from '@/app/crm/arbetsorder/WorkOrderTimeTab';
 import WorkOrderCommentsTab from '@/app/crm/arbetsorder/WorkOrderCommentsTab';
 import WorkOrderArticlesTab, { type ArticleLineItem } from '@/app/crm/arbetsorder/WorkOrderArticlesTab';
 import { useWorkOrderActivity } from '@/app/crm/arbetsorder/useWorkOrderActivity';
@@ -35,7 +34,7 @@ type InstallerWorkOrder = {
   status: WorkOrderStatus;
 };
 
-type InstallerTab = 'info' | 'articles' | 'time';
+type InstallerTab = 'info' | 'articles';
 
 export default function WorkOrderInstallerClient({ workOrderId, currentUserId }: { workOrderId: string; currentUserId: string | null }) {
   const router = useRouter();
@@ -45,8 +44,8 @@ export default function WorkOrderInstallerClient({ workOrderId, currentUserId }:
   const [activeTab, setActiveTab] = useState<InstallerTab>('info');
   const customerInfo = useCustomerContact(workOrderId);
 
-  const activity = useWorkOrderActivity(workOrderId);
-  const totalHours = useMemo(() => activity.timeEntries.reduce((s, e) => s + Number(e.hours || 0), 0), [activity.timeEntries]);
+  // No time tab here (see the tabs comment below), so don't pay for the time-entries request.
+  const activity = useWorkOrderActivity(workOrderId, { includeTimeEntries: false });
 
   useEffect(() => {
     let active = true;
@@ -93,8 +92,15 @@ export default function WorkOrderInstallerClient({ workOrderId, currentUserId }:
 
   // Comments render at the bottom of the Info tab (not a separate tab) so an @-mention notification
   // lands straight on the thread.
+  //
+  // NO TIME TAB during the cutover. Blikk is still the payroll system of record — someone reads the
+  // hours out of it before each payroll run — and CRM has no way to hand those hours over yet
+  // (no absence/internal time, no travel allowance, no export; that is fas 4). Hours logged here
+  // would live only in CRM and vanish from payroll, so the tab stays closed until CRM can carry
+  // the whole picture and time moves across in one step. Until then all time is reported in
+  // /tidrapport → Blikk, exactly as before.
   const tabs: Array<[InstallerTab, string]> = [
-    ['info', 'Info'], ['articles', 'Artiklar'], ['time', 'Tid'],
+    ['info', 'Info'], ['articles', 'Artiklar'],
   ];
 
   return (
@@ -158,6 +164,19 @@ export default function WorkOrderInstallerClient({ workOrderId, currentUserId }:
             ) : (!workScope ? <p className="text-sm text-slate-400">Ingen arbetsbeskrivning angiven.</p> : null)}
           </div>
 
+          {/* Where to report time. A CRM-planned job has no Blikk project, so it cannot be picked
+              in /tidrapport the usual way — without this the crew opens the job, finds no time tab
+              and no matching project, and guesses. Says the convention plainly until fas 4 brings
+              time into CRM. */}
+          <div className="grid gap-1.5 rounded-2xl border border-solid border-amber-200 bg-amber-50 p-3.5">
+            <p className={cn(crm.sectionTitle, 'text-amber-700')}>Tidrapportering</p>
+            <p className="text-sm leading-relaxed text-amber-900">
+              Rapportera tiden i <strong className="font-semibold">Tidrapport</strong> som <strong className="font-semibold">internt projekt</strong>, och skriv ordernumret{' '}
+              <strong className="font-semibold">{documentRef(workOrder.fortnox_order_number, workOrder.order_number)}</strong> i kommentaren.
+            </p>
+            <p className="text-xs text-amber-700">Tidrapporteringen flyttar hit när Blikk kopplas bort.</p>
+          </div>
+
           {/* Comments (write) — at the bottom of Info, no longer a separate tab */}
           <WorkOrderCommentsTab
             comments={activity.comments}
@@ -183,19 +202,6 @@ export default function WorkOrderInstallerClient({ workOrderId, currentUserId }:
           fortnoxConnected={false}
           canEdit={false}
           onSave={async () => false}
-        />
-      ) : null}
-
-      {/* Time (write) */}
-      {activeTab === 'time' ? (
-        <WorkOrderTimeTab
-          entries={activity.timeEntries}
-          loading={activity.timeEntriesLoading}
-          totalHours={totalHours}
-          currentUserId={currentUserId}
-          onCreate={activity.createTimeEntry}
-          onUpdate={activity.updateTimeEntry}
-          onDelete={activity.deleteTimeEntry}
         />
       ) : null}
 

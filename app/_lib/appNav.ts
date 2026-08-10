@@ -17,11 +17,16 @@ export const APP_NAV_ITEMS: AppNavItem[] = [
 
   // Sales / admin block
   { href: '/crm', label: 'CRM', roles: ['sales', 'admin'] },
-  { href: '/plannering', label: 'Planering', roles: ['sales', 'admin'] },
+  // Two planning worlds are live during the CRM cutover: new jobs are planned in CRM, the legacy
+  // Blikk-backed board runs its remaining jobs to completion. Both are listed so the office can
+  // reach either; the legacy one is labelled so nobody plans new work there by mistake.
+  { href: '/crm/planering', label: 'Planering', roles: ['sales', 'admin'] },
+  { href: '/plannering', label: 'Planering (äldre)', roles: ['sales', 'admin'] },
   { href: '/crm/korjournal', label: 'Körjournal', roles: ['sales', 'admin'] },
   { href: '/offert/kalkylator', label: 'Kalkylator', roles: ['sales', 'admin'] },
 
   // Installer / member block
+  { href: '/mina-jobb', label: 'Mina jobb', roles: ['member', 'admin'] },
   { href: '/egenkontroll', label: 'Egenkontroll', roles: ['member', 'admin'] },
   { href: '/archive', label: 'Egenkontroller', roles: ['member', 'sales', 'admin'] },
   { href: '/tidrapport', label: 'Tidrapport', roles: ['member', 'admin'] },

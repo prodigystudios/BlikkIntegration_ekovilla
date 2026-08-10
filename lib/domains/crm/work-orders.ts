@@ -450,6 +450,116 @@ export async function getCrmWorkOrder(supabase: SupabaseClient, id: string) {
   return supabase.from('crm_work_orders').select(crmWorkOrderSelect).eq('id', id).single();
 }
 
+// Look a work order up by the number written on the job, for the egenkontroll's order search.
+//
+// Accepts either reference: the Fortnox number once the order is synced (what the customer
+// paperwork shows, so what gets written down) or the internal AO number before that. Fortnox first.
+//
+// The projection is FIXED and minimal — see the route for why this runs elevated. line_items are
+// reduced to geometry: an egenkontroll needs area, thickness, density and what the row is called,
+// never unit_price / discount_percent / labor_cost.
+const WORK_ORDER_LOOKUP_SELECT =
+  'id, order_number, fortnox_order_number, project_name, client_name, desired_installation_date, work_address, customer_snapshot, internal_handoff, line_items';
+
+const LOOKUP_ADDRESS_KEYS = [
+  'street_address', 'postal_code', 'city',
+  'delivery_address', 'delivery_postal_code', 'delivery_city',
+] as const;
+
+const LOOKUP_LINE_ITEM_KEYS = [
+  'construction', 'm2', 'thickness_mm', 'density', 'article_name', 'line_note', 'pricing_mode', 'quantity',
+] as const;
+
+function narrowLookupRow(row: Record<string, unknown>): Record<string, unknown> {
+  const snapshot = (row.customer_snapshot ?? {}) as Record<string, unknown>;
+  const items = Array.isArray(row.line_items) ? (row.line_items as Record<string, unknown>[]) : [];
+  return {
+    ...row,
+    customer_snapshot: Object.fromEntries(LOOKUP_ADDRESS_KEYS.map((k) => [k, snapshot[k] ?? null])),
+    line_items: items.map((item) => Object.fromEntries(LOOKUP_LINE_ITEM_KEYS.map((k) => [k, item[k] ?? null]))),
+  };
+}
+
+export async function lookupCrmWorkOrderByNumber(supabase: SupabaseClient, orderNumber: string) {
+  const byFortnox = await supabase
+    .from('crm_work_orders')
+    .select(WORK_ORDER_LOOKUP_SELECT)
+    .eq('fortnox_order_number', orderNumber)
+    .limit(1)
+    .maybeSingle();
+  if (byFortnox.error) return { data: null, error: byFortnox.error };
+
+  let row = byFortnox.data as Record<string, unknown> | null;
+
+  if (!row) {
+    const byOrderNumber = await supabase
+      .from('crm_work_orders')
+      .select(WORK_ORDER_LOOKUP_SELECT)
+      .eq('order_number', orderNumber)
+      .limit(1)
+      .maybeSingle();
+    if (byOrderNumber.error) return { data: null, error: byOrderNumber.error };
+    row = byOrderNumber.data as Record<string, unknown> | null;
+  }
+
+  if (!row) return { data: null, error: null };
+
+  // The day the job is actually scheduled for — the egenkontroll dates itself from this rather
+  // than from the order's desired date, which goes stale as soon as the planner moves the job.
+  // Earliest segment that has not finished; falls back to the most recent one for past jobs.
+  const { data: segment } = await supabase
+    .from('ops_segments')
+    .select('start_day')
+    .eq('work_order_id', row.id as string)
+    .order('start_day', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  return {
+    data: { ...narrowLookupRow(row), scheduled_day: (segment as { start_day?: string } | null)?.start_day ?? null },
+    error: null,
+  };
+}
+
+// Redact a work order down to what the field view needs.
+//
+// Since the crew RLS policy (20260810_crm_work_order_crew_access.sql) an installer can read their
+// own work order — which is the point — but RLS is ROW level and cannot narrow columns, and
+// crmWorkOrderSelect carries things a person on a roof has no business receiving. Two of them are
+// personal data: customer_snapshot.personal_number and rot_details.personal_number (both written
+// by quoteSerializers for ROT jobs). This is where the column-level line is drawn instead.
+//
+// KEPT: order refs, names, status, dates, work address, internal handoff, and line_items —
+// article rows including prices, a deliberate decision (the field view's article tab shows them).
+// DROPPED: personnummer, pricing_summary, amount — nothing in the field view renders them.
+// rot_details is reduced to the three fields computePricing actually reads.
+export function redactWorkOrderForField<T extends Record<string, unknown>>(row: T): T {
+  const snapshot = (row.customer_snapshot ?? {}) as Record<string, unknown>;
+  const rot = (row.rot_details ?? {}) as Record<string, unknown>;
+
+  const {
+    pricing_summary: _pricingSummary,
+    amount: _amount,
+    ...rest
+  } = row as Record<string, unknown>;
+
+  return {
+    ...rest,
+    // Contact details only — the field view reads phone/email/contact_name and nothing else.
+    customer_snapshot: {
+      contact_name: snapshot.contact_name ?? null,
+      email: snapshot.email ?? null,
+      phone: snapshot.phone ?? null,
+    },
+    // Enough for the ROT line in the article tab's totals; no personnummer, no property designation.
+    rot_details: {
+      enabled: rot.enabled ?? false,
+      rot_percent: rot.rot_percent ?? null,
+      max_deduction: rot.max_deduction ?? null,
+    },
+  } as unknown as T;
+}
+
 // Invoice rounds (delfakturering) for a work order, oldest round first. Each row records the
 // Fortnox invoice number + the per-line quantities billed that round; the app owns this state
 // because Fortnox can't report per-article invoiced quantity back. Returns [] when none.

@@ -17,7 +17,10 @@ export const NAV_LINKS: RoleAwareLink[] = [
   { href: '/dokument-information', label: 'Dokument & Information' },
   { href: '/bestallning-klader', label: 'Beställning kläder', roles: ['member','admin'] },
   { href: '/crm/korjournal', label: 'Körjournal', roles: ['sales','admin'] },
-  { href: '/plannering', label: 'Planering', roles: ['sales','admin'] },
+  // Both planning worlds during the CRM cutover — see app/_lib/appNav.ts.
+  { href: '/crm/planering', label: 'Planering', roles: ['sales','admin'] },
+  { href: '/plannering', label: 'Planering (äldre)', roles: ['sales','admin'] },
+  { href: '/mina-jobb', label: 'Mina jobb', roles: ['member','admin'] },
   { href: '/tidrapport', label: 'Tidrapport', roles: ['member','admin'] },
   // Future admin-only examples:
   // { href: '/admin/users', label: 'Användare', roles: ['admin'] },
