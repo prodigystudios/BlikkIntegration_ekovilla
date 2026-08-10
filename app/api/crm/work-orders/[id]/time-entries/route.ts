@@ -1,6 +1,7 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { createCrmWorkOrderTimeEntry, listCrmWorkOrderTimeEntries } from '@/lib/domains/crm/work-orders';
+import { mirrorTimeEntryToBlikk } from '@/lib/domains/time-reports/mirrorToBlikk';
 import { createWorkOrderTimeEntrySchema, ok, requireSignedInUser, routeError, validationError } from '../../_lib';
 
 type RouteContext = {
@@ -48,7 +49,20 @@ export async function POST(req: Request, context: RouteContext) {
       return routeError(500, 'crm_work_order_time_entry_create_failed', error.message);
     }
 
-    return ok({ item: data }, 201);
+    // Blikk is still the payroll system of record during the cutover, so the entry is mirrored
+    // there. Deliberately awaited (a serverless function may be frozen the moment we respond, and
+    // a dropped mirror is missing pay) but never fatal — mirrorTimeEntryToBlikk swallows its own
+    // failures and leaves blikk_time_report_id null for reconciliation.
+    const mirror = await mirrorTimeEntryToBlikk(supabase, {
+      entryId: (data as { id: string }).id,
+      workOrderId: context.params.id,
+      userId: currentUser.currentUser.id,
+      workDate: parsedBody.data.work_date,
+      hours: parsedBody.data.hours,
+      note: parsedBody.data.note,
+    });
+
+    return ok({ item: data, mirror }, 201);
   } catch (e: any) {
     return routeError(500, 'crm_work_order_time_entry_unexpected', e?.message || 'Failed to create work order time entry');
   }
