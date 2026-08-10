@@ -163,6 +163,19 @@ export default function WorkOrderInstallerClient({ workOrderId, currentUserId }:
             ) : (!workScope ? <p className="text-sm text-slate-400">Ingen arbetsbeskrivning angiven.</p> : null)}
           </div>
 
+          {/* Where to report time. A CRM-planned job has no Blikk project, so it cannot be picked
+              in /tidrapport the usual way — without this the crew opens the job, finds no time tab
+              and no matching project, and guesses. Says the convention plainly until fas 4 brings
+              time into CRM. */}
+          <div className="grid gap-1.5 rounded-2xl border border-solid border-amber-200 bg-amber-50 p-3.5">
+            <p className={cn(crm.sectionTitle, 'text-amber-700')}>Tidrapportering</p>
+            <p className="text-sm leading-relaxed text-amber-900">
+              Rapportera tiden i <strong className="font-semibold">Tidrapport</strong> som <strong className="font-semibold">internt projekt</strong>, och skriv ordernumret{' '}
+              <strong className="font-semibold">{documentRef(workOrder.fortnox_order_number, workOrder.order_number)}</strong> i kommentaren.
+            </p>
+            <p className="text-xs text-amber-700">Tidrapporteringen flyttar hit när Blikk kopplas bort.</p>
+          </div>
+
           {/* Comments (write) — at the bottom of Info, no longer a separate tab */}
           <WorkOrderCommentsTab
             comments={activity.comments}
