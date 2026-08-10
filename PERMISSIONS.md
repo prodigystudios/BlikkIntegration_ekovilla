@@ -138,6 +138,41 @@ seed equals the role set the old predicate admitted, so behavior is identical):
 
 ---
 
+### Crew access — the one path that is NOT permission-based ⚠️
+
+`supabase/sql/20260810_crm_work_order_crew_access.sql` (field/CRM cutover).
+
+Installers (`member`) have **no CRM permission keys, deliberately** — and that must stay true.
+But they have to reach the work order they are scheduled on. That access is **derived from data,
+not granted by a key**: `is_user_on_work_order(uid, work_order_id)` asks the planning crew tables
+(`ops_segment_crew` / `ops_truck_crew` / `ops_truck_default_crew`, joined to the order through
+`ops_segments.work_order_id`) whether this person is on this job.
+
+| | |
+| --- | --- |
+| **Tables** | `crm_work_orders` (SELECT), `crm_work_order_time_entries` (SELECT + INSERT), `crm_work_order_comments` (SELECT + INSERT) |
+| **Policies** | `*_crew`, **additive** — Postgres OR-combines permissive policies, so the existing `assigned_to` / `has_permission` policies are untouched and nobody loses access |
+| **Resolution** | Weekly truck crew **overrides** the standing default crew, resolved per **ISO week** to match `crewForTruckInRange` in `app/crm/planering/WeekBoard.tsx` |
+| **Helper** | `security definer` (the caller has no `planning.schedule.read`), `revoke from public`, `grant execute to authenticated` |
+
+Two consequences worth remembering:
+
+- **RLS is row-level and cannot narrow columns.** `crmWorkOrderSelect` carries
+  `customer_snapshot.personal_number` and `rot_details.personal_number`, so a crew SELECT policy
+  alone would hand personnummer to installers. The column-level line is drawn in
+  `redactWorkOrderForField` (`lib/domains/crm/work-orders.ts`), applied in
+  `GET /api/crm/work-orders/[id]` for `role === 'member'`. **Any new field-facing route on a CRM
+  table must do the same.**
+- **The time-entry policies are dormant on purpose.** The field view has no time tab while Blikk
+  still owns payroll; the policies exist because they are correct and are what the CRM time
+  migration needs.
+
+`is_user_on_work_order` is callable by any authenticated user with an arbitrary uid, so an
+employee can probe who is on which job. Accepted: employees-only, and the planning board already
+shows crew to anyone with `planning.schedule.read`.
+
+---
+
 ## Managing permissions (admin UI)
 
 **Admin → Behörigheter** (`app/admin/permissions/AdminPermissions.tsx`):
@@ -249,6 +284,9 @@ yet), and coach. Swap them to granular keys once those are reconciled.
   `crm_customers` with `customer_stage = 'prospect'`; `crm_calls`/`crm_quotes` join
   `crm_customers` via `prospect_id`.
 - **Keep the catalog in sync** between the SQL `permissions` table and `PERMISSION_KEYS`.
+- **Not all access is a permission key.** Crew access to work orders is derived from the planning
+  tables (see above), so "member has no CRM keys" does *not* mean "member cannot read a work
+  order". Grep for `is_user_on_work_order` before reasoning about who can see what.
 
 ---
 
@@ -259,6 +297,7 @@ yet), and coach. Swap them to granular keys once those are reconciled.
 | Model + resolver + seed | `supabase/sql/20260608_permissions_model.sql`, `…_parity_assert.sql` |
 | RLS swaps | `supabase/sql/20260609_rls_permissions_crm_{core,quotes_workorders,admin}.sql`, `…_verify.sql` |
 | Lockout guard | `supabase/sql/20260609_permissions_admin_lockout_guard.sql` |
+| Crew access (non-key) | `supabase/sql/20260810_crm_work_order_crew_access.sql`, `redactWorkOrderForField` in `lib/domains/crm/work-orders.ts` |
 | App layer | `lib/auth/permissions.ts`, `app/api/crm/_shared.ts` (`requirePermission` + guard wrappers) |
 | Admin UI | `app/admin/permissions/AdminPermissions.tsx`, `app/api/admin/permissions/**` |
 
