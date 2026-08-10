@@ -70,7 +70,8 @@ order by r.fn;
 -- Expectation: the four planning.* keys exist; admin has all four, sales has read+write,
 -- konsult has read only, member has NONE (installers get access via fas 1a crew policies,
 -- never via CRM permissions).
-select p.key, coalesce(string_agg(rp.role, ', ' order by rp.role), '(no roles)') as granted_to
+-- role is the public.user_role ENUM, not text — string_agg needs an explicit ::text cast.
+select p.key, coalesce(string_agg(rp.role::text, ', ' order by rp.role::text), '(no roles)') as granted_to
 from public.permissions p
 left join public.role_permissions rp on rp.permission_key = p.key
 where p.key like 'planning.%' or p.key like 'crm.workorder.%'
