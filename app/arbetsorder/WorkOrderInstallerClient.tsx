@@ -5,7 +5,6 @@ import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/shared/cn';
 import { crm, workOrderStatusLabel, workOrderStatusClass } from '@/app/crm/lib/crmTokens';
 import { PhoneLink, EmailLink, AddressLink } from '@/app/crm/components/ContactLinks';
-import WorkOrderTimeTab from '@/app/crm/arbetsorder/WorkOrderTimeTab';
 import WorkOrderCommentsTab from '@/app/crm/arbetsorder/WorkOrderCommentsTab';
 import WorkOrderArticlesTab, { type ArticleLineItem } from '@/app/crm/arbetsorder/WorkOrderArticlesTab';
 import { useWorkOrderActivity } from '@/app/crm/arbetsorder/useWorkOrderActivity';
@@ -35,7 +34,7 @@ type InstallerWorkOrder = {
   status: WorkOrderStatus;
 };
 
-type InstallerTab = 'info' | 'articles' | 'time';
+type InstallerTab = 'info' | 'articles';
 
 export default function WorkOrderInstallerClient({ workOrderId, currentUserId }: { workOrderId: string; currentUserId: string | null }) {
   const router = useRouter();
@@ -46,7 +45,6 @@ export default function WorkOrderInstallerClient({ workOrderId, currentUserId }:
   const customerInfo = useCustomerContact(workOrderId);
 
   const activity = useWorkOrderActivity(workOrderId);
-  const totalHours = useMemo(() => activity.timeEntries.reduce((s, e) => s + Number(e.hours || 0), 0), [activity.timeEntries]);
 
   useEffect(() => {
     let active = true;
@@ -93,8 +91,15 @@ export default function WorkOrderInstallerClient({ workOrderId, currentUserId }:
 
   // Comments render at the bottom of the Info tab (not a separate tab) so an @-mention notification
   // lands straight on the thread.
+  //
+  // NO TIME TAB during the cutover. Blikk is still the payroll system of record — someone reads the
+  // hours out of it before each payroll run — and CRM has no way to hand those hours over yet
+  // (no absence/internal time, no travel allowance, no export; that is fas 4). Hours logged here
+  // would live only in CRM and vanish from payroll, so the tab stays closed until CRM can carry
+  // the whole picture and time moves across in one step. Until then all time is reported in
+  // /tidrapport → Blikk, exactly as before.
   const tabs: Array<[InstallerTab, string]> = [
-    ['info', 'Info'], ['articles', 'Artiklar'], ['time', 'Tid'],
+    ['info', 'Info'], ['articles', 'Artiklar'],
   ];
 
   return (
@@ -183,19 +188,6 @@ export default function WorkOrderInstallerClient({ workOrderId, currentUserId }:
           fortnoxConnected={false}
           canEdit={false}
           onSave={async () => false}
-        />
-      ) : null}
-
-      {/* Time (write) */}
-      {activeTab === 'time' ? (
-        <WorkOrderTimeTab
-          entries={activity.timeEntries}
-          loading={activity.timeEntriesLoading}
-          totalHours={totalHours}
-          currentUserId={currentUserId}
-          onCreate={activity.createTimeEntry}
-          onUpdate={activity.updateTimeEntry}
-          onDelete={activity.deleteTimeEntry}
         />
       ) : null}
 

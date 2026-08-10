@@ -95,6 +95,13 @@ create policy crm_work_orders_select_crew
 -- ── crm_work_order_time_entries: see the job's time, log your own ────────────
 -- SELECT covers the whole crew's entries on that job (the time tab renders the team's log, and
 -- they are out there together anyway); INSERT is still self-only.
+--
+-- DORMANT BY DESIGN: the installer field view has NO time tab during the cutover. Blikk is still
+-- the payroll system of record — a person reads the hours out of it before each payroll run — and
+-- CRM cannot hand hours over yet (no absence/internal time, no travel allowance, no export). Time
+-- logged in CRM would vanish from payroll, so all time keeps going through /tidrapport → Blikk
+-- until fas 4 moves it across in one step. These policies are kept because they are correct and
+-- are exactly what fas 4 needs; nothing in the field UI reaches them today.
 drop policy if exists crm_wo_time_entries_select_crew on public.crm_work_order_time_entries;
 create policy crm_wo_time_entries_select_crew
   on public.crm_work_order_time_entries
