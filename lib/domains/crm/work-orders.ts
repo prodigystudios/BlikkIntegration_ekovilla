@@ -288,6 +288,24 @@ export async function createCrmWorkOrderFromQuote(supabase: SupabaseClient, quot
     orderSnapshot = { ...orderSnapshot, personal_number: personalNumber };
   }
 
+  // ROT can only be filed with the property identified: fastighetsbeteckning for a småhus, or the
+  // BRF's org.nr for a bostadsrätt (Skatteverket takes either — never both). It is deliberately
+  // OPTIONAL on the quote: nothing is approved yet and the seller often doesn't have it while
+  // quoting. The order is where it becomes mandatory, because the order is the point of no return —
+  // the route auto-pushes to Fortnox the moment the order exists, and Fortnox has NO API field for
+  // the designation (whoever finalizes the invoice types it into the husarbete dialog, reading it
+  // off the text row / YourOrderNumber we send). An order created without it therefore reaches the
+  // invoice with nothing to type in, and the deduction can't be filed. This is the last point where
+  // a human is still in the loop.
+  const rot = (quote.rot_details || {}) as { enabled?: boolean | null; property_designation?: string | null; brf_org_number?: string | null };
+  if (rot.enabled === true && !rot.property_designation?.trim() && !rot.brf_org_number?.trim()) {
+    return {
+      data: null,
+      error: { message: 'Fastighetsbeteckning (eller BRF org.nr för bostadsrätt) krävs för ROT innan order kan skapas. Öppna offerten och fyll i den.' },
+      reason: 'missing_rot_property' as const,
+    };
+  }
+
   const orderNumber = buildWorkOrderNumber(quote.id);
 
   const createResult = await supabase

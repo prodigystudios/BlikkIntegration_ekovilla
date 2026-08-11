@@ -101,6 +101,62 @@ describe('createCrmWorkOrderFromQuote — fält-mappning', () => {
     expect(captured.insert!.customer_snapshot.personal_number).toBe('900101-1234');
   });
 
+  // V3: ROT-avdraget kan inte begäras utan att fastigheten är identifierad, och Fortnox har inget
+  // API-fält för beteckningen — den skrivs för hand i husarbete-dialogen utifrån textraden vi
+  // skickar. Kravet ligger därför på ORDERN (kundgodkänd), inte på offerten. Routen auto-pushar
+  // till Fortnox i samma andetag som ordern skapas, så det här är sista stället en människa hinner
+  // stoppas.
+  const rotQuote = (rot: Record<string, unknown>) =>
+    wonQuote({
+      quote_type: 'private',
+      customer_id: null,
+      customer_snapshot: { customer_name: 'Anna', personal_number: '900101-1234' },
+      rot_details: { enabled: true, personal_number: '900101-1234', ...rot },
+    });
+
+  it('blockerar ROT-order utan fastighetsbeteckning och BRF org.nr', async () => {
+    const { supabase, captured } = makeSupabase(rotQuote({ property_designation: null, brf_org_number: null }));
+    const result = await createCrmWorkOrderFromQuote(supabase as any, 'q1', 'user-1');
+    expect(result.reason).toBe('missing_rot_property');
+    expect(result.data).toBeNull();
+    // Ordern får inte ha hunnit skapas — annars auto-pushas den till Fortnox.
+    expect(captured.insert).toBeNull();
+  });
+
+  it('blockerar när beteckningen bara är blanksteg', async () => {
+    const { supabase } = makeSupabase(rotQuote({ property_designation: '   ' }));
+    const result = await createCrmWorkOrderFromQuote(supabase as any, 'q1', 'user-1');
+    expect(result.reason).toBe('missing_rot_property');
+  });
+
+  it('släpper igenom ROT-order med fastighetsbeteckning', async () => {
+    const { supabase, captured } = makeSupabase(rotQuote({ property_designation: 'Gläntan 1:14' }));
+    const result = await createCrmWorkOrderFromQuote(supabase as any, 'q1', 'user-1');
+    expect(result.error).toBeNull();
+    expect(captured.insert!.rot_details.property_designation).toBe('Gläntan 1:14');
+  });
+
+  // Bostadsrätt: fastigheten identifieras med föreningens org.nr i stället, så BRF-numret räcker.
+  it('släpper igenom ROT-order med bara BRF org.nr', async () => {
+    const { supabase } = makeSupabase(rotQuote({ property_designation: null, brf_org_number: '769606-1234' }));
+    const result = await createCrmWorkOrderFromQuote(supabase as any, 'q1', 'user-1');
+    expect(result.error).toBeNull();
+    expect(result.reason).toBeNull();
+  });
+
+  // Grinden gäller bara ROT. En vanlig order (eller en offert där ROT slagits av) rörs inte.
+  it('kräver ingen beteckning när ROT är av', async () => {
+    const { supabase } = makeSupabase(wonQuote({ rot_details: { enabled: false, property_designation: null } }));
+    const result = await createCrmWorkOrderFromQuote(supabase as any, 'q1', 'user-1');
+    expect(result.error).toBeNull();
+  });
+
+  it('kräver ingen beteckning för äldre offerter utan rot_details', async () => {
+    const { supabase } = makeSupabase(wonQuote({ rot_details: null }));
+    const result = await createCrmWorkOrderFromQuote(supabase as any, 'q1', 'user-1');
+    expect(result.error).toBeNull();
+  });
+
   it('seedar notes från offertens egna notes när de finns', async () => {
     const { supabase, captured } = makeSupabase(wonQuote({ notes: 'Internt orderunderlag' }));
 
