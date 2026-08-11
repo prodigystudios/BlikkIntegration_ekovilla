@@ -52,7 +52,9 @@ function mapActivity(raw: any): RefItem | null {
   };
 }
 
-async function fetchAllFromBlikk(basePath: string) {
+// Exporterad för fas 4:s engångsimport av referensdata (lib/domains/time/blikkImport.ts) — samma
+// paginering, samma säkerhetstak. Båda försvinner i fas 4.7 när Blikks tidyta tas ned.
+export async function fetchAllFromBlikk(basePath: string) {
   const blikk = getBlikk();
   const pageSize = 50;
   const maxPages = 10; // safety cap: 2000 rows

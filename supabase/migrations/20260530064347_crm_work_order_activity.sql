@@ -1,3 +1,10 @@
+-- ⚠️ SUPERSEDED 2026-08-11 av supabase/sql/20260811_time_entries_reshape.sql — KÖR INTE OM.
+-- `crm_work_order_time_entries` är omdöpt till `crm_time_entries` (fas 4: tidraden blev löneunderlag
+-- och behövde bli nullbar mot arbetsorder, för frånvaro har ingen). Körs den här filen om skapas en
+-- TOM SPÖKTABELL med det gamla namnet, plus policyer på den — `if not exists` skyddar bara mot att
+-- skriva över, inte mot att återuppstå. Ingen kod skriver dit, så skadan är skräp och inte
+-- dataförlust, men städa bort spöket direkt om det händer. Filen ligger kvar som historik.
+
 create table if not exists public.crm_work_order_time_entries (
 	id uuid primary key default gen_random_uuid(),
 	work_order_id uuid not null references public.crm_work_orders(id) on delete cascade,

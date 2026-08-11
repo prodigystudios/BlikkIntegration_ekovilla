@@ -1,10 +1,14 @@
-import { getCurrentUser } from '@/lib/auth/route';
-import { can, getEffectivePermissions, type PermissionKey } from '@/lib/auth/permissions';
+import { requirePermission, requireSignedInUser } from '@/lib/auth/guards';
 // Generic HTTP response helpers live in one place; re-exported here so the existing CRM route
 // imports (`from '../_shared'`) keep working unchanged.
 import { ok, routeError, validationError, invalidUuidParam, isNoRowsError } from '@/lib/api/responses';
 
 export { ok, routeError, validationError, invalidUuidParam, isNoRowsError };
+
+// requirePermission/requireSignedInUser moved to lib/auth/guards.ts so non-CRM surfaces (time &
+// payroll, admin) can gate without importing out of this folder. Re-exported unchanged — every
+// existing `from '../_shared'` import keeps working.
+export { requirePermission, requireSignedInUser };
 
 // Keep only the fields the client actually sent. Zod schemas inject defaults for absent
 // fields; persisting those on a partial PATCH would overwrite untouched columns with
@@ -13,25 +17,6 @@ export { ok, routeError, validationError, invalidUuidParam, isNoRowsError };
 export function pickProvidedFields<T extends Record<string, unknown>>(parsed: T, rawBody: unknown): Partial<T> {
   const sentKeys = rawBody && typeof rawBody === 'object' && !Array.isArray(rawBody) ? Object.keys(rawBody as object) : [];
   return Object.fromEntries(Object.entries(parsed).filter(([key]) => sentKeys.includes(key))) as Partial<T>;
-}
-
-// Permission-based gate. Resolves the user, then checks the effective permission set
-// (role bundle ± per-user overrides) from the DB. Returns the same { currentUser, response }
-// shape every CRM guard uses. This is the single primitive the role guards below wrap, and
-// the one new per-resource routes should call directly (e.g. requirePermission('crm.offer.write')).
-export async function requirePermission(key: PermissionKey) {
-  const currentUser = await getCurrentUser();
-
-  if (!currentUser) {
-    return { currentUser: null, response: routeError(401, 'unauthorized', 'Unauthorized') };
-  }
-
-  const perms = await getEffectivePermissions();
-  if (!can(perms, key)) {
-    return { currentUser: null, response: routeError(403, 'forbidden', 'Forbidden') };
-  }
-
-  return { currentUser, response: null };
 }
 
 // Legacy coarse guards, now thin wrappers over the permission layer. The seed in
@@ -49,14 +34,4 @@ export function requireCrmWriter() {
 
 export function requireCrmAdmin() {
   return requirePermission('crm.admin');
-}
-
-export async function requireSignedInUser() {
-  const currentUser = await getCurrentUser();
-
-  if (!currentUser) {
-    return { currentUser: null, response: routeError(401, 'unauthorized', 'Unauthorized') };
-  }
-
-  return { currentUser, response: null };
 }
