@@ -29,7 +29,11 @@ export const APP_NAV_ITEMS: AppNavItem[] = [
   { href: '/mina-jobb', label: 'Mina jobb', roles: ['member', 'admin'] },
   { href: '/egenkontroll', label: 'Egenkontroll', roles: ['member', 'admin'] },
   { href: '/archive', label: 'Egenkontroller', roles: ['member', 'sales', 'admin'] },
-  { href: '/tidrapport', label: 'Tidrapport', roles: ['member', 'admin'] },
+  // Två tidrapporter är live under cutovern, precis som de två planeringarna ovan: den nya skriver
+  // till CRM, den gamla till Blikk. Den gamla är märkt så ingen rapporterar fel av vana. Nya visas
+  // även för sales — beslutet är att ALLA anställda rapporterar tid i CRM, inte bara fältet.
+  { href: '/tid', label: 'Tidrapport', roles: ['member', 'sales', 'admin'] },
+  { href: '/tidrapport', label: 'Tidrapport (Blikk)', roles: ['member', 'admin'] },
   { href: '/bestallning-klader', label: 'Beställ kläder', roles: ['member', 'admin'] },
   { href: '/material-kvalitet', label: 'Materialkvalitet', roles: ['member', 'sales', 'admin'] },
 
