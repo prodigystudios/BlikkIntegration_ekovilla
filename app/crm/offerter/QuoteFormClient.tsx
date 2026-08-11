@@ -1707,6 +1707,10 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     const property = draft.rot_property_designation.trim();
     const brf = draft.rot_brf_org_number.trim();
     if (!property && !brf) { toast.error('Fyll i fastighetsbeteckning eller BRF org.nr'); return; }
+    // Re-saving means the whole quote is validated again, and an older quote can be missing
+    // something today's schema requires (Er referens, t.ex.). Say which field it is here instead of
+    // letting the PATCH answer with a generic valideringsfel the seller can't act on.
+    if (issues.length > 0) { toast.error(`Offerten måste kompletteras först: ${issues[0]}`); return; }
     setCreatingWorkOrder(true);
     try {
       const res = await fetch(`/api/crm/quotes/${quoteId}`, {
