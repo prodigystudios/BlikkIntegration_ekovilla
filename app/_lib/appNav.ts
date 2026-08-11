@@ -29,19 +29,19 @@ export const APP_NAV_ITEMS: AppNavItem[] = [
   { href: '/mina-jobb', label: 'Mina jobb', roles: ['member', 'admin'] },
   { href: '/egenkontroll', label: 'Egenkontroll', roles: ['member', 'admin'] },
   { href: '/archive', label: 'Egenkontroller', roles: ['member', 'sales', 'admin'] },
-  // Två tidrapporter är live under cutovern, precis som de två planeringarna ovan: den gamla skriver
-  // till Blikk, den nya till CRM.
-  //
-  // ⚠️ DEN GAMLA BEHÅLLER NAMNET "Tidrapport" och rörs inte. Blikk är fortfarande lönens system of
-  // record, och den som av vana klickar på "Tidrapport" ska landa där hen alltid landat — annars
-  // flyttas folk från Blikk utan att någon beslutat det, och timmarna når aldrig lönekörningen.
-  // Att byta namn är i praktiken att kapa vägen, även om koden är orörd. Namnen växlar först vid
-  // cutovern (fas 4.6), på uttrycklig instruktion.
-  //
-  // Den nya är opt-in under piloten och visas även för sales — beslutet är att ALLA anställda ska
-  // rapportera i CRM när det väl är skarpt, inte bara fältet.
+  // ⚠️ TIDRAPPORTEN PEKAR PÅ BLIKK OCH SKA FORTSÄTTA GÖRA DET.
+  // Blikk är lönens system of record tills något annat uttryckligen beslutats. Den som av vana
+  // klickar "Tidrapport" ska landa där hen alltid landat — att flytta folk därifrån ger samma
+  // resultat som att stänga vägen: timmar som aldrig når lönekörningen. Byt inte namn, ta inte bort,
+  // peka inte om.
   { href: '/tidrapport', label: 'Tidrapport', roles: ['member', 'admin'] },
-  { href: '/tid', label: 'Tidrapport (ny)', roles: ['member', 'sales', 'admin'] },
+
+  // Den nya CRM-tidrapporten (/tid) ligger MEDVETET INTE i menyn under piloten. Rutten fungerar och
+  // nås genom att skriva adressen — det räcker för att testa, och en halvtestad väg i menyn är en
+  // inbjudan att rapportera fel av misstag. Lägg tillbaka den här först när piloten är avstämd mot
+  // Blikk och cutovern är beslutad:
+  //   { href: '/tid', label: 'Tidrapport', roles: ['member', 'sales', 'admin'] },
+  // (och flytta då den gamla till "Tidrapport (Blikk)" eller ta bort den, på uttrycklig instruktion).
   { href: '/bestallning-klader', label: 'Beställ kläder', roles: ['member', 'admin'] },
   { href: '/material-kvalitet', label: 'Materialkvalitet', roles: ['member', 'sales', 'admin'] },
 
