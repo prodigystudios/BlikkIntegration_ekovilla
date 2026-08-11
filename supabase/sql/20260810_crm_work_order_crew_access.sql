@@ -105,6 +105,14 @@ create policy crm_work_orders_select_crew
   using (public.is_user_on_work_order(auth.uid(), id));
 
 -- ── crm_work_order_time_entries: see the job's time, log your own ────────────
+--
+-- ⚠️ SUPERSEDED 2026-08-11 för DEN HÄR TABELLEN — kör inte avsnittet om.
+-- The table was renamed to `crm_time_entries` in fas 4 (supabase/sql/20260811_time_entries_reshape.sql)
+-- and its policies were replaced by supabase/sql/20260811_time_entries_rls.sql. The crew policies
+-- below are no longer dormant — they live on under new names, doing exactly this job. Re-running
+-- this section recreates the OLD table name (via the policies' implicit table reference failing, or
+-- worse, attaching to a ghost table left by 20260530064347). The crm_work_orders and
+-- crm_work_order_comments sections above and below are still current.
 -- SELECT covers the whole crew's entries on that job (the time tab renders the team's log, and
 -- they are out there together anyway); INSERT is still self-only.
 --

@@ -88,3 +88,20 @@ export function swedishHoliday(iso: string): string | null {
   }
   return y.get(iso) ?? null;
 }
+
+// The three days above that are NOT lagstadgade röda dagar — they are non-working by custom and by
+// most collective agreements, which is why the board shades them, but they are ordinary weekdays in
+// law. The planning board doesn't care about the difference; payroll does.
+const DE_FACTO_EVES = new Set(['Julafton', 'Midsommarafton', 'Nyårsafton']);
+
+export type SwedishHolidayKind = 'public' | 'de_facto';
+
+// Additive companion to swedishHoliday, for time reporting (lib/domains/time/classify.ts): tells a
+// red-letter day apart from a de-facto free eve. Payroll treats them differently — julafton is not a
+// röd dag — so the caller must be able to see which it got. Deliberately a separate function rather
+// than a changed return type: the planning board's call sites stay untouched.
+export function swedishHolidayKind(iso: string): SwedishHolidayKind | null {
+  const name = swedishHoliday(iso);
+  if (!name) return null;
+  return DE_FACTO_EVES.has(name) ? 'de_facto' : 'public';
+}

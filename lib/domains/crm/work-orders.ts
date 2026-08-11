@@ -660,9 +660,13 @@ export async function updateCrmWorkOrderLineItems(
     .single();
 }
 
+// Tabellen heter `crm_time_entries` sedan fas 4 (20260811_time_entries_reshape.sql). Namnbytet är
+// inte kosmetiskt: raden bär numera även frånvaro och interntid, som per definition inte har någon
+// arbetsorder, och den är löneunderlag. Funktionerna här är kontorets arbetsordervy — de filtrerar
+// alltid på en order och rör aldrig de andra sorterna.
 export async function listCrmWorkOrderTimeEntries(supabase: SupabaseClient, workOrderId: string) {
   return supabase
-    .from('crm_work_order_time_entries')
+    .from('crm_time_entries')
     .select(crmWorkOrderTimeEntrySelect)
     .eq('work_order_id', workOrderId)
     .order('work_date', { ascending: false })
@@ -670,7 +674,14 @@ export async function listCrmWorkOrderTimeEntries(supabase: SupabaseClient, work
 }
 
 export async function createCrmWorkOrderTimeEntry(supabase: SupabaseClient, input: CreateWorkOrderTimeEntryInput) {
-  return supabase.from('crm_work_order_time_entries').insert(input).select(crmWorkOrderTimeEntrySelect).single();
+  // `kind` är NOT NULL sedan omformningen och CHECK:en binder den till vilket mål som är ifyllt.
+  // Den här vägen skapar per definition arbetsordertid, så den sätts här i stället för att läggas
+  // på anroparen — kontorsfliken vet inget om diskriminatorn.
+  return supabase
+    .from('crm_time_entries')
+    .insert({ ...input, kind: 'work_order' })
+    .select(crmWorkOrderTimeEntrySelect)
+    .single();
 }
 
 export async function listCrmWorkOrderComments(supabase: SupabaseClient, workOrderId: string) {
@@ -694,7 +705,7 @@ export async function updateCrmWorkOrderTimeEntry(
   input: { work_date: string; hours: number; note: string | null },
 ) {
   return supabase
-    .from('crm_work_order_time_entries')
+    .from('crm_time_entries')
     .update(input)
     .eq('id', id)
     .eq('user_id', userId)
@@ -704,7 +715,7 @@ export async function updateCrmWorkOrderTimeEntry(
 
 export async function deleteCrmWorkOrderTimeEntry(supabase: SupabaseClient, id: string, userId: string) {
   return supabase
-    .from('crm_work_order_time_entries')
+    .from('crm_time_entries')
     .delete()
     .eq('id', id)
     .eq('user_id', userId)
