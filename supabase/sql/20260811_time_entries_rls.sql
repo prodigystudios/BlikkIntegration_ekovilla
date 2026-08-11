@@ -34,6 +34,17 @@ drop policy if exists crm_wo_time_entries_delete_own on public.crm_time_entries;
 drop policy if exists crm_wo_time_entries_select_crew on public.crm_time_entries;
 drop policy if exists crm_wo_time_entries_insert_crew on public.crm_time_entries;
 
+-- ── ...och bort med de FYRA NYA, så filen går att köra om ─────────────────────
+-- Utan de här raderna är filen bara körbar EN gång: andra körningen dör på
+-- "policy ... already exists" (42710) vid första create, och då hinner ingenting ersättas — man
+-- sitter kvar med exakt de policyer man försökte byta ut, i tron att man just uppdaterat dem.
+-- Det hände på riktigt när UPDATE-policyn skulle rättas. `create policy` har inget `or replace`,
+-- så drop-först är enda vägen.
+drop policy if exists crm_time_entries_select on public.crm_time_entries;
+drop policy if exists crm_time_entries_insert on public.crm_time_entries;
+drop policy if exists crm_time_entries_update_own on public.crm_time_entries;
+drop policy if exists crm_time_entries_delete_own on public.crm_time_entries;
+
 -- ── SELECT ───────────────────────────────────────────────────────────────────
 -- Grenarna står billigast först. `user_id = auth.uid()` är en kolumnjämförelse och sann för de allra
 -- flesta rader en person läser; has_permission är ett svar per fråga; de två sista slår i tabeller
