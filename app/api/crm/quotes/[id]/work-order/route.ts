@@ -30,6 +30,13 @@ export async function POST(_req: Request, context: RouteContext) {
         return routeError(409, 'crm_work_order_missing_personal_number', result.error?.message || 'Personnummer krävs för privatkund innan order kan skapas');
       }
 
+      // ROT without fastighetsbeteckning/BRF org.nr. Its own code so the quote form can open the
+      // prompt that collects it; the quote list (no prompt there) just shows the message, which
+      // says where to fill it in.
+      if (result.reason === 'missing_rot_property') {
+        return routeError(409, 'crm_work_order_missing_rot_property', result.error?.message || 'Fastighetsbeteckning krävs för ROT innan order kan skapas');
+      }
+
       if (result.reason === 'quote_not_won' || result.reason === 'already_created') {
         return routeError(409, result.reason, result.error?.message || 'Arbetsorder kunde inte skapas');
       }

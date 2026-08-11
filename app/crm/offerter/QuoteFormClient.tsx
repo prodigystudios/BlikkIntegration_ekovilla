@@ -356,8 +356,9 @@ function getValidationIssues(draft: QuoteDraft, effectiveRows: EffectiveRow[]) {
   if (!draft.contact_name.trim()) issues.push('Er referens krävs');
   if (draft.quote_type === 'business' && draft.rot_enabled) issues.push('ROT är bara tillåtet för privatkund');
   // Fastighetsbeteckning is NOT required on the quote — it's only mandatory once the offer becomes a
-  // work order (customer-approved), so it's enforced at order creation, not here. The field stays
-  // available so it can be filled early when known.
+  // work order (customer-approved), so it's enforced at order creation, not here (the gate lives in
+  // createCrmWorkOrderFromQuote and answers `missing_rot_property`; a BRF org.nr identifies a
+  // bostadsrätt just as well). The field stays available so it can be filled early when known.
   // Every offer is built from article rows (there is no manual lump-sum amount field), so at least
   // one configured row is required.
   if (!hasAnyLineItemInput) issues.push('Lägg till minst en rad');
@@ -987,6 +988,10 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   // Private customer without personnummer (optional at create) → the work-order route rejects
   // with 409; we prompt for it, save it on the customer, then retry the conversion.
   const [pnPromptOpen, setPnPromptOpen] = useState(false);
+  // Same shape for the ROT property: optional while quoting, required once the customer approves
+  // and the offer becomes an order (the route rejects with 409). Prompt → re-save the quote →
+  // retry the conversion.
+  const [rotPropertyPromptOpen, setRotPropertyPromptOpen] = useState(false);
   // Custom "leave with unsaved changes?" confirm for in-app navigation (the browser's own
   // beforeunload text can't be customised, so we show our own dialog where we can). Holds the
   // intended destination so the same dialog serves the back button AND intercepted link clicks.
@@ -1536,6 +1541,56 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     return res.ok && json.ok;
   }
 
+  // The quote save payload, built from the current draft. Extracted so the ROT-property prompt can
+  // re-save the quote through the exact same shape the ordinary save uses — a partial PATCH won't
+  // do: the update schema requires the core fields, and only a body carrying `line_items` triggers
+  // the Fortnox auto-sync, which is what gets the fastighetsbeteckning onto the offer before it is
+  // converted to an order.
+  function buildQuotePayload() {
+    const effectiveCustomerName = getEffectiveCustomerName(draft);
+
+    // The offer's amount/summary always derive from the article rows — there is no manual amount
+    // field, and validation requires at least one row.
+    const amountNumber = totals.total;
+    const vatPercentNumber = parseDecimal(draft.vat_percent);
+
+    return {
+      prospect_id: draft.prospect_id || null,
+      customer_id: draft.customer_id || null,
+      customer_name: effectiveCustomerName,
+      quote_type: draft.quote_type,
+      customer_source: {
+        kind: draft.customer_source.kind,
+        sync_intent: draft.customer_source.kind === 'fortnox' ? 'linked' : draft.customer_source.sync_intent,
+        fortnox_customer_id: draft.customer_source.fortnox_customer_id || null,
+        fortnox_customer_name: draft.customer_source.fortnox_customer_name || null,
+      },
+      // Business quote at 0 % VAT = omvänd skattskyldighet (byggmoms) — the app's canonical
+      // signal (see quoteAmountDisplay). Captured point-in-time so the Fortnox push resolves
+      // the VAT regime even for snapshot-only quotes with no linked customer.
+      customer_snapshot: buildCustomerSnapshot(draft, {
+        reverseVat: draft.quote_type === 'business' && parseDecimal(draft.vat_percent) === 0,
+      }),
+      pricing_summary: {
+        subtotal: totals.subtotal,
+        vat: totals.vat,
+        total: totals.total,
+      },
+      line_items: draft.items,
+      rot_details: buildRotDetails(draft),
+      internal_handoff: buildInternalHandoff(draft),
+      project_name: draft.project_name,
+      description: draft.description,
+      amount: amountNumber,
+      vat_percent: vatPercentNumber,
+      valid_until: draft.valid_until || null,
+      status: draft.status,
+      quote_date: draft.quote_date,
+      follow_up_date: draft.follow_up_date || null,
+      notes: draft.notes,
+    };
+  }
+
   async function saveQuote() {
     setSubmitAttempted(true);
     if (submitting) return;
@@ -1552,48 +1607,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     setSubmitting(true);
 
     try {
-      const effectiveCustomerName = getEffectiveCustomerName(draft);
-
-      // The offer's amount/summary always derive from the article rows — there is no manual amount
-      // field, and validation requires at least one row.
-      const amountNumber = totals.total;
-      const vatPercentNumber = parseDecimal(draft.vat_percent);
-
-      const payload = {
-        prospect_id: draft.prospect_id || null,
-        customer_id: draft.customer_id || null,
-        customer_name: effectiveCustomerName,
-        quote_type: draft.quote_type,
-        customer_source: {
-          kind: draft.customer_source.kind,
-          sync_intent: draft.customer_source.kind === 'fortnox' ? 'linked' : draft.customer_source.sync_intent,
-          fortnox_customer_id: draft.customer_source.fortnox_customer_id || null,
-          fortnox_customer_name: draft.customer_source.fortnox_customer_name || null,
-        },
-        // Business quote at 0 % VAT = omvänd skattskyldighet (byggmoms) — the app's canonical
-        // signal (see quoteAmountDisplay). Captured point-in-time so the Fortnox push resolves
-        // the VAT regime even for snapshot-only quotes with no linked customer.
-        customer_snapshot: buildCustomerSnapshot(draft, {
-          reverseVat: draft.quote_type === 'business' && parseDecimal(draft.vat_percent) === 0,
-        }),
-        pricing_summary: {
-          subtotal: totals.subtotal,
-          vat: totals.vat,
-          total: totals.total,
-        },
-        line_items: draft.items,
-        rot_details: buildRotDetails(draft),
-        internal_handoff: buildInternalHandoff(draft),
-        project_name: draft.project_name,
-        description: draft.description,
-        amount: amountNumber,
-        vat_percent: vatPercentNumber,
-        valid_until: draft.valid_until || null,
-        status: draft.status,
-        quote_date: draft.quote_date,
-        follow_up_date: draft.follow_up_date || null,
-        notes: draft.notes,
-      };
+      const payload = buildQuotePayload();
 
       const res = await fetch(isEditing ? `/api/crm/quotes/${quoteId}` : '/api/crm/quotes', {
         method: isEditing ? 'PATCH' : 'POST',
@@ -1649,6 +1663,10 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           setPnPromptOpen(true);
           return;
         }
+        if (json?.errorDetails?.code === 'crm_work_order_missing_rot_property') {
+          setRotPropertyPromptOpen(true);
+          return;
+        }
         toast.error(json?.error || 'Kunde inte skapa arbetsorder');
         return;
       }
@@ -1677,6 +1695,43 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
       setCreatingWorkOrder(false);
     }
     // Retry the conversion now that the customer has a personnummer.
+    await createWorkOrderFromQuote();
+  }
+
+  // Save the ROT property identification on the quote, then retry the quote→order conversion.
+  // The quote is re-saved in full (not a partial PATCH): that is what re-syncs the Fortnox offer,
+  // and the offer is what `createorder` copies the order from — writing the designation only to our
+  // own row would leave Fortnox without it, which is the whole point of collecting it here.
+  async function saveRotPropertyAndCreateOrder() {
+    if (!quoteId) return;
+    const property = draft.rot_property_designation.trim();
+    const brf = draft.rot_brf_org_number.trim();
+    if (!property && !brf) { toast.error('Fyll i fastighetsbeteckning eller BRF org.nr'); return; }
+    setCreatingWorkOrder(true);
+    try {
+      const res = await fetch(`/api/crm/quotes/${quoteId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(buildQuotePayload()),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte spara fastighetsbeteckning'); return; }
+      if (json?.data?.fortnox_error) {
+        // The offer didn't re-sync, so converting it now would produce a Fortnox order without the
+        // designation — exactly what this gate exists to prevent. Stop and let them retry.
+        toast.error(`Sparat, men offerten kunde inte synkas till Fortnox: ${json.data.fortnox_error}`);
+        return;
+      }
+      // Saved → same bookkeeping as the ordinary save, so no phantom "resume draft?" banner.
+      clearPersistedDraft();
+      baselineRef.current = draftJson;
+      setRotPropertyPromptOpen(false);
+    } catch {
+      toast.error('Kunde inte spara fastighetsbeteckning');
+      return;
+    } finally {
+      setCreatingWorkOrder(false);
+    }
     await createWorkOrderFromQuote();
   }
 
@@ -2607,6 +2662,61 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           <Field label="Personnummer">
             <Input value={pnValue} onChange={(e) => setPnValue(formatSwedishIdNumber(e.target.value))} placeholder="ÅÅMMDD-XXXX" autoFocus />
           </Field>
+        </CrmModal>
+      ) : null}
+
+      {rotPropertyPromptOpen ? (
+        <CrmModal
+          onClose={() => setRotPropertyPromptOpen(false)}
+          ariaLabel="Fastighetsbeteckning krävs"
+          maxWidth="sm:max-w-[460px]"
+          header={
+            <>
+              <h2 className="text-lg font-bold text-slate-900">Fastighetsbeteckning krävs</h2>
+              <p className="m-0 mt-0.5 text-sm text-slate-500">
+                ROT-avdraget kan inte begäras utan att fastigheten är identifierad. Fyll i fastighetsbeteckningen — eller
+                BRF:ens org.nr om kunden bor i bostadsrätt. Uppgiften sparas på offerten och följer med till Fortnox.
+              </p>
+            </>
+          }
+          footer={
+            <>
+              <button
+                type="button"
+                onClick={() => setRotPropertyPromptOpen(false)}
+                className="flex-1 rounded-xl border border-slate-200 bg-white py-2.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 sm:flex-none sm:px-5"
+              >
+                Avbryt
+              </button>
+              <button
+                type="button"
+                onClick={() => void saveRotPropertyAndCreateOrder()}
+                disabled={creatingWorkOrder || (!draft.rot_property_designation.trim() && !draft.rot_brf_org_number.trim())}
+                className="flex-1 rounded-xl py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60 sm:ml-auto sm:flex-none sm:px-5"
+                style={{ backgroundColor: 'var(--crm-primary)' }}
+              >
+                {creatingWorkOrder ? 'Sparar…' : 'Spara och skapa order'}
+              </button>
+            </>
+          }
+        >
+          <div className="grid gap-3">
+            <Field label="Fastighetsbeteckning">
+              <Input
+                value={draft.rot_property_designation}
+                onChange={(e) => setDraft((d) => ({ ...d, rot_property_designation: e.target.value }))}
+                placeholder="T.ex. Gläntan 1:14"
+                autoFocus
+              />
+            </Field>
+            <Field label="BRF org.nr">
+              <Input
+                value={draft.rot_brf_org_number}
+                onChange={(e) => setDraft((d) => ({ ...d, rot_brf_org_number: e.target.value }))}
+                placeholder="Om bostadsrätt"
+              />
+            </Field>
+          </div>
         </CrmModal>
       ) : null}
     </div>
