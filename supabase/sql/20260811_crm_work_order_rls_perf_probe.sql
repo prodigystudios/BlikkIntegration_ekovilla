@@ -1,5 +1,21 @@
 -- CRM-arbetsorderlistan under besättnings-RLS:en — MÄTNING, inga ändringar sparas.
 --
+-- KORT: alla andra läsregler på crm_work_orders ger SAMMA svar för varje rad ("har du
+-- crm.workorder.read?") — databasen frågar en gång och är klar. Besättningsregeln ger OLIKA svar per
+-- rad ("står du på det här jobbets besättning?") och gräver genom planeringstabellerna varje gång.
+-- Det är den enda regeln i systemet som kostar per rad. Frågan här: märks det?
+--
+-- VARFÖR DEN BYTER ROLL. Som databasägare gäller RLS inte alls — mäter man därifrån mäter man en
+-- fråga utan policy på och lär sig ingenting. `set role authenticated` + JWT-claims är det som gör
+-- mätningen verklig. Uppslagen (vilka testpersoner finns, hur många rader) körs medvetet UTAN RLS;
+-- mätningarna körs medvetet MED. Rad "0. kontroll" i utdatan bevisar vilket som gällde — säger den
+-- FEL är resten skräp.
+--
+-- FARLIGT? Nej: inget skrivs (begin…rollback, hjälpfunktion i pg_temp, temporär tabell), rollen och
+-- claimsen sätts med SET LOCAL och dör med transaktionen även om något kraschar mitt i, och utdatan
+-- är antal + millisekunder — ingen kunddata. Den reella kostnaden är CPU: proben scannar tabellen
+-- flera gånger och sista mätningen är långsam med flit. Kör den inte mitt i högtrafik.
+--
 -- Den enda punkten i fält/CRM-cutovern som ingen mätte innan go-live. `crm_work_orders_select_crew`
 -- (20260810_crm_work_order_crew_access.sql) anropar `is_user_on_work_order(auth.uid(), id)` — ett
 -- predikat som beror på RADEN och därför i värsta fall körs en gång per arbetsorder. Frågan filen
@@ -70,6 +86,8 @@ declare
   t0 timestamptz;
   n  bigint;
   elapsed numeric;
+  kor_som text;
+  uid_syns text;
 begin
   if p_uid = '' then
     persona := p_persona; prob := '(ingen testperson hittad)'; rader := null; ms := null;
@@ -78,6 +96,21 @@ begin
 
   perform set_config('role', 'authenticated', true);
   perform set_config('request.jwt.claims', json_build_object('sub', p_uid, 'role', 'authenticated')::text, true);
+
+  -- 0) Beviset att mätningen mäter något. Tar rollbytet inte — fel rollnamn, ändrad Supabase-uppsättning
+  --    — körs allt nedan som tabellägare, och då gäller RLS inte alls: siffrorna blir strålande och
+  --    betyder ingenting. En mätning man inte kan skilja från en no-op är ingen mätning, så läs den
+  --    här raden FÖRST och kasta resten om den säger FEL.
+  select current_user::text into kor_som;
+  select coalesce(auth.uid()::text, '(null)') into uid_syns;
+  persona := p_persona;
+  prob := format('0. kontroll — kör som %s, auth.uid() = %s', kor_som, uid_syns);
+  rader := null; ms := null;
+  bedomning := case
+    when kor_som = 'authenticated' and uid_syns = p_uid then 'OK — RLS gäller'
+    else 'FEL — allt nedan mäter en fråga utan policy'
+  end;
+  return next;
 
   -- 1) Listsidan: exakt vad listCrmWorkOrdersWithFilters begär (sida 1, 100 rader).
   t0 := clock_timestamp();
@@ -132,9 +165,15 @@ $fn$;
 -- Kontexten först, medan rollen fortfarande är privilegierad: annars räknas raderna genom RLS och
 -- säger något helt annat än "så här många arbetsordrar finns det".
 insert into probe_out
-select 0, 'kontext', 'antal arbetsordrar', count(*), null, 'INFO' from public.crm_work_orders
+select 0, 'kontext', 'antal arbetsordrar', count(*), null::numeric, 'INFO' from public.crm_work_orders
 union all
-select 0, 'kontext', 'antal ops_segments', count(*), null, 'INFO' from public.ops_segments;
+select 0, 'kontext', 'antal ops_segments', count(*), null::numeric, 'INFO' from public.ops_segments
+union all
+-- Är RLS avslaget på tabellen finns det ingen policy att mäta kostnaden för, och alla siffror nedan
+-- är fritt fall. (Ägaren kringgår RLS ändå — därför rollbytet — men är den AV kringgår ALLA den.)
+select 0, 'kontext', 'RLS på crm_work_orders', null::bigint, null::numeric,
+       case when relrowsecurity then 'PÅ' else 'AV — inget nedan betyder något' end
+from pg_class where oid = 'public.crm_work_orders'::regclass;
 
 insert into probe_out
 select 1, p.* from pg_temp.rls_probe('kontor (sälj/admin)', current_setting('probe.office_uid')) p;
