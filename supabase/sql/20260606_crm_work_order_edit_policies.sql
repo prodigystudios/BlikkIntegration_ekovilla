@@ -8,6 +8,13 @@
 --
 -- NOTE: the base tables were created outside this repo (dashboard). This migration
 -- starts documenting their access rules here; it is idempotent and safe to re-run.
+--
+-- ⚠️ SUPERSEDED 2026-08-11 för TIME ENTRIES — avsnittet nedan går inte längre att köra.
+-- `crm_work_order_time_entries` heter `crm_time_entries` sedan fas 4
+-- (supabase/sql/20260811_time_entries_reshape.sql), och dessa två policyer är ersatta av
+-- crm_time_entries_update_own / _delete_own i supabase/sql/20260811_time_entries_rls.sql. Körs
+-- avsnittet om får du "relation does not exist" — det är ofarligt men förvirrande, och rätt fil att
+-- läsa är RLS-filen ovan. KOMMENTAR-avsnittet längst ned gäller fortfarande.
 
 -- ── Time entries ──────────────────────────────────────────────────────────────
 alter table public.crm_work_order_time_entries enable row level security;

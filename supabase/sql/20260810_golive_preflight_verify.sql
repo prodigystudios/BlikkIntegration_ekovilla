@@ -31,7 +31,10 @@ required_tables(tbl, note) as (
     ('ops_segment_crew', 'ny planering'), ('ops_truck_crew', 'ny planering'),
     ('ops_truck_default_crew', 'ny planering'), ('ops_depots', 'ny planering'),
     ('ops_depot_deliveries', 'ny planering'),
-    ('crm_work_orders', 'arbetsorder'), ('crm_work_order_time_entries', 'arbetsorder'),
+    -- crm_time_entries hette crm_work_order_time_entries fram till fas 4
+    -- (20260811_time_entries_reshape.sql). Namnet uppdaterat här, annars rapporterar preflighten
+    -- BLOCKERARE för en tabell som bara bytt namn — ett falsklarm mitt i en go-live-kontroll.
+    ('crm_work_orders', 'arbetsorder'), ('crm_time_entries', 'arbetsorder'),
     ('crm_work_order_comments', 'arbetsorder'),
     ('permissions', 'behörigheter'), ('role_permissions', 'behörigheter'),
     ('planning_segments', 'gamla planeringen — får INTE tas bort än'),
@@ -69,9 +72,13 @@ column_checks as (
     case when exists (select 1 from information_schema.columns where table_schema='public' and table_name='crm_work_orders' and column_name='fortnox_order_number') then 'OK' else 'BLOCKERARE' end,
     'egenkontrollens ordersök + jobbfeedens referens'
   union all
-  select 2, 'Kolumn', 'crm_work_order_time_entries.blikk_time_report_id',
-    case when exists (select 1 from information_schema.columns where table_schema='public' and table_name='crm_work_order_time_entries' and column_name='blikk_time_report_id') then 'OK' else 'INFO' end,
-    'INFO före deploy — läggs till av 20260810_crm_time_entries_blikk_mirror.sql'
+  -- Kvarleva från den påbörjade Blikk-speglingen som ströks (koden och migrationen raderade i
+  -- 6ec41fd). Kolumnen ska ALDRIG finnas — fas 4 flyttar tiden till CRM i stället för att spegla den
+  -- till Blikk. Kontrollen står kvar som ett negativt orakel: dyker den upp har någon återuppväckt
+  -- en bro som medvetet aldrig byggdes.
+  select 2, 'Kolumn', 'crm_time_entries.blikk_time_report_id (ska INTE finnas)',
+    case when exists (select 1 from information_schema.columns where table_schema='public' and table_name='crm_time_entries' and column_name='blikk_time_report_id') then 'VARNING' else 'OK' end,
+    'speglingen till Blikk ströks — fas 4 flyttar tiden i stället'
 ),
 
 -- ── Required functions ──────────────────────────────────────────────────────
