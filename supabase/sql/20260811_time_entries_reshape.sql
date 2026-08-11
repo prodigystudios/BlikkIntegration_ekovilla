@@ -144,11 +144,17 @@ alter table public.crm_time_entries add constraint crm_time_entries_break_check 
 -- inmatning går genom det nya formuläret läggs det på, färdigskrivet:
 --
 --   alter table public.crm_time_entries add constraint crm_time_entries_clock_check check (
---     source <> 'crm' or (start_time is not null and end_time is not null and minutes_worked is not null)
+--     source <> 'crm' or kind = 'absence'
+--     or (start_time is not null and end_time is not null and minutes_worked is not null)
 --   ) not valid;
 --
--- Fram till dess är domänlagret (lib/domains/time) enda garanten för att nya rader har klockslag,
--- och rader utan hamnar i hinken `unclassified` — som löneexporten vägrar köra med.
+-- ⚠️ `kind = 'absence'` i undantaget är inte slarv: lönebyrån vill ha frånvaro i TIMMAR
+-- ("Frånvarotimmar" i hennes layout), inte som ett pass med start och slut. En halv dag VAB är fyra
+-- timmar, inte 08:00–12:00. Arbetstid däremot måste ha klockslag — hon härleder övertidsersättningen
+-- ur dem.
+--
+-- Fram till dess är domänlagret (lib/domains/time) enda garanten för att nya arbetsrader har
+-- klockslag.
 
 -- ── 7. hours härleds ur minuterna ────────────────────────────────────────────
 -- Klienten räknar timmarna i dag och servern litar på den (components/dashboard/TimeReportModal.tsx
