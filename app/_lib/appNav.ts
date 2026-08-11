@@ -29,11 +29,19 @@ export const APP_NAV_ITEMS: AppNavItem[] = [
   { href: '/mina-jobb', label: 'Mina jobb', roles: ['member', 'admin'] },
   { href: '/egenkontroll', label: 'Egenkontroll', roles: ['member', 'admin'] },
   { href: '/archive', label: 'Egenkontroller', roles: ['member', 'sales', 'admin'] },
-  // Två tidrapporter är live under cutovern, precis som de två planeringarna ovan: den nya skriver
-  // till CRM, den gamla till Blikk. Den gamla är märkt så ingen rapporterar fel av vana. Nya visas
-  // även för sales — beslutet är att ALLA anställda rapporterar tid i CRM, inte bara fältet.
-  { href: '/tid', label: 'Tidrapport', roles: ['member', 'sales', 'admin'] },
-  { href: '/tidrapport', label: 'Tidrapport (Blikk)', roles: ['member', 'admin'] },
+  // Två tidrapporter är live under cutovern, precis som de två planeringarna ovan: den gamla skriver
+  // till Blikk, den nya till CRM.
+  //
+  // ⚠️ DEN GAMLA BEHÅLLER NAMNET "Tidrapport" och rörs inte. Blikk är fortfarande lönens system of
+  // record, och den som av vana klickar på "Tidrapport" ska landa där hen alltid landat — annars
+  // flyttas folk från Blikk utan att någon beslutat det, och timmarna når aldrig lönekörningen.
+  // Att byta namn är i praktiken att kapa vägen, även om koden är orörd. Namnen växlar först vid
+  // cutovern (fas 4.6), på uttrycklig instruktion.
+  //
+  // Den nya är opt-in under piloten och visas även för sales — beslutet är att ALLA anställda ska
+  // rapportera i CRM när det väl är skarpt, inte bara fältet.
+  { href: '/tidrapport', label: 'Tidrapport', roles: ['member', 'admin'] },
+  { href: '/tid', label: 'Tidrapport (ny)', roles: ['member', 'sales', 'admin'] },
   { href: '/bestallning-klader', label: 'Beställ kläder', roles: ['member', 'admin'] },
   { href: '/material-kvalitet', label: 'Materialkvalitet', roles: ['member', 'sales', 'admin'] },
 
