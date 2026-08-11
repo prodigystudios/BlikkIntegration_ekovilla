@@ -25,6 +25,18 @@
 --
 -- Kör mätningen när systemet används som vanligt, och kör den TVÅ gånger — första körningen betalar
 -- disk-I/O, andra läser ur cachen. Läs den andra.
+--
+-- ── MÄTT 2026-08-11 (14 arbetsordrar, 25 segment) ──────────────────────────
+-- Inget problem: allt under 8 ms, RLS bekräftat påslagen och gällande.
+--
+-- MEN datamängden är för liten för att säga något om skalning, och det syns i siffrorna: mätning 3
+-- läser EN rad på 7,6 ms medan mätning 1 läser fjorton på 3,9 ms. Den inversionen betyder att allt
+-- man ser är fast overhead och första-anrops-cache, inte radarbete. Läs "OK" som "inget problem nu",
+-- aldrig som "skalar".
+--
+-- Skalningsfrågan avgörs därför av mätning 5 (grenordningen), inte av millisekunderna. Mät om när
+-- tabellen vuxit en storleksordning — vid några hundra ordrar börjar radkostnaden gå att se, och då
+-- säger siffrorna något på riktigt.
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- STEG 1 — skapa probfunktionen. Kör den här filen som den är.
@@ -46,6 +58,11 @@ declare
   kor_som  text;
   uid_syns text;
   plan_json json;
+  plan_txt  text;
+  filter_txt text;
+  pos_perm  int;
+  pos_crew  int;
+  max_synliga bigint;
 begin
   -- ── Kontext ────────────────────────────────────────────────────────────────
   -- Körs som anroparen, alltså utan RLS. Med RLS hade de här räknats genom policyn och svarat på
@@ -75,12 +92,34 @@ begin
    order by p.role::text, p.id
    limit 1;
 
-  -- En installatör som faktiskt står på en bil — annars mäter vi en tom besättningsgren.
-  v_field := coalesce(
-    (select dc.member_id from public.ops_truck_default_crew dc limit 1),
-    (select tc.member_id from public.ops_truck_crew tc limit 1),
-    (select sc.member_id from public.ops_segment_crew sc limit 1)
-  );
+  -- En installatör som faktiskt SER något. Första bästa raden ur standardbesättningen duger inte:
+  -- att stå på en bil betyder inte att bilen har ett CRM-jobb den här veckan, och en persona som
+  -- ser noll rader mäter ingenting (den varianten valde först en person med 0 jobb, och hela
+  -- fälthalvan blev nollor). Välj den som löser upp till flest arbetsordrar — då mäter vi den dyra
+  -- vägen med data i.
+  select c.member_id into v_field
+    from (
+      select member_id from public.ops_truck_default_crew
+      union
+      select member_id from public.ops_truck_crew
+      union
+      select member_id from public.ops_segment_crew
+    ) c
+   order by (select count(*) from public.crm_work_orders w
+              where public.is_user_on_work_order(c.member_id, w.id)) desc,
+            c.member_id
+   limit 1;
+
+  -- Ser den flitigaste besättningsmedlemmen noll jobb är det inte en prestandasiffra utan ett
+  -- innehållsfynd: ingen i fält når någon CRM-arbetsorder alls.
+  select count(*) into max_synliga
+    from public.crm_work_orders w
+   where v_field is not null and public.is_user_on_work_order(v_field, w.id);
+  persona := 'kontext'; prob := 'flest arbetsordrar en besättningsmedlem ser';
+  rader := max_synliga; ms := null;
+  bedomning := case when coalesce(max_synliga, 0) = 0
+                    then 'NOLL — ingen i fält når någon CRM-order' else 'INFO' end;
+  return next;
 
   for rec in
     select * from (values ('kontor (sälj/admin)', v_office), ('fält (besättning)', v_field)) as v(label, uid)
@@ -159,22 +198,37 @@ begin
     bedomning := 'INFO';
     return next;
 
-    -- 5) Svaret på själva frågan, direkt ur planen i stället för att gissa: står funktionen kvar som
-    --    radfilter på crm_work_orders utvärderas den per rad. För KONTORET betyder JA att
-    --    OR-kortslutningen inte räddar er och att siffrorna ovan är den kostnaden. För FÄLTET är JA
-    --    förväntat — besättningsgrenen är deras enda väg in.
+    -- 5) Frågan som timingen inte kan besvara på ett litet dataset: betalar kontoret besättnings-
+    --    grenen per rad? Att funktionen SYNS i planen räcker inte som svar — de två policyerna OR:as
+    --    ihop, och en OR kortsluter, så står behörighetsgrenen först anropas besättningsfunktionen
+    --    aldrig trots att den står där. (Den tidigare varianten mätte närvaro och rapporterade
+    --    utvärdering — två olika saker, och just de två vi försöker skilja på.)
+    --
+    --    Det som avgör är ORDNINGEN i filteruttrycket, och den står i planen. Kommer has_permission
+    --    först kortsluter kontoret på varje rad och besättningsgrenen kostar dem ingenting.
     execute '
       explain (analyze, format json)
       select * from public.crm_work_orders
       order by desired_installation_date asc nulls last, created_at desc
       limit 100' into plan_json;
-    prob := '5. plan — besättningsfiltret kvar som radfilter?';
-    rader := null;
+    plan_txt := plan_json::text;
+    pos_perm := strpos(plan_txt, 'has_permission');
+    pos_crew := strpos(plan_txt, 'is_user_on_work_order');
     ms := round((plan_json->0->>'Execution Time')::numeric, 1);
+    rader := null;
+    prob := '5. plan — vilken gren står först i filtret?';
     bedomning := case
-      when plan_json::text like '%is_user_on_work_order%' then 'JA — utvärderas per rad'
-      else 'NEJ — kortsluts av behörighetsgrenen'
+      when pos_crew = 0 then 'besättningsgrenen saknas i planen'
+      when pos_perm = 0 then 'ENDA GRENEN — inget att kortsluta mot (väntat i fält)'
+      when pos_perm < pos_crew then 'OK — behörighetsgrenen först, kortsluter per rad'
+      else 'DYRT — besättningsgrenen först, körs för varje rad'
     end;
+    return next;
+
+    -- 6) Filteruttrycket i klartext, så slutsatsen ovan går att granska i stället för att litas på.
+    filter_txt := substring(plan_txt from '"Filter":\s*"(.*?)"');
+    prob := '6. filteruttryck: ' || coalesce(left(filter_txt, 180), '(inget filter i planen)');
+    rader := null; ms := null; bedomning := 'INFO';
     return next;
 
     perform set_config('role', 'none', true);
