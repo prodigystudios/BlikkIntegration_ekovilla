@@ -1,4 +1,4 @@
--- CRM-arbetsorderlistan under besättnings-RLS:en — MÄTNING, inga ändringar sparas.
+-- CRM-arbetsorderlistan under besättnings-RLS:en — MÄTNING.
 --
 -- KORT: alla andra läsregler på crm_work_orders ger SAMMA svar för varje rad ("har du
 -- crm.workorder.read?") — databasen frågar en gång och är klar. Besättningsregeln ger OLIKA svar per
@@ -7,200 +7,199 @@
 --
 -- VARFÖR DEN BYTER ROLL. Som databasägare gäller RLS inte alls — mäter man därifrån mäter man en
 -- fråga utan policy på och lär sig ingenting. `set role authenticated` + JWT-claims är det som gör
--- mätningen verklig. Uppslagen (vilka testpersoner finns, hur många rader) körs medvetet UTAN RLS;
--- mätningarna körs medvetet MED. Rad "0. kontroll" i utdatan bevisar vilket som gällde — säger den
--- FEL är resten skräp.
+-- mätningen verklig. Rad "0. kontroll" i utdatan bevisar vilket som gällde: säger den FEL är resten
+-- skräp.
 --
--- FARLIGT? Nej: inget skrivs (begin…rollback, hjälpfunktion i pg_temp, temporär tabell), rollen och
--- claimsen sätts med SET LOCAL och dör med transaktionen även om något kraschar mitt i, och utdatan
--- är antal + millisekunder — ingen kunddata. Den reella kostnaden är CPU: proben scannar tabellen
--- flera gånger och sista mätningen är långsam med flit. Kör den inte mitt i högtrafik.
+-- ⚠️ VARFÖR ALLT LIGGER I EN FUNKTION — läs det här innan du "förenklar" filen:
+-- Supabase SQL-editorn kan lägga varje sats på en EGEN uppkoppling. Då finns ingen delad session:
+-- en temptabell från sats 1 är borta i sats 2 (det felet, `relation "probe_out" does not exist`,
+-- är hur den här filen upptäcktes), `begin`/`rollback` gör ingenting, och — värre — ett
+-- `set local role authenticated` i en sats når INTE nästa sats. Mätningen hade då körts som ägare,
+-- utan RLS, och gett låga siffror som ser utmärkta ut. Ett tyst fel, inte ett felmeddelande.
+-- Därför: rollbyte, mätning och avläsning sker inuti EN sats — funktionsanropet.
 --
--- Den enda punkten i fält/CRM-cutovern som ingen mätte innan go-live. `crm_work_orders_select_crew`
--- (20260810_crm_work_order_crew_access.sql) anropar `is_user_on_work_order(auth.uid(), id)` — ett
--- predikat som beror på RADEN och därför i värsta fall körs en gång per arbetsorder. Frågan filen
--- svarar på: kostar det något för kontoret, som läser hela listan?
+-- FARLIGT? Inget skrivs till någon tabell, utdatan är antal + millisekunder (ingen kunddata), och
+-- rollbytet sätts med SET LOCAL inuti funktionen så det dör när satsen är klar. Det enda som lämnas
+-- kvar är själva funktionen — därför steg 3. Den reella kostnaden är CPU: proben scannar tabellen
+-- flera gånger och mätning 4 är långsam med flit. Kör den inte mitt i högtrafik.
 --
--- VARFÖR DET ANTAGLIGEN ÄR BILLIGT — och varför det ändå måste mätas: policyerna är permissiva och
--- OR:as ihop. För en säljare/admin är `has_permission('crm.workorder.read')` sann, och en OR
--- kortsluter så fort en gren är sann — men PostgreSQL garanterar INTE i vilken ordning grenarna
--- utvärderas. Väljer planeraren besättningsgrenen först betalar kontoret full kostnad per rad.
--- Mätningen avgör vilket som faktiskt händer i er databas, med er datamängd.
---
--- VÄRST BELASTADE STÄLLET är inte listan utan chip-räknarna: getCrmWorkOrderFilterCounts kör SEX
--- `count(*)`-frågor per sidladdning (CRM_WORK_ORDER_BOARD_FILTERS), och en count har ingen LIMIT att
--- sluta tidigt på — varje rad måste igenom policyn. Därför mäts count_all separat och jämförs × 6.
---
--- KÖRS SOM EN TRANSAKTION SOM RULLAS TILLBAKA. Hjälpfunktionen skapas i pg_temp och existerar bara
--- under körningen; inga rader, policyer eller funktioner i public rörs. Kör hela filen på en gång.
---
--- Supabase SQL-editorn visar bara SISTA resultatet — därför samlas allt i en temptabell som sista
--- satsen läser. EXPLAIN-delen (avsnitt 2, längst ned) är avkommenterad och körs separat.
---
--- Kör mätningen när systemet används som vanligt. En helt kall databas ger missvisande siffror åt
--- båda håll: första körningen betalar disk-I/O, andra körningen läser allt ur cachen. Kör två
--- gånger och läs den andra.
+-- Kör mätningen när systemet används som vanligt, och kör den TVÅ gånger — första körningen betalar
+-- disk-I/O, andra läser ur cachen. Läs den andra.
 
-begin;
+-- ═══════════════════════════════════════════════════════════════════════════
+-- STEG 1 — skapa probfunktionen. Kör den här filen som den är.
+-- ═══════════════════════════════════════════════════════════════════════════
 
--- ── Uppsamling ───────────────────────────────────────────────────────────────
-create temp table probe_out (
-  sort      int,
-  persona   text,
-  prob      text,
-  rader     bigint,
-  ms        numeric,
-  bedomning text
-);
-
--- ── Testpersoner ─────────────────────────────────────────────────────────────
--- Väljs ut medan vi fortfarande är privilegierade (efter rollbytet går profiles inte att läsa).
--- Byt ut selecten mot en hårdkodad uuid om du vill mäta en specifik person.
-select set_config(
-  'probe.office_uid',
-  coalesce((select id::text from public.profiles where role::text in ('admin', 'sales') order by role::text, id limit 1), ''),
-  true
-);
--- En installatör som faktiskt står på en bil — annars mäter vi en tom besättningsgren.
-select set_config(
-  'probe.field_uid',
-  coalesce(
-    (select member_id::text from public.ops_truck_default_crew limit 1),
-    (select member_id::text from public.ops_truck_crew limit 1),
-    (select member_id::text from public.ops_segment_crew limit 1),
-    ''
-  ),
-  true
-);
-
--- ── Sonden ───────────────────────────────────────────────────────────────────
--- Byter roll till `authenticated` och sätter JWT-claims så auth.uid() svarar rätt, kör frågorna, och
--- återgår innan den returnerar. Utan rollbytet körs allt som tabellägare och RLS hoppas över helt —
--- då mäter vi ingenting. Rollen sätts med set_config(...,true) = SET LOCAL: den överlever inte
--- transaktionen även om något går sönder mitt i.
-create function pg_temp.rls_probe(p_persona text, p_uid text)
+create or replace function public.crm_rls_probe()
 returns table(persona text, prob text, rader bigint, ms numeric, bedomning text)
 language plpgsql
+volatile
+security invoker
 as $fn$
 declare
-  t0 timestamptz;
-  n  bigint;
-  elapsed numeric;
-  kor_som text;
+  v_office uuid;
+  v_field  uuid;
+  rec      record;
+  t0       timestamptz;
+  n        bigint;
+  elapsed  numeric;
+  kor_som  text;
   uid_syns text;
+  plan_json json;
 begin
-  if p_uid = '' then
-    persona := p_persona; prob := '(ingen testperson hittad)'; rader := null; ms := null;
-    bedomning := 'HOPPAD ÖVER'; return next; return;
-  end if;
+  -- ── Kontext ────────────────────────────────────────────────────────────────
+  -- Körs som anroparen, alltså utan RLS. Med RLS hade de här räknats genom policyn och svarat på
+  -- något helt annat än "så här många arbetsordrar finns det".
+  persona := 'kontext'; ms := null; bedomning := 'INFO';
 
-  perform set_config('role', 'authenticated', true);
-  perform set_config('request.jwt.claims', json_build_object('sub', p_uid, 'role', 'authenticated')::text, true);
+  select count(*) into n from public.crm_work_orders;
+  prob := 'antal arbetsordrar'; rader := n; return next;
 
-  -- 0) Beviset att mätningen mäter något. Tar rollbytet inte — fel rollnamn, ändrad Supabase-uppsättning
-  --    — körs allt nedan som tabellägare, och då gäller RLS inte alls: siffrorna blir strålande och
-  --    betyder ingenting. En mätning man inte kan skilja från en no-op är ingen mätning, så läs den
-  --    här raden FÖRST och kasta resten om den säger FEL.
-  select current_user::text into kor_som;
-  select coalesce(auth.uid()::text, '(null)') into uid_syns;
-  persona := p_persona;
-  prob := format('0. kontroll — kör som %s, auth.uid() = %s', kor_som, uid_syns);
-  rader := null; ms := null;
-  bedomning := case
-    when kor_som = 'authenticated' and uid_syns = p_uid then 'OK — RLS gäller'
-    else 'FEL — allt nedan mäter en fråga utan policy'
-  end;
+  select count(*) into n from public.ops_segments;
+  prob := 'antal ops_segments'; rader := n; return next;
+
+  -- Är RLS avslaget på tabellen finns ingen policy att mäta kostnaden för, och allt nedan är fritt
+  -- fall. (Ägaren kringgår RLS ändå — därför rollbytet — men är den AV kringgår ALLA den.)
+  prob := 'RLS på crm_work_orders'; rader := null;
+  select case when c.relrowsecurity then 'PÅ' else 'AV — inget nedan betyder något' end
+    into bedomning
+    from pg_class c where c.oid = 'public.crm_work_orders'::regclass;
   return next;
 
-  -- 1) Listsidan: exakt vad listCrmWorkOrdersWithFilters begär (sida 1, 100 rader).
-  t0 := clock_timestamp();
-  execute '
-    select count(*) from (
+  -- ── Testpersoner ───────────────────────────────────────────────────────────
+  -- Väljs ut innan rollbytet: efteråt går profiles inte att läsa. Byt mot en hårdkodad uuid om du
+  -- vill mäta en bestämd person.
+  select p.id into v_office
+    from public.profiles p
+   where p.role::text in ('admin', 'sales')
+   order by p.role::text, p.id
+   limit 1;
+
+  -- En installatör som faktiskt står på en bil — annars mäter vi en tom besättningsgren.
+  v_field := coalesce(
+    (select dc.member_id from public.ops_truck_default_crew dc limit 1),
+    (select tc.member_id from public.ops_truck_crew tc limit 1),
+    (select sc.member_id from public.ops_segment_crew sc limit 1)
+  );
+
+  for rec in
+    select * from (values ('kontor (sälj/admin)', v_office), ('fält (besättning)', v_field)) as v(label, uid)
+  loop
+    persona := rec.label;
+
+    if rec.uid is null then
+      prob := '(ingen testperson hittad)'; rader := null; ms := null; bedomning := 'HOPPAD ÖVER';
+      return next;
+      continue;
+    end if;
+
+    perform set_config('role', 'authenticated', true);
+    perform set_config('request.jwt.claims',
+                       json_build_object('sub', rec.uid::text, 'role', 'authenticated')::text, true);
+
+    -- 0) Beviset att mätningen mäter något. Tar rollbytet inte körs allt nedan som tabellägare, och
+    --    då gäller ingen policy: siffrorna blir strålande och betyder ingenting. En mätning man inte
+    --    kan skilja från en no-op är ingen mätning — läs den här raden FÖRST.
+    kor_som  := current_user::text;
+    uid_syns := coalesce(auth.uid()::text, '(null)');
+    prob := format('0. kontroll — kör som %s, auth.uid() = %s', kor_som, uid_syns);
+    rader := null; ms := null;
+    bedomning := case
+      when kor_som = 'authenticated' and uid_syns = rec.uid::text then 'OK — RLS gäller'
+      else 'FEL — allt nedan mäter en fråga utan policy'
+    end;
+    return next;
+
+    -- Alla mätfrågor körs med EXECUTE, alltså dynamiskt. Statisk SQL i plpgsql cachar planen, och en
+    -- plan gjord för en roll säger ingenting om nästa — vi vill planera om varje gång.
+
+    -- 1) Listsidan: exakt vad listCrmWorkOrdersWithFilters begär (sida 1, 100 rader).
+    t0 := clock_timestamp();
+    execute '
+      select count(*) from (
+        select * from public.crm_work_orders
+        order by desired_installation_date asc nulls last, created_at desc
+        limit 100
+      ) t' into n;
+    elapsed := round((extract(epoch from clock_timestamp() - t0) * 1000)::numeric, 1);
+    prob := '1. listsida (100 rader)'; rader := n; ms := elapsed;
+    bedomning := case when elapsed < 150 then 'OK' when elapsed < 500 then 'VARNING' else 'ÅTGÄRDA' end;
+    return next;
+
+    -- 2) En chip-räknare. getCrmWorkOrderFilterCounts kör SEX sådana per sidladdning, och en count
+    --    har ingen LIMIT att sluta tidigt på — varje rad måste igenom policyn. Värsta stället.
+    t0 := clock_timestamp();
+    execute 'select count(*) from public.crm_work_orders' into n;
+    elapsed := round((extract(epoch from clock_timestamp() - t0) * 1000)::numeric, 1);
+    prob := '2. count_all (sidan kör 6 st → ms × 6)'; rader := n; ms := elapsed;
+    bedomning := case when elapsed * 6 < 150 then 'OK' when elapsed * 6 < 500 then 'VARNING' else 'ÅTGÄRDA' end;
+    return next;
+
+    -- 3) Enskild order — fältvyns väg, den som måste vara snabb för besättningen.
+    t0 := clock_timestamp();
+    execute '
+      select count(*) from (
+        select * from public.crm_work_orders
+        order by created_at desc limit 1
+      ) t' into n;
+    elapsed := round((extract(epoch from clock_timestamp() - t0) * 1000)::numeric, 1);
+    prob := '3. senaste ordern (1 rad)'; rader := n; ms := elapsed;
+    bedomning := case when elapsed < 50 then 'OK' when elapsed < 200 then 'VARNING' else 'ÅTGÄRDA' end;
+    return next;
+
+    -- 4) Taket: tvinga besättningsgrenen att köras för VARJE rad, utan OR att kortsluta på.
+    --    Ligger den nära (1) betyder det att kontoret redan betalar full kostnad.
+    t0 := clock_timestamp();
+    execute format(
+      'select count(*) from public.crm_work_orders where public.is_user_on_work_order(%L::uuid, id)',
+      rec.uid
+    ) into n;
+    elapsed := round((extract(epoch from clock_timestamp() - t0) * 1000)::numeric, 1);
+    prob := '4. is_user_on_work_order per rad (tak)'; rader := n; ms := elapsed;
+    bedomning := 'INFO';
+    return next;
+
+    -- 5) Svaret på själva frågan, direkt ur planen i stället för att gissa: står funktionen kvar som
+    --    radfilter på crm_work_orders utvärderas den per rad. För KONTORET betyder JA att
+    --    OR-kortslutningen inte räddar er och att siffrorna ovan är den kostnaden. För FÄLTET är JA
+    --    förväntat — besättningsgrenen är deras enda väg in.
+    execute '
+      explain (analyze, format json)
       select * from public.crm_work_orders
       order by desired_installation_date asc nulls last, created_at desc
-      limit 100
-    ) t' into n;
-  elapsed := round((extract(epoch from clock_timestamp() - t0) * 1000)::numeric, 1);
-  persona := p_persona; prob := '1. listsida (100 rader)'; rader := n; ms := elapsed;
-  bedomning := case when elapsed < 150 then 'OK' when elapsed < 500 then 'VARNING' else 'ÅTGÄRDA' end;
-  return next;
+      limit 100' into plan_json;
+    prob := '5. plan — besättningsfiltret kvar som radfilter?';
+    rader := null;
+    ms := round((plan_json->0->>'Execution Time')::numeric, 1);
+    bedomning := case
+      when plan_json::text like '%is_user_on_work_order%' then 'JA — utvärderas per rad'
+      else 'NEJ — kortsluts av behörighetsgrenen'
+    end;
+    return next;
 
-  -- 2) En chip-räknare. Sidan kör SEX sådana, så tröskeln jämförs mot ms × 6.
-  t0 := clock_timestamp();
-  execute 'select count(*) from public.crm_work_orders' into n;
-  elapsed := round((extract(epoch from clock_timestamp() - t0) * 1000)::numeric, 1);
-  persona := p_persona; prob := '2. count_all (sidan kör 6 st → ms × 6)'; rader := n; ms := elapsed;
-  bedomning := case when elapsed * 6 < 150 then 'OK' when elapsed * 6 < 500 then 'VARNING' else 'ÅTGÄRDA' end;
-  return next;
-
-  -- 3) Enskild order — fältvyns väg, den som måste vara snabb för besättningen.
-  t0 := clock_timestamp();
-  execute '
-    select count(*) from (
-      select * from public.crm_work_orders
-      order by created_at desc limit 1
-    ) t' into n;
-  elapsed := round((extract(epoch from clock_timestamp() - t0) * 1000)::numeric, 1);
-  persona := p_persona; prob := '3. senaste ordern (1 rad)'; rader := n; ms := elapsed;
-  bedomning := case when elapsed < 50 then 'OK' when elapsed < 200 then 'VARNING' else 'ÅTGÄRDA' end;
-  return next;
-
-  -- 4) Taket: tvinga besättningsgrenen att köras för VARJE rad, utan OR att kortsluta på.
-  --    Ligger den nära (1) betyder det att kontoret redan betalar full kostnad — då är det
-  --    ordningen på OR-grenarna som räddar er idag, och det är inget att förlita sig på.
-  t0 := clock_timestamp();
-  execute format(
-    'select count(*) from public.crm_work_orders where public.is_user_on_work_order(%L::uuid, id)', p_uid
-  ) into n;
-  elapsed := round((extract(epoch from clock_timestamp() - t0) * 1000)::numeric, 1);
-  persona := p_persona; prob := '4. is_user_on_work_order per rad (tak)'; rader := n; ms := elapsed;
-  bedomning := 'INFO';
-  return next;
-
-  perform set_config('role', 'none', true);
+    perform set_config('role', 'none', true);
+  end loop;
 end;
 $fn$;
 
--- ── Körning ──────────────────────────────────────────────────────────────────
--- Kontexten först, medan rollen fortfarande är privilegierad: annars räknas raderna genom RLS och
--- säger något helt annat än "så här många arbetsordrar finns det".
-insert into probe_out
-select 0, 'kontext', 'antal arbetsordrar', count(*), null::numeric, 'INFO' from public.crm_work_orders
-union all
-select 0, 'kontext', 'antal ops_segments', count(*), null::numeric, 'INFO' from public.ops_segments
-union all
--- Är RLS avslaget på tabellen finns det ingen policy att mäta kostnaden för, och alla siffror nedan
--- är fritt fall. (Ägaren kringgår RLS ändå — därför rollbytet — men är den AV kringgår ALLA den.)
-select 0, 'kontext', 'RLS på crm_work_orders', null::bigint, null::numeric,
-       case when relrowsecurity then 'PÅ' else 'AV — inget nedan betyder något' end
-from pg_class where oid = 'public.crm_work_orders'::regclass;
+-- Diagnostik, inte en app-funktion: den impersonerar och ska bara kunna köras av den som redan är
+-- privilegierad. authenticated ska aldrig komma åt den.
+revoke all on function public.crm_rls_probe() from public;
 
-insert into probe_out
-select 1, p.* from pg_temp.rls_probe('kontor (sälj/admin)', current_setting('probe.office_uid')) p;
-
-insert into probe_out
-select 2, p.* from pg_temp.rls_probe('fält (besättning)', current_setting('probe.field_uid')) p;
-
-select persona, prob, rader, ms, bedomning from probe_out order by sort, prob;
-
-rollback;
-
--- ─────────────────────────────────────────────────────────────────────────────
--- AVSNITT 2 — kör separat när en siffra ovan ser fel ut
+-- ═══════════════════════════════════════════════════════════════════════════
+-- STEG 2 — kör mätningen. Markera raden och kör den ENSAM (annars visar editorn
+--          resultatet av nästa sats i stället).
+-- ═══════════════════════════════════════════════════════════════════════════
 --
--- Visar planen. Leta efter `Filter: is_user_on_work_order(...)` på crm_work_orders: står funktionen
--- kvar som radfilter körs den per rad, och `Rows Removed by Filter` visar hur många gånger.
+--   select * from public.crm_rls_probe();
 --
---   begin;
---   set local role authenticated;
---   select set_config('request.jwt.claims', '{"sub":"<uuid-på-en-säljare>","role":"authenticated"}', true);
---   explain (analyze, buffers, verbose)
---     select * from public.crm_work_orders
---     order by desired_installation_date asc nulls last, created_at desc
---     limit 100;
---   rollback;
+-- ═══════════════════════════════════════════════════════════════════════════
+-- STEG 3 — städa när du är klar. Funktionen behöver inte ligga kvar.
+-- ═══════════════════════════════════════════════════════════════════════════
 --
--- ─────────────────────────────────────────────────────────────────────────────
+--   drop function public.crm_rls_probe();
+--
+-- ═══════════════════════════════════════════════════════════════════════════
 -- OM DET ÄR FÖR LÅNGSAMT — åtgärden, INTE applicerad
 --
 -- Indexen finns redan (ops_segments(work_order_id), ops_segment_crew(segment_id),
