@@ -16,7 +16,10 @@
 -- nästa gång någon öppnar det. Ett lagrat belopp är fruset i tiden, vilket är vad ett löneunderlag
 -- ska vara. Ingen sats finns i koden i dag.
 --
--- DEPLOY-ORDNING: efter 20260811_time_permissions.sql (RLS anropar has_permission). Idempotent.
+-- DEPLOY-ORDNING: efter BÅDE 20260811_time_permissions.sql (RLS anropar has_permission) OCH
+-- 20260811_time_reference_tables.sql — triggern nedan använder set_timestamp_time_reference() som
+-- skapas där. Följer man bara den första avbryts skriptet mitt i: tabellen finns, RLS är påslagen,
+-- men inga policyer hinner skapas, vilket ger en tabell ingen kan läsa. Idempotent.
 
 create table if not exists public.crm_time_compensations (
   id          uuid primary key default gen_random_uuid(),

@@ -116,3 +116,25 @@ describe('buildTimeEntryRow — gemensamt', () => {
     expect(buildTimeEntryRow({ ...work(), ...({ user_id: 'någon-annan' } as any) }, ANNA).row!.user_id).toBe(ANNA);
   });
 });
+
+// Regression från kodgranskningen: ett positivt timtal kan avrunda till noll minuter. Databasens
+// CHECK (minutes_worked > 0) hade avvisat det som ett rått 500 i stället för ett läsbart fel.
+describe('buildTimeEntryRow — avrundning', () => {
+  it('avvisar frånvaro som avrundar till noll minuter', () => {
+    const built = buildTimeEntryRow(
+      { kind: 'absence', work_date: '2026-08-11', absence_type_id: 'vab', hours: 0.004 },
+      'anna-uuid',
+    );
+    expect(built.error).toBe('Frånvaron måste vara minst en minut');
+    expect(built.row).toBeNull();
+  });
+
+  it('släpper igenom en minut', () => {
+    const built = buildTimeEntryRow(
+      { kind: 'absence', work_date: '2026-08-11', absence_type_id: 'vab', hours: 1 / 60 },
+      'anna-uuid',
+    );
+    expect(built.error).toBeNull();
+    expect(built.row!.minutes_worked).toBe(1);
+  });
+});

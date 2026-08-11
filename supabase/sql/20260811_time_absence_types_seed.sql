@@ -4,9 +4,12 @@
 -- inte är: det är de här nio raderna hon vill kunna se i underlaget. Seedas i stället för att
 -- importeras.
 --
--- `code` får ett unikt index så seeden går att köra om utan dubbletter. Namnen är inte unika i
--- tabellen (och ska inte vara det — admin kan behöva två varianter av samma sak), så koden är det
--- som gör raden identifierbar.
+-- ⚠️ INGET UNIKT INDEX PÅ `code` — en tidigare version hade det, och det var fel.
+-- Blikk-importen (lib/domains/time/blikkImport.ts) skriver också `code`, ofiltrerat. Ett unikt index
+-- hade betytt att en enda kolliderande kod från Blikk avbryter HELA importen av alla tre listorna,
+-- och att indexet inte ens går att skapa om dubbletter redan finns — vilket motsäger att filen är
+-- idempotent. En seed ska inte lägga ett globalt villkor som en annan datakälla måste råka respektera.
+-- Idempotensen löses i stället med `where not exists`, som bara rör den här filens egna rader.
 --
 -- `payroll_code` lämnas TOM med flit. Det är byråns egen benämning på löneart, och ingen i det här
 -- repot vet vad den ska vara — admin fyller i den i Admin → Tidkoder, där en gul ruta räknar hur
@@ -19,19 +22,25 @@
 --
 -- DEPLOY-ORDNING: efter 20260811_time_reference_tables.sql. Idempotent.
 
-create unique index if not exists crm_absence_types_code_uniq on public.crm_absence_types (code);
+-- Städar bort indexet från den tidigare versionen av den här filen, för den som redan kört den.
+drop index if exists public.crm_absence_types_code_uniq;
 
-insert into public.crm_absence_types (code, name, sort_index) values
-  ('SEM',  'Semester',                        10),
-  ('SJK',  'Sjukfrånvaro',                    20),
-  ('VAB',  'VAB',                             30),
-  ('FLD',  'Föräldraledighet',                40),
-  ('TIO',  '10-dagar vid barns födelse',      50),
-  ('TJL',  'Tjänstledighet',                  60),
+insert into public.crm_absence_types (code, name, sort_index)
+select v.code, v.name, v.sort_index
+from (values
+  ('SEM',  'Semester',                          10),
+  ('SJK',  'Sjukfrånvaro',                      20),
+  ('VAB',  'VAB',                               30),
+  ('FLD',  'Föräldraledighet',                  40),
+  ('TIO',  '10-dagar vid barns födelse',        50),
+  ('TJL',  'Tjänstledighet',                    60),
   ('ATF',  'Uttag ATF (arbetstidsförkortning)', 70),
-  ('KOMP', 'Uttag komp',                      80),
-  ('PERM', 'Permission (betald ledighet)',    90)
-on conflict (code) do nothing;
+  ('KOMP', 'Uttag komp',                        80),
+  ('PERM', 'Permission (betald ledighet)',      90)
+) as v(code, name, sort_index)
+where not exists (
+  select 1 from public.crm_absence_types existing where existing.code = v.code
+);
 
 -- ── Verifiering ──────────────────────────────────────────────────────────────
 -- Nio rader, alla aktiva, ingen med lönesort än:

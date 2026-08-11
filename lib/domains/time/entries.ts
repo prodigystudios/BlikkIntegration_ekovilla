@@ -99,6 +99,9 @@ export function buildTimeEntryRow(input: TimeEntryInput, userId: string): BuiltT
     const hours = Number(input.hours ?? 0);
     if (!Number.isFinite(hours) || hours <= 0) return { row: null, error: 'Ange antal frånvarotimmar' };
     minutes = Math.round(hours * 60);
+    // Ett positivt timtal kan ändå avrunda till noll minuter (0,004 h). Databasens CHECK
+    // (minutes_worked > 0) skulle avvisa det som ett rått 500 — säg det begripligt i stället.
+    if (minutes <= 0) return { row: null, error: 'Frånvaron måste vara minst en minut' };
   } else {
     if (!input.start_time || !input.end_time) return { row: null, error: 'Start- och sluttid krävs' };
     minutes = workedMinutes({

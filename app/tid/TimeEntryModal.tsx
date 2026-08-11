@@ -37,6 +37,8 @@ export type EditableEntry = {
   minutes_worked: number | null;
   time_code_id: string | null;
   note: string | null;
+  /** Etiketten för raden jobb, så en redigerad rad går att visa även om schemat ändrats sedan dess. */
+  work_order_label?: string | null;
 };
 
 type MyJob = { work_order_id: string; order_number: string | null; project_name: string | null; customer: string | null };
@@ -97,11 +99,9 @@ export default function TimeEntryModal({
     (async () => {
       const { data, error: rpcError } = await supabase.rpc('get_my_crm_jobs', { start_date: date, end_date: date });
       if (cancelled) return;
-      if (rpcError) {
-        setJobs([]);
-      } else {
+      const unique: MyJob[] = [];
+      if (!rpcError) {
         const seen = new Set<string>();
-        const unique: MyJob[] = [];
         for (const row of (data ?? []) as any[]) {
           if (!row.work_order_id || seen.has(row.work_order_id)) continue;
           seen.add(row.work_order_id);
@@ -112,11 +112,31 @@ export default function TimeEntryModal({
             customer: row.customer,
           });
         }
-        setJobs(unique);
-        // Ett enda jobb den dagen är det överlägset vanligaste — välj det, så blir en normal
-        // dagrapport tre fält och en knapp.
-        if (!entry && unique.length === 1) setWorkOrderId(unique[0].work_order_id);
       }
+
+      // Vid redigering kan schemat ha ändrats sedan raden skrevs, så radens eget jobb saknas i
+      // dagens lista. Lägg till det i stället för att tappa det — annars går en gammal rad inte att
+      // rätta utan att först byta jobb.
+      if (entry?.work_order_id && !unique.some((job) => job.work_order_id === entry.work_order_id)) {
+        unique.push({
+          work_order_id: entry.work_order_id,
+          order_number: null,
+          project_name: entry.work_order_label || 'Valt jobb',
+          customer: null,
+        });
+      }
+
+      setJobs(unique);
+
+      // ⚠️ Nollställ valet om det inte längre finns i listan. Utan det behåller formuläret jobbet
+      // från FÖREGÅENDE datum när man byter dag: rutan säger "inga jobb schemalagda" medan Spara
+      // ändå postar gårdagens arbetsorder. Fel jobb på lönen och på jobbkalkylen.
+      setWorkOrderId((current) => (unique.some((job) => job.work_order_id === current) ? current : ''));
+
+      // Ett enda jobb den dagen är det överlägset vanligaste — välj det, så blir en normal
+      // dagrapport tre fält och en knapp.
+      if (unique.length === 1) setWorkOrderId(unique[0].work_order_id);
+
       setJobsLoading(false);
     })();
     return () => { cancelled = true; };

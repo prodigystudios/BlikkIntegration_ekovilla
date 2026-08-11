@@ -6,6 +6,7 @@ import Input from '@/components/ui/Input';
 import { crm } from '@/app/crm/lib/crmTokens';
 import { cn } from '@/lib/shared/cn';
 import { minutesToHours } from '@/lib/domains/time/hours';
+import { parseDecimal } from '@/lib/shared/number';
 import { addDays, buildWeekDays, fmtISO, isoWeek, startOfWeek } from '@/app/crm/planering/planningDates';
 import { COMPENSATION_KINDS, COMPENSATION_LABELS, COMPENSATION_UNITS, summarizeCompensations, type CompensationItem, type CompensationKind } from '@/lib/domains/time/compensations';
 import TimeEntryModal, { type EditableEntry, type ReferenceData } from './TimeEntryModal';
@@ -82,7 +83,12 @@ export default function TidClient() {
   const [editing, setEditing] = React.useState<EditableEntry | null>(null);
   const [busyId, setBusyId] = React.useState<string | null>(null);
 
+  // Kapplöpningsvakt: klickar man snabbt genom veckorna kan ett tidigare svar komma sist och rita
+  // fel veckas rader. Bara den senaste hämtningen får skriva.
+  const loadSeq = React.useRef(0);
+
   const load = React.useCallback(async () => {
+    const seq = ++loadSeq.current;
     setError(null);
     try {
       const [entriesRes, compsRes, refRes] = await Promise.all([
@@ -95,14 +101,15 @@ export default function TidClient() {
         compsRes.json().catch(() => ({})),
         refRes.json().catch(() => ({})),
       ]);
+      if (seq !== loadSeq.current) return;
       if (!entriesRes.ok || !entriesJson.ok) throw new Error(entriesJson?.error || 'Kunde inte hämta tidrader');
       setEntries(entriesJson.data.items || []);
       if (compsRes.ok && compsJson.ok) setCompensations(compsJson.data.items || []);
       if (refRes.ok && refJson.ok) setReference(refJson.data);
     } catch (e) {
-      setError((e as Error).message);
+      if (seq === loadSeq.current) setError((e as Error).message);
     } finally {
-      setLoading(false);
+      if (seq === loadSeq.current) setLoading(false);
     }
   }, [fetchRange]);
 
@@ -152,6 +159,10 @@ export default function TidClient() {
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.ok) { setError(json?.error || 'Kunde inte ta bort raden'); return; }
       await load();
+    } catch {
+      // Utan den här försvann ett nätverksfel tyst: raden låg kvar och användaren fick ingen
+      // förklaring till varför "Ta bort" inte gjorde något.
+      setError('Kunde inte ta bort raden — kontrollera uppkopplingen');
     } finally {
       setBusyId(null);
     }
@@ -268,7 +279,7 @@ export default function TidClient() {
                       ) : null}
                       {entry.note ? <span className="text-slate-400">{entry.note}</span> : null}
                       <span className="ml-auto flex gap-1">
-                        <button type="button" onClick={() => { setEditing(entry); setModalDate(entry.work_date); }} className="px-1 text-sm text-slate-500 underline">
+                        <button type="button" onClick={() => { setEditing({ ...entry, work_order_label: entryLabel(entry) }); setModalDate(entry.work_date); }} className="px-1 text-sm text-slate-500 underline">
                           Ändra
                         </button>
                         <button
@@ -293,6 +304,9 @@ export default function TidClient() {
         items={compensations}
         totals={compensationTotals}
         monthLabel={`${MONTHS[monthAnchor.month]} ${monthAnchor.year}`}
+        monthStart={fetchRange.monthStart}
+        monthEnd={fetchRange.monthEnd}
+        todayIso={todayIso}
         onChanged={load}
         onError={setError}
       />
@@ -314,24 +328,39 @@ export default function TidClient() {
 // ett arbetspass — ett utlägg kan finnas en dag man inte jobbat. Visas per MÅNAD, till skillnad från
 // tiden ovan: de är enstaka poster man går igenom när perioden ska lämnas in, inte en daglig syssla.
 function CompensationSection({
-  items, totals, monthLabel, onChanged, onError,
+  items, totals, monthLabel, monthStart, monthEnd, todayIso, onChanged, onError,
 }: {
   items: CompensationItem[];
   totals: ReturnType<typeof summarizeCompensations>;
   monthLabel: string;
+  monthStart: string;
+  monthEnd: string;
+  todayIso: string;
   onChanged: () => Promise<void> | void;
   onError: (message: string) => void;
 }) {
   const [kind, setKind] = React.useState<CompensationKind>('travel');
-  const [date, setDate] = React.useState(new Date().toISOString().slice(0, 10));
+  // Förifyllt datum måste ligga i den månad listan visar, annars sparas posten och FÖRSVINNER
+  // direkt ur vyn — vilket bjuder in till att lägga in den en gång till. Står man i en annan månad
+  // än dagens (vilket sker av sig självt när veckan börjar i föregående månad) används månadens
+  // första dag. fmtISO och inte toISOString: den senare är UTC och ger fel dag efter midnatt.
+  const defaultDate = todayIso >= monthStart && todayIso <= monthEnd ? todayIso : monthStart;
+  const [date, setDate] = React.useState(defaultDate);
+  React.useEffect(() => { setDate(defaultDate); }, [defaultDate]);
+
   const [quantity, setQuantity] = React.useState('');
   const [amount, setAmount] = React.useState('');
   const [note, setNote] = React.useState('');
   const [saving, setSaving] = React.useState(false);
 
   const unit = COMPENSATION_UNITS[kind];
+  // parseDecimal (lib/shared/number.ts) tål både "1 250" och "1250,50". Number(x.replace(',','.'))
+  // ger NaN på tusentalsmellanslag, och med `|| 0` hade det tyst sparats som 0 kr.
+  const parsedAmount = parseDecimal(amount, NaN);
+  const amountValid = Number.isFinite(parsedAmount) && parsedAmount > 0;
 
   async function add() {
+    if (!amountValid) { onError('Ange ett belopp i kronor'); return; }
     setSaving(true);
     try {
       const res = await fetch('/api/time/compensations', {
@@ -340,9 +369,8 @@ function CompensationSection({
         body: JSON.stringify({
           entry_date: date,
           kind,
-          // Svenskt decimalkomma är vad folk skriver — parsas här så servern får en punkt.
-          quantity: unit ? Number(quantity.replace(',', '.')) || null : null,
-          amount: Number(amount.replace(',', '.')) || 0,
+          quantity: unit ? (parseDecimal(quantity, NaN) || null) : null,
+          amount: parsedAmount,
           note: note.trim() || null,
         }),
       });
@@ -350,16 +378,22 @@ function CompensationSection({
       if (!res.ok || !json.ok) { onError(json?.error || 'Kunde inte spara posten'); return; }
       setQuantity(''); setAmount(''); setNote('');
       await onChanged();
+    } catch {
+      onError('Kunde inte spara posten — kontrollera uppkopplingen');
     } finally {
       setSaving(false);
     }
   }
 
   async function remove(id: string) {
-    const res = await fetch(`/api/time/compensations/${id}`, { method: 'DELETE' });
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok || !json.ok) { onError(json?.error || 'Kunde inte ta bort posten'); return; }
-    await onChanged();
+    try {
+      const res = await fetch(`/api/time/compensations/${id}`, { method: 'DELETE' });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.ok) { onError(json?.error || 'Kunde inte ta bort posten'); return; }
+      await onChanged();
+    } catch {
+      onError('Kunde inte ta bort posten — kontrollera uppkopplingen');
+    }
   }
 
   return (
@@ -446,7 +480,7 @@ function CompensationSection({
         <button
           type="button"
           onClick={() => void add()}
-          disabled={saving || !amount.trim()}
+          disabled={saving || !amountValid}
           className="rounded-lg border border-solid border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:border-slate-400 disabled:cursor-not-allowed disabled:opacity-60"
         >
           Lägg till

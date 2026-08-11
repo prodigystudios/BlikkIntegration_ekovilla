@@ -81,11 +81,27 @@ create policy crm_time_entries_insert on public.crm_time_entries
 
 -- ── UPDATE / DELETE ──────────────────────────────────────────────────────────
 -- Bara sin egen rad. Se punkt 3 i huvudet — det är en åtstramning, med flit.
--- WITH CHECK på UPDATE hindrar dessutom att en rad flyttas till någon annan.
+--
+-- ⚠️ WITH CHECK SPEGLAR INSERT-VILLKORET, inte bara ägarskapet. Med enbart `user_id = auth.uid()`
+-- gick åtkomstkontrollen på arbetsordern att kringgå: man skapar en rad på ett jobb man når och
+-- flyttar den sedan med en PATCH till vilken arbetsorder som helst. Tid hade då kunnat bokföras på
+-- ett jobb man aldrig varit på — fel jobbkalkyl, och insyn i vilka ordrar som finns. Villkoret
+-- måste därför gälla vid varje skrivning, inte bara den första.
 create policy crm_time_entries_update_own on public.crm_time_entries
   for update to authenticated
   using (user_id = auth.uid())
-  with check (user_id = auth.uid());
+  with check (
+    user_id = auth.uid()
+    and (
+      work_order_id is null
+      or exists (
+        select 1 from public.crm_work_orders w
+        where w.id = crm_time_entries.work_order_id and w.assigned_to = auth.uid()
+      )
+      or public.is_user_on_work_order(auth.uid(), work_order_id)
+      or public.has_permission('crm.workorder.read')
+    )
+  );
 
 create policy crm_time_entries_delete_own on public.crm_time_entries
   for delete to authenticated
