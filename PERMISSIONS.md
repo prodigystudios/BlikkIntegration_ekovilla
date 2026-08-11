@@ -83,6 +83,17 @@ caught at compile time).
 **Meta** (back the legacy `requireCrmUser/Writer/Admin` guards 1:1): `crm.access` (read),
 `crm.write` (write), `crm.admin`.
 
+**Time & payroll** (fas 4, seeded in `20260811_time_permissions.sql`): `time.entry.write`,
+`time.entry.read.all`, `time.approve`, `time.payroll.read`, `time.reference.manage`.
+
+> Deliberately **not** `crm.*`. Time is company-wide — every employee reports it, including roles
+> with no CRM access at all. A time key inside the CRM namespace would inherit the `crm.access` /
+> `crm.write` meta guards and quietly lock installers out of their own hours. A unit test asserts
+> the namespace stays separate.
+
+**Planning** (Wave 7, seeded in `20260611_planning_permissions.sql`): `planning.schedule.read` /
+`planning.schedule.write`, `planning.truck.manage`, `planning.depot.manage`.
+
 ---
 
 ## Role seed
@@ -101,16 +112,24 @@ The seed reproduces the pre-migration role behavior exactly. (Parity is asserted
 | meta `crm.access` | – | ✓ | ✓ | ✓ |
 | meta `crm.write` | – | ✓ | – | ✓ |
 | meta `crm.admin` | – | – | – | ✓ |
+| `time.entry.write` | **✓** | **✓** | – | ✓ |
+| `time.entry.read.all` / `time.approve` / `time.payroll.read` / `time.reference.manage` | – | – | – | ✓ |
 
 **Asymmetries to remember:** `crm.routingrule.read` excludes konsult (its RLS SELECT did too);
 `crm.aiprospect.*` is admin-only; `member` gets no CRM keys (installers reach their own work
 orders via the `assigned_to` ownership branch, not via a role/permission).
 
+**`time.entry.write` is the first key `member` has ever held**, and the first that isn't about the
+CRM at all — every employee reports their own time. `konsult` gets nothing here: they are external
+and time is personal data. Approval sits on `admin` alone; if a supervisor (who is a `member`) ever
+needs it, grant the override rather than inventing a role:
+`select public.set_user_permission('<uuid>', 'time.approve', 'grant');`
+
 ---
 
 ## How the layers use it
 
-### App layer (`lib/auth/permissions.ts` + `app/api/crm/_shared.ts`)
+### App layer (`lib/auth/permissions.ts` + `lib/auth/guards.ts`)
 
 - `getEffectivePermissions()` calls `rpc('effective_permissions')`, **cached per request**
   (React `cache()`) so all guards in one request share one round-trip. **Fails closed** — on
@@ -121,6 +140,15 @@ orders via the `assigned_to` ownership branch, not via a role/permission).
 - The legacy guards are thin wrappers: `requireCrmUser → requirePermission('crm.access')`,
   `requireCrmWriter → 'crm.write'`, `requireCrmAdmin → 'crm.admin'`. Most routes still call
   these; the hot resource/Fortnox routes call `requirePermission` with an explicit key.
+- `requirePermission` / `requireSignedInUser` live in **`lib/auth/guards.ts`**, not in
+  `lib/auth/route.ts` beside `getCurrentUser`, and not in `app/api/crm/_shared.ts` where they
+  were born. Non-CRM routes (time & payroll, admin) gate without importing out of the CRM
+  folder; `_shared.ts` re-exports both so every existing CRM import is unchanged. **Keep the
+  module boundary:** the guard must call `getCurrentUser` *across* modules, because the route
+  tests mock `@/lib/auth/route` to simulate no-session/member/sales. `vi.mock` replaces a
+  module's exports but cannot intercept a call a module makes to itself — merging the two files
+  makes the session mock stop applying, and ~65 guard tests start asserting against a real
+  lookup instead of the scenario they name.
 
 ### Database (RLS)
 
@@ -258,6 +286,13 @@ is deployed (otherwise the RPC is missing and all CRM access 403s). Run, in orde
 
 Then deploy the code.
 
+**The same rule applies to every later key.** Adding a key to `PERMISSION_KEYS` and shipping the
+route that guards on it before the row exists in the database means the guard denies everyone —
+fail-closed is a safety property, not a grace period. Later additions, each SQL-first:
+
+- `20260611_planning_permissions.sql` — planning (Wave 7)
+- `20260811_time_permissions.sql` — time & payroll (fas 4)
+
 ---
 
 ## Admin lockout guard
@@ -310,7 +345,8 @@ yet), and coach. Swap them to granular keys once those are reconciled.
 | Lockout guard | `supabase/sql/20260609_permissions_admin_lockout_guard.sql` |
 | Crew access (non-key) | `supabase/sql/20260810_crm_work_order_crew_access.sql`, `redactWorkOrderForField` in `lib/domains/crm/work-orders.ts` |
 | Policy cost probe | `supabase/sql/20260811_crm_work_order_rls_perf_probe.sql` (create → run → drop; measures under impersonation) |
-| App layer | `lib/auth/permissions.ts`, `app/api/crm/_shared.ts` (`requirePermission` + guard wrappers) |
+| App layer | `lib/auth/permissions.ts` (catalog + resolver), `lib/auth/guards.ts` (`requirePermission`, `requireSignedInUser`), `app/api/crm/_shared.ts` (re-export + legacy CRM wrappers) |
+| Time & payroll keys | `supabase/sql/20260811_time_permissions.sql` |
 | Admin UI | `app/admin/permissions/AdminPermissions.tsx`, `app/api/admin/permissions/**` |
 
 ## Related docs

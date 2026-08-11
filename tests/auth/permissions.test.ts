@@ -20,7 +20,7 @@ describe('PERMISSION_KEYS catalog', () => {
   // Mirrors the SQL `permissions` catalog in 20260608_permissions_model.sql. If you add a key
   // there, add it here too (and to the seed + parity assert) — this guards the count.
   it('has the expected count and no duplicates', () => {
-    expect(PERMISSION_KEYS.length).toBe(39);
+    expect(PERMISSION_KEYS.length).toBe(44);
     expect(new Set(PERMISSION_KEYS).size).toBe(PERMISSION_KEYS.length);
   });
 
@@ -48,5 +48,20 @@ describe('PERMISSION_KEYS catalog', () => {
     for (const key of ['planning.schedule.read', 'planning.schedule.write', 'planning.truck.manage', 'planning.depot.manage'] as const) {
       expect(PERMISSION_KEYS).toContain(key);
     }
+  });
+
+  it('includes the time & payroll keys (fas 4)', () => {
+    for (const key of ['time.entry.write', 'time.entry.read.all', 'time.approve', 'time.payroll.read', 'time.reference.manage'] as const) {
+      expect(PERMISSION_KEYS).toContain(key);
+    }
+  });
+
+  // Time is company-wide, not a CRM surface: every employee reports time, including roles that
+  // have no CRM access at all. A time.* key that drifted into the crm.* namespace would inherit
+  // the CRM meta guards (crm.access/crm.write) and quietly lock installers out of their own hours.
+  it('keeps the time keys outside the crm.* namespace', () => {
+    const timeKeys = PERMISSION_KEYS.filter((key) => key.startsWith('time.'));
+    expect(timeKeys.length).toBe(5);
+    for (const key of timeKeys) expect(key.startsWith('crm.')).toBe(false);
   });
 });

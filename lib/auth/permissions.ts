@@ -39,6 +39,10 @@ export const PERMISSION_KEYS = [
   // Planning (Wave 7 — new CRM-first scheduling surface; seeded in 20260611_planning_permissions.sql)
   'planning.schedule.read', 'planning.schedule.write',
   'planning.truck.manage', 'planning.depot.manage',
+  // Time & payroll (fas 4 — tidrapporteringen flyttar från Blikk; seeded in 20260811_time_permissions.sql).
+  // Note these are NOT crm.* keys: time is company-wide (every employee reports), not a CRM surface.
+  'time.entry.write', 'time.entry.read.all',
+  'time.approve', 'time.payroll.read', 'time.reference.manage',
   // Coarse meta keys backing the legacy requireCrmUser/Writer/Admin guards 1:1
   'crm.access', 'crm.write', 'crm.admin',
 ] as const;
