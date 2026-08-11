@@ -171,6 +171,17 @@ Two consequences worth remembering:
 employee can probe who is on which job. Accepted: employees-only, and the planning board already
 shows crew to anyone with `planning.schedule.read`.
 
+**What it costs (measured 2026-08-11, question closed).** A row-dependent predicate can be evaluated
+once per row, which would have made the CRM work-order list — and especially the six `count(*)` chip
+queries, which have no `LIMIT` to stop early — scale badly. It doesn't: the plan's filter evaluates
+`assigned_to = auth.uid()` → `has_permission(...)` → `is_user_on_work_order(...)`, and for
+sales/admin the middle arm is true, so the OR short-circuits and the crew function is **never called
+on the office path**, at any table size. A `member` has no permission key, so their read does fall
+through to the crew branch — correct, it's their only way in, and it is scoped to their own jobs.
+Re-measure after PostgreSQL upgrades: arm order is not guaranteed. Probe and method:
+`supabase/sql/20260811_crm_work_order_rls_perf_probe.sql`, `SUPABASE_CONVENTIONS.md` →
+"Measuring what a policy costs".
+
 ---
 
 ## Managing permissions (admin UI)
@@ -298,6 +309,7 @@ yet), and coach. Swap them to granular keys once those are reconciled.
 | RLS swaps | `supabase/sql/20260609_rls_permissions_crm_{core,quotes_workorders,admin}.sql`, `…_verify.sql` |
 | Lockout guard | `supabase/sql/20260609_permissions_admin_lockout_guard.sql` |
 | Crew access (non-key) | `supabase/sql/20260810_crm_work_order_crew_access.sql`, `redactWorkOrderForField` in `lib/domains/crm/work-orders.ts` |
+| Policy cost probe | `supabase/sql/20260811_crm_work_order_rls_perf_probe.sql` (create → run → drop; measures under impersonation) |
 | App layer | `lib/auth/permissions.ts`, `app/api/crm/_shared.ts` (`requirePermission` + guard wrappers) |
 | Admin UI | `app/admin/permissions/AdminPermissions.tsx`, `app/api/admin/permissions/**` |
 
