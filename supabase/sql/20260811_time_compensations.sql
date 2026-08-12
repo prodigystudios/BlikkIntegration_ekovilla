@@ -20,6 +20,12 @@
 -- 20260811_time_reference_tables.sql — triggern nedan använder set_timestamp_time_reference() som
 -- skapas där. Följer man bara den första avbryts skriptet mitt i: tabellen finns, RLS är påslagen,
 -- men inga policyer hinner skapas, vilket ger en tabell ingen kan läsa. Idempotent.
+--
+-- ⚠️ DELVIS SUPERSEDED av supabase/sql/20260812_time_approvals.sql (fas 4.4).
+-- INSERT-, UPDATE- och DELETE-policyerna nedan har fått periodlåset
+-- (`and not public.is_time_locked(...)`) och ägs numera av den filen — ersättningar är också
+-- löneunderlag och fryser med månaden. Kör den här filen om, och låset försvinner tyst; kör då
+-- 20260812_time_approvals.sql direkt efteråt. SELECT-policyn är oförändrad.
 
 create table if not exists public.crm_time_compensations (
   id          uuid primary key default gen_random_uuid(),

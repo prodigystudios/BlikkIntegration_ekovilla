@@ -23,6 +23,12 @@
 --
 -- DEPLOY-ORDNING: efter 20260811_time_permissions.sql (nycklarna måste finnas — has_permission på
 -- en okänd nyckel är false, alltså nekad) och efter reshape-filen. Idempotent.
+--
+-- ⚠️ DELVIS SUPERSEDED av supabase/sql/20260812_time_approvals.sql (fas 4.4).
+-- INSERT-, UPDATE- och DELETE-policyerna nedan har fått ett villkor till där —
+-- `and not public.is_time_locked(...)`, periodlåset — och ÄGS numera av den filen. Kör den här
+-- filen om, och du tar bort låset utan att märka det: policyerna heter likadant och ser rätt ut.
+-- Kör alltid 20260812_time_approvals.sql direkt efteråt. SELECT-policyn är oförändrad.
 
 -- ── Bort med de åtta gamla ───────────────────────────────────────────────────
 drop policy if exists crm_work_order_time_entries_select_visible on public.crm_time_entries;

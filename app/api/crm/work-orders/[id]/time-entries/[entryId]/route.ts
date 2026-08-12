@@ -1,7 +1,23 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { deleteCrmWorkOrderTimeEntry, updateCrmWorkOrderTimeEntry } from '@/lib/domains/crm/work-orders';
+import { explainWriteMiss, periodLockError } from '@/lib/domains/time/approvals';
 import { createWorkOrderTimeEntrySchema, ok, requireSignedInUser, routeError, validationError } from '../../../_lib';
+
+// Kontorets Tid-flik skriver i crm_time_entries — samma tabell som löneunderlaget. Periodlåset
+// (fas 4.4) gäller därför också här, och svaren måste kunna säga det: triggern kastar P0001, och
+// policyns lås filtrerar bort raden så en UPDATE träffar noll rader utan fel.
+async function lockedOrNotFound(
+  supabase: Parameters<typeof explainWriteMiss>[0],
+  entryId: string,
+  userId: string,
+) {
+  const miss = await explainWriteMiss(supabase, {
+    table: 'crm_time_entries', dateColumn: 'work_date', id: entryId, userId,
+  });
+  if (miss.locked) return routeError(409, 'time_period_locked', miss.message);
+  return routeError(404, 'crm_work_order_time_entry_not_found', 'Tidraden hittades inte eller tillhör en annan användare');
+}
 
 type RouteContext = {
   params: {
@@ -25,8 +41,12 @@ export async function PATCH(req: Request, context: RouteContext) {
       note: parsedBody.data.note,
     });
 
-    if (error) return routeError(500, 'crm_work_order_time_entry_update_failed', error.message);
-    if (!data) return routeError(404, 'crm_work_order_time_entry_not_found', 'Tidraden hittades inte eller tillhör en annan användare');
+    if (error) {
+      const locked = periodLockError(error);
+      if (locked) return routeError(locked.status, locked.code, locked.message);
+      return routeError(500, 'crm_work_order_time_entry_update_failed', error.message);
+    }
+    if (!data) return lockedOrNotFound(supabase, context.params.entryId, currentUser.currentUser.id);
 
     return ok({ item: data });
   } catch (e: any) {
@@ -42,8 +62,12 @@ export async function DELETE(_req: Request, context: RouteContext) {
     const supabase = createRouteHandlerClient({ cookies });
     const { data, error } = await deleteCrmWorkOrderTimeEntry(supabase, context.params.entryId, currentUser.currentUser.id);
 
-    if (error) return routeError(500, 'crm_work_order_time_entry_delete_failed', error.message);
-    if (!data) return routeError(404, 'crm_work_order_time_entry_not_found', 'Tidraden hittades inte eller tillhör en annan användare');
+    if (error) {
+      const locked = periodLockError(error);
+      if (locked) return routeError(locked.status, locked.code, locked.message);
+      return routeError(500, 'crm_work_order_time_entry_delete_failed', error.message);
+    }
+    if (!data) return lockedOrNotFound(supabase, context.params.entryId, currentUser.currentUser.id);
 
     return ok({ id: context.params.entryId });
   } catch (e: any) {

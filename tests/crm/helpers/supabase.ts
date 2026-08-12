@@ -71,12 +71,18 @@ const KONSULT_KEYS: PermissionKey[] = [
   'crm.opportunity.read', 'crm.offer.read', 'crm.workorder.read', 'crm.task.read',
   'crm.report.read', 'crm.coach.read', 'crm.goal.read', 'fortnox.read', 'crm.access',
 ];
+// Tid & lön (20260811_time_permissions.sql). `time.entry.write` är den FÖRSTA nyckel `member` har,
+// och den enda tid-nyckel sales har — attest, allas tid och referensdata är admin. konsult får
+// ingenting: extern roll, och tid är personuppgift. Utan de här raderna hade route-testerna på
+// tid-ytan mätt en installatör som inte får rapportera sin egen tid, vilket inte är verkligheten.
+const MEMBER_KEYS: PermissionKey[] = ['time.entry.write'];
 
 export function effectivePermissionsForRole(role: string | undefined | null): Set<PermissionKey> {
   switch (role) {
     case 'admin': return new Set(PERMISSION_KEYS);
-    case 'sales': return new Set(SALES_KEYS);
+    case 'sales': return new Set([...SALES_KEYS, 'time.entry.write' as PermissionKey]);
     case 'konsult': return new Set(KONSULT_KEYS);
+    case 'member': return new Set(MEMBER_KEYS);
     default: return new Set();
   }
 }

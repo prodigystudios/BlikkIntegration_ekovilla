@@ -9,6 +9,7 @@ import { minutesToHours } from '@/lib/domains/time/hours';
 import { parseDecimal } from '@/lib/shared/number';
 import { addDays, buildWeekDays, fmtISO, isoWeek, startOfWeek } from '@/app/crm/planering/planningDates';
 import { COMPENSATION_KINDS, COMPENSATION_LABELS, COMPENSATION_UNITS, summarizeCompensations, type CompensationItem, type CompensationKind } from '@/lib/domains/time/compensations';
+import { isPeriodLocked, periodLabel, TIME_PERIOD_STATUS_LABELS, type TimeApprovalRow, type TimePeriodStatus } from '@/lib/domains/time/approvals';
 import TimeEntryModal, { type EditableEntry, type ReferenceData } from './TimeEntryModal';
 
 // Tidrapporten, CRM-versionen. Ligger på /tid bredvid gamla /tidrapport (som fortsätter mot Blikk)
@@ -38,6 +39,14 @@ function formatHours(minutes: number): string {
 
 function formatAmount(amount: number): string {
   return new Intl.NumberFormat('sv-SE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amount);
+}
+
+function formatStamp(value: string | null): string {
+  if (!value) return '';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? ''
+    : new Intl.DateTimeFormat('sv-SE', { dateStyle: 'short', timeStyle: 'short' }).format(date);
 }
 
 function entryMinutes(entry: EntryRow): number {
@@ -71,11 +80,20 @@ export default function TidClient() {
     const monthEnd = `${monthAnchor.year}-${pad(monthAnchor.month + 1)}-${pad(lastDay)}`;
     const weekStart = weekDays[0].iso;
     const weekEnd = weekDays[6].iso;
-    return { from: weekStart < monthStart ? weekStart : monthStart, to: weekEnd > monthEnd ? weekEnd : monthEnd, monthStart, monthEnd };
+    return {
+      from: weekStart < monthStart ? weekStart : monthStart,
+      to: weekEnd > monthEnd ? weekEnd : monthEnd,
+      monthStart,
+      monthEnd,
+      // Attestperioden är alltid en kalendermånad — samma månad som summorna ovan.
+      period: `${monthAnchor.year}-${pad(monthAnchor.month + 1)}`,
+    };
   }, [monthAnchor, weekDays]);
 
   const [entries, setEntries] = React.useState<EntryRow[]>([]);
   const [compensations, setCompensations] = React.useState<CompensationItem[]>([]);
+  const [approval, setApproval] = React.useState<TimeApprovalRow | null>(null);
+  const [approvalStatus, setApprovalStatus] = React.useState<TimePeriodStatus>('open');
   const [reference, setReference] = React.useState<ReferenceData>({ time_code: [], internal_project: [], absence_type: [] });
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
@@ -91,21 +109,30 @@ export default function TidClient() {
     const seq = ++loadSeq.current;
     setError(null);
     try {
-      const [entriesRes, compsRes, refRes] = await Promise.all([
+      const [entriesRes, compsRes, refRes, approvalRes] = await Promise.all([
         fetch(`/api/time/entries?from=${fetchRange.from}&to=${fetchRange.to}`, { cache: 'no-store' }),
         fetch(`/api/time/compensations?from=${fetchRange.monthStart}&to=${fetchRange.monthEnd}`, { cache: 'no-store' }),
         fetch('/api/time/reference', { cache: 'no-store' }),
+        fetch(`/api/time/approvals?period=${fetchRange.period}`, { cache: 'no-store' }),
       ]);
-      const [entriesJson, compsJson, refJson] = await Promise.all([
+      const [entriesJson, compsJson, refJson, approvalJson] = await Promise.all([
         entriesRes.json().catch(() => ({})),
         compsRes.json().catch(() => ({})),
         refRes.json().catch(() => ({})),
+        approvalRes.json().catch(() => ({})),
       ]);
       if (seq !== loadSeq.current) return;
       if (!entriesRes.ok || !entriesJson.ok) throw new Error(entriesJson?.error || 'Kunde inte hämta tidrader');
       setEntries(entriesJson.data.items || []);
       if (compsRes.ok && compsJson.ok) setCompensations(compsJson.data.items || []);
       if (refRes.ok && refJson.ok) setReference(refJson.data);
+      // Misslyckas statushämtningen läses perioden som öppen — knapparna står kvar och databasen
+      // säger nej om den ändå är stängd. Att låsa på ett nätverksfel hade varit värre: då kan man
+      // inte rapportera och får ingen förklaring.
+      if (approvalRes.ok && approvalJson.ok) {
+        setApproval(approvalJson.data.approval || null);
+        setApprovalStatus(approvalJson.data.status || 'open');
+      }
     } catch (e) {
       if (seq === loadSeq.current) setError((e as Error).message);
     } finally {
@@ -152,6 +179,18 @@ export default function TidClient() {
 
   const compensationTotals = React.useMemo(() => summarizeCompensations(compensations), [compensations]);
 
+  // Inlämnad eller attesterad → månaden är fryst. UI:t döljer knapparna, databasen är garantin:
+  // policy + trigger nekar även om någon skickar anropet ändå.
+  const locked = isPeriodLocked(approvalStatus);
+
+  // Låset gäller en MÅNAD, men vyn visar en VECKA — och en vecka kan ligga i två månader. Bara den
+  // status vi faktiskt hämtat får låsa något: en dag i grannmånaden lämnas öppen och servern får
+  // svara, i stället för att gissa att den delar den här månadens tillstånd.
+  const isDayLocked = React.useCallback(
+    (iso: string) => locked && iso >= fetchRange.monthStart && iso <= fetchRange.monthEnd,
+    [locked, fetchRange],
+  );
+
   async function removeEntry(id: string) {
     setBusyId(id);
     try {
@@ -176,14 +215,16 @@ export default function TidClient() {
             <h1 className={crm.pageTitle}>Tidrapport</h1>
             <p className={crm.pageSubtitle}>Rapportera din tid dag för dag — arbete, intern tid eller frånvaro.</p>
           </div>
-          <button
-            type="button"
-            onClick={() => { setEditing(null); setModalDate(todayIso); }}
-            className="rounded-xl px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:brightness-95"
-            style={{ backgroundColor: 'var(--crm-primary)' }}
-          >
-            Rapportera idag
-          </button>
+          {!isDayLocked(todayIso) ? (
+            <button
+              type="button"
+              onClick={() => { setEditing(null); setModalDate(todayIso); }}
+              className="rounded-xl px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:brightness-95"
+              style={{ backgroundColor: 'var(--crm-primary)' }}
+            >
+              Rapportera idag
+            </button>
+          ) : null}
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -225,6 +266,17 @@ export default function TidClient() {
         </div>
       ) : null}
 
+      <PeriodCard
+        periodStart={fetchRange.monthStart}
+        period={fetchRange.period}
+        status={approvalStatus}
+        approval={approval}
+        workMinutes={monthTotals.work}
+        absenceMinutes={monthTotals.absence}
+        onChanged={load}
+        onError={setError}
+      />
+
       {/* Ett kort per dag, hela veckan — även tomma dagar. Att en dag saknar rader är information:
           det är så man ser att man glömt rapportera. */}
       <section className="grid gap-2">
@@ -233,6 +285,7 @@ export default function TidClient() {
           const worked = dayEntries.filter((e) => e.kind !== 'absence').reduce((sum, e) => sum + entryMinutes(e), 0);
           const absent = dayEntries.filter((e) => e.kind === 'absence').reduce((sum, e) => sum + entryMinutes(e), 0);
           const isToday = day.iso === todayIso;
+          const dayLocked = isDayLocked(day.iso);
           return (
             <div
               key={day.iso}
@@ -250,13 +303,15 @@ export default function TidClient() {
                   {worked > 0 ? <span className="text-sm text-slate-600">{formatHours(worked)} h</span> : null}
                   {absent > 0 ? <span className="text-sm text-amber-700">{formatHours(absent)} h frånvaro</span> : null}
                 </div>
-                <button
-                  type="button"
-                  onClick={() => { setEditing(null); setModalDate(day.iso); }}
-                  className="rounded-lg border border-solid border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:border-slate-400"
-                >
-                  Rapportera
-                </button>
+                {!dayLocked ? (
+                  <button
+                    type="button"
+                    onClick={() => { setEditing(null); setModalDate(day.iso); }}
+                    className="rounded-lg border border-solid border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:border-slate-400"
+                  >
+                    Rapportera
+                  </button>
+                ) : null}
               </div>
 
               {loading && dayEntries.length === 0 ? (
@@ -278,19 +333,21 @@ export default function TidClient() {
                         <span className="text-slate-500">{formatHours(entryMinutes(entry))} h</span>
                       ) : null}
                       {entry.note ? <span className="text-slate-400">{entry.note}</span> : null}
-                      <span className="ml-auto flex gap-1">
-                        <button type="button" onClick={() => { setEditing({ ...entry, work_order_label: entryLabel(entry) }); setModalDate(entry.work_date); }} className="px-1 text-sm text-slate-500 underline">
-                          Ändra
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void removeEntry(entry.id)}
-                          disabled={busyId === entry.id}
-                          className="px-1 text-sm text-rose-600 underline disabled:opacity-50"
-                        >
-                          Ta bort
-                        </button>
-                      </span>
+                      {!dayLocked ? (
+                        <span className="ml-auto flex gap-1">
+                          <button type="button" onClick={() => { setEditing({ ...entry, work_order_label: entryLabel(entry) }); setModalDate(entry.work_date); }} className="px-1 text-sm text-slate-500 underline">
+                            Ändra
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void removeEntry(entry.id)}
+                            disabled={busyId === entry.id}
+                            className="px-1 text-sm text-rose-600 underline disabled:opacity-50"
+                          >
+                            Ta bort
+                          </button>
+                        </span>
+                      ) : null}
                     </li>
                   ))}
                 </ul>
@@ -307,6 +364,7 @@ export default function TidClient() {
         monthStart={fetchRange.monthStart}
         monthEnd={fetchRange.monthEnd}
         todayIso={todayIso}
+        locked={locked}
         onChanged={load}
         onError={setError}
       />
@@ -324,11 +382,101 @@ export default function TidClient() {
   );
 }
 
+// Månadens inlämning. Kortet finns för EN fråga — "är den här månaden klar?" — och den ska gå att
+// besvara utan att räkna ihop något själv, därför står summorna på knappen.
+//
+// `submitted` låser skrivningen men den anställde kan ta tillbaka den själv ända fram till attest
+// (Williams beslut 2026-08-12). Efter `approved` krävs en attestansvarig, och kortet säger det rakt
+// ut i stället för att bara sakna knapp — annars läser folk låset som en bugg.
+function PeriodCard({
+  periodStart, period, status, approval, workMinutes, absenceMinutes, onChanged, onError,
+}: {
+  periodStart: string;
+  period: string;
+  status: TimePeriodStatus;
+  approval: TimeApprovalRow | null;
+  workMinutes: number;
+  absenceMinutes: number;
+  onChanged: () => Promise<void> | void;
+  onError: (message: string) => void;
+}) {
+  const [busy, setBusy] = React.useState(false);
+  const label = periodLabel(periodStart);
+
+  async function setStatus(next: TimePeriodStatus) {
+    setBusy(true);
+    try {
+      const res = await fetch('/api/time/approvals', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ period, status: next }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.ok) { onError(json?.error || 'Kunde inte ändra periodens status'); return; }
+      await onChanged();
+    } catch {
+      onError('Kunde inte ändra periodens status — kontrollera uppkopplingen');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const tone =
+    status === 'approved' ? 'border-emerald-200 bg-emerald-50'
+    : status === 'submitted' ? 'border-amber-200 bg-amber-50'
+    : 'border-slate-200 bg-white';
+
+  return (
+    <section className={cn('grid gap-2 rounded-xl border border-solid px-4 py-3', tone)}>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="grid gap-0.5">
+          <strong className="text-sm text-slate-900">
+            {label} · {TIME_PERIOD_STATUS_LABELS[status]}
+          </strong>
+          <span className="text-sm text-slate-600">
+            {status === 'open'
+              ? `Arbetat ${formatHours(workMinutes)} h${absenceMinutes > 0 ? `, frånvaro ${formatHours(absenceMinutes)} h` : ''}. Lämna in när månaden är färdigrapporterad.`
+              : status === 'submitted'
+                ? `Inlämnad ${formatStamp(approval?.submitted_at ?? null)}. Månaden är låst — ångra inlämningen om du behöver ändra något.`
+                : `Attesterad ${formatStamp(approval?.approved_at ?? null)}. Månaden är låst; kontakta en attestansvarig om något behöver rättas.`}
+          </span>
+          {approval?.note && status === 'open' ? (
+            // Anledningen admin skrev när perioden öppnades igen — det är själva uppmaningen att
+            // göra något, och den ska inte bara finnas i adminvyn.
+            <span className="text-sm text-amber-800">Öppnad igen: {approval.note}</span>
+          ) : null}
+        </div>
+
+        {status === 'open' ? (
+          <button
+            type="button"
+            onClick={() => void setStatus('submitted')}
+            disabled={busy}
+            className="rounded-xl px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:brightness-95 disabled:opacity-60"
+            style={{ backgroundColor: 'var(--crm-primary)' }}
+          >
+            Lämna in {label}
+          </button>
+        ) : status === 'submitted' ? (
+          <button
+            type="button"
+            onClick={() => void setStatus('open')}
+            disabled={busy}
+            className="rounded-xl border border-solid border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-400 disabled:opacity-60"
+          >
+            Ångra inlämning
+          </button>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
 // Traktamenten, utlägg och milersättning. Egen lista med flit: de har eget datum och hör inte till
 // ett arbetspass — ett utlägg kan finnas en dag man inte jobbat. Visas per MÅNAD, till skillnad från
 // tiden ovan: de är enstaka poster man går igenom när perioden ska lämnas in, inte en daglig syssla.
 function CompensationSection({
-  items, totals, monthLabel, monthStart, monthEnd, todayIso, onChanged, onError,
+  items, totals, monthLabel, monthStart, monthEnd, todayIso, locked, onChanged, onError,
 }: {
   items: CompensationItem[];
   totals: ReturnType<typeof summarizeCompensations>;
@@ -336,6 +484,7 @@ function CompensationSection({
   monthStart: string;
   monthEnd: string;
   todayIso: string;
+  locked: boolean;
   onChanged: () => Promise<void> | void;
   onError: (message: string) => void;
 }) {
@@ -433,9 +582,11 @@ function CompensationSection({
                   <td className="px-3 py-2 font-medium">{formatAmount(Number(item.amount))} kr</td>
                   <td className="px-3 py-2 text-slate-500">{item.note || ''}</td>
                   <td className="px-3 py-2 text-right">
-                    <button type="button" onClick={() => void remove(item.id)} className="px-2 py-1 text-sm text-rose-600 underline">
-                      Ta bort
-                    </button>
+                    {!locked ? (
+                      <button type="button" onClick={() => void remove(item.id)} className="px-2 py-1 text-sm text-rose-600 underline">
+                        Ta bort
+                      </button>
+                    ) : null}
                   </td>
                 </tr>
               ))}
@@ -446,6 +597,10 @@ function CompensationSection({
         <p className="m-0 px-1 text-sm text-slate-500">Inget inlagt i {monthLabel.toLowerCase()}.</p>
       )}
 
+      {/* Inmatningen försvinner när månaden är inlämnad — ersättningar är löneunderlag och fryser
+          med perioden, precis som timmarna. Villkorlig rendering och inte `hidden`: preflight är av,
+          så `hidden` och `flex` bråkar om display på samma element. */}
+      {locked ? null : (
       <div className="flex flex-wrap items-end gap-2 px-1">
         <label className="grid gap-1">
           <span className="text-xs font-semibold text-slate-600">Typ</span>
@@ -486,6 +641,7 @@ function CompensationSection({
           Lägg till
         </button>
       </div>
+      )}
     </section>
   );
 }

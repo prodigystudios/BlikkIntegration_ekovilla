@@ -1,7 +1,7 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { deleteCompensation, updateCompensation } from '@/lib/domains/time/compensations';
-import { invalidUuidParam, ok, requirePermission, routeError, updateCompensationSchema, validationError } from '../../_lib';
+import { explainWriteMiss, invalidUuidParam, ok, periodLockError, requirePermission, routeError, updateCompensationSchema, validationError } from '../../_lib';
 
 type RouteContext = { params: { id: string } };
 
@@ -26,8 +26,18 @@ export async function PATCH(req: Request, context: RouteContext) {
 
     const supabase = createRouteHandlerClient({ cookies });
     const { data, error } = await updateCompensation(supabase, context.params.id, gate.currentUser.id, patch);
-    if (error) return routeError(500, 'time_compensation_update_failed', error.message);
-    if (!data) return routeError(404, 'time_compensation_not_found', 'Posten hittades inte');
+    if (error) {
+      const locked = periodLockError(error);
+      if (locked) return routeError(locked.status, locked.code, locked.message);
+      return routeError(500, 'time_compensation_update_failed', error.message);
+    }
+    if (!data) {
+      const miss = await explainWriteMiss(supabase, {
+        table: 'crm_time_compensations', dateColumn: 'entry_date', id: context.params.id, userId: gate.currentUser.id,
+      });
+      if (miss.locked) return routeError(409, 'time_period_locked', miss.message);
+      return routeError(404, 'time_compensation_not_found', 'Posten hittades inte');
+    }
 
     return ok({ item: data });
   } catch (e: any) {
@@ -45,8 +55,18 @@ export async function DELETE(_req: Request, context: RouteContext) {
 
     const supabase = createRouteHandlerClient({ cookies });
     const { data, error } = await deleteCompensation(supabase, context.params.id, gate.currentUser.id);
-    if (error) return routeError(500, 'time_compensation_delete_failed', error.message);
-    if (!data) return routeError(404, 'time_compensation_not_found', 'Posten hittades inte');
+    if (error) {
+      const locked = periodLockError(error);
+      if (locked) return routeError(locked.status, locked.code, locked.message);
+      return routeError(500, 'time_compensation_delete_failed', error.message);
+    }
+    if (!data) {
+      const miss = await explainWriteMiss(supabase, {
+        table: 'crm_time_compensations', dateColumn: 'entry_date', id: context.params.id, userId: gate.currentUser.id,
+      });
+      if (miss.locked) return routeError(409, 'time_period_locked', miss.message);
+      return routeError(404, 'time_compensation_not_found', 'Posten hittades inte');
+    }
 
     return ok({ id: data.id });
   } catch (e: any) {

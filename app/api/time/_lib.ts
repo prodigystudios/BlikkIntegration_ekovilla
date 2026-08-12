@@ -1,11 +1,16 @@
 import { z } from 'zod';
 import { TIME_REFERENCE_KINDS, type TimeReferenceKind } from '@/lib/domains/time/reference';
+import { TIME_PERIOD_STATUSES } from '@/lib/domains/time/approvals';
 
 // Delat för hela tid-ytan (app/api/time/**). Guards importeras från lib/auth/guards, INTE från
 // app/api/crm/_shared — tid är hela företagets, inte en CRM-yta, och nycklarna (time.*) ligger
 // medvetet utanför crm.*-rymden.
 export { requirePermission, requireSignedInUser } from '@/lib/auth/guards';
 export { ok, routeError, validationError, invalidUuidParam, isNoRowsError } from '@/lib/api/responses';
+export { can, getEffectivePermissions } from '@/lib/auth/permissions';
+// Periodlåset (fas 4.4) svarar på två sätt: triggern kastar (P0001) och policyn filtrerar bort
+// raden (noll rader). Båda ska bli begripliga svar, inte 500 respektive "hittades inte".
+export { periodLockError, explainWriteMiss } from '@/lib/domains/time/approvals';
 
 // Härledd ur domänen så en ny referenstyp inte kan glömmas bort här.
 export const timeReferenceKindSchema = z.enum(TIME_REFERENCE_KINDS as [TimeReferenceKind, ...TimeReferenceKind[]]);
@@ -58,6 +63,24 @@ export const createTimeEntrySchema = z.object({
   // Frånvaro anges i timmar — byrån vill ha "Frånvarotimmar", inte ett pass med start och slut.
   hours: z.coerce.number().min(0).max(24).nullable().optional(),
   time_code_id: z.string().uuid().nullable().optional(),
+  note: optionalText.optional().default(null),
+});
+
+// ── Attest ───────────────────────────────────────────────────────────────────
+
+// Perioden anges som månad ('2026-08') och aldrig som ett fritt datumintervall: attesten ÄR en
+// kalendermånad, och en route som tar from/to hade bjudit in till halvmånader som databasens CHECK
+// sedan avvisar med ett obegripligt fel.
+export const periodQuerySchema = z.object({
+  period: z.string().regex(/^\d{4}-\d{2}$/, 'Ogiltig period (ÅÅÅÅ-MM)'),
+});
+
+export const setPeriodStatusSchema = z.object({
+  period: z.string().regex(/^\d{4}-\d{2}$/, 'Ogiltig period (ÅÅÅÅ-MM)'),
+  status: z.enum(TIME_PERIOD_STATUSES),
+  // Utelämnad = sig själv. Sätts bara av attestytan, och kräver time.approve.
+  user_id: z.string().uuid().nullable().optional(),
+  // Anledning vid återöppning.
   note: optionalText.optional().default(null),
 });
 
