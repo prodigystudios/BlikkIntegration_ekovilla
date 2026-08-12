@@ -1,7 +1,7 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { buildTimeEntryRow, createTimeEntry, listTimeEntries } from '@/lib/domains/time/entries';
-import { createTimeEntrySchema, ok, rangeQuerySchema, requirePermission, requireSignedInUser, routeError, validationError } from '../_lib';
+import { createTimeEntrySchema, ok, periodLockError, rangeQuerySchema, requirePermission, requireSignedInUser, routeError, validationError } from '../_lib';
 
 // GET /api/time/entries?from&to — den inloggades tidrader i perioden.
 //
@@ -45,6 +45,11 @@ export async function POST(req: Request) {
     const supabase = createRouteHandlerClient({ cookies });
     const { data, error } = await createTimeEntry(supabase, built.row);
     if (error) {
+      // Periodlåset först: låstriggern kastar (P0001) INNAN RLS:ens with check hinner utvärderas —
+      // Postgres kör before-triggers före policykontrollen — så en stängd månad känns igen här och
+      // får sitt eget meddelande i stället för att felaktigt läsas som en åtkomstfråga.
+      const locked = periodLockError(error);
+      if (locked) return routeError(locked.status, locked.code, locked.message);
       // RLS nekar med noll rader; de vanligaste orsakerna är att man inte når arbetsordern eller
       // saknar time.entry.write. Säg det i stället för att skicka vidare ett rått Postgres-fel.
       if (error.code === 'PGRST116' || error.code === '42501') {

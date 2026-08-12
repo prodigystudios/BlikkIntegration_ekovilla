@@ -14,8 +14,9 @@ const AdminDepotUsage = dynamic(() => import('./depots/AdminDepotUsage'), { ssr:
 const AdminNews = dynamic(() => import('./news/AdminNews'), { ssr: false });
 const AdminPermissions = dynamic(() => import('./permissions/AdminPermissions'), { ssr: false });
 const AdminTimeReference = dynamic(() => import('./tid/AdminTimeReference'), { ssr: false });
+const AdminTimeApprovals = dynamic(() => import('./tid/AdminTimeApprovals'), { ssr: false });
 
-type AdminTab = 'users'|'permissions'|'contacts'|'depots'|'blikk'|'tid'|'news';
+type AdminTab = 'users'|'permissions'|'contacts'|'depots'|'blikk'|'tid'|'attest'|'news';
 
 const tabs: Array<{ id: AdminTab; label: string; summary: string }> = [
   { id: 'users', label: 'Användare', summary: 'Konton, roller och taggar' },
@@ -24,6 +25,7 @@ const tabs: Array<{ id: AdminTab; label: string; summary: string }> = [
   { id: 'depots', label: 'Depå-uttag', summary: 'Förbrukning och senaste uttag' },
   { id: 'blikk', label: 'Blikk-koppling', summary: 'Matchning mellan profiler och Blikk' },
   { id: 'tid', label: 'Tidkoder', summary: 'Tidkoder, internprojekt och frånvarotyper för tidrapporteringen' },
+  { id: 'attest', label: 'Attest', summary: 'Lås tidrapporteringen per person och kalendermånad' },
   { id: 'news', label: 'Nyheter', summary: 'Skapa och publicera dashboardnyheter' },
 ];
 
@@ -92,6 +94,7 @@ export default function AdminTabsClient() {
         {tab==='depots' && <AdminDepotUsage />}
         {tab==='blikk' && <AdminBlikkUsersMapping />}
         {tab==='tid' && <AdminTimeReference />}
+        {tab==='attest' && <AdminTimeApprovals />}
         {tab==='news' && <AdminNews />}
       </section>
     </PageShell>

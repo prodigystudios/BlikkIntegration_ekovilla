@@ -1,7 +1,7 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { createCompensation, listCompensations } from '@/lib/domains/time/compensations';
-import { createCompensationSchema, ok, rangeQuerySchema, requirePermission, requireSignedInUser, routeError, validationError } from '../_lib';
+import { createCompensationSchema, ok, periodLockError, rangeQuerySchema, requirePermission, requireSignedInUser, routeError, validationError } from '../_lib';
 
 // Traktamenten, utlägg och milersättning. Egna poster med eget datum — de hör inte till ett visst
 // arbetspass, och ett utlägg kan finnas en dag man inte jobbat.
@@ -42,7 +42,12 @@ export async function POST(req: Request) {
 
     const supabase = createRouteHandlerClient({ cookies });
     const { data, error } = await createCompensation(supabase, gate.currentUser.id, { ...parsed.data, quantity });
-    if (error) return routeError(500, 'time_compensation_create_failed', error.message);
+    if (error) {
+      // Ersättningar fryser med perioden precis som timmarna — de är också löneunderlag.
+      const locked = periodLockError(error);
+      if (locked) return routeError(locked.status, locked.code, locked.message);
+      return routeError(500, 'time_compensation_create_failed', error.message);
+    }
 
     return ok({ item: data }, 201);
   } catch (e: any) {

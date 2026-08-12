@@ -347,6 +347,7 @@ yet), and coach. Swap them to granular keys once those are reconciled.
 | Policy cost probe | `supabase/sql/20260811_crm_work_order_rls_perf_probe.sql` (create → run → drop; measures under impersonation) |
 | App layer | `lib/auth/permissions.ts` (catalog + resolver), `lib/auth/guards.ts` (`requirePermission`, `requireSignedInUser`), `app/api/crm/_shared.ts` (re-export + legacy CRM wrappers) |
 | Time & payroll keys | `supabase/sql/20260811_time_permissions.sql` |
+| Time approval (fas 4.4) | `supabase/sql/20260812_time_approvals.sql` — no new keys, but `time.approve` gains teeth: the transition RPC `set_time_period_status` and the `security definer` read model `time_approval_overview` both check it internally, and the write policies on `crm_time_entries` / `crm_time_compensations` gain `not is_time_locked(...)` |
 | Admin UI | `app/admin/permissions/AdminPermissions.tsx`, `app/api/admin/permissions/**` |
 
 ## Related docs

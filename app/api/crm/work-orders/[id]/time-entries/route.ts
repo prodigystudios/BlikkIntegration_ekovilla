@@ -1,6 +1,7 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { createCrmWorkOrderTimeEntry, listCrmWorkOrderTimeEntries } from '@/lib/domains/crm/work-orders';
+import { periodLockError } from '@/lib/domains/time/approvals';
 import { createWorkOrderTimeEntrySchema, ok, requireSignedInUser, routeError, validationError } from '../../_lib';
 
 // NOTE: the installer field view has no time tab during the CRM cutover — Blikk is still the
@@ -50,6 +51,11 @@ export async function POST(req: Request, context: RouteContext) {
     });
 
     if (error) {
+      // Kontorets uppföljningstid ligger i SAMMA tabell som löneunderlaget (crm_time_entries), så
+      // periodlåset från fas 4.4 gäller även här. Utan den här raden blir "månaden är attesterad"
+      // ett 500 med rå Postgres-text.
+      const locked = periodLockError(error);
+      if (locked) return routeError(locked.status, locked.code, locked.message);
       return routeError(500, 'crm_work_order_time_entry_create_failed', error.message);
     }
 
