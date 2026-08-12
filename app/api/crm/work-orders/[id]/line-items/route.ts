@@ -3,7 +3,7 @@ import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { getCrmWorkOrder, updateCrmWorkOrderLineItems } from '@/lib/domains/crm/work-orders';
 import { computePricing, type PricingLineItem } from '@/lib/domains/crm/pricing';
 import { updateWorkOrderInFortnox } from '@/lib/domains/fortnox/orders';
-import { FortnoxNotConnectedError } from '@/lib/domains/fortnox/client';
+import { FortnoxNotConnectedError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
 import { ok, requirePermission, routeError, updateWorkOrderLineItemsSchema, validationError, invalidUuidParam } from '../../_lib';
 
 type RouteContext = {
@@ -61,8 +61,11 @@ export async function PATCH(req: Request, context: RouteContext) {
       await updateWorkOrderInFortnox(context.params.id);
     } catch (e) {
       if (!(e instanceof FortnoxNotConnectedError)) {
-        fortnoxError = (e as any)?.message || 'Fortnox-synk misslyckades';
-        console.error('[fortnox] Arbetsorder-raduppdatering misslyckades:', fortnoxError);
+        // friendlyFortnoxMessage, inte e.message: FortnoxApiError.message ÄR den tekniska
+        // loggsträngen ("Fortnox POST /orders (400): {…}") och den hamnade rakt i säljarens toast.
+        // Samma översättning som manuella "Synka om"-knappen redan gör.
+        fortnoxError = friendlyFortnoxMessage(e);
+        console.error('[fortnox] Arbetsorder-raduppdatering misslyckades:', (e as Error)?.message);
       }
     }
 
