@@ -74,7 +74,13 @@ export default function AdminTimeApprovals() {
       if (!res.ok || !body?.ok) throw new Error(body?.error || `Fel (${res.status})`);
       setPeople(body.data.people || []);
     } catch (e) {
-      if (seq === loadSeq.current) setError((e as Error).message);
+      if (seq === loadSeq.current) {
+        setError((e as Error).message);
+        // Töm tabellen. Står föregående månads rader kvar under felrutan attesterar "Attestera"
+        // den NYA perioden utifrån den GAMLA månadens siffror — och setStatus rensar felrutan
+        // först, så det sista som varnade försvinner i samma klick.
+        setPeople([]);
+      }
     } finally {
       if (seq === loadSeq.current) setLoading(false);
     }

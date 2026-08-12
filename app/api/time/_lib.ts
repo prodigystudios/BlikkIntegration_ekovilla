@@ -71,12 +71,19 @@ export const createTimeEntrySchema = z.object({
 // Perioden anges som månad ('2026-08') och aldrig som ett fritt datumintervall: attesten ÄR en
 // kalendermånad, och en route som tar from/to hade bjudit in till halvmånader som databasens CHECK
 // sedan avvisar med ett obegripligt fel.
+//
+// ⚠️ Månadsdelen måste vara 01–12, inte bara två siffror. `\d{2}` släpper igenom '2026-13', som
+// blir datumet '2026-13-01' och ett Postgres-fel (22008) — alltså ett 500 för en ren
+// inmatningsmiss. Nåbart från UI:t: <input type="month"> faller tillbaka på ett textfält i
+// webbläsare som saknar stöd.
+const monthSchema = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'Ogiltig period (ÅÅÅÅ-MM)');
+
 export const periodQuerySchema = z.object({
-  period: z.string().regex(/^\d{4}-\d{2}$/, 'Ogiltig period (ÅÅÅÅ-MM)'),
+  period: monthSchema,
 });
 
 export const setPeriodStatusSchema = z.object({
-  period: z.string().regex(/^\d{4}-\d{2}$/, 'Ogiltig period (ÅÅÅÅ-MM)'),
+  period: monthSchema,
   status: z.enum(TIME_PERIOD_STATUSES),
   // Utelämnad = sig själv. Sätts bara av attestytan, och kräver time.approve.
   user_id: z.string().uuid().nullable().optional(),

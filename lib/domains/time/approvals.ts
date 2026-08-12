@@ -37,8 +37,11 @@ export const timeApprovalSelect =
 // som UTC-midnatt och blir 31 juli i svensk tid, vilket hade lagt en rad i fel period vid varje
 // månadsskifte. Samma fälla som fmtISO redan löser i planeringen.
 
-const PERIOD_RE = /^(\d{4})-(\d{2})$/;
-const ISO_DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+// Månad och dag valideras i mönstret, inte efteråt: '2026-13' matchar `\d{2}` men blir datumet
+// '2026-13-01', som Postgres avvisar med 22008 — ett 500 för en ren inmatningsmiss. Bättre att
+// kasta här, där anroparen kan svara 400.
+const PERIOD_RE = /^(\d{4})-(0[1-9]|1[0-2])$/;
+const ISO_DATE_RE = /^(\d{4})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 
 function pad(value: number): string {
   return String(value).padStart(2, '0');
@@ -229,9 +232,15 @@ export function normalizeOverviewRow(row: Record<string, unknown>): TimeApproval
 // ── Felöversättning ──────────────────────────────────────────────────────────
 
 /**
- * Låstriggern och övergångsmatrisen svarar med `raise exception`, alltså SQLSTATE P0001 med ett
- * färdigt svenskt meddelande. Utan den här mappningen blir en helt normal "perioden är stängd" ett
- * rått 500 med Postgres-text, och användaren får veta att något gick sönder i stället för varför.
+ * Låstriggern svarar med `raise exception`, alltså SQLSTATE P0001 med ett färdigt svenskt
+ * meddelande. Utan den här mappningen blir en helt normal "perioden är stängd" ett rått 500 med
+ * Postgres-text, och användaren får veta att något gick sönder i stället för varför.
+ *
+ * ⚠️ ANVÄND BARA PÅ SKRIVNINGAR MOT `crm_time_entries` / `crm_time_compensations`. Där är
+ * låstriggern enda källan till P0001, så koden `time_period_locked` är sann. RPC:n
+ * set_time_period_status kastar P0001 av flera skäl — behörighet, okänd status, fel periodstart —
+ * och den som mappar dem hit påstår "perioden är låst" om en behörighetsfråga. Attestroutens egen
+ * hantering sitter i app/api/time/approvals/route.ts.
  */
 export function periodLockError(error: { code?: string; message?: string } | null | undefined) {
   if (!error) return null;

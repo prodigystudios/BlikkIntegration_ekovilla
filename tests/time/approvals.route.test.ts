@@ -161,6 +161,25 @@ describe('POST /api/time/approvals — den anställde', () => {
     expect((await POST(req('/api/time/approvals', body({ period: '2026', status: 'submitted' })))).status).toBe(400);
     expect((await POST(req('/api/time/approvals', { method: 'POST' }))).status).toBe(400);
   });
+
+  it('avvisar en månad utanför 01–12 som 400, inte som ett Postgres-fel', async () => {
+    // '2026-13' matchar \d{2} men blir datumet '2026-13-01' → 22008 från Postgres → 500 för en ren
+    // inmatningsmiss. Nåbart: <input type="month"> faller tillbaka på text i äldre webbläsare.
+    mockUser.mockResolvedValue(memberUser);
+    expect((await POST(req('/api/time/approvals', body({ period: '2026-13', status: 'submitted' })))).status).toBe(400);
+    expect((await POST(req('/api/time/approvals', body({ period: '2026-00', status: 'submitted' })))).status).toBe(400);
+    expect((await GET(req('/api/time/approvals?period=2026-13'))).status).toBe(400);
+    expect(mockSet).not.toHaveBeenCalled();
+  });
+
+  it('kräver time.entry.write för att lämna in — konsult nekas med 403', async () => {
+    // Den som inte får rapportera tid ska inte kunna intyga att en månad är färdigrapporterad.
+    // RPC:n vaktar det också, men dess svar är ett P0001 som routen hade svarat 409 på.
+    mockUser.mockResolvedValue(konsultUser);
+    const res = await POST(req('/api/time/approvals', body({ period: '2026-08', status: 'submitted' })));
+    expect(res.status).toBe(403);
+    expect(mockSet).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -207,8 +226,13 @@ describe('POST /api/time/approvals — attestansvarig', () => {
     mockUser.mockResolvedValue(adminUser);
     mockSet.mockResolvedValue({ data: null, error: { code: 'P0001', message: 'Perioden är redan attesterad' } } as any);
     const res = await POST(req('/api/time/approvals', body({ period: '2026-08', status: 'approved', user_id: target })));
+    const json = await res.json();
     expect(res.status).toBe(409);
-    expect((await res.json()).error).toBe('Perioden är redan attesterad');
+    expect(json.error).toBe('Perioden är redan attesterad');
+    // ...och koden säger KONFLIKT, inte "perioden är låst". Matrisen kastar P0001 även på
+    // behörighet och trasig periodstart; att döpa alla till time_period_locked hade fått klienten
+    // att visa fel orsak.
+    expect(json.errorDetails.code).toBe('time_approval_conflict');
   });
 });
 

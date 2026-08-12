@@ -122,19 +122,29 @@ export default function TidClient() {
         approvalRes.json().catch(() => ({})),
       ]);
       if (seq !== loadSeq.current) return;
+
+      // Statusen sätts FÖRST, och alltid — före kastet nedan och oavsett hur det gick.
+      //
+      // Den styr vilka knappar som finns, och den hör till den månad vi just bytte TILL. Skrevs den
+      // bara vid lyckad hämtning låg föregående månads värde kvar: bläddrade man från en attesterad
+      // juli till en öppen augusti med ett fel i vägen, så påstod kortet att augusti var attesterad
+      // och alla rapportknappar var borta. Fail open — databasen är garantin, och att tyst låsa
+      // någon ute ur sin egen tidrapport på ett nätverksfel är värre än en knapp som svarar 409.
+      const approvalOk = approvalRes.ok && approvalJson.ok;
+      setApproval(approvalOk ? (approvalJson.data.approval || null) : null);
+      setApprovalStatus(approvalOk ? (approvalJson.data.status || 'open') : 'open');
+
       if (!entriesRes.ok || !entriesJson.ok) throw new Error(entriesJson?.error || 'Kunde inte hämta tidrader');
       setEntries(entriesJson.data.items || []);
       if (compsRes.ok && compsJson.ok) setCompensations(compsJson.data.items || []);
       if (refRes.ok && refJson.ok) setReference(refJson.data);
-      // Misslyckas statushämtningen läses perioden som öppen — knapparna står kvar och databasen
-      // säger nej om den ändå är stängd. Att låsa på ett nätverksfel hade varit värre: då kan man
-      // inte rapportera och får ingen förklaring.
-      if (approvalRes.ok && approvalJson.ok) {
-        setApproval(approvalJson.data.approval || null);
-        setApprovalStatus(approvalJson.data.status || 'open');
-      }
     } catch (e) {
-      if (seq === loadSeq.current) setError((e as Error).message);
+      if (seq === loadSeq.current) {
+        setError((e as Error).message);
+        // Nätverksfel kastar innan raderna ovan hann köras — samma resonemang, samma utfall.
+        setApproval(null);
+        setApprovalStatus('open');
+      }
     } finally {
       if (seq === loadSeq.current) setLoading(false);
     }

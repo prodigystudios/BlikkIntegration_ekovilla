@@ -37,6 +37,15 @@ describe('periodStartOf', () => {
     expect(() => periodStartOf('')).toThrow();
   });
 
+  it('kastar på en månad utanför 01–12 i stället för att bygga ett omöjligt datum', () => {
+    // '2026-13' matchar \d{2} och hade blivit '2026-13-01' — ett datum Postgres avvisar med 22008,
+    // alltså ett 500 långt från felets orsak. Mönstret ska fånga det, inte databasen.
+    expect(() => periodStartOf('2026-13')).toThrow();
+    expect(() => periodStartOf('2026-00')).toThrow();
+    expect(() => periodStartOf('2026-99')).toThrow();
+    expect(() => periodStartOf('2026-13-01')).toThrow();
+  });
+
   it('går inte via Date — sista dagen i månaden hamnar inte i nästa', () => {
     // new Date('2026-08-31') är UTC-midnatt, vilket i svensk tid är samma dag men i t.ex. UTC-5
     // blir 30 augusti. Strängvägen har inte problemet alls, och det är hela poängen.

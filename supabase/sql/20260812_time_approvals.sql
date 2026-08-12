@@ -221,8 +221,21 @@ begin
   v_is_self     := (p_user_id = v_actor);
   v_can_approve := public.has_permission('time.approve');
 
-  -- FOR UPDATE: två samtidiga anrop (t.ex. den anställde ångrar i samma sekund som admin
-  -- attesterar) ska inte kunna läsa samma utgångsstatus och båda skriva.
+  -- ⚠️ ADVISORY LOCK, inte bara FOR UPDATE.
+  --
+  -- `for update` låser en RAD, och första gången en period rör sig FINNS ingen rad — raden skapas
+  -- ju av den här körningen. Två samtidiga förstagångsanrop läste därför båda `open`, båda kom
+  -- förbi matrisen, och den som committade sist skrev över den andra via `on conflict do update`.
+  -- Konkret: admin attesterar i samma sekund som den anställde lämnar in → attesten faller
+  -- tillbaka till `submitted`, en övergång matrisen uttryckligen förbjuder. Perioden är fortfarande
+  -- låst, men den anställde kan nu ångra själv — attesten är tyst upphävd.
+  --
+  -- Låset är transaktionsbundet (`_xact_`) och släpps automatiskt vid commit eller rollback, och
+  -- det är taget på PERSON + PERIOD, så två olika personers attest aldrig köar bakom varandra.
+  perform pg_advisory_xact_lock(hashtext(p_user_id::text || ':' || p_period_start::text));
+
+  -- FOR UPDATE behålls: när raden väl finns är den billigare och mer exakt än advisory-låset, och
+  -- de två tillsammans täcker både "raden finns" och "raden är på väg att skapas".
   select * into v_row
   from public.crm_time_approvals
   where user_id = p_user_id and period_start = p_period_start

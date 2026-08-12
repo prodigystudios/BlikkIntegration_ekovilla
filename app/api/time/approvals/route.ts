@@ -3,7 +3,6 @@ import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import {
   canTransition,
   getTimeApproval,
-  periodLockError,
   periodStartOf,
   setTimePeriodStatus,
   statusOf,
@@ -84,6 +83,13 @@ export async function POST(req: Request) {
     const check = canTransition(from, parsed.data.status, { isSelf, canApprove });
     if (!check.allowed) return routeError(403, 'time_approval_forbidden', check.reason);
 
+    // RPC:n kräver time.entry.write för att lämna in — den som inte får rapportera tid ska inte
+    // kunna intyga att en månad är färdigrapporterad. Speglas här så svaret blir 403, inte ett
+    // P0001 nedan som hade kommit tillbaka som en konflikt.
+    if (parsed.data.status === 'submitted' && !can(perms, 'time.entry.write')) {
+      return routeError(403, 'forbidden', 'Du har inte behörighet att rapportera tid');
+    }
+
     const { data, error } = await setTimePeriodStatus(supabase, {
       userId: targetUserId,
       periodStart,
@@ -91,10 +97,16 @@ export async function POST(req: Request) {
       note: parsed.data.note,
     });
     if (error) {
-      // RPC:n är sista ordet och svarar med `raise exception` (P0001) och ett färdigt meddelande —
-      // typiskt när två personer agerade samtidigt och utgångsläget hann ändras efter läsningen.
-      const locked = periodLockError(error);
-      if (locked) return routeError(locked.status, locked.code, locked.message);
+      // RPC:n är sista ordet och svarar med `raise exception` (P0001) och ett färdigt meddelande.
+      // Kommer vi hit har routen redan prövat övergången och behörigheterna, så ett P0001 betyder
+      // i praktiken att utgångsläget hann ändras mellan läsningen och skrivningen — alltså en
+      // KONFLIKT, inte nödvändigtvis ett lås. Koden säger därför inte 'time_period_locked':
+      // matrisen kastar P0001 även på behörighet och trasig periodstart, och att döpa alla till
+      // "perioden är låst" hade fått klienten att visa fel orsak. Meddelandet är RPC:ns eget och
+      // är rätt oavsett vilken gren som slog till.
+      if (error.code === 'P0001') {
+        return routeError(409, 'time_approval_conflict', error.message || 'Periodens status hann ändras');
+      }
       return routeError(500, 'time_approval_write_failed', error.message);
     }
 
