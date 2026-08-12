@@ -633,7 +633,10 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                     {/* invoiced / partially_invoiced are system-managed by the invoicing flow and
                         aren't in WORK_ORDER_STATUS_OPTIONS — show them read-only so the picker can't
                         render a value-less <select> or silently regress the status on save. */}
-                    {workOrder.status === 'invoiced' || workOrder.status === 'partially_invoiced' ? (
+                    {/* Bara en FÄRDIGfakturerad order är låst. En delfakturerad rullar ofta vidare
+                        och måste kunna sättas tillbaka till Pågående — statusen bär arbetsläget,
+                        inte faktureringsläget (det visas som egen badge). */}
+                    {workOrder.status === 'invoiced' ? (
                       <div className="flex h-11 items-center">
                         <span className={cn(crm.badge, workOrderStatusClass[workOrder.status])}>{workOrderStatusLabel[workOrder.status]}</span>
                       </div>

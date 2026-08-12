@@ -137,9 +137,10 @@ export const workOrderStatusAccent: Record<WorkOrderStatus, string> = {
 // The forward flow shown as a stepper (ready retired; cancelled is off-flow).
 export const WORK_ORDER_STATUS_FLOW: WorkOrderStatus[] = ['draft', 'scheduled', 'in_progress', 'completed', 'partially_invoiced', 'invoiced'];
 
-// Statuses offered in the editable status picker. 'partially_invoiced' is system-set by the
-// delfakturering flow (not manually selectable), so it's intentionally excluded here.
-export const WORK_ORDER_STATUS_OPTIONS: WorkOrderStatus[] = ['draft', 'scheduled', 'in_progress', 'completed', 'invoiced', 'cancelled'];
+// Statuses offered in the editable status picker. BÅDA fakturastatusarna är systemsatta av
+// faktureringsflödet och nekas av routen (409) — 'invoiced' låg kvar här och var därför ett val
+// som alltid gav fel. Ordern blir fakturerad genom att faktureras, inte genom att väljas.
+export const WORK_ORDER_STATUS_OPTIONS: WorkOrderStatus[] = ['draft', 'scheduled', 'in_progress', 'completed', 'cancelled'];
 
 // ── Design Tokens ───────────────────────────────────────────────────────────
 
