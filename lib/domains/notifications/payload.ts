@@ -61,3 +61,24 @@ export function buildFaultReportUpdatedNotification(input: FaultReportNotificati
     entity_id: input.reportId,
   };
 }
+
+// Sent to the admins when someone files an app ticket (bug report / feature request).
+//
+// The href deep-links straight into the backlog tab with the ärende pre-opened — the point of the
+// notification is to get from "phone buzzed" to "reading the report" in one tap.
+export function buildAppTicketCreatedNotification(input: {
+  ticketId: string;
+  kindLabel: string; // "Bugg" / "Förslag"
+  areaLabel: string; // e.g. "CRM, offerter & ordrar"
+  title: string;
+  reporterName: string;
+}): NotificationContent {
+  return {
+    type: 'app_ticket.created',
+    title: `${input.kindLabel}: ${input.title}`,
+    body: `${input.reporterName} · ${input.areaLabel}`,
+    href: `/admin?tab=arenden&arende=${input.ticketId}`,
+    entity_type: 'app_ticket',
+    entity_id: input.ticketId,
+  };
+}

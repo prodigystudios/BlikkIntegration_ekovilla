@@ -6,6 +6,7 @@ import { ToastProvider } from '../lib/Toast';
 import { TruckAssignmentsProvider } from '../lib/TruckAssignmentsContext';
 import AppShell from './components/AppShell';
 import InstallPrompt from '../components/pwa/InstallPrompt';
+import ReportIssueLauncher from './components/ReportIssueLauncher';
 
 export const viewport = {
   width: 'device-width',
@@ -45,6 +46,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               {children}
             </AppShell>
             <InstallPrompt loggedIn={!!profile} />
+            {/* Utanför AppShell med flit: fältvyn /arbetsorder renderas utan skal, och det är
+                installatörerna som ser flest buggar. Komponenten gömmer sig själv på inloggnings-
+                och kundsidorna. */}
+            <ReportIssueLauncher loggedIn={!!profile} />
           </TruckAssignmentsProvider>
         </ToastProvider>
       </UserProfileProvider>

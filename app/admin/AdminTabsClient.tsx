@@ -15,8 +15,9 @@ const AdminNews = dynamic(() => import('./news/AdminNews'), { ssr: false });
 const AdminPermissions = dynamic(() => import('./permissions/AdminPermissions'), { ssr: false });
 const AdminTimeReference = dynamic(() => import('./tid/AdminTimeReference'), { ssr: false });
 const AdminTimeApprovals = dynamic(() => import('./tid/AdminTimeApprovals'), { ssr: false });
+const AdminSupportTickets = dynamic(() => import('./support/AdminSupportTickets'), { ssr: false });
 
-type AdminTab = 'users'|'permissions'|'contacts'|'depots'|'blikk'|'tid'|'attest'|'news';
+type AdminTab = 'users'|'permissions'|'contacts'|'depots'|'blikk'|'tid'|'attest'|'news'|'arenden';
 
 const tabs: Array<{ id: AdminTab; label: string; summary: string }> = [
   { id: 'users', label: 'Användare', summary: 'Konton, roller och taggar' },
@@ -27,6 +28,7 @@ const tabs: Array<{ id: AdminTab; label: string; summary: string }> = [
   { id: 'tid', label: 'Tidkoder', summary: 'Tidkoder, internprojekt och frånvarotyper för tidrapporteringen' },
   { id: 'attest', label: 'Attest', summary: 'Lås tidrapporteringen per person och kalendermånad' },
   { id: 'news', label: 'Nyheter', summary: 'Skapa och publicera dashboardnyheter' },
+  { id: 'arenden', label: 'Ärenden', summary: 'Buggar och önskemål som rapporterats i appen' },
 ];
 
 function resolveAdminTab(fromQuery: string | null, fromStorage: string | null): AdminTab | null {
@@ -96,6 +98,7 @@ export default function AdminTabsClient() {
         {tab==='tid' && <AdminTimeReference />}
         {tab==='attest' && <AdminTimeApprovals />}
         {tab==='news' && <AdminNews />}
+        {tab==='arenden' && <AdminSupportTickets />}
       </section>
     </PageShell>
   );
