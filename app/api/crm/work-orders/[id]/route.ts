@@ -9,10 +9,15 @@ import { isNoRowsError, ok, pickProvidedFields, requireCrmUser, requirePermissio
 // by hand — so a crafted PATCH can't fake a billed order or regress one back to a manual state.
 const SYSTEM_MANAGED_WO_STATUSES: string[] = ['invoiced', 'partially_invoiced'];
 
-// The edited fields that Fortnox mirrors on the order header: contact person → YourReference,
+// The edited fields that Fortnox mirrors on the order header: Er referens → YourReference,
 // work address → delivery address, ansvarig → OurReference. Gating on these keeps a status-only
 // PATCH — the board sends one on every drag — from becoming a Fortnox write.
-const FORTNOX_MIRRORED_FIELDS = ['contact', 'work_address', 'assigned_to'] as const;
+//
+// `contact` is deliberately ABSENT. The customer contact is who we and the installers call; it may
+// be re-pointed at a site foreman mid-job and must never touch the customer's document. It used to
+// share a field with Er referens, which meant fixing a phone number silently rewrote the reference
+// that routes the customer's invoice for approval.
+const FORTNOX_MIRRORED_FIELDS = ['your_reference', 'work_address', 'assigned_to'] as const;
 
 type RouteContext = {
   params: {
@@ -63,28 +68,38 @@ export async function PATCH(req: Request, context: RouteContext) {
     // change) doesn't wipe untouched columns (internal_handoff, work_address) with defaults.
     const updateInput = pickProvidedFields(parsedBody.data, rawBody);
 
-    // Read before the merge below deletes `contact` off updateInput.
+    // Read before the merges below strip `contact`/`your_reference` off updateInput.
     const touchesFortnox = FORTNOX_MIRRORED_FIELDS.some((field) => field in updateInput);
 
-    // Load the current row once — both the contact-snapshot merge and the status guard need it.
+    // Load the current row once — the snapshot merges and the status guard all need it.
     type WoCurrent = { status?: string | null; customer_snapshot?: Record<string, unknown> | null };
     let current: WoCurrent | null = null;
-    if (updateInput.contact || updateInput.status) {
+    if (updateInput.contact || updateInput.your_reference !== undefined || updateInput.status) {
       current = (await getCrmWorkOrder(supabase, context.params.id)).data as WoCurrent | null;
     }
 
-    // Contact override: merge into the (jsonb) customer_snapshot with a read-merge-write so the
-    // other snapshot fields (personnummer, addresses, reverse_vat, end-contact) are preserved.
-    // Lets a seller fix the responsible contact if it changed after the offer.
-    if (updateInput.contact) {
+    // Both overrides merge into the (jsonb) customer_snapshot with a read-merge-write so the other
+    // snapshot fields (personnummer, addresses, reverse_vat) survive. Built as one object so a PATCH
+    // carrying both doesn't have the second merge drop the first.
+    if (updateInput.contact || updateInput.your_reference !== undefined) {
       const snapshot = (current?.customer_snapshot ?? {}) as Record<string, unknown>;
-      (updateInput as Record<string, unknown>).customer_snapshot = {
-        ...snapshot,
-        contact_name: updateInput.contact.contact_name ?? null,
-        email: updateInput.contact.email ?? null,
-        phone: updateInput.contact.phone ?? null,
-      };
+      const merged: Record<string, unknown> = { ...snapshot };
+
+      if (updateInput.contact) {
+        // Freeze the pre-edit contact_name as Er referens on any order created before the two were
+        // split. Without this, editing the customer contact on such an order would still change what
+        // the Fortnox header falls back to — the exact bug the split exists to remove.
+        if (merged.your_reference == null) merged.your_reference = snapshot.contact_name ?? null;
+        merged.contact_name = updateInput.contact.contact_name ?? null;
+        merged.email = updateInput.contact.email ?? null;
+        merged.phone = updateInput.contact.phone ?? null;
+      }
+      // Sent explicitly (including null to clear) → wins over the freeze above.
+      if (updateInput.your_reference !== undefined) merged.your_reference = updateInput.your_reference;
+
+      (updateInput as Record<string, unknown>).customer_snapshot = merged;
       delete (updateInput as { contact?: unknown }).contact;
+      delete (updateInput as { your_reference?: unknown }).your_reference;
     }
 
     // System-managed status guard — only a real TRANSITION is blocked. The client always sends

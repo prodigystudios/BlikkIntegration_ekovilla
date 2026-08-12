@@ -2,13 +2,14 @@ import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
 import { lineItemUnitPrice, lineItemDiscountPercent, lineItemRowTotal } from '@/lib/domains/crm/pricing';
 import { fortnoxGet, fortnoxGetBinary, fortnoxPost, fortnoxPut, FortnoxApiError, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
-import { appendFortnoxTextNote, buildEndContactNote, claimFortnoxPush, resolveOurReference, resolveReverseVat, resolveRotReference, rotLaborRow, rowRotLaborCarveout, splitRotMaterialRow } from './helpers';
+import { appendFortnoxTextNote, claimFortnoxPush, resolveOurReference, resolveReverseVat, resolveRotReference, rotLaborRow, rowRotLaborCarveout, splitRotMaterialRow } from './helpers';
 import { DEFAULT_ROT_HOUSE_WORK_TYPE } from './types';
 
 // The point-in-time customer data carried on both the quote and the work order. Named once
 // because the header builder below has to read the same shape off either of them.
 type CustomerSnapshot = {
   contact_name?: string | null;
+  your_reference?: string | null;
   street_address?: string | null;
   delivery_address?: string | null;
   delivery_postal_code?: string | null;
@@ -231,6 +232,21 @@ export function buildOrderDeliveryFields(
   };
 }
 
+// "Er referens" for the Fortnox header. It is its OWN snapshot field on a work order, deliberately
+// NOT the customer contact: contact_name is who we and the installers call and may be re-pointed at
+// a site foreman mid-job, while YourReference is the customer's formal reference and is what routes
+// their invoice for approval. The two start out as the same person, which is why one field used to
+// serve both — and why fixing a phone number silently rewrote the customer's invoice reference.
+//
+// The contact_name fallback covers orders created before the split: dropping it would blank their
+// YourReference on the next sync. The PATCH route freezes the old value into your_reference the
+// first time such an order's contact is edited, so the fallback only ever reads an untouched row.
+export function resolveYourReference(
+  snapshot: { your_reference?: string | null; contact_name?: string | null } | null | undefined,
+): string | null {
+  return snapshot?.your_reference?.trim() || snapshot?.contact_name?.trim() || null;
+}
+
 type OrderHeaderWorkOrder = {
   assigned_to: string | null;
   customer_snapshot: CustomerSnapshot | null;
@@ -264,16 +280,19 @@ async function buildOrderHeader(
   const snapshot = workOrder.customer_snapshot ?? linkedQuote?.customer_snapshot ?? null;
   const ourReference = await resolveOurReference(workOrder.assigned_to ?? linkedQuote?.assigned_to ?? null, supabase);
   const { referenceNumber, propertyNote } = resolveRotReference(linkedQuote?.rot_details, snapshot?.label, rotEnabled);
-  const endContactNote = buildEndContactNote(snapshot);
+
+  const yourReference = resolveYourReference(snapshot);
 
   return {
     header: {
       ...(ourReference ? { OurReference: ourReference } : {}),
-      ...(snapshot?.contact_name ? { YourReference: snapshot.contact_name } : {}),
+      ...(yourReference ? { YourReference: yourReference } : {}),
       // "Ert referensnummer" — the order field is YourOrderNumber (the offer uses
       // YourReferenceNumber; sending the wrong one is a 2001399 "Felaktigt fältnamn").
       ...(referenceNumber ? { YourOrderNumber: referenceNumber } : {}),
-      ...(endContactNote ? { Remarks: endContactNote } : {}),
+      // No Remarks: it is Fortnox's own per-document body text (it rewrites it on createorder
+      // anyway), and the customer contact is deliberately CRM-internal — see the removal of
+      // buildEndContactNote.
       ...buildOrderDeliveryFields(workOrder.work_address, snapshot),
     },
     rotPropertyNote: propertyNote,

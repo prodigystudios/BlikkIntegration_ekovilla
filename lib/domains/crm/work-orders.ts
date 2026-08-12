@@ -171,6 +171,12 @@ export async function createStandaloneCrmWorkOrder(supabase: SupabaseClient, inp
     contact_name: contact.name || null,
     email: contact.email || null,
     phone: contact.phone || null,
+    // "Er referens" — kundens formella referens, den som hamnar på Fortnox-dokumenten och styr
+    // fakturan rätt hos kunden. SKILD från contact_name ovan: det fältet är kundkontakten, alltså
+    // vem vi och installatörerna ringer, och den får ändras fritt utan att röra Fortnox. På en
+    // standalone-order finns ingen offert att ärva referensen från, så den seedas från samma
+    // kontakt och kan sedan sättas för hand i ordervyn.
+    your_reference: contact.name || null,
     street_address: visit.street || visit.street_address || null,
     postal_code: visit.postal_code || null,
     city: visit.city || null,
@@ -274,7 +280,15 @@ export async function createCrmWorkOrderFromQuote(supabase: SupabaseClient, quot
   // predate it (the quote was saved before the number was known), so fall back to the customer's
   // current value and bake it into the order snapshot. If neither has it, block — the caller
   // collects it and saves it on the customer before retrying.
+  // "Er referens" blir ett EGET fält på arbetsordern. På offerten är den samma sak som
+  // contact_name (fältet heter "Er referens (kontaktperson)" och är obligatoriskt där), men från
+  // och med ordern skiljer sig de två: contact_name blir kundkontakten — vem vi ringer — och får
+  // ändras fritt, medan your_reference är det som går till Fortnox YourReference. Utan den här
+  // frysningen vid orderskapandet skulle en rättad kontaktperson skriva om kundens fakturareferens.
   let orderSnapshot = (quote.customer_snapshot || {}) as Record<string, unknown>;
+  if (orderSnapshot.your_reference == null) {
+    orderSnapshot = { ...orderSnapshot, your_reference: orderSnapshot.contact_name ?? null };
+  }
   if (quote.quote_type === 'private' && !orderSnapshot.personal_number) {
     let personalNumber: string | null = null;
     if (quote.customer_id) {

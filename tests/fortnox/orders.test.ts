@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildOrderRows, buildOrderDeliveryFields } from '@/lib/domains/fortnox/orders';
+import { buildOrderRows, buildOrderDeliveryFields, resolveYourReference } from '@/lib/domains/fortnox/orders';
 import { ROT_LABOR_ARTICLE_NUMBER } from '@/lib/domains/fortnox/helpers';
 
 describe('buildOrderRows', () => {
@@ -205,5 +205,30 @@ describe('buildOrderDeliveryFields — rensad adress', () => {
       DeliveryZipCode: '11111',
       DeliveryCity: 'Solna',
     });
+  });
+});
+
+// Er referens och kundkontakten delade tidigare ETT fält, så en rättad kontaktperson skrev om
+// kundens formella referens i Fortnox — den som styr fakturan till rätt attestant.
+describe('resolveYourReference', () => {
+  it('uses the dedicated Er referens field when set', () => {
+    expect(resolveYourReference({ your_reference: 'Inköp/Anna', contact_name: 'Platschef Emil' })).toBe('Inköp/Anna');
+  });
+
+  // De 15 ordrar som fanns när fältet delades saknar your_reference. Utan fallbacken hade deras
+  // YourReference nollats i Fortnox vid nästa headersynk.
+  it('falls back to contact_name for orders created before the split', () => {
+    expect(resolveYourReference({ contact_name: 'Emil' })).toBe('Emil');
+    expect(resolveYourReference({ your_reference: null, contact_name: 'Emil' })).toBe('Emil');
+  });
+
+  it('treats blanks as absent so a whitespace value never reaches Fortnox', () => {
+    expect(resolveYourReference({ your_reference: '   ', contact_name: 'Emil' })).toBe('Emil');
+    expect(resolveYourReference({ your_reference: '  ', contact_name: ' ' })).toBeNull();
+  });
+
+  it('returns null when there is nothing to send', () => {
+    expect(resolveYourReference({})).toBeNull();
+    expect(resolveYourReference(null)).toBeNull();
   });
 });
