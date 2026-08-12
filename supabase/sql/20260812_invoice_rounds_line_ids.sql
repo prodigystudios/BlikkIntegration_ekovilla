@@ -65,7 +65,12 @@ rebuilt as (
     jsonb_agg(
       case
         when needs_migration and line_id is not null
-          then jsonb_build_object('line_id', line_id, 'quantity', quantity, 'legacy_index', legacy_index)
+          -- `index` behålls MEDVETET bredvid line_id: då läser både den nya koden (på line_id) och
+          -- en ännu inte deployad/tillbakarullad version (på index) rätt. Utan den blir ordningen
+          -- migrering-före-deploy ett fönster där fakturerat läses som 0 och hela ordern kan
+          -- faktureras om. legacy_index är spårbarhet; index är kompatibilitet.
+          then jsonb_build_object('line_id', line_id, 'quantity', quantity,
+                                  'index', legacy_index, 'legacy_index', legacy_index)
         -- Redan migrerad, eller ingen träff på id:t: posten lämnas EXAKT som den var. Läskoden
         -- hanterar index-formen, och en gissning på fakturaunderlag är aldrig värd risken.
         else entry
