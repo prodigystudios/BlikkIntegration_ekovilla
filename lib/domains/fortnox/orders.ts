@@ -2,27 +2,47 @@ import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
 import { lineItemUnitPrice, lineItemDiscountPercent, lineItemRowTotal } from '@/lib/domains/crm/pricing';
 import { fortnoxGet, fortnoxGetBinary, fortnoxPost, fortnoxPut, FortnoxApiError, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
-import { appendFortnoxTextNote, buildEndContactNote, buildRotPropertyNote, claimFortnoxPush, resolveOurReference, resolveReverseVat, rotLaborRow, rowRotLaborCarveout, splitRotMaterialRow } from './helpers';
+import { appendFortnoxTextNote, buildEndContactNote, claimFortnoxPush, resolveOurReference, resolveReverseVat, resolveRotReference, rotLaborRow, rowRotLaborCarveout, splitRotMaterialRow } from './helpers';
 import { DEFAULT_ROT_HOUSE_WORK_TYPE } from './types';
+
+// The point-in-time customer data carried on both the quote and the work order. Named once
+// because the header builder below has to read the same shape off either of them.
+type CustomerSnapshot = {
+  contact_name?: string | null;
+  street_address?: string | null;
+  delivery_address?: string | null;
+  delivery_postal_code?: string | null;
+  delivery_city?: string | null;
+  postal_code?: string | null;
+  city?: string | null;
+  reverse_vat?: boolean | null;
+  end_contact_name?: string | null;
+  end_contact_phone?: string | null;
+  end_contact_email?: string | null;
+  label?: string | null;
+};
+
+// The work order's OWN address column — what the order detail page edits, and (since
+// getWorkAddress seeds it) where the job site lives once an order exists.
+type WorkOrderAddress = {
+  street_address?: string | null;
+  postal_code?: string | null;
+  city?: string | null;
+};
+
+type RotDetails = {
+  enabled?: boolean | null;
+  property_designation?: string | null;
+  brf_org_number?: string | null;
+};
 
 type WorkOrderRow = {
   id: string;
   quote_id: string | null;
   customer_id: string | null;
   assigned_to: string | null;
-  customer_snapshot: {
-    contact_name?: string | null;
-    delivery_address?: string | null;
-    delivery_postal_code?: string | null;
-    delivery_city?: string | null;
-    postal_code?: string | null;
-    city?: string | null;
-    reverse_vat?: boolean | null;
-    end_contact_name?: string | null;
-    end_contact_phone?: string | null;
-    end_contact_email?: string | null;
-    label?: string | null;
-  } | null;
+  customer_snapshot: CustomerSnapshot | null;
+  work_address: WorkOrderAddress | null;
   project_name: string;
   client_name: string | null;
   amount: number;
@@ -151,6 +171,123 @@ export function buildOrderRows(lineItems: WorkOrderRow['line_items'], vatPercent
   return appendFortnoxTextNote(rows, rotPropertyNote);
 }
 
+// The header fields we own on a Fortnox order. Everything else on the document (customer, dates,
+// totals) is either set once at creation or computed by Fortnox, and is deliberately absent here:
+// a PUT only touches the fields it carries, so an omitted key leaves Fortnox's value alone.
+export type FortnoxOrderHeaderFields = {
+  OurReference?: string;
+  YourReference?: string;
+  YourOrderNumber?: string;
+  Remarks?: string;
+  DeliveryAddress1?: string;
+  DeliveryZipCode?: string;
+  DeliveryCity?: string;
+};
+
+// The job site as Fortnox delivery address — or nothing, when the job happens at the customer's
+// own address.
+//
+// Two sources, in order: the work order's `work_address` column (what the order detail page edits)
+// and, for a row that never got one, the snapshot's `delivery_*`. They hold the same value at
+// creation (getWorkAddress copies snapshot → column), so reading the column first changes nothing
+// for an untouched order and is the whole point for an edited one — the edit used to land only in
+// the column while the push kept reading the snapshot.
+//
+// The "only when it differs from the customer address" rule is preserved deliberately: sending a
+// delivery address unconditionally would print a delivery block on every order confirmation that
+// doesn't have one today. Street is the anchor (same rule as buildCustomerSnapshot); postal/city
+// go as entered and are never borrowed from the customer address, since a job in another town
+// would otherwise get the wrong ort.
+export function buildOrderDeliveryFields(
+  workAddress: WorkOrderAddress | null | undefined,
+  snapshot: CustomerSnapshot | null | undefined,
+): Pick<FortnoxOrderHeaderFields, 'DeliveryAddress1' | 'DeliveryZipCode' | 'DeliveryCity'> {
+  const fromColumn = workAddress?.street_address?.trim();
+  const site = fromColumn
+    ? { street: fromColumn, zip: workAddress?.postal_code?.trim(), city: workAddress?.city?.trim() }
+    : snapshot?.delivery_address?.trim()
+      ? {
+          street: snapshot.delivery_address!.trim(),
+          zip: snapshot.delivery_postal_code?.trim(),
+          city: snapshot.delivery_city?.trim(),
+        }
+      : null;
+  if (!site) return {};
+
+  const customerStreet = snapshot?.street_address?.trim();
+  if (customerStreet && site.street.toLowerCase() === customerStreet.toLowerCase()) return {};
+
+  return {
+    DeliveryAddress1: site.street,
+    ...(site.zip ? { DeliveryZipCode: site.zip } : {}),
+    ...(site.city ? { DeliveryCity: site.city } : {}),
+  };
+}
+
+type OrderHeaderWorkOrder = {
+  assigned_to: string | null;
+  customer_snapshot: CustomerSnapshot | null;
+  work_address: WorkOrderAddress | null;
+};
+
+type OrderHeaderQuote = {
+  assigned_to?: string | null;
+  customer_snapshot?: CustomerSnapshot | null;
+  rot_details?: RotDetails | null;
+} | null;
+
+// Builds the order header (and the ROT text-row note that belongs with it) from the work order.
+//
+// ONE builder for all three push paths — create, the row re-sync after an article edit, and the
+// header-only sync after a contact/address edit. They used to disagree: only the create path ever
+// set OurReference/YourReference/delivery, so a contact person or work address corrected on the
+// order stayed in CRM and Fortnox kept the offer's original values with nothing to signal it.
+//
+// The WORK ORDER's snapshot leads and the quote's is a whole-object fallback, not a per-field one.
+// The two are identical at creation (createCrmWorkOrderFromQuote copies the quote's), and the order
+// is what gets edited afterwards — a per-field fallback would resurrect a value the seller
+// deliberately cleared. Same reasoning for assigned_to, which the detail page re-assigns and which
+// only ever holds an office role (listAssignableCrmUsers is sales/admin/konsult), never an installer.
+async function buildOrderHeader(
+  workOrder: OrderHeaderWorkOrder,
+  linkedQuote: OrderHeaderQuote,
+  rotEnabled: boolean,
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+): Promise<{ header: FortnoxOrderHeaderFields; rotPropertyNote: string | null }> {
+  const snapshot = workOrder.customer_snapshot ?? linkedQuote?.customer_snapshot ?? null;
+  const ourReference = await resolveOurReference(workOrder.assigned_to ?? linkedQuote?.assigned_to ?? null, supabase);
+  const { referenceNumber, propertyNote } = resolveRotReference(linkedQuote?.rot_details, snapshot?.label, rotEnabled);
+  const endContactNote = buildEndContactNote(snapshot);
+
+  return {
+    header: {
+      ...(ourReference ? { OurReference: ourReference } : {}),
+      ...(snapshot?.contact_name ? { YourReference: snapshot.contact_name } : {}),
+      // "Ert referensnummer" — the order field is YourOrderNumber (the offer uses
+      // YourReferenceNumber; sending the wrong one is a 2001399 "Felaktigt fältnamn").
+      ...(referenceNumber ? { YourOrderNumber: referenceNumber } : {}),
+      ...(endContactNote ? { Remarks: endContactNote } : {}),
+      ...buildOrderDeliveryFields(workOrder.work_address, snapshot),
+    },
+    rotPropertyNote: propertyNote,
+  };
+}
+
+// The quote fields the header builder falls back on (an order created from a quote inherits its
+// ROT details, which never live on the work order itself). Null for a standalone order.
+async function fetchLinkedQuoteForHeader(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  quoteId: string | null,
+): Promise<OrderHeaderQuote> {
+  if (!quoteId) return null;
+  const { data } = await supabase
+    .from('crm_quotes')
+    .select('assigned_to, customer_snapshot, rot_details')
+    .eq('id', quoteId)
+    .maybeSingle();
+  return (data as OrderHeaderQuote) ?? null;
+}
+
 // Resolves the Fortnox customer number from an already-fetched linked quote.
 // Checks customer_source first, then falls back to crm_customers.fortnox_customer_id.
 async function resolveCustomerNumberFromQuote(
@@ -192,7 +329,7 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
 
   const { data: workOrder, error } = await supabase
     .from('crm_work_orders')
-    .select('id, quote_id, customer_id, assigned_to, customer_snapshot, project_name, client_name, amount, vat_percent, currency_code, line_items, fortnox_order_number')
+    .select('id, quote_id, customer_id, assigned_to, customer_snapshot, work_address, project_name, client_name, amount, vat_percent, currency_code, line_items, fortnox_order_number')
     .eq('id', workOrderId)
     .single<WorkOrderRow>();
 
@@ -227,20 +364,8 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
       customer_id: string | null;
       customer_source: { kind?: string; fortnox_customer_id?: string } | null;
       assigned_to: string | null;
-      customer_snapshot: {
-        contact_name?: string | null;
-        delivery_address?: string | null;
-        delivery_postal_code?: string | null;
-        delivery_city?: string | null;
-        postal_code?: string | null;
-        city?: string | null;
-        reverse_vat?: boolean | null;
-        end_contact_name?: string | null;
-        end_contact_phone?: string | null;
-        end_contact_email?: string | null;
-        label?: string | null;
-      } | null;
-      rot_details: { enabled?: boolean | null; property_designation?: string | null; brf_org_number?: string | null } | null;
+      customer_snapshot: CustomerSnapshot | null;
+      rot_details: RotDetails | null;
     };
 
     const linkedQuote: LinkedQuote | null = workOrder.quote_id
@@ -295,55 +420,29 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
         );
       }
 
-      const ourReference = await resolveOurReference(linkedQuote?.assigned_to ?? workOrder.assigned_to ?? null, supabase);
-
-      const snapshot = linkedQuote?.customer_snapshot ?? workOrder.customer_snapshot;
-      // Work/job address (Fortnox delivery): street is the anchor; postal/city sent as
-      // entered, not borrowed from the customer address. Matches the work order's address.
-      const deliveryAddress = snapshot?.delivery_address;
-      const deliveryZip = snapshot?.delivery_postal_code;
-      const deliveryCity = snapshot?.delivery_city;
-
       const vatPercent = typeof workOrder.vat_percent === 'number' ? workOrder.vat_percent : 25;
       // Reverse charge (byggmoms) excludes ROT and forces 0 % rows + SEREVERSEDVAT on the order.
       const reverseVat = await resolveReverseVat(
         supabase,
-        snapshot?.reverse_vat,
+        workOrder.customer_snapshot?.reverse_vat ?? linkedQuote?.customer_snapshot?.reverse_vat,
         linkedQuote?.customer_id ?? workOrder.customer_id,
       );
       const rotEnabled = linkedQuote?.rot_details?.enabled === true && !reverseVat;
-      // "Ert referensnummer" (order field = YourOrderNumber): ROT villa fastighetsbeteckning, else
-      // the företag märkning (snapshot.label). Mirrors offers.ts; standalone ROT is a rare path.
-      // Bostadsrätt (BRF) can't use one field → text row via buildRotPropertyNote.
-      const hasProperty = rotEnabled && !!linkedQuote?.rot_details?.property_designation?.trim();
-      const hasBrf = rotEnabled && !!linkedQuote?.rot_details?.brf_org_number?.trim();
-      const propertyAsRef = hasProperty && !hasBrf;
-      const referenceNumber = propertyAsRef
-        ? linkedQuote!.rot_details!.property_designation!.trim()
-        : (snapshot?.label?.trim() || null);
-      const rotPropertyNote = propertyAsRef ? null : (rotEnabled ? buildRotPropertyNote(linkedQuote?.rot_details) : null);
+      const { header, rotPropertyNote } = await buildOrderHeader(workOrder, linkedQuote, rotEnabled, supabase);
       const orderRows = buildOrderRows(workOrder.line_items, vatPercent, rotEnabled, reverseVat, rotPropertyNote);
 
       const response = await fortnoxPost<{ Order: { DocumentNumber: string } }>('/orders', {
         Order: {
           CustomerNumber: customerNumber,
           OrderDate: new Date().toISOString().slice(0, 10),
-          ...(ourReference ? { OurReference: ourReference } : {}),
-          ...(snapshot?.contact_name ? { YourReference: snapshot.contact_name } : {}),
-          // "Ert referensnummer" — order field is YourOrderNumber (offer uses YourReferenceNumber).
-          ...(referenceNumber ? { YourOrderNumber: referenceNumber } : {}),
+          ...header,
           // No VATType on the payload (Fortnox rejects it on offers; we keep orders consistent):
           // the customer card drives the VAT regime, and rows carry the matching VAT (0 % for
           // reverse charge, see buildOrderRows) so header and rows never diverge.
+          //
+          // TaxReductionType is set HERE only. The ROT regime of an order never changes after it
+          // exists, and re-sending it on an update would add a rejection path for no gain.
           ...(rotEnabled ? { TaxReductionType: 'rot' } : {}),
-          ...(buildEndContactNote(snapshot) ? { Remarks: buildEndContactNote(snapshot) } : {}),
-          ...(deliveryAddress
-            ? {
-                DeliveryAddress1: deliveryAddress,
-                ...(deliveryZip ? { DeliveryZipCode: deliveryZip } : {}),
-                ...(deliveryCity ? { DeliveryCity: deliveryCity } : {}),
-              }
-            : {}),
           OrderRows: orderRows,
         },
       });
@@ -457,17 +556,18 @@ export async function createInvoiceFromWorkOrder(workOrderId: string): Promise<C
   }
 }
 
-// Push edited article rows to an already-synced Fortnox order (PUT replaces all rows).
-// If the order was never synced, falls back to the create path. Used after the work
-// order's line_items are edited so Fortnox reflects the corrected areas/articles before
-// invoicing. Fortnox rejects edits to an invoiced/cancelled order — that surfaces as the
-// thrown error and the sync status flips to 'failed'.
+// Re-sync an already-synced Fortnox order: header AND article rows (PUT replaces all rows).
+// If the order was never synced, falls back to the create path. Used after the work order's
+// line_items are edited, and by the manual "Synka om" button — which is why the header goes
+// too: it used to send rows only, so "Synka om" could not repair a contact person or work
+// address no matter how many times a seller pressed it. Fortnox rejects edits to an
+// invoiced/cancelled order — that surfaces as the thrown error and sync status flips to 'failed'.
 export async function updateWorkOrderInFortnox(workOrderId: string): Promise<PushOrderResult> {
   const supabase = getSupabaseAdmin();
 
   const { data: workOrder, error } = await supabase
     .from('crm_work_orders')
-    .select('id, quote_id, customer_id, customer_snapshot, vat_percent, fortnox_order_number, line_items')
+    .select('id, quote_id, customer_id, assigned_to, customer_snapshot, work_address, vat_percent, fortnox_order_number, line_items')
     .eq('id', workOrderId)
     .single<WorkOrderRow>();
 
@@ -484,27 +584,83 @@ export async function updateWorkOrderInFortnox(workOrderId: string): Promise<Pus
     .eq('id', workOrderId);
 
   try {
-    type EditRotDetails = { enabled?: boolean | null; property_designation?: string | null; brf_org_number?: string | null };
-    const { data: linkedQuote } = workOrder.quote_id
-      ? await supabase.from('crm_quotes').select('rot_details').eq('id', workOrder.quote_id).maybeSingle()
-      : { data: null as { rot_details: EditRotDetails | null } | null };
+    const linkedQuote = await fetchLinkedQuoteForHeader(supabase, workOrder.quote_id);
 
     const vatPercent = typeof workOrder.vat_percent === 'number' ? workOrder.vat_percent : 25;
     // Reverse charge (byggmoms) must be honoured on the edit-resync too, else editing an article
     // re-PUTs the order at 25 % VAT and silently un-does the 0 %-rate push. ROT is excluded then.
     const reverseVat = await resolveReverseVat(supabase, workOrder.customer_snapshot?.reverse_vat, workOrder.customer_id);
-    const rotDetails = (linkedQuote as { rot_details?: EditRotDetails | null } | null)?.rot_details ?? null;
-    const rotEnabled = rotDetails?.enabled === true && !reverseVat;
+    const rotEnabled = linkedQuote?.rot_details?.enabled === true && !reverseVat;
     // This PUT replaces ALL OrderRows, so a ROT property note that rides as a text ROW (bostadsrätt)
-    // would be WIPED unless we regenerate it here. Villa/företag put it in YourOrderNumber (header),
-    // which this rows-only PUT doesn't touch, so their note stays null here. Mirrors the create path.
-    const hasProperty = rotEnabled && !!rotDetails?.property_designation?.trim();
-    const hasBrf = rotEnabled && !!rotDetails?.brf_org_number?.trim();
-    const propertyAsRef = hasProperty && !hasBrf;
-    const rotPropertyNote = propertyAsRef ? null : (rotEnabled ? buildRotPropertyNote(rotDetails) : null);
+    // would be WIPED unless we regenerate it here. Villa/företag put it in YourOrderNumber, which
+    // the header below carries. Same builder as the create path, so the two can't diverge.
+    const { header, rotPropertyNote } = await buildOrderHeader(workOrder, linkedQuote, rotEnabled, supabase);
     const orderRows = buildOrderRows(workOrder.line_items, vatPercent, rotEnabled, reverseVat, rotPropertyNote);
 
-    await fortnoxPut(`/orders/${workOrder.fortnox_order_number}`, { Order: { OrderRows: orderRows } });
+    await fortnoxPut(`/orders/${workOrder.fortnox_order_number}`, { Order: { ...header, OrderRows: orderRows } });
+
+    await supabase
+      .from('crm_work_orders')
+      .update({ fortnox_order_sync_status: 'synced', fortnox_order_synced_at: new Date().toISOString() })
+      .eq('id', workOrderId);
+
+    return { fortnox_order_number: workOrder.fortnox_order_number };
+  } catch (e) {
+    const syncStatus = e instanceof FortnoxNotConnectedError ? 'not_synced' : 'failed';
+    await supabase.from('crm_work_orders').update({ fortnox_order_sync_status: syncStatus }).eq('id', workOrderId);
+    throw e;
+  }
+}
+
+// Push ONLY the header (references, on-site contact note, delivery address) of an already-synced
+// Fortnox order. Called after the order's contact person, work address or ansvarig is edited.
+//
+// Rows are deliberately NOT sent. A contact correction has to be possible on an order whose rows
+// are frozen by delfakturering, and re-PUTting rows there would break the array-index match that
+// tracks invoiced-vs-remaining per article. Rows have their own path (updateWorkOrderInFortnox).
+//
+// Returns null — quietly, not as an error — when there is nothing to push:
+//   • the order isn't in Fortnox yet. A contact edit must never CREATE the Fortnox document; that
+//     belongs to the article push or the seller's explicit "Skicka till Fortnox".
+//   • the order is fully invoiced. Fortnox refuses edits to an invoiced order, and a closed order
+//     must not flip to sync_status 'failed' every time someone corrects a phone number.
+//     `partially_invoiced` is NOT excluded: under Model B those invoices are standalone documents,
+//     so the Fortnox order itself is still open and accepts a header update.
+export async function syncWorkOrderHeaderToFortnox(workOrderId: string): Promise<PushOrderResult | null> {
+  const supabase = getSupabaseAdmin();
+
+  // Narrower than WorkOrderRow on purpose: this path reads no rows and no pricing, and typing it
+  // as the full row would claim fields the select doesn't fetch.
+  type HeaderSyncRow = OrderHeaderWorkOrder & {
+    quote_id: string | null;
+    customer_id: string | null;
+    status: string;
+    fortnox_order_number: string | null;
+    fortnox_invoice_number: string | null;
+  };
+
+  const { data: workOrder, error } = await supabase
+    .from('crm_work_orders')
+    .select('id, quote_id, customer_id, assigned_to, customer_snapshot, work_address, status, fortnox_order_number, fortnox_invoice_number')
+    .eq('id', workOrderId)
+    .single<HeaderSyncRow>();
+
+  if (error || !workOrder) throw new Error(`Arbetsorder ${workOrderId} hittades inte`);
+  if (!workOrder.fortnox_order_number) return null;
+  if (workOrder.status === 'invoiced' || workOrder.fortnox_invoice_number) return null;
+
+  try {
+    const linkedQuote = await fetchLinkedQuoteForHeader(supabase, workOrder.quote_id);
+    // ROT only decides which of the two "Ert referensnummer" values the header carries; the note
+    // half of resolveRotReference is a ROW and belongs to the row path, so it's dropped here.
+    const reverseVat = await resolveReverseVat(supabase, workOrder.customer_snapshot?.reverse_vat, workOrder.customer_id);
+    const rotEnabled = linkedQuote?.rot_details?.enabled === true && !reverseVat;
+    const { header } = await buildOrderHeader(workOrder, linkedQuote, rotEnabled, supabase);
+
+    // An empty header would be a PUT that says nothing — skip the round trip.
+    if (Object.keys(header).length === 0) return { fortnox_order_number: workOrder.fortnox_order_number };
+
+    await fortnoxPut(`/orders/${workOrder.fortnox_order_number}`, { Order: header });
 
     await supabase
       .from('crm_work_orders')
