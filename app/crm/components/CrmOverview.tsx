@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import EmptyState from '../../../components/ui/EmptyState';
 import MetricCard from './MetricCard';
+import ChangelogCard from './ChangelogCard';
 import type { UserRole } from '@/lib/roles';
 import { getVisibleCrmNavItems } from '../_lib/nav';
 import { cn } from '@/lib/shared/cn';
@@ -714,6 +715,11 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
           <LeaderboardPanel loading={loading} teamLeaderboard={teamLeaderboard} />
         </div>
       </div>
+
+      {/* Nytt i appen. Ligger efter innehållet men före snabbnavigeringen: ändringarna ska synas
+          utan att man letar, men de är inte det man kom hit för. Kortet döljer sig självt när det
+          inte finns något att visa. */}
+      <ChangelogCard />
 
       {/* Quick nav */}
       {items.length > 0 ? (

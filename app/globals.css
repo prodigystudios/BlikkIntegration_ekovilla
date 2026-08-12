@@ -29,12 +29,16 @@
     border-style: solid;
   }
 
-  /* Appärendena (Rapportera-knappen + backloggen i admin). Samma reset, samma skäl — men värt att
-     stava ut vilket fel den tar bort, för det var inte uppenbart: `border-t border-solid` sätter
-     stilen på ALLA fyra sidor och bredden bara på toppen, så de tre andra föll tillbaka på
-     webbläsarens `medium` (~3px) och en tänkt avdelarlinje blev en låda runt hela sektionen.
-     Med reseten beter sig varje border-utility som i vanlig Tailwind, och `border-solid` behöver
-     inte strös ut i komponenterna. */
+  /* Appärendena (Rapportera-knappen + backloggen i admin) OCH changeloggen — samma familj: det
+     användarna säger in, och det som går ut till dem. Samma reset, samma skäl — men värt att stava
+     ut vilket fel den tar bort, för det var inte uppenbart: `border-t border-solid` sätter stilen
+     på ALLA fyra sidor och bredden bara på toppen, så de tre andra föll tillbaka på webbläsarens
+     `medium` (~3px) och en tänkt avdelarlinje blev en låda runt hela sektionen. Med reseten beter
+     sig varje border-utility som i vanlig Tailwind, och `border-solid` behöver inte strös ut i
+     komponenterna.
+
+     ⚠️ TEMPORÄR. Preflight ska slås på app-vitt när de gamla ytorna stängts ner — då ska den här
+     regeln och sina syskon ovan raderas, inte utökas med fler selektorer. */
   .support-surface *,
   .support-surface *::before,
   .support-surface *::after {
