@@ -83,8 +83,12 @@ export const updateCrmWorkOrderSchema = z.object({
     delivery_address: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
     invoice_address: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
   }).optional().default({}),
-  // Responsible contact override — merged into customer_snapshot by the route so a contact that
-  // changed between offer→order flows to the installer view and the Fortnox YourReference.
+  // "Er referens" — kundens formella referens, det enda kontaktvärdet som når Fortnox
+  // (YourReference). Skilt från `contact` nedan med flit: den som rättar en kundkontakt ska inte
+  // råka skriva om referensen som styr kundens faktura till rätt attestant.
+  your_reference: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional(),
+  // Kundkontakten — vem vi och installatörerna ringer. Merged into customer_snapshot by the route.
+  // Når ALDRIG Fortnox; se FORTNOX_MIRRORED_FIELDS i routen.
   contact: z.object({
     contact_name: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
     email: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),

@@ -105,6 +105,7 @@ type WorkOrderDraft = {
   contact_name: string;
   contact_phone: string;
   contact_email: string;
+  your_reference: string;
   work_scope: string;
   handoff_notes: string;
   notes: string;
@@ -266,6 +267,9 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
       contact_name: item.customer_snapshot?.contact_name || '',
       contact_phone: item.customer_snapshot?.phone || '',
       contact_email: item.customer_snapshot?.email || '',
+      // Ordrar skapade innan Er referens blev ett eget fält har den kvar i contact_name — visa den
+      // därifrån, annars ser fältet tomt ut fast Fortnox har ett värde.
+      your_reference: item.customer_snapshot?.your_reference ?? item.customer_snapshot?.contact_name ?? '',
       work_scope: item.internal_handoff?.work_scope || '',
       handoff_notes: item.internal_handoff?.handoff_notes || '',
       notes: item.notes || '',
@@ -317,8 +321,9 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
             postal_code: draft.postal_code,
             city: draft.city,
           },
-          // Responsible contact (merged into the snapshot server-side) — lets us fix it if it
-          // changed between offer→order.
+          // Er referens — kundens formella referens, det ENDA kontaktvärdet som når Fortnox.
+          your_reference: draft.your_reference || null,
+          // Kundkontakten: vem vi och installatörerna ringer. Rör aldrig Fortnox.
           contact: {
             contact_name: draft.contact_name,
             phone: draft.contact_phone,
@@ -710,10 +715,32 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
           {/* Sidebar */}
           <div className="grid gap-5 lg:content-start">
 
+            {/* Er referens — kundens formella referens. Eget kort med flit: den ligger bredvid
+                Kundkontakt men betyder något helt annat, och den är den enda av de två som
+                kunden ser. Delade tidigare fält med kontaktpersonen, vilket gjorde att en rättad
+                telefonkontakt skrev om referensen som styr kundens faktura till rätt attestant. */}
+            {editingOverview ? (
+              <Card className="grid gap-2">
+                <p className={crm.sectionTitle}>Er referens</p>
+                <Input
+                  value={draft.your_reference}
+                  onChange={(e) => setField('your_reference', e.target.value)}
+                  placeholder="Kundens referens"
+                />
+                <p className="text-xs text-slate-500">Kundens egen referens — följer med till Fortnox och syns på order och faktura.</p>
+              </Card>
+            ) : draft?.your_reference ? (
+              <Card className="grid gap-1">
+                <p className={crm.sectionTitle}>Er referens</p>
+                <p className="text-sm font-semibold text-slate-900">{draft.your_reference}</p>
+              </Card>
+            ) : null}
+
             {/* Customer contact */}
             {editingOverview ? (
               <Card className="grid gap-3">
                 <p className={crm.sectionTitle}>Kundkontakt</p>
+                <p className="text-xs text-slate-500">För er och installatörerna. Skickas inte till Fortnox.</p>
                 {/* Pick a different contact if the responsible person changed offer→order. */}
                 {customerContacts.length > 0 ? (
                   <Select

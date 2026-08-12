@@ -174,3 +174,42 @@ describe('createCrmWorkOrderFromQuote — fält-mappning', () => {
     expect(captured.insert!.notes).toBe('Offertbeskrivning');
   });
 });
+
+// "Er referens" och kundkontakten delade tidigare fält (customer_snapshot.contact_name). Det
+// betydde att en säljare som rättade kontaktpersonen på ordern samtidigt skrev om kundens
+// formella referens — den som styr fakturan till rätt attestant hos kunden. Från och med
+// orderskapandet är de två skilda: your_reference går till Fortnox, contact_name gör det inte.
+describe('createCrmWorkOrderFromQuote — Er referens fryses vid orderskapandet', () => {
+  it('seedar your_reference från offertens contact_name', async () => {
+    const { supabase, captured } = makeSupabase(wonQuote({
+      customer_snapshot: { customer_name: 'Bygg AB', contact_name: 'Emil' },
+    }));
+
+    const result = await createCrmWorkOrderFromQuote(supabase as any, 'q1', 'user-1');
+
+    expect(result.error).toBeNull();
+    expect(captured.insert!.customer_snapshot.your_reference).toBe('Emil');
+    // Kundkontakten finns kvar som egen uppgift — de börjar som samma person.
+    expect(captured.insert!.customer_snapshot.contact_name).toBe('Emil');
+  });
+
+  it('skriver inte över en your_reference som offerten redan bär', async () => {
+    const { supabase, captured } = makeSupabase(wonQuote({
+      customer_snapshot: { customer_name: 'Bygg AB', contact_name: 'Emil', your_reference: 'Inköp/Anna' },
+    }));
+
+    await createCrmWorkOrderFromQuote(supabase as any, 'q1', 'user-1');
+
+    expect(captured.insert!.customer_snapshot.your_reference).toBe('Inköp/Anna');
+  });
+
+  it('sätter your_reference till null när offerten saknar kontaktperson', async () => {
+    const { supabase, captured } = makeSupabase(wonQuote({
+      customer_snapshot: { customer_name: 'Bygg AB' },
+    }));
+
+    await createCrmWorkOrderFromQuote(supabase as any, 'q1', 'user-1');
+
+    expect(captured.insert!.customer_snapshot.your_reference).toBeNull();
+  });
+});

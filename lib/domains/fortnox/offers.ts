@@ -2,7 +2,7 @@ import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
 import { lineItemUnitPrice, lineItemDiscountPercent, lineItemRowTotal } from '@/lib/domains/crm/pricing';
 import { fortnoxPost, fortnoxPut, fortnoxGetBinary, FortnoxApiError, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
-import { appendFortnoxTextNote, buildEndContactNote, buildRotPropertyNote, claimFortnoxPush, resolveOurReference, resolveReverseVat, rotLaborRow, rowRotLaborCarveout, splitRotMaterialRow } from './helpers';
+import { appendFortnoxTextNote, buildRotPropertyNote, claimFortnoxPush, resolveOurReference, resolveReverseVat, rotLaborRow, rowRotLaborCarveout, splitRotMaterialRow } from './helpers';
 import { buildFortnoxCustomerPayload, createFortnoxCustomer, splitSwedishName, buildFortnoxAddress, type FortnoxCustomerSource } from './customers';
 import { DEFAULT_ROT_HOUSE_WORK_TYPE } from './types';
 
@@ -465,11 +465,12 @@ export async function pushQuoteToFortnox(quoteId: string): Promise<PushOfferResu
     const deliveryZip = snapshot?.delivery_postal_code;
     const deliveryCity = snapshot?.delivery_city;
 
-    // Remarks now carries ONLY the on-site contact note. The quote's free-text `description` and
-    // the ROT property designation / BRF org.nr are deliberately kept OUT of Remarks — Fortnox's
-    // Remarks field renders as the offer's body text and would overwrite the company's standard
-    // offerttext. Description stays CRM-internal; the ROT property info rides as a text row instead.
-    const remarks = buildEndContactNote(snapshot) || undefined;
+    // Remarks is NOT sent at all. It renders as the offer's body text, so anything we put there
+    // overwrites the company's standard offerttext — which is why the quote's `description` and the
+    // ROT property designation were already kept out of it (the latter rides as a text row).
+    // The customer contact was the last thing using it and is now deliberately CRM-internal: it is
+    // who we and the installers call, not something the customer's document should carry. Fortnox
+    // rewrites Remarks per document type on createorder anyway, so it never survived offer→order.
 
     const offerBody = {
       Offer: {
@@ -485,7 +486,6 @@ export async function pushQuoteToFortnox(quoteId: string): Promise<PushOfferResu
         // customer card (kept in sync with our reverse_vat), and we send rows at the MATCHING VAT
         // (0 % for reverse charge, else vatPercent) so header and rows are always consistent.
         ...(rotEnabled ? { TaxReductionType: 'rot' } : {}),
-        ...(remarks ? { Remarks: remarks } : {}),
         ...(deliveryAddress
           ? {
               DeliveryAddress1: deliveryAddress,
