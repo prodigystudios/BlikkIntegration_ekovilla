@@ -153,10 +153,12 @@ describe('buildOrderDeliveryFields', () => {
     });
   });
 
-  // Legacy rows created before work_address was seeded still have to push their job site.
-  it('falls back to the snapshot delivery address when the column has no street', () => {
+  // Legacy rows created before work_address was seeded still have to push their job site. Keyed on
+  // the COLUMN being absent — a present-but-blank street means the seller cleared it (see the
+  // "rensad adress" block below), not that we should go looking in the snapshot.
+  it('falls back to the snapshot delivery address for a row with no work_address at all', () => {
     const snapshot = { ...customer, delivery_address: 'Gamla vägen 2', delivery_postal_code: '11111', delivery_city: 'Solna' };
-    expect(buildOrderDeliveryFields({ street_address: '  ' }, snapshot)).toEqual({
+    expect(buildOrderDeliveryFields(null, snapshot)).toEqual({
       DeliveryAddress1: 'Gamla vägen 2',
       DeliveryZipCode: '11111',
       DeliveryCity: 'Solna',
@@ -173,5 +175,35 @@ describe('buildOrderDeliveryFields', () => {
   it('sends nothing when there is no job site at all', () => {
     expect(buildOrderDeliveryFields(null, customer)).toEqual({});
     expect(buildOrderDeliveryFields({}, null)).toEqual({});
+  });
+});
+
+// Fynd ur kodgranskningen: fallbacken kunde inte skilja "aldrig satt" från "medvetet tömd", så en
+// raderad arbetsadress lämnade snapshotens gamla adress kvar — och pushade den igen.
+describe('buildOrderDeliveryFields — rensad adress', () => {
+  const snapshot = {
+    street_address: 'Storgatan 1', postal_code: '11122', city: 'Stockholm',
+    delivery_address: 'Gamla vägen 2', delivery_postal_code: '11111', delivery_city: 'Solna',
+  };
+
+  it('does not resurrect the snapshot address when the work address was cleared', () => {
+    // Kolumnen FINNS men gatan är tömd → ingen separat arbetsplats, inte "leta i snapshoten".
+    expect(buildOrderDeliveryFields({ street_address: '', postal_code: '', city: '' }, snapshot)).toEqual({});
+    expect(buildOrderDeliveryFields({ street_address: '   ' }, snapshot)).toEqual({});
+    expect(buildOrderDeliveryFields({}, snapshot)).toEqual({});
+  });
+
+  // Bakåtkompatibiliteten som fallbacken fanns för: rader som aldrig fick en work_address alls.
+  it('still falls back for a legacy row that has no work_address column value', () => {
+    expect(buildOrderDeliveryFields(null, snapshot)).toEqual({
+      DeliveryAddress1: 'Gamla vägen 2',
+      DeliveryZipCode: '11111',
+      DeliveryCity: 'Solna',
+    });
+    expect(buildOrderDeliveryFields(undefined, snapshot)).toEqual({
+      DeliveryAddress1: 'Gamla vägen 2',
+      DeliveryZipCode: '11111',
+      DeliveryCity: 'Solna',
+    });
   });
 });

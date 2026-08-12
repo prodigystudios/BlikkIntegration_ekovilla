@@ -202,16 +202,23 @@ export function buildOrderDeliveryFields(
   workAddress: WorkOrderAddress | null | undefined,
   snapshot: CustomerSnapshot | null | undefined,
 ): Pick<FortnoxOrderHeaderFields, 'DeliveryAddress1' | 'DeliveryZipCode' | 'DeliveryCity'> {
-  const fromColumn = workAddress?.street_address?.trim();
-  const site = fromColumn
-    ? { street: fromColumn, zip: workAddress?.postal_code?.trim(), city: workAddress?.city?.trim() }
-    : snapshot?.delivery_address?.trim()
-      ? {
-          street: snapshot.delivery_address!.trim(),
-          zip: snapshot.delivery_postal_code?.trim(),
-          city: snapshot.delivery_city?.trim(),
-        }
-      : null;
+  // Which source is AUTHORITATIVE is decided by whether the column exists at all — not by whether
+  // it happens to hold a street. A row that HAS a work_address owns its job site, so an emptied
+  // street means "no separate job site", not "look in the snapshot". Falling back on a blank street
+  // would re-push the address the seller just deleted, and would do it on a first create push too.
+  // Only a row with no work_address at all (legacy: getWorkAddress and the standalone create both
+  // always write one) may fall back to the snapshot's delivery_*.
+  const site = workAddress
+    ? (workAddress.street_address?.trim()
+        ? { street: workAddress.street_address.trim(), zip: workAddress.postal_code?.trim(), city: workAddress.city?.trim() }
+        : null)
+    : (snapshot?.delivery_address?.trim()
+        ? {
+            street: snapshot.delivery_address.trim(),
+            zip: snapshot.delivery_postal_code?.trim(),
+            city: snapshot.delivery_city?.trim(),
+          }
+        : null);
   if (!site) return {};
 
   const customerStreet = snapshot?.street_address?.trim();
@@ -657,15 +664,22 @@ export async function syncWorkOrderHeaderToFortnox(workOrderId: string): Promise
     const rotEnabled = linkedQuote?.rot_details?.enabled === true && !reverseVat;
     const { header } = await buildOrderHeader(workOrder, linkedQuote, rotEnabled, supabase);
 
-    // An empty header would be a PUT that says nothing — skip the round trip.
-    if (Object.keys(header).length === 0) return { fortnox_order_number: workOrder.fortnox_order_number };
+    // An empty header would be a PUT that says nothing — skip the round trip. null, not a result:
+    // nothing was sent, so the caller must not report a completed sync (and must not re-read the
+    // row expecting a fresh timestamp).
+    if (Object.keys(header).length === 0) return null;
 
     await fortnoxPut(`/orders/${workOrder.fortnox_order_number}`, { Order: header });
 
+    // `neq('failed')`: this path sends NO rows, so it cannot vouch for them. Stamping 'synced'
+    // unconditionally would clear a failed article sync, hide the "Försök igen"-knapp, and leave
+    // the order looking complete while Fortnox still holds the pre-edit rows. A failed row sync
+    // stays failed until the row path itself succeeds.
     await supabase
       .from('crm_work_orders')
       .update({ fortnox_order_sync_status: 'synced', fortnox_order_synced_at: new Date().toISOString() })
-      .eq('id', workOrderId);
+      .eq('id', workOrderId)
+      .neq('fortnox_order_sync_status', 'failed');
 
     return { fortnox_order_number: workOrder.fortnox_order_number };
   } catch (e) {
