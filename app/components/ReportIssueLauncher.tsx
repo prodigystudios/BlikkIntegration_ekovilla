@@ -49,7 +49,12 @@ export default function ReportIssueLauncher({ loggedIn }: { loggedIn: boolean })
   if (!loggedIn || isHiddenPath(pathname)) return null;
 
   return (
-    <>
+    // `crm-shell` bär CRM:ets CSS-variabler (globals.css) — och de är scopade till DEN klassen, inte
+    // till :root. Eftersom komponenten med flit renderas UTANFÖR AppShell (fältvyn saknar skal) var
+    // `var(--crm-primary)` odefinierad här, och Skicka-knappen blev vit text på ingen bakgrund:
+    // osynlig. Wrappern återger variablerna till hela trädet — knappen OCH modalen — så varje
+    // CRM-token fungerar som på övriga ytor. Div:en är layoutneutral: allt inuti är `fixed`.
+    <div className="crm-shell">
       <button
         type="button"
         onClick={() => {
@@ -85,7 +90,7 @@ export default function ReportIssueLauncher({ loggedIn }: { loggedIn: boolean })
           onClose={() => setOpen(false)}
         />
       )}
-    </>
+    </div>
   );
 }
 
@@ -377,7 +382,11 @@ function TicketForm({ pagePath, onCreated }: { pagePath: string; onCreated: () =
         type="submit"
         disabled={submitting}
         className={cn(crm.formButton, 'w-full')}
-        style={{ backgroundColor: 'var(--crm-primary)' }}
+        // Fallback-färgen är ingen dekoration: knappen har vit text, så en odefinierad
+        // `--crm-primary` gör den helt osynlig. Variabeln är scopad till `.crm-shell`, och den här
+        // komponenten lever utanför AppShell — händelseförloppet som gjorde knappen osynlig en
+        // gång. Wrappern ovan löser det, fallbacken gör att det inte kan hända igen.
+        style={{ backgroundColor: 'var(--crm-primary, #1a3f26)' }}
       >
         {submitting ? 'Skickar…' : 'Skicka rapport'}
       </button>

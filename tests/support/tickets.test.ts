@@ -41,6 +41,7 @@ const baseRow: AppTicketRow = {
   changelog_note: null,
   changelog_published_at: null,
   handled_by: null,
+  handled_by_name: null,
   handled_at: null,
   created_at: '2026-08-12T08:00:00.000Z',
   updated_at: '2026-08-12T08:00:00.000Z',
@@ -176,7 +177,7 @@ describe('mapTicketRow', () => {
 
 describe('buildTicketUpdatePatch', () => {
   const now = '2026-08-12T10:00:00.000Z';
-  const actor = { id: '33333333-3333-4333-8333-333333333333' };
+  const actor = { id: '33333333-3333-4333-8333-333333333333', name: 'William' };
 
   it('skriver BARA de fält klienten skickade', () => {
     const patch = buildTicketUpdatePatch(
@@ -185,7 +186,13 @@ describe('buildTicketUpdatePatch', () => {
       actor,
       now,
     );
-    expect(patch).toEqual({ updated_at: now, status: 'planned', handled_by: actor.id, handled_at: now });
+    expect(patch).toEqual({
+      updated_at: now,
+      status: 'planned',
+      handled_by: actor.id,
+      handled_by_name: actor.name,
+      handled_at: now,
+    });
     expect(patch).not.toHaveProperty('resolution');
     expect(patch).not.toHaveProperty('changelog_note');
   });
@@ -195,10 +202,21 @@ describe('buildTicketUpdatePatch', () => {
     expect(patch.resolution).toBeNull();
   });
 
-  it('stämplar handled_by/handled_at vid varje statusändring', () => {
+  // Namnet lagras som kopia: `profiles` är self-read-only, så det går inte att läsa upp i efterhand.
+  it('stämplar handled_by, handled_by_name och handled_at vid varje statusändring', () => {
     const patch = buildTicketUpdatePatch({ status: 'done' }, ['status'], actor, now);
     expect(patch.handled_by).toBe(actor.id);
+    expect(patch.handled_by_name).toBe(actor.name);
     expect(patch.handled_at).toBe(now);
+  });
+
+  // Bara en statusändring stämplar hanteraren. Att rätta en stavning i svaret är inte att "ta i"
+  // ärendet, och skulle annars skriva om när det senast hände något.
+  it('stämplar INTE hanteraren när bara svaret ändras', () => {
+    const patch = buildTicketUpdatePatch({ resolution: 'rättad text' }, ['resolution'], actor, now);
+    expect(patch).not.toHaveProperty('handled_by');
+    expect(patch).not.toHaveProperty('handled_by_name');
+    expect(patch).not.toHaveProperty('handled_at');
   });
 
   it('sätter och tar bort changelog-publiceringen', () => {

@@ -5,9 +5,9 @@ import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { ok, routeError, validationError, invalidUuidParam } from '@/lib/api/responses';
 import { updateTicketSchema } from '@/lib/domains/support/schemas';
 import { getTicket } from '@/lib/domains/support/queries';
-import { buildTicketUpdatePatch, checkChangelogPublishable, updateTicket } from '@/lib/domains/support/mutations';
+import { buildTicketUpdatePatch, checkChangelogPublishable, deleteTicket, updateTicket } from '@/lib/domains/support/mutations';
 import { mapTicketRow } from '@/lib/domains/support/mappers';
-import { getScreenshotUrl } from '@/lib/domains/support/storage';
+import { getScreenshotUrl, removeScreenshot } from '@/lib/domains/support/storage';
 import type { AppTicketRow } from '@/lib/domains/support/types';
 
 export const runtime = 'nodejs';
@@ -59,7 +59,12 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
     // Bara det klienten faktiskt skickade skrivs — annars hade en statusändring nollat ett svar
     // som redan stod i ärendet.
     const sentKeys = rawBody && typeof rawBody === 'object' && !Array.isArray(rawBody) ? Object.keys(rawBody) : [];
-    const patch = buildTicketUpdatePatch(parsed.data, sentKeys, { id: currentUser.id }, new Date().toISOString());
+    const patch = buildTicketUpdatePatch(
+      parsed.data,
+      sentKeys,
+      { id: currentUser.id, name: currentUser.name || 'Okänd användare' },
+      new Date().toISOString(),
+    );
     // updated_at ligger alltid i patchen; finns inget mer är det en tom sparning.
     if (Object.keys(patch).length <= 1) return routeError(400, 'nothing_to_update', 'Inget att spara.');
 
@@ -87,5 +92,35 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
     return ok({ item: data });
   } catch (e: any) {
     return routeError(500, 'app_tickets_unexpected', e?.message || 'Failed to update ticket');
+  }
+}
+
+// Radering är till för BRUS — dubbletter och skräp. Ett ärende som besvarats med "Blir inte av"
+// (declined) ska INTE raderas: det är ett svar till rapportören och information i sig.
+export async function DELETE(_req: Request, { params }: { params: { id: string } }) {
+  try {
+    const currentUser = await getCurrentUser();
+    if (!currentUser) return routeError(401, 'unauthorized', 'Unauthorized');
+    if (currentUser.role !== 'admin') return routeError(403, 'forbidden', 'Forbidden');
+
+    const badId = invalidUuidParam(params.id);
+    if (badId) return badId;
+
+    const supabase = createRouteHandlerClient({ cookies });
+    const { data, error } = await deleteTicket(supabase, params.id);
+    if (error) return routeError(500, 'app_ticket_delete_failed', error.message);
+    // Noll rader: raden fanns inte, eller RLS nekade. Grinden ovan har redan avgjort behörigheten,
+    // så det som återstår är att den inte finns.
+    if (!data) return routeError(404, 'not_found', 'Ärendet hittades inte.');
+
+    // Skärmbilden städas EFTER att raden är borta: blir storage-anropet fel är filen skräp, men
+    // ärendet är ändå raderat. Motsatt ordning kunde lämna en rad som pekar på en borttagen fil.
+    if (data.screenshot_bucket && data.screenshot_path) {
+      await removeScreenshot(getSupabaseAdmin(), data.screenshot_bucket, data.screenshot_path);
+    }
+
+    return ok({ deleted: true });
+  } catch (e: any) {
+    return routeError(500, 'app_tickets_unexpected', e?.message || 'Failed to delete ticket');
   }
 }

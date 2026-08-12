@@ -45,7 +45,7 @@ export async function createTicket(
 export function buildTicketUpdatePatch(
   input: UpdateTicketInput,
   sentKeys: string[],
-  actor: { id: string },
+  actor: { id: string; name: string },
   now: string,
 ): Record<string, unknown> {
   const patch: Record<string, unknown> = { updated_at: now };
@@ -55,8 +55,10 @@ export function buildTicketUpdatePatch(
     patch.status = input.status;
     // Vem som senast tog i ärendet, och när. Stämplas vid varje statusändring — inte bara den
     // första — så "handled_at" svarar på "när rörde vi det här sist", vilket är frågan man
-    // faktiskt ställer om en backlog.
+    // faktiskt ställer om en backlog. Namnet lagras som kopia eftersom `profiles` är
+    // self-read-only och alltså inte går att läsa upp i efterhand.
     patch.handled_by = actor.id;
+    patch.handled_by_name = actor.name;
     patch.handled_at = now;
   }
 
@@ -107,4 +109,17 @@ export async function updateTicket(
   const result = await supabase.from('app_tickets').update(patch).eq('id', id).select(ticketSelect).maybeSingle();
 
   return { data: result.data ? mapTicketRow(result.data as AppTicketRow) : null, error: result.error };
+}
+
+// Raderar ärendet (admin, RLS app_tickets_delete). Returnerar den RÅA raden — inte vyn — eftersom
+// anroparen behöver bucket och path för att städa bort skärmbilden ur storage. Utan `.select()` vet
+// vi inte vilken fil som just blev föräldralös. Noll rader tillbaka = RLS nekade, eller raden fanns
+// inte.
+export async function deleteTicket(
+  supabase: SupabaseClient,
+  id: string,
+): Promise<{ data: AppTicketRow | null; error: { message: string; code?: string } | null }> {
+  const result = await supabase.from('app_tickets').delete().eq('id', id).select(ticketSelect).maybeSingle();
+
+  return { data: (result.data as AppTicketRow | null) ?? null, error: result.error };
 }

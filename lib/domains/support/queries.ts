@@ -6,7 +6,7 @@ import type { ListTicketsQuery } from './schemas';
 // select-strängens LITERALTYP, och `'a' + 'b'` degraderar den till `string` — då blir `data` en
 // union med GenericStringError och varje mappning kräver en dubbelcast.
 export const ticketSelect =
-  'id, reporter_id, reporter_name, kind, area, title, description, page_path, status, resolution, screenshot_bucket, screenshot_path, changelog_note, changelog_published_at, handled_by, handled_at, created_at, updated_at';
+  'id, reporter_id, reporter_name, kind, area, title, description, page_path, status, resolution, screenshot_bucket, screenshot_path, changelog_note, changelog_published_at, handled_by, handled_by_name, handled_at, created_at, updated_at';
 
 // Öppna statusar uttryckt som en positiv lista. Att i stället negera de stängda (`not.in`) hade
 // gett samma svar men kräver PostgREST-citering i strängform — en positiv `.in()` går inte att

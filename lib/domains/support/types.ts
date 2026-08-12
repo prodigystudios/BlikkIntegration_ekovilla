@@ -87,6 +87,7 @@ export type AppTicketRow = {
   changelog_note: string | null;
   changelog_published_at: string | null;
   handled_by: string | null;
+  handled_by_name: string | null;
   handled_at: string | null;
   created_at: string;
   updated_at: string;
@@ -113,6 +114,9 @@ export type AppTicketView = {
   has_screenshot: boolean;
   changelog_note: string | null;
   changelog_published_at: string | null;
+  // Vem som senast tog i ärendet, och när. Namnet är en beständig kopia — `profiles` är
+  // self-read-only, så det går inte att läsa upp i efterhand.
+  handled_by_name: string | null;
   handled_at: string | null;
   created_at: string;
   updated_at: string;

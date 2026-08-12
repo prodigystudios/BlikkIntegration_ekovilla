@@ -36,6 +36,7 @@ export function mapTicketRow(row: AppTicketRow): AppTicketView {
     has_screenshot: !!(row.screenshot_bucket && row.screenshot_path),
     changelog_note: row.changelog_note,
     changelog_published_at: row.changelog_published_at,
+    handled_by_name: row.handled_by_name,
     handled_at: row.handled_at,
     created_at: row.created_at,
     updated_at: row.updated_at,
