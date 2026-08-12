@@ -5,7 +5,13 @@ import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 import CrmModal from '@/app/crm/components/CrmModal';
 import { changelogCategoryMeta, formatChangelogDay, formatChangelogStamp } from '@/app/_lib/changelogTokens';
-import { groupChangelogByDay, latestPublishedAt, newSince } from '@/lib/domains/changelog/merge';
+import {
+  FIRST_VISIT_WINDOW_DAYS,
+  groupChangelogByDay,
+  latestPublishedAt,
+  newSince,
+  publishedWithin,
+} from '@/lib/domains/changelog/merge';
 import type { ChangelogItemView } from '@/lib/domains/changelog/types';
 
 // "Nytt i appen" på CRM-översikten.
@@ -18,6 +24,12 @@ import type { ChangelogItemView } from '@/lib/domains/changelog/types';
 // användare, men det räcker för ett "har du sett det här?" och slipper en tabell + en skrivning vid
 // varje sidladdning. Samma val som nyhetsmodalen på dashboarden gjorde.
 //
+// FÖRSTA BESÖKET har inget "sedan sist" att jämföra mot — ingen har besökt listan innan den fanns.
+// Där avgör FÄRSKHET i stället (publishedWithin): vid lansering är allt nytt och alla ser det, medan
+// en nyanställd om ett år bara möts av det som faktiskt hänt nyligen. Regeln var först "stämpla tyst
+// vid första besöket", vilket hade gjort själva lanseringen osynlig för alla utom den som råkade
+// titta efter nästa publicering.
+//
 // OBS preflight är av (tailwind.config.js) — rot-elementet bär `support-surface`, som återställer
 // border-reseten för hela trädet (globals.css). Skriv `border`/`border-t` som vanligt här, och lägg
 // ALDRIG till `border-solid`.
@@ -29,7 +41,9 @@ export default function ChangelogCard() {
   const [items, setItems] = useState<ChangelogItemView[]>([]);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
-  const [modal, setModal] = useState<null | 'all' | 'new'>(null);
+  // 'first' och 'new' visar samma urval men olika rubrik: "sedan du var här" är fel ord för någon
+  // som aldrig varit här.
+  const [modal, setModal] = useState<null | 'all' | 'new' | 'first'>(null);
   const [unseen, setUnseen] = useState<ChangelogItemView[]>([]);
 
   // Stämplingen får bara ske en gång per laddning, annars kan en omrendering hinna nolla "nytt"
@@ -70,13 +84,18 @@ export default function ChangelogCard() {
           lastSeen = null;
         }
 
-        const fresh = newSince(list, lastSeen);
+        // Första besöket har inget "sedan sist" att jämföra mot — ingen har besökt listan innan den
+        // fanns. Då avgör färskhet i stället: vid lansering är allt nytt och visas, senare möts en
+        // ny användare bara av det som faktiskt hänt nyligen.
+        const fresh =
+          lastSeen === null ? publishedWithin(list, FIRST_VISIT_WINDOW_DAYS) : newSince(list, lastSeen);
+
         if (fresh.length > 0) {
           setUnseen(fresh);
-          setModal('new');
-        } else if (lastSeen === null) {
-          // Första besöket: stämpla direkt utan att visa något. Att slå upp hela historiken som
-          // "nytt" hade varit en modal med trettio rader som ingen läser.
+          setModal(lastSeen === null ? 'first' : 'new');
+        } else {
+          // Inget att visa — stämpla ändå, så nästa post räknas som ny i stället för att jämföras
+          // mot ingenting.
           markSeen(list);
         }
       } catch {
@@ -143,12 +162,14 @@ export default function ChangelogCard() {
               <p className="m-0 text-[12px] text-slate-500">
                 {modal === 'new'
                   ? 'Det här har ändrats sedan du senast öppnade CRM.'
-                  : 'Allt som fixats, tillkommit och förbättrats.'}
+                  : modal === 'first'
+                    ? 'Härifrån kan du följa vad som fixats och tillkommit. Det här är det senaste.'
+                    : 'Allt som fixats, tillkommit och förbättrats.'}
               </p>
             </div>
           }
           footer={
-            modal === 'new' ? (
+            modal === 'new' || modal === 'first' ? (
               <>
                 <button
                   type="button"
@@ -173,7 +194,7 @@ export default function ChangelogCard() {
             )
           }
         >
-          <ChangelogList items={modal === 'new' ? unseen : items} />
+          <ChangelogList items={modal === 'all' ? items : unseen} />
         </CrmModal>
       )}
     </section>

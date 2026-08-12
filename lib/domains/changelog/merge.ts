@@ -106,3 +106,21 @@ export function newSince(items: ChangelogItemView[], lastSeen: string | null): C
 export function latestPublishedAt(items: ChangelogItemView[]): string | null {
   return items.length > 0 ? items[0].published_at : null;
 }
+
+// Vad som är FÄRSKT just nu, oavsett om användaren sett listan förut.
+//
+// Används vid första besöket, där det inte finns något "sedan sist" att jämföra mot. Att stämpla
+// tyst hade gjort lanseringen osynlig — ingen har ju besökt listan innan den fanns. Att i stället
+// visa allt hade gjort att en nyanställd om ett år möts av hela historiken. Färskhetsfönstret löser
+// båda: vid lansering är allt nytt och visas, senare möts en ny användare bara av det som faktiskt
+// hänt nyligen — och oftast av ingenting alls.
+export const FIRST_VISIT_WINDOW_DAYS = 14;
+
+export function publishedWithin(
+  items: ChangelogItemView[],
+  days: number,
+  now: Date = new Date(),
+): ChangelogItemView[] {
+  const cutoff = new Date(now.getTime() - days * 24 * 60 * 60 * 1000).toISOString();
+  return items.filter((item) => item.published_at > cutoff);
+}

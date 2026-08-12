@@ -6,6 +6,8 @@ import {
   groupChangelogByDay,
   newSince,
   latestPublishedAt,
+  publishedWithin,
+  FIRST_VISIT_WINDOW_DAYS,
 } from '@/lib/domains/changelog/merge';
 import { buildEntryUpdatePatch, mapEntryToDraft } from '@/lib/domains/changelog/mutations';
 import {
@@ -178,6 +180,45 @@ describe('newSince', () => {
   it('latestPublishedAt tar nyaste posten, inte "nu"', () => {
     expect(latestPublishedAt(items)).toBe('2026-08-13T10:00:00.000Z');
     expect(latestPublishedAt([])).toBeNull();
+  });
+});
+
+// Första besöket har inget "sedan sist" att jämföra mot — ingen har besökt listan innan den fanns.
+// Regeln var först "stämpla tyst", vilket gjorde själva lanseringen osynlig: alla stämplades som
+// om de sett listan, och ingen fick modalen förrän NÄSTA post publicerades.
+describe('publishedWithin (första besöket)', () => {
+  const now = new Date('2026-08-13T12:00:00.000Z');
+  const items = mergeChangelog(
+    [
+      entry({ id: 'aaaaaaaa-0000-4000-8000-000000000001', published_at: '2026-08-12T10:00:00.000Z' }),
+      entry({ id: 'aaaaaaaa-0000-4000-8000-000000000002', published_at: '2026-06-01T10:00:00.000Z' }),
+    ],
+    [],
+  );
+
+  it('tar med det som publicerats inom fönstret', () => {
+    expect(publishedWithin(items, 14, now).map((i) => i.published_at)).toEqual(['2026-08-12T10:00:00.000Z']);
+  });
+
+  it('utesluter det som hunnit bli gammalt', () => {
+    // En nyanställd om ett år ska inte mötas av hela historiken.
+    expect(publishedWithin(items, 14, new Date('2027-08-13T12:00:00.000Z'))).toEqual([]);
+  });
+
+  // Lanseringsläget: allt skrevs samma dag, och alla ska se allt.
+  it('tar med allt när posterna publicerats nyss', () => {
+    const justPublished = mergeChangelog(
+      [
+        entry({ id: 'aaaaaaaa-0000-4000-8000-000000000003', published_at: '2026-08-13T09:00:00.000Z' }),
+        entry({ id: 'aaaaaaaa-0000-4000-8000-000000000004', published_at: '2026-08-13T09:05:00.000Z' }),
+      ],
+      [],
+    );
+    expect(publishedWithin(justPublished, 14, now)).toHaveLength(2);
+  });
+
+  it('fönstret är 14 dagar', () => {
+    expect(FIRST_VISIT_WINDOW_DAYS).toBe(14);
   });
 });
 
