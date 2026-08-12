@@ -176,6 +176,30 @@ export function buildRotPropertyNote(
   return parts.length ? parts.join('  ') : null;
 }
 
+// "Ert referensnummer" and the ROT property text row are two halves of ONE rule, so they are
+// resolved together instead of by two parallel copies of the same condition. A villa's
+// fastighetsbeteckning IS the customer's reference for the house and fits the single reference
+// field; a bostadsrätt needs two values (BRF org.nr + lägenhetsnr) that don't fit, so those ride
+// as a text row instead. A företag's märkning (customer_snapshot.label) uses the same reference
+// field — the two can never collide, since ROT is always a private customer.
+//
+// Returns exactly one of the two populated for a ROT document (never both), and the märkning as
+// referenceNumber for everything else. See FORTNOX_INTEGRATION.md 4b for why Fortnox can't take
+// the designation as a real field.
+export function resolveRotReference(
+  rot: { property_designation?: string | null; brf_org_number?: string | null } | null | undefined,
+  label: string | null | undefined,
+  rotEnabled: boolean,
+): { referenceNumber: string | null; propertyNote: string | null } {
+  const hasProperty = rotEnabled && !!rot?.property_designation?.trim();
+  const hasBrf = rotEnabled && !!rot?.brf_org_number?.trim();
+  const propertyAsRef = hasProperty && !hasBrf;
+  return {
+    referenceNumber: propertyAsRef ? rot!.property_designation!.trim() : (label?.trim() || null),
+    propertyNote: propertyAsRef ? null : (rotEnabled ? buildRotPropertyNote(rot) : null),
+  };
+}
+
 // Appends a document-level text note to a Fortnox row list WITHOUT creating two consecutive
 // text rows — Fortnox treats a second consecutive text row (Description only, no amounts) as a
 // new priced product row. If the last row is already a text row we merge the note into it

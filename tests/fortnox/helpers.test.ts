@@ -4,7 +4,7 @@ import { describe, it, expect, vi } from 'vitest';
 // '@/lib/supabase/server' (i typposition). Mocka den så testet inte drar in env-beroenden.
 vi.mock('@/lib/supabase/server', () => ({ getSupabaseAdmin: vi.fn() }));
 
-import { claimFortnoxPush, buildRotPropertyNote, appendFortnoxTextNote } from '@/lib/domains/fortnox/helpers';
+import { claimFortnoxPush, buildRotPropertyNote, appendFortnoxTextNote, resolveRotReference } from '@/lib/domains/fortnox/helpers';
 
 // Mock av supabase-kedjan. claimFortnoxPush gör upp till TVÅ försök, vart och ett:
 //   .from().update().eq().neq()/.eq().lt().select() → { data, error }
@@ -111,5 +111,48 @@ describe('appendFortnoxTextNote', () => {
     const rows = [{ Description: 'Lösull', Price: 100 }];
     expect(appendFortnoxTextNote(rows, null)).toHaveLength(1);
     expect(appendFortnoxTextNote(rows, '')).toHaveLength(1);
+  });
+});
+
+// "Ert referensnummer" och ROT-textraden är två halvor av en regel. De låg tidigare som två
+// parallella kopior i offers.ts och orders.ts (create + update) — testet låser att exakt EN av
+// dem fylls i, så en villa aldrig får både referensfält och rad, och en BRF aldrig tappar båda.
+describe('resolveRotReference', () => {
+  it('puts a villa fastighetsbeteckning in the reference field, not a row', () => {
+    expect(resolveRotReference({ property_designation: 'Haggården 6:3' }, null, true)).toEqual({
+      referenceNumber: 'Haggården 6:3',
+      propertyNote: null,
+    });
+  });
+
+  // Bostadsrätt = two values that can't share one field → they ride as a text row instead, and
+  // the reference field falls back to the märkning (normally empty for a private ROT customer).
+  it('puts a bostadsrätt on a text row and leaves the reference field to the märkning', () => {
+    expect(resolveRotReference({ property_designation: 'Haggården 6:3', brf_org_number: '769600-1234' }, null, true)).toEqual({
+      referenceNumber: null,
+      propertyNote: 'Fastighetsbeteckning: Haggården 6:3  BRF org.nr: 769600-1234',
+    });
+  });
+
+  it('uses the företag märkning as the reference number on a non-ROT document', () => {
+    expect(resolveRotReference(null, 'Projekt 4711', false)).toEqual({
+      referenceNumber: 'Projekt 4711',
+      propertyNote: null,
+    });
+  });
+
+  // ROT details left on a quote whose ROT was later switched off must not leak onto the document.
+  it('ignores ROT details when ROT is disabled', () => {
+    expect(resolveRotReference({ property_designation: 'Haggården 6:3' }, null, false)).toEqual({
+      referenceNumber: null,
+      propertyNote: null,
+    });
+  });
+
+  it('treats blank values as absent', () => {
+    expect(resolveRotReference({ property_designation: '   ' }, '  ', true)).toEqual({
+      referenceNumber: null,
+      propertyNote: null,
+    });
   });
 });

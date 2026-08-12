@@ -100,6 +100,16 @@ const FRIENDLY_FORTNOX_MESSAGES: Record<number, string> = {
   2000310: 'Posten används redan i Fortnox och kan inte ändras eller tas bort.',
   2000204: 'En obligatorisk uppgift saknas i Fortnox. Komplettera kund-/offertuppgifterna och försök igen.',
   1000030: 'Kunde inte hämta dokumentet från Fortnox. Försök igen om en stund.',
+  // Fortnox säger "skattereduktionstypen 'none' får inte innehålla rader med husarbetestypen X" —
+  // sant, men det pekar ut dokumentet när felet sitter på ARTIKELN. Vi skickar aldrig husarbete på
+  // ett icke-ROT-dokument; flaggan (`Housework` på artikeln i Fortnox) ärvs ner på raden och går
+  // inte att överrösta därifrån — `HouseWork: false` stämplar EMPTYHOUSEWORK och nekas likaså.
+  // Åtgärden ligger i artikelregistret. Se FORTNOX_INTEGRATION.md sekt. 4 punkt 3.
+  2004021: 'En av artiklarna har en husarbetestyp satt i Fortnox, men dokumentet har inte ROT. '
+    + 'Typen sitter på ARTIKELN och ärvs ner på raden — den går inte att stänga av härifrån. '
+    + 'Obs: den syns oftast INTE i Fortnox artikelvy, eftersom en urkryssad husarbetesruta lämnar '
+    + 'kvar typen. Kontakta en administratör — den behöver rensas via API:t '
+    + '(PUT /articles/{nr} med HouseworkType: null).',
 };
 
 // Turn any thrown Fortnox error into a message safe to show a non-technical user.

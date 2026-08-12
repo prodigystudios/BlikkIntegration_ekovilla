@@ -330,7 +330,14 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
       if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte spara arbetsorder'); return; }
       if (json.data?.item) applyWorkOrder(json.data.item as WorkOrderItem);
       setEditingOverview(false);
-      toast.success('Arbetsorder sparad');
+      // Kontaktperson/arbetsadress/ansvarig speglas på Fortnox-ordern. Synken är icke-fatal —
+      // sparningen har redan lyckats — men den får inte misslyckas tyst: det var precis så en
+      // ändrad kontakt kunde ligga rätt i CRM och fel i Fortnox utan att någon märkte det.
+      if (json.data?.fortnox_error) {
+        toast.error(`Arbetsorder sparad men Fortnox-synk misslyckades: ${json.data.fortnox_error}`);
+      } else {
+        toast.success('Arbetsorder sparad');
+      }
     } catch { toast.error('Kunde inte spara arbetsorder'); }
     finally { setSaving(false); }
   }

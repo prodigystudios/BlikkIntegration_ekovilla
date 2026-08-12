@@ -1,11 +1,18 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { getCrmWorkOrder, updateCrmWorkOrder, listWorkOrderInvoiceRounds, redactWorkOrderForField } from '@/lib/domains/crm/work-orders';
+import { syncWorkOrderHeaderToFortnox } from '@/lib/domains/fortnox/orders';
+import { FortnoxNotConnectedError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
 import { isNoRowsError, ok, pickProvidedFields, requireCrmUser, requirePermission, requireSignedInUser, routeError, updateCrmWorkOrderSchema, validationError } from '../_lib';
 
 // Fakturastatus is system-managed (set by the invoice/delfakturering flow), never chosen
 // by hand — so a crafted PATCH can't fake a billed order or regress one back to a manual state.
 const SYSTEM_MANAGED_WO_STATUSES: string[] = ['invoiced', 'partially_invoiced'];
+
+// The edited fields that Fortnox mirrors on the order header: contact person → YourReference,
+// work address → delivery address, ansvarig → OurReference. Gating on these keeps a status-only
+// PATCH — the board sends one on every drag — from becoming a Fortnox write.
+const FORTNOX_MIRRORED_FIELDS = ['contact', 'work_address', 'assigned_to'] as const;
 
 type RouteContext = {
   params: {
@@ -55,6 +62,9 @@ export async function PATCH(req: Request, context: RouteContext) {
     // Persist only fields the client actually sent, so a partial PATCH (e.g. a status-only
     // change) doesn't wipe untouched columns (internal_handoff, work_address) with defaults.
     const updateInput = pickProvidedFields(parsedBody.data, rawBody);
+
+    // Read before the merge below deletes `contact` off updateInput.
+    const touchesFortnox = FORTNOX_MIRRORED_FIELDS.some((field) => field in updateInput);
 
     // Load the current row once — both the contact-snapshot merge and the status guard need it.
     type WoCurrent = { status?: string | null; customer_snapshot?: Record<string, unknown> | null };
@@ -107,7 +117,30 @@ export async function PATCH(req: Request, context: RouteContext) {
       return routeError(500, 'crm_work_order_update_failed', error.message);
     }
 
-    return ok({ item: data });
+    // Mirror the edit onto the Fortnox order header. Non-fatal, exactly like the article route:
+    // the save has already succeeded, and a Fortnox outage must not make it look like it didn't.
+    // The reason is handed back so the UI can say the save landed but the sync didn't.
+    let fortnoxError: string | null = null;
+    let synced = false;
+    if (touchesFortnox) {
+      try {
+        synced = (await syncWorkOrderHeaderToFortnox(context.params.id)) !== null;
+      } catch (e) {
+        if (!(e instanceof FortnoxNotConnectedError)) {
+          fortnoxError = friendlyFortnoxMessage(e);
+          console.error('[fortnox] Arbetsorder-headersynk misslyckades:', (e as Error)?.message);
+        }
+      }
+    }
+
+    // Re-read only when Fortnox was actually touched, so the returned row carries the fresh
+    // sync status/timestamp instead of the pre-sync one the update returned.
+    if (synced || fortnoxError) {
+      const fresh = await getCrmWorkOrder(supabase, context.params.id);
+      return ok({ item: fresh.data ?? data, fortnox_error: fortnoxError });
+    }
+
+    return ok({ item: data, fortnox_error: null });
   } catch (e: any) {
     return routeError(500, 'crm_work_order_update_unexpected', e?.message || 'Failed to update work order');
   }
