@@ -29,9 +29,12 @@ import {
 // jämföra ärenden med varandra. Modalen är dessutom mönstret på varje annan CRM-yta (offert, kund,
 // felanmälan), så den är redan inlärd.
 //
-// OBS preflight är av (tailwind.config.js): `border` på en <div>/<span> ritar ingen linje utan
-// `border-solid`. <button> får däremot `border: 1px solid transparent` från globals.css, så
-// listraderna (som ÄR knappar) ritar sina kanter utan tillägget.
+// OBS preflight är av (tailwind.config.js), så border-utilities beter sig INTE som i vanlig Tailwind
+// — därför bär rot-elementet klassen `support-surface`, som återställer reseten (globals.css). Utan
+// den ritar `border` på en <div> ingen linje alls, och `border-t border-solid` blir en LÅDA: stilen
+// sätts på alla fyra sidor men bredden bara på toppen, så de tre andra faller tillbaka på
+// webbläsarens `medium` (~3px). Med klassen på plats: skriv `border`/`border-t` som vanligt, och
+// lägg ALDRIG till `border-solid` här.
 
 type StateFilter = 'open' | 'closed' | 'any';
 
@@ -95,8 +98,9 @@ export default function AdminSupportTickets() {
 
   return (
     // p-5 matchar de andra adminflikarna (Behörigheter, Tidkoder) — AdminTabsClient lägger inget
-    // innerutrymme i sitt kort.
-    <div className="grid grid-cols-1 gap-4 p-5">
+    // innerutrymme i sitt kort. `support-surface` återställer border-reseten för hela trädet,
+    // modalen inkluderad (den renderas som barn här nere).
+    <div className="support-surface grid grid-cols-1 gap-4 p-5">
       <div className="grid gap-1">
         <h2 className="m-0 text-lg font-bold text-slate-900">Ärenden</h2>
         <p className="m-0 text-sm text-slate-600">
@@ -123,7 +127,7 @@ export default function AdminSupportTickets() {
       </div>
 
       {error ? (
-        <div className="rounded-xl border border-solid border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div>
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div>
       ) : null}
 
       {loading ? (
@@ -196,11 +200,11 @@ function TicketRow({ ticket, onOpen }: { ticket: AppTicketView; onOpen: () => vo
             {ticketKindGlyph[ticket.kind]}
           </span>
           <span className="text-[13px] font-bold text-slate-900">{ticket.title}</span>
-          <span className={cn(crm.badge, 'border-solid', ticketStatusMeta[ticket.status].badge)}>
+          <span className={cn(crm.badge, ticketStatusMeta[ticket.status].badge)}>
             {ticket.status_label}
           </span>
           {ticket.changelog_published_at ? (
-            <span className={cn(crm.badge, 'border-solid border-emerald-200 bg-white text-emerald-700')}>
+            <span className={cn(crm.badge, 'border-emerald-200 bg-white text-emerald-700')}>
               I changeloggen
             </span>
           ) : null}
@@ -330,7 +334,7 @@ function TicketModal({
               {ticketKindGlyph[ticket.kind]}
             </span>
             <h2 className="m-0 text-base font-bold text-slate-900">{ticket.title}</h2>
-            <span className={cn(crm.badge, 'border-solid', ticketStatusMeta[ticket.status].badge)}>
+            <span className={cn(crm.badge, ticketStatusMeta[ticket.status].badge)}>
               {ticket.status_label}
             </span>
           </div>
@@ -400,7 +404,7 @@ function TicketModal({
         {pagePath ? (
           <div className="grid gap-1">
             <span className={crm.label}>Rapporterat från</span>
-            <code className="w-fit max-w-full overflow-x-auto rounded border border-solid border-[#dce4d8] bg-[#f4f8f1] px-1.5 py-0.5 font-mono text-[11px] text-slate-600">
+            <code className="w-fit max-w-full overflow-x-auto rounded border border-[#dce4d8] bg-[#f4f8f1] px-1.5 py-0.5 font-mono text-[11px] text-slate-600">
               {pagePath}
             </code>
           </div>
@@ -415,7 +419,7 @@ function TicketModal({
               <img
                 src={detail.screenshot_url}
                 alt={`Skärmbild från ${ticket.reporter_name}`}
-                className="max-h-72 rounded-lg border border-solid border-[#dce4d8] bg-white object-contain"
+                className="max-h-72 rounded-lg border border-[#dce4d8] bg-white object-contain"
               />
             </a>
             <span className="text-[11px] text-slate-400">Klicka för full storlek.</span>
@@ -424,7 +428,7 @@ function TicketModal({
           <p className="m-0 text-[12px] text-slate-400">Skärmbilden kunde inte hämtas.</p>
         ) : null}
 
-        <div className="grid gap-3 border-t border-solid border-slate-100 pt-4 sm:grid-cols-[10rem_1fr] sm:items-start">
+        <div className="grid gap-3 border-t border-slate-100 pt-4 sm:grid-cols-[10rem_1fr] sm:items-start">
           <div className="grid gap-1.5">
             <label htmlFor={`status-${ticket.id}`} className={crm.label}>Status</label>
             <Select
@@ -452,7 +456,7 @@ function TicketModal({
           </div>
         </div>
 
-        <div className="grid gap-2 border-t border-solid border-slate-100 pt-4">
+        <div className="grid gap-2 border-t border-slate-100 pt-4">
           <label htmlFor={`changelog-${ticket.id}`} className={crm.label}>Changelog-text</label>
           <Textarea
             id={`changelog-${ticket.id}`}
@@ -480,17 +484,17 @@ function TicketModal({
         </div>
 
         {confirmDelete ? (
-          <div className="rounded-xl border border-solid border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+          <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
             Ärendet och dess skärmbild tas bort permanent. Ska rapportören få ett svar i stället —
             välj status <strong>Blir inte av</strong> och skriv svaret.
           </div>
         ) : null}
 
         {error ? (
-          <div className="rounded-xl border border-solid border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>
+          <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>
         ) : null}
         {notice ? (
-          <div className="rounded-xl border border-solid border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">{notice}</div>
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">{notice}</div>
         ) : null}
       </div>
     </CrmModal>

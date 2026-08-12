@@ -28,6 +28,19 @@
     border-width: 0;
     border-style: solid;
   }
+
+  /* Appärendena (Rapportera-knappen + backloggen i admin). Samma reset, samma skäl — men värt att
+     stava ut vilket fel den tar bort, för det var inte uppenbart: `border-t border-solid` sätter
+     stilen på ALLA fyra sidor och bredden bara på toppen, så de tre andra föll tillbaka på
+     webbläsarens `medium` (~3px) och en tänkt avdelarlinje blev en låda runt hela sektionen.
+     Med reseten beter sig varje border-utility som i vanlig Tailwind, och `border-solid` behöver
+     inte strös ut i komponenterna. */
+  .support-surface *,
+  .support-surface *::before,
+  .support-surface *::after {
+    border-width: 0;
+    border-style: solid;
+  }
 }
 
 /* Planning density: the board was designed a touch large, so scale the whole planning surface down

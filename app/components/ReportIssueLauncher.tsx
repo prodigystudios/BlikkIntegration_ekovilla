@@ -49,12 +49,19 @@ export default function ReportIssueLauncher({ loggedIn }: { loggedIn: boolean })
   if (!loggedIn || isHiddenPath(pathname)) return null;
 
   return (
-    // `crm-shell` bär CRM:ets CSS-variabler (globals.css) — och de är scopade till DEN klassen, inte
-    // till :root. Eftersom komponenten med flit renderas UTANFÖR AppShell (fältvyn saknar skal) var
-    // `var(--crm-primary)` odefinierad här, och Skicka-knappen blev vit text på ingen bakgrund:
-    // osynlig. Wrappern återger variablerna till hela trädet — knappen OCH modalen — så varje
-    // CRM-token fungerar som på övriga ytor. Div:en är layoutneutral: allt inuti är `fixed`.
-    <div className="crm-shell">
+    // Två klasser, båda för att komponenten med flit renderas UTANFÖR AppShell (fältvyn saknar skal):
+    //
+    // `crm-shell` bär CRM:ets CSS-variabler, och de är scopade till DEN klassen — inte till :root.
+    // Utan den var `var(--crm-primary)` odefinierad och Skicka-knappen blev vit text på ingen
+    // bakgrund: osynlig.
+    //
+    // `support-surface` återställer Tailwinds border-reset (preflight är av). Utan den ritar
+    // `border` på en <div> ingen linje, och `border-t border-solid` blir en LÅDA — bredden sätts
+    // bara på toppen medan de tre andra sidorna faller tillbaka på webbläsarens `medium` (~3px).
+    // Med den: skriv `border`/`border-t` som vanligt och lägg ALDRIG till `border-solid` här.
+    //
+    // Div:en är layoutneutral: allt inuti är `fixed`.
+    <div className="crm-shell support-surface">
       <button
         type="button"
         onClick={() => {
@@ -289,7 +296,7 @@ function TicketForm({ pagePath, onCreated }: { pagePath: string; onCreated: () =
             exakt än vald del av appen. Monospace: det är en adress, inte en mening. */}
         <p className="m-0 flex flex-wrap items-center gap-1.5 text-[12px] text-slate-500">
           Skickas med:
-          <code className="rounded border border-solid border-[#dce4d8] bg-[#f4f8f1] px-1.5 py-0.5 font-mono text-[11px] text-slate-600">
+          <code className="rounded border border-[#dce4d8] bg-[#f4f8f1] px-1.5 py-0.5 font-mono text-[11px] text-slate-600">
             {pagePath}
           </code>
         </p>
@@ -334,7 +341,7 @@ function TicketForm({ pagePath, onCreated }: { pagePath: string; onCreated: () =
             <img
               src={previewUrl}
               alt="Förhandsvisning av vald skärmbild"
-              className="max-h-56 w-full rounded-lg border border-solid border-[#dce4d8] bg-white object-contain"
+              className="max-h-56 w-full rounded-lg border border-[#dce4d8] bg-white object-contain"
             />
             <div className="flex items-center justify-between gap-2">
               <span className="min-w-0 truncate text-[12px] text-slate-500">{screenshot?.name}</span>
@@ -451,10 +458,10 @@ function MyTickets({ reloadToken }: { reloadToken: number }) {
                   {t.kind_label} · {t.area_label} · {formatDate(t.created_at)}
                 </span>
                 {expanded && (
-                  <span className="mt-1 grid gap-2 border-t border-solid border-slate-100 pt-2">
+                  <span className="mt-1 grid gap-2 border-t border-slate-100 pt-2">
                     <span className="whitespace-pre-wrap text-[12px] text-slate-700">{t.description}</span>
                     {t.resolution && (
-                      <span className="grid gap-0.5 rounded-lg border border-solid border-[#e0e8dc] bg-[#f9fbf7] px-2.5 py-2">
+                      <span className="grid gap-0.5 rounded-lg border border-[#e0e8dc] bg-[#f9fbf7] px-2.5 py-2">
                         <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">Svar</span>
                         <span className="whitespace-pre-wrap text-[12px] text-slate-700">{t.resolution}</span>
                       </span>
