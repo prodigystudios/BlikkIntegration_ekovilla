@@ -32,3 +32,46 @@ export const createTimeReferenceSchema = z.object({
 
 // Allt valfritt: adminvyn sparar ett fält i taget (typiskt bara payroll_code).
 export const updateTimeReferenceSchema = createTimeReferenceSchema.partial();
+
+// ── Tidrader ─────────────────────────────────────────────────────────────────
+
+export const isoDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Ogiltigt datum (ÅÅÅÅ-MM-DD)');
+const clockSchema = z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/, 'Ogiltigt klockslag (TT:MM)');
+
+export const rangeQuerySchema = z.object({
+  from: isoDateSchema,
+  to: isoDateSchema,
+});
+
+// Formen speglar tabellens CHECK: `kind` avgör vilket mål som får vara ifyllt. Den fullständiga
+// regeln — och uträkningen av minuterna — bor i buildTimeEntryRow, så den går att testa utan
+// databas och kan aldrig kringgås av en route som glömmer den.
+export const createTimeEntrySchema = z.object({
+  kind: z.enum(['work_order', 'internal', 'absence']),
+  work_date: isoDateSchema,
+  work_order_id: z.string().uuid().nullable().optional(),
+  internal_project_id: z.string().uuid().nullable().optional(),
+  absence_type_id: z.string().uuid().nullable().optional(),
+  start_time: clockSchema.nullable().optional(),
+  end_time: clockSchema.nullable().optional(),
+  break_minutes: z.coerce.number().int().min(0).max(1439).optional().default(0),
+  // Frånvaro anges i timmar — byrån vill ha "Frånvarotimmar", inte ett pass med start och slut.
+  hours: z.coerce.number().min(0).max(24).nullable().optional(),
+  time_code_id: z.string().uuid().nullable().optional(),
+  note: optionalText.optional().default(null),
+});
+
+// ── Ersättningar (traktamente, utlägg, milersättning) ────────────────────────
+
+export const createCompensationSchema = z.object({
+  entry_date: isoDateSchema,
+  kind: z.enum(['travel', 'per_diem', 'expense']),
+  // Mil eller dagar. Utlägg har ingen kvantitet — där är beloppet hela sanningen.
+  quantity: z.coerce.number().min(0).nullable().optional(),
+  // Beloppet lagras alltid, även om systemet en dag räknar ut det ur en sats: räknas det vid
+  // visning ändras gamla månaders underlag retroaktivt när satsen justeras.
+  amount: z.coerce.number().min(0, 'Beloppet kan inte vara negativt'),
+  note: optionalText.optional().default(null),
+});
+
+export const updateCompensationSchema = createCompensationSchema.partial();
