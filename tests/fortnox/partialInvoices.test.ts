@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   computeInvoiceState,
+  activeLineItems,
   validatePartialRequest,
   buildInvoiceRows,
   roundSubtotal,
@@ -146,5 +147,67 @@ describe('hasCarvedRotLabor (partial-invoice Phase-2 guard)', () => {
   it('returns false when nothing is carved (empty / zero / missing / null)', () => {
     expect(hasCarvedRotLabor([itemLine({ labor_cost: '' }), itemLine({ labor_cost: '0' }), itemLine()])).toBe(false);
     expect(hasCarvedRotLabor(null)).toBe(false);
+  });
+});
+
+// En artikel som såldes men aldrig utfördes skrivs AV, den raderas inte. Radering hade förskjutit
+// arrayindexen som varje fakturarunda lagrar sina antal mot — en redan utställd fakturas antal
+// hade tyst pekat om till fel artikel. Flaggan gör återstående 0 så ordern kan stängas.
+describe('computeInvoiceState — avskriven rad', () => {
+  const three = [
+    { pricing_mode: 'item', unit_price: '100', quantity: '10' },
+    { pricing_mode: 'item', unit_price: '200', quantity: '5' },
+    { pricing_mode: 'item', unit_price: '300', quantity: '2' },
+  ];
+
+  it('nollar återstående på en avskriven rad utan att röra dess antal', () => {
+    const items = three.map((it, i) => (i === 2 ? { ...it, written_off: true } : it));
+    const state = computeInvoiceState(items, []);
+    expect(state[2].total).toBe(2);      // antalet står kvar — raden fanns
+    expect(state[2].remaining).toBe(0);  // …men det finns inget kvar att fakturera
+    expect(state[0].remaining).toBe(10); // övriga rader orörda
+  });
+
+  // Kärnan i buggen: utan avskrivning når isFinalRound aldrig sant, så ordern fastnar som
+  // delfakturerad i evighet med en summa som räknar arbete som aldrig utfördes.
+  it('låter sista rundan bli slutrunda när resten är avskriven', () => {
+    const items = three.map((it, i) => (i === 2 ? { ...it, written_off: true } : it));
+    const rounds = [{ line_quantities: [{ index: 0, quantity: 10 }] }];
+    const state = computeInvoiceState(items, rounds);
+    const { isFinalRound } = validatePartialRequest(state, [{ index: 1, quantity: 5 }]);
+    expect(isFinalRound).toBe(true);
+  });
+
+  it('utan avskrivning är samma runda INTE slutrunda', () => {
+    const state = computeInvoiceState(three, [{ line_quantities: [{ index: 0, quantity: 10 }] }]);
+    const { isFinalRound } = validatePartialRequest(state, [{ index: 1, quantity: 5 }]);
+    expect(isFinalRound).toBe(false);
+  });
+
+  it('vägrar fakturera en avskriven rad', () => {
+    const items = three.map((it, i) => (i === 2 ? { ...it, written_off: true } : it));
+    const state = computeInvoiceState(items, []);
+    expect(() => validatePartialRequest(state, [{ index: 2, quantity: 1 }])).toThrow(/överstiger återstående/);
+  });
+
+  // Indexen får ALDRIG förskjutas — det är hela skälet till att raden flaggas i stället för raderas.
+  it('behåller radernas index när en rad skrivs av', () => {
+    const items = three.map((it, i) => (i === 0 ? { ...it, written_off: true } : it));
+    const state = computeInvoiceState(items, []);
+    expect(state.map((s) => s.index)).toEqual([0, 1, 2]);
+    expect(state[1].total).toBe(5);
+    expect(state[2].total).toBe(2);
+  });
+});
+
+describe('activeLineItems', () => {
+  it('filtrerar bort avskrivna rader men behåller ordningen på resten', () => {
+    const items = [{ id: 'a' }, { id: 'b', written_off: true }, { id: 'c' }];
+    expect(activeLineItems(items).map((i) => i.id)).toEqual(['a', 'c']);
+  });
+
+  it('tål null och tom lista', () => {
+    expect(activeLineItems(null)).toEqual([]);
+    expect(activeLineItems([])).toEqual([]);
   });
 });

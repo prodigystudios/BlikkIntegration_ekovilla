@@ -40,6 +40,11 @@ export type PartialInvoiceLineItem = {
   // Labour carved out of a material row for ROT. NOT yet supported in partial invoicing — see
   // hasCarvedRotLabor below.
   labor_cost?: string | null;
+  // Avskriven rad: sold but never performed, written off so the order can be closed on what was
+  // actually delivered. The row is NOT deleted — every invoice round records its quantities against
+  // array indices in the frozen snapshot, so removing a row would silently re-point an earlier
+  // round's quantities at the wrong article. Flagged in place, nothing reindexes.
+  written_off?: boolean | null;
 };
 
 export type PartialRequestLine = { index: number; quantity: number };
@@ -81,8 +86,20 @@ export function computeInvoiceState(lineItems: PartialInvoiceLineItem[] | null, 
         return sum + (match ? Math.max(0, match.quantity) : 0);
       }, 0),
     );
-    return { index, total, invoiced, remaining: Math.max(0, roundQty(total - invoiced)) };
+    // A written-off row has nothing left to invoice, even though its quantity is untouched. This is
+    // what lets an order close: isFinalRound requires EVERY row's remaining to reach zero, so a
+    // single never-performed article would otherwise keep the order 'partially_invoiced' forever
+    // while its total still counted work that was never done.
+    const remaining = item.written_off ? 0 : Math.max(0, roundQty(total - invoiced));
+    return { index, total, invoiced, remaining };
   });
+}
+
+// Rows that still count toward the order's value: everything not written off. Used for the order
+// total and for the Fortnox rows, so a written-off article stops being billed and stops inflating
+// the order — the numbers follow what was actually delivered.
+export function activeLineItems<T extends { written_off?: boolean | null }>(lineItems: T[] | null | undefined): T[] {
+  return (lineItems ?? []).filter((item) => !item.written_off);
 }
 
 // Validate a requested round against remaining-per-line. Throws PartialInvoiceError on
@@ -206,7 +223,12 @@ export async function createPartialInvoice(
 
   if (error || !workOrder) throw new Error(`Arbetsorder ${workOrderId} hittades inte`);
 
-  if (workOrder.status !== 'completed' && workOrder.status !== 'partially_invoiced') {
+  // Gate the FIRST round on the work being ready to bill. Later rounds are not gated on status:
+  // once delfakturering has started the order may legitimately be back in a work state (a job that
+  // runs across several months bills as it goes), and requiring 'Fakturera' would mean flipping the
+  // status back and forth just to invoice — which is exactly the conflation we removed.
+  if (!workOrder.partial_invoicing_started_at
+      && workOrder.status !== 'completed' && workOrder.status !== 'partially_invoiced') {
     throw new PartialInvoiceError('Sätt arbetsordern till "Fakturera" innan du delfakturerar.');
   }
 

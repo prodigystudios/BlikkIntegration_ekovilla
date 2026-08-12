@@ -28,6 +28,9 @@ export type ArticleLineItem = {
   house_work_type?: string;
   // Labour carved out of a material row for ROT — summed onto the "Arbetskostnad ROT" Fortnox row.
   labor_cost?: string;
+  // Avskriven rad: såld men aldrig utförd. Ligger kvar (indexen bär fakturarundornas antal) men
+  // räknas bort ur summan och skickas inte till Fortnox.
+  written_off?: boolean;
 };
 
 type FortnoxArticle = { article_number: string; description: string | null; sales_price: number | null; unit: string | null };
@@ -112,9 +115,15 @@ type Props = {
   fortnoxConnected: boolean;
   canEdit?: boolean;
   onSave: (items: ArticleLineItem[]) => Promise<boolean>;
+  // Avskriv/återställ EN rad. Skild från onSave med flit: den här går igenom även när canEdit är
+  // false, alltså efter första delfakturan — det är precis då en outförd artikel måste kunna
+  // skrivas av för att ordern ska kunna stängas. Adresseras med arrayindex, samma som
+  // fakturarundorna. Utelämnas när avskrivning inte är möjlig (färdigfakturerad order).
+  onWriteOff?: (index: number, writtenOff: boolean) => Promise<void>;
+  writeOffBusyIndex?: number | null;
 };
 
-export default function WorkOrderArticlesTab({ items, currencyCode, vatPercent, quoteType, rotDetails, saving, fortnoxConnected, canEdit = true, onSave }: Props) {
+export default function WorkOrderArticlesTab({ items, currencyCode, vatPercent, quoteType, rotDetails, saving, fortnoxConnected, canEdit = true, onSave, onWriteOff, writeOffBusyIndex = null }: Props) {
   const [editing, setEditing] = useState(false);
   const [rows, setRows] = useState<ArticleLineItem[]>(items);
 
@@ -126,11 +135,16 @@ export default function WorkOrderArticlesTab({ items, currencyCode, vatPercent, 
 
   // Summary reflects the live edit when editing, otherwise the saved articles.
   const source = editing ? rows : items;
+  // Avskrivna rader räknas inte — varken i pengar eller i säckar. Ordervärdet ska visa det som
+  // faktiskt levereras, annars stämmer inte CRM med fakturorna.
   const totals = useMemo(
-    () => computePricing(source as PricingLineItem[], vatPercent, { isPrivate: quoteType === 'private', rot: rotDetails }),
+    () => computePricing(source.filter((r) => !r.written_off) as PricingLineItem[], vatPercent, { isPrivate: quoteType === 'private', rot: rotDetails }),
     [source, vatPercent, quoteType, rotDetails],
   );
-  const totalSacks = useMemo(() => items.reduce((sum, it) => sum + sackInfo(it).sacks, 0), [items]);
+  const totalSacks = useMemo(
+    () => items.filter((it) => !it.written_off).reduce((sum, it) => sum + sackInfo(it).sacks, 0),
+    [items],
+  );
 
   function updateRow(id: string, patch: Partial<ArticleLineItem>) {
     setRows((rs) => rs.map((r) => (r.id === id ? { ...r, ...patch } : r)));
@@ -176,13 +190,17 @@ export default function WorkOrderArticlesTab({ items, currencyCode, vatPercent, 
             <div className="rounded-xl border border-dashed border-[#cfdcc9] bg-[#f1f5ee] px-4 py-6 text-sm text-slate-500">Inga artiklar.</div>
           ) : (
             <div className="grid gap-2">
-              {items.map((item) => {
+              {items.map((item, index) => {
                 const { material, sacks } = sackInfo(item);
                 const mode = item.pricing_mode === 'item' ? 'item' : 'm3';
+                const writtenOff = !!item.written_off;
                 return (
-                  <div key={item.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#e0e8dc] bg-[#f1f5ee] px-3 py-2.5 text-sm">
+                  <div key={item.id} className={cn(
+                    'flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2.5 text-sm',
+                    writtenOff ? 'border-dashed border-[#d8d8d8] bg-[#f6f6f6] opacity-70' : 'border-[#e0e8dc] bg-[#f1f5ee]',
+                  )}>
                     <div className="grid min-w-0 gap-0.5">
-                      <strong className="truncate text-slate-900">{item.article_name || 'Offert-rad'}</strong>
+                      <strong className={cn('truncate text-slate-900', writtenOff && 'line-through decoration-slate-400')}>{item.article_name || 'Offert-rad'}</strong>
                       <span className="text-xs text-slate-500">
                         {item.article_number || 'Utan artikelnummer'}
                         {mode === 'm3'
@@ -192,10 +210,21 @@ export default function WorkOrderArticlesTab({ items, currencyCode, vatPercent, 
                       </span>
                     </div>
                     <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                      {sacks > 0 ? <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700">{sacks} säck</span> : null}
+                      {writtenOff ? <span className="rounded-full border border-slate-300 bg-white px-2 py-0.5 font-semibold text-slate-500">Avskriven</span> : null}
+                      {sacks > 0 && !writtenOff ? <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700">{sacks} säck</span> : null}
                       {/* m³ rows are priced per m³, so show the computed volume × à-pris (not the area). */}
                       <span>{mode === 'm3' ? `${formatVolume(lineItemQuantity(item as any))} m³` : `Antal ${item.quantity || '0'}`} · à {formatCurrency(parseDecimal(item.unit_price), currencyCode)}</span>
-                      <span className="font-semibold text-slate-900">{formatCurrency(lineItemRowTotal(item as PricingLineItem), currencyCode)}</span>
+                      <span className={cn('font-semibold text-slate-900', writtenOff && 'line-through decoration-slate-400')}>{formatCurrency(lineItemRowTotal(item as PricingLineItem), currencyCode)}</span>
+                      {onWriteOff ? (
+                        <button
+                          type="button"
+                          onClick={() => onWriteOff(index, !writtenOff)}
+                          disabled={writeOffBusyIndex === index}
+                          className="rounded-full border border-[#cfdcc9] bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-500 transition hover:border-slate-300 hover:text-slate-700 disabled:opacity-50"
+                        >
+                          {writeOffBusyIndex === index ? '…' : writtenOff ? 'Återställ' : 'Avskriv'}
+                        </button>
+                      ) : null}
                     </div>
                   </div>
                 );

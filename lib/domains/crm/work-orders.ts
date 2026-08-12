@@ -1,6 +1,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { crmQuoteSelect } from './quotes';
 import { resolveCrmContact, type CrmContactSource } from './contacts';
+import { computePricing, type PricingLineItem } from './pricing';
+import { activeLineItems, computeInvoiceState } from '@/lib/domains/fortnox/partialInvoices';
 
 export const crmWorkOrderSelect = `
   id,
@@ -672,6 +674,108 @@ export async function updateCrmWorkOrderLineItems(
     .eq('id', id)
     .select(crmWorkOrderSelect)
     .single();
+}
+
+// Avskriv (eller återställ) EN artikelrad på en arbetsorder — raden som såldes men aldrig utfördes.
+//
+// Raden RADERAS INTE. Varje delfakturarunda lagrar sina antal som {index, quantity} mot arrayindex
+// i den frysta snapshoten; att ta bort en rad skulle förskjuta indexen och tyst peka om en redan
+// utställd fakturas antal till fel artikel. Flaggan sätts därför på plats, och sätts på BÅDA
+// listorna (live + snapshot) så att beräkningen av återstående — som alltid mäts mot snapshoten —
+// ser samma sanning som ordervyn. De två är indexparallella: snapshoten är en kopia av line_items
+// vid första rundan, och redigering har varit låst sedan dess.
+//
+// Effekten: radens återstående blir 0, ordersumman räknas om utan den, och Fortnox-ordern
+// uppdateras av anroparen. Är allt fakturerat efteråt stängs ordern.
+export async function writeOffWorkOrderLineItem(
+  supabase: SupabaseClient,
+  workOrderId: string,
+  index: number,
+  writtenOff: boolean,
+) {
+  const { data, error } = await supabase
+    .from('crm_work_orders')
+    .select('id, status, vat_percent, quote_type, rot_details, line_items, line_items_invoicing_snapshot, fortnox_invoice_number')
+    .eq('id', workOrderId)
+    .maybeSingle();
+
+  if (error) return { data: null, error, reason: 'fetch_failed' as const };
+  if (!data) return { data: null, error: { message: 'Arbetsordern hittades inte' }, reason: 'not_found' as const };
+
+  const wo = data as {
+    status: string;
+    vat_percent: number | null;
+    quote_type: string | null;
+    rot_details: Record<string, unknown> | null;
+    line_items: Array<Record<string, any>> | null;
+    line_items_invoicing_snapshot: Array<Record<string, any>> | null;
+    fortnox_invoice_number: string | null;
+  };
+
+  const lineItems = wo.line_items ?? [];
+  if (index >= lineItems.length) {
+    return { data: null, error: { message: 'Raden finns inte på arbetsordern' }, reason: 'line_not_found' as const };
+  }
+
+  // En färdigfakturerad order är avslutad — då finns inget kvar att skriva av, och att ändra
+  // summan efter sista fakturan skulle bara få CRM och bokföringen att säga olika saker.
+  if (wo.status === 'invoiced' || wo.fortnox_invoice_number) {
+    return { data: null, error: { message: 'Ordern är färdigfakturerad och kan inte ändras.' }, reason: 'order_closed' as const };
+  }
+
+  // Redan fakturerat antal går inte att skriva av: fakturan är utställd, pengarna är krävda.
+  // Delvis fakturerad rad likaså — det som återstår kan inte "inte utföras" utan att resten
+  // också omprövas, och den bedömningen ska en människa göra i Fortnox, inte vi här.
+  const { data: rounds } = await supabase
+    .from('crm_work_order_invoices')
+    .select('line_quantities')
+    .eq('work_order_id', workOrderId);
+  const invoicedOnLine = (rounds ?? []).reduce((sum, round) => {
+    const match = ((round as { line_quantities: Array<{ index: number; quantity: number }> | null }).line_quantities ?? [])
+      .find((q) => q.index === index);
+    return sum + (match ? Math.max(0, match.quantity) : 0);
+  }, 0);
+  if (writtenOff && invoicedOnLine > 0) {
+    return {
+      data: null,
+      error: { message: 'Raden är redan fakturerad och kan inte skrivas av.' },
+      reason: 'already_invoiced' as const,
+    };
+  }
+
+  const applyFlag = (items: Array<Record<string, any>> | null) =>
+    (items ?? []).map((item, i) => (i === index ? { ...item, written_off: writtenOff } : item));
+
+  const nextLineItems = applyFlag(lineItems);
+  // Snapshoten finns bara när delfakturering har startat.
+  const nextSnapshot = wo.line_items_invoicing_snapshot ? applyFlag(wo.line_items_invoicing_snapshot) : null;
+
+  // Summan räknas om på de rader som fortfarande gäller, så ordervärdet följer det som levereras.
+  const pricing = computePricing(activeLineItems(nextLineItems) as PricingLineItem[], wo.vat_percent, {
+    isPrivate: wo.quote_type === 'private',
+    rot: (wo.rot_details ?? null) as any,
+  });
+
+  // Stäng ordern när avskrivningen gör att inget återstår att fakturera — men BARA om systemet
+  // fortfarande äger statusen. Har någon medvetet satt den till ett arbetsläge (ordern rullar
+  // vidare) ska vi inte stampa över det; då sätter de den själva när jobbet är klart.
+  const stateAfter = computeInvoiceState(nextSnapshot ?? nextLineItems, (rounds ?? []) as any);
+  const nothingLeft = (rounds ?? []).length > 0 && stateAfter.every((s) => s.remaining <= 0);
+  const closes = nothingLeft && wo.status === 'partially_invoiced';
+
+  return supabase
+    .from('crm_work_orders')
+    .update({
+      line_items: nextLineItems,
+      ...(nextSnapshot ? { line_items_invoicing_snapshot: nextSnapshot } : {}),
+      pricing_summary: { subtotal: pricing.subtotal, vat: pricing.vat, total: pricing.total },
+      amount: pricing.total,
+      ...(closes ? { status: 'invoiced', fortnox_invoiced_at: new Date().toISOString() } : {}),
+    })
+    .eq('id', workOrderId)
+    .select(crmWorkOrderSelect)
+    .single()
+    .then((res) => ({ data: res.data, error: res.error, reason: res.error ? ('update_failed' as const) : null }));
 }
 
 // Tabellen heter `crm_time_entries` sedan fas 4 (20260811_time_entries_reshape.sql). Namnbytet är
