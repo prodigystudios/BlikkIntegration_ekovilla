@@ -15,13 +15,15 @@ describe('friendlyFortnoxMessage', () => {
     expect(friendlyFortnoxMessage(e)).not.toContain('400');
   });
 
-  // 2004021 pekar ut fel ställe i Fortnox egen text: felet sitter på ARTIKELN (husarbete-flaggan
-  // ärvs och kan inte överröstas från raden), inte på dokumentet man just försökte spara.
+  // 2004021 pekar ut fel ställe i Fortnox egen text: typen sitter på ARTIKELN (ärvs ner på raden,
+  // kan inte överröstas därifrån), inte på dokumentet man just försökte spara. Texten måste också
+  // säga att den är OSYNLIG i Fortnox artikelvy — annars letar man förgäves, vilket hände 2026-08-12.
   it('translates 2004021 into an actionable instruction about the article', () => {
     const e = new FortnoxApiError(400, 'teknisk sträng', 2004021, "Dokument med skattereduktionstypen 'none' får inte innehålla rader med husarbetestypen 'CONSTRUCTION'.");
     const message = friendlyFortnoxMessage(e);
-    expect(message).toContain('husarbete');
-    expect(message).toContain('Register → Artiklar');
+    expect(message).toContain('husarbetestyp');
+    expect(message).toContain('ARTIKELN');
+    expect(message).toContain('HouseworkType: null');
   });
 
   // Okända koder ska falla tillbaka på Fortnox egen svenska text — den är oftast läsbar och

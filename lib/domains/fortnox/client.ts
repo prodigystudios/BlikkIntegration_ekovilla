@@ -105,11 +105,11 @@ const FRIENDLY_FORTNOX_MESSAGES: Record<number, string> = {
   // ett icke-ROT-dokument; flaggan (`Housework` på artikeln i Fortnox) ärvs ner på raden och går
   // inte att överrösta därifrån — `HouseWork: false` stämplar EMPTYHOUSEWORK och nekas likaså.
   // Åtgärden ligger i artikelregistret. Se FORTNOX_INTEGRATION.md sekt. 4 punkt 3.
-  2004021: 'En av artiklarna är markerad som husarbete i Fortnox, men dokumentet har inte ROT. '
-    + 'Flaggan sitter på ARTIKELN (Register → Artiklar i Fortnox) och ärvs ner på raden — den går '
-    + 'inte att stänga av härifrån. Typiskt arbets-, monterings- eller framkörningsartiklar. '
-    + 'Kontakta en administratör: artikelflaggan behöver stängas av, eftersom CRM sätter husarbete '
-    + 'per rad på ROT-dokument ändå.',
+  2004021: 'En av artiklarna har en husarbetestyp satt i Fortnox, men dokumentet har inte ROT. '
+    + 'Typen sitter på ARTIKELN och ärvs ner på raden — den går inte att stänga av härifrån. '
+    + 'Obs: den syns oftast INTE i Fortnox artikelvy, eftersom en urkryssad husarbetesruta lämnar '
+    + 'kvar typen. Kontakta en administratör — den behöver rensas via API:t '
+    + '(PUT /articles/{nr} med HouseworkType: null).',
 };
 
 // Turn any thrown Fortnox error into a message safe to show a non-technical user.
