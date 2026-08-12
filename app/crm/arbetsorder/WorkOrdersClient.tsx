@@ -10,7 +10,7 @@ import AssigneeFilter, { MINE, type AssigneeFilterValue, type AssigneeOption } f
 import DocumentNumberBadge from '@/app/crm/components/DocumentNumberBadge';
 import CrmModal from '@/app/crm/components/CrmModal';
 import EntityCombobox, { type EntityResult } from '@/app/crm/components/EntityCombobox';
-import { formatSwedishIdNumber } from '@/app/crm/kunder/customerNumbers';
+import { formatPersonalNumber, isValidPersonalNumber, PERSONAL_NUMBER_ERROR } from '@/lib/domains/crm/personalNumber';
 import { useToast } from '@/lib/Toast';
 
 type WorkOrderStatus = 'draft' | 'scheduled' | 'ready' | 'in_progress' | 'completed' | 'partially_invoiced' | 'invoiced' | 'cancelled';
@@ -148,6 +148,9 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
     if (!newOrderCustomerId) { toast.error('Välj en kund'); return; }
     if (!newOrderName.trim()) { toast.error('Ange ett ordernamn'); return; }
     if (needsPersonalNumber && !newOrderPersonalNumber.trim()) { toast.error('Fyll i personnummer för privatkunden'); return; }
+    // Tolv siffror krävs — tio ger trasiga ROT-uppgifter i Fortnox. Fångas här så användaren
+    // slipper en runda till servern för att få veta det.
+    if (needsPersonalNumber && !isValidPersonalNumber(newOrderPersonalNumber)) { toast.error(PERSONAL_NUMBER_ERROR); return; }
     setCreatingOrder(true);
     try {
       // If a prior attempt flagged a missing personnummer, save it on the customer first so the
@@ -489,12 +492,13 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
                 <p className={cn('mb-1.5', crm.sectionTitle)}>Personnummer (privatkund)</p>
                 <Input
                   value={newOrderPersonalNumber}
-                  onChange={(e) => setNewOrderPersonalNumber(formatSwedishIdNumber(e.target.value))}
-                  placeholder="ÅÅMMDD-XXXX"
+                  onChange={(e) => setNewOrderPersonalNumber(formatPersonalNumber(e.target.value))}
+                  placeholder="ÅÅÅÅMMDD-XXXX"
+                  inputMode="numeric"
                   autoFocus
                 />
                 <p className="mt-1.5 text-[11px] leading-snug text-amber-700">
-                  Privatkunden saknar personnummer. Fortnox behöver det för att fakturera ordern – det sparas på kundkortet.
+                  Privatkunden saknar ett fullständigt personnummer. Fortnox behöver det med fullt årtal för att fakturera ordern och för att ROT ska fungera – det sparas på kundkortet.
                 </p>
               </div>
             ) : null}

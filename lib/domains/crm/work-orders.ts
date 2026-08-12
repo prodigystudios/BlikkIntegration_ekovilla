@@ -3,6 +3,7 @@ import { crmQuoteSelect } from './quotes';
 import { resolveCrmContact, type CrmContactSource } from './contacts';
 import { computePricing, type PricingLineItem } from './pricing';
 import { activeLineItems, computeInvoiceState, validateLineItemEdit, type InvoiceRound } from '@/lib/domains/fortnox/partialInvoices';
+import { isValidPersonalNumber, PERSONAL_NUMBER_ERROR } from './personalNumber';
 
 export const crmWorkOrderSelect = `
   id,
@@ -156,6 +157,14 @@ export async function createStandaloneCrmWorkOrder(supabase: SupabaseClient, inp
     return { data: null, error: { message: 'Personnummer krävs för privatkund innan order kan skapas' }, reason: 'missing_personal_number' as const };
   }
 
+  // Och det ska vara ETT FULLT nummer. Kundkortet låser formatet numera, men rader som skapades
+  // innan dess bär tio siffror — och de tar sig hela vägen till Fortnox, där ROT- och
+  // husarbetesuppgifterna faller tyst och måste läggas in för hand. Här är sista stället felet går
+  // att fånga innan det blir ett bokföringsärende.
+  if (customer.customer_type === 'private' && !isValidPersonalNumber(customer.personal_number as string)) {
+    return { data: null, error: { message: PERSONAL_NUMBER_ERROR }, reason: 'invalid_personal_number' as const };
+  }
+
   const isBusiness = customer.customer_type === 'business';
   const clientName = isBusiness
     ? (customer.company_name || 'Okänd kund')
@@ -302,6 +311,13 @@ export async function createCrmWorkOrderFromQuote(supabase: SupabaseClient, quot
       return { data: null, error: { message: 'Personnummer krävs för privatkund innan order kan skapas' }, reason: 'missing_personal_number' as const };
     }
     orderSnapshot = { ...orderSnapshot, personal_number: personalNumber };
+  }
+
+  // Samma krav som på standalone-ordern, och det gäller BÅDE numret som redan låg i offertens
+  // snapshot och det som just hämtades från kundkortet: tio siffror ger trasiga ROT-uppgifter i
+  // Fortnox.
+  if (quote.quote_type === 'private' && !isValidPersonalNumber(String(orderSnapshot.personal_number ?? ''))) {
+    return { data: null, error: { message: PERSONAL_NUMBER_ERROR }, reason: 'invalid_personal_number' as const };
   }
 
   // ROT can only be filed with the property identified: fastighetsbeteckning for a småhus, or the

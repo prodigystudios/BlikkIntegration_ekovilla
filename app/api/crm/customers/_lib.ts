@@ -1,5 +1,17 @@
 import { z } from 'zod';
+import { isValidPersonalNumber, PERSONAL_NUMBER_ERROR } from '@/lib/domains/crm/personalNumber';
 export { ok, routeError, validationError, invalidUuidParam, requireCrmUser, requireCrmWriter, requirePermission, requireCrmAdmin, pickProvidedFields } from '../_shared';
+
+// Personnumret får vara tomt (säljaren får det ofta först när jobbet bokas), men står det något
+// ska det vara ETT FULLT nummer med århundrade. Tio siffror sparas utan protest av både oss och
+// Fortnox — men ROT- och husarbetesuppgifterna slutar då fungera på dokumentet, och avdraget måste
+// läggas in för hand i efterhand. Låset sitter här och inte bara i formuläret, eftersom det är
+// routen som avgör vad som faktiskt hamnar i databasen.
+const personalNumberSchema = z
+  .string()
+  .trim()
+  .nullable()
+  .refine((val) => !val || isValidPersonalNumber(val), { message: PERSONAL_NUMBER_ERROR });
 
 // Zod's built-in .email() rejects Unicode domain names (e.g. byggmästaren.se).
 // This helper validates the structural shape of an email while accepting IDN domains.
@@ -74,7 +86,7 @@ export const createCrmCustomerSchema = z
     organization_number: z.string().trim().nullable().optional().default(null),
     first_name: z.string().trim().nullable().optional().default(null),
     last_name: z.string().trim().nullable().optional().default(null),
-    personal_number: z.string().trim().nullable().optional().default(null),
+    personal_number: personalNumberSchema.optional().default(null),
     email: intlEmail('Ogiltig e-post').default(null),
     phone: z.string().trim().nullable().optional().default(null),
     mobile: z.string().trim().nullable().optional().default(null),
@@ -127,7 +139,7 @@ export const updateCrmCustomerSchema = z
     organization_number: z.string().trim().nullable().optional(),
     first_name: z.string().trim().nullable().optional(),
     last_name: z.string().trim().nullable().optional(),
-    personal_number: z.string().trim().nullable().optional(),
+    personal_number: personalNumberSchema.optional(),
     email: intlEmail('Ogiltig e-post'),
     phone: z.string().trim().nullable().optional(),
     mobile: z.string().trim().nullable().optional(),

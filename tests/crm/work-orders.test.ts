@@ -94,11 +94,11 @@ describe('createCrmWorkOrderFromQuote — fält-mappning', () => {
 
   it('tillåter privatorder när snapshot har personnummer, och bevarar det på ordern', async () => {
     const { supabase, captured } = makeSupabase(
-      wonQuote({ quote_type: 'private', customer_id: null, customer_snapshot: { customer_name: 'Anna', personal_number: '900101-1234' } }),
+      wonQuote({ quote_type: 'private', customer_id: null, customer_snapshot: { customer_name: 'Anna', personal_number: '19850101-1236' } }),
     );
     const result = await createCrmWorkOrderFromQuote(supabase as any, 'q1', 'user-1');
     expect(result.error).toBeNull();
-    expect(captured.insert!.customer_snapshot.personal_number).toBe('900101-1234');
+    expect(captured.insert!.customer_snapshot.personal_number).toBe('19850101-1236');
   });
 
   // V3: ROT-avdraget kan inte begäras utan att fastigheten är identifierad, och Fortnox har inget
@@ -110,8 +110,8 @@ describe('createCrmWorkOrderFromQuote — fält-mappning', () => {
     wonQuote({
       quote_type: 'private',
       customer_id: null,
-      customer_snapshot: { customer_name: 'Anna', personal_number: '900101-1234' },
-      rot_details: { enabled: true, personal_number: '900101-1234', ...rot },
+      customer_snapshot: { customer_name: 'Anna', personal_number: '19850101-1236' },
+      rot_details: { enabled: true, personal_number: '19850101-1236', ...rot },
     });
 
   it('blockerar ROT-order utan fastighetsbeteckning och BRF org.nr', async () => {

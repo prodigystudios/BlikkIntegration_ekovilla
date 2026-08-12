@@ -26,7 +26,9 @@ export async function POST(_req: Request, context: RouteContext) {
 
       // Emit the same code the standalone route uses so the client's personnummer prompt
       // (which keys off crm_work_order_missing_personal_number) fires on both order paths.
-      if (result.reason === 'missing_personal_number') {
+      // `invalid_personal_number` (tio siffror i stället för tolv) delar kod: åtgärden är densamma
+      // — fyll i ett fullständigt nummer — och meddelandet förklarar skillnaden.
+      if (result.reason === 'missing_personal_number' || result.reason === 'invalid_personal_number') {
         return routeError(409, 'crm_work_order_missing_personal_number', result.error?.message || 'Personnummer krävs för privatkund innan order kan skapas');
       }
 
