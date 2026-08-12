@@ -63,7 +63,7 @@ describe('createCrmCustomerSchema', () => {
         customer_type: 'private',
         first_name: 'Anna',
         last_name: 'Svensson',
-        personal_number: '900101-1234',
+        personal_number: '19850101-1236',
       });
       expect(result.success).toBe(true);
     });

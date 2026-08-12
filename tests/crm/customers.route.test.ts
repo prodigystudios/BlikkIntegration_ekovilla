@@ -427,7 +427,7 @@ describe('PATCH /api/crm/customers/[id]', () => {
   it('blockerar tömning av personnummer på en Fortnox-synkad privatkund (409, ingen skrivning)', async () => {
     mockGetCurrentUser.mockResolvedValue(salesUser);
     mockGet.mockResolvedValue({
-      data: { id: CUSTOMER_ID, customer_type: 'private', personal_number: '900101-1234', fortnox_customer_id: '123' },
+      data: { id: CUSTOMER_ID, customer_type: 'private', personal_number: '19850101-1236', fortnox_customer_id: '123' },
       error: null,
     } as any);
 
@@ -449,7 +449,7 @@ describe('PATCH /api/crm/customers/[id]', () => {
     mockUpdate.mockResolvedValue({ data: { id: CUSTOMER_ID }, error: null } as any);
 
     const res = await PATCH(
-      makeRequest('/api/crm/customers/c1', { method: 'PATCH', body: JSON.stringify({ personal_number: '900101-1234' }) }),
+      makeRequest('/api/crm/customers/c1', { method: 'PATCH', body: JSON.stringify({ personal_number: '19850101-1236' }) }),
       ctx
     );
 

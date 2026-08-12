@@ -9,6 +9,12 @@ import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
 import { crm, customerStageLabel, customerStageClass, syncStatusLabel, syncStatusClass, workOrderStatusLabel } from '@/app/crm/lib/crmTokens';
 import { formatSwedishIdNumber, isValidSwedishOrgNumber, vatFromOrgNumber } from './customerNumbers';
+import {
+  formatPersonalNumber,
+  isValidPersonalNumber,
+  PERSONAL_NUMBER_ERROR,
+  PERSONAL_NUMBER_HINT,
+} from '@/lib/domains/crm/personalNumber';
 import { riskTypeLabel } from '@/lib/domains/tic/mappers';
 import type { TicCreditReport } from '@/lib/domains/tic/types';
 import { PhoneLink, EmailLink, AddressLink } from '@/app/crm/components/ContactLinks';
@@ -396,6 +402,11 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
     if (!customer || !editDraft) return;
     if (customer.customer_type === 'private' && !editDraft.personal_number.trim()) {
       toast.error('Personnummer krävs för privatkund'); return;
+    }
+    // Tio siffror räcker för att spara men gör att ROT- och husarbetesuppgifterna faller tyst i
+    // Fortnox — och felet upptäcks först i bokföringen. Neka här i stället.
+    if (customer.customer_type === 'private' && !isValidPersonalNumber(editDraft.personal_number)) {
+      toast.error(PERSONAL_NUMBER_ERROR); return;
     }
     setSaving(true);
     try {
@@ -788,7 +799,23 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
                       </div>
                       <div>
                         <FieldLabel>Personnummer *</FieldLabel>
-                        <Input value={editDraft.personal_number} onChange={(e) => setField('personal_number', formatSwedishIdNumber(e.target.value))} placeholder="ÅÅMMDD-XXXX" />
+                        <Input
+                          value={editDraft.personal_number}
+                          onChange={(e) => setField('personal_number', formatPersonalNumber(e.target.value))}
+                          placeholder="ÅÅÅÅMMDD-XXXX"
+                          inputMode="numeric"
+                          aria-invalid={!!editDraft.personal_number.trim() && !isValidPersonalNumber(editDraft.personal_number)}
+                        />
+                        <p
+                          className={cn(
+                            'mt-1 text-[11px] leading-snug',
+                            editDraft.personal_number.trim() && !isValidPersonalNumber(editDraft.personal_number)
+                              ? 'text-rose-600'
+                              : 'text-slate-400',
+                          )}
+                        >
+                          {PERSONAL_NUMBER_HINT}
+                        </p>
                       </div>
                     </>
                   )}

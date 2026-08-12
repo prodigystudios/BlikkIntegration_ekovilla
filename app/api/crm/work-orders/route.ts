@@ -80,10 +80,16 @@ export async function POST(req: Request) {
     });
 
     if (result.error) {
-      const status = result.reason === 'customer_not_found'
-        ? 404
-        : result.reason === 'missing_personal_number' ? 409 : 500;
-      return routeError(status, `crm_work_order_${result.reason}`, result.error.message || 'Kunde inte skapa order');
+      if (result.reason === 'customer_not_found') {
+        return routeError(404, 'crm_work_order_customer_not_found', result.error.message || 'Kunde inte skapa order');
+      }
+      // Saknat OCH ogiltigt personnummer får samma kod med flit: åtgärden är identisk — fyll i ett
+      // fullständigt nummer — och klienten fäller redan ut fältet på den koden. Ett eget felnamn
+      // hade krävt en andra gren i UI:t för samma handling. Meddelandet skiljer dem åt.
+      if (result.reason === 'missing_personal_number' || result.reason === 'invalid_personal_number') {
+        return routeError(409, 'crm_work_order_missing_personal_number', result.error.message || 'Personnummer krävs för privatkund innan order kan skapas');
+      }
+      return routeError(500, `crm_work_order_${result.reason}`, result.error.message || 'Kunde inte skapa order');
     }
 
     return ok({ item: result.data }, 201);

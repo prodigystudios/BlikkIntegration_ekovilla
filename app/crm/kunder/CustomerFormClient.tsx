@@ -10,6 +10,12 @@ import { useToast } from '@/lib/Toast';
 import { crm } from '@/app/crm/lib/crmTokens';
 import { cn } from '@/lib/shared/cn';
 import { formatSwedishIdNumber, isValidSwedishOrgNumber, vatFromOrgNumber } from './customerNumbers';
+import {
+  formatPersonalNumber,
+  isValidPersonalNumber,
+  PERSONAL_NUMBER_ERROR,
+  PERSONAL_NUMBER_HINT,
+} from '@/lib/domains/crm/personalNumber';
 import { riskTypeLabel } from '@/lib/domains/tic/mappers';
 import { CreditReportSummary } from '@/app/crm/components/CreditReport';
 import type { TicLookupResult, TicRiskIndicator, TicCreditReport } from '@/lib/domains/tic/types';
@@ -325,7 +331,9 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
       } else {
         if (r.first_name && !c.first_name.trim()) next.first_name = r.first_name;
         if (r.last_name && !c.last_name.trim()) next.last_name = r.last_name;
-        if (r.personal_number && !c.personal_number.trim()) next.personal_number = formatSwedishIdNumber(r.personal_number);
+        // Personnummer har EGEN maskning: formatSwedishIdNumber kapar vid tio siffror (rätt för
+        // org.nr) och hade klippt bort århundradet.
+        if (r.personal_number && !c.personal_number.trim()) next.personal_number = formatPersonalNumber(r.personal_number);
       }
       if (r.email && !c.email.trim()) next.email = r.email;
       if (r.phone && !c.phone.trim()) next.phone = r.phone;
@@ -396,7 +404,15 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
       } else {
         body.first_name = draft.first_name.trim();
         body.last_name = draft.last_name.trim();
-        body.personal_number = draft.personal_number.trim() || null;
+        // Tomt är fortfarande tillåtet här (fylls ofta i senare) — men står det något ska det
+        // hålla, annars når ett trasigt nummer Fortnox och ROT-uppgifterna faller tyst.
+        const personalNumber = draft.personal_number.trim();
+        if (personalNumber && !isValidPersonalNumber(personalNumber)) {
+          // `finally` nedan nollställer saving — därför ingen egen setSaving här.
+          toast.error(PERSONAL_NUMBER_ERROR);
+          return;
+        }
+        body.personal_number = personalNumber || null;
       }
 
       const res = await fetch('/api/crm/customers', {
@@ -554,8 +570,20 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
                     </div>
                     <div>
                       <FieldLabel>Personnummer</FieldLabel>
-                      <Input value={draft.personal_number} onChange={(e) => set('personal_number', formatSwedishIdNumber(e.target.value))} placeholder="ÅÅMMDD-XXXX" />
-                      <p className="mt-1 text-[11px] leading-snug text-slate-400">Kan fyllas i senare, men krävs innan en order kan skapas för kunden.</p>
+                      <Input
+                        value={draft.personal_number}
+                        onChange={(e) => set('personal_number', formatPersonalNumber(e.target.value))}
+                        placeholder="ÅÅÅÅMMDD-XXXX"
+                        inputMode="numeric"
+                        aria-invalid={!!draft.personal_number.trim() && !isValidPersonalNumber(draft.personal_number)}
+                      />
+                      {draft.personal_number.trim() && !isValidPersonalNumber(draft.personal_number) ? (
+                        <p className="mt-1 text-[11px] leading-snug text-rose-600">{PERSONAL_NUMBER_ERROR}</p>
+                      ) : (
+                        <p className="mt-1 text-[11px] leading-snug text-slate-400">
+                          Kan fyllas i senare, men krävs innan en order kan skapas. {PERSONAL_NUMBER_HINT}
+                        </p>
+                      )}
                     </div>
                   </>
                 )}
