@@ -101,6 +101,11 @@ export const quoteLineItemSchema = z.object({
   // Fortnox row at push time; stored as entered so the split can be recomputed on edit.
   labor_cost: z.preprocess((value) => normalizeOptionalText(value) ?? '', z.string()).optional().default(''),
   density: z.preprocess((value) => normalizeOptionalText(value) ?? '', z.string()).optional().default(''),
+  // Avskriven rad (bara meningsfull på en arbetsorder): såld men aldrig utförd, räknas bort ur
+  // summan och skickas inte till Fortnox. MÅSTE finnas i schemat — annars strippar Zod flaggan vid
+  // varje sparning av artiklarna och avskrivningen försvinner tyst. Samma fälla som is_rot_work
+  // gick i en gång (se FORTNOX_INTEGRATION.md brist 3).
+  written_off: z.boolean().optional().default(false),
 });
 
 export const listCrmQuotesQuerySchema = z.object({

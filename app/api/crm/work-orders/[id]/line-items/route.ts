@@ -3,6 +3,7 @@ import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { getCrmWorkOrder, updateCrmWorkOrderLineItems } from '@/lib/domains/crm/work-orders';
 import { computePricing, type PricingLineItem } from '@/lib/domains/crm/pricing';
 import { updateWorkOrderInFortnox } from '@/lib/domains/fortnox/orders';
+import { activeLineItems, validateLineItemEdit } from '@/lib/domains/fortnox/partialInvoices';
 import { FortnoxNotConnectedError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
 import { ok, requirePermission, routeError, updateWorkOrderLineItemsSchema, validationError, invalidUuidParam } from '../../_lib';
 
@@ -33,21 +34,26 @@ export async function PATCH(req: Request, context: RouteContext) {
 
     const wo = current.data as any;
 
-    // Lock: once a work order is invoiced — fully OR in part (delfakturering) — its articles must
-    // not change. The rows would silently diverge from the already-issued invoice(s) and, for
-    // partial invoicing, shifting line_items would break the array-index match used to track
-    // invoiced-vs-remaining per article. The UI hides the editor in these states; this is the
-    // server-side guarantee.
-    if (
-      wo.status === 'invoiced' ||
-      wo.status === 'partially_invoiced' ||
-      wo.fortnox_invoice_number ||
-      wo.partial_invoicing_started_at
-    ) {
-      return routeError(409, 'work_order_locked', 'Arbetsordern är fakturerad och kan inte ändras.');
+    // En FÄRDIGfakturerad order är avslutad — där finns inget kvar att rätta, och att ändra
+    // summan efter sista fakturan skulle bara få CRM och bokföringen att säga olika saker.
+    if (wo.status === 'invoiced' || wo.fortnox_invoice_number) {
+      return routeError(409, 'work_order_locked', 'Arbetsordern är färdigfakturerad och kan inte ändras.');
     }
 
-    const pricing = computePricing(parsedBody.data.line_items as PricingLineItem[], wo.vat_percent, {
+    // Delfakturerad order: raderna är INTE längre låsta som helhet. Rundorna nycklas på radens id
+    // (20260812_invoice_rounds_line_ids.sql), så positionen är betydelselös och ett projekt kan
+    // ändras medan det pågår — artiklar tillkommer och utgår. Kvar att skydda är bara det som redan
+    // står på en utställd faktura; validateLineItemEdit äger den regeln.
+    if (wo.partial_invoicing_started_at) {
+      const { data: rounds } = await supabase
+        .from('crm_work_order_invoices')
+        .select('line_quantities')
+        .eq('work_order_id', context.params.id);
+      const verdict = validateLineItemEdit(wo.line_items, parsedBody.data.line_items as any, (rounds ?? []) as any);
+      if (!verdict.ok) return routeError(409, 'work_order_line_invoiced', verdict.message);
+    }
+
+    const pricing = computePricing(activeLineItems(parsedBody.data.line_items) as PricingLineItem[], wo.vat_percent, {
       isPrivate: wo.quote_type === 'private',
       rot: wo.rot_details ?? null,
     });

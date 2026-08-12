@@ -10,7 +10,10 @@ import { lineItemEffectiveUnitPrice } from '@/lib/domains/crm/pricing';
 import { parseDecimal } from '@/lib/shared/number';
 import { formatCurrency } from '@/app/crm/lib/format';
 
-export type PartialInvoiceLine = { index: number; quantity: number };
+// Rundans rader nycklas på radens stabila id (20260812_invoice_rounds_line_ids.sql). `index` finns
+// kvar för rundor skrivna före migreringen — samma reservväg som servern använder, så klientens
+// "kvar att fakturera" aldrig kan säga något annat än den som faktiskt validerar begäran.
+export type PartialInvoiceLine = { line_id?: string | null; index?: number | null; quantity: number };
 
 type LineItem = {
   article_name?: string | null;
@@ -55,11 +58,18 @@ export default function WorkOrderPartialInvoiceModal({
         const total = roundQty(lineItemQuantity(item));
         const invoiced = roundQty(
           rounds.reduce(
-            (sum, r) => sum + ((r.line_quantities ?? []).find((q) => q.index === index)?.quantity ?? 0),
+            (sum, r) => {
+              const entries = r.line_quantities ?? [];
+              const lineId = (item as { id?: string | null }).id ?? null;
+              const match = lineId
+                ? entries.find((q) => q.line_id === lineId) ?? entries.find((q) => !q.line_id && q.index === index)
+                : entries.find((q) => q.index === index);
+              return sum + (match?.quantity ?? 0);
+            },
             0,
           ),
         );
-        return { index, item, total, invoiced, remaining: Math.max(0, roundQty(total - invoiced)) };
+        return { index, lineId: (item as { id?: string | null }).id ?? null, item, total, invoiced, remaining: Math.max(0, roundQty(total - invoiced)) };
       }),
     [lineItems, rounds],
   );
@@ -79,7 +89,7 @@ export default function WorkOrderPartialInvoiceModal({
   const anyRemaining = state.some((s) => s.remaining > 0);
 
   function submit() {
-    onSubmit(billed.filter((b) => b.quantity > 0).map((b) => ({ index: b.index, quantity: b.quantity })));
+    onSubmit(billed.filter((b) => b.quantity > 0).map((b) => ({ line_id: b.lineId, index: b.index, quantity: b.quantity })));
   }
 
   return (

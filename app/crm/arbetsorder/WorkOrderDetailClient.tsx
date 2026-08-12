@@ -1029,9 +1029,10 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
           rotDetails={workOrder.rot_details}
           saving={savingArticles}
           fortnoxConnected={fortnoxConnected}
-          // Låst av FAKTURERINGEN, inte av arbetsstatusen. En delfakturerad order får numera stå
-          // som Pågående, och då säger status ingenting om huruvida raderna får ändras.
-          canEdit={!workOrder.fortnox_invoice_number && !workOrder.partial_invoicing_started_at}
+          // Bara en FÄRDIGfakturerad order är låst. En delfakturerad går att redigera — rundorna
+          // nycklas på radens id, så positionen är betydelselös och projektet kan ändras medan det
+          // pågår. Servern (validateLineItemEdit) skyddar det som redan står på en utställd faktura.
+          canEdit={!workOrder.fortnox_invoice_number && workOrder.status !== 'invoiced'}
           // Avskrivning finns kvar även när editorn är låst — det är hela poängen. Utom på en
           // färdigfakturerad order, där det inte finns något kvar att skriva av.
           onWriteOff={workOrder.fortnox_invoice_number || workOrder.status === 'invoiced' ? undefined : writeOffLine}

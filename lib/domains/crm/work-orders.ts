@@ -695,7 +695,7 @@ export async function writeOffWorkOrderLineItem(
 ) {
   const { data, error } = await supabase
     .from('crm_work_orders')
-    .select('id, status, vat_percent, quote_type, rot_details, line_items, line_items_invoicing_snapshot, fortnox_invoice_number')
+    .select('id, status, vat_percent, quote_type, rot_details, line_items, fortnox_invoice_number')
     .eq('id', workOrderId)
     .maybeSingle();
 
@@ -708,7 +708,6 @@ export async function writeOffWorkOrderLineItem(
     quote_type: string | null;
     rot_details: Record<string, unknown> | null;
     line_items: Array<Record<string, any>> | null;
-    line_items_invoicing_snapshot: Array<Record<string, any>> | null;
     fortnox_invoice_number: string | null;
   };
 
@@ -730,11 +729,9 @@ export async function writeOffWorkOrderLineItem(
     .from('crm_work_order_invoices')
     .select('line_quantities')
     .eq('work_order_id', workOrderId);
-  const invoicedOnLine = (rounds ?? []).reduce((sum, round) => {
-    const match = ((round as { line_quantities: Array<{ index: number; quantity: number }> | null }).line_quantities ?? [])
-      .find((q) => q.index === index);
-    return sum + (match ? Math.max(0, match.quantity) : 0);
-  }, 0);
+  // Via den delade beräkningen, så avskrivningen aldrig kan bedöma "redan fakturerat" annorlunda
+  // än delfaktureringen själv gör.
+  const invoicedOnLine = computeInvoiceState(lineItems, (rounds ?? []) as any)[index]?.invoiced ?? 0;
   if (writtenOff && invoicedOnLine > 0) {
     return {
       data: null,
@@ -747,8 +744,6 @@ export async function writeOffWorkOrderLineItem(
     (items ?? []).map((item, i) => (i === index ? { ...item, written_off: writtenOff } : item));
 
   const nextLineItems = applyFlag(lineItems);
-  // Snapshoten finns bara när delfakturering har startat.
-  const nextSnapshot = wo.line_items_invoicing_snapshot ? applyFlag(wo.line_items_invoicing_snapshot) : null;
 
   // Summan räknas om på de rader som fortfarande gäller, så ordervärdet följer det som levereras.
   const pricing = computePricing(activeLineItems(nextLineItems) as PricingLineItem[], wo.vat_percent, {
@@ -759,7 +754,9 @@ export async function writeOffWorkOrderLineItem(
   // Stäng ordern när avskrivningen gör att inget återstår att fakturera — men BARA om systemet
   // fortfarande äger statusen. Har någon medvetet satt den till ett arbetsläge (ordern rullar
   // vidare) ska vi inte stampa över det; då sätter de den själva när jobbet är klart.
-  const stateAfter = computeInvoiceState(nextSnapshot ?? nextLineItems, (rounds ?? []) as any);
+  // Mot de LEVANDE raderna. Sedan rundorna nycklas på radens id är snapshoten bara historik, och
+  // återstående ska mätas mot det ordern faktiskt innehåller nu.
+  const stateAfter = computeInvoiceState(nextLineItems, (rounds ?? []) as any);
   const nothingLeft = (rounds ?? []).length > 0 && stateAfter.every((s) => s.remaining <= 0);
   const closes = nothingLeft && wo.status === 'partially_invoiced';
 
@@ -767,7 +764,6 @@ export async function writeOffWorkOrderLineItem(
     .from('crm_work_orders')
     .update({
       line_items: nextLineItems,
-      ...(nextSnapshot ? { line_items_invoicing_snapshot: nextSnapshot } : {}),
       pricing_summary: { subtotal: pricing.subtotal, vat: pricing.vat, total: pricing.total },
       amount: pricing.total,
       ...(closes ? { status: 'invoiced', fortnox_invoiced_at: new Date().toISOString() } : {}),

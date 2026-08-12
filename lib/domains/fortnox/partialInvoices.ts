@@ -24,6 +24,9 @@ const roundQty = (n: number) => Math.round(n * 1e6) / 1e6;
 const roundMoney = (n: number) => Math.round(n * 100) / 100;
 
 export type PartialInvoiceLineItem = {
+  // Radens stabila UUID (obligatoriskt i quoteLineItemSchema). Nyckeln som fakturarundorna
+  // refererar — därför får den ALDRIG genereras om vid redigering.
+  id?: string | null;
   article_number?: string | null;
   article_name?: string | null;
   article_unit_name?: string | null;
@@ -47,7 +50,12 @@ export type PartialInvoiceLineItem = {
   written_off?: boolean | null;
 };
 
-export type PartialRequestLine = { index: number; quantity: number };
+// Vad en runda fakturerade på en rad. `line_id` är radens stabila UUID och är nyckeln; `index`
+// finns kvar för rundor skrivna innan 20260812_invoice_rounds_line_ids.sql och för poster som
+// migreringen medvetet lämnade orörda (id gick inte att slå upp). Positionen är alltså inte längre
+// bärande — det var den som tvingade fram artikellåset, eftersom en tillagd eller borttagen rad
+// pekade om en redan utställd fakturas antal till fel artikel.
+export type PartialRequestLine = { line_id?: string | null; index?: number | null; quantity: number };
 
 // Delfakturering does not yet proportion carved-out ROT labour (each material row's `labor_cost`)
 // across partially-invoiced quantities, so a ROT order that used the material→labour split can't be
@@ -58,7 +66,7 @@ export function hasCarvedRotLabor(lineItems: PartialInvoiceLineItem[] | null): b
   return (lineItems ?? []).some((i) => !i.is_rot_work && parseDecimal(i.labor_cost) > 0);
 }
 export type InvoiceRound = { line_quantities: PartialRequestLine[] | null };
-export type LineInvoiceState = { index: number; total: number; invoiced: number; remaining: number };
+export type LineInvoiceState = { lineId: string | null; index: number; total: number; invoiced: number; remaining: number };
 
 export type PartialInvoiceResult = {
   fortnox_invoice_number: string;
@@ -75,23 +83,34 @@ export class PartialInvoiceError extends Error {
   }
 }
 
-// Per-article invoiced-so-far + remaining, from the (frozen) line items and all prior rounds.
-// `total` is the line's full quantity (m³ volume or entered quantity, via the shared resolver).
+// Hur mycket en runda fakturerade på EN rad. Matchar på radens id när posten bär ett (allt skrivet
+// efter id-migreringen), annars på arrayposition — men positionsvägen används BARA för en rad som
+// saknar id, så en migrerad runda kan aldrig råka matcha på fel sätt.
+function invoicedOnLine(rounds: InvoiceRound[], lineId: string | null, index: number): number {
+  return roundQty(
+    rounds.reduce((sum, round) => {
+      const entries = round.line_quantities ?? [];
+      const match = lineId
+        ? entries.find((q) => q.line_id === lineId) ?? entries.find((q) => !q.line_id && q.index === index)
+        : entries.find((q) => q.index === index);
+      return sum + (match ? Math.max(0, match.quantity) : 0);
+    }, 0),
+  );
+}
+
+// Fakturerat hittills + återstående per rad, mot arbetsorderns AKTUELLA rader och alla tidigare
+// rundor. `total` är radens hela antal (m³-volym eller angivet antal, via den delade resolvern).
 export function computeInvoiceState(lineItems: PartialInvoiceLineItem[] | null, priorRounds: InvoiceRound[]): LineInvoiceState[] {
   return (lineItems ?? []).map((item, index) => {
+    const lineId = item.id ?? null;
     const total = roundQty(lineItemQuantity(item));
-    const invoiced = roundQty(
-      priorRounds.reduce((sum, round) => {
-        const match = (round.line_quantities ?? []).find((q) => q.index === index);
-        return sum + (match ? Math.max(0, match.quantity) : 0);
-      }, 0),
-    );
+    const invoiced = invoicedOnLine(priorRounds, lineId, index);
     // A written-off row has nothing left to invoice, even though its quantity is untouched. This is
     // what lets an order close: isFinalRound requires EVERY row's remaining to reach zero, so a
     // single never-performed article would otherwise keep the order 'partially_invoiced' forever
     // while its total still counted work that was never done.
     const remaining = item.written_off ? 0 : Math.max(0, roundQty(total - invoiced));
-    return { index, total, invoiced, remaining };
+    return { lineId, index, total, invoiced, remaining };
   });
 }
 
@@ -102,31 +121,81 @@ export function activeLineItems<T extends { written_off?: boolean | null }>(line
   return (lineItems ?? []).filter((item) => !item.written_off);
 }
 
-// Validate a requested round against remaining-per-line. Throws PartialInvoiceError on
-// over-invoicing or an all-zero request. Returns the (deduped, positive-only) quantities keyed by
-// line index and whether this round invoices the last of every line (→ status 'invoiced').
+// Vad en redigering av artikelraderna får göra när fakturor redan gått ut.
+//
+// Ersätter det gamla platta låset (allt eller inget från första delfakturan). Sedan rundorna
+// nycklas på radens id är positionen betydelselös, så det som återstår att skydda är bara detta:
+// det som redan står på en utställd faktura måste finnas kvar och får inte krympa under det
+// fakturerade. Allt annat — lägga till, ta bort ofakturerat, ändra antal uppåt, byta pris på det
+// som återstår, flytta om — är fritt, för det är precis vad ett pågående projekt kräver.
+export function validateLineItemEdit(
+  currentItems: PartialInvoiceLineItem[] | null,
+  nextItems: PartialInvoiceLineItem[] | null,
+  priorRounds: InvoiceRound[],
+): { ok: true } | { ok: false; message: string } {
+  const state = computeInvoiceState(currentItems, priorRounds);
+  const invoicedByKey = new Map<string, { invoiced: number; index: number }>();
+  (currentItems ?? []).forEach((item, index) => {
+    const st = state[index];
+    if (st && st.invoiced > 0) invoicedByKey.set(lineKey(item, index), { invoiced: st.invoiced, index });
+  });
+  if (invoicedByKey.size === 0) return { ok: true };
+
+  const nextByKey = new Map<string, PartialInvoiceLineItem>();
+  (nextItems ?? []).forEach((item, index) => nextByKey.set(lineKey(item, index), item));
+
+  for (const [key, { invoiced, index }] of invoicedByKey) {
+    const next = nextByKey.get(key);
+    if (!next) {
+      return { ok: false, message: `Rad ${index + 1} är fakturerad och kan inte tas bort. Sänk antalet till det som levererats i stället.` };
+    }
+    // Under det fakturerade skulle betyda att ordern säger att vi levererat mindre än vi redan
+    // krävt betalt för. Ner TILL det fakturerade är däremot precis hur en order stängs på det som
+    // faktiskt blev gjort — då blir återstående noll.
+    const nextQty = roundQty(lineItemQuantity(next));
+    if (nextQty + QTY_EPS < invoiced) {
+      return { ok: false, message: `Rad ${index + 1} är fakturerad med ${invoiced} och antalet kan inte sänkas under det.` };
+    }
+  }
+  return { ok: true };
+}
+
+// Nyckeln en rad adresseras med genom hela delfaktureringen: radens stabila id, med
+// arrayposition som reserv för äldre rader som saknar id. Samma funktion används av validering,
+// radbygge och summering, så de tre kan aldrig adressera olika saker.
+export function lineKey(item: { id?: string | null }, index: number): string {
+  return item.id ?? `#${index}`;
+}
+
+// Validera en begärd runda mot återstående per rad. Kastar PartialInvoiceError vid
+// överfakturering eller en tom begäran. Returnerar antalen (deduplicerade, bara positiva) nycklade
+// på radnyckeln, samt om rundan fakturerar det sista av varje rad (→ status 'invoiced').
 export function validatePartialRequest(
   state: LineInvoiceState[],
   request: PartialRequestLine[],
-): { requestByIndex: Map<number, number>; isFinalRound: boolean } {
-  const byIndex = new Map<number, number>();
+): { requestByKey: Map<string, number>; isFinalRound: boolean } {
+  const byKey = new Map<string, number>();
   for (const line of request) {
     const qty = Math.max(0, line.quantity);
     if (qty <= 0) continue;
-    const st = state.find((s) => s.index === line.index);
-    if (!st) throw new PartialInvoiceError(`Ogiltig rad (index ${line.index}).`);
-    const next = roundQty((byIndex.get(line.index) ?? 0) + qty);
+    // Begäran får peka ut raden med id (normalfallet) eller position (äldre klient).
+    const st = line.line_id
+      ? state.find((s) => s.lineId === line.line_id)
+      : state.find((s) => s.index === line.index);
+    if (!st) throw new PartialInvoiceError(`Ogiltig rad (${line.line_id ?? `index ${line.index}`}).`);
+    const key = st.lineId ?? `#${st.index}`;
+    const next = roundQty((byKey.get(key) ?? 0) + qty);
     if (next > st.remaining + QTY_EPS) {
-      throw new PartialInvoiceError(`Antal att fakturera överstiger återstående för rad ${line.index + 1}.`);
+      throw new PartialInvoiceError(`Antal att fakturera överstiger återstående för rad ${st.index + 1}.`);
     }
-    byIndex.set(line.index, next);
+    byKey.set(key, next);
   }
-  if (![...byIndex.values()].some((q) => q > 0)) {
+  if (![...byKey.values()].some((q) => q > 0)) {
     throw new PartialInvoiceError('Inget antal att fakturera angavs.');
   }
-  // Final round when, after billing this round, every line's remaining reaches zero.
-  const isFinalRound = state.every((s) => s.remaining - (byIndex.get(s.index) ?? 0) <= QTY_EPS);
-  return { requestByIndex: byIndex, isFinalRound };
+  // Slutrunda när varje rads återstående når noll efter den här rundan.
+  const isFinalRound = state.every((s) => s.remaining - (byKey.get(s.lineId ?? `#${s.index}`) ?? 0) <= QTY_EPS);
+  return { requestByKey: byKey, isFinalRound };
 }
 
 // Build Fortnox INVOICE rows for this round. NOTE: invoice rows use `DeliveredQuantity` (order
@@ -134,7 +203,7 @@ export function validatePartialRequest(
 // only lines with a positive quantity produce a row. Discount/ROT mapping mirrors buildOrderRows.
 export function buildInvoiceRows(
   lineItems: PartialInvoiceLineItem[] | null,
-  requestByIndex: Map<number, number>,
+  requestByKey: Map<string, number>,
   vatPercent: number,
   rotEnabled: boolean,
   reverseVat = false,
@@ -142,7 +211,7 @@ export function buildInvoiceRows(
 ) {
   const rows: Array<Record<string, unknown> & { Description: string }> = [];
   (lineItems ?? []).forEach((item, index) => {
-    const qty = requestByIndex.get(index) ?? 0;
+    const qty = requestByKey.get(lineKey(item, index)) ?? 0;
     if (qty <= 0) return;
     const discount = lineItemDiscountPercent(item);
     rows.push({
@@ -170,10 +239,10 @@ export function buildInvoiceRows(
 }
 
 // This round's subtotal ex VAT (quantity × discounted unit price), matching pricing_summary.subtotal.
-export function roundSubtotal(lineItems: PartialInvoiceLineItem[] | null, requestByIndex: Map<number, number>): number {
+export function roundSubtotal(lineItems: PartialInvoiceLineItem[] | null, requestByKey: Map<string, number>): number {
   let sum = 0;
   (lineItems ?? []).forEach((item, index) => {
-    const qty = requestByIndex.get(index) ?? 0;
+    const qty = requestByKey.get(lineKey(item, index)) ?? 0;
     if (qty <= 0) return;
     sum += qty * lineItemEffectiveUnitPrice(item);
   });
@@ -232,9 +301,12 @@ export async function createPartialInvoice(
     throw new PartialInvoiceError('Sätt arbetsordern till "Fakturera" innan du delfakturerar.');
   }
 
-  // Frozen basis: the snapshot taken at the first round (falls back to current line_items before
-  // any round exists). Per-article remaining is always measured against this, never the live rows.
-  const basis = workOrder.line_items_invoicing_snapshot ?? workOrder.line_items;
+  // Basen är arbetsorderns LEVANDE rader. Tidigare var den den frysta snapshoten, eftersom rundorna
+  // pekade på arrayposition och varje redigering hade förskjutit dem. Sedan rundorna nycklas på
+  // radens id är positionen betydelselös, och då ska återstående mätas mot det ordern faktiskt
+  // innehåller nu — annars kan en artikel som tillkommer mitt i projektet aldrig faktureras.
+  // Snapshoten skrivs fortfarande vid första rundan, men bara som historik.
+  const basis = workOrder.line_items;
 
   // Phase 2 guard: carved-out ROT labour isn't proportioned across partial rounds yet — block rather
   // than silently mis-bill. Checked before claiming so it can't leave the sync status stuck pending.
@@ -252,7 +324,7 @@ export async function createPartialInvoice(
   const roundNumber = (priorRounds.length ? Math.max(...priorRounds.map((r) => r.round_number)) : 0) + 1;
 
   const state = computeInvoiceState(basis, priorRounds);
-  const { requestByIndex, isFinalRound } = validatePartialRequest(state, request);
+  const { requestByKey, isFinalRound } = validatePartialRequest(state, request);
 
   const claimed = await claimFortnoxPush(
     supabase, 'crm_work_orders', workOrderId, 'fortnox_invoice_sync_status', 'fortnox_invoice_claimed_at',
@@ -278,7 +350,7 @@ export async function createPartialInvoice(
     if (header.CustomerNumber == null) throw new Error('Fortnox-ordern saknar kundkoppling');
 
     const rotPropertyNote = rotEnabled ? buildRotPropertyNote(workOrder.rot_details) : null;
-    const invoiceRows = buildInvoiceRows(basis, requestByIndex, vatPercent, rotEnabled, reverseVat, rotPropertyNote);
+    const invoiceRows = buildInvoiceRows(basis, requestByKey, vatPercent, rotEnabled, reverseVat, rotPropertyNote);
     if (!invoiceRows.length) throw new PartialInvoiceError('Inget antal att fakturera angavs.');
 
     // A partial invoice is a STANDALONE Fortnox invoice (it can't use the order's createinvoice,
@@ -314,14 +386,19 @@ export async function createPartialInvoice(
     const invoiceNumber = response.Invoice?.DocumentNumber != null ? String(response.Invoice.DocumentNumber) : '';
     if (!invoiceNumber) throw new Error('Fortnox returnerade inget fakturanummer');
 
-    const lineQuantities = [...requestByIndex.entries()].map(([index, quantity]) => ({ index, quantity }));
+    // Rundan sparas mot radens ID, inte dess position — det är hela poängen med omläggningen.
+    // legacy_index följer med som spårbarhet, precis som migreringen skriver den.
+    const lineQuantities = (basis ?? []).flatMap((item, index) => {
+      const quantity = requestByKey.get(lineKey(item, index)) ?? 0;
+      return quantity > 0 ? [{ line_id: item.id ?? null, quantity, legacy_index: index }] : [];
+    });
 
     await supabase.from('crm_work_order_invoices').insert({
       work_order_id: workOrderId,
       round_number: roundNumber,
       fortnox_invoice_number: invoiceNumber,
       fortnox_sync_status: 'synced',
-      amount: roundSubtotal(basis, requestByIndex),
+      amount: roundSubtotal(basis, requestByKey),
       line_quantities: lineQuantities,
       created_by: actorUserId,
     });

@@ -31,8 +31,15 @@ const workOrderStatusSchema = z.enum(['draft', 'scheduled', 'in_progress', 'comp
 // the domain validates them against each line's remaining quantity. Swedish comma input is
 // normalised client-side before submit.
 export const partialInvoiceSchema = z.object({
+  // Raden pekas ut med sitt stabila id; `index` är reservvägen för rader utan id (och för en
+  // klient som ännu inte laddat om). Minst ett av dem måste finnas, annars går raden inte att
+  // adressera alls — och en delfaktura som gissar rad är precis det vi aldrig får göra.
   lines: z
-    .array(z.object({ index: z.number().int().min(0), quantity: z.coerce.number().min(0) }))
+    .array(z.object({
+      line_id: z.string().min(1).nullish(),
+      index: z.number().int().min(0).nullish(),
+      quantity: z.coerce.number().min(0),
+    }).refine((l) => l.line_id != null || l.index != null, 'Raden saknar både id och position'))
     .min(1, 'Ange minst en rad att fakturera'),
 });
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Ogiltigt datum');
