@@ -115,15 +115,9 @@ type Props = {
   fortnoxConnected: boolean;
   canEdit?: boolean;
   onSave: (items: ArticleLineItem[]) => Promise<boolean>;
-  // Avskriv/återställ EN rad. Skild från onSave med flit: den här går igenom även när canEdit är
-  // false, alltså efter första delfakturan — det är precis då en outförd artikel måste kunna
-  // skrivas av för att ordern ska kunna stängas. Adresseras med arrayindex, samma som
-  // fakturarundorna. Utelämnas när avskrivning inte är möjlig (färdigfakturerad order).
-  onWriteOff?: (index: number, writtenOff: boolean) => Promise<void>;
-  writeOffBusyIndex?: number | null;
 };
 
-export default function WorkOrderArticlesTab({ items, currencyCode, vatPercent, quoteType, rotDetails, saving, fortnoxConnected, canEdit = true, onSave, onWriteOff, writeOffBusyIndex = null }: Props) {
+export default function WorkOrderArticlesTab({ items, currencyCode, vatPercent, quoteType, rotDetails, saving, fortnoxConnected, canEdit = true, onSave }: Props) {
   const [editing, setEditing] = useState(false);
   const [rows, setRows] = useState<ArticleLineItem[]>(items);
 
@@ -190,14 +184,14 @@ export default function WorkOrderArticlesTab({ items, currencyCode, vatPercent, 
             <div className="rounded-xl border border-dashed border-[#cfdcc9] bg-[#f1f5ee] px-4 py-6 text-sm text-slate-500">Inga artiklar.</div>
           ) : (
             <div className="grid gap-2">
-              {items.map((item, index) => {
+              {items.map((item) => {
                 const { material, sacks } = sackInfo(item);
                 const mode = item.pricing_mode === 'item' ? 'item' : 'm3';
                 const writtenOff = !!item.written_off;
                 return (
                   <div key={item.id} className={cn(
                     'flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2.5 text-sm',
-                    writtenOff ? 'border-dashed border-[#d8d8d8] bg-[#f6f6f6] opacity-70' : 'border-[#e0e8dc] bg-[#f1f5ee]',
+                    writtenOff ? 'border-transparent bg-[#eef1ec] text-slate-500' : 'border-[#e0e8dc] bg-[#f1f5ee]',
                   )}>
                     <div className="grid min-w-0 gap-0.5">
                       <strong className={cn('truncate text-slate-900', writtenOff && 'line-through decoration-slate-400')}>{item.article_name || 'Offert-rad'}</strong>
@@ -215,16 +209,6 @@ export default function WorkOrderArticlesTab({ items, currencyCode, vatPercent, 
                       {/* m³ rows are priced per m³, so show the computed volume × à-pris (not the area). */}
                       <span>{mode === 'm3' ? `${formatVolume(lineItemQuantity(item as any))} m³` : `Antal ${item.quantity || '0'}`} · à {formatCurrency(parseDecimal(item.unit_price), currencyCode)}</span>
                       <span className={cn('font-semibold text-slate-900', writtenOff && 'line-through decoration-slate-400')}>{formatCurrency(lineItemRowTotal(item as PricingLineItem), currencyCode)}</span>
-                      {onWriteOff ? (
-                        <button
-                          type="button"
-                          onClick={() => onWriteOff(index, !writtenOff)}
-                          disabled={writeOffBusyIndex === index}
-                          className="rounded-full border border-[#cfdcc9] bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-500 transition hover:border-slate-300 hover:text-slate-700 disabled:opacity-50"
-                        >
-                          {writeOffBusyIndex === index ? '…' : writtenOff ? 'Återställ' : 'Avskriv'}
-                        </button>
-                      ) : null}
                     </div>
                   </div>
                 );
@@ -293,13 +277,22 @@ export default function WorkOrderArticlesTab({ items, currencyCode, vatPercent, 
                   </div>
 
                   <div className="flex items-center justify-between gap-2">
-                    {rotEnabled ? (
+                    <div className="flex flex-wrap items-center gap-3">
+                      {rotEnabled ? (
+                        <label className="flex items-center gap-2 text-xs text-slate-600">
+                          <input type="checkbox" checked={!!row.is_rot_work} onChange={(e) => updateRow(row.id, { is_rot_work: e.target.checked })} className="h-3.5 w-3.5 rounded border-slate-300 accent-emerald-600" />
+                          ROT-arbete
+                        </label>
+                      ) : null}
+                      {/* Avskriven = såld men aldrig utförd. Räknas bort ur summan och skickas inte
+                          till Fortnox, men raden ligger kvar så skillnaden mot offerten går att
+                          förklara. En rad som aldrig fakturerats kan lika gärna tas bort helt. */}
                       <label className="flex items-center gap-2 text-xs text-slate-600">
-                        <input type="checkbox" checked={!!row.is_rot_work} onChange={(e) => updateRow(row.id, { is_rot_work: e.target.checked })} className="h-3.5 w-3.5 rounded border-slate-300 accent-emerald-600" />
-                        ROT-arbete
+                        <input type="checkbox" checked={!!row.written_off} onChange={(e) => updateRow(row.id, { written_off: e.target.checked })} className="h-3.5 w-3.5 rounded border-slate-300 accent-slate-500" />
+                        Avskriven (utförs ej)
                       </label>
-                    ) : <span />}
-                    <span className="text-sm font-semibold text-slate-900">{formatCurrency(rowTotal, currencyCode)}</span>
+                    </div>
+                    <span className={cn('text-sm font-semibold text-slate-900', row.written_off && 'line-through decoration-slate-400')}>{formatCurrency(rowTotal, currencyCode)}</span>
                   </div>
 
                   {/* Carve out the labour portion of a material row → the aggregated "Arbetskostnad

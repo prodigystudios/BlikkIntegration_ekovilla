@@ -69,7 +69,11 @@ export default function WorkOrderPartialInvoiceModal({
             0,
           ),
         );
-        return { index, lineId: (item as { id?: string | null }).id ?? null, item, total, invoiced, remaining: Math.max(0, roundQty(total - invoiced)) };
+        // Samma regel som serverns computeInvoiceState: en avskriven rad har inget kvar att
+        // fakturera. Utan den visades den som fakturerbar, förifylldes med sitt antal, och varje
+        // inskick nekades av valideringen.
+        const writtenOff = !!(item as { written_off?: boolean | null }).written_off;
+        return { index, lineId: (item as { id?: string | null }).id ?? null, item, total, invoiced, remaining: writtenOff ? 0 : Math.max(0, roundQty(total - invoiced)) };
       }),
     [lineItems, rounds],
   );

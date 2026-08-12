@@ -7,14 +7,6 @@ export const updateWorkOrderLineItemsSchema = z.object({
   line_items: z.array(quoteLineItemSchema).default([]),
 });
 
-// Avskriv/återställ EN rad, adresserad med sitt arrayindex. Index och inte id, eftersom det är
-// exakt så delfakturarundorna refererar rader — samma adressering hela vägen, ingen översättning
-// som kan glida. `written_off: false` ångrar.
-export const workOrderWriteOffSchema = z.object({
-  index: z.number().int().min(0),
-  written_off: z.boolean(),
-});
-
 function normalizeOptionalText(value: unknown) {
   if (value == null) return null;
   const trimmed = String(value).trim();

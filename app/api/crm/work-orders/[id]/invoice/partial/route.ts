@@ -28,9 +28,10 @@ export async function POST(req: Request, context: RouteContext) {
     if (readError) return routeError(500, 'crm_work_order_fetch_failed', readError.message);
     if (!current) return routeError(404, 'crm_work_order_not_found', 'Arbetsordern hittades inte.');
 
-    if (current.status !== 'completed' && current.status !== 'partially_invoiced') {
-      return routeError(409, 'work_order_not_ready_for_invoice', 'Sätt arbetsordern till "Fakturera" innan du delfakturerar.');
-    }
+    // Ingen statusgrind här — createPartialInvoice äger regeln (första rundan kräver "Fakturera",
+    // senare rundor gör det inte, och en avbruten order nekas alltid). En kopia på den här nivån
+    // gjorde domänens uppmjukning till död kod: en delfakturerad order som satts tillbaka till
+    // Pågående gick inte att fakturera vidare, vilket är precis det statusfrikopplingen finns för.
     if (!(Array.isArray(current.line_items) && current.line_items.length > 0)) {
       return routeError(409, 'work_order_has_no_articles', 'Arbetsordern saknar artiklar att fakturera.');
     }

@@ -144,12 +144,16 @@ function StatField({ label, value }: { label: string; value: React.ReactNode }) 
 // recomputes the row amount the same way the pricing/Fortnox row builders do.
 function roundLineBreakdown(
   lineItems: Array<Record<string, any>>,
-  lineQuantities: Array<{ index: number; quantity: number }> | null,
+  lineQuantities: Array<{ line_id?: string | null; index?: number | null; quantity: number }> | null,
 ) {
-  return (lineQuantities ?? []).map((lq) => {
-    const item = (lineItems[lq.index] ?? {}) as Record<string, any>;
+  return (lineQuantities ?? []).map((lq, i) => {
+    // Radens id är nyckeln; position bara för rundor skrivna före id-migreringen. Utan det här
+    // renderades varje rad som "Artikel · 0 kr", eftersom nya rundor inte har något `index`.
+    const item = ((lq.line_id
+      ? lineItems.find((li) => li.id === lq.line_id)
+      : (lq.index != null ? lineItems[lq.index] : null)) ?? {}) as Record<string, any>;
     return {
-      key: lq.index,
+      key: lq.line_id ?? `#${lq.index ?? i}`,
       name: item.article_name || item.line_note || 'Artikel',
       unit: item.article_unit_name || '',
       quantity: lq.quantity,
@@ -169,7 +173,6 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [savingArticles, setSavingArticles] = useState(false);
-  const [writeOffBusy, setWriteOffBusy] = useState<number | null>(null);
   const [pushingFortnox, setPushingFortnox] = useState(false);
   const [creatingInvoice, setCreatingInvoice] = useState(false);
   const [invoiceRounds, setInvoiceRounds] = useState<InvoiceRound[]>([]);
@@ -373,25 +376,6 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
       return true;
     } catch { toast.error('Kunde inte spara artiklar'); return false; }
     finally { setSavingArticles(false); }
-  }
-
-  // Avskriv/återställ en rad. Egen endpoint eftersom den får passera delfaktura-låset.
-  async function writeOffLine(index: number, writtenOff: boolean) {
-    if (!workOrder) return;
-    if (writtenOff && !window.confirm('Skriv av raden? Den räknas bort ur ordersumman och skickas inte till Fortnox. Redan fakturerade rader går inte att skriva av.')) return;
-    setWriteOffBusy(index);
-    try {
-      const res = await fetch(`/api/crm/work-orders/${workOrder.id}/line-items/write-off`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ index, written_off: writtenOff }),
-      });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte skriva av raden'); return; }
-      if (json.data?.item) applyWorkOrder(json.data.item as WorkOrderItem);
-      if (json.data?.fortnox_error) toast.error(`Sparat, men Fortnox-synk misslyckades: ${json.data.fortnox_error}`);
-      else toast.success(writtenOff ? 'Raden avskriven' : 'Raden återställd');
-    } catch { toast.error('Kunde inte skriva av raden'); }
-    finally { setWriteOffBusy(null); }
   }
 
   async function pushToFortnox() {
@@ -641,8 +625,14 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                         <span className={cn(crm.badge, workOrderStatusClass[workOrder.status])}>{workOrderStatusLabel[workOrder.status]}</span>
                       </div>
                     ) : (
+                      // Nuvarande status läggs till i listan om den inte är valbar (delfakturerad).
+                      // Annars matchar <Select value> ingen option, webbläsaren visar den FÖRSTA
+                      // ("Utkast") och ett omedvetet val skulle degradera ordern.
                       <Select value={draft.status} onChange={(e) => setField('status', e.target.value as WorkOrderStatus)}>
-                        {WORK_ORDER_STATUS_OPTIONS.map((value) => <option key={value} value={value}>{workOrderStatusLabel[value]}</option>)}
+                        {(WORK_ORDER_STATUS_OPTIONS.includes(workOrder.status)
+                          ? WORK_ORDER_STATUS_OPTIONS
+                          : [workOrder.status, ...WORK_ORDER_STATUS_OPTIONS]
+                        ).map((value) => <option key={value} value={value}>{workOrderStatusLabel[value]}</option>)}
                       </Select>
                     )}
                   </label>
@@ -967,11 +957,11 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                   {invoiceRounds.length > 1 ? 'Alla delfakturor finns i Fortnox. Slutför faktureringen där.' : 'Fakturautkast finns i Fortnox. Slutför faktureringen där.'}
                 </p>
               </>
-            ) : workOrder.status === 'completed' || workOrder.status === 'partially_invoiced' ? (
+            ) : workOrder.status === 'completed' || workOrder.status === 'partially_invoiced' || workOrder.partial_invoicing_started_at ? (
               <>
                 <div className="grid gap-2">
                   <button type="button" onClick={createInvoice} disabled={creatingInvoice || submittingPartial} className={cn(crm.saveButton, 'h-10 w-full')}>
-                    {creatingInvoice ? 'Skapar…' : workOrder.status === 'partially_invoiced' ? 'Fakturera resten' : 'Fakturera allt'}
+                    {creatingInvoice ? 'Skapar…' : workOrder.partial_invoicing_started_at ? 'Fakturera resten' : 'Fakturera allt'}
                   </button>
                   <button type="button" onClick={() => setShowPartialModal(true)} disabled={creatingInvoice || submittingPartial} className={cn(crm.ghostButton, 'h-10 w-full')}>
                     Delfakturera…
@@ -1035,8 +1025,6 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
           canEdit={!workOrder.fortnox_invoice_number && workOrder.status !== 'invoiced'}
           // Avskrivning finns kvar även när editorn är låst — det är hela poängen. Utom på en
           // färdigfakturerad order, där det inte finns något kvar att skriva av.
-          onWriteOff={workOrder.fortnox_invoice_number || workOrder.status === 'invoiced' ? undefined : writeOffLine}
-          writeOffBusyIndex={writeOffBusy}
           onSave={saveArticles}
         />
       ) : null}
@@ -1058,7 +1046,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
       {showPartialModal && workOrder ? (
         <WorkOrderPartialInvoiceModal
           lineItems={(workOrder.line_items || []) as any}
-          rounds={invoiceRounds.map((r) => ({ line_quantities: r.line_quantities }))}
+          rounds={invoiceRounds}
           currencyCode={workOrder.currency_code}
           submitting={submittingPartial}
           onClose={() => setShowPartialModal(false)}

@@ -305,3 +305,50 @@ describe('validateLineItemEdit', () => {
     expect(validateLineItemEdit([a, b], [a, { ...b, quantity: '9' }], rounds).ok).toBe(true);
   });
 });
+
+// ── Regressionsvakter från kodgranskningen ────────────────────────────────────
+describe('rundor för rader UTAN id', () => {
+  // Fyndet: en runda skrevs som {line_id: null, quantity, legacy_index} medan läsvägen för id-lösa
+  // rader letar efter `index`. Fakturerat lästes tillbaka som 0 → samma antal kunde faktureras igen.
+  it('läser tillbaka en runda som skrevs med index', () => {
+    const utanId = [{ pricing_mode: 'item', unit_price: '100', quantity: '10' }];
+    const state = computeInvoiceState(utanId, [{ line_quantities: [{ line_id: null, index: 0, quantity: 4 }] }]);
+    expect(state[0].invoiced).toBe(4);
+    expect(state[0].remaining).toBe(6);
+  });
+
+  // legacy_index är spårbarhet, inte nyckel — en post med BARA legacy_index får inte matcha.
+  it('matchar inte på legacy_index', () => {
+    const utanId = [{ pricing_mode: 'item', unit_price: '100', quantity: '10' }];
+    const state = computeInvoiceState(utanId, [{ line_quantities: [{ line_id: null, legacy_index: 0, quantity: 4 } as any] }]);
+    expect(state[0].invoiced).toBe(0);
+  });
+});
+
+describe('validateLineItemEdit — pris och artikel låsta på fakturerad rad', () => {
+  const a = { id: 'line-a', pricing_mode: 'item', unit_price: '200', quantity: '10' };
+  const rounds = [{ line_quantities: [{ line_id: 'line-a', quantity: 4 }] }];
+
+  it('nekar prisändring på en rad som redan fakturerats', () => {
+    const res = validateLineItemEdit([a], [{ ...a, unit_price: '300' }], rounds);
+    expect(res.ok).toBe(false);
+    expect((res as any).message).toMatch(/pris, rabatt, artikel/);
+  });
+
+  it('nekar rabatt-, artikel- och ROT-ändring likaså', () => {
+    expect(validateLineItemEdit([a], [{ ...a, discount_percent: '10' }], rounds).ok).toBe(false);
+    expect(validateLineItemEdit([a], [{ ...a, article_number: '999' }], rounds).ok).toBe(false);
+    expect(validateLineItemEdit([a], [{ ...a, is_rot_work: true }], rounds).ok).toBe(false);
+  });
+
+  it('tillåter samma ändringar på en OFAKTURERAD rad', () => {
+    const b = { id: 'line-b', pricing_mode: 'item', unit_price: '200', quantity: '5' };
+    expect(validateLineItemEdit([a, b], [a, { ...b, unit_price: '999', article_number: '111' }], rounds).ok).toBe(true);
+  });
+
+  // Avskrivning av en rad som redan fakturerats är också en förbjuden ändring: fakturan är utställd.
+  it('nekar att en fakturerad rad skrivs av', () => {
+    const res = validateLineItemEdit([a], [{ ...a, written_off: true }], rounds);
+    expect(res.ok).toBe(false);
+  });
+});

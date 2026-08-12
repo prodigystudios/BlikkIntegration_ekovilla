@@ -25,6 +25,11 @@ begin;
 -- Basen är samma lista som beräkningen av återstående alltid har använt: den frysta snapshoten när
 -- den finns, annars de levande raderna. `->` med heltal indexerar jsonb-arrayen, och `->>'id'` ger
 -- null om raden saknas — vilket är hela poängen med coalesce-grenen nedan.
+-- ⚠️ EXPANDERA ALLA POSTER, inte bara de omigrerade. UPDATE:en nedan ersätter HELA
+-- line_quantities-arrayen, så filtrerar man här försvinner varje post som inte kom med. En rad som
+-- delvis migrerats (någon post fick line_id, någon annan kunde inte slås upp) hade då förlorat de
+-- migrerade posternas antal vid nästa körning — alltså exakt vid den omkörning headern uppmanar
+-- till, och på fakturaunderlag. Urvalet av VILKA rader som skrivs sker i stället på rad-nivå sist.
 with expanded as (
   select
     inv.id                                   as invoice_row_id,
@@ -32,13 +37,13 @@ with expanded as (
     q.value                                  as entry,
     (q.value ->> 'quantity')::numeric        as quantity,
     (q.value ->> 'index')::int               as legacy_index,
+    -- Behöver den här posten migreras alls?
+    (q.value ? 'index' and not (q.value ? 'line_id')) as needs_migration,
     coalesce(wo.line_items_invoicing_snapshot, wo.line_items) as basis
   from public.crm_work_order_invoices inv
   join public.crm_work_orders wo on wo.id = inv.work_order_id
   cross join lateral jsonb_array_elements(coalesce(inv.line_quantities, '[]'::jsonb))
        with ordinality as q(value, ordinality)
-  -- Bara poster som ännu inte migrerats.
-  where q.value ? 'index' and not (q.value ? 'line_id')
 ),
 resolved as (
   select
@@ -47,17 +52,22 @@ resolved as (
     entry,
     quantity,
     legacy_index,
-    basis -> legacy_index ->> 'id' as line_id
+    needs_migration,
+    case when needs_migration then basis -> legacy_index ->> 'id' end as line_id
   from expanded
 ),
 rebuilt as (
   select
     invoice_row_id,
+    -- Sant bara om MINST en post faktiskt kunde migreras. Rader där ingenting ändras skrivs inte
+    -- alls, så en omkörning är en ren no-op i stället för en omskrivning.
+    bool_or(needs_migration and line_id is not null) as changed,
     jsonb_agg(
       case
-        when line_id is not null
+        when needs_migration and line_id is not null
           then jsonb_build_object('line_id', line_id, 'quantity', quantity, 'legacy_index', legacy_index)
-        -- Ingen träff: lämna posten som den var. Läskoden hanterar index-formen.
+        -- Redan migrerad, eller ingen träff på id:t: posten lämnas EXAKT som den var. Läskoden
+        -- hanterar index-formen, och en gissning på fakturaunderlag är aldrig värd risken.
         else entry
       end
       order by pos
@@ -68,7 +78,8 @@ rebuilt as (
 update public.crm_work_order_invoices inv
 set line_quantities = rebuilt.line_quantities
 from rebuilt
-where rebuilt.invoice_row_id = inv.id;
+where rebuilt.invoice_row_id = inv.id
+  and rebuilt.changed;
 
 commit;
 
