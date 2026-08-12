@@ -2,6 +2,7 @@ import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
 import { lineItemUnitPrice, lineItemDiscountPercent, lineItemRowTotal } from '@/lib/domains/crm/pricing';
 import { fortnoxGet, fortnoxGetBinary, fortnoxPost, fortnoxPut, FortnoxApiError, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
+import { activeLineItems } from './partialInvoices';
 import { appendFortnoxTextNote, claimFortnoxPush, resolveOurReference, resolveReverseVat, resolveRotReference, rotLaborRow, rowRotLaborCarveout, splitRotMaterialRow } from './helpers';
 import { DEFAULT_ROT_HOUSE_WORK_TYPE } from './types';
 
@@ -66,6 +67,9 @@ type WorkOrderRow = {
     house_work_type?: string | null;
     // Labour carved out of a material row for ROT — summed onto the aggregated "Arbetskostnad ROT" row.
     labor_cost?: string | null;
+    // Avskriven rad — sold but never performed. Kept in place (never deleted, so invoice rounds'
+    // array indices stay valid) but dropped from the Fortnox document. See partialInvoices.ts.
+    written_off?: boolean | null;
   }> | null;
 };
 
@@ -102,8 +106,12 @@ function orderTextRow(description: string): FortnoxOrderRow {
 // Exported for tests. NOTE: Fortnox order rows use `OrderedQuantity` (offer rows use
 // `Quantity`, invoice rows use `DeliveredQuantity`) — sending `Quantity` to /orders
 // returns 400 "Felaktigt fältnamn (Quantity)".
-export function buildOrderRows(lineItems: WorkOrderRow['line_items'], vatPercent: number, rotEnabled: boolean, reverseVat = false, rotPropertyNote: string | null = null): FortnoxOrderRow[] {
-  if (!lineItems?.length) return [];
+export function buildOrderRows(allLineItems: WorkOrderRow['line_items'], vatPercent: number, rotEnabled: boolean, reverseVat = false, rotPropertyNote: string | null = null): FortnoxOrderRow[] {
+  // Written-off rows are dropped from the document: the customer is never billed for work that
+  // wasn't performed, and the Fortnox order total has to match what the order is actually worth.
+  // They stay in line_items (indices are load-bearing for the invoice rounds) — only the push omits.
+  const lineItems = activeLineItems(allLineItems);
+  if (!lineItems.length) return [];
 
   // Accumulates the labour carved out of material rows (kr, ex VAT), emitted as one aggregated
   // "Arbetskostnad ROT" row after the loop. Mirrors buildOfferRows so offer→order stays consistent.

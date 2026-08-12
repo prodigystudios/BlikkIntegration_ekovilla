@@ -144,12 +144,16 @@ function StatField({ label, value }: { label: string; value: React.ReactNode }) 
 // recomputes the row amount the same way the pricing/Fortnox row builders do.
 function roundLineBreakdown(
   lineItems: Array<Record<string, any>>,
-  lineQuantities: Array<{ index: number; quantity: number }> | null,
+  lineQuantities: Array<{ line_id?: string | null; index?: number | null; quantity: number }> | null,
 ) {
-  return (lineQuantities ?? []).map((lq) => {
-    const item = (lineItems[lq.index] ?? {}) as Record<string, any>;
+  return (lineQuantities ?? []).map((lq, i) => {
+    // Radens id är nyckeln; position bara för rundor skrivna före id-migreringen. Utan det här
+    // renderades varje rad som "Artikel · 0 kr", eftersom nya rundor inte har något `index`.
+    const item = ((lq.line_id
+      ? lineItems.find((li) => li.id === lq.line_id)
+      : (lq.index != null ? lineItems[lq.index] : null)) ?? {}) as Record<string, any>;
     return {
-      key: lq.index,
+      key: lq.line_id ?? `#${lq.index ?? i}`,
       name: item.article_name || item.line_note || 'Artikel',
       unit: item.article_unit_name || '',
       quantity: lq.quantity,
@@ -511,6 +515,11 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
           <div className="grid min-w-0 gap-1.5">
             <div className="flex flex-wrap items-center gap-2">
               <span className={cn(crm.badge, workOrderStatusClass[workOrder.status])}>{workOrderStatusLabel[workOrder.status]}</span>
+              {/* Faktureringsläget är ett EGET faktum, inte en status. Sedan en delfakturerad order
+                  får stå som Pågående skulle det annars vara osynligt att fakturor redan gått ut. */}
+              {workOrder.partial_invoicing_started_at && workOrder.status !== 'invoiced' && workOrder.status !== 'partially_invoiced' ? (
+                <span className={cn(crm.badge, 'border-amber-200 bg-amber-50 text-amber-700')}>Delfakturerad</span>
+              ) : null}
               <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">{documentRef(workOrder.fortnox_order_number, workOrder.order_number)}</span>
               {overdue ? (
                 <span className={cn(crm.badge, 'border-rose-200 bg-rose-50 text-rose-700')}>Försenad</span>
@@ -608,13 +617,22 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                     {/* invoiced / partially_invoiced are system-managed by the invoicing flow and
                         aren't in WORK_ORDER_STATUS_OPTIONS — show them read-only so the picker can't
                         render a value-less <select> or silently regress the status on save. */}
-                    {workOrder.status === 'invoiced' || workOrder.status === 'partially_invoiced' ? (
+                    {/* Bara en FÄRDIGfakturerad order är låst. En delfakturerad rullar ofta vidare
+                        och måste kunna sättas tillbaka till Pågående — statusen bär arbetsläget,
+                        inte faktureringsläget (det visas som egen badge). */}
+                    {workOrder.status === 'invoiced' ? (
                       <div className="flex h-11 items-center">
                         <span className={cn(crm.badge, workOrderStatusClass[workOrder.status])}>{workOrderStatusLabel[workOrder.status]}</span>
                       </div>
                     ) : (
+                      // Nuvarande status läggs till i listan om den inte är valbar (delfakturerad).
+                      // Annars matchar <Select value> ingen option, webbläsaren visar den FÖRSTA
+                      // ("Utkast") och ett omedvetet val skulle degradera ordern.
                       <Select value={draft.status} onChange={(e) => setField('status', e.target.value as WorkOrderStatus)}>
-                        {WORK_ORDER_STATUS_OPTIONS.map((value) => <option key={value} value={value}>{workOrderStatusLabel[value]}</option>)}
+                        {(WORK_ORDER_STATUS_OPTIONS.includes(workOrder.status)
+                          ? WORK_ORDER_STATUS_OPTIONS
+                          : [workOrder.status, ...WORK_ORDER_STATUS_OPTIONS]
+                        ).map((value) => <option key={value} value={value}>{workOrderStatusLabel[value]}</option>)}
                       </Select>
                     )}
                   </label>
@@ -939,11 +957,11 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                   {invoiceRounds.length > 1 ? 'Alla delfakturor finns i Fortnox. Slutför faktureringen där.' : 'Fakturautkast finns i Fortnox. Slutför faktureringen där.'}
                 </p>
               </>
-            ) : workOrder.status === 'completed' || workOrder.status === 'partially_invoiced' ? (
+            ) : workOrder.status === 'completed' || workOrder.status === 'partially_invoiced' || workOrder.partial_invoicing_started_at ? (
               <>
                 <div className="grid gap-2">
                   <button type="button" onClick={createInvoice} disabled={creatingInvoice || submittingPartial} className={cn(crm.saveButton, 'h-10 w-full')}>
-                    {creatingInvoice ? 'Skapar…' : workOrder.status === 'partially_invoiced' ? 'Fakturera resten' : 'Fakturera allt'}
+                    {creatingInvoice ? 'Skapar…' : workOrder.partial_invoicing_started_at ? 'Fakturera resten' : 'Fakturera allt'}
                   </button>
                   <button type="button" onClick={() => setShowPartialModal(true)} disabled={creatingInvoice || submittingPartial} className={cn(crm.ghostButton, 'h-10 w-full')}>
                     Delfakturera…
@@ -1001,12 +1019,12 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
           rotDetails={workOrder.rot_details}
           saving={savingArticles}
           fortnoxConnected={fortnoxConnected}
-          canEdit={
-            workOrder.status !== 'invoiced' &&
-            workOrder.status !== 'partially_invoiced' &&
-            !workOrder.fortnox_invoice_number &&
-            !workOrder.partial_invoicing_started_at
-          }
+          // Bara en FÄRDIGfakturerad order är låst. En delfakturerad går att redigera — rundorna
+          // nycklas på radens id, så positionen är betydelselös och projektet kan ändras medan det
+          // pågår. Servern (validateLineItemEdit) skyddar det som redan står på en utställd faktura.
+          canEdit={!workOrder.fortnox_invoice_number && workOrder.status !== 'invoiced'}
+          // Avskrivning finns kvar även när editorn är låst — det är hela poängen. Utom på en
+          // färdigfakturerad order, där det inte finns något kvar att skriva av.
           onSave={saveArticles}
         />
       ) : null}
@@ -1028,7 +1046,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
       {showPartialModal && workOrder ? (
         <WorkOrderPartialInvoiceModal
           lineItems={(workOrder.line_items || []) as any}
-          rounds={invoiceRounds.map((r) => ({ line_quantities: r.line_quantities }))}
+          rounds={invoiceRounds}
           currencyCode={workOrder.currency_code}
           submitting={submittingPartial}
           onClose={() => setShowPartialModal(false)}

@@ -1,6 +1,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { crmQuoteSelect } from './quotes';
 import { resolveCrmContact, type CrmContactSource } from './contacts';
+import { computePricing, type PricingLineItem } from './pricing';
+import { activeLineItems, computeInvoiceState, validateLineItemEdit, type InvoiceRound } from '@/lib/domains/fortnox/partialInvoices';
 
 export const crmWorkOrderSelect = `
   id,
@@ -672,6 +674,82 @@ export async function updateCrmWorkOrderLineItems(
     .eq('id', id)
     .select(crmWorkOrderSelect)
     .single();
+}
+
+// Spara arbetsorderns artikelrader — EN väg in, oavsett om det är en ändring, en ny artikel, en
+// borttagen rad eller en avskrivning (`written_off`). Reglerna bor här i stället för i routen,
+// eftersom de är affärsregler och eftersom de tidigare fanns i två kopior som kunde glida isär.
+//
+// Vad som skyddas när fakturor redan gått ut ligger i validateLineItemEdit: det som står på en
+// utställd faktura måste finnas kvar, får inte krympa under det fakturerade, och får inte byta pris
+// eller artikel. Allt annat är fritt — ett projekt ändras medan det pågår.
+export async function saveWorkOrderLineItems(
+  supabase: SupabaseClient,
+  workOrderId: string,
+  nextLineItems: Array<Record<string, any>>,
+) {
+  const { data, error } = await supabase
+    .from('crm_work_orders')
+    .select('id, status, vat_percent, quote_type, rot_details, line_items, partial_invoicing_started_at, fortnox_invoice_number')
+    .eq('id', workOrderId)
+    .maybeSingle();
+
+  if (error) return { data: null, error, reason: 'fetch_failed' as const };
+  if (!data) return { data: null, error: { message: 'Arbetsordern hittades inte' }, reason: 'not_found' as const };
+
+  const wo = data as {
+    status: string;
+    vat_percent: number | null;
+    quote_type: string | null;
+    rot_details: Record<string, unknown> | null;
+    line_items: Array<Record<string, any>> | null;
+    partial_invoicing_started_at: string | null;
+    fortnox_invoice_number: string | null;
+  };
+
+  // En färdigfakturerad order är avslutad. Att ändra summan efter sista fakturan skulle bara få CRM
+  // och bokföringen att säga olika saker.
+  if (wo.status === 'invoiced' || wo.fortnox_invoice_number) {
+    return { data: null, error: { message: 'Arbetsordern är färdigfakturerad och kan inte ändras.' }, reason: 'order_closed' as const };
+  }
+
+  // Rundorna behövs både för redigeringsreglerna och för att avgöra om ordern stänger sig.
+  const { data: roundsData, error: roundsError } = await listWorkOrderInvoiceRounds(supabase, workOrderId);
+  // Fail closed: ett svalt läsfel hade sett ut som "inget är fakturerat" och släppt igenom en
+  // radering av en rad som redan står på kundens faktura.
+  if (roundsError) return { data: null, error: roundsError, reason: 'rounds_read_failed' as const };
+  const rounds = (roundsData ?? []) as unknown as InvoiceRound[];
+
+  if (wo.partial_invoicing_started_at) {
+    const verdict = validateLineItemEdit(wo.line_items as any, nextLineItems as any, rounds);
+    if (!verdict.ok) return { data: null, error: { message: verdict.message }, reason: 'line_invoiced' as const };
+  }
+
+  const pricing = computePricing(activeLineItems(nextLineItems) as PricingLineItem[], wo.vat_percent, {
+    isPrivate: wo.quote_type === 'private',
+    rot: (wo.rot_details ?? null) as any,
+  });
+
+  // Ordern stänger sig när inget återstår att fakturera och minst en runda gått ut — oavsett vilket
+  // ARBETSläge den står i. Den är då fullt fakturerad, och det är ett faktum om faktureringen, inte
+  // en åsikt om jobbet. Utan det här kunde en order som satts till Pågående aldrig nå ett avslut:
+  // 'invoiced' går inte att välja för hand, och alla fakturavägar svarar "inget kvar att fakturera".
+  const stateAfter = computeInvoiceState(nextLineItems as any, rounds);
+  const closes = rounds.length > 0 && stateAfter.every((s) => s.remaining <= 0);
+
+  const result = await supabase
+    .from('crm_work_orders')
+    .update({
+      line_items: nextLineItems,
+      pricing_summary: { subtotal: pricing.subtotal, vat: pricing.vat, total: pricing.total },
+      amount: pricing.total,
+      ...(closes ? { status: 'invoiced', fortnox_invoiced_at: new Date().toISOString() } : {}),
+    })
+    .eq('id', workOrderId)
+    .select(crmWorkOrderSelect)
+    .single();
+
+  return { data: result.data, error: result.error, reason: result.error ? ('update_failed' as const) : null };
 }
 
 // Tabellen heter `crm_time_entries` sedan fas 4 (20260811_time_entries_reshape.sql). Namnbytet är

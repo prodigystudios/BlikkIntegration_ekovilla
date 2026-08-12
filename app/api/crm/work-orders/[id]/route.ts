@@ -5,9 +5,16 @@ import { syncWorkOrderHeaderToFortnox } from '@/lib/domains/fortnox/orders';
 import { FortnoxNotConnectedError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
 import { isNoRowsError, ok, pickProvidedFields, requireCrmUser, requirePermission, requireSignedInUser, routeError, updateCrmWorkOrderSchema, validationError } from '../_lib';
 
-// Fakturastatus is system-managed (set by the invoice/delfakturering flow), never chosen
-// by hand — so a crafted PATCH can't fake a billed order or regress one back to a manual state.
+// Fakturastatus is system-managed (set by the invoice/delfakturering flow), never chosen by hand —
+// so a crafted PATCH can't fake a billed order.
 const SYSTEM_MANAGED_WO_STATUSES: string[] = ['invoiced', 'partially_invoiced'];
+
+// …but only 'invoiced' is TERMINAL. A part-invoiced order is usually still being worked on, and
+// `status` carries the work state, not the invoicing state — the two are independent facts that
+// happen to share one column. Refusing to leave 'partially_invoiced' forced a running job to
+// advertise itself as an invoicing state; the seller can now set it back to Pågående, and the
+// fact that rounds exist is shown from the invoice history instead.
+const TERMINAL_WO_STATUSES: string[] = ['invoiced'];
 
 // The edited fields that Fortnox mirrors on the order header: Er referens → YourReference,
 // work address → delivery address, ansvarig → OurReference. Gating on these keeps a status-only
@@ -111,10 +118,11 @@ export async function PATCH(req: Request, context: RouteContext) {
         return routeError(409, 'crm_work_order_status_system_managed',
           'Fakturastatus sätts automatiskt vid fakturering och kan inte väljas manuellt.');
       }
-      // …and a billed order can't be regressed to a manual status either.
-      if (current?.status && SYSTEM_MANAGED_WO_STATUSES.includes(current.status)) {
+      // …and a FULLY invoiced order is closed and can't be regressed. A part-invoiced one can:
+      // the job is often still running, and the invoicing progress is recorded in the rounds.
+      if (current?.status && TERMINAL_WO_STATUSES.includes(current.status)) {
         return routeError(409, 'crm_work_order_locked',
-          'Ordern är fakturerad och statusen kan inte ändras manuellt.');
+          'Ordern är färdigfakturerad och statusen kan inte ändras.');
       }
     }
 

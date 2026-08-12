@@ -28,6 +28,9 @@ export type ArticleLineItem = {
   house_work_type?: string;
   // Labour carved out of a material row for ROT — summed onto the "Arbetskostnad ROT" Fortnox row.
   labor_cost?: string;
+  // Avskriven rad: såld men aldrig utförd. Ligger kvar (indexen bär fakturarundornas antal) men
+  // räknas bort ur summan och skickas inte till Fortnox.
+  written_off?: boolean;
 };
 
 type FortnoxArticle = { article_number: string; description: string | null; sales_price: number | null; unit: string | null };
@@ -126,11 +129,16 @@ export default function WorkOrderArticlesTab({ items, currencyCode, vatPercent, 
 
   // Summary reflects the live edit when editing, otherwise the saved articles.
   const source = editing ? rows : items;
+  // Avskrivna rader räknas inte — varken i pengar eller i säckar. Ordervärdet ska visa det som
+  // faktiskt levereras, annars stämmer inte CRM med fakturorna.
   const totals = useMemo(
-    () => computePricing(source as PricingLineItem[], vatPercent, { isPrivate: quoteType === 'private', rot: rotDetails }),
+    () => computePricing(source.filter((r) => !r.written_off) as PricingLineItem[], vatPercent, { isPrivate: quoteType === 'private', rot: rotDetails }),
     [source, vatPercent, quoteType, rotDetails],
   );
-  const totalSacks = useMemo(() => items.reduce((sum, it) => sum + sackInfo(it).sacks, 0), [items]);
+  const totalSacks = useMemo(
+    () => items.filter((it) => !it.written_off).reduce((sum, it) => sum + sackInfo(it).sacks, 0),
+    [items],
+  );
 
   function updateRow(id: string, patch: Partial<ArticleLineItem>) {
     setRows((rs) => rs.map((r) => (r.id === id ? { ...r, ...patch } : r)));
@@ -179,10 +187,14 @@ export default function WorkOrderArticlesTab({ items, currencyCode, vatPercent, 
               {items.map((item) => {
                 const { material, sacks } = sackInfo(item);
                 const mode = item.pricing_mode === 'item' ? 'item' : 'm3';
+                const writtenOff = !!item.written_off;
                 return (
-                  <div key={item.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#e0e8dc] bg-[#f1f5ee] px-3 py-2.5 text-sm">
+                  <div key={item.id} className={cn(
+                    'flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2.5 text-sm',
+                    writtenOff ? 'border-transparent bg-[#eef1ec] text-slate-500' : 'border-[#e0e8dc] bg-[#f1f5ee]',
+                  )}>
                     <div className="grid min-w-0 gap-0.5">
-                      <strong className="truncate text-slate-900">{item.article_name || 'Offert-rad'}</strong>
+                      <strong className={cn('truncate text-slate-900', writtenOff && 'line-through decoration-slate-400')}>{item.article_name || 'Offert-rad'}</strong>
                       <span className="text-xs text-slate-500">
                         {item.article_number || 'Utan artikelnummer'}
                         {mode === 'm3'
@@ -192,10 +204,11 @@ export default function WorkOrderArticlesTab({ items, currencyCode, vatPercent, 
                       </span>
                     </div>
                     <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                      {sacks > 0 ? <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700">{sacks} säck</span> : null}
+                      {writtenOff ? <span className="rounded-full border border-slate-300 bg-white px-2 py-0.5 font-semibold text-slate-500">Avskriven</span> : null}
+                      {sacks > 0 && !writtenOff ? <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700">{sacks} säck</span> : null}
                       {/* m³ rows are priced per m³, so show the computed volume × à-pris (not the area). */}
                       <span>{mode === 'm3' ? `${formatVolume(lineItemQuantity(item as any))} m³` : `Antal ${item.quantity || '0'}`} · à {formatCurrency(parseDecimal(item.unit_price), currencyCode)}</span>
-                      <span className="font-semibold text-slate-900">{formatCurrency(lineItemRowTotal(item as PricingLineItem), currencyCode)}</span>
+                      <span className={cn('font-semibold text-slate-900', writtenOff && 'line-through decoration-slate-400')}>{formatCurrency(lineItemRowTotal(item as PricingLineItem), currencyCode)}</span>
                     </div>
                   </div>
                 );
@@ -264,13 +277,22 @@ export default function WorkOrderArticlesTab({ items, currencyCode, vatPercent, 
                   </div>
 
                   <div className="flex items-center justify-between gap-2">
-                    {rotEnabled ? (
+                    <div className="flex flex-wrap items-center gap-3">
+                      {rotEnabled ? (
+                        <label className="flex items-center gap-2 text-xs text-slate-600">
+                          <input type="checkbox" checked={!!row.is_rot_work} onChange={(e) => updateRow(row.id, { is_rot_work: e.target.checked })} className="h-3.5 w-3.5 rounded border-slate-300 accent-emerald-600" />
+                          ROT-arbete
+                        </label>
+                      ) : null}
+                      {/* Avskriven = såld men aldrig utförd. Räknas bort ur summan och skickas inte
+                          till Fortnox, men raden ligger kvar så skillnaden mot offerten går att
+                          förklara. En rad som aldrig fakturerats kan lika gärna tas bort helt. */}
                       <label className="flex items-center gap-2 text-xs text-slate-600">
-                        <input type="checkbox" checked={!!row.is_rot_work} onChange={(e) => updateRow(row.id, { is_rot_work: e.target.checked })} className="h-3.5 w-3.5 rounded border-slate-300 accent-emerald-600" />
-                        ROT-arbete
+                        <input type="checkbox" checked={!!row.written_off} onChange={(e) => updateRow(row.id, { written_off: e.target.checked })} className="h-3.5 w-3.5 rounded border-slate-300 accent-slate-500" />
+                        Avskriven (utförs ej)
                       </label>
-                    ) : <span />}
-                    <span className="text-sm font-semibold text-slate-900">{formatCurrency(rowTotal, currencyCode)}</span>
+                    </div>
+                    <span className={cn('text-sm font-semibold text-slate-900', row.written_off && 'line-through decoration-slate-400')}>{formatCurrency(rowTotal, currencyCode)}</span>
                   </div>
 
                   {/* Carve out the labour portion of a material row → the aggregated "Arbetskostnad

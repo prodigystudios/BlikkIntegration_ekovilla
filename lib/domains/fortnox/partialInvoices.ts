@@ -7,14 +7,20 @@ import { appendFortnoxTextNote, buildRotPropertyNote, claimFortnoxPush, resolveR
 import { pushWorkOrderToFortnox } from './orders';
 import { DEFAULT_ROT_HOUSE_WORK_TYPE } from './types';
 
-// Delfakturering (partial invoicing). The app OWNS the per-article invoiced state — a Fortnox
-// Order exposes only a single InvoiceReference and no per-row invoiced quantity, so we can't read
-// partial progress back from Fortnox. Each round we POST a standalone draft invoice (Model B) with
-// exactly that round's quantities and record what we billed. Remaining-per-article is derived from
-// the frozen line_items snapshot minus the sum of prior rounds (rows matched by array index — safe
-// because editing is locked from the first round on). The proven one-shot full-invoice path
-// (createInvoiceFromWorkOrder → order createinvoice) is left untouched and is used only when no
-// partial round has started.
+// Delfakturering (partial invoicing). Appen ÄGER det per-artikel fakturerade läget — en
+// Fortnox-order exponerar bara en enda InvoiceReference och inget fakturerat antal per rad, så
+// delprogressen går inte att läsa tillbaka därifrån. Varje omgång POST:ar vi en fristående
+// fakturautkast (Model B) med exakt den omgångens antal och registrerar vad vi fakturerade.
+//
+// EN BAS, EN NYCKEL: återstående per artikel räknas mot arbetsorderns LEVANDE `line_items`, och
+// rundornas rader matchas på radens stabila `id` (`lineKey`). Positionen bär ingenting, vilket är
+// varför artikelraderna får redigeras mitt i ett pågående projekt — det som skyddas är bara det som
+// redan står på en utställd faktura (`validateLineItemEdit`). Kolumnen
+// `line_items_invoicing_snapshot` är historik från den gamla index-baserade modellen och läses
+// inte av någon kodväg; två bilder av samma sanning var precis det som lät dem glida isär.
+//
+// Den beprövade en-shot-vägen (createInvoiceFromWorkOrder → order createinvoice) är orörd och
+// används bara innan någon delfakturarunda startat.
 
 // Quantity floating-point tolerance (m³ volumes are fractional). Below this two quantities are
 // treated as equal — used for the "remaining" comparison and the final-round test.
@@ -24,6 +30,9 @@ const roundQty = (n: number) => Math.round(n * 1e6) / 1e6;
 const roundMoney = (n: number) => Math.round(n * 100) / 100;
 
 export type PartialInvoiceLineItem = {
+  // Radens stabila UUID (obligatoriskt i quoteLineItemSchema). Nyckeln som fakturarundorna
+  // refererar — därför får den ALDRIG genereras om vid redigering.
+  id?: string | null;
   article_number?: string | null;
   article_name?: string | null;
   article_unit_name?: string | null;
@@ -40,9 +49,19 @@ export type PartialInvoiceLineItem = {
   // Labour carved out of a material row for ROT. NOT yet supported in partial invoicing — see
   // hasCarvedRotLabor below.
   labor_cost?: string | null;
+  // Avskriven rad: såld men aldrig utförd. Återstående blir 0 så ordern kan stängas på det som
+  // faktiskt levererades, och raden räknas bort ur ordersumman och ur Fortnox-dokumentet — men
+  // ligger kvar synlig, så skillnaden mot offerten går att förklara i efterhand. En rad som ALDRIG
+  // fakturerats får lika gärna raderas rakt av; avskrivningen finns för att den ska synas.
+  written_off?: boolean | null;
 };
 
-export type PartialRequestLine = { index: number; quantity: number };
+// Vad en runda fakturerade på en rad. `line_id` är radens stabila UUID och är nyckeln; `index`
+// finns kvar för rundor skrivna innan 20260812_invoice_rounds_line_ids.sql och för poster som
+// migreringen medvetet lämnade orörda (id gick inte att slå upp). Positionen är alltså inte längre
+// bärande — det var den som tvingade fram artikellåset, eftersom en tillagd eller borttagen rad
+// pekade om en redan utställd fakturas antal till fel artikel.
+export type PartialRequestLine = { line_id?: string | null; index?: number | null; quantity: number };
 
 // Delfakturering does not yet proportion carved-out ROT labour (each material row's `labor_cost`)
 // across partially-invoiced quantities, so a ROT order that used the material→labour split can't be
@@ -53,7 +72,7 @@ export function hasCarvedRotLabor(lineItems: PartialInvoiceLineItem[] | null): b
   return (lineItems ?? []).some((i) => !i.is_rot_work && parseDecimal(i.labor_cost) > 0);
 }
 export type InvoiceRound = { line_quantities: PartialRequestLine[] | null };
-export type LineInvoiceState = { index: number; total: number; invoiced: number; remaining: number };
+export type LineInvoiceState = { lineId: string | null; index: number; total: number; invoiced: number; remaining: number };
 
 export type PartialInvoiceResult = {
   fortnox_invoice_number: string;
@@ -70,46 +89,133 @@ export class PartialInvoiceError extends Error {
   }
 }
 
-// Per-article invoiced-so-far + remaining, from the (frozen) line items and all prior rounds.
-// `total` is the line's full quantity (m³ volume or entered quantity, via the shared resolver).
+// Hur mycket en runda fakturerade på EN rad. Matchar på radens id när posten bär ett (allt skrivet
+// efter id-migreringen), annars på arrayposition — men positionsvägen används BARA för en rad som
+// saknar id, så en migrerad runda kan aldrig råka matcha på fel sätt.
+function invoicedOnLine(rounds: InvoiceRound[], lineId: string | null, index: number): number {
+  return roundQty(
+    rounds.reduce((sum, round) => {
+      const entries = round.line_quantities ?? [];
+      const match = lineId
+        ? entries.find((q) => q.line_id === lineId) ?? entries.find((q) => !q.line_id && q.index === index)
+        : entries.find((q) => q.index === index);
+      return sum + (match ? Math.max(0, match.quantity) : 0);
+    }, 0),
+  );
+}
+
+// Fakturerat hittills + återstående per rad, mot arbetsorderns AKTUELLA rader och alla tidigare
+// rundor. `total` är radens hela antal (m³-volym eller angivet antal, via den delade resolvern).
 export function computeInvoiceState(lineItems: PartialInvoiceLineItem[] | null, priorRounds: InvoiceRound[]): LineInvoiceState[] {
   return (lineItems ?? []).map((item, index) => {
+    const lineId = item.id ?? null;
     const total = roundQty(lineItemQuantity(item));
-    const invoiced = roundQty(
-      priorRounds.reduce((sum, round) => {
-        const match = (round.line_quantities ?? []).find((q) => q.index === index);
-        return sum + (match ? Math.max(0, match.quantity) : 0);
-      }, 0),
-    );
-    return { index, total, invoiced, remaining: Math.max(0, roundQty(total - invoiced)) };
+    const invoiced = invoicedOnLine(priorRounds, lineId, index);
+    // A written-off row has nothing left to invoice, even though its quantity is untouched. This is
+    // what lets an order close: isFinalRound requires EVERY row's remaining to reach zero, so a
+    // single never-performed article would otherwise keep the order 'partially_invoiced' forever
+    // while its total still counted work that was never done.
+    const remaining = item.written_off ? 0 : Math.max(0, roundQty(total - invoiced));
+    return { lineId, index, total, invoiced, remaining };
   });
 }
 
-// Validate a requested round against remaining-per-line. Throws PartialInvoiceError on
-// over-invoicing or an all-zero request. Returns the (deduped, positive-only) quantities keyed by
-// line index and whether this round invoices the last of every line (→ status 'invoiced').
+// Rows that still count toward the order's value: everything not written off. Used for the order
+// total and for the Fortnox rows, so a written-off article stops being billed and stops inflating
+// the order — the numbers follow what was actually delivered.
+export function activeLineItems<T extends { written_off?: boolean | null }>(lineItems: T[] | null | undefined): T[] {
+  return (lineItems ?? []).filter((item) => !item.written_off);
+}
+
+// Vad en redigering av artikelraderna får göra när fakturor redan gått ut.
+//
+// Ersätter det gamla platta låset (allt eller inget från första delfakturan). Sedan rundorna
+// nycklas på radens id är positionen betydelselös, så det som återstår att skydda är bara detta:
+// det som redan står på en utställd faktura måste finnas kvar och får inte krympa under det
+// fakturerade. Allt annat — lägga till, ta bort ofakturerat, ändra antal uppåt, byta pris på det
+// som återstår, flytta om — är fritt, för det är precis vad ett pågående projekt kräver.
+export function validateLineItemEdit(
+  currentItems: PartialInvoiceLineItem[] | null,
+  nextItems: PartialInvoiceLineItem[] | null,
+  priorRounds: InvoiceRound[],
+): { ok: true } | { ok: false; message: string } {
+  const state = computeInvoiceState(currentItems, priorRounds);
+  const invoicedByKey = new Map<string, { invoiced: number; index: number }>();
+  (currentItems ?? []).forEach((item, index) => {
+    const st = state[index];
+    if (st && st.invoiced > 0) invoicedByKey.set(lineKey(item, index), { invoiced: st.invoiced, index });
+  });
+  if (invoicedByKey.size === 0) return { ok: true };
+
+  const nextByKey = new Map<string, PartialInvoiceLineItem>();
+  (nextItems ?? []).forEach((item, index) => nextByKey.set(lineKey(item, index), item));
+
+  for (const [key, { invoiced, index }] of invoicedByKey) {
+    const next = nextByKey.get(key);
+    if (!next) {
+      return { ok: false, message: `Rad ${index + 1} är fakturerad och kan inte tas bort. Sänk antalet till det som levererats i stället.` };
+    }
+    // Under det fakturerade skulle betyda att ordern säger att vi levererat mindre än vi redan
+    // krävt betalt för. Ner TILL det fakturerade är däremot precis hur en order stängs på det som
+    // faktiskt blev gjort — då blir återstående noll.
+    const nextQty = roundQty(lineItemQuantity(next));
+    if (nextQty + QTY_EPS < invoiced) {
+      return { ok: false, message: `Rad ${index + 1} är fakturerad med ${invoiced} och antalet kan inte sänkas under det.` };
+    }
+    // Priset och artikeln är låsta när något av raden gått ut på faktura. Vi har ETT pris per rad,
+    // så att ändra det skriver om vad den redan utställda fakturan påstås ha kostat — CRM och
+    // bokföringen skulle sluta gå ihop. Ska resten säljas till ett annat pris hör det hemma på en
+    // egen rad. Samma sak för husarbete: halva raden kan inte vara ROT och andra halvan inte.
+    const cur = (currentItems ?? [])[index];
+    const changed = (field: keyof PartialInvoiceLineItem) => String(cur?.[field] ?? '') !== String(next[field] ?? '');
+    if (changed('unit_price') || changed('discount_percent') || changed('article_number') || changed('is_rot_work')) {
+      return { ok: false, message: `Rad ${index + 1} är fakturerad — pris, rabatt, artikel och ROT-markering kan inte ändras. Lägg det som skiljer på en ny rad.` };
+    }
+    // Avskrivning betyder "utfördes aldrig". Det kan inte gälla en rad som redan står på en
+    // utställd faktura — pengarna är krävda. Sänk antalet till det levererade i stället.
+    if (next.written_off && !cur?.written_off) {
+      return { ok: false, message: `Rad ${index + 1} är redan fakturerad och kan inte skrivas av. Sänk antalet till det som levererats i stället.` };
+    }
+  }
+  return { ok: true };
+}
+
+// Nyckeln en rad adresseras med genom hela delfaktureringen: radens stabila id, med
+// arrayposition som reserv för äldre rader som saknar id. Samma funktion används av validering,
+// radbygge och summering, så de tre kan aldrig adressera olika saker.
+export function lineKey(item: { id?: string | null }, index: number): string {
+  return item.id ?? `#${index}`;
+}
+
+// Validera en begärd runda mot återstående per rad. Kastar PartialInvoiceError vid
+// överfakturering eller en tom begäran. Returnerar antalen (deduplicerade, bara positiva) nycklade
+// på radnyckeln, samt om rundan fakturerar det sista av varje rad (→ status 'invoiced').
 export function validatePartialRequest(
   state: LineInvoiceState[],
   request: PartialRequestLine[],
-): { requestByIndex: Map<number, number>; isFinalRound: boolean } {
-  const byIndex = new Map<number, number>();
+): { requestByKey: Map<string, number>; isFinalRound: boolean } {
+  const byKey = new Map<string, number>();
   for (const line of request) {
     const qty = Math.max(0, line.quantity);
     if (qty <= 0) continue;
-    const st = state.find((s) => s.index === line.index);
-    if (!st) throw new PartialInvoiceError(`Ogiltig rad (index ${line.index}).`);
-    const next = roundQty((byIndex.get(line.index) ?? 0) + qty);
+    // Begäran får peka ut raden med id (normalfallet) eller position (äldre klient).
+    const st = line.line_id
+      ? state.find((s) => s.lineId === line.line_id)
+      : state.find((s) => s.index === line.index);
+    if (!st) throw new PartialInvoiceError(`Ogiltig rad (${line.line_id ?? `index ${line.index}`}).`);
+    const key = st.lineId ?? `#${st.index}`;
+    const next = roundQty((byKey.get(key) ?? 0) + qty);
     if (next > st.remaining + QTY_EPS) {
-      throw new PartialInvoiceError(`Antal att fakturera överstiger återstående för rad ${line.index + 1}.`);
+      throw new PartialInvoiceError(`Antal att fakturera överstiger återstående för rad ${st.index + 1}.`);
     }
-    byIndex.set(line.index, next);
+    byKey.set(key, next);
   }
-  if (![...byIndex.values()].some((q) => q > 0)) {
+  if (![...byKey.values()].some((q) => q > 0)) {
     throw new PartialInvoiceError('Inget antal att fakturera angavs.');
   }
-  // Final round when, after billing this round, every line's remaining reaches zero.
-  const isFinalRound = state.every((s) => s.remaining - (byIndex.get(s.index) ?? 0) <= QTY_EPS);
-  return { requestByIndex: byIndex, isFinalRound };
+  // Slutrunda när varje rads återstående når noll efter den här rundan.
+  const isFinalRound = state.every((s) => s.remaining - (byKey.get(s.lineId ?? `#${s.index}`) ?? 0) <= QTY_EPS);
+  return { requestByKey: byKey, isFinalRound };
 }
 
 // Build Fortnox INVOICE rows for this round. NOTE: invoice rows use `DeliveredQuantity` (order
@@ -117,7 +223,7 @@ export function validatePartialRequest(
 // only lines with a positive quantity produce a row. Discount/ROT mapping mirrors buildOrderRows.
 export function buildInvoiceRows(
   lineItems: PartialInvoiceLineItem[] | null,
-  requestByIndex: Map<number, number>,
+  requestByKey: Map<string, number>,
   vatPercent: number,
   rotEnabled: boolean,
   reverseVat = false,
@@ -125,7 +231,7 @@ export function buildInvoiceRows(
 ) {
   const rows: Array<Record<string, unknown> & { Description: string }> = [];
   (lineItems ?? []).forEach((item, index) => {
-    const qty = requestByIndex.get(index) ?? 0;
+    const qty = requestByKey.get(lineKey(item, index)) ?? 0;
     if (qty <= 0) return;
     const discount = lineItemDiscountPercent(item);
     rows.push({
@@ -153,10 +259,10 @@ export function buildInvoiceRows(
 }
 
 // This round's subtotal ex VAT (quantity × discounted unit price), matching pricing_summary.subtotal.
-export function roundSubtotal(lineItems: PartialInvoiceLineItem[] | null, requestByIndex: Map<number, number>): number {
+export function roundSubtotal(lineItems: PartialInvoiceLineItem[] | null, requestByKey: Map<string, number>): number {
   let sum = 0;
   (lineItems ?? []).forEach((item, index) => {
-    const qty = requestByIndex.get(index) ?? 0;
+    const qty = requestByKey.get(lineKey(item, index)) ?? 0;
     if (qty <= 0) return;
     sum += qty * lineItemEffectiveUnitPrice(item);
   });
@@ -171,7 +277,6 @@ type WorkOrderRow = {
   customer_id: string | null;
   customer_snapshot: { reverse_vat?: boolean | null } | null;
   line_items: PartialInvoiceLineItem[] | null;
-  line_items_invoicing_snapshot: PartialInvoiceLineItem[] | null;
   partial_invoicing_started_at: string | null;
   fortnox_order_number: string | null;
   rot_details: { enabled?: boolean | null; property_designation?: string | null; brf_org_number?: string | null } | null;
@@ -200,19 +305,36 @@ export async function createPartialInvoice(
 
   const { data: workOrder, error } = await supabase
     .from('crm_work_orders')
-    .select('id, status, project_name, vat_percent, customer_id, customer_snapshot, line_items, line_items_invoicing_snapshot, partial_invoicing_started_at, fortnox_order_number, rot_details')
+    .select('id, status, project_name, vat_percent, customer_id, customer_snapshot, line_items, partial_invoicing_started_at, fortnox_order_number, rot_details')
     .eq('id', workOrderId)
     .single<WorkOrderRow>();
 
   if (error || !workOrder) throw new Error(`Arbetsorder ${workOrderId} hittades inte`);
 
-  if (workOrder.status !== 'completed' && workOrder.status !== 'partially_invoiced') {
+  // Gate the FIRST round on the work being ready to bill. Later rounds are not gated on status:
+  // once delfakturering has started the order may legitimately be back in a work state (a job that
+  // runs across several months bills as it goes), and requiring 'Fakturera' would mean flipping the
+  // status back and forth just to invoice — which is exactly the conflation we removed.
+  // En avbruten order faktureras aldrig, oavsett hur långt delfaktureringen hunnit — annars kan en
+  // stale flik ställa ut en riktig faktura på ett jobb kunden hoppat av.
+  if (workOrder.status === 'cancelled') {
+    throw new PartialInvoiceError('Arbetsordern är avbruten och kan inte faktureras.');
+  }
+  // Bara FÖRSTA rundan gatas på att jobbet är klart att faktureras. Senare rundor gör det inte:
+  // ordern ligger ofta tillbaka i ett arbetsläge (ett jobb över flera månader faktureras allt
+  // eftersom), och att kräva "Fakturera" hade betytt att vippa statusen fram och tillbaka bara för
+  // att fakturera — exakt den sammanblandning som togs bort.
+  if (!workOrder.partial_invoicing_started_at
+      && workOrder.status !== 'completed' && workOrder.status !== 'partially_invoiced') {
     throw new PartialInvoiceError('Sätt arbetsordern till "Fakturera" innan du delfakturerar.');
   }
 
-  // Frozen basis: the snapshot taken at the first round (falls back to current line_items before
-  // any round exists). Per-article remaining is always measured against this, never the live rows.
-  const basis = workOrder.line_items_invoicing_snapshot ?? workOrder.line_items;
+  // Basen är arbetsorderns LEVANDE rader. Tidigare var den den frysta snapshoten, eftersom rundorna
+  // pekade på arrayposition och varje redigering hade förskjutit dem. Sedan rundorna nycklas på
+  // radens id är positionen betydelselös, och då ska återstående mätas mot det ordern faktiskt
+  // innehåller nu — annars kan en artikel som tillkommer mitt i projektet aldrig faktureras.
+  // Snapshoten skrivs fortfarande vid första rundan, men bara som historik.
+  const basis = workOrder.line_items;
 
   // Phase 2 guard: carved-out ROT labour isn't proportioned across partial rounds yet — block rather
   // than silently mis-bill. Checked before claiming so it can't leave the sync status stuck pending.
@@ -221,16 +343,19 @@ export async function createPartialInvoice(
   }
 
   // Validate BEFORE claiming so a bad request doesn't flip the sync status to pending.
-  const { data: priorRoundsData } = await supabase
+  const { data: priorRoundsData, error: roundsError } = await supabase
     .from('crm_work_order_invoices')
     .select('round_number, line_quantities, fortnox_invoice_number')
     .eq('work_order_id', workOrderId)
     .order('round_number', { ascending: true });
+  // Fail closed. Ett svalt läsfel hade sett ut som "inget är fakturerat än" och låtit hela ordern
+  // faktureras en gång till.
+  if (roundsError) throw new Error(`Kunde inte läsa fakturarundorna: ${roundsError.message}`);
   const priorRounds = (priorRoundsData ?? []) as Array<{ round_number: number; line_quantities: PartialRequestLine[] | null; fortnox_invoice_number: string | null }>;
   const roundNumber = (priorRounds.length ? Math.max(...priorRounds.map((r) => r.round_number)) : 0) + 1;
 
   const state = computeInvoiceState(basis, priorRounds);
-  const { requestByIndex, isFinalRound } = validatePartialRequest(state, request);
+  const { requestByKey, isFinalRound } = validatePartialRequest(state, request);
 
   const claimed = await claimFortnoxPush(
     supabase, 'crm_work_orders', workOrderId, 'fortnox_invoice_sync_status', 'fortnox_invoice_claimed_at',
@@ -256,7 +381,7 @@ export async function createPartialInvoice(
     if (header.CustomerNumber == null) throw new Error('Fortnox-ordern saknar kundkoppling');
 
     const rotPropertyNote = rotEnabled ? buildRotPropertyNote(workOrder.rot_details) : null;
-    const invoiceRows = buildInvoiceRows(basis, requestByIndex, vatPercent, rotEnabled, reverseVat, rotPropertyNote);
+    const invoiceRows = buildInvoiceRows(basis, requestByKey, vatPercent, rotEnabled, reverseVat, rotPropertyNote);
     if (!invoiceRows.length) throw new PartialInvoiceError('Inget antal att fakturera angavs.');
 
     // A partial invoice is a STANDALONE Fortnox invoice (it can't use the order's createinvoice,
@@ -292,14 +417,25 @@ export async function createPartialInvoice(
     const invoiceNumber = response.Invoice?.DocumentNumber != null ? String(response.Invoice.DocumentNumber) : '';
     if (!invoiceNumber) throw new Error('Fortnox returnerade inget fakturanummer');
 
-    const lineQuantities = [...requestByIndex.entries()].map(([index, quantity]) => ({ index, quantity }));
+    // Rundan sparas mot radens ID, inte dess position — det är hela poängen med omläggningen.
+    //
+    // ⚠️ En rad UTAN id måste få `index`, inte bara `legacy_index`: läsvägen (invoicedOnLine) letar
+    // efter `index` för id-lösa rader, så en post med bara `legacy_index` hade lästs tillbaka som
+    // "0 fakturerat" och samma antal kunnat faktureras igen. legacy_index är spårbarhet, inte nyckel.
+    const lineQuantities = (basis ?? []).flatMap((item, index) => {
+      const quantity = requestByKey.get(lineKey(item, index)) ?? 0;
+      if (quantity <= 0) return [];
+      return [item.id
+        ? { line_id: item.id, quantity, legacy_index: index }
+        : { line_id: null, index, quantity }];
+    });
 
     await supabase.from('crm_work_order_invoices').insert({
       work_order_id: workOrderId,
       round_number: roundNumber,
       fortnox_invoice_number: invoiceNumber,
       fortnox_sync_status: 'synced',
-      amount: roundSubtotal(basis, requestByIndex),
+      amount: roundSubtotal(basis, requestByKey),
       line_quantities: lineQuantities,
       created_by: actorUserId,
     });
@@ -311,9 +447,8 @@ export async function createPartialInvoice(
       .update({
         fortnox_invoice_sync_status: 'synced',
         status,
-        // Freeze the basis + mark the start at the first round so editing locks and remaining math
-        // stays stable across rounds.
-        ...(workOrder.line_items_invoicing_snapshot ? {} : { line_items_invoicing_snapshot: workOrder.line_items }),
+        // Ingen snapshot längre: basen ÄR de levande raderna. En andra, frusen bild av samma sak
+        // var det som lät "Fakturera resten" och valideringen svara olika.
         ...(workOrder.partial_invoicing_started_at ? {} : { partial_invoicing_started_at: nowIso }),
         // The terminal fortnox_invoice_number/at mirror the LAST round, for the existing card + reports.
         ...(isFinalRound ? { fortnox_invoice_number: invoiceNumber, fortnox_invoiced_at: nowIso } : {}),
@@ -352,20 +487,25 @@ export async function invoiceRemainingForWorkOrder(workOrderId: string, actorUse
 
   const { data: workOrder, error } = await supabase
     .from('crm_work_orders')
-    .select('line_items, line_items_invoicing_snapshot')
+    .select('line_items')
     .eq('id', workOrderId)
-    .single<{ line_items: PartialInvoiceLineItem[] | null; line_items_invoicing_snapshot: PartialInvoiceLineItem[] | null }>();
+    .single<{ line_items: PartialInvoiceLineItem[] | null }>();
   if (error || !workOrder) throw new Error(`Arbetsorder ${workOrderId} hittades inte`);
 
-  const basis = workOrder.line_items_invoicing_snapshot ?? workOrder.line_items;
-
-  const { data: priorRoundsData } = await supabase
+  // Samma bas som createPartialInvoice validerar mot. Läste tidigare den frysta snapshoten, vilket
+  // betydde att den här funktionen kunde begära antal på rader som inte längre fanns — eller,
+  // värre, på rätt POSITION men fel artikel.
+  const { data: priorRoundsData, error: roundsError } = await supabase
     .from('crm_work_order_invoices')
     .select('line_quantities')
     .eq('work_order_id', workOrderId);
-  const state = computeInvoiceState(basis, (priorRoundsData ?? []) as InvoiceRound[]);
+  // Fail closed: tolkas ett läsfel som "inga rundor" blir varje rads återstående dess fulla antal,
+  // och hela ordern faktureras om.
+  if (roundsError) throw new Error(`Kunde inte läsa fakturarundorna: ${roundsError.message}`);
+  const state = computeInvoiceState(workOrder.line_items, (priorRoundsData ?? []) as InvoiceRound[]);
 
-  const request = state.filter((s) => s.remaining > QTY_EPS).map((s) => ({ index: s.index, quantity: s.remaining }));
+  // Rader pekas ut med id (position som reserv), precis som modalen gör.
+  const request = state.filter((s) => s.remaining > QTY_EPS).map((s) => ({ line_id: s.lineId, index: s.index, quantity: s.remaining }));
   if (!request.length) throw new PartialInvoiceError('Det finns inget kvar att fakturera.');
 
   return createPartialInvoice(workOrderId, request, actorUserId);

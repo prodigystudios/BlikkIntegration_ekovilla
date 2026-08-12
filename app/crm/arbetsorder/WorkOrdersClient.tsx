@@ -31,6 +31,9 @@ type WorkOrderItem = {
   assignee: { id: string; full_name: string | null } | null;
   fortnox_order_number: string | null;
   fortnox_order_sync_status: FortnoxSyncStatus;
+  // Sätts vid första delfakturan. Faktureringsläget är skilt från arbetsstatusen, så listan visar
+  // det som en egen badge när statusen inte redan säger det.
+  partial_invoicing_started_at?: string | null;
 };
 
 type WorkOrderFilter = 'all' | 'draft' | 'scheduled' | 'active' | 'completed' | 'invoiced';
@@ -357,6 +360,9 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
                             <span className={cn('inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-semibold', workOrderStatusClass[item.status])}>
                               {workOrderStatusLabel[item.status]}
                             </span>
+                            {item.partial_invoicing_started_at && item.status !== 'invoiced' && item.status !== 'partially_invoiced' ? (
+                              <span className="inline-flex items-center rounded-md border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">Delfakturerad</span>
+                            ) : null}
                             {overdue ? (
                               <span className="inline-flex items-center rounded-md border border-rose-200 bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold text-rose-700">
                                 Försenad

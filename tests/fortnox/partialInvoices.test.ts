@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   computeInvoiceState,
+  activeLineItems,
+  validateLineItemEdit,
   validatePartialRequest,
   buildInvoiceRows,
   roundSubtotal,
@@ -19,7 +21,8 @@ const itemLine = (overrides: Partial<PartialInvoiceLineItem> = {}): PartialInvoi
 describe('computeInvoiceState', () => {
   it('reports the full quantity as remaining when there are no prior rounds', () => {
     const [state] = computeInvoiceState([itemLine()], []);
-    expect(state).toEqual({ index: 0, total: 50, invoiced: 0, remaining: 50 });
+    // lineId är null här eftersom testraden saknar id — då nycklas den fortfarande på position.
+    expect(state).toEqual({ lineId: null, index: 0, total: 50, invoiced: 0, remaining: 50 });
   });
 
   it('subtracts a single prior round from the remaining', () => {
@@ -51,11 +54,11 @@ describe('validatePartialRequest', () => {
   const state = () => computeInvoiceState([itemLine(), itemLine({ quantity: '10' })], []);
 
   it('accepts a request within remaining and dedupes quantities by index', () => {
-    const { requestByIndex, isFinalRound } = validatePartialRequest(state(), [
+    const { requestByKey, isFinalRound } = validatePartialRequest(state(), [
       { index: 0, quantity: 20 },
       { index: 0, quantity: 5 },
     ]);
-    expect(requestByIndex.get(0)).toBe(25);
+    expect(requestByKey.get('#0')).toBe(25);
     expect(isFinalRound).toBe(false);
   });
 
@@ -88,7 +91,7 @@ describe('validatePartialRequest', () => {
 
 describe('buildInvoiceRows', () => {
   it('emits a row only for lines with a positive quantity, using DeliveredQuantity', () => {
-    const rows = buildInvoiceRows([itemLine(), itemLine()], new Map([[1, 5]]), 25, false);
+    const rows = buildInvoiceRows([itemLine(), itemLine()], new Map([['#1', 5]]), 25, false);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ DeliveredQuantity: 5, Price: 100, VAT: 25 });
     // Invoice rows use DeliveredQuantity, not OrderedQuantity/Quantity.
@@ -97,27 +100,27 @@ describe('buildInvoiceRows', () => {
   });
 
   it('sends a percentage discount with DiscountType PERCENT', () => {
-    const [row] = buildInvoiceRows([itemLine({ discount_percent: '25' })], new Map([[0, 10]]), 25, false);
+    const [row] = buildInvoiceRows([itemLine({ discount_percent: '25' })], new Map([['#0', 10]]), 25, false);
     expect(row).toMatchObject({ Discount: 25, DiscountType: 'PERCENT' });
   });
 
   it('marks HouseWork only when ROT is enabled and the row is rot work', () => {
-    const on = buildInvoiceRows([itemLine({ is_rot_work: true })], new Map([[0, 1]]), 25, true);
+    const on = buildInvoiceRows([itemLine({ is_rot_work: true })], new Map([['#0', 1]]), 25, true);
     expect(on[0]).toMatchObject({ HouseWork: true, HouseWorkType: 'CONSTRUCTION' });
     // Non-ROT → HouseWork omitted (never false — that stamps EMPTYHOUSEWORK and 2004021).
-    const off = buildInvoiceRows([itemLine({ is_rot_work: true })], new Map([[0, 1]]), 25, false);
+    const off = buildInvoiceRows([itemLine({ is_rot_work: true })], new Map([['#0', 1]]), 25, false);
     expect((off[0] as any).HouseWork).toBeUndefined();
   });
 
   it('forces 0 % VAT on rows for reverse charge (byggmoms), else the passed vatPercent', () => {
-    const [reverse] = buildInvoiceRows([itemLine()], new Map([[0, 10]]), 25, false, true);
+    const [reverse] = buildInvoiceRows([itemLine()], new Map([['#0', 10]]), 25, false, true);
     expect((reverse as any).VAT).toBe(0);
-    const [normal] = buildInvoiceRows([itemLine()], new Map([[0, 10]]), 25, false, false);
+    const [normal] = buildInvoiceRows([itemLine()], new Map([['#0', 10]]), 25, false, false);
     expect((normal as any).VAT).toBe(25);
   });
 
   it('appends the ROT property note as a trailing text row on the partial invoice', () => {
-    const rows = buildInvoiceRows([itemLine()], new Map([[0, 10]]), 25, true, false, 'Fastighetsbeteckning: Haggården 6:3');
+    const rows = buildInvoiceRows([itemLine()], new Map([['#0', 10]]), 25, true, false, 'Fastighetsbeteckning: Haggården 6:3');
     expect(rows).toHaveLength(2);
     expect(rows[1]).toEqual({ Description: 'Fastighetsbeteckning: Haggården 6:3' });
     expect((rows[1] as any).DeliveredQuantity).toBeUndefined();
@@ -126,11 +129,11 @@ describe('buildInvoiceRows', () => {
 
 describe('roundSubtotal', () => {
   it('sums quantity × unit price for the billed lines', () => {
-    expect(roundSubtotal([itemLine({ unit_price: '100' })], new Map([[0, 30]]))).toBe(3000);
+    expect(roundSubtotal([itemLine({ unit_price: '100' })], new Map([['#0', 30]]))).toBe(3000);
   });
 
   it('applies the line discount', () => {
-    expect(roundSubtotal([itemLine({ unit_price: '100', discount_percent: '25' })], new Map([[0, 10]]))).toBe(750);
+    expect(roundSubtotal([itemLine({ unit_price: '100', discount_percent: '25' })], new Map([['#0', 10]]))).toBe(750);
   });
 });
 
@@ -146,5 +149,206 @@ describe('hasCarvedRotLabor (partial-invoice Phase-2 guard)', () => {
   it('returns false when nothing is carved (empty / zero / missing / null)', () => {
     expect(hasCarvedRotLabor([itemLine({ labor_cost: '' }), itemLine({ labor_cost: '0' }), itemLine()])).toBe(false);
     expect(hasCarvedRotLabor(null)).toBe(false);
+  });
+});
+
+// En artikel som såldes men aldrig utfördes skrivs AV, den raderas inte. Radering hade förskjutit
+// arrayindexen som varje fakturarunda lagrar sina antal mot — en redan utställd fakturas antal
+// hade tyst pekat om till fel artikel. Flaggan gör återstående 0 så ordern kan stängas.
+describe('computeInvoiceState — avskriven rad', () => {
+  const three = [
+    { pricing_mode: 'item', unit_price: '100', quantity: '10' },
+    { pricing_mode: 'item', unit_price: '200', quantity: '5' },
+    { pricing_mode: 'item', unit_price: '300', quantity: '2' },
+  ];
+
+  it('nollar återstående på en avskriven rad utan att röra dess antal', () => {
+    const items = three.map((it, i) => (i === 2 ? { ...it, written_off: true } : it));
+    const state = computeInvoiceState(items, []);
+    expect(state[2].total).toBe(2);      // antalet står kvar — raden fanns
+    expect(state[2].remaining).toBe(0);  // …men det finns inget kvar att fakturera
+    expect(state[0].remaining).toBe(10); // övriga rader orörda
+  });
+
+  // Kärnan i buggen: utan avskrivning når isFinalRound aldrig sant, så ordern fastnar som
+  // delfakturerad i evighet med en summa som räknar arbete som aldrig utfördes.
+  it('låter sista rundan bli slutrunda när resten är avskriven', () => {
+    const items = three.map((it, i) => (i === 2 ? { ...it, written_off: true } : it));
+    const rounds = [{ line_quantities: [{ index: 0, quantity: 10 }] }];
+    const state = computeInvoiceState(items, rounds);
+    const { isFinalRound } = validatePartialRequest(state, [{ index: 1, quantity: 5 }]);
+    expect(isFinalRound).toBe(true);
+  });
+
+  it('utan avskrivning är samma runda INTE slutrunda', () => {
+    const state = computeInvoiceState(three, [{ line_quantities: [{ index: 0, quantity: 10 }] }]);
+    const { isFinalRound } = validatePartialRequest(state, [{ index: 1, quantity: 5 }]);
+    expect(isFinalRound).toBe(false);
+  });
+
+  it('vägrar fakturera en avskriven rad', () => {
+    const items = three.map((it, i) => (i === 2 ? { ...it, written_off: true } : it));
+    const state = computeInvoiceState(items, []);
+    expect(() => validatePartialRequest(state, [{ index: 2, quantity: 1 }])).toThrow(/överstiger återstående/);
+  });
+
+  // Indexen får ALDRIG förskjutas — det är hela skälet till att raden flaggas i stället för raderas.
+  it('behåller radernas index när en rad skrivs av', () => {
+    const items = three.map((it, i) => (i === 0 ? { ...it, written_off: true } : it));
+    const state = computeInvoiceState(items, []);
+    expect(state.map((s) => s.index)).toEqual([0, 1, 2]);
+    expect(state[1].total).toBe(5);
+    expect(state[2].total).toBe(2);
+  });
+});
+
+describe('activeLineItems', () => {
+  it('filtrerar bort avskrivna rader men behåller ordningen på resten', () => {
+    const items = [{ id: 'a' }, { id: 'b', written_off: true }, { id: 'c' }];
+    expect(activeLineItems(items).map((i) => i.id)).toEqual(['a', 'c']);
+  });
+
+  it('tål null och tom lista', () => {
+    expect(activeLineItems(null)).toEqual([]);
+    expect(activeLineItems([])).toEqual([]);
+  });
+});
+
+// ── Nyckelbytet: rundorna refererar radens id, inte dess position ──────────────
+// Positionen var bärande förut, vilket tvingade fram artikellåset: en tillagd eller borttagen rad
+// pekade om en redan utställd fakturas antal till fel artikel. Testerna nedan är beviset för att
+// det inte längre kan hända.
+describe('computeInvoiceState — nycklad på line_id', () => {
+  const a = { id: 'line-a', pricing_mode: 'item', unit_price: '100', quantity: '10' };
+  const b = { id: 'line-b', pricing_mode: 'item', unit_price: '200', quantity: '5' };
+  const rounds = [{ line_quantities: [{ line_id: 'line-b', quantity: 2 }] }];
+
+  it('följer raden när den flyttar sig i listan', () => {
+    const before = computeInvoiceState([a, b], rounds);
+    expect(before.find((s) => s.lineId === 'line-b')!.invoiced).toBe(2);
+    // Samma rader, omvänd ordning — fakturerat ska fortfarande sitta på line-b.
+    const after = computeInvoiceState([b, a], rounds);
+    expect(after.find((s) => s.lineId === 'line-b')!.invoiced).toBe(2);
+    expect(after.find((s) => s.lineId === 'line-a')!.invoiced).toBe(0);
+  });
+
+  it('påverkas inte av att en ny rad läggs till före den fakturerade', () => {
+    const nyRad = { id: 'line-c', pricing_mode: 'item', unit_price: '50', quantity: '3' };
+    const state = computeInvoiceState([nyRad, a, b], rounds);
+    expect(state.find((s) => s.lineId === 'line-b')!.invoiced).toBe(2);
+    expect(state.find((s) => s.lineId === 'line-c')!.invoiced).toBe(0);
+    expect(state.find((s) => s.lineId === 'line-c')!.remaining).toBe(3);
+  });
+
+  it('påverkas inte av att en ofakturerad rad tas bort', () => {
+    const state = computeInvoiceState([b], rounds);
+    expect(state[0].invoiced).toBe(2);
+    expect(state[0].remaining).toBe(3);
+  });
+
+  // Rundor skrivna före migreringen bär bara index. De måste fortfarande läsas rätt.
+  it('faller tillbaka på position för en rad utan id', () => {
+    const legacyRounds = [{ line_quantities: [{ index: 1, quantity: 2 }] }];
+    const utanId = [{ pricing_mode: 'item', unit_price: '100', quantity: '10' }, { pricing_mode: 'item', unit_price: '200', quantity: '5' }];
+    const state = computeInvoiceState(utanId, legacyRounds);
+    expect(state[1].invoiced).toBe(2);
+    expect(state[0].invoiced).toBe(0);
+  });
+
+  // Vakten mot att blanda ihop vägarna: en rad MED id får inte matcha en id-post för en annan rad
+  // bara för att positionerna råkar sammanfalla.
+  it('matchar aldrig en id-post mot fel rad', () => {
+    const state = computeInvoiceState([a, b], [{ line_quantities: [{ line_id: 'line-okänd', quantity: 99 }] }]);
+    expect(state.every((s) => s.invoiced === 0)).toBe(true);
+  });
+});
+
+describe('validateLineItemEdit', () => {
+  const a = { id: 'line-a', pricing_mode: 'item', unit_price: '100', quantity: '10' };
+  const b = { id: 'line-b', pricing_mode: 'item', unit_price: '200', quantity: '5' };
+  const rounds = [{ line_quantities: [{ line_id: 'line-b', quantity: 2 }] }];
+
+  it('släpper igenom allt när inget är fakturerat', () => {
+    expect(validateLineItemEdit([a, b], [], [])).toEqual({ ok: true });
+  });
+
+  it('tillåter att en ny artikel läggs till mitt i projektet', () => {
+    const ny = { id: 'line-c', pricing_mode: 'item', unit_price: '50', quantity: '1' };
+    expect(validateLineItemEdit([a, b], [a, b, ny], rounds).ok).toBe(true);
+  });
+
+  it('tillåter att en OFAKTURERAD rad tas bort', () => {
+    expect(validateLineItemEdit([a, b], [b], rounds).ok).toBe(true);
+  });
+
+  it('nekar att en FAKTURERAD rad tas bort', () => {
+    const res = validateLineItemEdit([a, b], [a], rounds);
+    expect(res.ok).toBe(false);
+    expect((res as any).message).toMatch(/fakturerad och kan inte tas bort/);
+  });
+
+  // Kärnan i den fastnade ordern: sänk till det som levererats så återstående blir noll.
+  it('tillåter att antalet sänks NER TILL det fakturerade', () => {
+    const sankt = { ...b, quantity: '2' };
+    expect(validateLineItemEdit([a, b], [a, sankt], rounds).ok).toBe(true);
+    expect(computeInvoiceState([a, sankt], rounds).find((s) => s.lineId === 'line-b')!.remaining).toBe(0);
+  });
+
+  it('nekar att antalet sänks UNDER det fakturerade', () => {
+    const forLagt = { ...b, quantity: '1' };
+    const res = validateLineItemEdit([a, b], [a, forLagt], rounds);
+    expect(res.ok).toBe(false);
+    expect((res as any).message).toMatch(/kan inte sänkas under/);
+  });
+
+  it('tillåter att antalet höjs på en fakturerad rad', () => {
+    expect(validateLineItemEdit([a, b], [a, { ...b, quantity: '9' }], rounds).ok).toBe(true);
+  });
+});
+
+// ── Regressionsvakter från kodgranskningen ────────────────────────────────────
+describe('rundor för rader UTAN id', () => {
+  // Fyndet: en runda skrevs som {line_id: null, quantity, legacy_index} medan läsvägen för id-lösa
+  // rader letar efter `index`. Fakturerat lästes tillbaka som 0 → samma antal kunde faktureras igen.
+  it('läser tillbaka en runda som skrevs med index', () => {
+    const utanId = [{ pricing_mode: 'item', unit_price: '100', quantity: '10' }];
+    const state = computeInvoiceState(utanId, [{ line_quantities: [{ line_id: null, index: 0, quantity: 4 }] }]);
+    expect(state[0].invoiced).toBe(4);
+    expect(state[0].remaining).toBe(6);
+  });
+
+  // legacy_index är spårbarhet, inte nyckel — en post med BARA legacy_index får inte matcha.
+  it('matchar inte på legacy_index', () => {
+    const utanId = [{ pricing_mode: 'item', unit_price: '100', quantity: '10' }];
+    const state = computeInvoiceState(utanId, [{ line_quantities: [{ line_id: null, legacy_index: 0, quantity: 4 } as any] }]);
+    expect(state[0].invoiced).toBe(0);
+  });
+});
+
+describe('validateLineItemEdit — pris och artikel låsta på fakturerad rad', () => {
+  const a = { id: 'line-a', pricing_mode: 'item', unit_price: '200', quantity: '10' };
+  const rounds = [{ line_quantities: [{ line_id: 'line-a', quantity: 4 }] }];
+
+  it('nekar prisändring på en rad som redan fakturerats', () => {
+    const res = validateLineItemEdit([a], [{ ...a, unit_price: '300' }], rounds);
+    expect(res.ok).toBe(false);
+    expect((res as any).message).toMatch(/pris, rabatt, artikel/);
+  });
+
+  it('nekar rabatt-, artikel- och ROT-ändring likaså', () => {
+    expect(validateLineItemEdit([a], [{ ...a, discount_percent: '10' }], rounds).ok).toBe(false);
+    expect(validateLineItemEdit([a], [{ ...a, article_number: '999' }], rounds).ok).toBe(false);
+    expect(validateLineItemEdit([a], [{ ...a, is_rot_work: true }], rounds).ok).toBe(false);
+  });
+
+  it('tillåter samma ändringar på en OFAKTURERAD rad', () => {
+    const b = { id: 'line-b', pricing_mode: 'item', unit_price: '200', quantity: '5' };
+    expect(validateLineItemEdit([a, b], [a, { ...b, unit_price: '999', article_number: '111' }], rounds).ok).toBe(true);
+  });
+
+  // Avskrivning av en rad som redan fakturerats är också en förbjuden ändring: fakturan är utställd.
+  it('nekar att en fakturerad rad skrivs av', () => {
+    const res = validateLineItemEdit([a], [{ ...a, written_off: true }], rounds);
+    expect(res.ok).toBe(false);
   });
 });

@@ -232,3 +232,34 @@ describe('resolveYourReference', () => {
     expect(resolveYourReference(null)).toBeNull();
   });
 });
+
+// En avskriven rad ska inte längre finnas på Fortnox-dokumentet — kunden faktureras aldrig för
+// arbete som inte utfördes, och orderns summa i Fortnox måste följa verkligheten.
+describe('buildOrderRows — avskrivna rader', () => {
+  it('utelämnar avskrivna rader ur Fortnox-ordern', () => {
+    const rows = buildOrderRows([
+      { article_name: 'Lösull', pricing_mode: 'item', unit_price: '100', quantity: '2' },
+      { article_name: 'Ångbroms', pricing_mode: 'item', unit_price: '500', quantity: '1', written_off: true },
+    ], 25, false);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].Description).toBe('Lösull');
+  });
+
+  it('ger en tom radlista när allt är avskrivet', () => {
+    const rows = buildOrderRows([
+      { article_name: 'Lösull', pricing_mode: 'item', unit_price: '100', quantity: '2', written_off: true },
+    ], 25, false);
+    expect(rows).toEqual([]);
+  });
+
+  // Avskrivningen får inte råka slå av ROT-arbetskostnaden för de rader som ÄR kvar.
+  it('räknar fortfarande ut ROT-arbetskostnaden på kvarvarande rader', () => {
+    const rows = buildOrderRows([
+      { pricing_mode: 'item', article_name: 'Lösull', unit_price: '200', quantity: '100', labor_cost: '8000' },
+      { pricing_mode: 'item', article_name: 'Struken', unit_price: '500', quantity: '1', written_off: true },
+    ], 25, true);
+    expect(rows).toHaveLength(2);
+    expect((rows[1] as any).ArticleNumber).toBe(ROT_LABOR_ARTICLE_NUMBER);
+    expect((rows[1] as any).Price).toBe(8000);
+  });
+});
