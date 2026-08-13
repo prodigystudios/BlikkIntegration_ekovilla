@@ -109,13 +109,16 @@ describe('createCrmQuoteSchema', () => {
     expect(result.success).toBe(true);
   });
 
-  it('kräver personnummer för privatkund NÄR ROT är på', () => {
+  it('kräver INTE personnummer för privatkund ens när ROT är på', () => {
+    // Kunden lämnar sällan ut numret innan hen tackat ja. Kravet flyttat till orderskapandet
+    // (createCrmWorkOrderFromQuote → missing_personal_number), samma skede som
+    // fastighetsbeteckningen. Se app/api/crm/quotes/_lib.ts.
     const result = createCrmQuoteSchema.safeParse({
       ...validQuoteBase, quote_type: 'private', customer_name: 'Anna Svensson',
       customer_snapshot: { customer_name: 'Anna Svensson' },
       rot_details: { enabled: true, property_designation: 'Kv 1', personal_number: '' },
     });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 
   it('misslyckas med ogiltigt datumformat i quote_date', () => {
@@ -187,7 +190,7 @@ describe('createCrmQuoteSchema', () => {
     ).toBe(false);
   });
 
-  it('misslyckas med ROT aktiverat utan personnummer', () => {
+  it('godkänner ROT aktiverat utan personnummer — kravet ligger på arbetsordern', () => {
     expect(
       createCrmQuoteSchema.safeParse({
         ...validQuoteBase,
@@ -196,7 +199,20 @@ describe('createCrmQuoteSchema', () => {
         rot_details: { enabled: true },
         // saknar rot_details.personal_number
       }).success
-    ).toBe(false);
+    ).toBe(true);
+  });
+
+  it('godkänner ROT helt utan personnummer på båda ställena', () => {
+    // Det skarpa fallet: säljaren slår på ROT på en kund som ännu inte lämnat sitt nummer.
+    expect(
+      createCrmQuoteSchema.safeParse({
+        ...validQuoteBase,
+        quote_type: 'private',
+        customer_name: 'Anna Svensson',
+        customer_snapshot: { customer_name: 'Anna Svensson' },
+        rot_details: { enabled: true },
+      }).success
+    ).toBe(true);
   });
 
   it('godkänner privatkund med ROT när personnummer finns', () => {

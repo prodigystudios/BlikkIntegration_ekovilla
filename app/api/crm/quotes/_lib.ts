@@ -151,16 +151,23 @@ export const createCrmQuoteSchema = z.object({
     });
   }
 
-  // Personnummer is required on the quote only when ROT is used (ROT can't be computed without
-  // it); otherwise it's optional here and enforced when the work order is created. Matches the
-  // client validation and the relaxed customer-create rule.
-  if (value.quote_type === 'private' && value.rot_details.enabled && !value.customer_snapshot.personal_number) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['customer_snapshot', 'personal_number'],
-      message: 'Personnummer krävs för ROT',
-    });
-  }
+  // Personnummer krävs INTE på offerten, inte ens med ROT påslaget. Kunden vill i praktiken ofta
+  // inte lämna ut numret förrän hen bestämt sig för att tacka ja, och en spärr här tvingar då
+  // fram antingen ett påhittat nummer eller en offert utan ROT — båda sämre än att fråga senare.
+  // (De platshållarnummer som ligger i kundregistret, `11111` och `0000000`, uppstod på just
+  // det sättet.)
+  //
+  // Kravet ligger i stället på ARBETSORDERN (`createCrmWorkOrderFromQuote` /
+  // `createStandaloneCrmWorkOrder` → `missing_personal_number` / `invalid_personal_number`), som
+  // är efter att kunden tackat ja och före allt som når bokföringen. Offertformuläret fäller redan
+  // ut ett inmatningsfält på den felkoden, så numret efterfrågas i det ögonblick det behövs.
+  // Samma placering som fastighetsbeteckningen (FORTNOX_INTEGRATION.md 4b, V3) — de två ROT-
+  // förutsättningarna följs nu åt i stället för att gälla i olika skeden.
+  //
+  // Formatkravet på tolv siffror står kvar där ett nummer FAKTISKT skrivs in (kundformuläret,
+  // POST/PATCH /api/crm/customers, orderskapandet). Det som tas bort är kravet att lämna ett
+  // nummer — aldrig kravet att det som lämnas är komplett; ett tiosiffrigt nummer bryter ROT
+  // tyst i Fortnox (FORTNOX_INTEGRATION.md 4e).
 
   if (value.quote_type === 'business' && !value.customer_snapshot.company_name && !value.customer_name) {
     ctx.addIssue({
@@ -188,14 +195,6 @@ export const createCrmQuoteSchema = z.object({
       code: z.ZodIssueCode.custom,
       path: ['rot_details', 'enabled'],
       message: 'ROT gäller bara privatkund',
-    });
-  }
-
-  if (value.rot_details.enabled && !value.rot_details.personal_number) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['rot_details', 'personal_number'],
-      message: 'Personnummer krävs när ROT används',
     });
   }
 
