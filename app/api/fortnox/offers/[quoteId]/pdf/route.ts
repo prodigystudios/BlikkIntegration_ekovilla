@@ -26,6 +26,9 @@ export async function GET(_req: Request, { params }: RouteContext) {
     }
     if (e instanceof FortnoxNotConnectedError) return routeError(409, 'fortnox_not_connected', friendlyFortnoxMessage(e));
     if (e instanceof FortnoxApiError) return routeError(e.status === 409 ? 409 : 502, 'fortnox_offer_pdf_failed', friendlyFortnoxMessage(e));
+    // ROT-offerter renderas lokalt (lib/domains/fortnox/offerPdf.ts). Ett fel där är varken ett
+    // Fortnox-fel eller loggat ovan, så det skulle annars bli ett tyst 500 på en ny kodväg.
+    console.error('[offert-pdf] oväntat fel:', e instanceof Error ? e.stack ?? e.message : e);
     return routeError(500, 'fortnox_offer_pdf_unexpected', 'Kunde inte hämta PDF. Försök igen.');
   }
 }
