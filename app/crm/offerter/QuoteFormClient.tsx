@@ -9,6 +9,9 @@ import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
 import { parseDecimal } from '@/lib/shared/number';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
+import {
+  lineItemMarginPercent, marginTier, quoteMargin, MARGIN_THRESHOLDS, type MarginTier,
+} from '@/lib/domains/crm/pricing';
 import { crm } from '@/app/crm/lib/crmTokens';
 import AddressAutocompleteInput from '@/app/crm/components/AddressAutocompleteInput';
 import CrmModal from '@/app/crm/components/CrmModal';
@@ -212,6 +215,9 @@ type ArticleLite = {
   isFavorite?: boolean;
   // Artikelns beskrivning ur registret. INTERN hjälptext för säljaren — se article_note på raden.
   note?: string | null;
+  // Inköpspris ur artikelcachen, för täckningsgraden. Lagras ALDRIG på offertraden (se pricing.ts):
+  // line_items följer med till fältvyn, och där har installatörerna inget med inköpspriser att göra.
+  purchasePrice?: number | null;
 };
 
 type CrmCustomerLite = {
@@ -474,7 +480,7 @@ function ArticlePicker({ value, articleNumber, price, unit, note, onSelect, onCl
         .then((r) => r.json().catch(() => ({})))
         .then((json) => {
           if (!cancelled) {
-            const raw: Array<{ article_number: string; description: string | null; note?: string | null; sales_price: number | null; unit: string | null; is_favorite?: boolean }> =
+            const raw: Array<{ article_number: string; description: string | null; note?: string | null; sales_price: number | null; purchase_price?: number | null; unit: string | null; is_favorite?: boolean }> =
               Array.isArray(json?.data?.items) ? json.data.items : [];
             setItems(raw.map((a) => ({
               id: a.article_number,
@@ -484,6 +490,7 @@ function ArticlePicker({ value, articleNumber, price, unit, note, onSelect, onCl
               unit: a.unit ?? undefined,
               isFavorite: a.is_favorite ?? false,
               note: a.note ?? null,
+              purchasePrice: a.purchase_price ?? null,
             })));
           }
         })
@@ -818,11 +825,51 @@ function SortableLineItem({ id, children }: { id: string; children: (dragHandle:
   );
 }
 
+// ─── MarginBadge ──────────────────────────────────────────────────────────────
+//
+// Täckningsgrad per rad, färgad efter MARGIN_THRESHOLDS. Ett stöd för säljaren att se när en
+// rabatt äter marginalen — inte en spärr: rött hindrar ingen från att spara eller skicka, det
+// säger att offerten behöver godkännas.
+//
+// Saknas inköpspris visas INGET märke alls (61 av 289 artiklar har inget). Ett grått "?" på var
+// femte rad hade blivit brus, och en avsaknad av pris är inte en dålig affär.
+function MarginBadge({ marginPercent, className }: { marginPercent: number | null; className?: string }) {
+  const tier = marginTier(marginPercent);
+  if (tier === 'unknown' || marginPercent == null) return null;
+
+  // Egna klasser i stället för Badge-primitiven: den här ska vara liten och sifferorienterad
+  // (tabular-nums så procenten inte hoppar i sidled när säljaren skriver i prisfältet).
+  const styles: Record<Exclude<MarginTier, 'unknown'>, string> = {
+    good: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+    watch: 'border-amber-200 bg-amber-50 text-amber-700',
+    bad: 'border-rose-200 bg-rose-50 text-rose-700',
+  };
+  const titles: Record<Exclude<MarginTier, 'unknown'>, string> = {
+    good: `Täckningsgrad ${marginPercent.toFixed(1)} % – över ${MARGIN_THRESHOLDS.good} %`,
+    watch: `Täckningsgrad ${marginPercent.toFixed(1)} % – under ${MARGIN_THRESHOLDS.good} %, se över priset`,
+    bad: `Täckningsgrad ${marginPercent.toFixed(1)} % – under ${MARGIN_THRESHOLDS.watch} %, offerten kräver godkännande`,
+  };
+
+  return (
+    <span
+      title={titles[tier]}
+      className={cn(
+        'inline-flex items-center gap-1 rounded-md border border-solid px-1.5 py-0.5 text-[11px] font-semibold tabular-nums',
+        styles[tier],
+        className,
+      )}
+    >
+      TG {marginPercent.toFixed(0)} %
+    </span>
+  );
+}
+
 function LineItemRow({
   row,
   index,
   metrics,
   rotEnabled,
+  marginPercent,
   expanded,
   onToggle,
   onChange,
@@ -835,6 +882,8 @@ function LineItemRow({
   index: number;
   metrics: EffectiveRow | undefined;
   rotEnabled: boolean;
+  /** Radens täckningsgrad i procent, eller null när artikeln saknar inköpspris. */
+  marginPercent: number | null;
   // Accordion: which row is open is owned by the parent so opening one collapses the rest.
   expanded: boolean;
   onToggle: (next: boolean) => void;
@@ -975,7 +1024,8 @@ function LineItemRow({
             </Select>
           </label>
         ) : null}
-        <span className="ml-auto text-sm font-semibold tabular-nums text-slate-900">{formatCurrency(metrics?.rowTotal ?? 0, 'SEK')}</span>
+        <MarginBadge marginPercent={marginPercent} className="ml-auto" />
+        <span className="text-sm font-semibold tabular-nums text-slate-900">{formatCurrency(metrics?.rowTotal ?? 0, 'SEK')}</span>
       </div>
 
       <Field label="Radtext"><Input value={row.line_note} onChange={(e) => onChange({ line_note: e.target.value })} placeholder="Fritext för raden" /></Field>
@@ -1798,6 +1848,49 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   // lagrat — se matchedValidityPreset i quoteSerializers.
   const validityPreset = matchedValidityPreset(draft.quote_date, draft.valid_until);
 
+  // Radernas täckningsgrad: intäkt mot inköpspris.
+  //
+  // ⚠️ Inköpspriserna hålls HÄR, i komponent-state — aldrig i `draft`. Utkastet sparas som
+  // `line_items`, och de följer med offert → arbetsorder → fältvyn (redactWorkOrderForField
+  // plockar bara bort amount/pricing_summary). Ett inköpspris på raden hade alltså hamnat i
+  // installatörernas payload. Genom att aldrig lägga det där finns ingen läckyta att täta.
+  const [purchasePrices, setPurchasePrices] = useState<Record<string, number>>({});
+
+  // Vid redigering bär raderna artikelnummer men inget inköpspris (det är ju aldrig sparat). Slå
+  // upp priserna för just de artiklar offerten använder — inte hela registret.
+  const articleNumbersOnRows = draft.items.map((i) => i.article_number).filter(Boolean).join(',');
+  useEffect(() => {
+    const numbers = [...new Set(articleNumbersOnRows.split(',').filter(Boolean))]
+      .filter((nr) => !(nr in purchasePrices));
+    if (numbers.length === 0) return;
+    let cancelled = false;
+    fetch(`/api/fortnox/articles?numbers=${encodeURIComponent(numbers.join(','))}&limit=500`, { cache: 'no-store' })
+      .then((r) => r.json().catch(() => ({})))
+      .then((json) => {
+        if (cancelled) return;
+        const items: Array<{ article_number: string; purchase_price?: number | null }> =
+          Array.isArray(json?.data?.items) ? json.data.items : [];
+        const next: Record<string, number> = {};
+        for (const a of items) {
+          if (typeof a.purchase_price === 'number' && a.purchase_price > 0) next[a.article_number] = a.purchase_price;
+        }
+        // Icke-fatalt om uppslaget failar: TG visas bara inte, offerten fungerar som förut.
+        if (Object.keys(next).length) setPurchasePrices((prev) => ({ ...prev, ...next }));
+      })
+      .catch(() => { /* tyst — TG är hjälpinformation, inte något offerten hänger på */ });
+    return () => { cancelled = true; };
+  }, [articleNumbersOnRows]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const purchasePriceForRow = (item: QuoteLineItem): number | null =>
+    (item.article_number ? purchasePrices[item.article_number] : undefined) ?? null;
+
+  // Offertens samlade TG. Viktad på belopp, inte ett snitt av radernas procent — se quoteMargin.
+  const quoteMarginResult = quoteMargin(
+    draft.items,
+    (index) => purchasePriceForRow(draft.items[index]),
+  );
+  const quoteMarginTier = marginTier(quoteMarginResult.marginPercent);
+
   const sections: { id: string; label: string; done?: boolean }[] = [
     { id: 'section-kund', label: 'Kund', done: Boolean(draft.quote_type === 'business' ? (draft.company_name || draft.customer_name) : draft.customer_name) },
     { id: 'section-offert', label: 'Offert', done: Boolean(draft.project_name.trim()) },
@@ -2276,6 +2369,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
                 dragHandle={dragHandle}
                 metrics={effectiveRows.find((r) => r.id === row.id)}
                 rotEnabled={draft.rot_enabled}
+                marginPercent={lineItemMarginPercent(row, purchasePriceForRow(row))}
                 expanded={expandedRowId === row.id}
                 onToggle={(next) => setExpandedRowId(next ? row.id : null)}
                 onChange={(patch) => setDraft((d) => ({ ...d, items: d.items.map((item) => item.id === row.id ? { ...item, ...patch } : item) }))}
@@ -2284,6 +2378,10 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
                   const unitName = getArticleUnitName(article.unit);
                   const normalizedUnit = unitName.trim().toLowerCase();
                   const pricingMode: 'm3' | 'item' = normalizedUnit === 'm3' || normalizedUnit === 'm³' || /m\s*³/i.test(normalizedUnit) ? 'm3' : 'item';
+                  if (article.articleNumber && typeof article.purchasePrice === 'number' && article.purchasePrice > 0) {
+                    // Inköpspriset stannar i komponent-state, aldrig i draft — se purchasePrices.
+                    setPurchasePrices((prev) => ({ ...prev, [article.articleNumber!]: article.purchasePrice! }));
+                  }
                   setDraft((current) => ({
                     ...current,
                     items: current.items.map((item) => item.id === row.id ? {
@@ -2536,6 +2634,41 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
                           <span className="tabular-nums">{formatCurrency(totals.toPay, 'SEK')}</span>
                         </div>
                       </>
+                    ) : null}
+
+                    {/* Offertens samlade täckningsgrad. Viktad på belopp — se quoteMargin; ett
+                        ovägt snitt av radernas procent hade låtit en småpostrad väga lika tungt
+                        som huvudposten. Visas bara när minst en rad går att bedöma.
+
+                        INGEN ram och särskilt inte `border-t border-solid`: med preflight av
+                        sätter border-solid stilen på ALLA fyra sidor medan border-t bara sätter
+                        bredden upptill, så övriga sidor ärver webbläsarens `medium` (3px) och det
+                        blir en fantomram runt hela blocket. Se FRONTEND_SYSTEM.md. Raderna ovanför
+                        separeras med luft, så den här gör likadant. */}
+                    {quoteMarginResult.marginPercent != null ? (
+                      <div className="mt-2.5 grid gap-1">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="text-slate-500">Täckningsgrad</span>
+                          <MarginBadge marginPercent={quoteMarginResult.marginPercent} />
+                        </div>
+                        {quoteMarginResult.unpricedRows > 0 ? (
+                          // Utan den här upplysningen ser TG:n ut att gälla hela offerten, och en
+                          // grön siffra kan dölja att halva beloppet aldrig bedömdes.
+                          <p className="m-0 text-[11px] leading-snug text-slate-400">
+                            {quoteMarginResult.unpricedRows} {quoteMarginResult.unpricedRows === 1 ? 'rad' : 'rader'} saknar
+                            inköpspris ({formatCurrency(quoteMarginResult.unpricedRevenue, 'SEK')}) och ingår inte i siffran.
+                          </p>
+                        ) : null}
+                        {quoteMarginTier === 'bad' ? (
+                          <p className="m-0 rounded-md border border-solid border-rose-200 bg-rose-50 px-2 py-1.5 text-[11px] font-medium leading-snug text-rose-700">
+                            Täckningsgraden är under {MARGIN_THRESHOLDS.watch} %. Offerten behöver godkännas av säljchef innan den skickas.
+                          </p>
+                        ) : quoteMarginTier === 'watch' ? (
+                          <p className="m-0 text-[11px] leading-snug text-amber-700">
+                            Under {MARGIN_THRESHOLDS.good} % — se över priset innan du skickar.
+                          </p>
+                        ) : null}
+                      </div>
                     ) : null}
                   </div>
                 ) : (

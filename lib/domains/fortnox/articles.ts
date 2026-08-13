@@ -208,6 +208,13 @@ export async function listCachedFortnoxArticles(opts?: {
   activeOnly?: boolean;
   search?: string;
   limit?: number;
+  /**
+   * Slå upp specifika artikelnummer. Används av offertformuläret vid redigering: raderna bär
+   * artikelnummer men inte inköpspris (det lagras med flit aldrig på raden — se pricing.ts), så
+   * täckningsgraden behöver slås upp för just de artiklar offerten faktiskt använder i stället för
+   * att dra hem hela registret.
+   */
+  numbers?: string[];
 }): Promise<CachedFortnoxArticle[]> {
   const supabase = getSupabaseAdmin();
   const favorites = await listFavoriteArticleNumbers();
@@ -217,6 +224,7 @@ export async function listCachedFortnoxArticles(opts?: {
   const buildQuery = () => {
     let q = supabase.from('fortnox_articles_cache').select(ARTICLE_CACHE_SELECT).order('article_number', { ascending: true });
     if (opts?.activeOnly !== false) q = q.eq('active', true);
+    if (opts?.numbers?.length) q = q.in('article_number', opts.numbers);
     // Each token adds an AND group: (number~token OR description~token) — multi-word order-independent.
     for (const token of tokens) q = q.or(`article_number.ilike.%${token}%,description.ilike.%${token}%`);
     return q;

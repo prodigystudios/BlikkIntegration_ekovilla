@@ -95,6 +95,109 @@ export function computePricing(
   return { subtotal, vat, total, vatPercent, rotDeduction, toPay: total - rotDeduction };
 }
 
+// ─── Täckningsgrad (TG) ────────────────────────────────────────────────────────
+//
+// TG = (pris − inköpspris) ÷ PRIS. Det är måttet säljchefen bett om, och det som brukar menas med
+// "procentuell vinst". Blanda ALDRIG ihop det med påslag ((pris − inköp) ÷ inköp): köp för 100 och
+// sälj för 200 är 50 % TG men 100 % påslag, och tröskelvärdena nedan är satta för TG.
+//
+// ⚠️ INKÖPSPRISET LAGRAS INTE PÅ OFFERTRADEN. Det slås upp ur artikelcachen bara för att räkna i
+// offertformuläret. Skälet: `line_items` följer med offert → arbetsorder → fältvyn, och
+// `redactWorkOrderForField` plockar bara bort `amount`/`pricing_summary` — ett inköpspris på raden
+// hade alltså hamnat i installatörernas payload. Genom att aldrig lägga det där finns ingen läckyta
+// att komma ihåg att täta.
+
+/** Hur en rads TG bedöms. `unknown` = artikeln saknar inköpspris, då går det inte att uttala sig. */
+export type MarginTier = 'good' | 'watch' | 'bad' | 'unknown';
+
+/**
+ * ⚠️ PRELIMINÄRA TRÖSKLAR — SÄLJCHEFEN SKA SÄTTA DE SKARPA.
+ *
+ * Satta kring registrets faktiska median (53,7 % mätt 2026-08-13, tionde percentilen 40,3 %), så
+ * ungefär hälften av artiklarna hamnar grönt på listpris och rött triggar vid rejäl rabatt.
+ * De styr en färg som säljare kommer att lita på — ändra dem HÄR och ingen annanstans.
+ */
+export const MARGIN_THRESHOLDS = {
+  /** TG ≥ detta = grönt. */
+  good: 50,
+  /** TG ≥ detta men under `good` = gult. Under detta = rött. */
+  watch: 35,
+} as const;
+
+/**
+ * Radens täckningsgrad i procent, eller null när den inte går att räkna.
+ *
+ * Räknas på radens FAKTISKA intäkt (antal × rabatterat à-pris) mot inköp × samma antal, så en
+ * rabatt slår igenom direkt — det är hela poängen: säljaren ska se när rabatten äter marginalen.
+ *
+ * Returnerar null när inköpspriset saknas (61 av 289 artiklar) eller när raden inte har någon
+ * intäkt. Noll intäkt ger ingen meningsfull procent, och att visa "0 %" eller "−100 %" på en tom
+ * rad hade fått nya rader att lysa rött innan säljaren ens skrivit något.
+ */
+export function lineItemMarginPercent(
+  item: PricingLineItem,
+  purchasePrice: number | null | undefined,
+): number | null {
+  if (purchasePrice == null || !Number.isFinite(purchasePrice) || purchasePrice <= 0) return null;
+  const quantity = lineItemQuantity(item);
+  const revenue = lineItemRowTotal(item);
+  if (!(revenue > 0) || !(quantity > 0)) return null;
+  const cost = purchasePrice * quantity;
+  return ((revenue - cost) / revenue) * 100;
+}
+
+/** Färgnivån för en TG. `null` (okänt inköpspris) ger `unknown` — inte rött. */
+export function marginTier(
+  marginPercent: number | null | undefined,
+  thresholds: { good: number; watch: number } = MARGIN_THRESHOLDS,
+): MarginTier {
+  if (marginPercent == null || !Number.isFinite(marginPercent)) return 'unknown';
+  if (marginPercent >= thresholds.good) return 'good';
+  if (marginPercent >= thresholds.watch) return 'watch';
+  return 'bad';
+}
+
+/**
+ * Offertens samlade TG över de rader som går att räkna på.
+ *
+ * Summerar intäkt och kostnad var för sig i stället för att medelvärdesbilda radernas procent — ett
+ * ovägt snitt låter en 5-kronorsrad väga lika tungt som en 50 000-kronorsrad och ger fel svar på
+ * frågan "tjänar vi pengar på den här offerten".
+ *
+ * Rader utan inköpspris hålls UTANFÖR båda summorna. Att räkna dem som kostnadsfria hade blåst upp
+ * TG:n och gjort siffran farligt optimistisk; `unpricedRows` säger i stället hur mycket av offerten
+ * som inte kunde bedömas.
+ */
+export function quoteMargin(
+  items: PricingLineItem[],
+  purchasePriceFor: (index: number) => number | null | undefined,
+): { marginPercent: number | null; revenue: number; cost: number; unpricedRows: number; unpricedRevenue: number } {
+  let revenue = 0;
+  let cost = 0;
+  let unpricedRows = 0;
+  let unpricedRevenue = 0;
+
+  for (const [index, item] of items.entries()) {
+    const rowRevenue = lineItemRowTotal(item);
+    const purchase = purchasePriceFor(index);
+    const quantity = lineItemQuantity(item);
+    if (purchase == null || !Number.isFinite(purchase) || purchase <= 0 || !(quantity > 0)) {
+      if (rowRevenue > 0) { unpricedRows++; unpricedRevenue += rowRevenue; }
+      continue;
+    }
+    revenue += rowRevenue;
+    cost += purchase * quantity;
+  }
+
+  return {
+    marginPercent: revenue > 0 ? ((revenue - cost) / revenue) * 100 : null,
+    revenue,
+    cost,
+    unpricedRows,
+    unpricedRevenue,
+  };
+}
+
 // ─── VAT display convention (agreed with finance) ──────────────────────────────
 // How a quote's amount is presented to the seller / customer differs by customer type:
 //   • private customer  → lead with the price to pay INCL moms (what they actually pay)
