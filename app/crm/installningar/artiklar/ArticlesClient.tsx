@@ -69,12 +69,22 @@ export default function ArticlesClient({ initialArticles, fortnoxConnected }: Ar
   async function handleSync() {
     setSyncing(true);
     try {
-      await apiRequest('/api/fortnox/articles/sync', { method: 'POST' });
+      // Synken hämtar även artiklarnas beskrivningar, och de finns bara på Fortnox enskild-GET —
+      // alltså ett anrop per artikel, throttlat. Första körningen tar därför ett par minuter.
+      // Därefter hämtas bara nya artiklar och synken är snabb igen. Utan den här förvarningen ser
+      // en tyst knapp ut som att ingenting händer, och någon trycker om eller lämnar sidan.
+      const result = await apiRequest<{ synced: number; notesFetched?: number }>(
+        '/api/fortnox/articles/sync', { method: 'POST' },
+      );
       const data = await apiRequest<{ items: CachedFortnoxArticle[] }>(
         '/api/fortnox/articles?active_only=false&limit=1000',
       );
       setArticles(data.items);
-      toast.success('Artikelregistret synkades från Fortnox');
+      toast.success(
+        result.notesFetched
+          ? `Artikelregistret synkades — ${result.notesFetched} beskrivningar hämtades`
+          : 'Artikelregistret synkades från Fortnox',
+      );
     } catch (e: any) {
       toast.error(e?.message || 'Synk misslyckades');
     } finally {
@@ -94,7 +104,7 @@ export default function ArticlesClient({ initialArticles, fortnoxConnected }: Ar
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="secondary" onClick={handleSync} disabled={!fortnoxConnected || syncing}>
-            {syncing ? 'Synkar…' : 'Synka från Fortnox'}
+            {syncing ? 'Synkar… (kan ta ett par minuter)' : 'Synka från Fortnox'}
           </Button>
           <Link href={`${LIST_BASE}/ny`} className={buttonVariants({ variant: 'primary' }) + ' no-underline'}>
             Ny artikel

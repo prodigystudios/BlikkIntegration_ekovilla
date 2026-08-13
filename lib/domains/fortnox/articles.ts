@@ -25,10 +25,90 @@ type FortnoxPriceResponse = { Price: { Price: number | null } };
 export type ArticleSyncResult = {
   synced: number;
   pages: number;
+  /** Antal artiklar vars beskrivning (Note) hämtades i den här körningen. */
+  notesFetched: number;
 };
+
+// ── Artikelbeskrivningar (Fortnox `Note`) ────────────────────────────────────
+//
+// `GET /articles` (listan) returnerar INTE `Note` — bara enskild-GET gör det (samma lucka som
+// kundernas `Type` och artiklarnas `HouseworkType`). Beskrivningen måste därför hämtas per artikel.
+//
+// Kostnaden bärs EN gång: `note_synced_at` markerar att vi frågat, så en artikel utan beskrivning
+// inte frågas om igen. Första körningen tar ~100 s för ~289 artiklar; därefter hämtas bara nya.
+
+/** Fortnox tål ~4 req/s. En paus mellan varje anrop håller oss under, med marginal. */
+const NOTE_FETCH_DELAY_MS = 300;
+
+/**
+ * Tak per körning. Skyddar mot att synken springer in i en funktionstimeout om artikelregistret
+ * växer kraftigt — resten hämtas vid nästa synk, eftersom `note_synced_at` gör passet resumebart.
+ */
+const NOTE_FETCH_MAX_PER_RUN = 400;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Hämtar `Note` för artiklar som ännu inte frågats efter och skriver in den i cachen.
+ *
+ * Sekventiellt med paus — INTE `Promise.all`. Parallell fan-out mot Fortnox är precis vad som
+ * sprängde kundimporten (TD-3): 429-storm, tappade svar och tyst felaktig data. Ett misslyckat
+ * anrop stämplar ändå `note_synced_at` så en trasig artikel inte blockerar passet för alltid; den
+ * plockas upp igen vid nästa fulla omsynk.
+ */
+export async function syncArticleNotes(): Promise<number> {
+  const supabase = getSupabaseAdmin();
+
+  const { data: pending, error } = await supabase
+    .from('fortnox_articles_cache')
+    .select('article_number')
+    .is('note_synced_at', null)
+    .order('article_number', { ascending: true })
+    .limit(NOTE_FETCH_MAX_PER_RUN);
+
+  if (error) throw new Error(`Kunde inte läsa artiklar utan beskrivning: ${error.message}`);
+  if (!pending?.length) return 0;
+
+  let fetched = 0;
+  for (const [i, row] of pending.entries()) {
+    const articleNumber = (row as { article_number: string }).article_number;
+    let note: string | null = null;
+    try {
+      const { Article } = await fortnoxGet<FortnoxArticleWriteResponse>(
+        `/articles/${encodeURIComponent(articleNumber)}`,
+      );
+      note = Article?.Note?.trim() || null;
+      fetched++;
+    } catch (e) {
+      // Icke-fatalt: en artikel som inte går att läsa ska inte välta hela synken. Stämpeln sätts
+      // ändå, annars fastnar passet på samma rad vid varje körning.
+      console.warn(`[Fortnox] kunde inte hämta beskrivning för artikel ${articleNumber}:`, (e as Error).message);
+    }
+
+    const { error: updateError } = await supabase
+      .from('fortnox_articles_cache')
+      .update({ note, note_synced_at: new Date().toISOString() })
+      .eq('article_number', articleNumber);
+    if (updateError) {
+      console.warn(`[Fortnox] kunde inte spara beskrivning för artikel ${articleNumber}:`, updateError.message);
+    }
+
+    if (i < pending.length - 1) await sleep(NOTE_FETCH_DELAY_MS);
+  }
+
+  return fetched;
+}
 
 // Map a Fortnox article into a fortnox_articles_cache row. Shared by the bulk
 // sync and the single-article write paths so the cached shape stays identical.
+//
+// ⚠️ `note`/`note_synced_at` ligger MED FLIT utanför. Listendpointen returnerar ingen `Note`, så
+// hade fältet stått här hade varje full artikelsynk nollat alla beskrivningar vi mödosamt hämtat
+// en och en. En PostgREST-upsert rör bara de kolumner som finns i payloaden — utelämnade kolumner
+// står kvar orörda, vilket är precis vad vi vill här. Enskild-GET-vägen sätter dem explicit
+// (se upsertArticleCacheRow).
 function mapFortnoxArticleToCacheRow(a: FortnoxArticle, now: string) {
   return {
     article_number: a.ArticleNumber,
@@ -75,12 +155,23 @@ export async function syncFortnoxArticles(): Promise<ArticleSyncResult> {
     page++;
   } while (page <= totalPages);
 
-  return { synced: totalSynced, pages: totalPages };
+  // Beskrivningarna (Note) finns inte i listsvaret och hämtas per artikel — men bara för dem vi
+  // inte redan frågat om. Första körningen är därför långsam (~100 s), därefter snabb igen.
+  // Icke-fatalt: artiklarna är synkade även om beskrivningshämtningen fallerar, och passet är
+  // resumebart via note_synced_at.
+  let notesFetched = 0;
+  try {
+    notesFetched = await syncArticleNotes();
+  } catch (e) {
+    console.warn('[Fortnox] hämtning av artikelbeskrivningar misslyckades:', (e as Error).message);
+  }
+
+  return { synced: totalSynced, pages: totalPages, notesFetched };
 }
 
 // Read articles from local cache. Fast, no external API call.
 const ARTICLE_CACHE_SELECT =
-  'article_number, description, sales_price, purchase_price, unit, article_type, active, last_fetched_at';
+  'article_number, description, note, sales_price, purchase_price, unit, article_type, active, last_fetched_at';
 
 // The global favorite article numbers (shared, not per-user). Small curated set.
 export async function listFavoriteArticleNumbers(): Promise<Set<string>> {
@@ -262,11 +353,17 @@ export async function listFortnoxArticlePriceLists(): Promise<FortnoxArticlePric
 // for integration writes, consistent with syncFortnoxArticles.
 async function upsertArticleCacheRow(article: FortnoxArticle): Promise<void> {
   const supabase = getSupabaseAdmin();
+  const now = new Date().toISOString();
   const { error } = await supabase
     .from('fortnox_articles_cache')
-    .upsert(mapFortnoxArticleToCacheRow(article, new Date().toISOString()), {
-      onConflict: 'article_number',
-    });
+    .upsert({
+      ...mapFortnoxArticleToCacheRow(article, now),
+      // Det här är svaret från en ENSKILD artikel, alltså den enda vägen `Note` kommer med. Skriv in
+      // den direkt så en beskrivning som ändras i CRM:s artikelformulär slår igenom i offertens
+      // artikelväljare med en gång, utan att invänta nästa fulla synk.
+      note: article.Note?.trim() || null,
+      note_synced_at: now,
+    }, { onConflict: 'article_number' });
   if (error) throw new Error(`Kunde inte uppdatera artikelcache: ${error.message}`);
 }
 

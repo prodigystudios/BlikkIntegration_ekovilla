@@ -7,7 +7,9 @@ export async function POST() {
     if (admin.response) return admin.response;
 
     const result = await syncFortnoxArticles();
-    return ok({ synced: result.synced, pages: result.pages });
+    // notesFetched: hur många artikelbeskrivningar som hämtades. Första körningen efter att
+    // funktionen infördes hämtar hela registret (~100 s); därefter är den nära noll.
+    return ok({ synced: result.synced, pages: result.pages, notesFetched: result.notesFetched });
   } catch (e: any) {
     return routeError(500, 'fortnox_articles_sync_failed', e?.message || 'Artikelsynk misslyckades');
   }

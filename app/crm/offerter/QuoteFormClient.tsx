@@ -66,6 +66,10 @@ type QuoteLineItem = {
   article_id: string | null;
   article_name: string | null;
   article_number: string | null;
+  // Artikelns beskrivning från registret, kopierad till raden när artikeln väljs — samma
+  // denormalisering som article_price/article_unit_name. INTERN: visas som grå hjälptext under
+  // vald artikel och läses aldrig av Fortnox-pushen (buildOfferRows rör den inte).
+  article_note: string | null;
   article_price: number | null;
   article_unit_name: string | null;
   discount_percent: string;
@@ -206,6 +210,8 @@ type ArticleLite = {
   price?: number | null;
   unit?: string | { name?: string | null; objectiveName?: string | null } | null;
   isFavorite?: boolean;
+  // Artikelns beskrivning ur registret. INTERN hjälptext för säljaren — se article_note på raden.
+  note?: string | null;
 };
 
 type CrmCustomerLite = {
@@ -253,6 +259,7 @@ function createEmptyLineItem(): QuoteLineItem {
     article_id: null,
     article_name: null,
     article_number: null,
+    article_note: null,
     article_price: null,
     article_unit_name: null,
     discount_percent: '',
@@ -413,11 +420,13 @@ const initialDraft: QuoteDraft = {
 
 // ─── ArticlePicker ────────────────────────────────────────────────────────────
 
-function ArticlePicker({ value, articleNumber, price, unit, onSelect, onClear }: {
+function ArticlePicker({ value, articleNumber, price, unit, note, onSelect, onClear }: {
   value: string;
   articleNumber?: string | null;
   price?: number | null;
   unit?: string | null;
+  /** Artikelns beskrivning ur registret — INTERN hjälptext, når aldrig Fortnox. */
+  note?: string | null;
   onSelect: (article: ArticleLite) => void;
   onClear: () => void;
 }) {
@@ -465,7 +474,7 @@ function ArticlePicker({ value, articleNumber, price, unit, onSelect, onClear }:
         .then((r) => r.json().catch(() => ({})))
         .then((json) => {
           if (!cancelled) {
-            const raw: Array<{ article_number: string; description: string | null; sales_price: number | null; unit: string | null; is_favorite?: boolean }> =
+            const raw: Array<{ article_number: string; description: string | null; note?: string | null; sales_price: number | null; unit: string | null; is_favorite?: boolean }> =
               Array.isArray(json?.data?.items) ? json.data.items : [];
             setItems(raw.map((a) => ({
               id: a.article_number,
@@ -474,6 +483,7 @@ function ArticlePicker({ value, articleNumber, price, unit, onSelect, onClear }:
               price: a.sales_price,
               unit: a.unit ?? undefined,
               isFavorite: a.is_favorite ?? false,
+              note: a.note ?? null,
             })));
           }
         })
@@ -497,6 +507,18 @@ function ArticlePicker({ value, articleNumber, price, unit, onSelect, onClear }:
           <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-600">Vald artikel</span>
           <span className="truncate text-sm font-semibold text-slate-900">{value}</span>
           {meta ? <span className="truncate text-xs text-slate-500">{meta}</span> : null}
+          {/* Artikelns beskrivning ur registret — INTERN. Ett stöd för säljaren att se vad artikeln
+              faktiskt innehåller; den skickas aldrig med till Fortnox och syns inte på offerten.
+              Inte truncate: hela poängen är att kunna läsa texten. Tre rader räcker för de
+              beskrivningar som finns och hindrar en lång text från att svälla ut raden. */}
+          {/* text-xs/slate-500 är repots hjälptext-token, inte 11px/slate-400 som stod här först:
+              slate-400 på vitt ligger kring 3:1 i kontrast, under gränsen för läsbar brödtext.
+              Beskrivningen är dessutom den längsta texten i kortet och den enda man faktiskt läser
+              — meta-raden ovanför är siffror man skummar. Att göra den minst och ljusast var
+              bakvänt. */}
+          {note?.trim() ? (
+            <span className="line-clamp-3 text-xs leading-relaxed text-slate-500">{note.trim()}</span>
+          ) : null}
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <button
@@ -881,6 +903,7 @@ function LineItemRow({
         articleNumber={row.article_number}
         price={row.article_price}
         unit={row.article_unit_name}
+        note={row.article_note}
         onSelect={onSelectArticle}
         onClear={onClearArticle}
       />
@@ -1169,7 +1192,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           end_contact_email: item.customer_snapshot?.end_contact_email || '',
           label: item.customer_snapshot?.label || '',
           items: item.line_items?.length
-            ? item.line_items.map((line) => ({ ...line, line_note: line.line_note || '', is_rot_work: line.is_rot_work ?? false, house_work_type: line.house_work_type || 'CONSTRUCTION', labor_cost: line.labor_cost || '', density: line.density || '' }))
+            ? item.line_items.map((line) => ({ ...line, line_note: line.line_note || '', is_rot_work: line.is_rot_work ?? false, house_work_type: line.house_work_type || 'CONSTRUCTION', labor_cost: line.labor_cost || '', density: line.density || '', article_note: line.article_note ?? null }))
             : [createEmptyLineItem()],
           project_name: item.project_name,
           description: item.description || '',
@@ -2270,6 +2293,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
                       article_number: article.articleNumber || null,
                       article_price: typeof article.price === 'number' ? article.price : null,
                       article_unit_name: unitName || null,
+                      article_note: article.note ?? null,
                       construction: construction || item.construction,
                       pricing_mode: pricingMode,
                       auto_price: false,
@@ -2281,7 +2305,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
                 onClearArticle={() => setDraft((current) => ({
                   ...current,
                   items: current.items.map((item) => item.id === row.id ? {
-                    ...item, article_id: null, article_name: null, article_number: null, article_price: null, article_unit_name: null,
+                    ...item, article_id: null, article_name: null, article_number: null, article_price: null, article_unit_name: null, article_note: null,
                   } : item),
                 }))}
                 onRemove={() => setDraft((d) => ({ ...d, items: d.items.length > 1 ? d.items.filter((item) => item.id !== row.id) : [createEmptyLineItem()] }))}

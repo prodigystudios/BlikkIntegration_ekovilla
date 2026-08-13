@@ -93,6 +93,11 @@ export const quoteLineItemSchema = z.object({
   article_number: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
   article_price: z.preprocess((value) => (value == null || value === '' ? null : parseAmount(value)), z.number().finite('Ogiltigt artikelpris').nullable()).optional().default(null),
   article_unit_name: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
+  // Artikelns beskrivning ur artikelregistret, kopierad till raden när artikeln väljs. MÅSTE ligga
+  // i schemat — annars strippar Zod fältet vid varje sparning och hjälptexten försvinner tyst så
+  // fort offerten öppnas igen. Samma fälla som is_rot_work och written_off gick i.
+  // INTERN: läses aldrig av Fortnox-pushen, se tests/fortnox/offers.test.ts.
+  article_note: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
   discount_percent: z.preprocess((value) => normalizeOptionalText(value) ?? '', z.string()).optional().default(''),
   line_note: z.preprocess((value) => normalizeOptionalText(value) ?? '', z.string()).optional().default(''),
   is_rot_work: z.boolean().optional().default(false),

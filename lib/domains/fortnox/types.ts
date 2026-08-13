@@ -95,6 +95,9 @@ export type FortnoxArticleListResponse = {
 export type CachedFortnoxArticle = {
   article_number: string;
   description: string | null;
+  // Artikelns beskrivning (Fortnox `Note`). Hämtas per artikel — listendpointen returnerar den
+  // inte. INTERN: visas som hjälptext för säljaren, skickas aldrig till Fortnox.
+  note?: string | null;
   sales_price: number | null;
   purchase_price: number | null;
   unit: string | null;
