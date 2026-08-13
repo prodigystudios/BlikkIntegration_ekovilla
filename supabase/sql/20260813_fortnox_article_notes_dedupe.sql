@@ -40,8 +40,12 @@ from (
   where a.note is not null and btrim(a.note) <> ''
 ) sub
 where c.article_number = sub.article_number
-  and sub.cleaned is not null
-  and sub.cleaned <> c.note;
+  -- `is distinct from` i stället för `<>`: en beskrivning som bara består av avskiljare (';;;')
+  -- ger NULL ur string_agg, och med `<>` hade raden hoppats över så skräpsträngen blivit kvar och
+  -- renderats som hjälptext under artikeln. dedupeArticleNote i koden ger null för samma indata —
+  -- städningen måste matcha funktionen den efterliknar, annars beror resultatet på vilken väg
+  -- värdet råkade komma in.
+  and sub.cleaned is distinct from c.note;
 
 -- ── Verifiering (kör efter applicering) ──────────────────────────────────────
 --

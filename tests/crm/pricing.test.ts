@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   lineItemRowTotal, computePricing, resolveQuoteVatBreakdown, quoteAmountDisplay,
-  lineItemMarginPercent, marginTier, quoteMargin, MARGIN_THRESHOLDS,
+  rowMarginPercent, marginTier, quoteMargin, MARGIN_THRESHOLDS,
 } from '@/lib/domains/crm/pricing';
 
 describe('lineItemRowTotal', () => {
@@ -167,38 +167,32 @@ describe('quoteAmountDisplay', () => {
 // Täckningsgrad (TG)
 // ---------------------------------------------------------------------------
 
-describe('lineItemMarginPercent', () => {
-  it('räknar TG på pris, inte på inköp', () => {
+describe('rowMarginPercent', () => {
+  it('räknar TG på intäkten, inte på inköpet', () => {
     // Köp 100, sälj 200 → 50 % TG. Samma affär är 100 % PÅSLAG; blandas de ihop blir tröskeln
     // dubbelt fel och en usel affär lyser grön.
-    expect(lineItemMarginPercent({ pricing_mode: 'item', unit_price: '200', quantity: '1' }, 100)).toBeCloseTo(50, 6);
-    expect(lineItemMarginPercent({ pricing_mode: 'item', unit_price: '150', quantity: '1' }, 100)).toBeCloseTo(33.333, 3);
+    expect(rowMarginPercent({ revenue: 200, quantity: 1, purchasePrice: 100 })).toBeCloseTo(50, 6);
+    expect(rowMarginPercent({ revenue: 150, quantity: 1, purchasePrice: 100 })).toBeCloseTo(33.333, 3);
   });
 
-  it('låter rabatten slå igenom — det är hela poängen', () => {
-    // 20 % rabatt på 200 → 160 intäkt mot 100 i inköp → 37,5 % i stället för 50 %.
-    expect(lineItemMarginPercent({ pricing_mode: 'item', unit_price: '200', quantity: '1', discount_percent: '20' }, 100))
-      .toBeCloseTo(37.5, 6);
+  it('räknar inköpet mot antalet', () => {
+    expect(rowMarginPercent({ revenue: 2000, quantity: 10, purchasePrice: 100 })).toBeCloseTo(50, 6);
   });
 
-  it('räknar på antalet, så en flerradsrad blir rätt', () => {
-    expect(lineItemMarginPercent({ pricing_mode: 'item', unit_price: '200', quantity: '10' }, 100)).toBeCloseTo(50, 6);
-  });
-
-  it('ger negativ TG när priset ligger under inköp', () => {
-    expect(lineItemMarginPercent({ pricing_mode: 'item', unit_price: '80', quantity: '1' }, 100)).toBeCloseTo(-25, 6);
+  it('ger negativ TG när intäkten ligger under inköpet', () => {
+    expect(rowMarginPercent({ revenue: 80, quantity: 1, purchasePrice: 100 })).toBeCloseTo(-25, 6);
   });
 
   it('ger null när inköpspriset saknas — 61 av 289 artiklar har inget', () => {
-    expect(lineItemMarginPercent({ pricing_mode: 'item', unit_price: '200', quantity: '1' }, null)).toBeNull();
-    expect(lineItemMarginPercent({ pricing_mode: 'item', unit_price: '200', quantity: '1' }, undefined)).toBeNull();
-    expect(lineItemMarginPercent({ pricing_mode: 'item', unit_price: '200', quantity: '1' }, 0)).toBeNull();
+    expect(rowMarginPercent({ revenue: 200, quantity: 1, purchasePrice: null })).toBeNull();
+    expect(rowMarginPercent({ revenue: 200, quantity: 1, purchasePrice: undefined })).toBeNull();
+    expect(rowMarginPercent({ revenue: 200, quantity: 1, purchasePrice: 0 })).toBeNull();
   });
 
   it('ger null för en tom rad i stället för att lysa rött', () => {
     // En nyss tillagd rad ska inte larma innan säljaren skrivit något.
-    expect(lineItemMarginPercent({ pricing_mode: 'item', unit_price: '', quantity: '' }, 100)).toBeNull();
-    expect(lineItemMarginPercent({ pricing_mode: 'item', unit_price: '0', quantity: '1' }, 100)).toBeNull();
+    expect(rowMarginPercent({ revenue: 0, quantity: 0, purchasePrice: 100 })).toBeNull();
+    expect(rowMarginPercent({ revenue: 0, quantity: 5, purchasePrice: 100 })).toBeNull();
   });
 });
 
@@ -231,13 +225,10 @@ describe('quoteMargin', () => {
   it('viktar efter belopp — inte ett ovägt snitt av radernas procent', () => {
     // 5-kronorsraden har 80 % TG, 50 000-raden har 20 %. Ett ovägt snitt vore 50 % och skulle
     // dölja att offerten som helhet är svag.
-    const result = quoteMargin(
-      [
-        { pricing_mode: 'item', unit_price: '5', quantity: '1' },      // inköp 1  → 4 kr vinst
-        { pricing_mode: 'item', unit_price: '50000', quantity: '1' },  // inköp 40000 → 10 000 kr vinst
-      ],
-      (i) => (i === 0 ? 1 : 40000),
-    );
+    const result = quoteMargin([
+      { revenue: 5, quantity: 1, purchasePrice: 1 },
+      { revenue: 50000, quantity: 1, purchasePrice: 40000 },
+    ]);
     expect(result.revenue).toBe(50005);
     expect(result.cost).toBe(40001);
     expect(result.marginPercent).toBeCloseTo(20.006, 2);
@@ -245,28 +236,38 @@ describe('quoteMargin', () => {
 
   it('håller rader utan inköpspris UTANFÖR summorna och rapporterar dem', () => {
     // Att räkna dem som kostnadsfria hade blåst upp TG:n till en farligt optimistisk siffra.
-    const result = quoteMargin(
-      [
-        { pricing_mode: 'item', unit_price: '200', quantity: '1' },
-        { pricing_mode: 'item', unit_price: '1000', quantity: '1' },
-      ],
-      (i) => (i === 0 ? 100 : null),
-    );
+    const result = quoteMargin([
+      { revenue: 200, quantity: 1, purchasePrice: 100 },
+      { revenue: 1000, quantity: 1, purchasePrice: null },
+    ]);
     expect(result.marginPercent).toBeCloseTo(50, 6);
     expect(result.revenue).toBe(200);
     expect(result.unpricedRows).toBe(1);
     expect(result.unpricedRevenue).toBe(1000);
   });
 
+  it('fångar den AUTO-PRISSATTA raden som obedömd i stället för att tappa den', () => {
+    // Regressionsvakt: formuläret prissätter auto-rader med sin egen stub, så de HAR en intäkt på
+    // skärmen men saknar artikel och därmed inköpspris. Räknades de inte skulle säljaren se en grön
+    // TG som ignorerade nästan hela offertvärdet — utan en enda varning.
+    const result = quoteMargin([
+      { revenue: 100, quantity: 1, purchasePrice: 40 },
+      { revenue: 18000, quantity: 20, purchasePrice: null }, // 20 m³ × 900 kr, ingen artikel vald
+    ]);
+    expect(result.marginPercent).toBeCloseTo(60, 6);
+    expect(result.unpricedRows).toBe(1);
+    expect(result.unpricedRevenue).toBe(18000);
+  });
+
   it('ger null när ingen rad går att bedöma', () => {
-    const result = quoteMargin([{ pricing_mode: 'item', unit_price: '200', quantity: '1' }], () => null);
+    const result = quoteMargin([{ revenue: 200, quantity: 1, purchasePrice: null }]);
     expect(result.marginPercent).toBeNull();
     expect(result.unpricedRows).toBe(1);
   });
 
   it('räknar inte tomma rader som obedömbara', () => {
     // En tom rad har ingen intäkt och ska varken påverka TG:n eller flaggas som "kunde inte bedömas".
-    const result = quoteMargin([{ pricing_mode: 'item', unit_price: '', quantity: '' }], () => null);
+    const result = quoteMargin([{ revenue: 0, quantity: 0, purchasePrice: null }]);
     expect(result.unpricedRows).toBe(0);
     expect(result.marginPercent).toBeNull();
   });

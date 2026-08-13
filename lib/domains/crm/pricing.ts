@@ -125,25 +125,41 @@ export const MARGIN_THRESHOLDS = {
 } as const;
 
 /**
- * Radens täckningsgrad i procent, eller null när den inte går att räkna.
+ * En rad att räkna täckningsgrad på.
  *
- * Räknas på radens FAKTISKA intäkt (antal × rabatterat à-pris) mot inköp × samma antal, så en
- * rabatt slår igenom direkt — det är hela poängen: säljaren ska se när rabatten äter marginalen.
+ * ⚠️ `revenue` SKICKAS IN, den härleds inte här. Skälet är en bugg som annars uppstår tyst:
+ * offertformuläret prissätter auto-prissatta rader med sin egen stub (`computeUnitPrice`), medan
+ * `lineItemUnitPrice` ger dem 0. Räknade vi själva ur raden skulle en auto-prissatt rad bidra med
+ * 0 kr till TG:n men synas i Delsumman — och eftersom den då har noll intäkt skulle den inte ens
+ * flaggas som obedömd. Säljaren hade sett en grön TG som ignorerade nästan hela offerten.
+ *
+ * Genom att anroparen skickar SAMMA belopp som visas på skärmen kan siffrorna inte glida isär.
+ */
+export type MarginRow = {
+  /** Radens intäkt i kronor, rabatt inräknad — exakt det belopp som visas för raden. */
+  revenue: number;
+  /** Antalet raden fakturerar (m³-volym eller styck), för att multiplicera inköpspriset. */
+  quantity: number;
+  /** Inköpspris per enhet ur artikelregistret, eller null när det saknas. */
+  purchasePrice: number | null | undefined;
+};
+
+function hasPurchasePrice(purchasePrice: number | null | undefined): purchasePrice is number {
+  return purchasePrice != null && Number.isFinite(purchasePrice) && purchasePrice > 0;
+}
+
+/**
+ * Radens täckningsgrad i procent, eller null när den inte går att räkna.
  *
  * Returnerar null när inköpspriset saknas (61 av 289 artiklar) eller när raden inte har någon
  * intäkt. Noll intäkt ger ingen meningsfull procent, och att visa "0 %" eller "−100 %" på en tom
  * rad hade fått nya rader att lysa rött innan säljaren ens skrivit något.
  */
-export function lineItemMarginPercent(
-  item: PricingLineItem,
-  purchasePrice: number | null | undefined,
-): number | null {
-  if (purchasePrice == null || !Number.isFinite(purchasePrice) || purchasePrice <= 0) return null;
-  const quantity = lineItemQuantity(item);
-  const revenue = lineItemRowTotal(item);
-  if (!(revenue > 0) || !(quantity > 0)) return null;
-  const cost = purchasePrice * quantity;
-  return ((revenue - cost) / revenue) * 100;
+export function rowMarginPercent(row: MarginRow): number | null {
+  if (!hasPurchasePrice(row.purchasePrice)) return null;
+  if (!(row.revenue > 0) || !(row.quantity > 0)) return null;
+  const cost = row.purchasePrice * row.quantity;
+  return ((row.revenue - cost) / row.revenue) * 100;
 }
 
 /** Färgnivån för en TG. `null` (okänt inköpspris) ger `unknown` — inte rött. */
@@ -165,28 +181,29 @@ export function marginTier(
  * frågan "tjänar vi pengar på den här offerten".
  *
  * Rader utan inköpspris hålls UTANFÖR båda summorna. Att räkna dem som kostnadsfria hade blåst upp
- * TG:n och gjort siffran farligt optimistisk; `unpricedRows` säger i stället hur mycket av offerten
- * som inte kunde bedömas.
+ * TG:n och gjort siffran farligt optimistisk; `unpricedRevenue` säger i stället hur stor del av
+ * offerten som inte kunde bedömas. Det gäller ÄVEN auto-prissatta rader utan vald artikel — de har
+ * en intäkt på skärmen men inget inköpspris, och utan den här raden hade de försvunnit spårlöst.
  */
-export function quoteMargin(
-  items: PricingLineItem[],
-  purchasePriceFor: (index: number) => number | null | undefined,
-): { marginPercent: number | null; revenue: number; cost: number; unpricedRows: number; unpricedRevenue: number } {
+export function quoteMargin(rows: MarginRow[]): {
+  marginPercent: number | null;
+  revenue: number;
+  cost: number;
+  unpricedRows: number;
+  unpricedRevenue: number;
+} {
   let revenue = 0;
   let cost = 0;
   let unpricedRows = 0;
   let unpricedRevenue = 0;
 
-  for (const [index, item] of items.entries()) {
-    const rowRevenue = lineItemRowTotal(item);
-    const purchase = purchasePriceFor(index);
-    const quantity = lineItemQuantity(item);
-    if (purchase == null || !Number.isFinite(purchase) || purchase <= 0 || !(quantity > 0)) {
-      if (rowRevenue > 0) { unpricedRows++; unpricedRevenue += rowRevenue; }
+  for (const row of rows) {
+    if (!hasPurchasePrice(row.purchasePrice) || !(row.quantity > 0)) {
+      if (row.revenue > 0) { unpricedRows++; unpricedRevenue += row.revenue; }
       continue;
     }
-    revenue += rowRevenue;
-    cost += purchase * quantity;
+    revenue += row.revenue;
+    cost += row.purchasePrice * row.quantity;
   }
 
   return {

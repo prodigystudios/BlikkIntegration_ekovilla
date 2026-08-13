@@ -30,6 +30,9 @@ export const OFFER_VALIDITY_PRESETS = [10, 15, 20, 30, 45, 60] as const;
 export function addDaysIso(iso: string, days: number): string {
   const date = new Date(`${iso}T12:00:00`);
   if (Number.isNaN(date.getTime())) return iso;
+  // Vakta ÄVEN dagantalet: setDate(NaN) gör datumet ogiltigt och toISOString KASTAR då
+  // (RangeError), vilket hade tagit ner hela formulärets rendering i stället för att degradera.
+  if (!Number.isFinite(days)) return iso;
   date.setDate(date.getDate() + days);
   return date.toISOString().slice(0, 10);
 }

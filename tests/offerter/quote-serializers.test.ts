@@ -365,3 +365,13 @@ describe('giltighetstid', () => {
     });
   });
 });
+
+describe('addDaysIso — ogiltigt dagantal', () => {
+  it('lämnar datumet orört i stället för att kasta', () => {
+    // setDate(NaN) gör datumet ogiltigt och toISOString kastar RangeError. Utan vakten hade en
+    // anropare med ett härlett dagantal tagit ner hela formulärets rendering.
+    expect(addDaysIso('2026-08-13', Number.NaN)).toBe('2026-08-13');
+    expect(addDaysIso('2026-08-13', Number('custom'))).toBe('2026-08-13');
+    expect(addDaysIso('2026-08-13', Infinity)).toBe('2026-08-13');
+  });
+});

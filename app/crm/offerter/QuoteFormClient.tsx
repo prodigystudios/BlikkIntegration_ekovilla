@@ -10,7 +10,8 @@ import { cn } from '@/lib/shared/cn';
 import { parseDecimal } from '@/lib/shared/number';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
 import {
-  lineItemMarginPercent, marginTier, quoteMargin, MARGIN_THRESHOLDS, type MarginTier,
+  rowMarginPercent, marginTier, quoteMargin, MARGIN_THRESHOLDS,
+  type MarginRow, type MarginTier,
 } from '@/lib/domains/crm/pricing';
 import { crm } from '@/app/crm/lib/crmTokens';
 import AddressAutocompleteInput from '@/app/crm/components/AddressAutocompleteInput';
@@ -854,12 +855,14 @@ function MarginBadge({ marginPercent, className }: { marginPercent: number | nul
     <span
       title={titles[tier]}
       className={cn(
+        // En decimal, inte toFixed(0): 34,6 % är rött men avrundades till "TG 35 %" — märket
+        // påstod exakt den tröskel det låg under. Siffran måste hamna på samma sida som färgen.
         'inline-flex items-center gap-1 rounded-md border border-solid px-1.5 py-0.5 text-[11px] font-semibold tabular-nums',
         styles[tier],
         className,
       )}
     >
-      TG {marginPercent.toFixed(0)} %
+      TG {marginPercent.toFixed(1)} %
     </span>
   );
 }
@@ -1024,8 +1027,12 @@ function LineItemRow({
             </Select>
           </label>
         ) : null}
-        <MarginBadge marginPercent={marginPercent} className="ml-auto" />
-        <span className="text-sm font-semibold tabular-nums text-slate-900">{formatCurrency(metrics?.rowTotal ?? 0, 'SEK')}</span>
+        {/* ml-auto MÅSTE sitta på summan, inte på märket: MarginBadge renderar null när
+            inköpspriset saknas (61 av 289 artiklar, plus varje rad utan vald artikel), och då
+            tappade beloppet sin högerställning och hoppade i sidled mellan raderna. */}
+        <span className="ml-auto flex items-center gap-2 text-sm font-semibold tabular-nums text-slate-900">
+          <MarginBadge marginPercent={marginPercent} />{formatCurrency(metrics?.rowTotal ?? 0, 'SEK')}
+        </span>
       </div>
 
       <Field label="Radtext"><Input value={row.line_note} onChange={(e) => onChange({ line_note: e.target.value })} placeholder="Fritext för raden" /></Field>
@@ -1806,6 +1813,58 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     await createWorkOrderFromQuote();
   }
 
+  // ── Täckningsgrad (TG) ──
+  //
+  // ⚠️ HOOKARNA MÅSTE LIGGA HÄR, ÖVER `if (loading) return`. Ligger de under körs de inte på
+  // första rendern av en redigerad offert (loading startar true) men väl på den andra, och React
+  // kastar "Rendered more hooks than during the previous render" → vit sida vid varje redigering.
+  // Repot saknar ESLint, så react-hooks/rules-of-hooks fångar det inte; type-check och tester
+  // gjorde det inte heller.
+  //
+  // ⚠️ Inköpspriserna hålls i komponent-state — aldrig i `draft`. Utkastet sparas som `line_items`,
+  // och de följer med offert → arbetsorder → fältvyn (redactWorkOrderForField plockar bara bort
+  // amount/pricing_summary). Ett inköpspris på raden hade alltså hamnat i installatörernas payload.
+  const [purchasePrices, setPurchasePrices] = useState<Record<string, number | null>>({});
+
+  // Vid redigering bär raderna artikelnummer men inget inköpspris (det är ju aldrig sparat). Slå
+  // upp priserna för just de artiklar offerten använder — inte hela registret.
+  const articleNumbersOnRows = draft.items.map((i) => i.article_number).filter(Boolean).join(',');
+  useEffect(() => {
+    const numbers = [...new Set(articleNumbersOnRows.split(',').filter(Boolean))]
+      .filter((nr) => !(nr in purchasePrices));
+    if (numbers.length === 0) return;
+    let cancelled = false;
+    fetch(`/api/fortnox/articles?numbers=${encodeURIComponent(numbers.join(','))}`, { cache: 'no-store' })
+      .then((r) => r.json().catch(() => ({})))
+      .then((json) => {
+        if (cancelled) return;
+        const items: Array<{ article_number: string; purchase_price?: number | null }> =
+          Array.isArray(json?.data?.items) ? json.data.items : [];
+        // Varje efterfrågat nummer får ett svar, ÄVEN när priset saknas (null). Utan den negativa
+        // noteringen skulle de 61 artiklarna utan inköpspris slås upp på nytt vid varje
+        // radändring, eftersom `!(nr in purchasePrices)` aldrig blev falskt för dem.
+        const next: Record<string, number | null> = Object.fromEntries(numbers.map((nr) => [nr, null]));
+        for (const a of items) {
+          if (typeof a.purchase_price === 'number' && a.purchase_price > 0) next[a.article_number] = a.purchase_price;
+        }
+        setPurchasePrices((prev) => ({ ...prev, ...next }));
+      })
+      .catch(() => { /* tyst — TG är hjälpinformation, inte något offerten hänger på */ });
+    return () => { cancelled = true; };
+  }, [articleNumbersOnRows]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // TG räknas på SAMMA belopp som visas på skärmen (effectiveRows.rowTotal), inte ur raden på nytt.
+  // Formuläret prissätter auto-prissatta rader med sin egen stub medan pricing.ts ger dem 0 — räknade
+  // vi om här skulle en auto-rad bidra med 0 kr till TG:n men synas i Delsumman, och inte ens
+  // flaggas som obedömd. Se MarginRow i pricing.ts.
+  const marginRows: MarginRow[] = effectiveRows.map((r) => ({
+    revenue: r.rowTotal,
+    quantity: r.amount,
+    purchasePrice: r.article_number ? purchasePrices[r.article_number] ?? null : null,
+  }));
+  const quoteMarginResult = quoteMargin(marginRows);
+  const quoteMarginTier = marginTier(quoteMarginResult.marginPercent);
+
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -1848,48 +1907,6 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   // lagrat — se matchedValidityPreset i quoteSerializers.
   const validityPreset = matchedValidityPreset(draft.quote_date, draft.valid_until);
 
-  // Radernas täckningsgrad: intäkt mot inköpspris.
-  //
-  // ⚠️ Inköpspriserna hålls HÄR, i komponent-state — aldrig i `draft`. Utkastet sparas som
-  // `line_items`, och de följer med offert → arbetsorder → fältvyn (redactWorkOrderForField
-  // plockar bara bort amount/pricing_summary). Ett inköpspris på raden hade alltså hamnat i
-  // installatörernas payload. Genom att aldrig lägga det där finns ingen läckyta att täta.
-  const [purchasePrices, setPurchasePrices] = useState<Record<string, number>>({});
-
-  // Vid redigering bär raderna artikelnummer men inget inköpspris (det är ju aldrig sparat). Slå
-  // upp priserna för just de artiklar offerten använder — inte hela registret.
-  const articleNumbersOnRows = draft.items.map((i) => i.article_number).filter(Boolean).join(',');
-  useEffect(() => {
-    const numbers = [...new Set(articleNumbersOnRows.split(',').filter(Boolean))]
-      .filter((nr) => !(nr in purchasePrices));
-    if (numbers.length === 0) return;
-    let cancelled = false;
-    fetch(`/api/fortnox/articles?numbers=${encodeURIComponent(numbers.join(','))}&limit=500`, { cache: 'no-store' })
-      .then((r) => r.json().catch(() => ({})))
-      .then((json) => {
-        if (cancelled) return;
-        const items: Array<{ article_number: string; purchase_price?: number | null }> =
-          Array.isArray(json?.data?.items) ? json.data.items : [];
-        const next: Record<string, number> = {};
-        for (const a of items) {
-          if (typeof a.purchase_price === 'number' && a.purchase_price > 0) next[a.article_number] = a.purchase_price;
-        }
-        // Icke-fatalt om uppslaget failar: TG visas bara inte, offerten fungerar som förut.
-        if (Object.keys(next).length) setPurchasePrices((prev) => ({ ...prev, ...next }));
-      })
-      .catch(() => { /* tyst — TG är hjälpinformation, inte något offerten hänger på */ });
-    return () => { cancelled = true; };
-  }, [articleNumbersOnRows]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const purchasePriceForRow = (item: QuoteLineItem): number | null =>
-    (item.article_number ? purchasePrices[item.article_number] : undefined) ?? null;
-
-  // Offertens samlade TG. Viktad på belopp, inte ett snitt av radernas procent — se quoteMargin.
-  const quoteMarginResult = quoteMargin(
-    draft.items,
-    (index) => purchasePriceForRow(draft.items[index]),
-  );
-  const quoteMarginTier = marginTier(quoteMarginResult.marginPercent);
 
   const sections: { id: string; label: string; done?: boolean }[] = [
     { id: 'section-kund', label: 'Kund', done: Boolean(draft.quote_type === 'business' ? (draft.company_name || draft.customer_name) : draft.customer_name) },
@@ -2369,7 +2386,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
                 dragHandle={dragHandle}
                 metrics={effectiveRows.find((r) => r.id === row.id)}
                 rotEnabled={draft.rot_enabled}
-                marginPercent={lineItemMarginPercent(row, purchasePriceForRow(row))}
+                marginPercent={rowMarginPercent(marginRows[index])}
                 expanded={expandedRowId === row.id}
                 onToggle={(next) => setExpandedRowId(next ? row.id : null)}
                 onChange={(patch) => setDraft((d) => ({ ...d, items: d.items.map((item) => item.id === row.id ? { ...item, ...patch } : item) }))}

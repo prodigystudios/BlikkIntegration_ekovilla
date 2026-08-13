@@ -1,5 +1,5 @@
 import { getSupabaseAdmin } from '@/lib/supabase/server';
-import { fortnoxGet, fortnoxPost, fortnoxPut, fortnoxDelete, FortnoxApiError } from './client';
+import { fortnoxGet, fortnoxPost, fortnoxPut, fortnoxDelete, fortnoxSleep, FortnoxApiError } from './client';
 import { articleSearchTokens, sortArticlesFavoritesFirst } from './articleSearch';
 import { listFortnoxPriceLists } from './customers';
 import type {
@@ -25,7 +25,7 @@ type FortnoxPriceResponse = { Price: { Price: number | null } };
 export type ArticleSyncResult = {
   synced: number;
   pages: number;
-  /** Antal artiklar vars beskrivning (Note) hämtades i den här körningen. */
+  /** Antal artiklar som FICK en beskrivning i den här körningen (tomma Note räknas inte). */
   notesFetched: number;
 };
 
@@ -45,10 +45,6 @@ const NOTE_FETCH_DELAY_MS = 300;
  * växer kraftigt — resten hämtas vid nästa synk, eftersom `note_synced_at` gör passet resumebart.
  */
 const NOTE_FETCH_MAX_PER_RUN = 400;
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 /**
  * Städar en artikelbeskrivning från upprepade segment.
@@ -103,11 +99,15 @@ export async function syncArticleNotes(): Promise<number> {
         `/articles/${encodeURIComponent(articleNumber)}`,
       );
       note = dedupeArticleNote(Article?.Note);
-      fetched++;
+      if (note) fetched++;
     } catch (e) {
-      // Icke-fatalt: en artikel som inte går att läsa ska inte välta hela synken. Stämpeln sätts
-      // ändå, annars fastnar passet på samma rad vid varje körning.
+      // ⚠️ STÄMPLA INTE vid fel. Ett enda 429 eller timeout hade annars satt note_synced_at på en
+      // artikel vars beskrivning aldrig lästes — och eftersom passet bara plockar rader där
+      // stämpeln är null, och den fulla synken medvetet inte rör kolumnerna, hade den
+      // beskrivningen varit borta för alltid utan annan väg tillbaka än manuell SQL. Raden lämnas
+      // orörd och plockas upp vid nästa synk. Samma val som verifyCustomerTypesBatch gör.
       console.warn(`[Fortnox] kunde inte hämta beskrivning för artikel ${articleNumber}:`, (e as Error).message);
+      continue;
     }
 
     const { error: updateError } = await supabase
@@ -118,7 +118,7 @@ export async function syncArticleNotes(): Promise<number> {
       console.warn(`[Fortnox] kunde inte spara beskrivning för artikel ${articleNumber}:`, updateError.message);
     }
 
-    if (i < pending.length - 1) await sleep(NOTE_FETCH_DELAY_MS);
+    if (i < pending.length - 1) await fortnoxSleep(NOTE_FETCH_DELAY_MS);
   }
 
   return fetched;

@@ -63,9 +63,13 @@ function buildFortnoxError(status: number, method: string, path: string, text: s
   return new FortnoxApiError(status, `Fortnox ${method} ${path} misslyckades (${status}): ${text}`, code, message);
 }
 
-function sleep(ms: number): Promise<void> {
+// Exporterad: klienten äger rate-limit-policyn mot Fortnox, så de pass som throttlar sina egna
+// anrop (artikelbeskrivningar, kundtyp-verifiering) ska använda samma paus i stället för att var
+// och en bära en egen kopia.
+export function fortnoxSleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+const sleep = fortnoxSleep;
 
 // Fortnox rate-limits the API (~4 req/s). On 429 it returns Retry-After. Retry
 // transparently with backoff so callers (sync passes, document pushes) ride out

@@ -15,9 +15,15 @@
 -- offertraden, så den kan inte nå Fortnox. Radens `Description` kommer från `article_name` och
 -- radtexten från `line_note` — två fält som inget av detta rör.
 --
--- DEPLOY-ORDNING: helt ADDITIV (två nullbara kolumner, inget befintligt ändras), så ordningen
--- SQL/kod spelar ingen roll. Körs koden först är `note` bara null och ingen hjälprad visas.
--- Kör i Supabase SQL editor. Idempotent.
+-- ⚠️ DEPLOY-ORDNING: KÖR SQL:EN FÖRE KODEN.
+--
+-- Migreringen är additiv i den meningen att inget befintligt ändras, men koden är det INTE:
+-- `ARTICLE_CACHE_SELECT` i lib/domains/fortnox/articles.ts begär `note`, och PostgREST svarar 400
+-- ("column ... does not exist") på ett select mot en kolumn som saknas — den returnerar inte null.
+-- Deployas koden först slutar därför ALLA artikelläsningar att fungera: offertens artikelväljare
+-- får inga träffar och artikelsidan (server-renderad) kraschar helt.
+--
+-- Additiv i schemat ≠ ofarlig ordning. Kör i Supabase SQL editor. Idempotent.
 
 alter table public.fortnox_articles_cache
   add column if not exists note           text,

@@ -36,8 +36,10 @@ export async function GET(req: Request) {
 
     const articles = await listCachedFortnoxArticles({
       search: parsed.data.q,
-      // En uppslagning på nummer ska hitta artikeln även om den avaktiverats sedan offerten skrevs.
-      activeOnly: numbers ? false : parsed.data.active_only !== 'false',
+      // En uppslagning på nummer ska SOM DEFAULT hitta artikeln även om den avaktiverats sedan
+      // offerten skrevs — men en anropare som uttryckligen ber om active_only=true ska få det.
+      // Att tyst kasta bort parametern hade gett tillbaka avaktiverade artiklar utan någon signal.
+      activeOnly: numbers ? parsed.data.active_only === 'true' : parsed.data.active_only !== 'false',
       limit: parsed.data.limit,
       numbers,
     });
