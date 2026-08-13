@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { lineItemRowTotal, computePricing, resolveQuoteVatBreakdown, quoteAmountDisplay } from '@/lib/domains/crm/pricing';
+import {
+  lineItemRowTotal, computePricing, resolveQuoteVatBreakdown, quoteAmountDisplay,
+  rowMarginPercent, marginTier, quoteMargin, MARGIN_THRESHOLDS,
+} from '@/lib/domains/crm/pricing';
 
 describe('lineItemRowTotal', () => {
   it('item mode: quantity × unit_price', () => {
@@ -157,5 +160,115 @@ describe('quoteAmountDisplay', () => {
   it('private at 0 % VAT is NOT reverse charge (byggmoms is B2B only)', () => {
     const d = quoteAmountDisplay('private', { subtotal: 100_000, vat: 0, total: 100_000, vatPercent: 0 });
     expect(d.reverseCharge).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Täckningsgrad (TG)
+// ---------------------------------------------------------------------------
+
+describe('rowMarginPercent', () => {
+  it('räknar TG på intäkten, inte på inköpet', () => {
+    // Köp 100, sälj 200 → 50 % TG. Samma affär är 100 % PÅSLAG; blandas de ihop blir tröskeln
+    // dubbelt fel och en usel affär lyser grön.
+    expect(rowMarginPercent({ revenue: 200, quantity: 1, purchasePrice: 100 })).toBeCloseTo(50, 6);
+    expect(rowMarginPercent({ revenue: 150, quantity: 1, purchasePrice: 100 })).toBeCloseTo(33.333, 3);
+  });
+
+  it('räknar inköpet mot antalet', () => {
+    expect(rowMarginPercent({ revenue: 2000, quantity: 10, purchasePrice: 100 })).toBeCloseTo(50, 6);
+  });
+
+  it('ger negativ TG när intäkten ligger under inköpet', () => {
+    expect(rowMarginPercent({ revenue: 80, quantity: 1, purchasePrice: 100 })).toBeCloseTo(-25, 6);
+  });
+
+  it('ger null när inköpspriset saknas — 61 av 289 artiklar har inget', () => {
+    expect(rowMarginPercent({ revenue: 200, quantity: 1, purchasePrice: null })).toBeNull();
+    expect(rowMarginPercent({ revenue: 200, quantity: 1, purchasePrice: undefined })).toBeNull();
+    expect(rowMarginPercent({ revenue: 200, quantity: 1, purchasePrice: 0 })).toBeNull();
+  });
+
+  it('ger null för en tom rad i stället för att lysa rött', () => {
+    // En nyss tillagd rad ska inte larma innan säljaren skrivit något.
+    expect(rowMarginPercent({ revenue: 0, quantity: 0, purchasePrice: 100 })).toBeNull();
+    expect(rowMarginPercent({ revenue: 0, quantity: 5, purchasePrice: 100 })).toBeNull();
+  });
+});
+
+describe('marginTier', () => {
+  it('delar in efter trösklarna, gränsvärdet inklusive', () => {
+    expect(marginTier(60)).toBe('good');
+    expect(marginTier(MARGIN_THRESHOLDS.good)).toBe('good');
+    expect(marginTier(MARGIN_THRESHOLDS.good - 0.1)).toBe('watch');
+    expect(marginTier(MARGIN_THRESHOLDS.watch)).toBe('watch');
+    expect(marginTier(MARGIN_THRESHOLDS.watch - 0.1)).toBe('bad');
+    expect(marginTier(-10)).toBe('bad');
+  });
+
+  it('okänt inköpspris är UNKNOWN, aldrig rött', () => {
+    // Ett saknat inköpspris är inte en dålig affär — att färga det rött hade fått säljaren att
+    // jaga godkännande för artiklar som ingen prissatt.
+    expect(marginTier(null)).toBe('unknown');
+    expect(marginTier(undefined)).toBe('unknown');
+    expect(marginTier(Number.NaN)).toBe('unknown');
+  });
+
+  it('respekterar egna trösklar när säljchefen satt sina', () => {
+    expect(marginTier(45, { good: 40, watch: 30 })).toBe('good');
+    expect(marginTier(35, { good: 40, watch: 30 })).toBe('watch');
+    expect(marginTier(25, { good: 40, watch: 30 })).toBe('bad');
+  });
+});
+
+describe('quoteMargin', () => {
+  it('viktar efter belopp — inte ett ovägt snitt av radernas procent', () => {
+    // 5-kronorsraden har 80 % TG, 50 000-raden har 20 %. Ett ovägt snitt vore 50 % och skulle
+    // dölja att offerten som helhet är svag.
+    const result = quoteMargin([
+      { revenue: 5, quantity: 1, purchasePrice: 1 },
+      { revenue: 50000, quantity: 1, purchasePrice: 40000 },
+    ]);
+    expect(result.revenue).toBe(50005);
+    expect(result.cost).toBe(40001);
+    expect(result.marginPercent).toBeCloseTo(20.006, 2);
+  });
+
+  it('håller rader utan inköpspris UTANFÖR summorna och rapporterar dem', () => {
+    // Att räkna dem som kostnadsfria hade blåst upp TG:n till en farligt optimistisk siffra.
+    const result = quoteMargin([
+      { revenue: 200, quantity: 1, purchasePrice: 100 },
+      { revenue: 1000, quantity: 1, purchasePrice: null },
+    ]);
+    expect(result.marginPercent).toBeCloseTo(50, 6);
+    expect(result.revenue).toBe(200);
+    expect(result.unpricedRows).toBe(1);
+    expect(result.unpricedRevenue).toBe(1000);
+  });
+
+  it('fångar den AUTO-PRISSATTA raden som obedömd i stället för att tappa den', () => {
+    // Regressionsvakt: formuläret prissätter auto-rader med sin egen stub, så de HAR en intäkt på
+    // skärmen men saknar artikel och därmed inköpspris. Räknades de inte skulle säljaren se en grön
+    // TG som ignorerade nästan hela offertvärdet — utan en enda varning.
+    const result = quoteMargin([
+      { revenue: 100, quantity: 1, purchasePrice: 40 },
+      { revenue: 18000, quantity: 20, purchasePrice: null }, // 20 m³ × 900 kr, ingen artikel vald
+    ]);
+    expect(result.marginPercent).toBeCloseTo(60, 6);
+    expect(result.unpricedRows).toBe(1);
+    expect(result.unpricedRevenue).toBe(18000);
+  });
+
+  it('ger null när ingen rad går att bedöma', () => {
+    const result = quoteMargin([{ revenue: 200, quantity: 1, purchasePrice: null }]);
+    expect(result.marginPercent).toBeNull();
+    expect(result.unpricedRows).toBe(1);
+  });
+
+  it('räknar inte tomma rader som obedömbara', () => {
+    // En tom rad har ingen intäkt och ska varken påverka TG:n eller flaggas som "kunde inte bedömas".
+    const result = quoteMargin([{ revenue: 0, quantity: 0, purchasePrice: null }]);
+    expect(result.unpricedRows).toBe(0);
+    expect(result.marginPercent).toBeNull();
   });
 });

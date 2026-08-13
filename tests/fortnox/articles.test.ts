@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildFortnoxArticlePayload } from '@/lib/domains/fortnox/articles';
+import { buildFortnoxArticlePayload, dedupeArticleNote } from '@/lib/domains/fortnox/articles';
 import { articleSearchTokens, matchesArticleSearch, sortArticlesFavoritesFirst } from '@/lib/domains/fortnox/articleSearch';
 import {
   fortnoxArticleInputSchema,
@@ -258,5 +258,40 @@ describe('fortnoxArticleInputSchema', () => {
       prices: [{ price_list: 'A', price: -1 }],
     });
     expect(parsed.success).toBe(false);
+  });
+});
+
+describe('dedupeArticleNote', () => {
+  it('tar bort upprepade segment och behåller ordningen', () => {
+    // Verkligt fall: artikel 10111 hade samma text fyra gånger, 83 tecken där 20 räckte.
+    expect(dedupeArticleNote('1RLL/FRP, 112FRP/PLL;1RLL/FRP, 112FRP/PLL;1RLL/FRP, 112FRP/PLL;1RLL/FRP, 112FRP/PLL'))
+      .toBe('1RLL/FRP, 112FRP/PLL');
+  });
+
+  it('behåller segment som verkligen skiljer sig, i ursprunglig ordning', () => {
+    // Två snarlika texter kan vara två riktiga upplysningar — bara exakta dubbletter tas bort.
+    expect(dedupeArticleNote('565X1220MM, 10PKT/PALL;Ensidig tejp;565X1220MM, 10PKT/PALL'))
+      .toBe('565X1220MM, 10PKT/PALL; Ensidig tejp');
+  });
+
+  it('lämnar en beskrivning utan dubbletter orörd (bortsett från normaliserade mellanrum)', () => {
+    expect(dedupeArticleNote('Slitstark vindduk anpassad för lösull.')).toBe('Slitstark vindduk anpassad för lösull.');
+  });
+
+  it('är idempotent — en omsynk får inte ge ett annat resultat', () => {
+    const once = dedupeArticleNote('A;A;B');
+    expect(dedupeArticleNote(once)).toBe(once);
+    expect(once).toBe('A; B');
+  });
+
+  it('ger null för tomt, blankt och saknat värde', () => {
+    expect(dedupeArticleNote(null)).toBeNull();
+    expect(dedupeArticleNote(undefined)).toBeNull();
+    expect(dedupeArticleNote('   ')).toBeNull();
+    expect(dedupeArticleNote(';;;')).toBeNull();
+  });
+
+  it('släpper tomma segment mellan semikolon', () => {
+    expect(dedupeArticleNote('A;;B;')).toBe('A; B');
   });
 });

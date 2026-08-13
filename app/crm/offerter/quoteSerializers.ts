@@ -8,6 +8,59 @@
 import { parseDecimal } from '@/lib/shared/number';
 import { inferMaterialFromArticle, lineItemSacks } from '@/lib/domains/crm/materials';
 
+// ── Giltighetstid ────────────────────────────────────────────────────────────
+//
+// "Giltig till" härleds ur offertdatumet plus ett antal dagar. Säljaren väljer antalet i en
+// rullgardin i stället för att behöva plocka ett datum i kalendern — det vanliga fallet är ett
+// jämnt antal dagar, inte ett specifikt datum. Kalendern finns kvar för de gånger det ÄR ett
+// specifikt datum som gäller.
+
+/** Standard: en månad. Det är den giltighetstid offerterna har haft sedan formuläret byggdes. */
+export const OFFER_VALIDITY_DAYS = 30;
+
+/** Valen i rullgardinen. 30 ligger med som standardvalet. */
+export const OFFER_VALIDITY_PRESETS = [10, 15, 20, 30, 45, 60] as const;
+
+/**
+ * Datumet `days` dagar efter `iso` (YYYY-MM-DD).
+ *
+ * Klockan tolvs på dagen med flit: en date-only-sträng tolkad som midnatt kan tippa över till fel
+ * dygn när sommartid slår om, och då blir giltighetstiden en dag kort eller lång.
+ */
+export function addDaysIso(iso: string, days: number): string {
+  const date = new Date(`${iso}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return iso;
+  // Vakta ÄVEN dagantalet: setDate(NaN) gör datumet ogiltigt och toISOString KASTAR då
+  // (RangeError), vilket hade tagit ner hela formulärets rendering i stället för att degradera.
+  if (!Number.isFinite(days)) return iso;
+  date.setDate(date.getDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+/** Antal dagar mellan två datum (YYYY-MM-DD), eller null om något av dem inte är ett datum. */
+export function daysBetweenIso(from: string, to: string): number | null {
+  if (!from || !to) return null;
+  const start = new Date(`${from}T12:00:00`);
+  const end = new Date(`${to}T12:00:00`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
+  return Math.round((end.getTime() - start.getTime()) / 86_400_000);
+}
+
+/**
+ * Vilket rullgardinsval giltighetstiden motsvarar, eller null för ett datum som inte är någon av
+ * dem ("Eget datum").
+ *
+ * Härleds ur datumen i stället för att lagras separat. Ett eget fält för "valt antal dagar" hade
+ * blivit en andra sanning som kan glida isär från `valid_until` — och det är `valid_until` som går
+ * till Fortnox. Följden blir också att en offert som redigeras visar rätt val i rullgardinen utan
+ * att något behöver ha sparats.
+ */
+export function matchedValidityPreset(quoteDate: string, validUntil: string): number | null {
+  const days = daysBetweenIso(quoteDate, validUntil);
+  if (days === null) return null;
+  return (OFFER_VALIDITY_PRESETS as readonly number[]).includes(days) ? days : null;
+}
+
 export type QuoteCustomerFields = {
   quote_type: 'private' | 'business';
   customer_name: string;

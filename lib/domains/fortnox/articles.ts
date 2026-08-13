@@ -1,5 +1,5 @@
 import { getSupabaseAdmin } from '@/lib/supabase/server';
-import { fortnoxGet, fortnoxPost, fortnoxPut, fortnoxDelete, FortnoxApiError } from './client';
+import { fortnoxGet, fortnoxPost, fortnoxPut, fortnoxDelete, fortnoxSleep, FortnoxApiError } from './client';
 import { articleSearchTokens, sortArticlesFavoritesFirst } from './articleSearch';
 import { listFortnoxPriceLists } from './customers';
 import type {
@@ -25,10 +25,113 @@ type FortnoxPriceResponse = { Price: { Price: number | null } };
 export type ArticleSyncResult = {
   synced: number;
   pages: number;
+  /** Antal artiklar som FICK en beskrivning i den här körningen (tomma Note räknas inte). */
+  notesFetched: number;
 };
+
+// ── Artikelbeskrivningar (Fortnox `Note`) ────────────────────────────────────
+//
+// `GET /articles` (listan) returnerar INTE `Note` — bara enskild-GET gör det (samma lucka som
+// kundernas `Type` och artiklarnas `HouseworkType`). Beskrivningen måste därför hämtas per artikel.
+//
+// Kostnaden bärs EN gång: `note_synced_at` markerar att vi frågat, så en artikel utan beskrivning
+// inte frågas om igen. Första körningen tar ~100 s för ~289 artiklar; därefter hämtas bara nya.
+
+/** Fortnox tål ~4 req/s. En paus mellan varje anrop håller oss under, med marginal. */
+const NOTE_FETCH_DELAY_MS = 300;
+
+/**
+ * Tak per körning. Skyddar mot att synken springer in i en funktionstimeout om artikelregistret
+ * växer kraftigt — resten hämtas vid nästa synk, eftersom `note_synced_at` gör passet resumebart.
+ */
+const NOTE_FETCH_MAX_PER_RUN = 400;
+
+/**
+ * Städar en artikelbeskrivning från upprepade segment.
+ *
+ * ⚠️ Beskrivningarna i Fortnox är till stor del DUBBLETTER: samma text ligger två till fyra gånger
+ * i samma fält, separerad med semikolon. Vid mätning 2026-08-13 gällde det 177 av 227 ifyllda
+ * beskrivningar (78 %), och en artikel gick från 435 till 108 tecken vid dedupe. Mönstret ser ut
+ * som upprepade importer där texten lagts på i stället för att ersättas.
+ *
+ * Vi städar vid skrivning till vår cache i stället för att röra Fortnox: fältet är hjälptext för
+ * säljaren, och att skriva om 177 artiklar i det skarpa registret är en helt annan sorts åtgärd som
+ * kräver ett eget beslut. Funktionen är idempotent, så en omsynk ger samma resultat.
+ *
+ * Segment jämförs exakt efter trim — inget försök att slå ihop "nästan lika" texter, eftersom två
+ * snarlika segment mycket väl kan vara två verkliga upplysningar.
+ */
+export function dedupeArticleNote(note: string | null | undefined): string | null {
+  const trimmed = (note ?? '').trim();
+  if (!trimmed) return null;
+  const segments = trimmed.split(';').map((s) => s.trim()).filter(Boolean);
+  if (segments.length === 0) return null;
+  return [...new Set(segments)].join('; ');
+}
+
+/**
+ * Hämtar `Note` för artiklar som ännu inte frågats efter och skriver in den i cachen.
+ *
+ * Sekventiellt med paus — INTE `Promise.all`. Parallell fan-out mot Fortnox är precis vad som
+ * sprängde kundimporten (TD-3): 429-storm, tappade svar och tyst felaktig data. Ett misslyckat
+ * anrop stämplar ändå `note_synced_at` så en trasig artikel inte blockerar passet för alltid; den
+ * plockas upp igen vid nästa fulla omsynk.
+ */
+export async function syncArticleNotes(): Promise<number> {
+  const supabase = getSupabaseAdmin();
+
+  const { data: pending, error } = await supabase
+    .from('fortnox_articles_cache')
+    .select('article_number')
+    .is('note_synced_at', null)
+    .order('article_number', { ascending: true })
+    .limit(NOTE_FETCH_MAX_PER_RUN);
+
+  if (error) throw new Error(`Kunde inte läsa artiklar utan beskrivning: ${error.message}`);
+  if (!pending?.length) return 0;
+
+  let fetched = 0;
+  for (const [i, row] of pending.entries()) {
+    const articleNumber = (row as { article_number: string }).article_number;
+    let note: string | null = null;
+    try {
+      const { Article } = await fortnoxGet<FortnoxArticleWriteResponse>(
+        `/articles/${encodeURIComponent(articleNumber)}`,
+      );
+      note = dedupeArticleNote(Article?.Note);
+      if (note) fetched++;
+    } catch (e) {
+      // ⚠️ STÄMPLA INTE vid fel. Ett enda 429 eller timeout hade annars satt note_synced_at på en
+      // artikel vars beskrivning aldrig lästes — och eftersom passet bara plockar rader där
+      // stämpeln är null, och den fulla synken medvetet inte rör kolumnerna, hade den
+      // beskrivningen varit borta för alltid utan annan väg tillbaka än manuell SQL. Raden lämnas
+      // orörd och plockas upp vid nästa synk. Samma val som verifyCustomerTypesBatch gör.
+      console.warn(`[Fortnox] kunde inte hämta beskrivning för artikel ${articleNumber}:`, (e as Error).message);
+      continue;
+    }
+
+    const { error: updateError } = await supabase
+      .from('fortnox_articles_cache')
+      .update({ note, note_synced_at: new Date().toISOString() })
+      .eq('article_number', articleNumber);
+    if (updateError) {
+      console.warn(`[Fortnox] kunde inte spara beskrivning för artikel ${articleNumber}:`, updateError.message);
+    }
+
+    if (i < pending.length - 1) await fortnoxSleep(NOTE_FETCH_DELAY_MS);
+  }
+
+  return fetched;
+}
 
 // Map a Fortnox article into a fortnox_articles_cache row. Shared by the bulk
 // sync and the single-article write paths so the cached shape stays identical.
+//
+// ⚠️ `note`/`note_synced_at` ligger MED FLIT utanför. Listendpointen returnerar ingen `Note`, så
+// hade fältet stått här hade varje full artikelsynk nollat alla beskrivningar vi mödosamt hämtat
+// en och en. En PostgREST-upsert rör bara de kolumner som finns i payloaden — utelämnade kolumner
+// står kvar orörda, vilket är precis vad vi vill här. Enskild-GET-vägen sätter dem explicit
+// (se upsertArticleCacheRow).
 function mapFortnoxArticleToCacheRow(a: FortnoxArticle, now: string) {
   return {
     article_number: a.ArticleNumber,
@@ -75,12 +178,23 @@ export async function syncFortnoxArticles(): Promise<ArticleSyncResult> {
     page++;
   } while (page <= totalPages);
 
-  return { synced: totalSynced, pages: totalPages };
+  // Beskrivningarna (Note) finns inte i listsvaret och hämtas per artikel — men bara för dem vi
+  // inte redan frågat om. Första körningen är därför långsam (~100 s), därefter snabb igen.
+  // Icke-fatalt: artiklarna är synkade även om beskrivningshämtningen fallerar, och passet är
+  // resumebart via note_synced_at.
+  let notesFetched = 0;
+  try {
+    notesFetched = await syncArticleNotes();
+  } catch (e) {
+    console.warn('[Fortnox] hämtning av artikelbeskrivningar misslyckades:', (e as Error).message);
+  }
+
+  return { synced: totalSynced, pages: totalPages, notesFetched };
 }
 
 // Read articles from local cache. Fast, no external API call.
 const ARTICLE_CACHE_SELECT =
-  'article_number, description, sales_price, purchase_price, unit, article_type, active, last_fetched_at';
+  'article_number, description, note, sales_price, purchase_price, unit, article_type, active, last_fetched_at';
 
 // The global favorite article numbers (shared, not per-user). Small curated set.
 export async function listFavoriteArticleNumbers(): Promise<Set<string>> {
@@ -94,6 +208,13 @@ export async function listCachedFortnoxArticles(opts?: {
   activeOnly?: boolean;
   search?: string;
   limit?: number;
+  /**
+   * Slå upp specifika artikelnummer. Används av offertformuläret vid redigering: raderna bär
+   * artikelnummer men inte inköpspris (det lagras med flit aldrig på raden — se pricing.ts), så
+   * täckningsgraden behöver slås upp för just de artiklar offerten faktiskt använder i stället för
+   * att dra hem hela registret.
+   */
+  numbers?: string[];
 }): Promise<CachedFortnoxArticle[]> {
   const supabase = getSupabaseAdmin();
   const favorites = await listFavoriteArticleNumbers();
@@ -103,6 +224,7 @@ export async function listCachedFortnoxArticles(opts?: {
   const buildQuery = () => {
     let q = supabase.from('fortnox_articles_cache').select(ARTICLE_CACHE_SELECT).order('article_number', { ascending: true });
     if (opts?.activeOnly !== false) q = q.eq('active', true);
+    if (opts?.numbers?.length) q = q.in('article_number', opts.numbers);
     // Each token adds an AND group: (number~token OR description~token) — multi-word order-independent.
     for (const token of tokens) q = q.or(`article_number.ilike.%${token}%,description.ilike.%${token}%`);
     return q;
@@ -262,11 +384,17 @@ export async function listFortnoxArticlePriceLists(): Promise<FortnoxArticlePric
 // for integration writes, consistent with syncFortnoxArticles.
 async function upsertArticleCacheRow(article: FortnoxArticle): Promise<void> {
   const supabase = getSupabaseAdmin();
+  const now = new Date().toISOString();
   const { error } = await supabase
     .from('fortnox_articles_cache')
-    .upsert(mapFortnoxArticleToCacheRow(article, new Date().toISOString()), {
-      onConflict: 'article_number',
-    });
+    .upsert({
+      ...mapFortnoxArticleToCacheRow(article, now),
+      // Det här är svaret från en ENSKILD artikel, alltså den enda vägen `Note` kommer med. Skriv in
+      // den direkt så en beskrivning som ändras i CRM:s artikelformulär slår igenom i offertens
+      // artikelväljare med en gång, utan att invänta nästa fulla synk.
+      note: dedupeArticleNote(article.Note),
+      note_synced_at: now,
+    }, { onConflict: 'article_number' });
   if (error) throw new Error(`Kunde inte uppdatera artikelcache: ${error.message}`);
 }
 

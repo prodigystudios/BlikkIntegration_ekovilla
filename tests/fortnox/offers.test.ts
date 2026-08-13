@@ -322,3 +322,32 @@ describe('snapshotToFortnoxSource → buildFortnoxCustomerPayload', () => {
     expect(payload.DeliveryCity).toBe('Södertälje');
   });
 });
+
+describe('article_note är INTERN', () => {
+  it('artikelns beskrivning når aldrig Fortnox-raden', () => {
+    // Beskrivningen är ett säljstöd i offertformuläret, inte något kunden ska se. Den ligger på
+    // raden (denormaliserad från artikelregistret) och MÅSTE hållas utanför payloaden — annars
+    // hamnar en intern registeranteckning på kundens offert.
+    const rows = buildOfferRows(
+      [{
+        article_number: '2410510',
+        article_name: 'EKOVILLA cellulosa',
+        unit_price: '420',
+        quantity: '2',
+        // @ts-expect-error – fältet finns på raden i appen men ingår inte i pushens radtyp,
+        // vilket i sig är skyddet: buildOfferRows kan inte råka läsa det.
+        article_note: 'Intern anteckning: beställs på pall, 3 dagars ledtid',
+      }],
+      25,
+      false,
+    );
+
+    const serialized = JSON.stringify(rows);
+    expect(serialized).not.toContain('Intern anteckning');
+    expect(serialized).not.toContain('article_note');
+    expect(serialized).not.toContain('ledtid');
+    // Raden i övrigt är oförändrad.
+    expect(rows[0].Description).toBe('EKOVILLA cellulosa');
+    expect(rows[0].Price).toBe(420);
+  });
+});

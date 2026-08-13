@@ -10,6 +10,10 @@ const querySchema = z.object({
   q: z.string().trim().optional(),
   active_only: z.enum(['true', 'false']).optional(),
   limit: z.coerce.number().int().min(1).max(1000).optional(),
+  // Kommaseparerade artikelnummer. Offertformuläret slår upp inköpspris för de artiklar en
+  // redigerad offert redan använder, i stället för att hämta hela registret. Taket speglar
+  // registrets storlek och hindrar en orimligt lång IN-lista.
+  numbers: z.string().trim().min(1).optional(),
 });
 
 export async function GET(req: Request) {
@@ -22,13 +26,22 @@ export async function GET(req: Request) {
       q: url.searchParams.get('q') || undefined,
       active_only: url.searchParams.get('active_only') || undefined,
       limit: url.searchParams.get('limit') || undefined,
+      numbers: url.searchParams.get('numbers') || undefined,
     });
     if (!parsed.success) return validationError(parsed.error);
 
+    const numbers = parsed.data.numbers
+      ? [...new Set(parsed.data.numbers.split(',').map((n) => n.trim()).filter(Boolean))].slice(0, 500)
+      : undefined;
+
     const articles = await listCachedFortnoxArticles({
       search: parsed.data.q,
-      activeOnly: parsed.data.active_only !== 'false',
+      // En uppslagning på nummer ska SOM DEFAULT hitta artikeln även om den avaktiverats sedan
+      // offerten skrevs — men en anropare som uttryckligen ber om active_only=true ska få det.
+      // Att tyst kasta bort parametern hade gett tillbaka avaktiverade artiklar utan någon signal.
+      activeOnly: numbers ? parsed.data.active_only === 'true' : parsed.data.active_only !== 'false',
       limit: parsed.data.limit,
+      numbers,
     });
 
     return ok({ items: articles, count: articles.length });

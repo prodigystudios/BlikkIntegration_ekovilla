@@ -555,3 +555,38 @@ describe('PATCH /api/crm/quotes/[id] — status won', () => {
     expect((await res.json()).errorDetails.code).toBe('crm_quote_won_failed');
   });
 });
+
+describe('article_note på offertraden', () => {
+  it('överlever Zod-valideringen — annars försvinner beskrivningen tyst vid varje sparning', () => {
+    // Samma fälla som is_rot_work och written_off gick i: ett fält som saknas i schemat strippas
+    // utan felmeddelande, och hjälptexten är borta så fort offerten öppnas igen.
+    const parsed = createCrmQuoteSchema.safeParse({
+      ...validQuoteBase,
+      // Rader kräver "Er referens" (kontaktperson) — annars fälls offerten på den regeln i stället.
+      customer_snapshot: { ...validQuoteBase.customer_snapshot, contact_name: 'Anna' },
+      line_items: [{
+        id: 'row-1',
+        article_number: '2410510',
+        article_name: 'EKOVILLA cellulosa',
+        article_note: 'Beställs på pall, 3 dagars ledtid',
+        unit_price: '420',
+        quantity: '2',
+      }],
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.line_items[0].article_note).toBe('Beställs på pall, 3 dagars ledtid');
+    }
+  });
+
+  it('saknad beskrivning blir null, inte undefined', () => {
+    const parsed = createCrmQuoteSchema.safeParse({
+      ...validQuoteBase,
+      customer_snapshot: { ...validQuoteBase.customer_snapshot, contact_name: 'Anna' },
+      line_items: [{ id: 'row-1', article_name: 'Utan artikel', unit_price: '100', quantity: '1' }],
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.line_items[0].article_note).toBeNull();
+  });
+});
