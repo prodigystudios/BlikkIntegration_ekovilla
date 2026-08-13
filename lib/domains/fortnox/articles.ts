@@ -51,6 +51,29 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
+ * Städar en artikelbeskrivning från upprepade segment.
+ *
+ * ⚠️ Beskrivningarna i Fortnox är till stor del DUBBLETTER: samma text ligger två till fyra gånger
+ * i samma fält, separerad med semikolon. Vid mätning 2026-08-13 gällde det 177 av 227 ifyllda
+ * beskrivningar (78 %), och en artikel gick från 435 till 108 tecken vid dedupe. Mönstret ser ut
+ * som upprepade importer där texten lagts på i stället för att ersättas.
+ *
+ * Vi städar vid skrivning till vår cache i stället för att röra Fortnox: fältet är hjälptext för
+ * säljaren, och att skriva om 177 artiklar i det skarpa registret är en helt annan sorts åtgärd som
+ * kräver ett eget beslut. Funktionen är idempotent, så en omsynk ger samma resultat.
+ *
+ * Segment jämförs exakt efter trim — inget försök att slå ihop "nästan lika" texter, eftersom två
+ * snarlika segment mycket väl kan vara två verkliga upplysningar.
+ */
+export function dedupeArticleNote(note: string | null | undefined): string | null {
+  const trimmed = (note ?? '').trim();
+  if (!trimmed) return null;
+  const segments = trimmed.split(';').map((s) => s.trim()).filter(Boolean);
+  if (segments.length === 0) return null;
+  return [...new Set(segments)].join('; ');
+}
+
+/**
  * Hämtar `Note` för artiklar som ännu inte frågats efter och skriver in den i cachen.
  *
  * Sekventiellt med paus — INTE `Promise.all`. Parallell fan-out mot Fortnox är precis vad som
@@ -79,7 +102,7 @@ export async function syncArticleNotes(): Promise<number> {
       const { Article } = await fortnoxGet<FortnoxArticleWriteResponse>(
         `/articles/${encodeURIComponent(articleNumber)}`,
       );
-      note = Article?.Note?.trim() || null;
+      note = dedupeArticleNote(Article?.Note);
       fetched++;
     } catch (e) {
       // Icke-fatalt: en artikel som inte går att läsa ska inte välta hela synken. Stämpeln sätts
@@ -361,7 +384,7 @@ async function upsertArticleCacheRow(article: FortnoxArticle): Promise<void> {
       // Det här är svaret från en ENSKILD artikel, alltså den enda vägen `Note` kommer med. Skriv in
       // den direkt så en beskrivning som ändras i CRM:s artikelformulär slår igenom i offertens
       // artikelväljare med en gång, utan att invänta nästa fulla synk.
-      note: article.Note?.trim() || null,
+      note: dedupeArticleNote(article.Note),
       note_synced_at: now,
     }, { onConflict: 'article_number' });
   if (error) throw new Error(`Kunde inte uppdatera artikelcache: ${error.message}`);
