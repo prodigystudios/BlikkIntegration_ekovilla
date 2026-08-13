@@ -427,13 +427,16 @@ const initialDraft: QuoteDraft = {
 
 // ─── ArticlePicker ────────────────────────────────────────────────────────────
 
-function ArticlePicker({ value, articleNumber, price, unit, note, onSelect, onClear }: {
+function ArticlePicker({ value, articleNumber, price, unit, note, purchasePrice, onSelect, onClear }: {
   value: string;
   articleNumber?: string | null;
   price?: number | null;
   unit?: string | null;
   /** Artikelns beskrivning ur registret — INTERN hjälptext, når aldrig Fortnox. */
   note?: string | null;
+  /** Inköpspris per enhet ur artikelregistret. Visas som underlag till täckningsgraden — utan
+   *  kronorna är procenten svår att förhandla mot. Lagras aldrig på raden (se pricing.ts). */
+  purchasePrice?: number | null;
   onSelect: (article: ArticleLite) => void;
   onClear: () => void;
 }) {
@@ -508,6 +511,9 @@ function ArticlePicker({ value, articleNumber, price, unit, note, onSelect, onCl
       articleNumber || 'Utan artikelnummer',
       typeof price === 'number' ? `${price.toFixed(2)} kr` : null,
       getArticleUnitName(unit) || null,
+      // Inköpspriset som underlag till TG-märket på raden: procenten säger att marginalen är tunn,
+      // kronorna säger hur mycket utrymme som faktiskt finns kvar att förhandla med.
+      typeof purchasePrice === 'number' ? `Inköp ${purchasePrice.toFixed(2)} kr` : null,
     ].filter(Boolean).join(' · ');
     return (
       <div className="flex items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5">
@@ -873,6 +879,7 @@ function LineItemRow({
   metrics,
   rotEnabled,
   marginPercent,
+  purchasePrice,
   expanded,
   onToggle,
   onChange,
@@ -887,6 +894,8 @@ function LineItemRow({
   rotEnabled: boolean;
   /** Radens täckningsgrad i procent, eller null när artikeln saknar inköpspris. */
   marginPercent: number | null;
+  /** Artikelns inköpspris per enhet, visat som underlag till täckningsgraden. */
+  purchasePrice: number | null;
   // Accordion: which row is open is owned by the parent so opening one collapses the rest.
   expanded: boolean;
   onToggle: (next: boolean) => void;
@@ -956,6 +965,7 @@ function LineItemRow({
         price={row.article_price}
         unit={row.article_unit_name}
         note={row.article_note}
+        purchasePrice={purchasePrice}
         onSelect={onSelectArticle}
         onClear={onClearArticle}
       />
@@ -2387,6 +2397,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
                 metrics={effectiveRows.find((r) => r.id === row.id)}
                 rotEnabled={draft.rot_enabled}
                 marginPercent={rowMarginPercent(marginRows[index])}
+                purchasePrice={marginRows[index].purchasePrice ?? null}
                 expanded={expandedRowId === row.id}
                 onToggle={(next) => setExpandedRowId(next ? row.id : null)}
                 onChange={(patch) => setDraft((d) => ({ ...d, items: d.items.map((item) => item.id === row.id ? { ...item, ...patch } : item) }))}
