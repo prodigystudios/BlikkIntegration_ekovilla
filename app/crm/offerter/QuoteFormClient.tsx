@@ -346,9 +346,8 @@ function getValidationIssues(draft: QuoteDraft, effectiveRows: EffectiveRow[]) {
   if (!draft.prospect_id && !draft.customer_id && !effectiveCustomerName) issues.push('Kund måste anges');
   if (draft.customer_source.kind === 'prospect' && !draft.prospect_id) issues.push('Prospektkälla kräver valt prospekt');
   if (draft.customer_source.kind === 'fortnox' && !draft.customer_source.fortnox_customer_name.trim()) issues.push('Fortnox-kund behöver kundreferens');
-  // Personnummer is only required on the quote when ROT is used (ROT can't be computed without
-  // it). Otherwise it's optional here and enforced when the work order is created.
-  if (draft.quote_type === 'private' && draft.rot_enabled && !draft.personal_number.trim()) issues.push('Personnummer krävs för ROT');
+  // Personnummer krävs inte på offerten ens med ROT — kunden lämnar det ofta först när hen tackar
+  // ja. Kravet ligger på arbetsordern (se app/api/crm/quotes/_lib.ts).
   if (draft.quote_type === 'business' && !draft.company_name.trim() && !draft.customer_name.trim()) issues.push('Företagsnamn krävs');
   // Er referens (kontaktperson) is required: it becomes YourReference on the Fortnox
   // offer and carries through offer → order → invoice. Enforced here so no quote leaves
@@ -1479,11 +1478,9 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     if (draft.quote_type === 'business' && !draft.company_name.trim() && !draft.customer_name.trim()) {
       errs.company_name = 'Företagsnamn krävs';
     }
-    if (draft.quote_type === 'private' && draft.rot_enabled && !draft.personal_number.trim()) {
-      errs.personal_number = 'Personnummer krävs för ROT';
-    }
     if (!draft.contact_name.trim()) errs.contact_name = 'Er referens krävs';
-    // Fastighetsbeteckning is enforced at order creation, not on the quote — no field error here.
+    // Personnummer och fastighetsbeteckning krävs båda vid orderskapandet, inte på offerten —
+    // inga fältfel här.
     return errs;
   }, [submitAttempted, draft, effectiveRows]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1781,8 +1778,11 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     { id: 'section-kund', label: 'Kund', done: Boolean(draft.quote_type === 'business' ? (draft.company_name || draft.customer_name) : draft.customer_name) },
     { id: 'section-offert', label: 'Offert', done: Boolean(draft.project_name.trim()) },
     { id: 'section-rader', label: 'Produkter & priser', done: hasAnyLineItemInput },
+    // ROT-sektionen har inget eget krav för att offerten ska gå att spara: varken personnummer
+    // eller fastighetsbeteckning efterfrågas förrän arbetsordern skapas. `done: undefined` håller
+    // den utanför förloppsräknaren i stället för att visa den som evigt ofullständig.
     ...(draft.quote_type === 'private' && draft.rot_enabled
-      ? [{ id: 'section-rot', label: 'ROT-avdrag', done: Boolean(draft.personal_number.trim()) }]
+      ? [{ id: 'section-rot', label: 'ROT-avdrag' }]
       : []),
     { id: 'section-handoff', label: 'Intern handoff' },
     ...(isEditing && loadedQuote ? [{ id: 'section-arbetsorder', label: 'Arbetsorder' }] : []),
@@ -2284,8 +2284,14 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
                     {draft.personal_number.trim() ? <span className="font-normal text-slate-500"> · {draft.personal_number}</span> : null}
                   </p>
                 </div>
+                {/* Upplysning, inte spärr. Offerten går att skicka utan numret — kunden vill
+                    sällan lämna ut det innan hen tackat ja — och Fortnox räknar ut och visar
+                    skattereduktionen på offerten ändå (uppmätt: 4 875 kr på en offert vars
+                    husarbetespost saknade personnummer). Det numret avgör är om avdraget kan
+                    knytas till en person, vilket krävs först vid fakturering. Därför efterfrågas
+                    det när arbetsordern skapas. */}
                 {!draft.personal_number.trim() ? (
-                  <span className="text-xs font-medium text-amber-700">Kunden saknar personnummer – ROT-avdraget kan inte beräknas i Fortnox.</span>
+                  <span className="text-xs font-medium text-amber-700">Personnummer saknas – behövs inte för offerten, men efterfrågas när arbetsordern skapas.</span>
                 ) : null}
               </div>
               <div className="grid gap-4 md:grid-cols-2">
