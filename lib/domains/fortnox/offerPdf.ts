@@ -275,6 +275,9 @@ const COL_SUM_R = M_RIGHT;
 // innan det når hit, så foten aldrig krockar med raderna.
 const BOTTOM_BLOCK_H = 165;
 const CONTENT_BOTTOM = BOTTOM_BLOCK_H + 20;
+// Baslinjen säljtextens SISTA rad landar på när blocket trycks ned mot summaradens linje
+// (som ligger på BOTTOM_BLOCK_H + 26). Ger några punkters luft mellan texten och linjen.
+const TEXT_BLOCK_BOTTOM = BOTTOM_BLOCK_H + 42;
 
 const INK = rgb(0.09, 0.09, 0.11);
 const MUTED = rgb(0.35, 0.35, 0.38);
@@ -289,6 +292,21 @@ function drawText(page: PDFPage, text: string, x: number, y: number, font: PDFFo
 function drawRight(page: PDFPage, text: string, xRight: number, y: number, font: PDFFont, size: number, color = INK) {
   const safe = pdfSafe(text);
   page.drawText(safe, { x: xRight - font.widthOfTextAtSize(safe, size), y, size, font, color });
+}
+
+/**
+ * Var säljtextblocket ska börja: nedtryckt mot summaradens linje, som i Fortnox mall.
+ *
+ * Luften hör hemma MELLAN artiklarna och texten, inte som ett hål mellan texten och summan. Flöt
+ * blocket fritt satt brödtexten klistrad under sista artikeln med ett stort tomrum under sig.
+ *
+ * ⚠️ Flyttar bara NEDÅT. Ryms blocket inte där nere (lång text, eller rader som redan ätit upp
+ * sidan) behålls det fria flödet och sidbrytningen sköter resten — annars hade texten kunnat
+ * skjutas upp ÖVER de artikelrader den ska stå under.
+ */
+export function anchorTextBlockStart(currentY: number, blockHeight: number, gap = 22): number {
+  const anchored = TEXT_BLOCK_BOTTOM + blockHeight;
+  return anchored < currentY - gap ? anchored : currentY - gap;
 }
 
 /** Bryter text till rader som ryms inom `maxWidth`. Bevarar avsiktliga radbrytningar. */
@@ -422,9 +440,24 @@ export async function renderOfferPdf(input: OfferPdfInput): Promise<Uint8Array> 
   }
 
   // ── Säljtext + ROT-förbehåll ──
-  y -= 22;
-  for (const paragraph of SALES_TEXT) {
-    const lines = wrapText(paragraph, fonts.regular, 8.5, M_RIGHT - M_LEFT);
+  //
+  // Blocket TRYCKS NED mot summaradens linje i stället för att flyta direkt efter sista artikeln.
+  // Så gör Fortnox mall: luften hamnar mellan raderna och texten, inte som ett tomrum mellan texten
+  // och summan. Flöt den fritt satt brödtexten klistrad under sista artikeln med ett stort hål under.
+  //
+  // ROT-förbehållet BARA på ett ROT-dokument — det är ett avtalsvillkor om Skatteverket, och när
+  // OFFER_PDF_MODE går till 'all' renderas även rena företagsoffer här. De ska inte bära en mening
+  // om ett avdrag som aldrig varit inblandat.
+  const salesBlocks = SALES_TEXT.map((p) => wrapText(p, fonts.regular, 8.5, M_RIGHT - M_LEFT));
+  const clauseLines = isRotDocument(offer) ? wrapText(ROT_CLAUSE, fonts.regular, 8.5, M_RIGHT - M_LEFT) : [];
+
+  const blockHeight =
+    salesBlocks.reduce((h, lines) => h + lines.length * 11 + 6, 0) +
+    (clauseLines.length ? 4 + clauseLines.length * 11 : 0);
+
+  y = anchorTextBlockStart(y, blockHeight);
+
+  for (const lines of salesBlocks) {
     ensureSpace(lines.length * 11 + 8);
     for (const line of lines) {
       drawText(page, line, M_LEFT, y, fonts.regular, 8.5);
@@ -433,10 +466,6 @@ export async function renderOfferPdf(input: OfferPdfInput): Promise<Uint8Array> 
     y -= 6;
   }
 
-  // ROT-förbehållet BARA på ett ROT-dokument. Det är ett avtalsvillkor om Skatteverket, och när
-  // OFFER_PDF_MODE går till 'all' renderas även rena företagsoffer med omvänd skattskyldighet här
-  // — de ska inte bära en mening om ett avdrag som aldrig varit inblandat.
-  const clauseLines = isRotDocument(offer) ? wrapText(ROT_CLAUSE, fonts.regular, 8.5, M_RIGHT - M_LEFT) : [];
   if (clauseLines.length) ensureSpace(clauseLines.length * 11 + 8);
   y -= 4;
   for (const line of clauseLines) {

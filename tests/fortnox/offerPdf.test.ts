@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { PDFDocument } from 'pdf-lib';
 import {
+  anchorTextBlockStart,
   belongsToOffer,
   buildTaxReductionLines,
   formatAmount,
@@ -146,6 +147,32 @@ describe('buildTaxReductionLines', () => {
 
   it('ger inga rader alls utan sökande', () => {
     expect(buildTaxReductionLines([], 4875)).toEqual([]);
+  });
+});
+
+describe('anchorTextBlockStart', () => {
+  it('trycker ned blocket mot summaradens linje när det finns gott om plats', () => {
+    // Kort offert: raderna slutar högt upp. Blocket ska ändå landa nere vid linjen, som i Fortnox
+    // mall — inte klistrat under sista artikeln med ett hål under sig.
+    const start = anchorTextBlockStart(700, 120);
+    expect(start).toBeLessThan(700);
+    expect(start).toBe(165 + 42 + 120);
+  });
+
+  it('FLYTTAR ALDRIG blocket uppåt, in i artikelraderna', () => {
+    // Lång offert: raderna har redan ätit sidan. Ankaret skulle hamna ovanför nuvarande position —
+    // då måste det fria flödet behållas, annars skrivs texten ovanpå raderna den ska stå under.
+    const currentY = 250;
+    expect(anchorTextBlockStart(currentY, 400)).toBe(currentY - 22);
+    expect(anchorTextBlockStart(currentY, 400)).toBeLessThan(currentY);
+  });
+
+  it('behåller det fria flödet när blocket precis inte får plats nedtryckt', () => {
+    // Gränsfallet: ankaret sammanfaller med flödespositionen → ingen flytt, sidbrytningen tar vid.
+    const blockHeight = 100;
+    const anchored = 165 + 42 + blockHeight;
+    expect(anchorTextBlockStart(anchored + 22, blockHeight)).toBe(anchored);
+    expect(anchorTextBlockStart(anchored + 10, blockHeight)).toBe(anchored + 10 - 22);
   });
 });
 
