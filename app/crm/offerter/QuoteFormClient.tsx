@@ -22,6 +22,10 @@ import {
   buildRotDetails,
   buildInternalHandoff,
   buildMeasurementLines,
+  addDaysIso,
+  matchedValidityPreset,
+  OFFER_VALIDITY_DAYS,
+  OFFER_VALIDITY_PRESETS,
 } from './quoteSerializers';
 import { resolveCrmContact } from '@/lib/domains/crm/contacts';
 import { ROT_HOUSE_WORK_TYPES } from '@/lib/domains/fortnox/types';
@@ -291,15 +295,8 @@ function formatDate(value: string | null | undefined) {
   return new Intl.DateTimeFormat('sv-SE', { dateStyle: 'medium' }).format(date);
 }
 
-// An offer is valid for one month by default — "Giltig till" is derived as the offer date + 30 days
-// (and re-derived when the offer date changes). Noon avoids DST edge cases on the date-only string.
-const OFFER_VALIDITY_DAYS = 30;
-function addDaysIso(iso: string, days: number): string {
-  const date = new Date(`${iso}T12:00:00`);
-  if (Number.isNaN(date.getTime())) return iso;
-  date.setDate(date.getDate() + days);
-  return date.toISOString().slice(0, 10);
-}
+// Giltighetstiden (standard 30 dagar, rullgardinens val och datumräkningen) bor i
+// quoteSerializers — ren logik i en icke-klientmodul, så den är enhetstestad.
 
 function getDefaultDraftCustomerSource(prospectId?: string | null): QuoteDraft['customer_source'] {
   return {
@@ -1774,6 +1771,10 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   // Single source of truth for the visible sections (in order). Drives both the
   // section header numbers and the sidebar nav so they can never drift apart.
   // `done: undefined` marks an internal section with no completion requirement.
+  // Vilket val i giltighetstids-rullgardinen datumen motsvarar (null = eget datum). Härlett, inte
+  // lagrat — se matchedValidityPreset i quoteSerializers.
+  const validityPreset = matchedValidityPreset(draft.quote_date, draft.valid_until);
+
   const sections: { id: string; label: string; done?: boolean }[] = [
     { id: 'section-kund', label: 'Kund', done: Boolean(draft.quote_type === 'business' ? (draft.company_name || draft.customer_name) : draft.customer_name) },
     { id: 'section-offert', label: 'Offert', done: Boolean(draft.project_name.trim()) },
@@ -2107,33 +2108,69 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
             <Field label="Beskrivning" className="md:col-span-2">
               <Textarea value={draft.description} onChange={(e) => setDraft((d) => ({ ...d, description: e.target.value }))} rows={3} placeholder="Kort om omfattning eller vad som offereras" />
             </Field>
-            {/* Moms + the two dates on one even 3-column row. */}
-            <div className="grid gap-4 sm:grid-cols-3 md:col-span-2">
-              <Field label="Moms %">
+            {/* Moms + de två datumen på EN rad. Sex kolumner i stället för tre jämna: momsfältet
+                rymmer "25" och behöver inte en tredjedel av bredden, medan "Giltig till" bär två
+                kontroller (giltighetstid + datum) och behöver halva. */}
+            <div className="grid gap-4 sm:grid-cols-6 md:col-span-2">
+              <Field label="Moms %" className="sm:col-span-1">
                 <Input value={draft.vat_percent} onChange={(e) => setDraft((d) => ({ ...d, vat_percent: e.target.value }))} inputMode="decimal" placeholder="25" />
-                {selectedCustomer?.reverse_vat ? (
-                  <p className="mt-1 text-[11px] leading-snug text-amber-700">
-                    Kunden har <strong>omvänd skattskyldighet</strong> – moms sätts till 0 %. Köparen redovisar momsen själv.
-                  </p>
-                ) : null}
               </Field>
-              <Field label="Offertdatum" plain>
-                {/* Changing the offer date re-derives "Giltig till" to offer date + 30 days — but only
-                    while the validity is still the default. A validity the user set by hand (e.g. a
-                    negotiated 60-day offer) is preserved when the offer date changes. */}
+              <Field label="Offertdatum" plain className="sm:col-span-2">
+                {/* Ändras offertdatumet flyttas "Giltig till" med och BEHÅLLER giltighetstiden —
+                    väljer man 15 dagar ska det förbli 15 dagar, inte ett datum som blir fel så fort
+                    offertdatumet justeras. Ett datum som inte motsvarar något val i rullgardinen
+                    ("Eget datum") lämnas däremot orört: då är det just det datumet som gäller. */}
                 <DatePicker
                   value={draft.quote_date}
                   clearable={false}
                   aria-label="Offertdatum"
                   onChange={(next) => setDraft((d) => {
-                    const wasDefault = !d.valid_until || d.valid_until === addDaysIso(d.quote_date, OFFER_VALIDITY_DAYS);
-                    return { ...d, quote_date: next, valid_until: next && wasDefault ? addDaysIso(next, OFFER_VALIDITY_DAYS) : d.valid_until };
+                    const preset = matchedValidityPreset(d.quote_date, d.valid_until);
+                    const keepDays = d.valid_until ? preset : OFFER_VALIDITY_DAYS;
+                    return {
+                      ...d,
+                      quote_date: next,
+                      valid_until: next && keepDays !== null ? addDaysIso(next, keepDays) : d.valid_until,
+                    };
                   })}
                 />
               </Field>
-              <Field label="Giltig till" plain>
-                <DatePicker value={draft.valid_until} onChange={(v) => setDraft((d) => ({ ...d, valid_until: v }))} aria-label="Giltig till" />
+              <Field label="Giltig till" plain className="sm:col-span-3">
+                {/* Rullgardinen är den snabba vägen: giltighetstiden är nästan alltid ett jämnt
+                    antal dagar, och då ska ingen behöva räkna fram ett datum i kalendern. Valet
+                    HÄRLEDS ur datumen (matchedValidityPreset) i stället för att lagras — ett eget
+                    fält hade blivit en andra sanning vid sidan av valid_until, som är det som går
+                    till Fortnox. Kalendern står bredvid för de gånger ett specifikt datum gäller.
+
+                    minmax(0,1fr) på datumkolumnen med flit: ett <input> har min-width auto och
+                    spränger annars ut rutnätet i stället för att krympa (se FRONTEND_SYSTEM.md om
+                    grid blowout). */}
+                <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] gap-2">
+                  <Select
+                    aria-label="Giltighetstid"
+                    value={validityPreset ?? 'custom'}
+                    onChange={(e) => setDraft((d) => ({ ...d, valid_until: addDaysIso(d.quote_date, Number(e.target.value)) }))}
+                  >
+                    {OFFER_VALIDITY_PRESETS.map((days) => (
+                      <option key={days} value={days}>{days} dagar</option>
+                    ))}
+                    {/* "Eget datum" är ett TILLSTÅND, inte ett val: man hamnar där genom att plocka
+                        ett datum i kalendern, och det finns inget vettigt för ett klick här att
+                        göra. Alternativet visas därför bara när det faktiskt gäller, och är
+                        avstängt — annars står det i listan och ser trasigt ut när ingenting händer. */}
+                    {validityPreset === null ? <option value="custom" disabled>Eget datum</option> : null}
+                  </Select>
+                  <DatePicker value={draft.valid_until} onChange={(v) => setDraft((d) => ({ ...d, valid_until: v }))} aria-label="Giltig till" />
+                </div>
               </Field>
+              {/* Byggmoms-notisen står på egen rad under fälten, inte inuti momsfältet. Momskolumnen
+                  är en sjättedel bred nu, och där hade texten radbrutits till en smal remsa som
+                  drog upp höjden på hela raden. */}
+              {selectedCustomer?.reverse_vat ? (
+                <p className="text-[11px] leading-snug text-amber-700 sm:col-span-6">
+                  Kunden har <strong>omvänd skattskyldighet</strong> – moms sätts till 0 %. Köparen redovisar momsen själv.
+                </p>
+              ) : null}
             </div>
           </div>
 

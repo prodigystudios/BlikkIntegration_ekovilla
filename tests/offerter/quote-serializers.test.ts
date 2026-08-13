@@ -5,6 +5,11 @@ import {
   buildRotDetails,
   buildInternalHandoff,
   buildMeasurementLines,
+  addDaysIso,
+  daysBetweenIso,
+  matchedValidityPreset,
+  OFFER_VALIDITY_DAYS,
+  OFFER_VALIDITY_PRESETS,
   type QuoteCustomerFields,
   type QuoteRotFields,
   type QuoteHandoffFields,
@@ -286,5 +291,77 @@ describe('buildInternalHandoff', () => {
   it('mappar fält, tomma blir null', () => {
     expect(buildInternalHandoff({ desired_installation_date: '2026-07-01', handoff_notes: '', work_scope: 'Tak' }))
       .toEqual({ desired_installation_date: '2026-07-01', handoff_notes: null, work_scope: 'Tak' });
+  });
+});
+
+describe('giltighetstid', () => {
+  it('30 dagar är standard och finns som val i rullgardinen', () => {
+    // Standarden får inte glida isär från valen — annars visar rullgardinen "Eget datum" på en
+    // splitterny offert, vilket ser ut som att något är fel.
+    expect(OFFER_VALIDITY_DAYS).toBe(30);
+    expect(OFFER_VALIDITY_PRESETS).toContain(OFFER_VALIDITY_DAYS);
+  });
+
+  describe('addDaysIso', () => {
+    it('lägger till dagar och håller sig till YYYY-MM-DD', () => {
+      expect(addDaysIso('2026-08-13', 30)).toBe('2026-09-12');
+      expect(addDaysIso('2026-08-13', 10)).toBe('2026-08-23');
+    });
+
+    it('går över månads- och årsskifte', () => {
+      expect(addDaysIso('2026-12-20', 20)).toBe('2027-01-09');
+      expect(addDaysIso('2028-02-20', 10)).toBe('2028-03-01'); // skottår
+    });
+
+    it('överlever sommartidsomställningen', () => {
+      // Datumen tolkas kl. 12 just för det här: vid midnatt kan omställningen tippa över dygnet
+      // och giltighetstiden bli en dag kort. Sverige ställer om sista söndagen i mars och oktober.
+      expect(addDaysIso('2026-03-25', 10)).toBe('2026-04-04');
+      expect(addDaysIso('2026-10-20', 15)).toBe('2026-11-04');
+    });
+
+    it('lämnar ett ogiltigt datum orört i stället för att svara NaN', () => {
+      expect(addDaysIso('inte-ett-datum', 30)).toBe('inte-ett-datum');
+    });
+  });
+
+  describe('daysBetweenIso', () => {
+    it('räknar dagar mellan två datum', () => {
+      expect(daysBetweenIso('2026-08-13', '2026-09-12')).toBe(30);
+      expect(daysBetweenIso('2026-08-13', '2026-08-13')).toBe(0);
+    });
+
+    it('räknar rätt över sommartid', () => {
+      expect(daysBetweenIso('2026-03-25', '2026-04-04')).toBe(10);
+      expect(daysBetweenIso('2026-10-20', '2026-11-04')).toBe(15);
+    });
+
+    it('ger null när ett datum saknas eller är trasigt', () => {
+      expect(daysBetweenIso('', '2026-09-12')).toBeNull();
+      expect(daysBetweenIso('2026-08-13', '')).toBeNull();
+      expect(daysBetweenIso('2026-08-13', 'skräp')).toBeNull();
+    });
+  });
+
+  describe('matchedValidityPreset', () => {
+    it('känner igen varje val i rullgardinen', () => {
+      for (const days of OFFER_VALIDITY_PRESETS) {
+        expect(matchedValidityPreset('2026-08-13', addDaysIso('2026-08-13', days))).toBe(days);
+      }
+    });
+
+    it('ger null för ett datum som inte motsvarar något val — då visas "Eget datum"', () => {
+      expect(matchedValidityPreset('2026-08-13', addDaysIso('2026-08-13', 37))).toBeNull();
+      expect(matchedValidityPreset('2026-08-13', '2026-08-13')).toBeNull();
+    });
+
+    it('ger null när giltighetsdatumet saknas', () => {
+      // Tomt fält får inte råka matcha ett val och visa fel giltighetstid.
+      expect(matchedValidityPreset('2026-08-13', '')).toBeNull();
+    });
+
+    it('ger null för ett datum FÖRE offertdatumet', () => {
+      expect(matchedValidityPreset('2026-08-13', '2026-08-01')).toBeNull();
+    });
   });
 });
