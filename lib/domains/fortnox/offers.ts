@@ -2,9 +2,12 @@ import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
 import { lineItemUnitPrice, lineItemDiscountPercent, lineItemRowTotal } from '@/lib/domains/crm/pricing';
 import { fortnoxGet, fortnoxPost, fortnoxPut, fortnoxGetBinary, FortnoxApiError, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
-import {
-  OFFER_PDF_MODE, loadLogo, renderOfferPdf, shouldRenderLocally,
-  type FortnoxCompanySettingsResponse, type FortnoxOfferResponse, type FortnoxTaxReductionResponse,
+// Läget kommer från offerPdfMode (ingen pdf-lib), typerna raderas vid kompilering. Själva
+// renderaren laddas dynamiskt i getFortnoxOfferPdf, så PDF-motorn aldrig hamnar på kallstarten för
+// de routes som bara sparar en offert.
+import { OFFER_PDF_MODE, mayRenderLocally, shouldRenderLocally } from './offerPdfMode';
+import type {
+  FortnoxCompanySettingsResponse, FortnoxOfferResponse, FortnoxTaxReductionResponse,
 } from './offerPdf';
 import { appendFortnoxTextNote, buildRotPropertyNote, claimFortnoxPush, resolveOurReference, resolveReverseVat, rotLaborRow, rowRotLaborCarveout, splitRotMaterialRow } from './helpers';
 import { buildFortnoxCustomerPayload, createFortnoxCustomer, splitSwedishName, buildFortnoxAddress, type FortnoxCustomerSource } from './customers';
@@ -573,29 +576,48 @@ export async function getFortnoxOfferPdf(quoteId: string): Promise<{ bytes: Uint
   // Offerten kan renderas LOKALT i stället för av Fortnox utskriftsmall — idag bara ROT, där
   // Fortnox mall utelämnar skattereduktionen, på sikt alla när den egna formgivningen är klar.
   // Se lib/domains/fortnox/offerPdf.ts för läget (`OFFER_PDF_MODE`) och varför.
-  //
-  // Förhandsvillkoret speglar `shouldRenderLocally` men avgör bara OM det är värt en Fortnox-
-  // rundtur: i 'rot'-läget behöver en offert utan ROT aldrig hämtas. Det egentliga beslutet tas
-  // av `shouldRenderLocally` när svaret finns.
-  if (OFFER_PDF_MODE === 'all' || (OFFER_PDF_MODE === 'rot' && rotSelected)) {
+  if (mayRenderLocally(OFFER_PDF_MODE, rotSelected)) {
     const { Offer } = await fortnoxGet<{ Offer: FortnoxOfferResponse }>(`/offers/${offerNumber}`);
+
     if (shouldRenderLocally(OFFER_PDF_MODE, rotSelected, Offer?.TaxReductionType)) {
-      const [taxReductions, company, logo] = await Promise.all([
+      // Dynamisk import: offerPdf drar in pdf-lib (stora font-/kodningstabeller) och node:fs. Den
+      // laddas först när en PDF faktiskt ska ritas, inte när modulen importeras.
+      const { belongsToOffer, loadLogo, renderOfferPdf } = await import('./offerPdf');
+
+      // Ingen tyst fallback någonstans i den här grenen. Skulle någon av läsningarna svälja sitt
+      // fel får säljaren ett dokument som SER rätt ut men saknar skattereduktionen (eller hela
+      // företagsfoten) — precis felet vi bygger bort — och mejlar det vidare utan att märka något.
+      // Ett tydligt fel som går att rapportera är bättre än en tyst felaktig offert, så läsningarna
+      // nedan får kasta.
+      const [taxReductionResponse, companyResponse, logo] = await Promise.all([
         fortnoxGet<{ TaxReductions?: FortnoxTaxReductionResponse[] }>('/taxreductions', {
           filter: 'offers',
           referencenumber: offerNumber,
-        }).then((r) => r.TaxReductions ?? []).catch(() => []),
-        fortnoxGet<{ CompanySettings?: FortnoxCompanySettingsResponse }>('/settings/company')
-          .then((r) => r.CompanySettings ?? {}).catch(() => ({})),
+        }),
+        fortnoxGet<{ CompanySettings?: FortnoxCompanySettingsResponse }>('/settings/company'),
         loadLogo(),
       ]);
 
-      // Ingen tyst fallback till Fortnox här. Faller renderingen tillbaka på deras mall får
-      // säljaren ett dokument som SER rätt ut men saknar skattereduktionen — precis felet vi
-      // bygger bort — och skickar det vidare till kunden utan att märka något. Ett tydligt fel
-      // som går att rapportera är bättre än en tyst felaktig offert.
-      const bytes = await renderOfferPdf({ offer: Offer, taxReductions, company, logo });
+      // Fortnox numrerar offerter/ordrar/fakturor i skilda serier, så en post som slinker igenom
+      // filtret kan tillhöra ett annat dokument — och bär då en främmande kunds personnummer.
+      const taxReductions = (taxReductionResponse.TaxReductions ?? [])
+        .filter((entry) => belongsToOffer(entry, offerNumber));
+
+      const bytes = await renderOfferPdf({
+        offer: Offer, taxReductions, company: companyResponse.CompanySettings ?? {}, logo,
+      });
       return { bytes, contentType: 'application/pdf', offerNumber };
+    }
+
+    // CRM säger ROT men Fortnox-dokumentet gör det inte. Då är Fortnox mall rätt för den data som
+    // faktiskt ligger där — men avvikelsen betyder att ROT inte nådde fram vid pushen, vilket är
+    // värt att kunna se i loggen i stället för att bara tyst få en offert utan avdrag.
+    if (rotSelected) {
+      console.warn(
+        `[offert-pdf] offert ${offerNumber}: ROT valt i CRM men Fortnox har ` +
+        `TaxReductionType=${JSON.stringify(Offer?.TaxReductionType)} — faller tillbaka på Fortnox mall. ` +
+        'Synka om offerten om avdraget ska finnas.',
+      );
     }
   }
 

@@ -31,34 +31,18 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFImage, type PDFPage } from 'pdf-lib';
 
-/**
- * Vilka offerter som renderas lokalt i stället för av Fortnox utskriftsmall.
- *
- * - `'rot'` – bara ROT-offerter (dagens läge: det är där Fortnox mall är trasig).
- * - `'all'` – alla offerter. Dit vi är på väg när den egna formgivningen är klar; byt hit och
- *   Fortnox utskriftsmall används inte längre någonstans.
- * - `'off'` – tillbaka till Fortnox för allt, om något behöver backas snabbt.
- *
- * Ett värde att ändra, ingen kodändring runt omkring.
- */
-export type OfferPdfMode = 'rot' | 'all' | 'off';
-export const OFFER_PDF_MODE: OfferPdfMode = 'rot';
+// Läget och beslutet bor i offerPdfMode.ts — en modul UTAN pdf-lib, så offers.ts kan läsa dem
+// utan att dra in PDF-motorn på offertsparningens kallstart. Re-exporteras här för anropare som
+// ändå har renderaren laddad.
+export { OFFER_PDF_MODE, mayRenderLocally, shouldRenderLocally, type OfferPdfMode } from './offerPdfMode';
 
 /**
- * Ska den här offerten renderas lokalt?
- *
- * I `'rot'`-läget krävs BÅDA: att säljaren valt ROT i CRM och att Fortnox räknar dokumentet som ett
- * ROT-dokument. Två oberoende villkor, så en icke-ROT-offert aldrig kan glida in i den lokala
- * renderaren medan den bara ska täcka det trasiga fallet.
+ * Bär dokumentet ett ROT-avdrag? Styr det som BARA hör hemma på ett ROT-dokument: förbehållet om
+ * Skatteverket och Skattered.-kolumnen i summaraden. Viktigt när OFFER_PDF_MODE går till 'all' och
+ * renderaren även möter vanliga företagsoffer.
  */
-export function shouldRenderLocally(
-  mode: OfferPdfMode,
-  rotSelected: boolean,
-  taxReductionType: string | null | undefined,
-): boolean {
-  if (mode === 'off') return false;
-  if (mode === 'all') return true;
-  return rotSelected && taxReductionType === 'rot';
+export function isRotDocument(offer: Pick<FortnoxOfferResponse, 'TaxReductionType' | 'TaxReduction'>): boolean {
+  return offer.TaxReductionType === 'rot' && Number(offer.TaxReduction ?? 0) > 0;
 }
 
 // ── Fortnox-svarens form (bara fälten vi ritar) ──────────────────────────────
@@ -106,7 +90,25 @@ export type FortnoxOfferResponse = {
 export type FortnoxTaxReductionResponse = {
   CustomerName?: string | null;
   SocialSecurityNumber?: string | null;
+  // Behövs för att kunna bevisa att posten hör till DET HÄR dokumentet — se belongsToOffer.
+  ReferenceDocumentType?: string | null;
+  ReferenceNumber?: number | string | null;
 };
+
+/**
+ * Hör skattereduktionsposten till just den här offerten?
+ *
+ * `/taxreductions?filter=offers&referencenumber=N` filtrerar på serverns sida, men Fortnox numrerar
+ * offerter, ordrar och fakturor i SKILDA serier — faktura 10008 och offert 10008 finns samtidigt i
+ * det här bolaget. Skulle filtret tolkas fel eller ignoreras får vi tillbaka en annan kunds post,
+ * och då trycks främmande namn OCH fullständigt personnummer på en offert som mejlas ut. Vi
+ * kontrollerar därför i efterhand i stället för att lita på frågan.
+ */
+export function belongsToOffer(entry: FortnoxTaxReductionResponse, offerNumber: string): boolean {
+  const type = (entry.ReferenceDocumentType ?? '').toUpperCase();
+  if (type !== 'OFFER') return false;
+  return String(entry.ReferenceNumber ?? '') === String(offerNumber);
+}
 
 export type FortnoxCompanySettingsResponse = {
   Name?: string | null;
@@ -130,9 +132,13 @@ export type FortnoxCompanySettingsResponse = {
 //
 // Fortnox exponerar inte utskriftsmallens fasta texter, så de måste bo här. Det är den enda
 // verkliga dubbleringen i lösningen: ändrar någon texten i Fortnox ändras den inte här.
-// Säljtexten är ordagrant densamma som i app/api/pdf/offert-kalkylator/[id]/route.ts — hålls
-// medvetet som två kopior i stället för att bryta ut en delad modul, eftersom kalkylatorns PDF
-// har en egen livscykel och detta är en tillfällig workaround som ska bort igen.
+//
+// ⚠️ Texten nedan speglar FORTNOX offertmall, inte kalkylatorns PDF. De är LIKA MEN INTE LIKA:
+// `STANDARD_TEXT` i app/api/pdf/offert-kalkylator/[id]/route.ts inleds med ett fjärde stycke
+// ("Betalningsvillkor: 10 dagar, alternativt finansiering via vår bankpartner SVEA BANK.") som
+// Fortnox offert INTE har — betalningsvillkoret står där i referensblocket i stället. Kopiera
+// alltså inte den ena till den andra utan att jämföra mot en riktig rendering; det här dokumentet
+// ska vara omöjligt att skilja från den Fortnox-offert det ersätter.
 
 const SALES_TEXT = [
   'Vi tackar för förtroendet och har härmed nöjet att offerera er följande lösullsentreprenad.',
@@ -159,14 +165,18 @@ const LOGO_PATH = path.join(process.cwd(), 'public', 'brand', 'Ekovilla_logo_Hea
  */
 export function pdfSafe(input: unknown): string {
   return String(input ?? '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/\t/g, ' ')
     .replace(/[‐-―−]/g, '-')
     .replace(/[‘’‛]/g, "'")
     .replace(/[“”‟]/g, '"')
     .replace(/•/g, '*')
     .replace(/ /g, ' ')
     .replace(/…/g, '...')
-    // Kvarvarande tecken utanför WinAnsi tas bort hellre än att kasta.
-    .replace(/[^\x20-\x7E -ÿ]/g, '');
+    // Kvarvarande tecken utanför WinAnsi tas bort hellre än att kasta. Radbrytningen MÅSTE
+    // undantas: wrapText delar på \n för att bevara avsiktliga brytningar, och tas tecknet
+    // bort här klistras raderna ihop ("Rad ettRad två") i stället för att brytas.
+    .replace(/[^\n\x20-\x7E -ÿ]/g, '');
 }
 
 /** Svenskt belopp: mellanslag som tusentalsavskiljare, komma som decimaltecken, alltid två decimaler. */
@@ -198,21 +208,37 @@ export function isTextOnlyRow(row: FortnoxOfferRowResponse): boolean {
 }
 
 /**
- * Raden under "Preliminär skattereduktion", en per person avdraget delas på.
- *
- * Fortnox skriver ut ett tomt parentespar när personnumret saknas ("Kim Wolke () - 4 875,00 SEK").
- * Vi utelämnar parentesen i stället — samma uppgifter, utan en artefakt som ser ut som en bugg för
- * kunden. Beloppet är oförändrat; personnumret krävs först när arbetsordern skapas.
+ * Vem avdraget avser. Fortnox skriver ut ett tomt parentespar när personnumret saknas
+ * ("Kim Wolke ()"). Vi utelämnar parentesen i stället — samma uppgifter, utan en artefakt som ser
+ * ut som en bugg för kunden. Personnumret krävs först när arbetsordern skapas.
  */
-export function buildTaxReductionLine(
-  entry: FortnoxTaxReductionResponse,
-  amount: number | null | undefined,
-  currency = 'SEK',
-): string {
+function taxReductionWho(entry: FortnoxTaxReductionResponse): string {
   const name = (entry.CustomerName ?? '').trim();
   const ssn = (entry.SocialSecurityNumber ?? '').trim();
-  const who = ssn ? `${name} (${ssn})` : name;
-  return `${who} - ${formatAmount(amount)} ${currency}`;
+  return ssn ? `${name} (${ssn})` : name;
+}
+
+/**
+ * Raderna under "Preliminär skattereduktion".
+ *
+ * ⚠️ **Beloppet delas ALDRIG ut per person.** Fortnox `/taxreductions` returnerar ingen
+ * per-person-summa på en offert (`ApprovedAmount` är null tills Skatteverket svarat), så en
+ * uppdelning hade varit vår gissning — och att dela lika är fel så fort avdraget inte är jämnt
+ * fördelat mellan de sökande. Att trycka en påhittad ROT-summa per person på ett kunddokument är
+ * precis vad modulens huvudregel förbjuder: Fortnox äger beloppen.
+ *
+ * Därför: en sökande → namnet och hela beloppet på samma rad (så Fortnox mall gör). Flera sökande →
+ * ett namn per rad och totalen för sig, utan att påstå vem som får vad.
+ */
+export function buildTaxReductionLines(
+  entries: FortnoxTaxReductionResponse[],
+  total: number | null | undefined,
+  currency = 'SEK',
+): string[] {
+  if (entries.length === 0) return [];
+  const amount = `${formatAmount(total)} ${currency}`;
+  if (entries.length === 1) return [`${taxReductionWho(entries[0])} - ${amount}`];
+  return [...entries.map(taxReductionWho), `Totalt - ${amount}`];
 }
 
 /** Momsunderlag per skattesats, för raden "Moms 25% 6 966,95 (27 867,80)". */
@@ -340,17 +366,24 @@ export async function renderOfferPdf(input: OfferPdfInput): Promise<Uint8Array> 
 
   y = tableHeader(page, y);
 
-  const ensureSpace = (needed: number) => {
+  // `withTableHeader` styr om den nya sidan ska inledas med radtabellens kolumnrubrik. Bara
+  // radloopen vill ha den — bryter säljtexten till en ny sida ska den sidan INTE öppna med
+  // "Artnr / Benämning / Antal …" följt av enbart brödtext, vilket avslöjar att dokumentet inte
+  // kommer från Fortnox mall.
+  const ensureSpace = (needed: number, withTableHeader = false) => {
     if (y - needed >= CONTENT_BOTTOM) return;
     page = newPage();
     y = drawHeader(page, fonts, offer, logo, true);
-    y = tableHeader(page, y);
+    if (withTableHeader) y = tableHeader(page, y);
   };
 
   for (const row of rows) {
     const isText = isTextOnlyRow(row);
     const nameLines = wrapText(row.Description ?? '', fonts.regular, 9, COL_QTY_R - COL_NAME - 14);
-    ensureSpace(nameLines.length * 12 + 4);
+    // En rabatterad rad ritar en extra upplysningsrad under sig — reservera för den också, annars
+    // kan "Rabatt X %" hamna ovanpå summaraden längst ned.
+    const hasDiscountLine = !isText && Number(row.Discount ?? 0) > 0 && row.DiscountType === 'PERCENT';
+    ensureSpace(nameLines.length * 12 + (hasDiscountLine ? 16 : 4), true);
 
     for (const [i, line] of nameLines.entries()) {
       drawText(page, line, COL_NAME, y - i * 12, fonts.regular, 9, isText ? MUTED : INK);
@@ -363,7 +396,7 @@ export async function renderOfferPdf(input: OfferPdfInput): Promise<Uint8Array> 
       drawRight(page, formatAmount(row.Price), COL_PRICE_R, y, fonts.regular, 9);
       drawRight(page, formatAmount(row.Total), COL_SUM_R, y, fonts.regular, 9);
       // Rabatten står som egen upplysning; Total från Fortnox är redan rabatterad.
-      if (Number(row.Discount ?? 0) > 0 && row.DiscountType === 'PERCENT') {
+      if (hasDiscountLine) {
         y -= nameLines.length * 12;
         drawText(page, `Rabatt ${formatAmount(row.Discount)} %`, COL_NAME, y, fonts.regular, 8, MUTED);
         y -= 12;
@@ -374,15 +407,16 @@ export async function renderOfferPdf(input: OfferPdfInput): Promise<Uint8Array> 
   }
 
   // ── Preliminär skattereduktion ──
-  if (taxReductions.length > 0 && Number(offer.TaxReduction ?? 0) > 0) {
-    ensureSpace(20 + taxReductions.length * 12);
+  const reductionLines = Number(offer.TaxReduction ?? 0) > 0
+    ? buildTaxReductionLines(taxReductions, offer.TaxReduction, currency)
+    : [];
+  if (reductionLines.length > 0) {
+    ensureSpace(24 + reductionLines.length * 12);
     y -= 12;
     drawText(page, 'Preliminär skattereduktion', COL_NAME, y, fonts.regular, 9);
     y -= 12;
-    // Ett avdrag kan delas mellan flera personer (t.ex. makar) — en rad per person.
-    const per = Number(offer.TaxReduction ?? 0) / taxReductions.length;
-    for (const entry of taxReductions) {
-      drawText(page, buildTaxReductionLine(entry, per, currency), COL_NAME, y, fonts.regular, 9);
+    for (const line of reductionLines) {
+      drawText(page, line, COL_NAME, y, fonts.regular, 9);
       y -= 12;
     }
   }
@@ -399,8 +433,11 @@ export async function renderOfferPdf(input: OfferPdfInput): Promise<Uint8Array> 
     y -= 6;
   }
 
-  const clauseLines = wrapText(ROT_CLAUSE, fonts.regular, 8.5, M_RIGHT - M_LEFT);
-  ensureSpace(clauseLines.length * 11 + 8);
+  // ROT-förbehållet BARA på ett ROT-dokument. Det är ett avtalsvillkor om Skatteverket, och när
+  // OFFER_PDF_MODE går till 'all' renderas även rena företagsoffer med omvänd skattskyldighet här
+  // — de ska inte bära en mening om ett avdrag som aldrig varit inblandat.
+  const clauseLines = isRotDocument(offer) ? wrapText(ROT_CLAUSE, fonts.regular, 8.5, M_RIGHT - M_LEFT) : [];
+  if (clauseLines.length) ensureSpace(clauseLines.length * 11 + 8);
   y -= 4;
   for (const line of clauseLines) {
     drawText(page, line, M_LEFT, y, fonts.regular, 8.5);
@@ -455,9 +492,13 @@ function drawHeader(
     offer.Address2 ?? '',
     [offer.ZipCode, offer.City].filter(Boolean).join(' '),
   ].filter((l) => l.trim());
-  for (const [i, line] of customerLines.entries()) {
-    drawText(page, line, 330, cy - i * 12, i === 0 ? fonts.bold : fonts.bold, 9);
+  // Hela kundblocket är fett, inte bara namnet — så renderar Fortnox mall det (verifierat på
+  // offert 25 och 10006, där även gata och postort står i fetstil).
+  for (const line of customerLines) {
+    drawText(page, line, 330, cy, fonts.bold, 9);
+    cy -= 12;
   }
+  cy += customerLines.length * 12;
 
   const delivery = (offer.DeliveryAddress1 ?? '').trim();
   const sameAsInvoice = delivery.toLowerCase() === (offer.Address1 ?? '').trim().toLowerCase();
@@ -522,7 +563,9 @@ function drawTotals(
     { label: 'Moms', value: formatAmount(offer.TotalVAT) },
     ...(roundOff !== 0 ? [{ label: 'Öresavr', value: formatAmount(roundOff) }] : []),
     { label: 'Totalt', value: formatAmount(offer.Total) },
-    { label: 'Skattered.', value: formatAmount(offer.TaxReduction) },
+    // Skattered. bara när det finns ett avdrag — annars får varje företagsoffert en "0,00"-kolumn
+    // om skattereduktion när OFFER_PDF_MODE står på 'all'.
+    ...(isRotDocument(offer) ? [{ label: 'Skattered.', value: formatAmount(offer.TaxReduction) }] : []),
   ];
 
   // Etiketterna fördelas jämnt från vänster; offertvärdet högerställs sist och är det kunden läser.
@@ -565,9 +608,13 @@ function drawCompanyFooter(page: PDFPage, fonts: Fonts, company: FortnoxCompanyS
       ],
     },
     {
+      // Etiketten MÅSTE följa värdet som faktiskt valdes. Ett plusgironummer under rubriken
+      // "Bankgiro" är en betalningsuppgift som ser auktoritativ ut och är fel kontotyp.
       x: 355,
       rows: [
-        ['Bankgiro', company.BG || company.PG || ''],
+        company.BG
+          ? (['Bankgiro', company.BG] as [string, string])
+          : (['Plusgiro', company.PG ?? ''] as [string, string]),
         ['Säte', company.Domicile ?? ''],
       ],
     },

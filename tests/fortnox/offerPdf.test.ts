@@ -1,8 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { PDFDocument } from 'pdf-lib';
 import {
-  buildTaxReductionLine,
+  belongsToOffer,
+  buildTaxReductionLines,
   formatAmount,
+  isRotDocument,
   formatQuantity,
   isTextOnlyRow,
   pdfSafe,
@@ -116,17 +118,63 @@ describe('isTextOnlyRow', () => {
   });
 });
 
-describe('buildTaxReductionLine', () => {
-  it('skriver namn, personnummer och belopp', () => {
-    expect(buildTaxReductionLine({ CustomerName: 'Rasmus Eklund', SocialSecurityNumber: '19920926-1230' }, 5821))
-      .toBe('Rasmus Eklund (19920926-1230) - 5 821,00 SEK');
+describe('buildTaxReductionLines', () => {
+  it('skriver namn, personnummer och belopp när det finns EN sökande', () => {
+    expect(buildTaxReductionLines([{ CustomerName: 'Rasmus Eklund', SocialSecurityNumber: '19920926-1230' }], 5821))
+      .toEqual(['Rasmus Eklund (19920926-1230) - 5 821,00 SEK']);
   });
 
   it('utelämnar parentesen när personnumret saknas — Fortnox skriver ut ett tomt "()"', () => {
     // Numret krävs först vid orderskapandet, så en offert utan det är ett normalfall och ska inte
     // se trasig ut för kunden.
-    expect(buildTaxReductionLine({ CustomerName: 'Kim Wolke', SocialSecurityNumber: '' }, 4875))
-      .toBe('Kim Wolke - 4 875,00 SEK');
+    expect(buildTaxReductionLines([{ CustomerName: 'Kim Wolke', SocialSecurityNumber: '' }], 4875))
+      .toEqual(['Kim Wolke - 4 875,00 SEK']);
+  });
+
+  it('DELAR ALDRIG beloppet mellan flera sökande — det vore vår gissning', () => {
+    // Fortnox ger ingen per-person-summa på en offert. Att dela lika hade tryckt en påhittad
+    // ROT-summa per person på ett kunddokument så fort avdraget inte är jämnt fördelat.
+    const lines = buildTaxReductionLines([
+      { CustomerName: 'Anna Ek', SocialSecurityNumber: '19850101-1236' },
+      { CustomerName: 'Bo Ek', SocialSecurityNumber: '19830202-2380' },
+    ], 4875);
+
+    expect(lines).toEqual(['Anna Ek (19850101-1236)', 'Bo Ek (19830202-2380)', 'Totalt - 4 875,00 SEK']);
+    // Halva beloppet får inte förekomma någonstans.
+    expect(lines.join(' ')).not.toContain('2 437,50');
+  });
+
+  it('ger inga rader alls utan sökande', () => {
+    expect(buildTaxReductionLines([], 4875)).toEqual([]);
+  });
+});
+
+describe('isRotDocument', () => {
+  it('är sant bara när dokumentet både är ROT-typat och bär ett avdrag', () => {
+    expect(isRotDocument({ TaxReductionType: 'rot', TaxReduction: 4875 })).toBe(true);
+    expect(isRotDocument({ TaxReductionType: 'rot', TaxReduction: 0 })).toBe(false);
+    // Avgörande när OFFER_PDF_MODE går till 'all': en företagsoffert får inte bära ROT-förbehållet
+    // om Skatteverket eller en "Skattered. 0,00"-kolumn.
+    expect(isRotDocument({ TaxReductionType: 'none', TaxReduction: 0 })).toBe(false);
+    expect(isRotDocument({ TaxReductionType: null, TaxReduction: null })).toBe(false);
+  });
+});
+
+describe('belongsToOffer', () => {
+  it('accepterar posten som pekar på just den här offerten', () => {
+    expect(belongsToOffer({ ReferenceDocumentType: 'OFFER', ReferenceNumber: 10008 }, '10008')).toBe(true);
+  });
+
+  it('avvisar en post från ett annat dokumentslag med SAMMA nummer', () => {
+    // Fortnox numrerar offerter/ordrar/fakturor i skilda serier, så faktura 10008 och offert 10008
+    // finns samtidigt. Utan kontrollen kan en annan kunds personnummer hamna på offerten.
+    expect(belongsToOffer({ ReferenceDocumentType: 'INVOICE', ReferenceNumber: 10008 }, '10008')).toBe(false);
+    expect(belongsToOffer({ ReferenceDocumentType: 'ORDER', ReferenceNumber: 10008 }, '10008')).toBe(false);
+  });
+
+  it('avvisar en offertpost med fel nummer, och en post som saknar uppgifterna', () => {
+    expect(belongsToOffer({ ReferenceDocumentType: 'OFFER', ReferenceNumber: 10007 }, '10008')).toBe(false);
+    expect(belongsToOffer({ CustomerName: 'Okänd' }, '10008')).toBe(false);
   });
 });
 
@@ -162,6 +210,12 @@ describe('pdfSafe', () => {
     // Ett tankstreck i en artikelbenämning skulle annars göra hela offerten till ett 500-svar.
     expect(pdfSafe('Ekovilla — lösull')).toBe('Ekovilla - lösull');
     expect(pdfSafe('”citat” och ’apostrof’')).toBe('"citat" och \'apostrof\'');
+  });
+
+  it('BEVARAR radbrytningen — annars klistras raderna ihop i stället för att brytas', () => {
+    // wrapText delar på \n. Togs tecknet bort här blev "Rad ett\nRad två" till "Rad ettRad två".
+    expect(pdfSafe('Rad ett\nRad två')).toBe('Rad ett\nRad två');
+    expect(pdfSafe('Rad ett\r\nRad två')).toBe('Rad ett\nRad två');
   });
 });
 
