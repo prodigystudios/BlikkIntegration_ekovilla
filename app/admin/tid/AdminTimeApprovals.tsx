@@ -332,7 +332,12 @@ export default function AdminTimeApprovals() {
   };
 
   return (
-    <div className="grid gap-4">
+    // ⚠️ Padding hör hemma HÄR, inte i skalet. AdminTabsClient renderar flikinnehållet i en
+    // `crm.card`, och den tokenen har medvetet ingen padding ("content controls its own padding")
+    // — så utan p-5 ligger rubriken och korten klistrade mot kortkanten. Systerfliken
+    // AdminTimeReference gör likadant, och de två ska se lika ut eftersom de sitter bredvid
+    // varandra i samma flikrad.
+    <div className="grid gap-4 p-5">
       <div className="grid gap-1">
         <h2 className="m-0 text-lg font-bold text-slate-900">Attest</h2>
         <p className="m-0 text-sm text-slate-600">
