@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { addDaysISO, daysBetweenInclusive, isoWeek, buildWeekDays, buildMonthWeeks, parseISO } from '@/app/crm/planering/planningDates';
+import {
+  addDaysISO, buildMonthWeeks, buildWeekDays, daysBetweenInclusive, isoWeek, parseISO,
+  startOfWeek, stockholmToday, stockholmTodayISO,
+} from '@/app/crm/planering/planningDates';
 
 describe('addDaysISO / daysBetweenInclusive', () => {
   it('adds days across a month boundary', () => {
@@ -29,6 +32,35 @@ describe('buildWeekDays', () => {
     expect(days[5].isWeekend).toBe(true);
     expect(days[6].isWeekend).toBe(true);
     expect(days[0].isWeekend).toBe(false);
+  });
+});
+
+// The board is server-rendered before it hydrates and the server runs on UTC, so "today" must be
+// the Swedish calendar day or the two sides disagree between 00:00 and 02:00. These assertions are
+// runtime-zone independent: fmtISO reads back the very local fields stockholmToday sets.
+describe('stockholmToday / stockholmTodayISO', () => {
+  it('uses the Swedish day, not the UTC day, late on a summer evening (CEST, UTC+2)', () => {
+    const instant = new Date('2026-08-14T23:30:00Z'); // 01:30 on the 15th in Stockholm
+    expect(stockholmTodayISO(instant)).toBe('2026-08-15');
+    // What the old `new Date()`-on-the-server path would have produced:
+    expect(instant.toISOString().slice(0, 10)).toBe('2026-08-14');
+  });
+
+  it('uses the Swedish day in winter too (CET, UTC+1)', () => {
+    expect(stockholmTodayISO(new Date('2026-01-14T23:30:00Z'))).toBe('2026-01-15');
+    expect(stockholmTodayISO(new Date('2026-01-14T22:30:00Z'))).toBe('2026-01-14');
+  });
+
+  it('agrees with UTC during the rest of the day', () => {
+    expect(stockholmTodayISO(new Date('2026-08-14T09:00:00Z'))).toBe('2026-08-14');
+  });
+
+  it('returns a local-midnight Date the other helpers can walk', () => {
+    const day = stockholmToday(new Date('2026-08-14T23:30:00Z'));
+    expect([day.getHours(), day.getMinutes(), day.getSeconds()]).toEqual([0, 0, 0]);
+    // 15 Aug 2026 is a Saturday → its week starts Monday the 10th. Getting the day wrong here is
+    // what pushed the board onto the wrong week on a Monday night.
+    expect(startOfWeek(day).getDate()).toBe(10);
   });
 });
 

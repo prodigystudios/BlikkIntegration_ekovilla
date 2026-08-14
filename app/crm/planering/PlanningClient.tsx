@@ -9,12 +9,13 @@ import { crm, workOrderStatusAccent } from '@/app/crm/lib/crmTokens';
 import type { OpsSegment, OpsTruck, SchedulableWorkOrder } from '@/lib/domains/planning/types';
 import type { AssignablePerson, CrewMember } from '@/lib/domains/planning/crew';
 import type { DayNote } from '@/lib/domains/planning/dayNotes';
-import type { TruckCrewMember } from '@/lib/domains/planning/truckCrew';
+import { crewForTruckInRange, type TruckCrewMember } from '@/lib/domains/planning/truckCrew';
 import type { DefaultCrewMember } from '@/lib/domains/planning/defaultCrew';
 import type { DepotBalance } from '@/lib/domains/planning/depotStock';
 import { DEFAULT_JOB_TYPES, type JobType, type JobTypeRow } from '@/lib/domains/planning/jobTypes';
 import {
-  addDays, addDaysISO, buildMonthWeeks, buildWeekDays, daysBetweenInclusive, fmtISO, isoWeek, startOfWeek, swedishMonthYear,
+  addDays, addDaysISO, buildMonthWeeks, buildWeekDays, daysBetweenInclusive, isoWeek, startOfWeek,
+  stockholmToday, stockholmTodayISO, swedishMonthYear,
 } from './planningDates';
 import Backlog from './Backlog';
 import WeekBoard from './WeekBoard';
@@ -79,10 +80,12 @@ export default function PlanningClient({
   const [placeholderOpen, setPlaceholderOpen] = useState(false);
 
   const dragRef = useRef<DragData | null>(null);
-  const todayISO = useMemo(() => fmtISO(new Date()), []);
+  // Anchored to Europe/Stockholm, not to the runtime clock: this component is server-rendered
+  // before it hydrates and the server runs on UTC. See stockholmToday in ./planningDates.
+  const todayISO = useMemo(() => stockholmTodayISO(), []);
 
   // ── visible range (depends on view + offset) ──────────────────────────────
-  const weekMonday = useMemo(() => addDays(startOfWeek(new Date()), weekOffset * 7), [weekOffset]);
+  const weekMonday = useMemo(() => addDays(startOfWeek(stockholmToday()), weekOffset * 7), [weekOffset]);
   const weekDays = useMemo(() => buildWeekDays(weekMonday), [weekMonday]);
   // "Hela månaden"-toggle: stack this week + each following week through the month end, each as
   // its own WeekBoard (otherwise just the single current week).
@@ -96,8 +99,7 @@ export default function PlanningClient({
   }, [view, stackWeeks, weekMonday]);
   const weekDaysList = useMemo(() => weekMondays.map((m) => buildWeekDays(m)), [weekMondays]);
   const monthAnchor = useMemo(() => {
-    const b = new Date();
-    b.setHours(0, 0, 0, 0);
+    const b = stockholmToday();
     b.setDate(1);
     b.setMonth(b.getMonth() + monthOffset);
     return b;
@@ -511,9 +513,13 @@ export default function PlanningClient({
     [toast],
   );
 
+  // The week matters: in "Hela månaden" the loaded range spans several weeks, so truckCrew holds one
+  // row per week per person. Resolving on (truck, member) alone deleted whichever week happened to
+  // come first — pick the row from the same week the caller clicked, using the very predicate the
+  // board rendered that week's crew with.
   const removeTruckCrew = useCallback(
-    async (truckId: string, memberId: string) => {
-      const row = truckCrew.find((c) => c.truck_id === truckId && c.member_id === memberId);
+    async (truckId: string, memberId: string, startDay: string, endDay: string) => {
+      const row = crewForTruckInRange(truckCrew, truckId, startDay, endDay).find((c) => c.member_id === memberId);
       if (!row) return;
       setTruckCrew((prev) => prev.filter((c) => c.id !== row.id));
       const r = await fetch(`${API}/truck-crew/${row.id}`, { method: 'DELETE' });

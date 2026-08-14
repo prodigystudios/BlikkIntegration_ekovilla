@@ -3,6 +3,43 @@
 
 export const WEEKDAYS_SHORT = ['mån', 'tis', 'ons', 'tor', 'fre', 'lör', 'sön'] as const;
 
+const PLANNING_TIME_ZONE = 'Europe/Stockholm';
+
+const zoneParts = new Intl.DateTimeFormat('sv-SE', {
+  timeZone: PLANNING_TIME_ZONE,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+
+/**
+ * "Today" as the Swedish calendar sees it, returned as a LOCAL-midnight Date.
+ *
+ * ⚠️ The board must never derive its reference day from `new Date()` directly. PlanningClient is a
+ * client component rendered by a server component, so it is server-rendered before it hydrates —
+ * and the server runs on UTC. Between 00:00 and 02:00 Swedish time the two clocks sit on different
+ * calendar days, so the server would render one week and the browser another: a hydration mismatch
+ * plus a visible flash of the wrong week (and, on a Monday night, the wrong week entirely).
+ *
+ * Local-midnight rather than UTC-anchored on purpose: every other helper in this file reads local
+ * Date fields (getFullYear/getMonth/getDate), so a local anchor keeps the arithmetic below
+ * unchanged. In the browser this is exactly today; on the UTC server it is the Swedish day
+ * expressed in the server's own local (= UTC) fields, which is what fmtISO then reads back.
+ *
+ * (app/crm/rapportering/reportRanges.ts solves the same problem with a UTC-anchored `stockholmDay`
+ * because its arithmetic is UTC-based. Unifying the two is a separate change — see its header.)
+ */
+export function stockholmToday(now: Date = new Date()): Date {
+  const parts = zoneParts.formatToParts(now);
+  const part = (type: string) => Number(parts.find((p) => p.type === type)?.value);
+  return new Date(part('year'), part('month') - 1, part('day'));
+}
+
+/** `stockholmToday` as YYYY-MM-DD. */
+export function stockholmTodayISO(now: Date = new Date()): string {
+  return fmtISO(stockholmToday(now));
+}
+
 export function fmtISO(d: Date): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');

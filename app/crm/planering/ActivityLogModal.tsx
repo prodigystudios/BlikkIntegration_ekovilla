@@ -42,11 +42,26 @@ function chipTone(entityType: string): string {
   }
 }
 
-const dayFmt = new Intl.DateTimeFormat('sv-SE', { weekday: 'long', day: 'numeric', month: 'long' });
-const timeFmt = new Intl.DateTimeFormat('sv-SE', { hour: '2-digit', minute: '2-digit' });
+const PLANNING_TIME_ZONE = 'Europe/Stockholm';
 
+// ⚠️ Deliberately NOT zoned: this one formats the local-midnight Date rebuilt from a dayKey that is
+// already a Swedish calendar date, so a local formatter round-trips it exactly. Pinning a zone here
+// would re-shift an already-shifted day.
+const dayFmt = new Intl.DateTimeFormat('sv-SE', { weekday: 'long', day: 'numeric', month: 'long' });
+// Zoned, because this one formats a real instant (created_at) and must agree with the grouping.
+const timeFmt = new Intl.DateTimeFormat('sv-SE', { timeZone: PLANNING_TIME_ZONE, hour: '2-digit', minute: '2-digit' });
+const dayKeyFmt = new Intl.DateTimeFormat('sv-SE', {
+  timeZone: PLANNING_TIME_ZONE,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+
+// The Swedish calendar day an event belongs under. Slicing the timestamp string gave the UTC day
+// while the clock beside it rendered local time, so anything logged between 00:00 and 02:00 was
+// filed under the previous day. sv-SE with 2-digit parts formats as YYYY-MM-DD.
 function dayKey(iso: string): string {
-  return iso.slice(0, 10);
+  return dayKeyFmt.format(new Date(iso));
 }
 
 export default function ActivityLogModal({ onClose }: { onClose: () => void }) {
@@ -94,7 +109,9 @@ export default function ActivityLogModal({ onClose }: { onClose: () => void }) {
       .then((r) => r.json())
       .then((json) => {
         if (cancelled) return;
-        if (!json?.ok) throw new Error(json?.error?.message || 'Kunde inte ladda aktivitetsloggen');
+        // routeError puts the human string in `error` (the object lives in `errorDetails`), so
+        // `error.message` was always undefined and every server message fell back to the generic one.
+        if (!json?.ok) throw new Error(json?.error || 'Kunde inte ladda aktivitetsloggen');
         const list = (json.data?.events ?? []) as ActivityEvent[];
         setEvents(list);
         setReachedEnd(list.length < PAGE);
@@ -112,7 +129,7 @@ export default function ActivityLogModal({ onClose }: { onClose: () => void }) {
     fetch(buildQuery(events[events.length - 1].created_at))
       .then((r) => r.json())
       .then((json) => {
-        if (!json?.ok) throw new Error(json?.error?.message || 'Kunde inte ladda fler');
+        if (!json?.ok) throw new Error(json?.error || 'Kunde inte ladda fler');
         const list = (json.data?.events ?? []) as ActivityEvent[];
         setEvents((prev) => [...prev, ...list]);
         setReachedEnd(list.length < PAGE);

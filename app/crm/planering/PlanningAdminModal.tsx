@@ -6,6 +6,7 @@ import { useToast } from '@/lib/Toast';
 import { crm } from '@/app/crm/lib/crmTokens';
 import { MATERIAL_SHORTS } from '@/lib/domains/crm/materials';
 import { useEntityCrud } from './useEntityCrud';
+import { stockholmTodayISO } from './planningDates';
 import { TrashIcon } from './managerModalUi';
 import type { OpsTruck, OpsDepot } from '@/lib/domains/planning/types';
 import type { JobTypeRow } from '@/lib/domains/planning/jobTypes';
@@ -196,6 +197,12 @@ function PersonAvatar({ name, seed }: { name: string; seed: string }) {
   );
 }
 
+// Shared empty team for trucks with no standing crew. ⚠️ Must be a stable reference: the effect
+// below re-syncs on `initial`, and a fresh `[]` literal at the call site made it fire on EVERY
+// parent render — wiping an unsaved pick the moment you typed in a field above. That hit exactly
+// the case you were setting a team up in (a truck that has none yet).
+const NO_CREW: DefaultCrewMember[] = [];
+
 function StandardCrewEditor({ truckId, initial, people, onSaved }: { truckId: string; initial: DefaultCrewMember[]; people: AssignablePerson[]; onSaved: () => void }) {
   const toast = useToast();
   const [leaderId, setLeaderId] = useState('');
@@ -384,7 +391,7 @@ function TruckPanel({
               <button onClick={onSave} disabled={busy} className={cn(crm.formButton, 'mt-3')} style={{ backgroundColor: 'var(--crm-primary)' }}>Spara depå</button>
             </div>
 
-            <StandardCrewEditor key={truck.id} truckId={truck.id} initial={defaultByTruck.get(truck.id) ?? []} people={people} onSaved={onCrewSaved} />
+            <StandardCrewEditor key={truck.id} truckId={truck.id} initial={defaultByTruck.get(truck.id) ?? NO_CREW} people={people} onSaved={onCrewSaved} />
 
             <RiskZone title="Riskzon" body="Ta bort bil endast om den inte längre används i planeringen. En bil med schemalagda jobb kan inte tas bort — avaktivera istället." label="Ta bort bil" onConfirm={onRemove} busy={busy} />
           </div>
@@ -575,7 +582,9 @@ function StockPanel({ canWrite }: { canWrite: boolean }) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
 
-  const today = new Date().toISOString().slice(0, 10);
+  // Swedish calendar day, not UTC: toISOString() booked the delivery to yesterday when recorded
+  // between midnight and 02:00.
+  const today = stockholmTodayISO();
   const [depotId, setDepotId] = useState('');
   const [material, setMaterial] = useState(MATERIAL_SHORTS[0] ?? '');
   const [sacks, setSacks] = useState('');

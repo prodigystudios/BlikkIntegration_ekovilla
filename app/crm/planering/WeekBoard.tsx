@@ -35,7 +35,7 @@ type WeekBoardProps = {
   truckCrew: TruckCrewMember[];
   defaultCrew: DefaultCrewMember[];
   onAddTruckCrew: (truckId: string, person: AssignablePerson, startDay: string, endDay: string) => void;
-  onRemoveTruckCrew: (truckId: string, memberId: string) => void;
+  onRemoveTruckCrew: (truckId: string, memberId: string, startDay: string, endDay: string) => void;
   onCopyTruckCrew: (truckId: string, sourceFrom: string, sourceTo: string) => void;
   onForkWeek: (truckId: string, startDay: string, endDay: string) => void;
   onRestoreWeek: (truckId: string, startDay: string, endDay: string) => void;
@@ -242,7 +242,7 @@ export default function WeekBoard({
                             crew={laneWeekly}
                             people={people}
                             onAdd={(p) => onAddTruckCrew(truck.id, p, weekStart, weekEnd)}
-                            onRemove={(mid) => onRemoveTruckCrew(truck.id, mid)}
+                            onRemove={(mid) => onRemoveTruckCrew(truck.id, mid, weekStart, weekEnd)}
                           />
                         ) : (
                           <CrewAvatars crew={laneWeekly} />
@@ -294,7 +294,7 @@ export default function WeekBoard({
                           crew={laneWeekly}
                           people={people}
                           onAdd={(p) => onAddTruckCrew(truck.id, p, weekStart, weekEnd)}
-                          onRemove={(mid) => onRemoveTruckCrew(truck.id, mid)}
+                          onRemove={(mid) => onRemoveTruckCrew(truck.id, mid, weekStart, weekEnd)}
                         />
                       ) : null
                     )}
