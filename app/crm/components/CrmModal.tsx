@@ -48,18 +48,23 @@ export default function CrmModal({
         aria-label={ariaLabel}
         onClick={(e) => e.stopPropagation()}
         className={cn(
-          'crm-sheet-in flex h-[100dvh] max-h-[100dvh] w-full flex-col overflow-hidden rounded-none bg-white shadow-[0_-12px_50px_rgba(15,23,42,0.30)] sm:h-auto sm:max-h-[88vh] sm:rounded-2xl sm:shadow-[0_30px_80px_rgba(15,23,42,0.28)]',
+          // Ytan är CRM-kortets papper (#f9fbf7), inte vitt. Två skäl: modalen ska höra ihop med
+          // sidan den öppnas ovanpå, och de vita inmatningsfälten inuti ska LÄSA som fält. Vitt på
+          // vitt lämnade bara hårfina ramar att skilja dem åt, vilket fick formulären att se platta
+          // ut. Körjournalens modal hade redan tonat sin kropp på egen hand — samma behov, löst
+          // lokalt; nu delat.
+          'crm-sheet-in flex h-[100dvh] max-h-[100dvh] w-full flex-col overflow-hidden rounded-none bg-[#f9fbf7] shadow-[0_-12px_50px_rgba(15,23,42,0.30)] sm:h-auto sm:max-h-[88vh] sm:rounded-2xl sm:shadow-[0_30px_80px_rgba(15,23,42,0.28)]',
           maxWidth,
         )}
       >
         {/* Sticky header */}
-        <div className="flex items-start justify-between gap-3 border-b border-slate-100 px-5 pb-4 [padding-top:calc(1rem+env(safe-area-inset-top))] sm:pt-4">
+        <div className="flex items-start justify-between gap-3 border-b border-solid border-[#e4ebe0] px-5 pb-4 [padding-top:calc(1rem+env(safe-area-inset-top))] sm:pt-4">
           <div className="min-w-0 flex-1">{header}</div>
           <button
             type="button"
             aria-label="Stäng"
             onClick={onClose}
-            className="!h-9 !w-9 shrink-0 !rounded-full !border !border-slate-200 !bg-white !p-0 text-slate-500 transition hover:!border-slate-300 hover:text-slate-700"
+            className="!h-9 !w-9 shrink-0 !rounded-full !border !border-solid !border-slate-200 !bg-white !p-0 text-slate-500 transition hover:!border-slate-300 hover:text-slate-700"
           >
             <svg className="mx-auto" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M18 6L6 18M6 6l12 12" />
@@ -72,7 +77,7 @@ export default function CrmModal({
 
         {/* Sticky footer */}
         {footer ? (
-          <div className="flex items-center gap-2 border-t border-slate-100 px-5 py-3 [padding-bottom:calc(0.75rem+env(safe-area-inset-bottom))] sm:[padding-bottom:0.75rem]">
+          <div className="flex items-center gap-2 border-t border-solid border-[#e4ebe0] px-5 py-3 [padding-bottom:calc(0.75rem+env(safe-area-inset-bottom))] sm:[padding-bottom:0.75rem]">
             {footer}
           </div>
         ) : null}
