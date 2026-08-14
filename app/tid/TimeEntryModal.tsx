@@ -396,9 +396,13 @@ export default function TimeEntryModal({
                     <Input inputMode="numeric" value={breakMinutes} onChange={(e) => setBreakMinutes(e.target.value)} />
                   </span>
                 </label>
-                <div className="text-right">
-                  <div className={LABEL}>Arbetad tid</div>
-                  <div className={cn('text-2xl font-bold tabular-nums leading-tight', previewMinutes > 0 ? 'text-slate-900' : 'text-slate-300')}>
+                {/* shrink-0 + nowrap: flexbarn krymper under sitt innehåll som standard, så både
+                    etiketten och talet bröts mitt itu — "8,50" på en rad och "h" på nästa. Talet är
+                    stort för att det är blockets svar, inte för att det ska ta plats; text-xl
+                    räcker och lämnar rummet åt rastfältet bredvid. */}
+                <div className="shrink-0 text-right">
+                  <div className={cn(LABEL, 'whitespace-nowrap')}>Arbetad tid</div>
+                  <div className={cn('whitespace-nowrap text-xl font-bold tabular-nums leading-tight', previewMinutes > 0 ? 'text-slate-900' : 'text-slate-300')}>
                     {formatHours(previewMinutes)} h
                   </div>
                 </div>
