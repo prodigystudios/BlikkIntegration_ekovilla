@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/shared/cn';
 import { crm, workOrderStatusLabel, workOrderStatusClass } from '@/app/crm/lib/crmTokens';
 import { PhoneLink, EmailLink, AddressLink } from '@/app/crm/components/ContactLinks';
 import WorkOrderCommentsTab from '@/app/crm/arbetsorder/WorkOrderCommentsTab';
 import WorkOrderArticlesTab, { type ArticleLineItem } from '@/app/crm/arbetsorder/WorkOrderArticlesTab';
+import WorkOrderTimeTab from '@/app/crm/arbetsorder/WorkOrderTimeTab';
 import { useWorkOrderActivity } from '@/app/crm/arbetsorder/useWorkOrderActivity';
 import { useCustomerContact } from '@/app/crm/arbetsorder/useCustomerContact';
 import { formatDate, joinAddress, documentRef } from '@/app/crm/lib/format';
@@ -34,9 +35,18 @@ type InstallerWorkOrder = {
   status: WorkOrderStatus;
 };
 
-type InstallerTab = 'info' | 'articles';
+type InstallerTab = 'info' | 'articles' | 'time';
 
-export default function WorkOrderInstallerClient({ workOrderId, currentUserId }: { workOrderId: string; currentUserId: string | null }) {
+export default function WorkOrderInstallerClient({
+  workOrderId,
+  currentUserId,
+  canReportTime = false,
+}: {
+  workOrderId: string;
+  currentUserId: string | null;
+  /** Testfönstret för Tid-fliken — se app/arbetsorder/[id]/page.tsx. */
+  canReportTime?: boolean;
+}) {
   const router = useRouter();
   const [workOrder, setWorkOrder] = useState<InstallerWorkOrder | null>(null);
   const [loading, setLoading] = useState(true);
@@ -44,8 +54,8 @@ export default function WorkOrderInstallerClient({ workOrderId, currentUserId }:
   const [activeTab, setActiveTab] = useState<InstallerTab>('info');
   const customerInfo = useCustomerContact(workOrderId);
 
-  // No time tab here (see the tabs comment below), so don't pay for the time-entries request.
-  const activity = useWorkOrderActivity(workOrderId, { includeTimeEntries: false });
+  // Utan Tid-fliken finns ingen konsument för tidraderna — hämta dem inte då.
+  const activity = useWorkOrderActivity(workOrderId, { includeTimeEntries: canReportTime });
 
   useEffect(() => {
     let active = true;
@@ -93,15 +103,26 @@ export default function WorkOrderInstallerClient({ workOrderId, currentUserId }:
   // Comments render at the bottom of the Info tab (not a separate tab) so an @-mention notification
   // lands straight on the thread.
   //
-  // NO TIME TAB during the cutover. Blikk is still the payroll system of record — someone reads the
-  // hours out of it before each payroll run — and CRM has no way to hand those hours over yet
-  // (no absence/internal time, no travel allowance, no export; that is fas 4). Hours logged here
-  // would live only in CRM and vanish from payroll, so the tab stays closed until CRM can carry
-  // the whole picture and time moves across in one step. Until then all time is reported in
-  // /tidrapport → Blikk, exactly as before.
+  // TID-FLIKEN ÄR STÄNGD FÖR BESÄTTNINGEN, öppen bara för attestansvariga (`canReportTime`).
+  //
+  // Skälet är inte längre tekniskt: fas 4 är byggd, klockslag är obligatoriska och CRM kan bära
+  // hela bilden. Skälet är att besättningen fortfarande rapporterar i Blikk, som läses ut för hand
+  // före varje lönekörning. En flik här hade blivit en ANDRA plats att rapportera på — och timmar
+  // som hamnar i CRM i stället för i Blikk når aldrig lönen. Att flytta någon från Blikk ger samma
+  // utfall som att stänga vägen.
+  //
+  // Villkoret är alltså ett testfönster (William 2026-08-14: "jag måste ändå kunna testa"), inte en
+  // behörighetsmodell. Vid cutovern tas `canReportTime` bort härifrån och ur page.tsx, och den gula
+  // rutan nedan med den.
   const tabs: Array<[InstallerTab, string]> = [
     ['info', 'Info'], ['articles', 'Artiklar'],
+    ...(canReportTime ? [['time', 'Tid'] as [InstallerTab, string]] : []),
   ];
+
+  const totalLoggedHours = useMemo(
+    () => activity.timeEntries.reduce((sum, item) => sum + Number(item.hours || 0), 0),
+    [activity.timeEntries],
+  );
 
   return (
     <div className="mx-auto grid max-w-2xl gap-5 px-4 py-6" style={{ minHeight: '100dvh', backgroundColor: '#e5ede5' }}>
@@ -167,15 +188,21 @@ export default function WorkOrderInstallerClient({ workOrderId, currentUserId }:
           {/* Where to report time. A CRM-planned job has no Blikk project, so it cannot be picked
               in /tidrapport the usual way — without this the crew opens the job, finds no time tab
               and no matching project, and guesses. Says the convention plainly until fas 4 brings
-              time into CRM. */}
-          <div className="grid gap-1.5 rounded-2xl border border-solid border-amber-200 bg-amber-50 p-3.5">
-            <p className={cn(crm.sectionTitle, 'text-amber-700')}>Tidrapportering</p>
-            <p className="text-sm leading-relaxed text-amber-900">
-              Rapportera tiden i <strong className="font-semibold">Tidrapport</strong> som <strong className="font-semibold">internt projekt</strong>, och skriv ordernumret{' '}
-              <strong className="font-semibold">{documentRef(workOrder.fortnox_order_number, workOrder.order_number)}</strong> i kommentaren.
-            </p>
-            <p className="text-xs text-amber-700">Tidrapporteringen flyttar hit när Blikk kopplas bort.</p>
-          </div>
+              time into CRM.
+
+              Döljs för den som HAR Tid-fliken: två anvisningar som pekar åt olika håll är värre än
+              ingen alls, och den som testar den nya vägen ska inte samtidigt läsa att tiden hör
+              hemma i Blikk. Besättningen ser rutan oförändrad. */}
+          {!canReportTime ? (
+            <div className="grid gap-1.5 rounded-2xl border border-solid border-amber-200 bg-amber-50 p-3.5">
+              <p className={cn(crm.sectionTitle, 'text-amber-700')}>Tidrapportering</p>
+              <p className="text-sm leading-relaxed text-amber-900">
+                Rapportera tiden i <strong className="font-semibold">Tidrapport</strong> som <strong className="font-semibold">internt projekt</strong>, och skriv ordernumret{' '}
+                <strong className="font-semibold">{documentRef(workOrder.fortnox_order_number, workOrder.order_number)}</strong> i kommentaren.
+              </p>
+              <p className="text-xs text-amber-700">Tidrapporteringen flyttar hit när Blikk kopplas bort.</p>
+            </div>
+          ) : null}
 
           {/* Comments (write) — at the bottom of Info, no longer a separate tab */}
           <WorkOrderCommentsTab
@@ -202,6 +229,20 @@ export default function WorkOrderInstallerClient({ workOrderId, currentUserId }:
           fortnoxConnected={false}
           canEdit={false}
           onSave={async () => false}
+        />
+      ) : null}
+
+      {/* Tid — samma komponent som kontorets flik, alltså samma klockslagskrav och samma
+          serveruträkning av minuterna. Fältet ska inte ha en egen variant av regeln. */}
+      {activeTab === 'time' && canReportTime ? (
+        <WorkOrderTimeTab
+          entries={activity.timeEntries}
+          loading={activity.timeEntriesLoading}
+          totalHours={totalLoggedHours}
+          currentUserId={currentUserId}
+          onCreate={activity.createTimeEntry}
+          onUpdate={activity.updateTimeEntry}
+          onDelete={activity.deleteTimeEntry}
         />
       ) : null}
 
