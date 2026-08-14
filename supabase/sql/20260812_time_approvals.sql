@@ -30,6 +30,13 @@
 -- 20260811_time_entries_reshape.sql + _rls.sql och 20260811_time_compensations.sql.
 -- Den här filen ÄGER numera write-policyerna på BÅDA de tabellerna — se SUPERSEDED-noterna i
 -- respektive fil. Kör den SIST av tid-filerna, och kör om den om någon av dem körts om.
+--
+-- ⚠️⚠️ DELVIS SUPERSEDED av supabase/sql/20260814_time_admin_corrections.sql (2026-08-14).
+-- Den filen äger numera `crm_time_entries_update_own` och `_delete_own` — den lägger till
+-- admin-grenen (`time.entry.write.all`) som gör det möjligt att rätta någon annans rad i en öppen
+-- period. `create policy` har inget `or replace`, så KÖRS DEN HÄR FILEN EFTERÅT försvinner
+-- admin-grenen TYST: rättelserna träffar noll rader utan fel, och routen svarar "Tidraden hittades
+-- inte" om en rad som syns i listan. Kör alltså 20260814 SIST av tid-filerna, inte den här.
 -- Idempotent (kör den två gånger i SQL-editorn innan du litar på den).
 
 -- ── 1. Tabellen ──────────────────────────────────────────────────────────────

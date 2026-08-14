@@ -38,8 +38,11 @@ import type { PersonPeriodSummary } from '../../../lib/domains/time/summary';
 // uppfinna en regel: systemet känner varken tjänstgöringsgrad eller schema, och en deltidare hade
 // flaggats varje månad tills flaggan slutade betyda något.
 //
-// Ändra någon annans TIMMAR går inte, med flit (se RLS i 20260811_time_entries_rls.sql). Behöver en
-// rad rättas öppnar man perioden med en anledning, och personen rättar själv. Det lämnar spår.
+// Att ändra någon annans timmar KRÄVER att perioden är öppen och nyckeln `time.entry.write.all`
+// (20260814_time_admin_corrections.sql — den filen äger numera write-policyerna, INTE
+// 20260811_time_entries_rls.sql). Låstriggern prövar radens ägare, så attesterad tid är orörbar
+// även härifrån, och varje rättelse av någon annans rad skrivs till crm_time_entry_audit av en
+// databastrigger.
 //
 // OBS preflight är av (tailwind.config.js): `border` på en <div> ritar ingen linje utan
 // `border-solid`, och <input> får `width: 100%` från globals.css.
@@ -398,9 +401,9 @@ export default function AdminTimeApprovals() {
       <div className="grid gap-1">
         <h2 className="m-0 text-lg font-bold text-slate-900">Attest</h2>
         <p className="m-0 text-sm text-slate-600">
-          Lås en kalendermånad per person. Inlämnad och attesterad tid går inte att ändra — varken av
-          den anställde eller härifrån. Behöver något rättas: öppna perioden med en anledning, så
-          rättar personen själv.
+          Lås en kalendermånad per person. Inlämnad och attesterad tid går inte att ändra — öppna
+          perioden med en anledning först, så kan den anställde rätta själv. Du kan också rätta
+          raderna härifrån när perioden är öppen; varje sådan ändring loggas med ditt namn.
         </p>
       </div>
 
@@ -497,7 +500,10 @@ export default function AdminTimeApprovals() {
             </select>
           </label>
 
-          {submitted.length > 0 ? (
+          {/* ⚠️ Bara när periodens data faktiskt är hämtad. `people` töms inte vid månadsbyte, så
+              under laddningen låg föregående månads inlämnade kvar — och knappen hade attesterat
+              DEM under den NYA perioden. */}
+          {!loading && submitted.length > 0 ? (
             confirmBulk ? (
               <span className="flex items-center gap-2 text-sm">
                 <span className="text-slate-600">Attestera {submitted.length}?</span>

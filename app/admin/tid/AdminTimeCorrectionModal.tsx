@@ -40,6 +40,21 @@ const KINDS: Array<{ key: Kind; label: string }> = [
 const FIELD = 'w-full rounded-xl border border-solid border-[#dbe4d6] bg-white px-3 py-2 text-sm text-slate-900';
 const LABEL = 'text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600';
 
+/**
+ * Rast i minuter, eller null när fältet inte går att tolka.
+ *
+ * ⚠️ ALDRIG `Number(x) || 0`. "30 min", "0,5" och ett klistrat blanksteg blir alla NaN, och `|| 0`
+ * gör då rastavdraget till noll — 07:00–16:00 skrivs som 540 minuter i stället för 510, alltså
+ * trettio minuter tillagda på någon annans lön. Exakt samma fälla som redan kostade en gång på
+ * dagradens sida; här kom den tillbaka via inmatningen.
+ */
+function parseBreak(value: string): number | null {
+  const trimmed = value.trim().replace(',', '.');
+  if (trimmed === '') return 0;
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) && parsed >= 0 && Number.isInteger(parsed) ? parsed : null;
+}
+
 function formatHours(minutes: number): string {
   return minutesToHours(minutes).toFixed(2).replace('.', ',');
 }
@@ -66,8 +81,12 @@ export default function AdminTimeCorrectionModal({
   const [start, setStart] = React.useState((day.startTime || '').slice(0, 5));
   const [end, setEnd] = React.useState((day.endTime || '').slice(0, 5));
   const [breakMinutes, setBreakMinutes] = React.useState(String(day.breakMinutes));
-  const [absenceHours, setAbsenceHours] = React.useState(String(minutesToHours(day.absenceMinutes) || 8));
-  const isAbsenceRow = day.kind === 'absence';
+  // ⚠️ Radens EGNA minuter som utgångsvärde, inte 8. `|| 8` slog till på varje arbetsrad som görs
+  // om till frånvaro (absenceMinutes är noll där per konstruktion) och föreslog då åtta timmar för
+  // ett fyratimmarspass — dubbelt mot sanningen, på löneunderlaget.
+  const [absenceHours, setAbsenceHours] = React.useState(
+    String(minutesToHours(day.absenceMinutes || day.workMinutes) || ''),
+  );
   const [workOrderId, setWorkOrderId] = React.useState('');
   const [internalId, setInternalId] = React.useState('');
   const [absenceId, setAbsenceId] = React.useState('');
@@ -80,6 +99,10 @@ export default function AdminTimeCorrectionModal({
   // egna jobb, vilket är fel lista i varje tänkbart fall.)
   const [query, setQuery] = React.useState('');
   const [hits, setHits] = React.useState<WorkOrderHit[]>([]);
+  // ⚠️ Valet måste synas ÄVEN när träfflistan är borta. Förut kunde man klicka en träff för att
+  // läsa den, tömma sökrutan så listan försvann, och spara — varpå raden tyst flyttades till det
+  // jobbet. Den enda markören satt på träffknappen, som just hade avmonterats.
+  const [chosen, setChosen] = React.useState<WorkOrderHit | null>(null);
   const [searching, setSearching] = React.useState(false);
   const searchSeq = React.useRef(0);
 
@@ -100,6 +123,10 @@ export default function AdminTimeCorrectionModal({
         const body = await res.json().catch(() => null);
         if (seq !== searchSeq.current) return;
         setHits(res.ok && body?.ok ? (body.data.items || []) : []);
+      } catch {
+        // Utan den här grenen låg FÖRRA sökningens träffar kvar under den NYA termen, och ett klick
+        // flyttade raden till en order man inte sökt efter.
+        if (seq === searchSeq.current) setHits([]);
       } finally {
         if (seq === searchSeq.current) setSearching(false);
       }
@@ -107,13 +134,22 @@ export default function AdminTimeCorrectionModal({
     return () => clearTimeout(timer);
   }, [kind, query]);
 
+  const parsedBreak = parseBreak(breakMinutes);
+  const absenceValue = Number(String(absenceHours).replace(',', '.'));
+
   const previewMinutes = React.useMemo(() => {
     if (kind === 'absence') {
-      const hours = Number(String(absenceHours).replace(',', '.'));
-      return Number.isFinite(hours) ? Math.round(hours * 60) : 0;
+      return Number.isFinite(absenceValue) && absenceValue > 0 ? Math.round(absenceValue * 60) : 0;
     }
-    return workedMinutes({ workDate: date, startTime: start || null, endTime: end || null, breakMinutes: Number(breakMinutes) || 0 });
-  }, [kind, absenceHours, date, start, end, breakMinutes]);
+    if (parsedBreak === null) return 0;
+    return workedMinutes({ workDate: date, startTime: start || null, endTime: end || null, breakMinutes: parsedBreak });
+  }, [kind, absenceValue, date, start, end, parsedBreak]);
+
+  // ⚠️ `grossMinutes` läser `end <= start` som ett pass över midnatt, så identiska klockslag ger
+  // exakt 1440 minuter — och serverns guard är `> 1440`, alltså exklusiv. Ett dubbelklistrat
+  // klockslag hade skrivit ett DYGN på någon annans månad, med "24,00 h" i förhandsvisningen som
+  // enda signal. Ett pass måste sluta på en annan tid än det börjar.
+  const sameClock = kind !== 'absence' && !!start && start === end;
 
   // Målet behöver bara väljas när man BYTER det. Rör man inte väljaren ärver raden sitt nuvarande
   // mål av servern, så en ren klockslagsrättelse ska inte kräva att man letar upp jobbet igen.
@@ -134,7 +170,7 @@ export default function AdminTimeCorrectionModal({
     } else {
       patch.start_time = start;
       patch.end_time = end;
-      patch.break_minutes = Number(breakMinutes) || 0;
+      patch.break_minutes = parsedBreak ?? 0;
     }
     const result = await onSave(patch);
     // Lyckades det avmonterar föräldern oss — då finns ingen state kvar att skriva till.
@@ -150,7 +186,7 @@ export default function AdminTimeCorrectionModal({
         <>
           <h2 className="text-lg font-bold text-slate-900">Rätta tidrad</h2>
           <p className="m-0 mt-0.5 text-sm text-slate-500">
-            Ändringen loggas med ditt namn. Den anställde ser den i sin tidrapport.
+            Ändringen loggas med ditt namn, datum och radens värde före och efter.
           </p>
         </>
       }
@@ -166,7 +202,7 @@ export default function AdminTimeCorrectionModal({
           <button
             type="button"
             onClick={() => void save()}
-            disabled={busy || previewMinutes <= 0 || needsTarget}
+            disabled={busy || previewMinutes <= 0 || needsTarget || sameClock || !date}
             className="!py-2.5 flex-1 rounded-xl text-sm font-semibold text-white shadow-sm transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60 sm:ml-auto sm:flex-none sm:!px-5"
             style={{ backgroundColor: 'var(--crm-primary)' }}
           >
@@ -211,6 +247,18 @@ export default function AdminTimeCorrectionModal({
               {day.label ? <>Nu: <strong className="font-semibold text-slate-700">{day.label}</strong>. </> : null}
               Sök bara om raden ska flyttas till ett annat jobb.
             </p>
+            {chosen ? (
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-solid border-emerald-200 bg-emerald-50 px-3 py-2 text-sm">
+                <span className="font-semibold text-emerald-900">Flyttas till {orderLabel(chosen)}</span>
+                <button
+                  type="button"
+                  onClick={() => { setWorkOrderId(''); setChosen(null); }}
+                  className="!p-0 text-sm font-semibold text-emerald-800 underline underline-offset-2"
+                >
+                  Ångra
+                </button>
+              </div>
+            ) : null}
             <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Sök ordernummer eller kund…" />
             {searching ? <span className="text-sm text-slate-400">Söker…</span> : null}
             {hits.length > 0 ? (
@@ -219,7 +267,7 @@ export default function AdminTimeCorrectionModal({
                   <button
                     key={order.id}
                     type="button"
-                    onClick={() => setWorkOrderId(order.id)}
+                    onClick={() => { setWorkOrderId(order.id); setChosen(order); }}
                     aria-pressed={workOrderId === order.id}
                     className={cn(
                       '!px-3 !py-2.5 !justify-start !text-left w-full rounded-xl border border-solid text-sm transition',
@@ -290,6 +338,10 @@ export default function AdminTimeCorrectionModal({
             </div>
             {!start || !end ? (
               <p className="m-0 text-sm text-slate-500">Fyll i start- och sluttid.</p>
+            ) : sameClock ? (
+              <p className="m-0 text-sm text-rose-600">Start och slut är samma klockslag.</p>
+            ) : parsedBreak === null ? (
+              <p className="m-0 text-sm text-rose-600">Rasten måste vara ett helt antal minuter.</p>
             ) : previewMinutes <= 0 ? (
               <p className="m-0 text-sm text-rose-600">Rasten är längre än passet.</p>
             ) : null}

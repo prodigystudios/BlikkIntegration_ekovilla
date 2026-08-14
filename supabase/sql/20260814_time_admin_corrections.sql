@@ -17,8 +17,10 @@
 -- som medvetet ligger på två ställen (trigger + policy), hade blivit dekoration. Att öppna perioden
 -- kräver en anledning som syns för den anställde, så rättelsen lämnar spår i BÅDA ändarna.
 --
--- ADDITIV: nya nycklar, ny tabell, nya policygrenar. Inget befintligt villkor tas bort, så den kan
--- köras före eller efter koden. (Före koden ger bara en nyckel ingen ännu använder.)
+-- ⚠️ KÖRS FÖRE KODEN. Additiv i schemat, men INTE i beteende: getEffectivePermissions failar closed,
+-- så en route som vaktar på en nyckel databasen inte känner till nekar alla. Och utan policygrenen
+-- nedan träffar adminens UPDATE noll rader UTAN fel, vilket routen svarar 404 på — om en rad som
+-- syns i listan. PERMISSIONS.md: "The same rule applies to every later key ... each SQL-first".
 
 
 -- ── 1. Nyckeln ───────────────────────────────────────────────────────────────
@@ -68,9 +70,12 @@ create index if not exists crm_time_entry_audit_user_idx  on public.crm_time_ent
 -- Loggen är läsbar för den som får se andras tid, och för den vars tid det gäller — den anställde
 -- ska kunna se att någon rört hens rader. INGA insert/update/delete-policyer: raderna skrivs bara
 -- av triggern nedan, som är security definer. En logg som går att redigera är inte en logg.
+-- `force` och inte bara `enable`: utan den går tabellägaren förbi RLS, och revoke gäller inte
+-- service_role. En logg som en serverväg kan tömma är ingen logg.
 alter table public.crm_time_entry_audit enable row level security;
+alter table public.crm_time_entry_audit force row level security;
 grant select on public.crm_time_entry_audit to authenticated;
-revoke insert, update, delete on public.crm_time_entry_audit from authenticated;
+revoke insert, update, delete on public.crm_time_entry_audit from authenticated, anon;
 
 drop policy if exists crm_time_entry_audit_select on public.crm_time_entry_audit;
 create policy crm_time_entry_audit_select on public.crm_time_entry_audit
@@ -78,7 +83,34 @@ create policy crm_time_entry_audit_select on public.crm_time_entry_audit
   using (user_id = auth.uid() or public.has_permission('time.entry.read.all'));
 
 
--- ── 3. Triggern som loggar ───────────────────────────────────────────────────
+-- ── 3. Ägarlåset ─────────────────────────────────────────────────────────────
+-- ⚠️ EN TIDRAD FÅR ALDRIG BYTA ÄGARE. Att rätta ett fel är en sak; att flytta någons timmar till en
+-- annan persons löneunderlag en helt annan.
+--
+-- Fram till nu höll RLS det: WITH CHECK krävde `user_id = auth.uid()`, så en PATCH som ändrade
+-- ägaren avvisades oavsett vilken väg den kom. Admin-grenen nedan släpper det villkoret för den som
+-- har time.entry.write.all — och WITH CHECK KAN INTE SE OLD, så den kan omöjligt jämföra gammal och
+-- ny ägare. Utan den här triggern vore appens fältstrippning enda skyddet, och den gäller inte en
+-- request som går direkt mot PostgREST med användarens egen session.
+create or replace function public.enforce_time_entry_owner()
+returns trigger
+language plpgsql
+as $$
+begin
+  if new.user_id is distinct from old.user_id then
+    raise exception 'En tidrad kan inte byta ägare';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists enforce_time_entry_owner on public.crm_time_entries;
+create trigger enforce_time_entry_owner
+  before update on public.crm_time_entries
+  for each row execute function public.enforce_time_entry_owner();
+
+
+-- ── 4. Triggern som loggar ───────────────────────────────────────────────────
 -- security definer: loggen ska skrivas även om den som ändrar inte har rätt att skriva i
 -- audit-tabellen — vilket ingen har, med flit.
 create or replace function public.log_time_entry_change()
@@ -108,7 +140,11 @@ begin
   elsif tg_op = 'INSERT' then
     v_owner := new.user_id; v_entry := new.id; v_before := null;             v_after := to_jsonb(new);
   else
-    v_owner := new.user_id; v_entry := new.id; v_before := to_jsonb(old);    v_after := to_jsonb(new);
+    -- ⚠️ ÄGAREN TAS UR OLD PÅ EN UPPDATERING. Tog vi den ur NEW skulle en ägarflytt bokföras under
+    -- den som TOG timmarna, och om den som flyttade dem tog dem till sig själv blev actor = owner
+    -- och hoppet nedan skrev ingen rad alls — spårlöst, alltså precis tvärtemot vad loggen finns
+    -- för. Ägarlåset ovan gör flytten omöjlig, men loggen ska inte förlita sig på en annan trigger.
+    v_owner := old.user_id; v_entry := old.id; v_before := to_jsonb(old);    v_after := to_jsonb(new);
   end if;
 
   -- Egna ändringar loggas inte. Den normala vägen i /tid ska inte fylla loggen med brus; det är
@@ -145,7 +181,7 @@ create trigger log_time_entry_change
   for each row execute function public.log_time_entry_change();
 
 
--- ── 4. Policygrenarna ────────────────────────────────────────────────────────
+-- ── 5. Policygrenarna ────────────────────────────────────────────────────────
 -- ⚠️ DE HÄR ERSÄTTER policyerna med samma namn i 20260812_time_approvals.sql. Kör den filen INNAN
 -- den här, aldrig efter — annars försvinner admin-grenen tyst, precis som periodlåset gjorde när
 -- 20260811-filerna kördes om. `create policy` har inget `or replace`.

@@ -253,6 +253,7 @@ const current = {
   end_time: '16:00:00',
   break_minutes: 30,
   minutes_worked: 510,
+  hours: 8.5,
   time_code_id: 'tc-1',
   note: 'Vindsbjälklag',
 };
@@ -299,5 +300,13 @@ describe('mergeCorrection', () => {
     const absence = { ...current, kind: 'absence' as const, work_order_id: null, absence_type_id: 'vab', minutes_worked: 240 };
     expect(mergeCorrection(absence, {}).hours).toBe(4);
     expect(mergeCorrection(absence, { hours: 8 }).hours).toBe(8);
+  });
+
+  // Regression: de gamla kontorsraderna har minutes_worked NULL men hours satt. Utan fallbacken
+  // blev timtalet null, buildTimeEntryRow krävde klockslag raden aldrig haft, och den admin som
+  // bara ville flytta raden till rätt jobb tvingades hitta på tider — som sedan skrev om lönetimmarna.
+  it('faller tillbaka på hours när minutes_worked är null', () => {
+    const legacy = { ...current, minutes_worked: null, hours: 6.5, start_time: null, end_time: null };
+    expect(mergeCorrection(legacy, {}).hours).toBe(6.5);
   });
 });

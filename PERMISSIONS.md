@@ -84,7 +84,7 @@ caught at compile time).
 `crm.write` (write), `crm.admin`.
 
 **Time & payroll** (fas 4, seeded in `20260811_time_permissions.sql`): `time.entry.write`,
-`time.entry.read.all`, `time.approve`, `time.payroll.read`, `time.reference.manage`.
+`time.entry.read.all`, `time.approve`, `time.payroll.read`, `time.reference.manage`, `time.entry.write.all`.
 
 > Deliberately **not** `crm.*`. Time is company-wide — every employee reports it, including roles
 > with no CRM access at all. A time key inside the CRM namespace would inherit the `crm.access` /
@@ -113,7 +113,7 @@ The seed reproduces the pre-migration role behavior exactly. (Parity is asserted
 | meta `crm.write` | – | ✓ | – | ✓ |
 | meta `crm.admin` | – | – | – | ✓ |
 | `time.entry.write` | **✓** | **✓** | – | ✓ |
-| `time.entry.read.all` / `time.approve` / `time.payroll.read` / `time.reference.manage` | – | – | – | ✓ |
+| `time.entry.read.all` / `time.approve` / `time.payroll.read` / `time.reference.manage` / `time.entry.write.all` | – | – | – | ✓ |
 
 **Asymmetries to remember:** `crm.routingrule.read` excludes konsult (its RLS SELECT did too);
 `crm.aiprospect.*` is admin-only; `member` gets no CRM keys (installers reach their own work

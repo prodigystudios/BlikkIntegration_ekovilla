@@ -252,7 +252,7 @@ export async function updateTimeEntry(
 export async function getTimeEntryForCorrection(supabase: SupabaseClient, id: string) {
   return supabase
     .from('crm_time_entries')
-    .select('id, user_id, kind, work_date, work_order_id, internal_project_id, absence_type_id, start_time, end_time, break_minutes, minutes_worked, time_code_id, note')
+    .select('id, user_id, kind, work_date, work_order_id, internal_project_id, absence_type_id, start_time, end_time, break_minutes, minutes_worked, hours, time_code_id, note')
     .eq('id', id)
     .maybeSingle();
 }
@@ -303,6 +303,8 @@ export function mergeCorrection(
     end_time: string | null;
     break_minutes: number | null;
     minutes_worked: number | null;
+    /** Fallbacken för de gamla kontorsraderna, där minutes_worked är NULL men hours satt. */
+    hours: number | null;
     time_code_id: string | null;
     note: string | null;
   },
@@ -319,8 +321,16 @@ export function mergeCorrection(
     start_time: pick(patch.start_time, existing.start_time),
     end_time: pick(patch.end_time, existing.end_time),
     break_minutes: pick(patch.break_minutes, existing.break_minutes ?? 0),
-    // Frånvaro anges i timmar. Utelämnas de behålls radens nuvarande minuttal, omräknat.
-    hours: pick(patch.hours, existing.minutes_worked != null ? existing.minutes_worked / 60 : null),
+    // Frånvaro anges i timmar. Utelämnas de behålls radens nuvarande värde.
+    //
+    // ⚠️ `hours` är fallbacken och måste vara med. På de gamla kontorsraderna är minutes_worked NULL
+    // men hours satt; utan fallbacken blev timtalet null, buildTimeEntryRow krävde klockslag som
+    // raden aldrig haft, och admin fick hitta på tider — varpå triggern skrev om radens hours till
+    // något helt annat. En rättelse av ARBETSORDERN hade då tyst ändrat lönetimmarna.
+    hours: pick(
+      patch.hours,
+      existing.minutes_worked != null ? existing.minutes_worked / 60 : existing.hours,
+    ),
     note: pick(patch.note, existing.note),
   };
 }
