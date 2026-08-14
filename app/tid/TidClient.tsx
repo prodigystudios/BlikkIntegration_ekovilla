@@ -44,10 +44,15 @@ function formatHours(minutes: number): string {
   return minutesToHours(minutes).toFixed(2).replace('.', ',');
 }
 
-/** Timmar för en ruta som är 48 px bred: "8", "8,5", "17". Två decimaler får inte plats. */
+/**
+ * Timmar i en dagruta: "8", "8,5", "7,75".
+ *
+ * Efterföljande nollor faller bort men värdet AVRUNDAS INTE. En decimal hade gjort 7,75 h till
+ * "7,8" i rutan medan rubriken direkt under sa "7,75 h" — två olika svar på samma fråga, en
+ * centimeter isär, på en sida vars hela poäng är att man ska kunna lita på siffran.
+ */
 function compactHours(minutes: number): string {
-  const hours = minutes / 60;
-  return Number.isInteger(hours) ? String(hours) : hours.toFixed(1).replace('.', ',');
+  return String(minutesToHours(minutes)).replace('.', ',');
 }
 
 function formatAmount(amount: number): string {
@@ -130,6 +135,12 @@ function entryLabel(entry: EntryRow): string {
   return [number ? `#${number}` : null, order.client_name || order.project_name].filter(Boolean).join(' · ') || 'Arbetsorder';
 }
 
+// Etikett för ETT FÄLT. Medvetet inte `crm.sectionTitle`: den tokenen är en avdelningsrubrik i
+// slate-400 om 10 px, cirka 2,9:1 mot vitt — under WCAG AA och för svag för texten som talar om vad
+// man ska skriva i rutan, särskilt på en telefon i dagsljus. Samma familj, mörkare ton. Samma
+// konstant finns i TimeEntryModal med samma motivering.
+const LABEL = 'text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600';
+
 const STATUS_TONE: Record<TimePeriodStatus, string> = {
   open: 'border-slate-200 bg-white text-slate-600',
   submitted: 'border-amber-200 bg-amber-50 text-amber-800',
@@ -169,12 +180,20 @@ export default function TidClient() {
   const [approval, setApproval] = React.useState<TimeApprovalRow | null>(null);
   const [approvalStatus, setApprovalStatus] = React.useState<TimePeriodStatus>('open');
   const [reference, setReference] = React.useState<ReferenceData>({ time_code: [], internal_project: [], absence_type: [] });
-  const [loading, setLoading] = React.useState(true);
+  // Laddningsläget HÄRLEDS ur vilket intervall som faktiskt är hämtat, det sätts inte för hand.
+  //
+  // Förut satte varje veckoknapp `loading = true`. Men hämtningen täcker hela MÅNADEN, så två
+  // veckor i samma månad delar intervall — och remsan gick ändå till skelett och veckosumman till
+  // streck medan ett svar med exakt samma rader var på väg. Nu blinkar den bara när vi verkligen
+  // saknar datat, alltså vid ett månadsbyte eller första besöket.
+  const [loadedKey, setLoadedKey] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [modalDate, setModalDate] = React.useState<string | null>(null);
   const [editing, setEditing] = React.useState<EditableEntry | null>(null);
   const [busyId, setBusyId] = React.useState<string | null>(null);
   const [pickedIso, setPickedIso] = React.useState(todayIso);
+
+  const loading = loadedKey !== `${fetchRange.from}:${fetchRange.to}`;
 
   // Kapplöpningsvakt: klickar man snabbt genom veckorna kan ett tidigare svar komma sist och rita
   // fel veckas rader. Bara den senaste hämtningen får skriva.
@@ -221,7 +240,8 @@ export default function TidClient() {
         setApprovalStatus('open');
       }
     } finally {
-      if (seq === loadSeq.current) setLoading(false);
+      // Även efter ett fel: felrutan förklarar vad som hände, ett evigt skelett gör det inte.
+      if (seq === loadSeq.current) setLoadedKey(`${fetchRange.from}:${fetchRange.to}`);
     }
   }, [fetchRange]);
 
@@ -318,7 +338,6 @@ export default function TidClient() {
 
   function goToWeek(delta: number) {
     setWeekOffset((value) => value + delta);
-    setLoading(true);
   }
 
   const selectedEntries = byDate.get(selectedIso) ?? [];
@@ -364,7 +383,7 @@ export default function TidClient() {
         {weekOffset !== 0 ? (
           <button
             type="button"
-            onClick={() => { setWeekOffset(0); setLoading(true); }}
+            onClick={() => setWeekOffset(0)}
             className="!py-1.5 justify-self-center rounded-lg text-sm font-semibold text-slate-600 underline underline-offset-2"
           >
             Gå till denna vecka
@@ -872,7 +891,7 @@ function CompensationSection({
             <div className="grid gap-2 rounded-xl bg-[#f1f5ee] p-3">
               <div className="grid gap-2 sm:grid-cols-2">
                 <label className="grid gap-1">
-                  <span className={crm.sectionTitle}>Typ</span>
+                  <span className={LABEL}>Typ</span>
                   <select
                     value={kind}
                     onChange={(e) => setKind(e.target.value as CompensationKind)}
@@ -884,22 +903,22 @@ function CompensationSection({
                   </select>
                 </label>
                 <label className="grid gap-1">
-                  <span className={crm.sectionTitle}>Datum</span>
+                  <span className={LABEL}>Datum</span>
                   <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
                 </label>
                 {unit ? (
                   <label className="grid gap-1">
-                    <span className={crm.sectionTitle}>Antal ({unit})</span>
+                    <span className={LABEL}>Antal ({unit})</span>
                     <Input inputMode="decimal" value={quantity} onChange={(e) => setQuantity(e.target.value)} />
                   </label>
                 ) : null}
                 <label className="grid gap-1">
-                  <span className={crm.sectionTitle}>Belopp (kr)</span>
+                  <span className={LABEL}>Belopp (kr)</span>
                   <Input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} />
                 </label>
               </div>
               <label className="grid gap-1">
-                <span className={crm.sectionTitle}>Anteckning</span>
+                <span className={LABEL}>Anteckning</span>
                 <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="T.ex. parkering Uppsala" />
               </label>
               <button

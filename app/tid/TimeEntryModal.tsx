@@ -3,7 +3,6 @@ import React from 'react';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import CrmModal from '@/app/crm/components/CrmModal';
 import Input from '@/components/ui/Input';
-import { crm } from '@/app/crm/lib/crmTokens';
 import { cn } from '@/lib/shared/cn';
 import { minutesToHours, workedMinutes } from '@/lib/domains/time/hours';
 import type { TimeReferenceItem } from '@/lib/domains/time/reference';
@@ -62,6 +61,17 @@ const KINDS: Array<{ key: TimeEntryKind; label: string }> = [
 // Fältstil på ett ställe. Preflight är av, så `border` utan `border-solid` ritar ingen linje —
 // och globals.css ger <select>/<textarea> ingen egen ram att ärva.
 const FIELD = 'w-full rounded-xl border border-solid border-[#dbe4d6] bg-white px-3 py-2 text-sm text-slate-900';
+
+/**
+ * Etikett för ETT FÄLT — medvetet inte `crm.sectionTitle`.
+ *
+ * Tokenen är en avdelningsrubrik: 10 px i slate-400, vilket är ungefär 2,9:1 mot vitt och alltså
+ * under WCAG AA:s 4,5:1 utan att kvala in som stor text. Det duger för ett ord som märker upp ett
+ * stycke man ändå läser, men inte för texten som talar om vad man ska skriva i rutan — allra minst
+ * i en app som används på en telefon i dagsljus. Samma familj (versaler, spärrad), mörkare ton:
+ * slate-600 ligger runt 7:1 mot alla ytor formuläret använder.
+ */
+const LABEL = 'text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600';
 
 // 'HH:MM:SS' från Postgres → 'HH:MM' som <input type="time"> vill ha.
 function toTimeInput(value: string | null): string {
@@ -283,14 +293,14 @@ export default function TimeEntryModal({
         </div>
 
         <label className="grid gap-1">
-          <span className={crm.sectionTitle}>Datum</span>
+          <span className={LABEL}>Datum</span>
           <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
         </label>
 
         {kind === 'absence' ? (
           <>
             <label className="grid gap-1">
-              <span className={crm.sectionTitle}>Frånvaroorsak</span>
+              <span className={LABEL}>Frånvaroorsak</span>
               <select value={absenceId} onChange={(e) => setAbsenceId(e.target.value)} className={FIELD}>
                 <option value="">Välj…</option>
                 {reference.absence_type.map((item) => (
@@ -301,15 +311,20 @@ export default function TimeEntryModal({
             {/* Ingen summering här: talet man skriver ÄR summan. Att eka det i en egen ruta hade
                 sett ut som en uträkning utan att vara en. */}
             <label className="grid gap-1">
-              <span className={crm.sectionTitle}>Antal timmar</span>
+              <span className={LABEL}>Antal timmar</span>
               <Input inputMode="decimal" value={absenceHours} onChange={(e) => setAbsenceHours(e.target.value)} placeholder="8" />
+              {/* Utan den här raden blir ett oläsbart timtal ett tyst avstängt Spara: knappen
+                  slocknar och ingenting säger varför. */}
+              {previewMinutes <= 0 ? (
+                <span className="text-sm text-rose-600">Ange antal timmar som en siffra, t.ex. 4 eller 7,5.</span>
+              ) : null}
             </label>
           </>
         ) : (
           <>
             {kind === 'work_order' ? (
               <div className="grid gap-1.5">
-                <span className={crm.sectionTitle}>Jobb</span>
+                <span className={LABEL}>Jobb</span>
                 {jobsLoading ? (
                   <span className="text-sm text-slate-400">Hämtar dagens jobb…</span>
                 ) : jobs.length === 0 ? (
@@ -349,7 +364,7 @@ export default function TimeEntryModal({
               </div>
             ) : (
               <label className="grid gap-1">
-                <span className={crm.sectionTitle}>Internprojekt</span>
+                <span className={LABEL}>Internprojekt</span>
                 <select value={internalId} onChange={(e) => setInternalId(e.target.value)} className={FIELD}>
                   <option value="">Välj…</option>
                   {reference.internal_project.map((item) => (
@@ -365,31 +380,36 @@ export default function TimeEntryModal({
             <div className="grid gap-3 rounded-2xl border border-solid border-[#e0e8dc] bg-[#f6f9f4] p-3">
               <div className="grid grid-cols-2 gap-2">
                 <label className="grid gap-1">
-                  <span className={crm.sectionTitle}>Start</span>
+                  <span className={LABEL}>Start</span>
                   <Input type="time" value={start} onChange={(e) => setStart(e.target.value)} />
                 </label>
                 <label className="grid gap-1">
-                  <span className={crm.sectionTitle}>Slut</span>
+                  <span className={LABEL}>Slut</span>
                   <Input type="time" value={end} onChange={(e) => setEnd(e.target.value)} />
                 </label>
               </div>
 
               <div className="flex items-end justify-between gap-3">
                 <label className="grid gap-1">
-                  <span className={crm.sectionTitle}>Rast (min)</span>
+                  <span className={LABEL}>Rast (min)</span>
                   <span className="block w-24">
                     <Input inputMode="numeric" value={breakMinutes} onChange={(e) => setBreakMinutes(e.target.value)} />
                   </span>
                 </label>
                 <div className="text-right">
-                  <div className={crm.sectionTitle}>Arbetad tid</div>
+                  <div className={LABEL}>Arbetad tid</div>
                   <div className={cn('text-2xl font-bold tabular-nums leading-tight', previewMinutes > 0 ? 'text-slate-900' : 'text-slate-300')}>
                     {formatHours(previewMinutes)} h
                   </div>
                 </div>
               </div>
 
-              {previewMinutes <= 0 ? (
+              {/* Tre lägen, inte två. Ett tomt klockslag och en för lång rast ger båda noll minuter,
+                  men bara det ena handlar om rasten — och att skylla på rasten när fältet är tomt
+                  skickar folk att ändra fel sak. */}
+              {!start || !end ? (
+                <p className="m-0 text-sm text-slate-500">Fyll i start- och sluttid.</p>
+              ) : previewMinutes <= 0 ? (
                 <p className="m-0 text-sm text-rose-600">Rasten är längre än passet.</p>
               ) : null}
             </div>
@@ -398,7 +418,7 @@ export default function TimeEntryModal({
 
         {reference.time_code.length > 0 ? (
           <label className="grid gap-1">
-            <span className={crm.sectionTitle}>Tidkod (valfri)</span>
+            <span className={LABEL}>Tidkod (valfri)</span>
             <select value={timeCodeId} onChange={(e) => setTimeCodeId(e.target.value)} className={FIELD}>
               <option value="">—</option>
               {reference.time_code.map((item) => (
@@ -409,7 +429,7 @@ export default function TimeEntryModal({
         ) : null}
 
         <label className="grid gap-1">
-          <span className={crm.sectionTitle}>Anteckning{requiresNote ? ' (krävs)' : ''}</span>
+          <span className={LABEL}>Anteckning{requiresNote ? ' (krävs)' : ''}</span>
           <textarea
             value={note}
             onChange={(e) => setNote(e.target.value)}
