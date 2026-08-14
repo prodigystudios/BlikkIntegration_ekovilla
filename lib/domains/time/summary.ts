@@ -46,6 +46,15 @@ export type DayRow = {
   label: string | null;
   /** Tidraden bakom dagraden, när den är känd — annars går raden inte att rätta. */
   entryId: string | null;
+  /**
+   * Rastavdraget i minuter.
+   *
+   * ⚠️ Måste följa med. Den som RÄTTAR raden skickar tillbaka rasten tillsammans med klockslagen,
+   * och servern räknar om minuterna ur alla tre. Saknas den här defaultar formuläret till noll och
+   * en rättad 07:00–16:00 med halvtimmes rast går från 510 till 540 minuter — trettio minuter
+   * tillagda på någons lön, tyst, vid varje rättelse.
+   */
+  breakMinutes: number;
 };
 
 // En rad per tidrad, inte per dag: byrån vill se klockslagen, och två pass samma dag har två par.
@@ -66,6 +75,7 @@ export function buildDayRows(entries: SummarizableEntry[]): DayRow[] {
         note: entry.note ?? null,
         label: isAbsence ? null : entry.label ?? null,
         entryId: entry.id ?? null,
+        breakMinutes: isAbsence ? 0 : entry.breakMinutes ?? 0,
       };
     });
 }

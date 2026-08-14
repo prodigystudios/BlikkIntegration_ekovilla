@@ -908,7 +908,7 @@ function DayRowCells({
 
   const [draftStart, setDraftStart] = React.useState(start || '');
   const [draftEnd, setDraftEnd] = React.useState(end || '');
-  const [draftBreak, setDraftBreak] = React.useState('0');
+  const [draftBreak, setDraftBreak] = React.useState(String(day.breakMinutes));
   const [draftHours, setDraftHours] = React.useState(String(minutesToHours(day.absenceMinutes)));
 
   // Rättelse kräver att raden går att peka ut. Saknas id:t är den läsbar men inte ändringsbar —
@@ -930,7 +930,7 @@ function DayRowCells({
     return (
       <tr className="border-x-0 border-b-0 border-t border-solid border-slate-200 align-top">
         <td className="whitespace-nowrap px-2 py-1.5 text-slate-700">{formatDay(day.date)}</td>
-        <td className="px-2 py-1.5" colSpan={4}>
+        <td className="px-2 py-1.5" colSpan={5}>
           <div className="flex flex-wrap items-end gap-2">
             {isAbsence ? (
               <label className="grid gap-1">
@@ -1020,8 +1020,12 @@ function DayRowCells({
               <button
                 type="button"
                 onClick={() => {
+                  // ⚠️ RASTEN MÅSTE SÅS OM. Utan den raden ligger formulärets nolla kvar och
+                  // rättelsen skickar break_minutes: 0 — servern räknar då om passet UTAN
+                  // rastavdrag och lägger till minuter på någons lön.
                   setDraftStart(start || '');
                   setDraftEnd(end || '');
+                  setDraftBreak(String(day.breakMinutes));
                   setDraftHours(String(minutesToHours(day.absenceMinutes)));
                   setEditing(true);
                 }}
