@@ -11,7 +11,7 @@ import type { DefaultCrewMember } from '@/lib/domains/planning/defaultCrew';
 import { groupNotesByDay, type DayNote } from '@/lib/domains/planning/dayNotes';
 import { swedishHoliday } from '@/lib/domains/planning/holidays';
 import { CrewEditor, CrewAvatars, SegmentCardBody, type SegmentActions } from './jobCard';
-import { orderInfo } from '@/lib/domains/planning/order';
+import { compareBoardOrder, orderInfo } from '@/lib/domains/planning/order';
 import DayNotesCell from './DayNotesCell';
 
 type WeekBoardProps = {
@@ -204,9 +204,12 @@ export default function WeekBoard({
           <p className="py-8 text-center text-sm text-slate-400">Inga bilar upplagda än.</p>
         ) : (
           trucks.map((truck, ti) => {
-            const laneSegs = segments.filter(
-              (s) => s.truck_id === truck.id && s.end_day >= weekStart && s.start_day <= weekEnd,
-            );
+            // Sorted, not just filtered: rendering in raw array order let an unrelated UPDATE
+            // reshuffle two jobs that share a day. DOM order is the vertical order inside a day
+            // column, so this comparator IS the "which job is done first" the badge shows.
+            const laneSegs = segments
+              .filter((s) => s.truck_id === truck.id && s.end_day >= weekStart && s.start_day <= weekEnd)
+              .sort((a, b) => a.start_day.localeCompare(b.start_day) || compareBoardOrder(a, b));
             const laneWeekly = crewForTruckInRange(truckCrew, truck.id, weekStart, weekEnd);
             const overridden = laneWeekly.length > 0;
             const defaultTeam = defaultCrew.filter((m) => m.truck_id === truck.id);

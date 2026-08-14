@@ -76,7 +76,11 @@ export async function listSegments(
     .lte('start_day', range.to)
     .gte('end_day', range.from)
     .order('start_day', { ascending: true })
-    .order('sort_index', { ascending: true });
+    .order('sort_index', { ascending: true })
+    // Final tiebreak. sort_index defaults to 0 on every row, so without this the rows that share a
+    // day come back in whatever order the executor produced — and it produces a different one after
+    // any UPDATE to the table. Matches compareBoardOrder, which the boards render with.
+    .order('id', { ascending: true });
 
   if (error) return { data: [], error };
 

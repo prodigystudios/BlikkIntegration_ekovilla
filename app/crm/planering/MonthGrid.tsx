@@ -5,7 +5,7 @@ import { crm } from '@/app/crm/lib/crmTokens';
 import type { OpsSegment, OpsTruck } from '@/lib/domains/planning/types';
 import type { MonthWeek } from './planningDates';
 import { SegmentCardBody, type SegmentActions } from './jobCard';
-import { orderInfo } from '@/lib/domains/planning/order';
+import { compareBoardOrder, orderInfo } from '@/lib/domains/planning/order';
 import type { JobType } from '@/lib/domains/planning/jobTypes';
 import type { AssignablePerson } from '@/lib/domains/planning/crew';
 import { groupNotesByDay, type DayNote } from '@/lib/domains/planning/dayNotes';
@@ -77,13 +77,16 @@ export default function MonthGrid({
               {week.days.map((cell) => {
                 const isToday = cell.iso === todayISO;
                 const dayActive = placing && canWrite;
+                // Grouped by truck first (that's what makes a dense month scannable), but within a
+                // truck the run order has to be the one the badge shows — sort_index was missing
+                // here, so a card badged "2/2" could sit above the one badged "1/2".
                 const daySegs = segments
                   .filter((s) => s.start_day <= cell.iso && s.end_day >= cell.iso)
                   .sort(
                     (a, b) =>
                       (truckOrder.get(a.truck_id) ?? 999) - (truckOrder.get(b.truck_id) ?? 999) ||
                       a.start_day.localeCompare(b.start_day) ||
-                      a.id.localeCompare(b.id),
+                      compareBoardOrder(a, b),
                   );
                 const cellNotes = notesByDay.get(cell.iso) ?? [];
                 const hol = swedishHoliday(cell.iso);

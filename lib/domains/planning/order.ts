@@ -4,12 +4,26 @@
 
 type Orderable = { id: string; truck_id: string; start_day: string; sort_index: number };
 
-// Segments sharing the same truck AND start day, ordered as shown on the board
-// (sort_index, then id as a stable tiebreak).
+/**
+ * THE order two jobs on the same truck and day are shown in: sort_index, then id.
+ *
+ * ⚠️ Every surface that renders segments must use this. `sort_index` defaults to 0 for every row
+ * (see 20260611_ops_planning_foundation.sql), so untouched jobs are all ties — and a tie decided by
+ * anything other than a stable key is decided by nothing. Postgres is free to return equal-ranked
+ * rows in any order, and it changes that order after an unrelated UPDATE, so the week board (which
+ * rendered in raw array order) reshuffled two jobs on one truck when a job on a DIFFERENT truck was
+ * moved to another day. The month board sorted, but left sort_index out entirely, so a card badged
+ * "2/2" could sit above the one badged "1/2".
+ */
+export function compareBoardOrder(a: Orderable, b: Orderable): number {
+  return a.sort_index - b.sort_index || a.id.localeCompare(b.id);
+}
+
+// Segments sharing the same truck AND start day, ordered as shown on the board.
 export function dayGroup<T extends Orderable>(segments: T[], seg: Pick<Orderable, 'truck_id' | 'start_day'>): T[] {
   return segments
     .filter((s) => s.truck_id === seg.truck_id && s.start_day === seg.start_day)
-    .sort((a, b) => a.sort_index - b.sort_index || a.id.localeCompare(b.id));
+    .sort(compareBoardOrder);
 }
 
 export type OrderInfo = { index: number; total: number };

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { dayGroup, orderInfo, reorderWithinGroup } from '@/lib/domains/planning/order';
+import { compareBoardOrder, dayGroup, orderInfo, reorderWithinGroup } from '@/lib/domains/planning/order';
 
 type Seg = { id: string; truck_id: string; start_day: string; sort_index: number };
 const s = (id: string, truck_id: string, start_day: string, sort_index = 0): Seg => ({ id, truck_id, start_day, sort_index });
@@ -49,5 +49,27 @@ describe('reorderWithinGroup', () => {
     const group = [s('a', 't1', 'd', 0), s('b', 't1', 'd', 1)];
     expect(reorderWithinGroup(group, 'a', 'up')).toEqual([]);
     expect(reorderWithinGroup(group, 'b', 'down')).toEqual([]);
+  });
+});
+
+describe('compareBoardOrder', () => {
+  it('orders by sort_index first', () => {
+    expect(compareBoardOrder(s('a', 't1', 'd', 2), s('b', 't1', 'd', 1))).toBeGreaterThan(0);
+  });
+
+  it('breaks all-zero ties on id, so the order cannot depend on array position', () => {
+    // Regression: sort_index defaults to 0 on every row, so untouched jobs are all ties. The week
+    // board rendered in raw array order and the server query had no final tiebreak, so moving a job
+    // on ONE truck reshuffled two same-day jobs on ANOTHER truck.
+    const two = [s('zulu', 't1', 'd'), s('alpha', 't1', 'd')];
+    expect([...two].sort(compareBoardOrder).map((x) => x.id)).toEqual(['alpha', 'zulu']);
+    expect([...two].reverse().sort(compareBoardOrder).map((x) => x.id)).toEqual(['alpha', 'zulu']);
+  });
+
+  it('is the same order dayGroup reports, so cards and badges agree', () => {
+    const segs = [s('c', 't1', 'd'), s('a', 't1', 'd'), s('b', 't1', 'd', -1)];
+    const byGroup = dayGroup(segs, s('x', 't1', 'd')).map((x) => x.id);
+    expect([...segs].sort(compareBoardOrder).map((x) => x.id)).toEqual(byGroup);
+    expect(byGroup).toEqual(['b', 'a', 'c']);
   });
 });
