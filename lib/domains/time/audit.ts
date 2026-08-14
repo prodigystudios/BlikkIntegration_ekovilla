@@ -17,7 +17,8 @@ export type TimeEntryAuditRow = {
   id: string;
   entry_id: string;
   user_id: string;
-  changed_by: string;
+  /** Null = okänd aktör (servicenyckel eller SQL-editor). */
+  changed_by: string | null;
   action: 'insert' | 'update' | 'delete';
   before_data: Record<string, unknown> | null;
   after_data: Record<string, unknown> | null;
@@ -47,7 +48,11 @@ export async function listTimeEntryAudit(
     .from('crm_time_entry_audit')
     .select(timeEntryAuditSelect)
     .order('created_at', { ascending: false })
-    .limit(opts.limit ?? 200);
+    // Rundligt tilltaget: loggen innehåller bara ANDRAS ändringar, som per konstruktion är
+    // undantag. Filtreringen på arbetsdatum sker i JS (värdet bor i jsonb), så en för snäv gräns
+    // hade tyst svarat "ingen har rört månaden" om en äldre månad — därför hellre en gräns ingen
+    // realistisk mängd rättelser når.
+    .limit(opts.limit ?? 1000);
 
   // Utan userId begränsar RLS till den egna tiden, om man inte har time.entry.read.all.
   if (opts.userId) query = query.eq('user_id', opts.userId);
@@ -69,6 +74,13 @@ export function auditInRange(row: TimeEntryAuditRow, range: { from: string; to: 
 
 // ── Vad som faktiskt ändrades ────────────────────────────────────────────────
 
+/**
+ * En ändrad uppgift. `null` betyder ALLTID "tomt" — aldrig "vet ej".
+ *
+ * ⚠️ Överlasta inte `to` med en sentinel. En tidigare version skrev jobbytet som `to: null` och
+ * lät vyn hoppa över pilen, vilket gjorde att en TÖMD anteckning ritades som bara sitt gamla värde
+ * — "Anteckning: Fel" läste som det som står där nu, tvärtom mot vad som hänt.
+ */
 export type AuditChange = { label: string; from: string | null; to: string | null };
 
 const CLOCK_FIELDS = ['start_time', 'end_time'] as const;
@@ -123,7 +135,7 @@ export function describeAuditChange(row: Pick<TimeEntryAuditRow, 'action' | 'bef
   // Målbytet redovisas som ett faktum, inte som två uuid:n.
   const targets = ['work_order_id', 'internal_project_id', 'absence_type_id'] as const;
   if (targets.some((field) => before[field] !== after[field])) {
-    changes.push({ label: 'Jobb eller orsak', from: 'ändrat', to: null });
+    changes.push({ label: 'Jobb eller orsak', from: null, to: 'ändrat' });
   }
 
   return changes;

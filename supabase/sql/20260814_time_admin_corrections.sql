@@ -47,7 +47,11 @@ create table if not exists public.crm_time_entry_audit (
   -- Vems tid det gällde, och vem som ändrade. Båda behövs: "admin ändrade" utan att veta vems
   -- lön det rörde är oanvändbart, och tvärtom likaså.
   user_id       uuid not null,
-  changed_by    uuid not null,
+  -- NULL = okänd aktör (servicenyckel eller SQL-editor, där auth.uid() är null). Nullbar OCH med
+  -- främmande nyckel, inte ett noll-uuid: dels för att en sentinel som inte finns i profiles gör
+  -- FK:n omöjlig, dels för att PostgREST kräver en FK för att kunna bädda in namnet — utan den
+  -- svarar hela läsningen PGRST200 och loggen går inte att visa alls.
+  changed_by    uuid references public.profiles(id) on delete set null,
   action        text not null check (action in ('update','delete','insert')),
   -- Hela raden före och efter, som jsonb. Inte kolumn för kolumn: tabellen växer med tiden, och en
   -- logg som tappar ett fält när schemat ändras är sämre än ingen logg alls.
@@ -63,6 +67,23 @@ create table if not exists public.crm_time_entry_audit (
   -- ett värde som triggern ser utan att hela ändringen görs i EN databasfunktion.)
   created_at    timestamptz not null default now()
 );
+
+-- Migrering för den som redan kört en tidigare version av den här filen: kolumnen skapades då
+-- `not null` utan FK, och `create table if not exists` rör inte en tabell som finns.
+do $$
+begin
+  alter table public.crm_time_entry_audit alter column changed_by drop not null;
+exception when others then null;
+end $$;
+
+update public.crm_time_entry_audit
+   set changed_by = null
+ where changed_by = '00000000-0000-0000-0000-000000000000'::uuid;
+
+alter table public.crm_time_entry_audit drop constraint if exists crm_time_entry_audit_changed_by_fkey;
+alter table public.crm_time_entry_audit
+  add constraint crm_time_entry_audit_changed_by_fkey
+  foreign key (changed_by) references public.profiles(id) on delete set null;
 
 create index if not exists crm_time_entry_audit_entry_idx on public.crm_time_entry_audit (entry_id, created_at desc);
 create index if not exists crm_time_entry_audit_user_idx  on public.crm_time_entry_audit (user_id, created_at desc);
@@ -160,8 +181,9 @@ begin
   values (
     v_entry,
     v_owner,
-    -- changed_by är not null: en okänd aktör bokförs som nollan i stället för att raden faller bort.
-    coalesce(v_actor, '00000000-0000-0000-0000-000000000000'::uuid),
+    -- NULL när aktören är okänd (servicenyckel, SQL-editor). Loggen ska bära det som ett faktum,
+    -- inte som ett påhittat uuid som ingen profil matchar.
+    v_actor,
     lower(tg_op),
     v_before,
     v_after

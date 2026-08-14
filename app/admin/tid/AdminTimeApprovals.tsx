@@ -863,10 +863,16 @@ function PersonDays({
   if (!summary) return null;
 
   if (summary.rows.length === 0 && detail.compensations.length === 0) {
+    // ⚠️ Loggen renderas ÄVEN här. Har en admin raderat personens alla rader ser månaden tom ut, och
+    // då är raderingsraderna det enda som visar att det funnits något — att returnera tidigt hade
+    // gömt just det bevis man öppnar loggen för.
     return (
-      <p className="m-0 text-sm text-slate-500">
-        {name || 'Personen'} har inte rapporterat något den här månaden.
-      </p>
+      <div className="grid gap-3">
+        <p className="m-0 text-sm text-slate-500">
+          {name || 'Personen'} har inte rapporterat något den här månaden.
+        </p>
+        <AuditTrail rows={detail.audit} failed={detail.auditFailed} />
+      </div>
     );
   }
 
@@ -1076,7 +1082,8 @@ function AuditTrail({ rows, failed }: { rows: TimeEntryAuditRow[]; failed: boole
                   {changes.map((change) => (
                     <li key={change.label}>
                       {change.label}: <span className="tabular-nums">{change.from ?? '—'}</span>
-                      {change.to !== null ? <> → <span className="font-medium tabular-nums text-slate-900">{change.to}</span></> : null}
+                      {' → '}
+                      <span className="font-medium tabular-nums text-slate-900">{change.to ?? '—'}</span>
                     </li>
                   ))}
                 </ul>

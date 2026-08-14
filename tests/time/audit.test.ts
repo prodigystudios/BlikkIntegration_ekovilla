@@ -58,7 +58,7 @@ describe('describeAuditChange', () => {
   // eftersom ordern kan ha ändrats sedan dess. Bytet redovisas som ett faktum.
   it('redovisar ett jobbyte utan att låtsas namnge det', () => {
     const changes = describeAuditChange(row({ after_data: { ...base, work_order_id: 'wo-2' } }));
-    expect(changes).toEqual([{ label: 'Jobb eller orsak', from: 'ändrat', to: null }]);
+    expect(changes).toEqual([{ label: 'Jobb eller orsak', from: null, to: 'ändrat' }]);
   });
 
   it('namnger sorten på svenska när den bytts', () => {
@@ -70,6 +70,9 @@ describe('describeAuditChange', () => {
     });
   });
 
+  // ⚠️ `null` betyder ALLTID tomt, aldrig "vet ej". Delade jobbytet plats med den betydelsen
+  // ritades en TÖMD anteckning som bara sitt gamla värde — "Anteckning: Fel" läste som det som
+  // står där nu, tvärtom mot vad som hänt.
   it('visar en tillagd och en borttagen anteckning', () => {
     expect(describeAuditChange(row({ after_data: { ...base, note: 'Rättat efter samtal' } }))[0])
       .toEqual({ label: 'Anteckning', from: null, to: 'Rättat efter samtal' });

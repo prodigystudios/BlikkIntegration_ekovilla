@@ -212,7 +212,7 @@ export default function TidClient() {
         fetch(`/api/time/approvals?period=${fetchRange.period}`, { cache: 'no-store' }),
         // "Har någon annan rört min tid?" Loggen innehåller BARA andras ändringar — triggern hoppar
         // över egna sparningar — så en tom lista är ett rakt svar och inte ett tomt.
-        fetch(`/api/time/audit?from=${fetchRange.monthStart}&to=${fetchRange.monthEnd}`, { cache: 'no-store' }),
+        fetch(`/api/time/audit?from=${fetchRange.from}&to=${fetchRange.to}`, { cache: 'no-store' }),
       ]);
       const [entriesJson, compsJson, refJson, approvalJson, auditJson] = await Promise.all([
         entriesRes.json().catch(() => ({})),
@@ -960,10 +960,14 @@ function CompensationSection({
 function AuditNotice({ rows }: { rows: TimeEntryAuditRow[] }) {
   if (rows.length === 0) return null;
 
+  // Antal RADER, inte antal händelser: tre rättelser av samma rad är en rad som ändrats tre gånger,
+  // inte tre ändrade rader.
+  const touched = new Set(rows.map((row) => row.entry_id)).size;
+
   return (
     <section className="grid gap-2 rounded-2xl border border-solid border-amber-200 bg-amber-50 px-3.5 py-3">
       <p className="m-0 text-sm font-semibold text-amber-900">
-        {rows.length === 1 ? 'En rad' : `${rows.length} rader`} i din tid har ändrats av någon annan
+        {touched === 1 ? 'En rad' : `${touched} rader`} i din tid har ändrats av någon annan
       </p>
       <ul className="m-0 grid list-none gap-1.5 p-0 text-sm text-amber-900">
         {rows.map((row) => {
@@ -975,7 +979,7 @@ function AuditNotice({ rows }: { rows: TimeEntryAuditRow[] }) {
               {row.changed_by_profile?.full_name || 'okänd användare'}, {formatStamp(row.created_at)}
               {changes.length > 0 ? (
                 <span className="block text-amber-800">
-                  {changes.map((change) => `${change.label}: ${change.from ?? '—'}${change.to !== null ? ` → ${change.to}` : ''}`).join(' · ')}
+                  {changes.map((change) => `${change.label}: ${change.from ?? '—'} → ${change.to ?? '—'}`).join(' · ')}
                 </span>
               ) : null}
             </li>
