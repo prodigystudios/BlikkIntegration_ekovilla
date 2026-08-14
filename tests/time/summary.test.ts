@@ -129,3 +129,20 @@ describe('summarizePerson', () => {
     expect(summary.absenceByReason).toEqual([]);
   });
 });
+
+// `label` är inte en av byråns kolumner — den finns för kontorets egen granskning i attestens
+// dagvy. Den ska aldrig hamna på en frånvarorad: frånvaro hör inte till ett jobb, och en etikett
+// som följt med från formuläret hade sett ut som att någon arbetat på ordern under sin sjukdag.
+describe('buildDayRows — vad tiden lades på', () => {
+  it('bär arbetsorderns etikett på arbetad tid', () => {
+    expect(buildDayRows([entry({ label: 'AO-1 · Villa Ek' })])[0].label).toBe('AO-1 · Villa Ek');
+  });
+
+  it('lämnar etiketten tom på frånvaro även om den skickas med', () => {
+    const rows = buildDayRows([
+      entry({ kind: 'absence', startTime: null, endTime: null, minutesWorked: 240, absenceReason: 'VAB', label: 'AO-1' }),
+    ]);
+    expect(rows[0].label).toBeNull();
+    expect(rows[0].absenceReasons).toEqual(['VAB']);
+  });
+});

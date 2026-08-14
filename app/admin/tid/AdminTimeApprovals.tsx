@@ -11,6 +11,12 @@ import {
   type TimeApprovalOverviewRow,
   type TimePeriodStatus,
 } from '../../../lib/domains/time/approvals';
+import {
+  COMPENSATION_LABELS,
+  COMPENSATION_UNITS,
+  type CompensationItem,
+} from '../../../lib/domains/time/compensations';
+import type { PersonPeriodSummary } from '../../../lib/domains/time/summary';
 
 // Admin → Attest. Fas 4.4: en kalendermånad per person, och knappen som fryser den.
 //
@@ -51,6 +57,29 @@ function currentPeriod(): string {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 }
 
+/** '2026-08-14' → 'fre 14 aug'. Fälten plockas ur strängen och formateras i UTC, så ingen
+ *  tidszon kan flytta datumet en dag — samma skäl som periodStartOf räknar på strängar. */
+function formatDay(iso: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (!match) return iso;
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  return new Intl.DateTimeFormat('sv-SE', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' }).format(date);
+}
+
+/** Postgres `time` serialiseras som 'HH:MM:SS'. Sekunderna är alltid noll här och bara brus. */
+function formatClock(value: string | null): string | null {
+  return value ? value.slice(0, 5) : null;
+}
+
+type PersonDetail = {
+  loading: boolean;
+  error: string | null;
+  summary: PersonPeriodSummary | null;
+  compensations: CompensationItem[];
+};
+
+const EMPTY_DETAIL: PersonDetail = { loading: true, error: null, summary: null, compensations: [] };
+
 export default function AdminTimeApprovals() {
   const [period, setPeriod] = React.useState(currentPeriod);
   const [people, setPeople] = React.useState<TimeApprovalOverviewRow[]>([]);
@@ -58,10 +87,15 @@ export default function AdminTimeApprovals() {
   const [error, setError] = React.useState<string | null>(null);
   const [notice, setNotice] = React.useState<string | null>(null);
   const [busyId, setBusyId] = React.useState<string | null>(null);
+  // En person i taget öppen. Fler samtidiga hade betytt fler tillstånd att hålla i takt med
+  // perioden, och dagvyn läses en person åt gången ändå.
+  const [expandedId, setExpandedId] = React.useState<string | null>(null);
+  const [detail, setDetail] = React.useState<PersonDetail | null>(null);
 
   // Samma kapplöpningsvakt som i /tid: bläddrar man snabbt mellan månader kan ett tidigare svar
   // komma sist och rita fel månads status — på en attestyta vore det ett dyrt misstag.
   const loadSeq = React.useRef(0);
+  const detailSeq = React.useRef(0);
 
   const load = React.useCallback(async () => {
     const seq = ++loadSeq.current;
@@ -87,6 +121,52 @@ export default function AdminTimeApprovals() {
   }, [period]);
 
   React.useEffect(() => { void load(); }, [load]);
+
+  // En öppen dagvy hör till den månad den hämtades för. Bläddrar man vidare måste den stängas —
+  // annars ligger juli-dagarna kvar under augusti-raden och ser ut som augusti. Sekvensnumret
+  // räknas upp så ett svar som redan är på väg inte kan rita upp den igen.
+  React.useEffect(() => {
+    detailSeq.current++;
+    setExpandedId(null);
+    setDetail(null);
+  }, [period]);
+
+  const loadDetail = React.useCallback(async (userId: string) => {
+    const seq = ++detailSeq.current;
+    setDetail(EMPTY_DETAIL);
+    try {
+      const res = await fetch(`/api/admin/time/entries?period=${period}&user_id=${userId}`, {
+        cache: 'no-store',
+        credentials: 'same-origin',
+      });
+      const body = await res.json().catch(() => null);
+      if (seq !== detailSeq.current) return;
+      if (!res.ok || !body?.ok) throw new Error(body?.error || `Fel (${res.status})`);
+      setDetail({
+        loading: false,
+        error: null,
+        summary: body.data as PersonPeriodSummary,
+        compensations: (body.data.compensations || []) as CompensationItem[],
+      });
+    } catch (e) {
+      // Hela tillståndet skrivs om, inte bara felet: lämnas summary kvar visas föregående persons
+      // dagar under felrutan. Samma fälla som redan kostat en gång i den här vyn.
+      if (seq === detailSeq.current) {
+        setDetail({ loading: false, error: (e as Error).message, summary: null, compensations: [] });
+      }
+    }
+  }, [period]);
+
+  function toggleDetail(userId: string) {
+    if (expandedId === userId) {
+      detailSeq.current++;
+      setExpandedId(null);
+      setDetail(null);
+      return;
+    }
+    setExpandedId(userId);
+    void loadDetail(userId);
+  }
 
   async function setStatus(row: TimeApprovalOverviewRow, status: TimePeriodStatus, note?: string) {
     setBusyId(row.user_id);
@@ -192,11 +272,27 @@ export default function AdminTimeApprovals() {
             <tbody>
               {people.map((row) => {
                 const locked = isPeriodLocked(row.status);
+                const isExpanded = expandedId === row.user_id;
                 return (
-                  <tr key={row.user_id} className="border-b border-solid border-slate-100 align-top">
+                  <React.Fragment key={row.user_id}>
+                  <tr className="border-b border-solid border-slate-100 align-top">
                     <td className="px-3 py-2">
-                      <div className="font-medium text-slate-900">{row.full_name || '(namn saknas)'}</div>
-                      <div className="text-xs text-slate-400">{row.role}</div>
+                      {/* Ikonknapp: globals.css ger varje <button> padding och centrering utan att
+                          ligga i ett lager, så Tailwind måste gå före med `!`. */}
+                      <button
+                        type="button"
+                        onClick={() => toggleDetail(row.user_id)}
+                        aria-expanded={isExpanded}
+                        className="!inline-flex !items-start !justify-start !p-0 !text-left"
+                      >
+                        <span aria-hidden className={`mt-0.5 text-slate-400 transition-transform ${isExpanded ? 'rotate-90' : ''}`}>›</span>
+                        <span>
+                          <span className="block font-medium text-slate-900 underline-offset-2 hover:underline">
+                            {row.full_name || '(namn saknas)'}
+                          </span>
+                          <span className="block text-xs text-slate-400">{row.role}</span>
+                        </span>
+                      </button>
                     </td>
                     <td className="px-3 py-2">
                       <span className={`inline-block rounded-lg px-2 py-1 text-xs font-semibold ${STATUS_TONE[row.status]}`}>
@@ -245,12 +341,153 @@ export default function AdminTimeApprovals() {
                       ) : null}
                     </td>
                   </tr>
+                  {isExpanded ? (
+                    <tr className="border-b border-solid border-slate-100">
+                      <td colSpan={7} className="bg-slate-50 px-3 py-3">
+                        <PersonDays detail={detail} name={row.full_name} />
+                      </td>
+                    </tr>
+                  ) : null}
+                  </React.Fragment>
                 );
               })}
             </tbody>
           </table>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * En persons månad, dag för dag.
+ *
+ * Lönepersonens enda uttryckliga krav (William 2026-08-14): hon vill se **starttid, sluttid och
+ * total arbetad tid** när hon kontrollerar någons arbetstider. Aggregatet i tabellen ovanför går
+ * inte att kontrollera — det ÄR summan av det man vill titta på.
+ *
+ * Kolumnerna följer byråns underlag (se TIME_AND_PAYROLL.md): datum, klockslag, arbetade timmar,
+ * frånvarotimmar med orsak, anteckning. "Orsak / jobb" bär dessutom arbetsordern, vilket byrån inte
+ * bett om — det är för kontorets egen granskning, som sedan piloten blåstes av är den enda
+ * kontrollen som finns.
+ *
+ * Rader utan klockslag flaggas i stället för att visa ett tankstreck: de är kvar från kontorets
+ * Tid-flik och ska bort innan klockslagen blir obligatoriska. En tom ruta hade sett ut som en
+ * detalj; "saknas" är en uppgift.
+ */
+function PersonDays({ detail, name }: { detail: PersonDetail | null; name: string | null }) {
+  if (!detail || detail.loading) return <p className="m-0 text-sm text-slate-400">Laddar dagar…</p>;
+  if (detail.error) {
+    return (
+      <div className="rounded-lg border border-solid border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+        {detail.error}
+      </div>
+    );
+  }
+
+  const summary = detail.summary;
+  if (!summary) return null;
+
+  if (summary.rows.length === 0 && detail.compensations.length === 0) {
+    return (
+      <p className="m-0 text-sm text-slate-500">
+        {name || 'Personen'} har inte rapporterat något den här månaden.
+      </p>
+    );
+  }
+
+  return (
+    <div className="grid gap-3">
+      {summary.rows.length > 0 ? (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[640px] border-collapse text-sm">
+            <thead>
+              <tr className="text-left text-[11px] font-extrabold uppercase tracking-wide text-slate-500">
+                <th className="px-2 py-1.5">Datum</th>
+                <th className="px-2 py-1.5">Klockslag</th>
+                <th className="px-2 py-1.5 text-right">Arbetat</th>
+                <th className="px-2 py-1.5 text-right">Frånvaro</th>
+                <th className="px-2 py-1.5">Orsak / jobb</th>
+                <th className="px-2 py-1.5">Anteckning</th>
+              </tr>
+            </thead>
+            <tbody>
+              {summary.rows.map((day, index) => {
+                const start = formatClock(day.startTime);
+                const end = formatClock(day.endTime);
+                const isAbsence = day.absenceMinutes > 0;
+                return (
+                  <tr key={`${day.date}-${index}`} className="border-t border-solid border-slate-200 align-top">
+                    <td className="whitespace-nowrap px-2 py-1.5 text-slate-700">{formatDay(day.date)}</td>
+                    <td className="whitespace-nowrap px-2 py-1.5 tabular-nums text-slate-700">
+                      {start && end ? (
+                        `${start}–${end}`
+                      ) : isAbsence ? (
+                        <span className="text-slate-400">—</span>
+                      ) : (
+                        <span className="font-semibold text-amber-700">saknas</span>
+                      )}
+                    </td>
+                    <td className="whitespace-nowrap px-2 py-1.5 text-right tabular-nums text-slate-900">
+                      {day.workMinutes > 0 ? `${formatHours(day.workMinutes)} h` : '—'}
+                    </td>
+                    <td className="whitespace-nowrap px-2 py-1.5 text-right tabular-nums text-slate-600">
+                      {day.absenceMinutes > 0 ? `${formatHours(day.absenceMinutes)} h` : '—'}
+                    </td>
+                    <td className="px-2 py-1.5 text-slate-600">
+                      {day.absenceReasons.length > 0 ? day.absenceReasons.join(', ') : day.label || '—'}
+                    </td>
+                    <td className="px-2 py-1.5 text-slate-500">{day.note || ''}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+            <tfoot>
+              <tr className="border-t-2 border-solid border-slate-300 font-semibold text-slate-900">
+                <td className="px-2 py-2" colSpan={2}>Totalt</td>
+                <td className="whitespace-nowrap px-2 py-2 text-right tabular-nums">{formatHours(summary.workMinutes)} h</td>
+                <td className="whitespace-nowrap px-2 py-2 text-right tabular-nums">
+                  {summary.absenceMinutes > 0 ? `${formatHours(summary.absenceMinutes)} h` : '—'}
+                </td>
+                <td colSpan={2} />
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      ) : null}
+
+      {/* Byrån behöver veta VILKEN ledighet, inte bara hur mycket — orsakerna har olika lönesort. */}
+      {summary.absenceByReason.length > 0 ? (
+        <div className="flex flex-wrap gap-2 text-xs text-slate-600">
+          {summary.absenceByReason.map((item) => (
+            <span key={item.reason} className="rounded-lg border border-solid border-slate-200 bg-white px-2 py-1">
+              {item.reason}: {formatHours(item.minutes)} h
+            </span>
+          ))}
+        </div>
+      ) : null}
+
+      {detail.compensations.length > 0 ? (
+        <div className="grid gap-1">
+          <p className="m-0 text-[11px] font-extrabold uppercase tracking-wide text-slate-500">Ersättningar</p>
+          <ul className="m-0 grid list-none gap-1 p-0 text-sm text-slate-700">
+            {detail.compensations.map((item) => {
+              const unit = COMPENSATION_UNITS[item.kind];
+              return (
+                <li key={item.id} className="flex flex-wrap items-baseline gap-x-2">
+                  <span className="text-slate-500">{formatDay(item.entry_date)}</span>
+                  <span className="font-medium">{COMPENSATION_LABELS[item.kind] || item.kind}</span>
+                  {unit && item.quantity != null ? (
+                    <span className="text-slate-500">{formatAmount(item.quantity)} {unit}</span>
+                  ) : null}
+                  <span className="font-medium">{formatAmount(item.amount)} kr</span>
+                  {item.note ? <span className="text-slate-500">· {item.note}</span> : null}
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ) : null}
     </div>
   );
 }

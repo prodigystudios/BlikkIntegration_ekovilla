@@ -82,6 +82,14 @@ export const periodQuerySchema = z.object({
   period: monthSchema,
 });
 
+// Attestens dagvy: en namngiven persons månad. Ligger bara på /api/admin/time/** — /api/time/**
+// ska förbli "min egen tid" utan en enda parameter som öppnar för andras (se kommentaren i
+// app/api/time/entries/route.ts om Blikk-motsvarigheten som tar ?userId= utan behörighetskontroll).
+export const personPeriodQuerySchema = z.object({
+  period: monthSchema,
+  user_id: z.string().uuid('Ogiltigt användar-id'),
+});
+
 export const setPeriodStatusSchema = z.object({
   period: monthSchema,
   status: z.enum(TIME_PERIOD_STATUSES),

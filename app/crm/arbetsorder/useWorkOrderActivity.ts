@@ -47,12 +47,30 @@ export function useWorkOrderActivity(workOrderId: string, options?: { includeTim
     return () => { active = false; };
   }, [workOrderId, includeTimeEntries]);
 
+  // Klockslagen är obligatoriska sedan 2026-08-14: raden är löneunderlag, och lönen härleder OB och
+  // övertid ur start och slut. Timmarna räknas på servern och skickas aldrig härifrån.
+  function timeEntryBody(data: TimeDraft) {
+    return {
+      work_date: data.work_date,
+      start_time: data.start_time,
+      end_time: data.end_time,
+      break_minutes: Number(data.break_minutes || 0),
+      note: data.note,
+    };
+  }
+
+  function missingClock(data: TimeDraft): boolean {
+    if (data.work_date && data.start_time && data.end_time) return false;
+    toast.error('Datum, starttid och sluttid krävs');
+    return true;
+  }
+
   async function createTimeEntry(data: TimeDraft): Promise<boolean> {
-    if (!data.work_date || !data.hours.trim()) { toast.error('Datum och timmar krävs'); return false; }
+    if (missingClock(data)) return false;
     try {
       const res = await fetch(`/api/crm/work-orders/${workOrderId}/time-entries`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ work_date: data.work_date, hours: Number(data.hours.replace(',', '.')), note: data.note }),
+        body: JSON.stringify(timeEntryBody(data)),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte logga tid'); return false; }
@@ -63,11 +81,11 @@ export function useWorkOrderActivity(workOrderId: string, options?: { includeTim
   }
 
   async function updateTimeEntry(id: string, data: TimeDraft): Promise<boolean> {
-    if (!data.work_date || !data.hours.trim()) { toast.error('Datum och timmar krävs'); return false; }
+    if (missingClock(data)) return false;
     try {
       const res = await fetch(`/api/crm/work-orders/${workOrderId}/time-entries/${id}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ work_date: data.work_date, hours: Number(data.hours.replace(',', '.')), note: data.note }),
+        body: JSON.stringify(timeEntryBody(data)),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte uppdatera tidrad'); return false; }

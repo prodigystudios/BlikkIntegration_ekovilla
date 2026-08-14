@@ -1,6 +1,7 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { deleteCrmWorkOrderTimeEntry, updateCrmWorkOrderTimeEntry } from '@/lib/domains/crm/work-orders';
+import { buildTimeEntryRow } from '@/lib/domains/time/entries';
 import { explainWriteMiss, periodLockError } from '@/lib/domains/time/approvals';
 import { createWorkOrderTimeEntrySchema, ok, requireSignedInUser, routeError, validationError } from '../../../_lib';
 
@@ -34,12 +35,22 @@ export async function PATCH(req: Request, context: RouteContext) {
     const parsedBody = createWorkOrderTimeEntrySchema.safeParse(await req.json().catch(() => null));
     if (!parsedBody.success) return validationError(parsedBody.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
-    const { data, error } = await updateCrmWorkOrderTimeEntry(supabase, context.params.entryId, currentUser.currentUser.id, {
+    // Ordern skickas med bara för att buildTimeEntryRow ska kunna validera en arbetsorderrad —
+    // updateCrmWorkOrderTimeEntry skalar bort den igen, så en PATCH kan aldrig flytta raden till
+    // ett annat jobb.
+    const built = buildTimeEntryRow({
+      kind: 'work_order',
       work_date: parsedBody.data.work_date,
-      hours: parsedBody.data.hours,
+      work_order_id: context.params.id,
+      start_time: parsedBody.data.start_time,
+      end_time: parsedBody.data.end_time,
+      break_minutes: parsedBody.data.break_minutes,
       note: parsedBody.data.note,
-    });
+    }, currentUser.currentUser.id);
+    if (built.error || !built.row) return routeError(400, 'crm_work_order_time_entry_invalid', built.error || 'Ogiltig tidrad');
+
+    const supabase = createRouteHandlerClient({ cookies });
+    const { data, error } = await updateCrmWorkOrderTimeEntry(supabase, context.params.entryId, currentUser.currentUser.id, built.row);
 
     if (error) {
       const locked = periodLockError(error);

@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { workedMinutes } from './hours';
-import type { TimeEntryKind } from './summary';
+import type { SummarizableEntry, TimeEntryKind } from './summary';
 
 // Tidrader — läsning, skrivning och den regel som gör underlaget trovärdigt:
 // SERVERN RÄKNAR MINUTERNA, aldrig klienten.
@@ -133,6 +133,49 @@ export function buildTimeEntryRow(input: TimeEntryInput, userId: string): BuiltT
       // skrivs den ändå över — det är hela poängen.
     },
     error: null,
+  };
+}
+
+/**
+ * Databasrad → löneunderlagets form (lib/domains/time/summary.ts).
+ *
+ * Enda stället där kolumnnamn möter summeringen. `summarizePerson` känner inte till PostgREST och
+ * `listTimeEntries` känner inte till byråns kolumner — den här funktionen är fogen, och den är ren
+ * så den går att testa utan databas.
+ *
+ * `minutesWorked` skickas med för raderna som saknar klockslag, och `hours` är fallbacken för den.
+ *
+ * ⚠️ `minutes_worked` ÄR NULL PÅ DE GAMLA KONTORSRADERNA. Kolumnen lades till nullbar utan backfill
+ * (20260811_time_entries_reshape.sql), CHECK:en tillåter null, och triggern härleder `hours` UR
+ * minuterna — aldrig tvärtom. Kontorets Tid-flik skriver fortfarande bara datum + timmar, så de
+ * raderna har timmar men inga minuter. Utan fallbacken blir de noll timmar i dagvyn, tyst, och
+ * summan längst ner motsäger aggregatet i raden ovanför. Samma coalesce finns i RPC:n
+ * time_approval_overview (20260812_time_approvals.sql) — ändras den ena måste den andra följa med.
+ */
+export function toSummarizableEntry(row: TimeEntryRow): SummarizableEntry {
+  const workOrder = row.work_order;
+  // Ordernumret först: det är vad kontoret känner igen ett jobb på. Projekt- eller kundnamn läggs
+  // till när det finns, så en rad går att placera utan att slå upp ordern.
+  const workOrderLabel = workOrder
+    ? [workOrder.order_number || workOrder.fortnox_order_number, workOrder.project_name || workOrder.client_name]
+        .filter(Boolean)
+        .join(' · ') || null
+    : null;
+
+  return {
+    workDate: row.work_date,
+    startTime: row.start_time,
+    endTime: row.end_time,
+    breakMinutes: row.break_minutes ?? 0,
+    minutesWorked: row.minutes_worked ?? (row.hours != null ? Math.round(row.hours * 60) : null),
+    kind: row.kind,
+    userId: row.user_id,
+    absenceReason: row.absence_type?.name ?? null,
+    // Frånvaroorsakens lönesort. Arbetstidens (tidkodens) hämtas inte: ingen läser den i dag, och
+    // en kolumn i timEntrySelect kostar payload på varje läsning av /tid utan att någon ser den.
+    payrollCode: row.absence_type?.payroll_code ?? null,
+    note: row.note,
+    label: row.kind === 'internal' ? row.internal_project?.name ?? null : workOrderLabel,
   };
 }
 

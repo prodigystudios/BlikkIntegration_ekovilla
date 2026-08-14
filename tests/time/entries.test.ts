@@ -138,3 +138,97 @@ describe('buildTimeEntryRow — avrundning', () => {
     expect(built.row!.minutes_worked).toBe(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// toSummarizableEntry — fogen mellan databasraden och löneunderlaget
+// ---------------------------------------------------------------------------
+// Enda stället där kolumnnamn möter summeringen. Går den sönder tyst blir underlaget fel utan att
+// någon uträkning gjort något galet — därför egna fall och inte bara route-testet.
+
+import { toSummarizableEntry, type TimeEntryRow } from '@/lib/domains/time/entries';
+
+const row = (over: Partial<TimeEntryRow> = {}): TimeEntryRow => ({
+  id: 'e1',
+  user_id: ANNA,
+  kind: 'work_order',
+  work_order_id: 'wo1',
+  internal_project_id: null,
+  absence_type_id: null,
+  work_date: '2026-08-14',
+  start_time: '08:00:00',
+  end_time: '18:00:00',
+  break_minutes: 60,
+  minutes_worked: 540,
+  hours: 9,
+  time_code_id: 'tc1',
+  note: null,
+  source: 'crm',
+  ...over,
+});
+
+describe('toSummarizableEntry', () => {
+  it('bär klockslagen vidare orörda — de är underlaget byrån räknar övertid ur', () => {
+    const mapped = toSummarizableEntry(row());
+    expect(mapped.startTime).toBe('08:00:00');
+    expect(mapped.endTime).toBe('18:00:00');
+    expect(mapped.breakMinutes).toBe(60);
+  });
+
+  // Frånvaro och gamla kontorsrader har inga klockslag. workedMinutes faller tillbaka på
+  // minutesWorked — glöms den i mapparen blir de raderna noll timmar, tyst.
+  it('skickar med minutesWorked för rader utan klockslag', () => {
+    const mapped = toSummarizableEntry(row({ kind: 'absence', start_time: null, end_time: null, minutes_worked: 240 }));
+    expect(mapped.minutesWorked).toBe(240);
+  });
+
+  // Regression från kodgranskningen. minutes_worked lades till NULLBAR utan backfill, och kontorets
+  // Tid-flik skriver fortfarande bara datum + timmar — triggern härleder hours UR minuterna, aldrig
+  // tvärtom. Utan fallbacken visar dagvyn noll timmar på just de raderna, och summan längst ner
+  // motsäger aggregatet i raden ovanför. Samma coalesce som i RPC:n time_approval_overview.
+  it('faller tillbaka på hours när minutes_worked är null — de gamla kontorsraderna', () => {
+    const mapped = toSummarizableEntry(row({
+      source: 'legacy_office', start_time: null, end_time: null, minutes_worked: null, hours: 7.5,
+    }));
+    expect(mapped.minutesWorked).toBe(450);
+  });
+
+  it('avrundar den fallbacken till hela minuter', () => {
+    expect(toSummarizableEntry(row({ start_time: null, end_time: null, minutes_worked: null, hours: 0.51 })).minutesWorked).toBe(31);
+  });
+
+  it('låter minutes_worked vinna när båda finns — minuterna är sanningen', () => {
+    const mapped = toSummarizableEntry(row({ start_time: null, end_time: null, minutes_worked: 455, hours: 7.5 }));
+    expect(mapped.minutesWorked).toBe(455);
+  });
+
+  it('namnger arbetsordern med ordernummer och projekt', () => {
+    const mapped = toSummarizableEntry(row({
+      work_order: { id: 'wo1', order_number: 'AO-1', fortnox_order_number: '12', project_name: 'Villa Ek', client_name: 'Ekbergs' },
+    }));
+    expect(mapped.label).toBe('AO-1 · Villa Ek');
+  });
+
+  it('faller tillbaka på Fortnox-numret och kundnamnet när CRM-fälten saknas', () => {
+    const mapped = toSummarizableEntry(row({
+      work_order: { id: 'wo1', order_number: null, fortnox_order_number: '12', project_name: null, client_name: 'Ekbergs' },
+    }));
+    expect(mapped.label).toBe('12 · Ekbergs');
+  });
+
+  it('använder internprojektets namn på interntid', () => {
+    const mapped = toSummarizableEntry(row({
+      kind: 'internal', work_order_id: null, work_order: null,
+      internal_project_id: 'ip1', internal_project: { id: 'ip1', name: 'Verkstad' },
+    }));
+    expect(mapped.label).toBe('Verkstad');
+  });
+
+  it('tar frånvaroorsakens namn och lönesort', () => {
+    const absence = toSummarizableEntry(row({
+      kind: 'absence', start_time: null, end_time: null, minutes_worked: 240,
+      absence_type: { id: 'a1', name: 'VAB', payroll_code: 'LÖN300' },
+    }));
+    expect(absence.absenceReason).toBe('VAB');
+    expect(absence.payrollCode).toBe('LÖN300');
+  });
+});
