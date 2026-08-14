@@ -1510,8 +1510,12 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     // prefilling entirely, which left vat_percent at 25 % while the card said reverse charge — and
     // the yellow notice reads the card, so the screen claimed 0 % while the quote saved 25 %.
     if (createdCustomerId) {
+      // Generation-guarded like every other lookup: the seller can clear the picker or choose someone
+      // else while this is in flight, and a late response must not resurrect what they just replaced.
+      const generation = ++customerLookupRef.current;
       fetchCustomerLite(createdCustomerId).then((customer) => {
         if (!customer) { toast.error('Kunde inte hämta vald kund'); return; }
+        if (customerLookupRef.current !== generation) return; // superseded by a deliberate change
         // Decided against the LIVE draft, so it holds in edit mode too — there the customer comes
         // from the loaded quote rather than from a restored stash.
         if (draftRef.current.customer_id === customer.id) refreshFromCustomerCard(customer);
@@ -2453,10 +2457,30 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
               {/* Byggmoms-notisen står på egen rad under fälten, inte inuti momsfältet. Momskolumnen
                   är en sjättedel bred nu, och där hade texten radbrutits till en smal remsa som
                   drog upp höjden på hela raden. */}
+              {/* ⚠️ The notice must reflect the OFFER, not just the customer card. It used to state
+                  "moms sätts till 0 %" purely from the card, so an offer sitting at 25 % — a quote
+                  written before the customer got reverse charge, or one where the refresh could not
+                  tell an untouched field from an edited one — displayed a promise the saved document
+                  did not keep. buildQuotePayload derives reverse_vat from vat_percent, so the draft
+                  is what actually reaches Fortnox. */}
               {selectedCustomer?.reverse_vat ? (
-                <p className="text-[11px] leading-snug text-amber-700 sm:col-span-6">
-                  Kunden har <strong>omvänd skattskyldighet</strong> – moms sätts till 0 %. Köparen redovisar momsen själv.
-                </p>
+                parseDecimal(draft.vat_percent) === 0 ? (
+                  <p className="text-[11px] leading-snug text-amber-700 sm:col-span-6">
+                    Kunden har <strong>omvänd skattskyldighet</strong> – moms sätts till 0 %. Köparen redovisar momsen själv.
+                  </p>
+                ) : (
+                  <p className="text-[11px] leading-snug text-rose-700 sm:col-span-6">
+                    Kunden har <strong>omvänd skattskyldighet</strong>, men den här offerten står på{' '}
+                    {draft.vat_percent} % moms.{' '}
+                    <button
+                      type="button"
+                      onClick={() => setDraft((d) => ({ ...d, vat_percent: '0' }))}
+                      className="p-0 font-semibold text-rose-800 underline underline-offset-2 hover:text-rose-900"
+                    >
+                      Sätt 0 %
+                    </button>
+                  </p>
+                )
               ) : null}
             </div>
           </div>
