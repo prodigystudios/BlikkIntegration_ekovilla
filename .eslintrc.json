@@ -1,0 +1,34 @@
+{
+  // ESLint infördes 2026-08-14 för EN sak: fånga rules-of-hooks.
+  //
+  // Tre kodgranskningar i rad hittade fel som `npm run type-check` och 1163 tester var blinda för,
+  // och den senaste var en krasch — ett useMemo efter en tidig return, vilket hade slagit ut
+  // /arbetsorder/[id] för alla användare. Den felklassen är gratis att fånga med ett verktyg och
+  // dyr att fånga med ögon.
+  //
+  // Konfigurationen är MEDVETET SMAL. En bred uppsättning på ett moget repo ger hundratals fynd
+  // som ingen åtgärdar, och då slutar man läsa utskriften — vilket är värre än att inte ha lint
+  // alls, eftersom en riktig krasch då drunknar. Regler slås på när någon tänker göra något åt
+  // dem, inte innan.
+  "root": true,
+  "extends": "next",
+  "rules": {
+    // Målet. Ett brott här är alltid en bugg, aldrig en smaksak: hooks som körs i olika ordning
+    // mellan renderingar kastar i React 18. Noll överträdelser i repot i dag, så den kan stå som
+    // error direkt.
+    "react-hooks/rules-of-hooks": "error",
+
+    // AVSTÄNGD, inte löst. 38 befintliga varningar, 23 av dem i app/plannering/page.tsx som är
+    // skyddad och dessutom byggs om greenfield. De flesta är medvetna utelämnanden. Att slå på
+    // den nu betyder brus, inte säkerhet — men den är den naturliga NÄSTA breddningen när någon
+    // har tid att gå igenom dem fil för fil.
+    "react-hooks/exhaustive-deps": "off",
+
+    // Ren typografi (' och " i JSX-text). Ingen buggrisk, 4 träffar, inget värde.
+    "react/no-unescaped-entities": "off",
+
+    // <img> i stället för next/image. En prestandaavvägning per bild, inte ett fel — och den
+    // enda träffen är PWA-installationsprompten, där bilden är en liten inline-ikon.
+    "@next/next/no-img-element": "off"
+  }
+}
