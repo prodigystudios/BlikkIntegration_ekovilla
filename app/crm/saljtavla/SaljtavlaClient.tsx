@@ -339,7 +339,7 @@ export default function SaljtavlaClient({ currentUserId }: { currentUserId: stri
           returnTo={`/crm/saljtavla?quote_id=${detailQuote.id}`}
           documentEmail={documentEmail}
           onClose={() => setDetailQuoteId(null)}
-          onQuoteChanged={(updated) => setQuotes((current) => current.map((q) => (q.id === updated.id ? updated : q)))}
+          onQuoteChanged={(patch) => setQuotes((current) => current.map((q) => (q.id === patch.id ? { ...q, ...patch } : q)))}
         />
       ) : null}
 

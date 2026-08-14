@@ -2,7 +2,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Input from '../../../components/ui/Input';
-import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
 import AssigneeFilter, { matchesAssignee, type AssigneeFilterValue, type AssigneeOption } from '@/app/crm/components/AssigneeFilter';
 import { documentRef } from '@/app/crm/lib/format';
@@ -99,7 +98,6 @@ function compareQuotes(a: QuoteItem, b: QuoteItem) {
 // ─── QuotesClient ─────────────────────────────────────────────────────────────
 
 export default function QuotesClient({ currentUserId }: { currentUserId: string | null }) {
-  const toast = useToast();
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -433,7 +431,7 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
           returnTo={`/crm/offerter?quote_id=${detailQuote.id}`}
           documentEmail={documentEmail}
           onClose={() => setDetailPanelOpen(false)}
-          onQuoteChanged={(updated) => setQuotes((current) => current.map((q) => (q.id === updated.id ? { ...q, ...updated } : q)))}
+          onQuoteChanged={(patch) => setQuotes((current) => current.map((q) => (q.id === patch.id ? { ...q, ...patch } : q)))}
         />
       ) : null}
 

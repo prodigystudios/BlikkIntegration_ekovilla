@@ -10,7 +10,6 @@ import { openFortnoxPdf } from '@/app/crm/lib/fortnoxDoc';
 import { resolveQuoteVatBreakdown, quoteAmountDisplay } from '@/lib/domains/crm/pricing';
 import { quoteCustomerName, isQuoteOverdue } from '@/app/crm/lib/quoteDisplay';
 import type { EmailableDocument } from '@/app/crm/components/useDocumentEmail';
-import { isQuoteCardLocked } from '@/lib/domains/crm/quoteBoard';
 
 // The quote detail modal, shared by the offer list and the Säljtavla board.
 //
@@ -61,19 +60,43 @@ function formatDate(value: string | null | undefined) {
 }
 
 /**
- * Fold a server response onto the row the consumer gave us.
+ * What an action changed, for the consumer to apply to its own row.
  *
- * The cast is the point of the generic: the offer list and the board type the same API rows
- * differently (the list declares the full prospect record, the board only its company_name), so
- * handing either of them a bare QuoteDetailItem would NARROW what they already hold. Both surfaces
- * store rows from the same endpoint, so spreading the response over the caller's own object keeps
- * every field it knows about and updates the ones that changed.
+ * ⚠️ A PATCH, deliberately — not a finished row. Merging onto the `quote` prop here would use the
+ * value captured when the button was clicked: start a slow Fortnox push, flip the status while it
+ * spins, and the push's late response would carry the OLD status back and revert the change on
+ * screen while the database holds the new one. Consumers apply this functionally against their
+ * current state instead, which is what the code this replaced did.
+ *
+ * Only scalar fields, so it spreads cleanly onto either surface's row type — the offer list and the
+ * board declare the same API rows differently (full prospect record vs. just its company_name).
  */
-function mergeQuote<T extends QuoteDetailItem>(base: T, patch: Partial<QuoteDetailItem>): T {
-  return { ...base, ...patch } as T;
+export type QuoteDetailPatch = {
+  id: string;
+  status?: QuoteDetailItem['status'];
+  work_order_id?: string | null;
+  work_order_number?: string | null;
+  converted_to_work_order_at?: string | null;
+  fortnox_offer_number?: string | null;
+  fortnox_sync_status?: QuoteDetailItem['fortnox_sync_status'];
+  fortnox_synced_at?: string | null;
+  updated_at?: string;
+};
+
+/** Narrow a full server row down to the fields a consumer needs to apply. */
+function patchFromItem(id: string, item: QuoteDetailItem | undefined, fallback: Partial<QuoteDetailPatch>): QuoteDetailPatch {
+  if (!item) return { id, ...fallback };
+  return {
+    id,
+    status: item.status,
+    work_order_id: item.work_order_id,
+    work_order_number: item.work_order_number,
+    fortnox_offer_number: item.fortnox_offer_number,
+    fortnox_sync_status: item.fortnox_sync_status,
+  };
 }
 
-export default function QuoteDetailPanel<T extends QuoteDetailItem>({
+export default function QuoteDetailPanel({
   quote,
   workOrderFortnoxNumber,
   returnTo,
@@ -81,7 +104,7 @@ export default function QuoteDetailPanel<T extends QuoteDetailItem>({
   onQuoteChanged,
   documentEmail,
 }: {
-  quote: T;
+  quote: QuoteDetailItem;
   /** Fortnox order number for this quote's work order, if the consumer has indexed it. */
   workOrderFortnoxNumber: string | null;
   /**
@@ -90,8 +113,8 @@ export default function QuoteDetailPanel<T extends QuoteDetailItem>({
    */
   returnTo: string;
   onClose: () => void;
-  /** The updated row after any action, so the consumer can patch its own list/board state. */
-  onQuoteChanged: (updated: T) => void;
+  /** What changed, for the consumer to apply against its own current state. */
+  onQuoteChanged: (patch: QuoteDetailPatch) => void;
   /**
    * Owned by the CONSUMER, not by this panel. The e-mail flow has its own dismissable progress
    * overlay and outlives the modal it was started from — a hook living here would be torn down with
@@ -111,10 +134,6 @@ export default function QuoteDetailPanel<T extends QuoteDetailItem>({
   // A work order locks the offer in Fortnox — unless the last sync failed, in which case the
   // re-sync button stays available so the user can recover.
   const offerLocked = Boolean(quote.work_order_id) && quote.fortnox_sync_status !== 'failed';
-  // The board refuses to DRAG a won card that already has a work order (isQuoteCardLocked). Letting
-  // the same card be clicked out of 'won' in this panel would make that guard decorative — and
-  // moving it would strand the work order that was already created from it.
-  const statusLocked = isQuoteCardLocked(quote);
   const display = quoteAmountDisplay(quote.quote_type, resolveQuoteVatBreakdown(quote));
   const customerName = quoteCustomerName(quote);
 
@@ -157,7 +176,7 @@ export default function QuoteDetailPanel<T extends QuoteDetailItem>({
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte byta status'); return; }
       const updated = json?.data?.item as QuoteDetailItem | undefined;
-      onQuoteChanged(mergeQuote(quote, updated ?? { status: nextStatus }));
+      onQuoteChanged(patchFromItem(quote.id, updated, { status: nextStatus }));
     } catch {
       toast.error('Kunde inte byta status');
     } finally {
@@ -175,7 +194,7 @@ export default function QuoteDetailPanel<T extends QuoteDetailItem>({
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte skapa arbetsorder'); return; }
       const updated = json?.data?.item as QuoteDetailItem | undefined;
-      if (updated) onQuoteChanged(mergeQuote(quote, updated));
+      onQuoteChanged(patchFromItem(quote.id, updated, {}));
       const workOrder = json?.data?.workOrder as { id?: string; order_number?: string } | undefined;
       if (json?.data?.fortnox_error) {
         toast.error(`Arbetsorder skapad men Fortnox-synk misslyckades: ${json.data.fortnox_error}`);
@@ -204,10 +223,12 @@ export default function QuoteDetailPanel<T extends QuoteDetailItem>({
           ? `Fortnox-offert #${offerNumber} ${wasUpdated ? 'uppdaterad' : 'skapad'}`
           : 'Skickad till Fortnox',
       );
-      onQuoteChanged(mergeQuote(quote, {
+      onQuoteChanged({
+        id: quote.id,
         fortnox_offer_number: offerNumber ?? quote.fortnox_offer_number,
         fortnox_sync_status: 'synced',
-      }));
+        fortnox_synced_at: new Date().toISOString(),
+      });
     } catch {
       toast.error('Kunde inte skicka till Fortnox');
     } finally {
@@ -322,10 +343,7 @@ export default function QuoteDetailPanel<T extends QuoteDetailItem>({
 
             {/* Status changer */}
             <div className="grid gap-2">
-              <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
-                Byt status
-                {statusLocked ? <span className="ml-2 font-medium normal-case tracking-normal text-slate-400">— låst, arbetsorder är skapad</span> : null}
-              </span>
+              <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Byt status</span>
               <div className="flex flex-wrap gap-2">
                 {(Object.entries(quoteStatusMeta) as Array<[QuoteDetailItem['status'], typeof quoteStatusMeta[QuoteDetailItem['status']]]>).map(([s, meta]) => {
                   const isCurrent = quote.status === s;
@@ -333,7 +351,7 @@ export default function QuoteDetailPanel<T extends QuoteDetailItem>({
                     <button
                       key={s}
                       type="button"
-                      disabled={moving || isCurrent || statusLocked}
+                      disabled={moving || isCurrent}
                       onClick={() => void moveQuoteToStatus(s)}
                       className={cn(
                         'inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition',
