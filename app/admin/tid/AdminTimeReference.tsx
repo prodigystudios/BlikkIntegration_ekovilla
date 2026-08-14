@@ -181,7 +181,7 @@ export default function AdminTimeReference() {
             <div className="overflow-x-auto rounded-xl border border-solid border-slate-200 bg-white">
               <table className="w-full min-w-[720px] border-collapse text-sm">
                 <thead>
-                  <tr className="border-b border-solid border-slate-200 text-left text-[11px] font-extrabold uppercase tracking-wide text-slate-500">
+                  <tr className="border-x-0 border-t-0 border-b border-solid border-slate-200 text-left text-[11px] font-extrabold uppercase tracking-wide text-slate-500">
                     <th className="px-3 py-2">Namn</th>
                     <th className="px-3 py-2">Kod</th>
                     <th className="px-3 py-2">Lönesort</th>
@@ -201,7 +201,7 @@ export default function AdminTimeReference() {
                   {items.map((item) => {
                     const busy = busyKey === `${section.kind}:${item.id}`;
                     return (
-                      <tr key={item.id} className={'border-b border-solid border-slate-100 ' + (item.is_active ? '' : 'text-slate-400')}>
+                      <tr key={item.id} className={'border-x-0 border-t-0 border-b border-solid border-slate-100 ' + (item.is_active ? '' : 'text-slate-400')}>
                         <td className="px-3 py-2 font-medium">
                           {item.name}
                           {item.blikk_id ? <span className="ml-2 text-xs text-slate-400">Blikk #{item.blikk_id}</span> : null}

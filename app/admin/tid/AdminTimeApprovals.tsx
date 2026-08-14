@@ -637,7 +637,7 @@ function PersonRow({
       </div>
 
       {expanded ? (
-        <div className="border-t border-solid border-[#e4ebe0] bg-[#f9fbf7] px-4 py-3">
+        <div className="border-x-0 border-b-0 border-t border-solid border-[#e4ebe0] bg-[#f9fbf7] px-4 py-3">
           <PersonDays detail={detail} name={row.full_name} />
         </div>
       ) : null}
@@ -785,7 +785,7 @@ function PersonDays({ detail, name }: { detail: PersonDetail | null; name: strin
                 const end = formatClock(day.endTime);
                 const isAbsence = day.absenceMinutes > 0;
                 return (
-                  <tr key={`${day.date}-${index}`} className="border-t border-solid border-slate-200 align-top">
+                  <tr key={`${day.date}-${index}`} className="border-x-0 border-b-0 border-t border-solid border-slate-200 align-top">
                     <td className="whitespace-nowrap px-2 py-1.5 text-slate-700">{formatDay(day.date)}</td>
                     <td className="whitespace-nowrap px-2 py-1.5 tabular-nums text-slate-700">
                       {start && end ? (
@@ -811,7 +811,7 @@ function PersonDays({ detail, name }: { detail: PersonDetail | null; name: strin
               })}
             </tbody>
             <tfoot>
-              <tr className="border-t-2 border-solid border-slate-300 font-semibold text-slate-900">
+              <tr className="border-x-0 border-b-0 border-t-2 border-solid border-slate-300 font-semibold text-slate-900">
                 <td className="px-2 py-2" colSpan={2}>Totalt</td>
                 <td className="whitespace-nowrap px-2 py-2 text-right tabular-nums">{formatHours(summary.workMinutes)} h</td>
                 <td className="whitespace-nowrap px-2 py-2 text-right tabular-nums">

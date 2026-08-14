@@ -58,7 +58,7 @@ export default function CrmModal({
         )}
       >
         {/* Sticky header */}
-        <div className="flex items-start justify-between gap-3 border-b border-solid border-[#e4ebe0] px-5 pb-4 [padding-top:calc(1rem+env(safe-area-inset-top))] sm:pt-4">
+        <div className="flex items-start justify-between gap-3 border-x-0 border-t-0 border-b border-solid border-[#e4ebe0] px-5 pb-4 [padding-top:calc(1rem+env(safe-area-inset-top))] sm:pt-4">
           <div className="min-w-0 flex-1">{header}</div>
           <button
             type="button"
@@ -77,7 +77,7 @@ export default function CrmModal({
 
         {/* Sticky footer */}
         {footer ? (
-          <div className="flex items-center gap-2 border-t border-solid border-[#e4ebe0] px-5 py-3 [padding-bottom:calc(0.75rem+env(safe-area-inset-bottom))] sm:[padding-bottom:0.75rem]">
+          <div className="flex items-center gap-2 border-x-0 border-b-0 border-t border-solid border-[#e4ebe0] px-5 py-3 [padding-bottom:calc(0.75rem+env(safe-area-inset-bottom))] sm:[padding-bottom:0.75rem]">
             {footer}
           </div>
         ) : null}
