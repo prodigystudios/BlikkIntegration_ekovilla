@@ -44,9 +44,19 @@ export const createStandaloneWorkOrderSchema = z.object({
   desired_installation_date: z.preprocess((value) => normalizeOptionalText(value), dateSchema.nullable()).optional().default(null),
 });
 
+// Klockslag, inte ett timtal. Raden ligger i crm_time_entries — SAMMA tabell som löneunderlaget —
+// och lönen härleder OB och övertid ur start och slut (William 2026-08-14). Ett timtal går inte att
+// räkna övertid på: nio timmar säger inte om de låg 07–16 eller 14–23.
+//
+// Rasten anges separat och dras av på servern. Byråns exempel: 08–18 med en timmes rast är nio
+// timmar, inte tio.
+const clockSchema = z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/, 'Ogiltigt klockslag (TT:MM)');
+
 export const createWorkOrderTimeEntrySchema = z.object({
   work_date: dateSchema,
-  hours: z.coerce.number().positive('Timmar måste vara större än 0').max(24, 'Timmar får inte överstiga 24'),
+  start_time: clockSchema,
+  end_time: clockSchema,
+  break_minutes: z.coerce.number().int().min(0).max(1439).optional().default(0),
   note: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
 });
 

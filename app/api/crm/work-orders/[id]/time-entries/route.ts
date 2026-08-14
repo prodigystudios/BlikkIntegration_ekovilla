@@ -1,6 +1,7 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { createCrmWorkOrderTimeEntry, listCrmWorkOrderTimeEntries } from '@/lib/domains/crm/work-orders';
+import { buildTimeEntryRow } from '@/lib/domains/time/entries';
 import { periodLockError } from '@/lib/domains/time/approvals';
 import { createWorkOrderTimeEntrySchema, ok, requireSignedInUser, routeError, validationError } from '../../_lib';
 
@@ -41,14 +42,22 @@ export async function POST(req: Request, context: RouteContext) {
     const parsedBody = createWorkOrderTimeEntrySchema.safeParse(await req.json().catch(() => null));
     if (!parsedBody.success) return validationError(parsedBody.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
-    const { data, error } = await createCrmWorkOrderTimeEntry(supabase, {
-      work_order_id: context.params.id,
-      user_id: currentUser.currentUser.id,
+    // Samma rulle som /tid: buildTimeEntryRow räknar minuterna ur klockslagen och lämnar `hours`
+    // till databastriggern. Fliken skrev tidigare timmar direkt, vilket gjorde de raderna omöjliga
+    // att räkna övertid på — de är löneunderlag, inte bara kontorets uppföljning.
+    const built = buildTimeEntryRow({
+      kind: 'work_order',
       work_date: parsedBody.data.work_date,
-      hours: parsedBody.data.hours,
+      work_order_id: context.params.id,
+      start_time: parsedBody.data.start_time,
+      end_time: parsedBody.data.end_time,
+      break_minutes: parsedBody.data.break_minutes,
       note: parsedBody.data.note,
-    });
+    }, currentUser.currentUser.id);
+    if (built.error || !built.row) return routeError(400, 'crm_work_order_time_entry_invalid', built.error || 'Ogiltig tidrad');
+
+    const supabase = createRouteHandlerClient({ cookies });
+    const { data, error } = await createCrmWorkOrderTimeEntry(supabase, built.row);
 
     if (error) {
       // Kontorets uppföljningstid ligger i SAMMA tabell som löneunderlaget (crm_time_entries), så

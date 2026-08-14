@@ -6,12 +6,28 @@ import Textarea from '../../../components/ui/Textarea';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 import { formatDate, formatDateTime } from '@/app/crm/lib/format';
+import { minutesToHours, workedMinutes } from '@/lib/domains/time/hours';
+
+// Kontorets Tid-flik. Den skriver i `crm_time_entries` — SAMMA tabell som löneunderlaget — och
+// därför fångar den klockslag sedan 2026-08-14. Ett timtal går inte att räkna övertid eller OB på:
+// nio timmar säger inte om de låg 07–16 eller 14–23, och lönebyrån härleder båda ur just start och
+// slut.
+//
+// Fliken är fortfarande "min egen tid på det här jobbet": RLS tillåter bara egna rader, så knapparna
+// för att ändra och ta bort visas bara på dem.
+//
+// Timsumman här är en FÖRHANDSVISNING. Servern räknar om minuterna ur klockslagen med samma
+// funktion (workedMinutes → buildTimeEntryRow), och `hours` skrivs av en databastrigger — klientens
+// siffra kan alltså aldrig bli någons lön.
 
 export type TimeEntryItem = {
   id: string;
   work_order_id: string;
   user_id: string;
   work_date: string;
+  start_time: string | null;
+  end_time: string | null;
+  break_minutes: number | null;
   hours: number;
   note: string | null;
   created_at: string;
@@ -19,10 +35,35 @@ export type TimeEntryItem = {
   user?: { full_name?: string | null } | null;
 };
 
-export type TimeDraft = { work_date: string; hours: string; note: string };
+export type TimeDraft = { work_date: string; start_time: string; end_time: string; break_minutes: string; note: string };
 
 function todayIso() {
   return new Date().toISOString().slice(0, 10);
+}
+
+function emptyDraft(): TimeDraft {
+  // 60 minuters rast som utgångsvärde är byråns eget exempel (08–18 med en timmes rast är nio
+  // timmar). Det är en gissning man ser och kan ändra, inte en regel — till skillnad från ett tomt
+  // fält, som tyst blir noll.
+  return { work_date: todayIso(), start_time: '', end_time: '', break_minutes: '60', note: '' };
+}
+
+/** Postgres `time` kommer som 'HH:MM:SS'; <input type="time"> vill ha 'HH:MM'. */
+function toClockInput(value: string | null): string {
+  return value ? value.slice(0, 5) : '';
+}
+
+/** Förhandsvisning av arbetad tid. Tom sträng när passet inte går att räkna ut än. */
+function draftHours(draft: TimeDraft): string | null {
+  if (!draft.start_time || !draft.end_time) return null;
+  const minutes = workedMinutes({
+    workDate: draft.work_date,
+    startTime: draft.start_time,
+    endTime: draft.end_time,
+    breakMinutes: Number(draft.break_minutes || 0),
+  });
+  if (minutes <= 0) return null;
+  return `${minutesToHours(minutes).toFixed(2).replace('.', ',')} h`;
 }
 
 type Props = {
@@ -35,25 +76,60 @@ type Props = {
   onDelete: (id: string) => Promise<boolean>;
 };
 
+function DraftFields({ draft, onChange }: { draft: TimeDraft; onChange: (next: TimeDraft) => void }) {
+  const preview = draftHours(draft);
+  return (
+    <>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <label className="grid gap-1 text-sm text-slate-600">
+          <span className={crm.sectionTitle}>Datum</span>
+          <Input value={draft.work_date} onChange={(e) => onChange({ ...draft, work_date: e.target.value })} type="date" />
+        </label>
+        <label className="grid gap-1 text-sm text-slate-600">
+          <span className={crm.sectionTitle}>Rast (min)</span>
+          <Input value={draft.break_minutes} onChange={(e) => onChange({ ...draft, break_minutes: e.target.value })} inputMode="numeric" placeholder="60" />
+        </label>
+        <label className="grid gap-1 text-sm text-slate-600">
+          <span className={crm.sectionTitle}>Starttid</span>
+          <Input value={draft.start_time} onChange={(e) => onChange({ ...draft, start_time: e.target.value })} type="time" />
+        </label>
+        <label className="grid gap-1 text-sm text-slate-600">
+          <span className={crm.sectionTitle}>Sluttid</span>
+          <Input value={draft.end_time} onChange={(e) => onChange({ ...draft, end_time: e.target.value })} type="time" />
+        </label>
+      </div>
+      <p className="m-0 text-xs text-slate-500">
+        {preview ? <>Arbetad tid efter rastavdrag: <strong className="text-slate-700">{preview}</strong></> : 'Fyll i start- och sluttid.'}
+      </p>
+    </>
+  );
+}
+
 export default function WorkOrderTimeTab({ entries, loading, totalHours, currentUserId, onCreate, onUpdate, onDelete }: Props) {
-  const [createDraft, setCreateDraft] = useState<TimeDraft>({ work_date: todayIso(), hours: '', note: '' });
+  const [createDraft, setCreateDraft] = useState<TimeDraft>(emptyDraft);
   const [creating, setCreating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [editDraft, setEditDraft] = useState<TimeDraft>({ work_date: '', hours: '', note: '' });
+  const [editDraft, setEditDraft] = useState<TimeDraft>(emptyDraft);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   async function submitCreate() {
     setCreating(true);
     const ok = await onCreate(createDraft);
-    if (ok) setCreateDraft({ work_date: todayIso(), hours: '', note: '' });
+    if (ok) setCreateDraft(emptyDraft());
     setCreating(false);
   }
 
   function startEdit(item: TimeEntryItem) {
     setConfirmDeleteId(null);
     setEditingId(item.id);
-    setEditDraft({ work_date: item.work_date, hours: String(item.hours), note: item.note || '' });
+    setEditDraft({
+      work_date: item.work_date,
+      start_time: toClockInput(item.start_time),
+      end_time: toClockInput(item.end_time),
+      break_minutes: String(item.break_minutes ?? 0),
+      note: item.note || '',
+    });
   }
 
   async function submitEdit(id: string) {
@@ -86,11 +162,8 @@ export default function WorkOrderTimeTab({ entries, loading, totalHours, current
           const isEditing = editingId === item.id;
           if (isEditing) {
             return (
-              <div key={item.id} className="grid gap-2 rounded-xl border border-emerald-200 bg-[#f1f5ee] px-3 py-3">
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <Input value={editDraft.work_date} onChange={(e) => setEditDraft((c) => ({ ...c, work_date: e.target.value }))} type="date" />
-                  <Input value={editDraft.hours} onChange={(e) => setEditDraft((c) => ({ ...c, hours: e.target.value }))} inputMode="decimal" placeholder="8" />
-                </div>
+              <div key={item.id} className="grid gap-2 rounded-xl border border-solid border-emerald-200 bg-[#f1f5ee] px-3 py-3">
+                <DraftFields draft={editDraft} onChange={setEditDraft} />
                 <Textarea value={editDraft.note} onChange={(e) => setEditDraft((c) => ({ ...c, note: e.target.value }))} rows={2} placeholder="Vad gjordes?" />
                 <div className="flex items-center justify-end gap-2">
                   <button type="button" onClick={() => setEditingId(null)} className={crm.ghostButton}>Avbryt</button>
@@ -101,11 +174,17 @@ export default function WorkOrderTimeTab({ entries, loading, totalHours, current
               </div>
             );
           }
+          const start = toClockInput(item.start_time);
+          const end = toClockInput(item.end_time);
           return (
-            <div key={item.id} className="grid gap-1 rounded-xl border border-[#e0e8dc] bg-[#f1f5ee] px-3 py-3 text-sm">
+            <div key={item.id} className="grid gap-1 rounded-xl border border-solid border-[#e0e8dc] bg-[#f1f5ee] px-3 py-3 text-sm">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <strong className="text-slate-900">{item.user?.full_name || 'Medarbetare'}</strong>
-                <span className="text-slate-500">{item.hours} h · {formatDate(item.work_date)}</span>
+                <span className="text-slate-500">
+                  {/* Rader från före klockslagskravet har bara ett timtal. De visas som de är i
+                      stället för att gömmas — de ska rättas, inte försvinna. */}
+                  {start && end ? `${start}–${end} · ` : null}{item.hours} h · {formatDate(item.work_date)}
+                </span>
               </div>
               {item.note ? <div className="text-slate-600">{item.note}</div> : null}
               <div className="flex items-center justify-between gap-3">
@@ -132,14 +211,7 @@ export default function WorkOrderTimeTab({ entries, loading, totalHours, current
 
       <div className={cn(crm.cardInner, 'grid gap-3 lg:content-start')}>
         <p className={crm.sectionTitle}>Ny tidrad</p>
-        <label className="grid gap-1 text-sm text-slate-600">
-          <span className={crm.sectionTitle}>Datum</span>
-          <Input value={createDraft.work_date} onChange={(e) => setCreateDraft((c) => ({ ...c, work_date: e.target.value }))} type="date" />
-        </label>
-        <label className="grid gap-1 text-sm text-slate-600">
-          <span className={crm.sectionTitle}>Timmar</span>
-          <Input value={createDraft.hours} onChange={(e) => setCreateDraft((c) => ({ ...c, hours: e.target.value }))} inputMode="decimal" placeholder="8" />
-        </label>
+        <DraftFields draft={createDraft} onChange={setCreateDraft} />
         <label className="grid gap-1 text-sm text-slate-600">
           <span className={crm.sectionTitle}>Kommentar</span>
           <Textarea value={createDraft.note} onChange={(e) => setCreateDraft((c) => ({ ...c, note: e.target.value }))} rows={4} placeholder="Vad gjordes?" />

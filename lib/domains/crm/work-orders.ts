@@ -46,6 +46,9 @@ export const crmWorkOrderTimeEntrySelect = `
   work_order_id,
   user_id,
   work_date,
+  start_time,
+  end_time,
+  break_minutes,
   hours,
   note,
   created_at,
@@ -85,14 +88,6 @@ type WorkOrderUpdateInput = {
   internal_handoff: Record<string, any>;
   work_address: WorkOrderAddress;
   assigned_to?: string | null;
-};
-
-type CreateWorkOrderTimeEntryInput = {
-  work_order_id: string;
-  user_id: string;
-  work_date: string;
-  hours: number;
-  note: string | null;
 };
 
 type CreateWorkOrderCommentInput = {
@@ -781,13 +776,14 @@ export async function listCrmWorkOrderTimeEntries(supabase: SupabaseClient, work
     .order('created_at', { ascending: false });
 }
 
-export async function createCrmWorkOrderTimeEntry(supabase: SupabaseClient, input: CreateWorkOrderTimeEntryInput) {
-  // `kind` är NOT NULL sedan omformningen och CHECK:en binder den till vilket mål som är ifyllt.
-  // Den här vägen skapar per definition arbetsordertid, så den sätts här i stället för att läggas
-  // på anroparen — kontorsfliken vet inget om diskriminatorn.
+// Raden byggs av buildTimeEntryRow (lib/domains/time/entries.ts), inte här: den äger regeln att
+// SERVERN räknar minuterna ur klockslagen, sätter `kind` och utelämnar `hours` så databastriggern
+// får härleda den. Två vägar in i samma tabell får inte ha två uträkningar — kontorets timmar och
+// löneunderlaget ÄR samma rad.
+export async function createCrmWorkOrderTimeEntry(supabase: SupabaseClient, row: Record<string, unknown>) {
   return supabase
     .from('crm_time_entries')
-    .insert({ ...input, kind: 'work_order' })
+    .insert(row)
     .select(crmWorkOrderTimeEntrySelect)
     .single();
 }
@@ -810,11 +806,15 @@ export async function updateCrmWorkOrderTimeEntry(
   supabase: SupabaseClient,
   id: string,
   userId: string,
-  input: { work_date: string; hours: number; note: string | null },
+  row: Record<string, unknown>,
 ) {
+  // `user_id` och `work_order_id` skalas bort. Ägarbytet är självklart, men orderbytet är det inte:
+  // raden byggs med ordern ur URL:en, så en PATCH mot fel orders adress hade FLYTTAT tidraden dit.
+  // Fliken kan bara ändra sin egen rads innehåll, aldrig vilket jobb den tillhör.
+  const { user_id: _ignoredUser, work_order_id: _ignoredOrder, ...patch } = row;
   return supabase
     .from('crm_time_entries')
-    .update(input)
+    .update(patch)
     .eq('id', id)
     .eq('user_id', userId)
     .select(crmWorkOrderTimeEntrySelect)
