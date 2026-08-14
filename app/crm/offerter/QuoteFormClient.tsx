@@ -1136,7 +1136,13 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   // What the customer card gave when the customer was picked. The reference the refresh-on-return
   // merge compares against to tell an untouched field from one the seller changed. Persisted with
   // the draft, because the comparison has to survive the trip to the customer card and back.
-  const [appliedCustomerFields, setAppliedCustomerFields] = useState<CustomerDerivedValues | null>(null);
+  // A ref, not state: nothing renders from it, and every reader is an async callback that must see
+  // the latest value rather than the one captured when its request left.
+  const appliedCustomerRef = useRef<CustomerDerivedValues | null>(null);
+  // Mirror of the draft for async callbacks. A customer lookup resolves a few hundred milliseconds
+  // after it starts, and the form is editable throughout — a merge that compared against the draft
+  // as it was when the request left would quietly undo anything typed meanwhile.
+  const draftRef = useRef<QuoteDraft>(initialDraft);
   // Whether the job is performed at a different address than the customer's. Off → the
   // order inherits the customer address; on → the work-address fields are shown and must
   // be filled. A deliberate toggle (vs silent prefill) so a wrong company address can't
@@ -1178,6 +1184,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   const [recoverableDraft, setRecoverableDraft] = useState<QuoteDraft | null>(null);
   // JSON snapshot of the current draft — the single comparison key for dirty detection + autosave.
   const draftJson = useMemo(() => JSON.stringify(draft), [draft]);
+  useEffect(() => { draftRef.current = draft; }, [draft]);
   // Unsaved work: the draft differs from the captured clean baseline (null until it's captured).
   const isDirty = baselineRef.current !== null && draftJson !== baselineRef.current;
 
@@ -1200,7 +1207,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
       // seller has changed since. Absent in stashes written before this existed — readers treat a
       // missing snapshot as "don't merge" rather than guessing.
       localStorage.setItem(draftStorageKey, JSON.stringify({
-        version: 1, savedAt: Date.now(), quoteId: quoteId ?? null, draft, appliedCustomer: appliedCustomerFields,
+        version: 1, savedAt: Date.now(), quoteId: quoteId ?? null, draft, appliedCustomer: appliedCustomerRef.current,
       }));
     } catch { /* localStorage unavailable — ignore */ }
   }
@@ -1216,7 +1223,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   // fetchCustomerLite. Without it a resumed draft looks like no customer was ever picked: no chip,
   // no contact dropdown, no reverse-VAT hint. Deliberately fire-and-forget: the draft is already
   // applied synchronously above, and a failed lookup only costs the chip.
-  function applyRestoredDraft(restored: QuoteDraft) {
+  function applyRestoredDraft(restored: QuoteDraft, opts?: { skipCustomerLookup?: boolean }) {
     // Backfill any fields absent from an older-shaped stash (e.g. saved before `labor_cost` existed)
     // from the initial draft / an empty line item, so every field/Input stays controlled.
     const items = (restored.items ?? []).map((line) => ({ ...createEmptyLineItem(), ...line }));
@@ -1225,17 +1232,30 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     setCustomEndContact(Boolean(
       restored.end_contact_name || restored.end_contact_phone || restored.end_contact_email,
     ));
-    if (restored.customer_id) hydrateSelectedCustomer(restored.customer_id);
+    // The round-trip caller fetches the same customer a moment later to run the merge; skip the
+    // duplicate request rather than firing two lookups for one id on every trip.
+    if (restored.customer_id && !opts?.skipCustomerLookup) hydrateSelectedCustomer(restored.customer_id);
   }
 
-  // Populate the draft from a chosen customer. Shared by the search picker and the
-  // post-create round-trip so both paths fill identical fields.
-  // Look up a customer for the picker only — never touches the draft. Guarded so a slow response
-  // can't overwrite a newer selection; see customerLookupRef.
-  function hydrateSelectedCustomer(customerId: string) {
+  /**
+   * Look up a customer for the picker only — never touches the draft. Guarded so a slow response
+   * can't overwrite a newer selection; see customerLookupRef.
+   *
+   * `seedApplied` records the card's values as the merge reference. Used when the draft did NOT come
+   * from an in-session pick (edit mode), where there is no record of what the card once gave. Taking
+   * the card's CURRENT values as the reference means: a field that still matches the card counts as
+   * untouched and will refresh, a field that differs is treated as the seller's and is preserved.
+   * That errs toward keeping what is on the quote, which is the safe direction.
+   */
+  function hydrateSelectedCustomer(customerId: string, opts?: { seedApplied?: boolean }) {
     const generation = ++customerLookupRef.current;
     void fetchCustomerLite(customerId).then((customer) => {
-      if (customer && customerLookupRef.current === generation) setSelectedCustomer(customer);
+      if (!customer || customerLookupRef.current !== generation) return;
+      setSelectedCustomer(customer);
+      // Only when nothing better exists: a reference restored from the stash records what the
+      // card gave when the customer was PICKED, which is the accurate baseline. This one is a
+      // present-day approximation and must never overwrite it.
+      if (opts?.seedApplied && !appliedCustomerRef.current) appliedCustomerRef.current = customerDraftFields(customer);
     });
   }
 
@@ -1286,8 +1306,9 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     const fields = customerDraftFields(customer);
     // Remember what the card gave, so a later return can tell "still the card's value" from
     // "the seller changed this". Persisted with the draft — see persistDraft.
-    setAppliedCustomerFields(fields);
-    setCustomWorkAddress(Boolean(fields.delivery_address));
+    appliedCustomerRef.current = fields;
+    // All three fields, not just the street — see refreshFromCustomerCard for why.
+    setCustomWorkAddress(Boolean(fields.delivery_address || fields.delivery_postal_code || fields.delivery_city));
     setDraft((current) => ({
       ...current,
       ...fields,
@@ -1303,22 +1324,24 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
    * Returning from the customer card with the SAME customer: pull in what was changed there without
    * touching what the seller has typed here.
    *
-   * `baseline` is the draft as it was just restored — safe to compare against directly because this
-   * runs immediately after applyRestoredDraft, before the form is interactive.
+   * ⚠️ Merged against the LIVE draft (draftRef), not against a snapshot taken before the lookup. The
+   * form is interactive the whole time the request is in flight — comparing against a stale copy
+   * would silently revert anything typed in those few hundred milliseconds.
    */
-  function refreshFromCustomerCard(
-    customer: CrmCustomerLite,
-    baseline: QuoteDraft,
-    applied: CustomerDerivedValues | null,
-  ) {
+  function refreshFromCustomerCard(customer: CrmCustomerLite) {
     customerLookupRef.current += 1;
     setSelectedCustomer(customer);
     // No reference for what the card originally gave (a stash written before this existed) — leave
     // the draft alone. Overwriting on a guess is the failure mode that destroys the seller's work.
+    const applied = appliedCustomerRef.current;
     if (!applied) return;
-    const merged = mergeUntouchedCustomerFields(pickCustomerDerived(baseline), applied, customerDraftFields(customer));
-    setAppliedCustomerFields(customerDraftFields(customer));
-    setCustomWorkAddress(Boolean(merged.delivery_address));
+    const fromCard = customerDraftFields(customer);
+    const merged = mergeUntouchedCustomerFields(pickCustomerDerived(draftRef.current), applied, fromCard);
+    appliedCustomerRef.current = fromCard;
+    // Keyed on ALL three work-address fields, not just the street: a card whose delivery address
+    // differs only in postal code/city would otherwise leave the toggle off, hiding fields that do
+    // hold values — and buildCustomerSnapshot, which anchors on the street, would then drop them.
+    setCustomWorkAddress(Boolean(merged.delivery_address || merged.delivery_postal_code || merged.delivery_city));
     setDraft((current) => ({
       ...current,
       ...merged,
@@ -1408,7 +1431,11 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
 
         // Show the linked customer in the picker so editing doesn't look like no
         // customer is selected. Fetch the live row (silently ignored if it 404s).
-        if (item.customer_id) hydrateSelectedCustomer(item.customer_id);
+        // seedApplied: an existing quote's draft came from the database, not from an in-session
+        // pick, so there is no record of what the card once gave. Without a reference the merge
+        // refuses to run — and editing an existing quote is the flow where "pop into the customer,
+        // turn on omvänd skattskyldighet, come back" happens most.
+        if (item.customer_id) hydrateSelectedCustomer(item.customer_id, { seedApplied: true });
       })
       .catch(() => { if (active) { toast.error('Kunde inte ladda offert'); router.push('/crm/offerter'); } })
       .finally(() => { if (active) setLoading(false); });
@@ -1462,8 +1489,9 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           // backfill as the resume banner (keeps every Input controlled).
           restoredDraft = envelope.draft as QuoteDraft;
           restoredApplied = (envelope.appliedCustomer as CustomerDerivedValues | null) ?? null;
-          applyRestoredDraft(restoredDraft);
-          if (restoredApplied) setAppliedCustomerFields(restoredApplied);
+          // The branch below fetches this same customer to run the merge — don't fetch it twice.
+          applyRestoredDraft(restoredDraft, { skipCustomerLookup: Boolean(createdCustomerId) });
+          if (restoredApplied) appliedCustomerRef.current = restoredApplied;
         }
       }
     } catch { /* ignore malformed draft */ }
@@ -1482,11 +1510,11 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     // prefilling entirely, which left vat_percent at 25 % while the card said reverse charge — and
     // the yellow notice reads the card, so the screen claimed 0 % while the quote saved 25 %.
     if (createdCustomerId) {
-      const baseline = restoredDraft;
-      const sameCustomer = baseline?.customer_id === createdCustomerId;
       fetchCustomerLite(createdCustomerId).then((customer) => {
         if (!customer) { toast.error('Kunde inte hämta vald kund'); return; }
-        if (sameCustomer && baseline) refreshFromCustomerCard(customer, baseline, restoredApplied);
+        // Decided against the LIVE draft, so it holds in edit mode too — there the customer comes
+        // from the loaded quote rather than from a restored stash.
+        if (draftRef.current.customer_id === customer.id) refreshFromCustomerCard(customer);
         else applySelectedCustomer(customer);
       });
     }
@@ -1519,6 +1547,10 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
       // Only offer it when it actually differs from the clean baseline — otherwise there's nothing
       // to recover and a stale/no-op stash is just cleared.
       if (!fresh || JSON.stringify(envelope.draft) === baselineRef.current) { clearPersistedDraft(); return; }
+      // Carry the merge reference over with the draft. Resuming without it left the customer-card
+      // refresh with nothing to compare against, so a later trip to the card couldn't tell an
+      // untouched field from an edited one and refused to update either.
+      appliedCustomerRef.current = (envelope.appliedCustomer as CustomerDerivedValues | null) ?? null;
       setRecoverableDraft(envelope.draft as QuoteDraft);
     } catch { clearPersistedDraft(); }
   // eslint-disable-next-line react-hooks/exhaustive-deps
