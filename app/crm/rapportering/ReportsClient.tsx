@@ -167,8 +167,15 @@ export default function ReportsClient() {
     () => (report?.perSeller || []).slice(0, 12).map((s) => ({ name: s.userName, Ordervärde: s.orderValue, Offertvärde: s.quoteValue })),
     [report],
   );
+  // Both series, same as the per-seller chart: a customer billed this period on an older
+  // order has no order value, and plotting order value alone would draw it as a labelled
+  // empty bar.
   const customerChartData = useMemo(
-    () => (report?.perCustomer || []).slice(0, 8).map((c) => ({ name: c.customer, Ordervärde: c.orderValue })),
+    () => (report?.perCustomer || []).slice(0, 8).map((c) => ({
+      name: c.customer,
+      Ordervärde: c.orderValue,
+      Fakturerat: c.invoicedValue,
+    })),
     [report],
   );
 
@@ -245,8 +252,8 @@ export default function ReportsClient() {
           <SectionCard
             title="Försäljning över tid"
             subtitle={singlePoint
-              ? 'Offertvärde, ordervärde och fakturerat för hela den valda perioden'
-              : 'Offertvärde, ordervärde och fakturerat per månad'}
+              ? 'Offert- och ordervärde skapat i perioden; fakturerat är det som fakturerades under perioden'
+              : 'Offert- och ordervärde per månad de skapades; fakturerat per månad det fakturerades'}
             action={<ExportButton onClick={() => downloadCsv(
               `forsaljning-over-tid_${report.range.from}_${report.range.to}.csv`,
               [singlePoint ? 'Period' : 'Månad', 'Offertvärde', 'Ordervärde', 'Fakturerat'],
@@ -280,7 +287,7 @@ export default function ReportsClient() {
           {/* 2. Per säljare */}
           <SectionCard
             title="Per säljare"
-            subtitle="Aktivitet och värde per säljare i perioden"
+            subtitle="Aktivitet och värde per säljare — ordervärde för det som skapades i perioden, fakturerat för det som fakturerades under den"
             action={<ExportButton onClick={() => downloadCsv(
               `per-saljare_${report.range.from}_${report.range.to}.csv`,
               ['Säljare', 'Samtal', 'Offerter', 'Offertvärde', 'Vunnet värde', 'Ordervärde', 'Fakturerat'],
@@ -335,7 +342,7 @@ export default function ReportsClient() {
           {/* 3. Konvertering (funnel) */}
           <SectionCard
             title="Konvertering"
-            subtitle="Offert → vunnen → arbetsorder → fakturerat"
+            subtitle="Offert → vunnen → arbetsorder → fakturerat, för det som skapades i perioden — faktureringen kan ha skett senare"
             action={<ExportButton onClick={() => downloadCsv(
               `konvertering_${report.range.from}_${report.range.to}.csv`,
               ['Steg', 'Antal', 'Värde', 'Konvertering'],
@@ -363,7 +370,7 @@ export default function ReportsClient() {
           {/* 4. Per kund */}
           <SectionCard
             title="Per kund"
-            subtitle="Topplista kunder på ordervärde"
+            subtitle="Topplista kunder på ordervärde och fakturerat i perioden"
             action={<ExportButton onClick={() => downloadCsv(
               `per-kund_${report.range.from}_${report.range.to}.csv`,
               ['Kund', 'Antal order', 'Ordervärde', 'Fakturerat'],
@@ -379,7 +386,9 @@ export default function ReportsClient() {
                       <XAxis type="number" tickFormatter={formatCompact} tick={{ fontSize: 12, fill: '#64748b' }} />
                       <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: '#64748b' }} width={140} />
                       <Tooltip formatter={(value) => formatCurrency(Number(value))} />
+                      <Legend wrapperStyle={{ fontSize: 12 }} />
                       <Bar dataKey="Ordervärde" fill={COLOR_ORDER} radius={[0, 4, 4, 0]} />
+                      <Bar dataKey="Fakturerat" fill={COLOR_INVOICED} radius={[0, 4, 4, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
