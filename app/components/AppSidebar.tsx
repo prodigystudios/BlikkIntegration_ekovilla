@@ -1,7 +1,7 @@
 "use client";
 
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/shared/cn';
 import type { UserRole } from '@/lib/roles';
@@ -14,6 +14,12 @@ import NotificationBell from '@/components/notifications/NotificationBell';
 // inside /crm it swaps to the CRM nav (plus a "back to start" item). Mirrors the
 // proven CrmSidebar chrome (collapse rail, mobile drawer, expandable groups) but
 // is the single shell chrome for the whole app — no separate global header.
+//
+// On desktop it rests as a narrow icon rail and peeks open on hover, so navigating
+// costs no clicks and reading costs no width. The panel is fixed and floats over the
+// content while peeking — a spacer holds the rail's column — so the page never
+// reflows under the cursor. Pinning (the chevron) is the opt-out for a permanently
+// open sidebar and is the only state that is remembered.
 
 type NavNode = { href: string; label: string; children?: NavNode[] };
 
@@ -121,9 +127,14 @@ const navIcons: Record<string, JSX.Element> = {
       <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" />
     </svg>
   ),
+  // "Planering (äldre)" sits directly under "Planering" in APP_NAV_ITEMS, which warns
+  // about exactly this misnavigation — a clock badge keeps the calendar family but makes
+  // the two tell apart at a glance now that the rail shows icons only.
   '/plannering': (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" />
+      <path d="M21 11V6a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2h6" />
+      <line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" />
+      <circle cx="17.5" cy="17.5" r="4.5" /><path d="M17.5 15.5v2l1.5 1" />
     </svg>
   ),
   '/offert/kalkylator': (
@@ -193,7 +204,38 @@ const navIcons: Record<string, JSX.Element> = {
   ),
 };
 
-const COLLAPSE_KEY = 'app-sidebar-collapsed';
+// v2 key: the model changed from "collapsed yes/no" to "pinned open vs. hover rail",
+// so old stored preferences are deliberately not carried over — everyone starts on
+// the rail and re-pins if they want the labels up permanently.
+const PINNED_KEY = 'app-sidebar-pinned';
+
+// A short open delay keeps the panel shut when the mouse merely sweeps across the rail
+// on its way into the content; the longer close delay forgives the diagonal move down
+// into a nav group.
+const PEEK_OPEN_MS = 120;
+const PEEK_CLOSE_MS = 180;
+
+// Whether the panel is holding focus because someone tabbed into it, as opposed to
+// merely clicking a button in it — only the former should keep it open once the mouse
+// has left. Engines that don't know the selector throw on matches(), and there the
+// mouse is the more trustworthy signal.
+function hasKeyboardFocusInside(el: HTMLElement | null) {
+  const active = document.activeElement;
+  if (!el || !(active instanceof HTMLElement) || !el.contains(active)) return false;
+  try {
+    return active.matches(':focus-visible');
+  } catch {
+    return false;
+  }
+}
+
+// An anchored popover opened from inside the panel (ProfileMenu) renders through a
+// portal but is positioned against its trigger, so collapsing the rail would leave it
+// floating detached over the content. The notification sheet deliberately does not
+// match — it carries its own full-screen overlay and wants the rail out of the way.
+function hasAnchoredPopoverInside(el: HTMLElement | null) {
+  return !!el?.querySelector('[aria-haspopup][aria-expanded="true"]');
+}
 
 export default function AppSidebar({
   role,
@@ -223,22 +265,93 @@ export default function AppSidebar({
   const [pendingHref, setPendingHref] = useState<string | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const [collapsed, setCollapsed] = useState(false);
+  // null until the stored preference and the pointer type are known. Rail is the
+  // rendered default, so the server renders the rail and the common case never flashes
+  // wide-then-narrow on load; only a pinned sidebar widens after hydration.
+  const [pinnedPref, setPinnedPref] = useState<boolean | null>(null);
+  const [peeking, setPeeking] = useState(false);
+  const [hoverCapable, setHoverCapable] = useState<boolean | null>(null);
+  const asideRef = useRef<HTMLElement | null>(null);
+  const peekTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // The rail is a pointer affordance: without hover there is nothing to peek with, and
+  // the footer's profile/logout menu would be unreachable behind a bare chevron. Those
+  // devices keep the always-open sidebar unless the user says otherwise.
+  const pinned = pinnedPref ?? hoverCapable === false;
+
+  // Icons-only state. Everything below keys its compact styling off this, so the hover
+  // peek renders the exact same chrome as a pinned sidebar — one code path, not two.
+  const rail = !pinned && !peeking;
 
   useEffect(() => {
-    const stored = typeof window !== 'undefined' ? window.localStorage.getItem(COLLAPSE_KEY) : null;
-    if (stored === '1') setCollapsed(true);
-    else if (stored === '0') setCollapsed(false);
-    else setCollapsed(pathname.startsWith('/crm/planering'));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    try {
+      const stored = window.localStorage.getItem(PINNED_KEY);
+      if (stored === '1') setPinnedPref(true);
+      else if (stored === '0') setPinnedPref(false);
+    } catch { /* ignore */ }
   }, []);
 
-  const toggleCollapsed = () =>
-    setCollapsed((c) => {
-      const next = !c;
-      try { window.localStorage.setItem(COLLAPSE_KEY, next ? '1' : '0'); } catch { /* ignore */ }
-      return next;
-    });
+  // Touch devices fire a sticky :hover on tap, which would leave the panel stuck open
+  // with nothing to dismiss it, so the peek is limited to real pointers. Those devices
+  // keep the rail plus its tooltips and the pin button.
+  useEffect(() => {
+    const media = window.matchMedia('(hover: hover) and (pointer: fine)');
+    const update = () => setHoverCapable(media.matches);
+    update();
+    // Same fallback the other matchMedia call sites in this repo use: this effect runs
+    // in the shell around every authenticated page, so a throw here is a blank app.
+    if (typeof media.addEventListener === 'function') {
+      media.addEventListener('change', update);
+      return () => media.removeEventListener('change', update);
+    }
+    media.addListener(update);
+    return () => media.removeListener(update);
+  }, []);
+
+  useEffect(() => () => { if (peekTimer.current) clearTimeout(peekTimer.current); }, []);
+
+  const clearPeekTimer = () => {
+    if (peekTimer.current) clearTimeout(peekTimer.current);
+    peekTimer.current = null;
+  };
+
+  const openPeek = useCallback((immediate: boolean) => {
+    if (hoverCapable !== true) return;
+    clearPeekTimer();
+    if (immediate) setPeeking(true);
+    else peekTimer.current = setTimeout(() => setPeeking(true), PEEK_OPEN_MS);
+  }, [hoverCapable]);
+
+  const endPeek = useCallback(() => {
+    clearPeekTimer();
+    setPeeking(false);
+  }, []);
+
+  // Blur bubbles on every move between children, so the delay doubles as the guard
+  // against collapsing mid-tab; the focus check keeps the panel open for a keyboard
+  // user whose mouse happens to wander off it. It has to be :focus-visible and not
+  // plain focus — clicking a nav group toggle leaves that button focused, and a
+  // contains() check would then pin the panel open over the content indefinitely.
+  const closePeek = useCallback(() => {
+    clearPeekTimer();
+    peekTimer.current = setTimeout(() => {
+      const el = asideRef.current;
+      if (hasKeyboardFocusInside(el) || hasAnchoredPopoverInside(el)) return;
+      setPeeking(false);
+    }, PEEK_CLOSE_MS);
+  }, []);
+
+  // React events cross portal boundaries along the component tree, so the notification
+  // sheet's and ProfileMenu's contents would otherwise re-open the peek from behind
+  // their own overlays. Only focus that actually lands inside the panel counts.
+  const isInsideAside = (target: EventTarget | null) =>
+    target instanceof Node && !!asideRef.current?.contains(target);
+
+  const togglePinned = () => {
+    const next = !pinned;
+    setPinnedPref(next);
+    try { window.localStorage.setItem(PINNED_KEY, next ? '1' : '0'); } catch { /* ignore */ }
+  };
 
   useEffect(() => {
     setPendingHref(null);
@@ -252,6 +365,20 @@ export default function AppSidebar({
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [mobileOpen]);
 
+  // Escape dismisses the peek the way it dismisses any other overlay. Focus follows it
+  // out, otherwise the next Tab would resume inside a panel that is no longer readable.
+  useEffect(() => {
+    if (!peeking) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      const active = document.activeElement;
+      if (active instanceof HTMLElement && asideRef.current?.contains(active)) active.blur();
+      endPeek();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [peeking, endPeek]);
+
   const brandSub = inCrm ? 'CRM' : 'Arbetsyta';
 
   const renderLink = (node: NavNode, active: boolean, isChild: boolean) => {
@@ -261,12 +388,12 @@ export default function AppSidebar({
       <Link
         href={node.href}
         aria-current={active ? 'page' : undefined}
-        title={collapsed ? node.label : undefined}
+        title={rail ? node.label : undefined}
         onClick={() => { if (!active) setPendingHref(node.href); }}
         className={cn(
           'flex items-center gap-3 rounded-xl text-sm font-medium no-underline transition-colors',
           isChild ? 'py-2 pl-11 pr-3 text-[13px]' : 'px-3 py-2.5',
-          collapsed && !isChild && 'lg:justify-center lg:gap-0 lg:px-0',
+          rail && !isChild && 'lg:justify-center lg:gap-0 lg:px-0',
           active ? 'text-white' : pending ? 'text-emerald-300' : 'hover:text-white',
         )}
         style={
@@ -280,7 +407,7 @@ export default function AppSidebar({
         onMouseLeave={(e) => { if (!active) (e.currentTarget as HTMLElement).style.backgroundColor = ''; }}
       >
         {!isChild && <span className={cn('shrink-0', active ? 'text-emerald-300' : '')}>{icon}</span>}
-        <span className={cn('truncate crm-fade-in', collapsed && 'lg:hidden')}>{node.label}</span>
+        <span className={cn('truncate crm-fade-in', rail && 'lg:hidden')}>{node.label}</span>
       </Link>
     );
   };
@@ -323,27 +450,44 @@ export default function AppSidebar({
         />
       )}
 
+      {/* Desktop layout column. The panel itself is fixed, so a peek floats over the
+          content instead of reflowing the whole page every time the mouse passes. */}
+      <div
+        aria-hidden="true"
+        className={cn(
+          'hidden shrink-0 lg:block lg:transition-[width] lg:duration-200',
+          pinned ? 'lg:w-56' : 'lg:w-[68px]',
+        )}
+      />
+
       <aside
+        ref={asideRef}
         id="app-sidebar-nav"
         aria-label="Navigation"
+        onMouseEnter={() => openPeek(false)}
+        onMouseLeave={closePeek}
+        onFocus={(e) => { if (isInsideAside(e.target)) openPeek(true); }}
+        onBlur={(e) => { if (isInsideAside(e.target)) closePeek(); }}
         className={cn(
           'app-sidebar flex w-56 shrink-0 flex-col overflow-y-auto',
           // Mobile: off-canvas drawer from the RIGHT (better thumb reach).
           'fixed right-0 top-0 z-50 h-[100dvh] transition-transform duration-300 ease-out',
           mobileOpen ? 'translate-x-0' : 'translate-x-full',
-          // Desktop: static left rail (DOM order in the flex row puts it left).
-          'lg:sticky lg:right-auto lg:top-0 lg:z-auto lg:h-[100dvh] lg:translate-x-0 lg:transition-[width] lg:duration-200',
-          collapsed ? 'lg:w-[68px]' : 'lg:w-56',
+          // Desktop: fixed left rail floating above the content (the spacer holds the column).
+          'lg:left-0 lg:right-auto lg:top-0 lg:z-40 lg:h-[100dvh] lg:translate-x-0 lg:transition-[width] lg:duration-200',
+          rail ? 'lg:w-[68px]' : 'lg:w-56',
+          // Only a peek floats; a pinned sidebar sits flush in its own column.
+          !pinned && !rail && 'lg:shadow-[0_24px_60px_-12px_rgba(2,20,12,0.55)]',
         )}
         style={{ backgroundColor: 'var(--crm-sidebar-bg)' }}
       >
         {/* Logo + collapse toggle */}
-        <div className={cn('flex items-center justify-between px-4 pb-3 [padding-top:calc(1.25rem+env(safe-area-inset-top))] lg:pt-5', collapsed && 'lg:flex-col lg:items-center lg:gap-2 lg:px-3')}>
+        <div className={cn('flex items-center justify-between px-4 pb-3 [padding-top:calc(1.25rem+env(safe-area-inset-top))] lg:pt-5', rail && 'lg:flex-col lg:items-center lg:gap-2 lg:px-3')}>
           <Link
             href="/"
             title="Till start"
             onClick={() => setPendingHref('/')}
-            className={cn('crm-fade-in block no-underline', collapsed && 'lg:hidden')}
+            className={cn('crm-fade-in block no-underline', rail && 'lg:hidden')}
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/brand/Ekovilla_vit.png" alt="Ekovilla" className="h-6 w-auto" />
@@ -353,21 +497,28 @@ export default function AppSidebar({
             href="/"
             title="Till start"
             onClick={() => setPendingHref('/')}
-            className={cn('crm-fade-in hidden', collapsed ? 'lg:block' : 'lg:hidden')}
+            className={cn('crm-fade-in hidden', rail ? 'lg:block' : 'lg:hidden')}
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/brand/Ekovilla_logga_vit.png" alt="Ekovilla" className="h-6 w-6 object-contain" />
           </Link>
-          {/* Desktop: notification bell + collapse toggle, grouped top-right (mobile has the bell in the top bar). */}
-          <div className={cn('ml-auto hidden items-center gap-1 lg:flex', collapsed ? 'lg:ml-0 lg:flex-col' : 'lg:self-start')}>
-            <NotificationBell collapsed={collapsed} className="!h-8 !w-8 !rounded-lg !border !border-white/20 !bg-transparent !p-0 !text-white/80 hover:!border-white/30 hover:!bg-white/10 hover:!text-white" />
+          {/* Desktop: notification bell + pin toggle, grouped top-right (mobile has the bell in the top bar). */}
+          <div className={cn('ml-auto hidden items-center gap-1 lg:flex', rail ? 'lg:ml-0 lg:flex-col' : 'lg:self-start')}>
+            {/* The sheet is anchored to the sidebar's layout column, so the peek has to be
+                gone before it opens. It can't be left to the mouse: the overlay is inserted
+                under a stationary cursor, and no mouseleave fires until the pointer moves. */}
+            <span onClickCapture={endPeek} className="contents">
+              <NotificationBell collapsed={!pinned} className="!h-8 !w-8 !rounded-lg !border !border-white/20 !bg-transparent !p-0 !text-white/80 hover:!border-white/30 hover:!bg-white/10 hover:!text-white" />
+            </span>
             <button
               type="button"
-              onClick={toggleCollapsed}
-              aria-label={collapsed ? 'Visa meny' : 'Fäll ihop meny'}
+              onClick={togglePinned}
+              aria-pressed={pinned}
+              aria-label={pinned ? 'Lossa menyn' : 'Fäst menyn öppen'}
+              title={pinned ? 'Lossa menyn — den visas då vid hover' : 'Fäst menyn öppen'}
               className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-white/80 transition-colors hover:bg-white/10 hover:text-white"
             >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={cn('transition-transform', collapsed && 'rotate-180')}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={cn('transition-transform', !pinned && 'rotate-180')}>
                 <polyline points="15 18 9 12 15 6" />
               </svg>
             </button>
@@ -392,8 +543,8 @@ export default function AppSidebar({
             <Link
               href="/"
               onClick={() => setPendingHref('/')}
-              title={collapsed ? 'Till start' : undefined}
-              className={cn('flex items-center gap-3 rounded-xl px-3 py-2 text-[13px] font-medium no-underline transition-colors hover:text-white', collapsed && 'lg:justify-center lg:gap-0 lg:px-0')}
+              title={rail ? 'Till start' : undefined}
+              className={cn('flex items-center gap-3 rounded-xl px-3 py-2 text-[13px] font-medium no-underline transition-colors hover:text-white', rail && 'lg:justify-center lg:gap-0 lg:px-0')}
               style={{ color: 'var(--crm-sidebar-text-muted)' }}
               onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--crm-sidebar-hover)'; }}
               onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = ''; }}
@@ -403,13 +554,13 @@ export default function AppSidebar({
                   <path d="M15 18l-6-6 6-6" />
                 </svg>
               </span>
-              <span className={cn('truncate crm-fade-in', collapsed && 'lg:hidden')}>Till start</span>
+              <span className={cn('truncate crm-fade-in', rail && 'lg:hidden')}>Till start</span>
             </Link>
           </div>
         )}
 
         {/* Nav items */}
-        <nav className={cn('flex-1 px-2', collapsed && 'lg:px-2')}>
+        <nav className="flex-1 px-2">
           <ul role="list" className="grid list-none gap-0.5 p-0">
             {items.map((item) => {
               const children = item.children ?? [];
@@ -423,11 +574,11 @@ export default function AppSidebar({
                     <button
                       type="button"
                       aria-expanded={open}
-                      title={collapsed ? item.label : undefined}
+                      title={rail ? item.label : undefined}
                       onClick={() => setExpanded((prev) => ({ ...prev, [item.href]: !open }))}
                       className={cn(
                         'flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors',
-                        collapsed && 'lg:justify-center lg:gap-0 lg:px-0',
+                        rail && 'lg:justify-center lg:gap-0 lg:px-0',
                         groupActive ? 'text-white' : 'hover:text-white',
                       )}
                       style={{ color: groupActive ? '#ffffff' : 'var(--crm-sidebar-text)' }}
@@ -435,13 +586,13 @@ export default function AppSidebar({
                       onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = ''; }}
                     >
                       <span className={cn('shrink-0', groupActive ? 'text-emerald-300' : '')}>{navIcons[item.href] ?? fallbackIcon}</span>
-                      <span className={cn('flex-1 truncate text-left crm-fade-in', collapsed && 'lg:hidden')}>{item.label}</span>
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={cn('shrink-0 transition-transform', open && 'rotate-180', collapsed && 'lg:hidden')}>
+                      <span className={cn('flex-1 truncate text-left crm-fade-in', rail && 'lg:hidden')}>{item.label}</span>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={cn('shrink-0 transition-transform', open && 'rotate-180', rail && 'lg:hidden')}>
                         <polyline points="6 9 12 15 18 9" />
                       </svg>
                     </button>
                     {open && (
-                      <ul role="list" className={cn('mt-0.5 grid list-none gap-0.5 p-0', collapsed && 'lg:hidden')}>
+                      <ul role="list" className={cn('mt-0.5 grid list-none gap-0.5 p-0', rail && 'lg:hidden')}>
                         {children.map((child) => (
                           <li key={child.href}>{renderLink(child, childActive === child.href, true)}</li>
                         ))}
@@ -457,15 +608,15 @@ export default function AppSidebar({
 
         {/* User + account menu */}
         <div className="mx-3 mt-2 mb-3 h-px" style={{ backgroundColor: 'var(--crm-sidebar-border)' }} />
-        <div className={cn('flex items-center gap-2.5 px-4 pb-5', collapsed && 'lg:justify-center lg:px-2')}>
+        <div className={cn('flex items-center gap-2.5 px-4 pb-5', rail && 'lg:justify-center lg:px-2')}>
           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-700 text-xs font-bold text-white">
             {userInitial}
           </div>
-          <div className={cn('min-w-0 flex-1', collapsed && 'lg:hidden')}>
+          <div className={cn('min-w-0 flex-1', rail && 'lg:hidden')}>
             <p className="truncate text-[13px] font-semibold text-white">{userName || 'Användare'}</p>
             <p className="truncate text-[11px]" style={{ color: 'var(--crm-sidebar-text-muted)' }}>{role || 'roll saknas'}</p>
           </div>
-          <div className={cn('shrink-0', collapsed && 'lg:hidden')}>
+          <div className={cn('shrink-0', rail && 'lg:hidden')}>
             <ProfileMenu fullName={userName || null} role={role} placement="up" />
           </div>
         </div>
