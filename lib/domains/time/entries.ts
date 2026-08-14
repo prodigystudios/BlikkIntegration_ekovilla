@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { workedMinutes } from './hours';
-import type { TimeEntryKind } from './summary';
+import type { SummarizableEntry, TimeEntryKind } from './summary';
 
 // Tidrader — läsning, skrivning och den regel som gör underlaget trovärdigt:
 // SERVERN RÄKNAR MINUTERNA, aldrig klienten.
@@ -32,7 +32,7 @@ export const timeEntrySelect = `
   work_order:crm_work_orders(id, order_number, fortnox_order_number, project_name, client_name),
   internal_project:crm_internal_projects(id, name),
   absence_type:crm_absence_types(id, name, payroll_code),
-  time_code:crm_time_codes(id, name, code)
+  time_code:crm_time_codes(id, name, code, payroll_code)
 `;
 
 export type TimeEntryRow = {
@@ -54,7 +54,7 @@ export type TimeEntryRow = {
   work_order?: { id: string; order_number: string | null; fortnox_order_number: string | null; project_name: string | null; client_name: string | null } | null;
   internal_project?: { id: string; name: string } | null;
   absence_type?: { id: string; name: string; payroll_code: string | null } | null;
-  time_code?: { id: string; name: string; code: string | null } | null;
+  time_code?: { id: string; name: string; code: string | null; payroll_code?: string | null } | null;
 };
 
 export type TimeEntryInput = {
@@ -133,6 +133,45 @@ export function buildTimeEntryRow(input: TimeEntryInput, userId: string): BuiltT
       // skrivs den ändå över — det är hela poängen.
     },
     error: null,
+  };
+}
+
+/**
+ * Databasrad → löneunderlagets form (lib/domains/time/summary.ts).
+ *
+ * Enda stället där kolumnnamn möter summeringen. `summarizePerson` känner inte till PostgREST och
+ * `listTimeEntries` känner inte till byråns kolumner — den här funktionen är fogen, och den är ren
+ * så den går att testa utan databas.
+ *
+ * `minutesWorked` skickas med för raderna som saknar klockslag: frånvaro (som anges i timmar med
+ * flit) och `legacy_office`-raderna från tiden före omformningen. workedMinutes faller tillbaka på
+ * den när grossMinutes inte kan räknas.
+ */
+export function toSummarizableEntry(row: TimeEntryRow): SummarizableEntry {
+  const workOrder = row.work_order;
+  // Ordernumret först: det är vad kontoret känner igen ett jobb på. Projekt- eller kundnamn läggs
+  // till när det finns, så en rad går att placera utan att slå upp ordern.
+  const workOrderLabel = workOrder
+    ? [workOrder.order_number || workOrder.fortnox_order_number, workOrder.project_name || workOrder.client_name]
+        .filter(Boolean)
+        .join(' · ') || null
+    : null;
+
+  return {
+    workDate: row.work_date,
+    startTime: row.start_time,
+    endTime: row.end_time,
+    breakMinutes: row.break_minutes ?? 0,
+    minutesWorked: row.minutes_worked,
+    kind: row.kind,
+    userId: row.user_id,
+    absenceReason: row.absence_type?.name ?? null,
+    // Lönesorten tas från den referensrad som faktiskt valdes på tidraden: frånvaroorsaken för
+    // frånvaro, tidkoden för arbetad tid. Internprojektets egen payroll_code används inte — raden
+    // bär en tidkod, och två källor hade kunnat säga olika.
+    payrollCode: row.kind === 'absence' ? row.absence_type?.payroll_code ?? null : row.time_code?.payroll_code ?? null,
+    note: row.note,
+    label: row.kind === 'internal' ? row.internal_project?.name ?? null : workOrderLabel,
   };
 }
 

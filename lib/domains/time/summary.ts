@@ -20,6 +20,14 @@ export type SummarizableEntry = ShiftInput & {
   /** Byråns lönesort, från referensraden. */
   payrollCode?: string | null;
   note?: string | null;
+  /**
+   * Vad tiden lades på — arbetsordern eller internprojektet, i klartext.
+   *
+   * Ingen av byråns kolumner. Den finns för attestens dagvy, där kontoret granskar rapporteringen
+   * för hand: "9 timmar den 14:e" säger inget om raden är rimlig, "9 timmar på AO-20260729-42E7C4"
+   * gör det. Frånvaro har ingen — där bär absenceReason samma roll.
+   */
+  label?: string | null;
 };
 
 export type DayRow = {
@@ -32,6 +40,8 @@ export type DayRow = {
   /** Flera frånvaroorsaker samma dag listas var för sig — de kan ha olika lönesort. */
   absenceReasons: string[];
   note: string | null;
+  /** Arbetsordern eller internprojektet raden hör till. Null på frånvaro. */
+  label: string | null;
 };
 
 // En rad per tidrad, inte per dag: byrån vill se klockslagen, och två pass samma dag har två par.
@@ -50,6 +60,7 @@ export function buildDayRows(entries: SummarizableEntry[]): DayRow[] {
         absenceMinutes: isAbsence ? minutes : 0,
         absenceReasons: isAbsence && entry.absenceReason ? [entry.absenceReason] : [],
         note: entry.note ?? null,
+        label: isAbsence ? null : entry.label ?? null,
       };
     });
 }
