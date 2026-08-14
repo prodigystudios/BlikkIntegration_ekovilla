@@ -61,7 +61,6 @@ export default function KorjournalTripModal({
       onClose={onClose}
       ariaLabel={editing ? 'Redigera resa' : 'Ny resa'}
       maxWidth="sm:max-w-[720px]"
-      bodyClassName="bg-[#f6f9f3]"
       header={
         <div className="grid gap-1">
           <span className={crm.sectionTitle}>{editing ? 'Redigera resa' : 'Ny resa'}</span>
