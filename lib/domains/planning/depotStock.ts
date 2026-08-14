@@ -164,24 +164,30 @@ async function derivePlannedDemandRows(supabase: SupabaseClient): Promise<StockR
   const { data: trucks } = await supabase.from('ops_trucks').select('id, depot_id');
   const truckDepot = new Map((trucks ?? []).map((t: any) => [t.id as string, (t.depot_id as string | null) ?? null]));
 
-  // Ordered so the attribution is deterministic: a job spread over several trucks is booked against
-  // its EARLIEST segment's depot, not whichever row the database happened to return first.
   const { data: segs } = await supabase
     .from('ops_segments')
-    .select('id, work_order_id, truck_id, start_day, work_order:crm_work_orders(status, line_items)')
-    .order('start_day', { ascending: true })
-    .order('id', { ascending: true });
+    .select('id, work_order_id, truck_id, start_day, work_order:crm_work_orders(status, line_items)');
 
-  const candidates: PlannedDemandSegment[] = ((segs ?? []) as Array<Record<string, any>>).map((s) => {
-    const wo = Array.isArray(s.work_order) ? s.work_order[0] : s.work_order;
-    return {
-      work_order_id: (s.work_order_id as string | null) ?? null,
-      depot_id: truckDepot.get(s.truck_id) ?? null,
-      status: (wo?.status as string | null) ?? null,
-      material: wo ? materialShortFromLineItems(wo.line_items) : null,
-      sacks: wo ? totalSacks(wo.line_items) : 0,
-    };
-  });
+  const open = new Set(SCHEDULABLE_WORK_ORDER_STATUSES as unknown as string[]);
+  const rows = ((segs ?? []) as Array<Record<string, any>>)
+    .map((s): Record<string, any> => ({ ...s, wo: Array.isArray(s.work_order) ? s.work_order[0] : s.work_order }))
+    // Drop closed jobs BEFORE parsing line_items — that parse is the expensive part, and every
+    // completed job in the table would otherwise pay for it on every board load.
+    .filter((s) => s.wo && open.has(s.wo.status))
+    // Sorted here rather than with .order(): the attribution below must be deterministic (a job
+    // split across trucks is booked against its earliest segment's depot), but asking the database
+    // to sort every ops_segments row on each load buys nothing — the set is already in memory, and
+    // an ascending server-side sort would bias truncation toward the oldest rows if a row cap ever
+    // applies, which would quietly hollow out the very demand figure this feeds.
+    .sort((a, b) => String(a.start_day).localeCompare(String(b.start_day)) || String(a.id).localeCompare(String(b.id)));
+
+  const candidates: PlannedDemandSegment[] = rows.map((s) => ({
+    work_order_id: (s.work_order_id as string | null) ?? null,
+    depot_id: truckDepot.get(s.truck_id) ?? null,
+    status: (s.wo.status as string | null) ?? null,
+    material: materialShortFromLineItems(s.wo.line_items),
+    sacks: totalSacks(s.wo.line_items),
+  }));
   return attributePlannedDemand(candidates);
 }
 
