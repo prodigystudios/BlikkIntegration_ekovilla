@@ -5,10 +5,14 @@ import { buildTimeEntryRow } from '@/lib/domains/time/entries';
 import { periodLockError } from '@/lib/domains/time/approvals';
 import { createWorkOrderTimeEntrySchema, ok, requireSignedInUser, routeError, validationError } from '../../_lib';
 
-// NOTE: the installer field view has no time tab during the CRM cutover — Blikk is still the
-// payroll system of record and CRM cannot hand hours over yet (fas 4). This endpoint stays live
-// for the office view (/crm/arbetsorder/[id]), where time logged is internal follow-up rather
-// than payroll input. See app/arbetsorder/WorkOrderInstallerClient.tsx.
+// Två klienter skriver hit: kontorets vy (/crm/arbetsorder/[id]) och fältvyn
+// (/arbetsorder/[id]) — den senare bara för attestansvariga, som ett testfönster. Besättningen
+// rapporterar fortfarande i Blikk, som läses ut för hand före varje lönekörning, och en öppen flik
+// i fält hade blivit en andra plats att rapportera på. Villkoret bor i
+// app/arbetsorder/[id]/page.tsx (`canReportTime`) och tas bort vid cutovern.
+//
+// Raderna är INTE bara intern uppföljning: de ligger i crm_time_entries, alltså samma tabell som
+// löneunderlaget, och bär klockslag sedan 20260814_time_entries_clock_check.sql.
 
 type RouteContext = {
   params: {
