@@ -745,16 +745,12 @@ export default function PlanneringPage() {
     onChange();
     try {
       // Safari < 14 uses addListener/removeListener
-      // eslint-disable-next-line deprecation/deprecation
       if (typeof mq.addEventListener === 'function') mq.addEventListener('change', onChange);
-      // eslint-disable-next-line deprecation/deprecation
       else mq.addListener(onChange);
     } catch { /* ignore */ }
     return () => {
       try {
-        // eslint-disable-next-line deprecation/deprecation
         if (typeof mq.removeEventListener === 'function') mq.removeEventListener('change', onChange);
-        // eslint-disable-next-line deprecation/deprecation
         else mq.removeListener(onChange);
       } catch { /* ignore */ }
     };
