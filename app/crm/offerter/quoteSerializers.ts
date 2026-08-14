@@ -261,3 +261,59 @@ export function buildMeasurementLines(items: MeasurementLineItem[]): string[] {
   if (totalSacks > 0) lines.push('', `Totalt: ${totalSacks} säck`);
   return lines;
 }
+
+// ── Uppdatera offerten från kundkortet utan att äta säljarens egna ändringar ──
+//
+// Att gå in på kundkortet mitt i en offert och komma tillbaka finns till för att kunna ÅTGÄRDA
+// något på kunden — slå på omvänd skattskyldighet, rätta en adress. Samtidigt fyller säljaren i
+// egna värden på offerten som inte ska bli överskrivna av kortet.
+//
+// Tidigare gjordes valet ovillkorligt, och båda svaren var fel på var sitt sätt: förifyllde man
+// alltid försvann det säljaren skrivit, förifyllde man aldrig blev en påslagen omvänd moms kvar
+// på 25 % — och gula notisen intygade ändå motsatsen, eftersom den läser kundkortet direkt.
+//
+// Regeln nedan skiljer dem åt: ett fält som fortfarande bär exakt det värde kortet gav när kunden
+// valdes är oberört och får det färska värdet; har säljaren ändrat det står deras värde kvar.
+
+export const CUSTOMER_DERIVED_KEYS = [
+  'quote_type', 'vat_percent', 'company_name', 'customer_name', 'organization_number',
+  'personal_number', 'contact_name', 'phone', 'email', 'street_address', 'postal_code', 'city',
+  'delivery_address', 'delivery_postal_code', 'delivery_city',
+] as const;
+
+export type CustomerDerivedKey = (typeof CUSTOMER_DERIVED_KEYS)[number];
+
+/** The subset of draft fields that `applySelectedCustomer` derives from the customer card. */
+export type CustomerDerivedValues = Record<CustomerDerivedKey, string>;
+
+/** Pick the customer-derived subset out of anything draft-shaped. */
+export function pickCustomerDerived(source: Partial<Record<CustomerDerivedKey, unknown>>): CustomerDerivedValues {
+  const out = {} as CustomerDerivedValues;
+  for (const key of CUSTOMER_DERIVED_KEYS) out[key] = String(source[key] ?? '');
+  return out;
+}
+
+/**
+ * Field-by-field merge on return from the customer card.
+ *
+ * @param current  what the draft holds now
+ * @param applied  what the card gave when the customer was picked (the "untouched" reference)
+ * @param next     what the card gives now
+ *
+ * Untouched (current === applied) → take `next`. Edited → keep `current`.
+ *
+ * ⚠️ Without `applied` this is undecidable — that is the whole reason it is stored alongside the
+ * draft. A caller with no reference must leave the draft alone rather than guess, because guessing
+ * wrong in the "overwrite" direction is the one that silently destroys a seller's work.
+ */
+export function mergeUntouchedCustomerFields(
+  current: CustomerDerivedValues,
+  applied: CustomerDerivedValues,
+  next: CustomerDerivedValues,
+): CustomerDerivedValues {
+  const out = {} as CustomerDerivedValues;
+  for (const key of CUSTOMER_DERIVED_KEYS) {
+    out[key] = current[key] === applied[key] ? next[key] : current[key];
+  }
+  return out;
+}

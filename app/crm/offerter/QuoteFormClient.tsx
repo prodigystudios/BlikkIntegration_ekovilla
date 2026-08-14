@@ -28,8 +28,11 @@ import {
   buildMeasurementLines,
   addDaysIso,
   matchedValidityPreset,
+  mergeUntouchedCustomerFields,
+  pickCustomerDerived,
   OFFER_VALIDITY_DAYS,
   OFFER_VALIDITY_PRESETS,
+  type CustomerDerivedValues,
 } from './quoteSerializers';
 import { resolveCrmContact } from '@/lib/domains/crm/contacts';
 import { ROT_HOUSE_WORK_TYPES } from '@/lib/domains/fortnox/types';
@@ -1130,6 +1133,10 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   );
   const [loadedQuote, setLoadedQuote] = useState<QuoteItem | null>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<CrmCustomerLite | null>(null);
+  // What the customer card gave when the customer was picked. The reference the refresh-on-return
+  // merge compares against to tell an untouched field from one the seller changed. Persisted with
+  // the draft, because the comparison has to survive the trip to the customer card and back.
+  const [appliedCustomerFields, setAppliedCustomerFields] = useState<CustomerDerivedValues | null>(null);
   // Whether the job is performed at a different address than the customer's. Off → the
   // order inherits the customer address; on → the work-address fields are shown and must
   // be filled. A deliberate toggle (vs silent prefill) so a wrong company address can't
@@ -1189,7 +1196,12 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
 
   function persistDraft() {
     try {
-      localStorage.setItem(draftStorageKey, JSON.stringify({ version: 1, savedAt: Date.now(), quoteId: quoteId ?? null, draft }));
+      // appliedCustomer rides along so a return from the customer card can tell which fields the
+      // seller has changed since. Absent in stashes written before this existed — readers treat a
+      // missing snapshot as "don't merge" rather than guessing.
+      localStorage.setItem(draftStorageKey, JSON.stringify({
+        version: 1, savedAt: Date.now(), quoteId: quoteId ?? null, draft, appliedCustomer: appliedCustomerFields,
+      }));
     } catch { /* localStorage unavailable — ignore */ }
   }
 
@@ -1227,9 +1239,10 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     });
   }
 
-  function applySelectedCustomer(customer: CrmCustomerLite) {
-    customerLookupRef.current += 1; // a deliberate pick outranks any lookup still in flight
-    setSelectedCustomer(customer);
+  // What the customer card yields for the draft's customer-derived fields. Extracted so the initial
+  // pick and the refresh-on-return compute IDENTICAL values — the merge compares against these, so
+  // any drift between the two would read as "the seller edited this" and quietly stop refreshing.
+  function customerDraftFields(customer: CrmCustomerLite): CustomerDerivedValues {
     // Primary contact first, then the customer card's own e-mail/phone — a customer with no
     // contact rows (the common case) would otherwise leave both fields empty.
     const contact = resolveCrmContact(customer);
@@ -1244,15 +1257,11 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
         (del.city || '') !== (vis?.city || '')
       ),
     );
-    setCustomWorkAddress(deliveryDiffers);
-    setDraft((current) => ({
-      ...current,
-      customer_id: customer.id,
+    return {
       quote_type: customer.customer_type,
       // Reverse charge (omvänd skattskyldighet) → 0 % moms; otherwise the standard 25 %.
       // Follows the customer's setting (kept in sync with Fortnox VATType); still editable.
       vat_percent: customer.reverse_vat ? '0' : '25',
-      customer_source: buildCustomerSource(customer),
       company_name: customer.company_name || '',
       customer_name: customer.company_name || `${customer.first_name || ''} ${customer.last_name || ''}`.trim(),
       organization_number: customer.organization_number || '',
@@ -1268,6 +1277,55 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
       delivery_address: deliveryDiffers ? del?.street || '' : '',
       delivery_postal_code: deliveryDiffers ? del?.postal_code || '' : '',
       delivery_city: deliveryDiffers ? del?.city || '' : '',
+    };
+  }
+
+  function applySelectedCustomer(customer: CrmCustomerLite) {
+    customerLookupRef.current += 1; // a deliberate pick outranks any lookup still in flight
+    setSelectedCustomer(customer);
+    const fields = customerDraftFields(customer);
+    // Remember what the card gave, so a later return can tell "still the card's value" from
+    // "the seller changed this". Persisted with the draft — see persistDraft.
+    setAppliedCustomerFields(fields);
+    setCustomWorkAddress(Boolean(fields.delivery_address));
+    setDraft((current) => ({
+      ...current,
+      ...fields,
+      // The merge machinery compares plain strings; re-narrow the one field that is a union.
+      // Written as a check rather than a cast so an unexpected value can't slip through as a type.
+      quote_type: fields.quote_type === 'private' ? 'private' : 'business',
+      customer_id: customer.id,
+      customer_source: buildCustomerSource(customer),
+    }));
+  }
+
+  /**
+   * Returning from the customer card with the SAME customer: pull in what was changed there without
+   * touching what the seller has typed here.
+   *
+   * `baseline` is the draft as it was just restored — safe to compare against directly because this
+   * runs immediately after applyRestoredDraft, before the form is interactive.
+   */
+  function refreshFromCustomerCard(
+    customer: CrmCustomerLite,
+    baseline: QuoteDraft,
+    applied: CustomerDerivedValues | null,
+  ) {
+    customerLookupRef.current += 1;
+    setSelectedCustomer(customer);
+    // No reference for what the card originally gave (a stash written before this existed) — leave
+    // the draft alone. Overwriting on a guess is the failure mode that destroys the seller's work.
+    if (!applied) return;
+    const merged = mergeUntouchedCustomerFields(pickCustomerDerived(baseline), applied, customerDraftFields(customer));
+    setAppliedCustomerFields(customerDraftFields(customer));
+    setCustomWorkAddress(Boolean(merged.delivery_address));
+    setDraft((current) => ({
+      ...current,
+      ...merged,
+      quote_type: merged.quote_type === 'private' ? 'private' : 'business',
+      // Identity metadata always follows the card — the seller never edits these.
+      customer_id: customer.id,
+      customer_source: buildCustomerSource(customer),
     }));
   }
 
@@ -1391,7 +1449,8 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     // this quote — dropping it meant a trip to the customer card silently threw away everything
     // typed since the last save. The stash is cleared below either way, so skipping the restore
     // only ever lost work.
-    let restoredCustomerId: string | null = null;
+    let restoredDraft: QuoteDraft | null = null;
+    let restoredApplied: CustomerDerivedValues | null = null;
     try {
       const raw = localStorage.getItem(draftStorageKey);
       if (raw) {
@@ -1401,28 +1460,34 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
         if (fresh) {
           // Route through applyRestoredDraft so an older-shaped stash gets the same per-item/field
           // backfill as the resume banner (keeps every Input controlled).
-          const restored = envelope.draft as QuoteDraft;
-          applyRestoredDraft(restored);
-          restoredCustomerId = restored.customer_id ?? null;
+          restoredDraft = envelope.draft as QuoteDraft;
+          restoredApplied = (envelope.appliedCustomer as CustomerDerivedValues | null) ?? null;
+          applyRestoredDraft(restoredDraft);
+          if (restoredApplied) setAppliedCustomerFields(restoredApplied);
         }
       }
     } catch { /* ignore malformed draft */ }
     clearPersistedDraft();
 
-    // ⚠️ Only PREFILL from the card when this is a DIFFERENT customer than the draft already carries.
-    //
     // Coming back from a customer card, `created_customer_id` is appended even when nothing was
-    // created — CustomerDetailClient reuses the param for plain returns. So this branch used to run
-    // applySelectedCustomer over the just-restored draft and overwrite Er referens, phone, e-mail
-    // and every address field with the card's values. The seller's own edits vanished on a round
-    // trip they made precisely to look something up.
+    // created — CustomerDetailClient reuses the param for plain returns. Two different situations
+    // hide behind the same parameter:
     //
-    // The same-customer case needs nothing here: applyRestoredDraft above already put the customer
-    // object back (chip, contact dropdown, reverse-VAT hint) without touching the draft.
-    if (createdCustomerId && createdCustomerId !== restoredCustomerId) {
+    //   • a DIFFERENT customer (the create-new-customer flow) → prefill everything, as before
+    //   • the SAME customer (the seller went to fix something) → merge: take what changed on the
+    //     card, keep what the seller has typed here
+    //
+    // The merge is what makes "pop into the customer and turn on omvänd skattskyldighet" work. It
+    // used to prefill unconditionally, which wiped the seller's Er referens; then it stopped
+    // prefilling entirely, which left vat_percent at 25 % while the card said reverse charge — and
+    // the yellow notice reads the card, so the screen claimed 0 % while the quote saved 25 %.
+    if (createdCustomerId) {
+      const baseline = restoredDraft;
+      const sameCustomer = baseline?.customer_id === createdCustomerId;
       fetchCustomerLite(createdCustomerId).then((customer) => {
-        if (customer) applySelectedCustomer(customer);
-        else toast.error('Kunde inte hämta vald kund');
+        if (!customer) { toast.error('Kunde inte hämta vald kund'); return; }
+        if (sameCustomer && baseline) refreshFromCustomerCard(customer, baseline, restoredApplied);
+        else applySelectedCustomer(customer);
       });
     }
 
