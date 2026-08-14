@@ -173,10 +173,12 @@ describe('buildDayRows — rasten', () => {
 // "Arbetsorder" — och ett valt jobb föll då tyst bort medan UI:t sa att raden var rättad.
 describe('buildDayRows — sorten', () => {
   it('bär radens kind, som inte går att härleda ur minuterna', () => {
+    // Egna datum: buildDayRows sorterar på datum och starttid, och en frånvarorad utan klockslag
+    // hamnar annars först — ordningen är inte poängen här, sorten är.
     const rows = buildDayRows([
-      entry({ kind: 'work_order' }),
-      entry({ kind: 'internal' }),
-      entry({ kind: 'absence', startTime: null, endTime: null, minutesWorked: 240 }),
+      entry({ kind: 'work_order', workDate: '2026-08-11' }),
+      entry({ kind: 'internal', workDate: '2026-08-12' }),
+      entry({ kind: 'absence', workDate: '2026-08-13', startTime: null, endTime: null, minutesWorked: 240 }),
     ]);
     expect(rows.map((row) => row.kind)).toEqual(['work_order', 'internal', 'absence']);
   });
