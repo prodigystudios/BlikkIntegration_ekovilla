@@ -57,6 +57,16 @@ export default function WorkOrderInstallerClient({
   // Utan Tid-fliken finns ingen konsument för tidraderna — hämta dem inte då.
   const activity = useWorkOrderActivity(workOrderId, { includeTimeEntries: canReportTime });
 
+  // ⚠️ ALLA HOOKS MÅSTE LIGGA FÖRE DE TIDIGA RETURERNA NEDAN (`if (loading)`, `if (error)`).
+  // Den här summan används först längst ner, men får inte deklareras där: första rendern går ut
+  // genom laddningsgrenen, nästa gör det inte, och en hook som bara körs i den andra ger
+  // "Rendered more hooks than during the previous render" — en krasch för ALLA som öppnar sidan,
+  // inte bara för dem som ser fliken. Repot har ingen ESLint som fångar det.
+  const totalLoggedHours = useMemo(
+    () => activity.timeEntries.reduce((sum, item) => sum + Number(item.hours || 0), 0),
+    [activity.timeEntries],
+  );
+
   useEffect(() => {
     let active = true;
     async function load() {
@@ -118,11 +128,6 @@ export default function WorkOrderInstallerClient({
     ['info', 'Info'], ['articles', 'Artiklar'],
     ...(canReportTime ? [['time', 'Tid'] as [InstallerTab, string]] : []),
   ];
-
-  const totalLoggedHours = useMemo(
-    () => activity.timeEntries.reduce((sum, item) => sum + Number(item.hours || 0), 0),
-    [activity.timeEntries],
-  );
 
   return (
     <div className="mx-auto grid max-w-2xl gap-5 px-4 py-6" style={{ minHeight: '100dvh', backgroundColor: '#e5ede5' }}>

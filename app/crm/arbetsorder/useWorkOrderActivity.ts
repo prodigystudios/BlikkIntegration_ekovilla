@@ -10,9 +10,10 @@ import type { MentionUser } from '@/app/crm/components/MentionTextarea';
 // order. Used by both the full editor (/crm) and the installer field view (/arbetsorder)
 // so the write logic lives in one place. Handlers return a boolean so callers can reset
 // their own form/edit state on success.
-// `includeTimeEntries: false` skips the time-entries request entirely. The installer field view has
-// no time tab during the CRM cutover (Blikk still owns payroll), so fetching a list nothing renders
-// costs an extra round trip on a phone in a field, every time a job is opened.
+// `includeTimeEntries: false` skips the time-entries request entirely. Fältvyn döljer Tid-fliken
+// för alla utom attestansvariga (besättningen rapporterar fortfarande i Blikk), och att hämta en
+// lista som ingenting renderar kostar en extra rundtur på en telefon i fält, varje gång ett jobb
+// öppnas.
 export function useWorkOrderActivity(workOrderId: string, options?: { includeTimeEntries?: boolean }) {
   const includeTimeEntries = options?.includeTimeEntries !== false;
   const toast = useToast();
