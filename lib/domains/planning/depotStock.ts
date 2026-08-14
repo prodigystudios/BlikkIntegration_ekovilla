@@ -164,30 +164,45 @@ async function derivePlannedDemandRows(supabase: SupabaseClient): Promise<StockR
   const { data: trucks } = await supabase.from('ops_trucks').select('id, depot_id');
   const truckDepot = new Map((trucks ?? []).map((t: any) => [t.id as string, (t.depot_id as string | null) ?? null]));
 
+  // Open work orders first, then only THEIR segments — the same two-step listSchedulableWorkOrders
+  // and getPlanningInsights use. Reading every ops_segments row ever created and filtering in JS
+  // grew with the table and put the result within reach of PostgREST's row cap, which would have
+  // quietly hollowed out the demand figure (and the shortfall warning) with no error anywhere.
+  const { data: openWos } = await supabase
+    .from('crm_work_orders')
+    .select('id, status, line_items')
+    .in('status', SCHEDULABLE_WORK_ORDER_STATUSES as unknown as string[]);
+
+  // Parsed once per work order, not once per segment: line_items is the expensive part and a job's
+  // material/sack count is the same on every segment it spans.
+  const woById = new Map(
+    (openWos ?? []).map((w: any) => [
+      w.id as string,
+      { status: (w.status as string | null) ?? null, material: materialShortFromLineItems(w.line_items), sacks: totalSacks(w.line_items) },
+    ]),
+  );
+  if (woById.size === 0) return [];
+
+  // Ordered so the attribution is deterministic: a job split across trucks is booked against its
+  // EARLIEST segment's depot, not whichever row came back first. Cheap now that the set is bounded.
   const { data: segs } = await supabase
     .from('ops_segments')
-    .select('id, work_order_id, truck_id, start_day, work_order:crm_work_orders(status, line_items)');
+    .select('id, work_order_id, truck_id, start_day')
+    .in('work_order_id', [...woById.keys()])
+    .order('start_day', { ascending: true })
+    .order('id', { ascending: true });
 
-  const open = new Set(SCHEDULABLE_WORK_ORDER_STATUSES as unknown as string[]);
-  const rows = ((segs ?? []) as Array<Record<string, any>>)
-    .map((s): Record<string, any> => ({ ...s, wo: Array.isArray(s.work_order) ? s.work_order[0] : s.work_order }))
-    // Drop closed jobs BEFORE parsing line_items — that parse is the expensive part, and every
-    // completed job in the table would otherwise pay for it on every board load.
-    .filter((s) => s.wo && open.has(s.wo.status))
-    // Sorted here rather than with .order(): the attribution below must be deterministic (a job
-    // split across trucks is booked against its earliest segment's depot), but asking the database
-    // to sort every ops_segments row on each load buys nothing — the set is already in memory, and
-    // an ascending server-side sort would bias truncation toward the oldest rows if a row cap ever
-    // applies, which would quietly hollow out the very demand figure this feeds.
-    .sort((a, b) => String(a.start_day).localeCompare(String(b.start_day)) || String(a.id).localeCompare(String(b.id)));
-
-  const candidates: PlannedDemandSegment[] = rows.map((s) => ({
-    work_order_id: (s.work_order_id as string | null) ?? null,
-    depot_id: truckDepot.get(s.truck_id) ?? null,
-    status: (s.wo.status as string | null) ?? null,
-    material: materialShortFromLineItems(s.wo.line_items),
-    sacks: totalSacks(s.wo.line_items),
-  }));
+  const candidates: PlannedDemandSegment[] = ((segs ?? []) as Array<Record<string, any>>).flatMap((s) => {
+    const wo = woById.get(s.work_order_id as string);
+    if (!wo) return [];
+    return [{
+      work_order_id: (s.work_order_id as string | null) ?? null,
+      depot_id: truckDepot.get(s.truck_id) ?? null,
+      status: wo.status,
+      material: wo.material,
+      sacks: wo.sacks,
+    }];
+  });
   return attributePlannedDemand(candidates);
 }
 
