@@ -7,7 +7,7 @@ import { crm } from '@/app/crm/lib/crmTokens';
 import { cn } from '@/lib/shared/cn';
 import { minutesToHours } from '@/lib/domains/time/hours';
 import { parseDecimal } from '@/lib/shared/number';
-import { addDays, buildWeekDays, fmtISO, isoWeek, startOfWeek } from '@/app/crm/planering/planningDates';
+import { addDays, buildWeekDays, fmtISO, isoWeek, startOfWeek, type WeekDay } from '@/app/crm/planering/planningDates';
 import { COMPENSATION_KINDS, COMPENSATION_LABELS, COMPENSATION_UNITS, summarizeCompensations, type CompensationItem, type CompensationKind } from '@/lib/domains/time/compensations';
 import { isPeriodLocked, periodLabel, TIME_PERIOD_STATUS_LABELS, type TimeApprovalRow, type TimePeriodStatus } from '@/lib/domains/time/approvals';
 import TimeEntryModal, { type EditableEntry, type ReferenceData } from './TimeEntryModal';
@@ -15,14 +15,20 @@ import TimeEntryModal, { type EditableEntry, type ReferenceData } from './TimeEn
 // Tidrapporten, CRM-versionen. Ligger på /tid bredvid gamla /tidrapport (som fortsätter mot Blikk)
 // tills cutovern i fas 4.6 — två levande vägar, precis som "Planering" och "Planering (äldre)".
 //
-// ⚠️ VECKOVY MED DAGKORT, av samma skäl som gamla sidan har det. Det här är den anställdes yta, och
-// den dagliga frågan är "har jag rapporterat idag?" — den ska besvaras på en blick, inte genom att
-// skanna en lista. En första version visade månaden; det var rätt form för den som läser lönen och
-// fel för den som gör jobbet. Månadsöversikt per person, attest och export är lön/admins yta och
-// ligger i Admin (fas 4.4–4.5), inte här.
+// ⚠️ VECKAN ÄR REMSAN, DAGEN ÄR SIDAN (omdesign 2026-08-14).
 //
-// Månadssumman finns ändå kvar överst, tydligt märkt: det är den siffran man vill se innan man
-// lämnar in perioden, och den är gratis eftersom hela månaden ändå hämtas.
+// Sidan svarar på EN daglig fråga — "har jag rapporterat idag?" — och den ska besvaras på en blick,
+// på en telefon, med en hand. Därför bär varje dagruta i remsan sina egna timmar: en tom ruta ÄR
+// svaret, ingen text behövs. Under remsan ligger en dag i taget, med sina rader och en knapp.
+//
+// Den förra versionen visade sju dagkort under varandra. Det gav sju likadana "Rapportera"-knappar,
+// tre metrik-chips som delvis upprepade varandra och samma siffra på tre ställen — och tomma dagar
+// kostade lika mycket höjd som en dag med innehåll. På en telefon låg första dagen under två fulla
+// block med krom.
+//
+// Månadssiffrorna ligger kvar men LÄNGST NER, vid inlämningsknappen: de är det man vill se när
+// perioden ska stängas, inte när man ska föra in dagens pass. Månadsöversikt per person, attest och
+// export är lön/admins yta och ligger i Admin, inte här.
 
 type EntryRow = EditableEntry & {
   hours: number;
@@ -32,9 +38,16 @@ type EntryRow = EditableEntry & {
 };
 
 const MONTHS = ['januari', 'februari', 'mars', 'april', 'maj', 'juni', 'juli', 'augusti', 'september', 'oktober', 'november', 'december'];
+const MONTHS_SHORT = ['jan', 'feb', 'mar', 'apr', 'maj', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'dec'];
 
 function formatHours(minutes: number): string {
   return minutesToHours(minutes).toFixed(2).replace('.', ',');
+}
+
+/** Timmar för en ruta som är 48 px bred: "8", "8,5", "17". Två decimaler får inte plats. */
+function compactHours(minutes: number): string {
+  const hours = minutes / 60;
+  return Number.isInteger(hours) ? String(hours) : hours.toFixed(1).replace('.', ',');
 }
 
 function formatAmount(amount: number): string {
@@ -47,6 +60,31 @@ function formatStamp(value: string | null): string {
   return Number.isNaN(date.getTime())
     ? ''
     : new Intl.DateTimeFormat('sv-SE', { dateStyle: 'short', timeStyle: 'short' }).format(date);
+}
+
+/** '2026-08-14' → 'fredag 14 augusti'. Fälten plockas ur strängen, så ingen tidszon flyttar dagen. */
+function longDayLabel(iso: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (!match) return iso;
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  return new Intl.DateTimeFormat('sv-SE', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' }).format(date);
+}
+
+/** '2026-08-14' → '14 aug'. Kort datum för listor där året aldrig är i fråga. */
+function shortDate(iso: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (!match) return iso;
+  return `${Number(match[3])} ${MONTHS_SHORT[Number(match[2]) - 1]}`;
+}
+
+/** '10–16 aug' eller '28 jul–3 aug' när veckan korsar ett månadsskifte. */
+function weekRangeLabel(days: WeekDay[]): string {
+  const first = days[0].date;
+  const last = days[6].date;
+  const sameMonth = first.getMonth() === last.getMonth();
+  return sameMonth
+    ? `${first.getDate()}–${last.getDate()} ${MONTHS_SHORT[last.getMonth()]}`
+    : `${first.getDate()} ${MONTHS_SHORT[first.getMonth()]}–${last.getDate()} ${MONTHS_SHORT[last.getMonth()]}`;
 }
 
 function entryMinutes(entry: EntryRow): number {
@@ -62,6 +100,12 @@ function entryLabel(entry: EntryRow): string {
   return [number ? `#${number}` : null, order.client_name || order.project_name].filter(Boolean).join(' · ') || 'Arbetsorder';
 }
 
+const STATUS_TONE: Record<TimePeriodStatus, string> = {
+  open: 'border-slate-200 bg-white text-slate-600',
+  submitted: 'border-amber-200 bg-amber-50 text-amber-800',
+  approved: 'border-emerald-200 bg-emerald-50 text-emerald-800',
+};
+
 export default function TidClient() {
   const [weekOffset, setWeekOffset] = React.useState(0);
   const monday = React.useMemo(() => addDays(startOfWeek(new Date()), weekOffset * 7), [weekOffset]);
@@ -72,7 +116,7 @@ export default function TidClient() {
   const monthAnchor = React.useMemo(() => ({ year: monday.getFullYear(), month: monday.getMonth() }), [monday]);
 
   // En hämtning som täcker BÅDE veckan och dess månad: en vecka kan spänna över ett månadsskifte,
-  // och då ska varken dagkorten eller månadssumman tappa rader.
+  // och då ska varken dagrutorna eller månadssumman tappa rader.
   const fetchRange = React.useMemo(() => {
     const pad = (n: number) => String(n).padStart(2, '0');
     const monthStart = `${monthAnchor.year}-${pad(monthAnchor.month + 1)}-01`;
@@ -85,7 +129,7 @@ export default function TidClient() {
       to: weekEnd > monthEnd ? weekEnd : monthEnd,
       monthStart,
       monthEnd,
-      // Attestperioden är alltid en kalendermånad — samma månad som summorna ovan.
+      // Attestperioden är alltid en kalendermånad — samma månad som summorna nedan.
       period: `${monthAnchor.year}-${pad(monthAnchor.month + 1)}`,
     };
   }, [monthAnchor, weekDays]);
@@ -100,6 +144,7 @@ export default function TidClient() {
   const [modalDate, setModalDate] = React.useState<string | null>(null);
   const [editing, setEditing] = React.useState<EditableEntry | null>(null);
   const [busyId, setBusyId] = React.useState<string | null>(null);
+  const [selectedIso, setSelectedIso] = React.useState(todayIso);
 
   // Kapplöpningsvakt: klickar man snabbt genom veckorna kan ett tidigare svar komma sist och rita
   // fel veckas rader. Bara den senaste hämtningen får skriva.
@@ -152,6 +197,15 @@ export default function TidClient() {
 
   React.useEffect(() => { void load(); }, [load]);
 
+  // Den valda dagen måste följa med när veckan byts, annars visar panelen en dag som inte längre
+  // står i remsan. Idag väljs när den ligger i veckan, annars måndagen — man bläddrar bakåt för att
+  // titta på en vecka, och då är dess början rätt startpunkt.
+  React.useEffect(() => {
+    const isoList = weekDays.map((day) => day.iso);
+    if (isoList.includes(selectedIso)) return;
+    setSelectedIso(isoList.includes(todayIso) ? todayIso : isoList[0]);
+  }, [weekDays, selectedIso, todayIso]);
+
   const byDate = React.useMemo(() => {
     const map = new Map<string, EntryRow[]>();
     for (const entry of entries) {
@@ -161,6 +215,20 @@ export default function TidClient() {
     }
     return map;
   }, [entries]);
+
+  // Per dag i veckan: arbetad tid och frånvaro var för sig. Rutan i remsan visar den ena eller den
+  // andra, och frånvaro ska aldrig läggas ihop med arbetstid.
+  const dayTotals = React.useMemo(() => {
+    const map = new Map<string, { worked: number; absent: number }>();
+    for (const day of weekDays) map.set(day.iso, { worked: 0, absent: 0 });
+    for (const entry of entries) {
+      const total = map.get(entry.work_date);
+      if (!total) continue;
+      if (entry.kind === 'absence') total.absent += entryMinutes(entry);
+      else total.worked += entryMinutes(entry);
+    }
+    return map;
+  }, [entries, weekDays]);
 
   const weekTotal = React.useMemo(() => {
     const isoSet = new Set(weekDays.map((day) => day.iso));
@@ -217,64 +285,112 @@ export default function TidClient() {
     }
   }
 
+  function goToWeek(delta: number) {
+    setWeekOffset((value) => value + delta);
+    setLoading(true);
+  }
+
+  const selectedEntries = byDate.get(selectedIso) ?? [];
+  const selectedLocked = isDayLocked(selectedIso);
+
   return (
-    <PageShell className="max-w-[1100px]">
+    <PageShell className="max-w-[760px]">
       <section className={cn(crm.cardInner, 'grid gap-3')}>
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="grid gap-1">
-            <h1 className={crm.pageTitle}>Tidrapport</h1>
-            <p className={crm.pageSubtitle}>Rapportera din tid dag för dag — arbete, intern tid eller frånvaro.</p>
+        <div className="flex items-center justify-between gap-3">
+          <h1 className={crm.pageTitle}>Tidrapport</h1>
+          <span className={cn(crm.badge, 'border-solid', STATUS_TONE[approvalStatus])}>
+            {MONTHS[monthAnchor.month]} · {TIME_PERIOD_STATUS_LABELS[approvalStatus]}
+          </span>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <StepButton label="Föregående vecka" onClick={() => goToWeek(-1)}>←</StepButton>
+          <div className="min-w-0 flex-1 text-center">
+            <div className="truncate text-sm font-semibold text-slate-900">{weekRangeLabel(weekDays)}</div>
+            <div className="text-xs text-slate-500">
+              v.{isoWeek(monday)} · <span className="tabular-nums">{formatHours(weekTotal)} h</span>
+            </div>
           </div>
-          {!isDayLocked(todayIso) ? (
-            <button
-              type="button"
-              onClick={() => { setEditing(null); setModalDate(todayIso); }}
-              className="rounded-xl px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:brightness-95"
-              style={{ backgroundColor: 'var(--crm-primary)' }}
-            >
-              Rapportera idag
-            </button>
-          ) : null}
+          <StepButton label="Nästa vecka" onClick={() => goToWeek(1)}>→</StepButton>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <button type="button" onClick={() => { setWeekOffset((v) => v - 1); setLoading(true); }} className="rounded-lg border border-solid border-slate-200 bg-white px-3 py-1.5 text-sm">←</button>
-          <span className="min-w-[130px] text-center text-sm font-semibold text-slate-900">
-            v.{isoWeek(monday)} · {MONTHS[monthAnchor.month]}
-          </span>
-          <button type="button" onClick={() => { setWeekOffset((v) => v + 1); setLoading(true); }} className="rounded-lg border border-solid border-slate-200 bg-white px-3 py-1.5 text-sm">→</button>
-          {weekOffset !== 0 ? (
-            <button type="button" onClick={() => { setWeekOffset(0); setLoading(true); }} className="rounded-lg border border-solid border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-600">
-              Denna vecka
-            </button>
-          ) : null}
-        </div>
-
-        {/* Veckan är arbetsytan; månadssiffrorna är det man vill se innan perioden lämnas in. */}
-        <div className="flex flex-wrap gap-2">
-          <span className="rounded-xl border border-solid border-slate-200 bg-white px-3 py-2 text-sm">
-            Veckan <strong className="text-base">{formatHours(weekTotal)} h</strong>
-          </span>
-          <span className="rounded-xl border border-solid border-slate-200 bg-white px-3 py-2 text-sm">
-            {MONTHS[monthAnchor.month]}: arbetat <strong className="text-base">{formatHours(monthTotals.work)} h</strong>
-          </span>
-          <span className="rounded-xl border border-solid border-slate-200 bg-white px-3 py-2 text-sm">
-            {MONTHS[monthAnchor.month]}: frånvaro <strong className="text-base">{formatHours(monthTotals.absence)} h</strong>
-          </span>
-          {monthTotals.byReason.map(([reason, minutes]) => (
-            <span key={reason} className="rounded-xl bg-slate-100 px-3 py-2 text-sm text-slate-600">
-              {reason} {formatHours(minutes)} h
-            </span>
+        {/* Remsan ÄR svaret på "har jag rapporterat?". En tom ruta säger det utan ett ord — därför
+            bär varje ruta sina egna timmar i stället för att listan under gör det sju gånger. */}
+        <div className="grid grid-cols-7 gap-1.5">
+          {weekDays.map((day) => (
+            <DayTile
+              key={day.iso}
+              day={day}
+              totals={dayTotals.get(day.iso) ?? { worked: 0, absent: 0 }}
+              isToday={day.iso === todayIso}
+              isSelected={day.iso === selectedIso}
+              onSelect={() => setSelectedIso(day.iso)}
+            />
           ))}
         </div>
+
+        {weekOffset !== 0 ? (
+          <button
+            type="button"
+            onClick={() => { setWeekOffset(0); setLoading(true); }}
+            className="!py-1.5 justify-self-center rounded-lg text-sm font-semibold text-slate-600 underline underline-offset-2"
+          >
+            Gå till denna vecka
+          </button>
+        ) : null}
       </section>
 
       {error ? (
         <div className="rounded-xl border border-solid border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
           {error}
-          <button type="button" onClick={() => setError(null)} className="ml-3 underline">Stäng</button>
+          <button type="button" onClick={() => setError(null)} className="!p-0 ml-3 underline">Stäng</button>
         </div>
       ) : null}
+
+      {/* Dagen. En i taget, med sina rader och en knapp — inte sju kort med sju likadana knappar. */}
+      <section className={cn(crm.cardInner, 'grid gap-3')}>
+        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+          <div className="flex flex-wrap items-baseline gap-2">
+            <h2 className="m-0 text-base font-bold capitalize text-slate-900">{longDayLabel(selectedIso)}</h2>
+            {selectedIso === todayIso ? <Badge variant="accent">Idag</Badge> : null}
+          </div>
+          <DayTotals totals={dayTotals.get(selectedIso) ?? { worked: 0, absent: 0 }} />
+        </div>
+
+        {loading && selectedEntries.length === 0 ? (
+          <p className="m-0 text-sm text-slate-400">Laddar…</p>
+        ) : selectedEntries.length === 0 ? (
+          <p className="m-0 text-sm text-slate-500">Inget rapporterat den här dagen.</p>
+        ) : (
+          <ul className="m-0 grid list-none gap-2 p-0">
+            {selectedEntries.map((entry) => (
+              <EntryCard
+                key={entry.id}
+                entry={entry}
+                locked={selectedLocked}
+                busy={busyId === entry.id}
+                onEdit={() => { setEditing({ ...entry, work_order_label: entryLabel(entry) }); setModalDate(entry.work_date); }}
+                onDelete={() => void removeEntry(entry.id)}
+              />
+            ))}
+          </ul>
+        )}
+
+        {selectedLocked ? (
+          <p className="m-0 text-sm text-slate-500">
+            {MONTHS[monthAnchor.month]} är {TIME_PERIOD_STATUS_LABELS[approvalStatus].toLowerCase()} och går inte att ändra.
+          </p>
+        ) : (
+          <button
+            type="button"
+            onClick={() => { setEditing(null); setModalDate(selectedIso); }}
+            className="!py-2.5 w-full rounded-xl text-sm font-semibold text-white shadow-sm transition hover:brightness-95"
+            style={{ backgroundColor: 'var(--crm-primary)' }}
+          >
+            Rapportera tid
+          </button>
+        )}
+      </section>
 
       <PeriodCard
         periodStart={fetchRange.monthStart}
@@ -283,89 +399,10 @@ export default function TidClient() {
         approval={approval}
         workMinutes={monthTotals.work}
         absenceMinutes={monthTotals.absence}
+        byReason={monthTotals.byReason}
         onChanged={load}
         onError={setError}
       />
-
-      {/* Ett kort per dag, hela veckan — även tomma dagar. Att en dag saknar rader är information:
-          det är så man ser att man glömt rapportera. */}
-      <section className="grid gap-2">
-        {weekDays.map((day) => {
-          const dayEntries = byDate.get(day.iso) ?? [];
-          const worked = dayEntries.filter((e) => e.kind !== 'absence').reduce((sum, e) => sum + entryMinutes(e), 0);
-          const absent = dayEntries.filter((e) => e.kind === 'absence').reduce((sum, e) => sum + entryMinutes(e), 0);
-          const isToday = day.iso === todayIso;
-          const dayLocked = isDayLocked(day.iso);
-          return (
-            <div
-              key={day.iso}
-              className={cn(
-                crm.card,
-                'grid gap-2',
-                isToday ? 'ring-2 ring-emerald-200' : '',
-                day.isWeekend && dayEntries.length === 0 ? 'opacity-60' : '',
-              )}
-            >
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex flex-wrap items-baseline gap-2">
-                  <strong className="text-sm capitalize text-slate-900">{day.weekday} {day.dayLabel}</strong>
-                  {isToday ? <Badge variant="accent">Idag</Badge> : null}
-                  {worked > 0 ? <span className="text-sm text-slate-600">{formatHours(worked)} h</span> : null}
-                  {absent > 0 ? <span className="text-sm text-amber-700">{formatHours(absent)} h frånvaro</span> : null}
-                </div>
-                {!dayLocked ? (
-                  <button
-                    type="button"
-                    onClick={() => { setEditing(null); setModalDate(day.iso); }}
-                    className="rounded-lg border border-solid border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:border-slate-400"
-                  >
-                    Rapportera
-                  </button>
-                ) : null}
-              </div>
-
-              {loading && dayEntries.length === 0 ? (
-                <p className="m-0 text-sm text-slate-400">Laddar…</p>
-              ) : dayEntries.length === 0 ? (
-                <p className="m-0 text-sm text-slate-400">Inget rapporterat.</p>
-              ) : (
-                <ul className="m-0 grid list-none gap-1 p-0">
-                  {dayEntries.map((entry) => (
-                    <li key={entry.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg bg-slate-50 px-3 py-2 text-sm">
-                      <span className="font-medium text-slate-900">
-                        {entry.start_time
-                          ? `${entry.start_time.slice(0, 5)}–${(entry.end_time || '').slice(0, 5)}`
-                          : `${formatHours(entryMinutes(entry))} h`}
-                      </span>
-                      {entry.break_minutes > 0 ? <span className="text-xs text-slate-400">rast {entry.break_minutes}m</span> : null}
-                      <span className="text-slate-600">{entryLabel(entry)}</span>
-                      {entry.kind !== 'absence' ? (
-                        <span className="text-slate-500">{formatHours(entryMinutes(entry))} h</span>
-                      ) : null}
-                      {entry.note ? <span className="text-slate-400">{entry.note}</span> : null}
-                      {!dayLocked ? (
-                        <span className="ml-auto flex gap-1">
-                          <button type="button" onClick={() => { setEditing({ ...entry, work_order_label: entryLabel(entry) }); setModalDate(entry.work_date); }} className="px-1 text-sm text-slate-500 underline">
-                            Ändra
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void removeEntry(entry.id)}
-                            disabled={busyId === entry.id}
-                            className="px-1 text-sm text-rose-600 underline disabled:opacity-50"
-                          >
-                            Ta bort
-                          </button>
-                        </span>
-                      ) : null}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          );
-        })}
-      </section>
 
       <CompensationSection
         items={compensations}
@@ -392,14 +429,165 @@ export default function TidClient() {
   );
 }
 
+// globals.css ger varje <button> `padding: 10px 14px` och centrering utan att ligga i ett lager, så
+// Tailwind måste gå före med `!`. Samma sak överallt i den här filen där en knapp har egen form.
+function StepButton({ label, onClick, children }: { label: string; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      className="!h-11 !w-11 !p-0 shrink-0 rounded-xl border border-solid border-[#d9e2d4] bg-white text-slate-600 transition hover:border-slate-400"
+    >
+      {children}
+    </button>
+  );
+}
+
+/**
+ * En dag i veckoremsan.
+ *
+ * Fyllningen är informationen, inte dekoration: tom ruta = inget rapporterat, och det är precis den
+ * fråga sidan finns för. Streckad kant på tomma dagar gör skillnaden läsbar även för den som inte
+ * uppfattar färgskillnaden.
+ *
+ * Rutan är minst 60 px hög — den ska gå att träffa med en tumme i en handske.
+ */
+function DayTile({
+  day, totals, isToday, isSelected, onSelect,
+}: {
+  day: WeekDay;
+  totals: { worked: number; absent: number };
+  isToday: boolean;
+  isSelected: boolean;
+  onSelect: () => void;
+}) {
+  const hasWork = totals.worked > 0;
+  const hasAbsence = totals.absent > 0;
+  const hasAny = hasWork || hasAbsence;
+
+  // Fyllningen bär informationen visuellt; aria-label bär samma sak för den som inte ser rutan.
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      aria-pressed={isSelected}
+      aria-current={isToday ? 'date' : undefined}
+      aria-label={[
+        `${day.weekday} ${day.date.getDate()}`,
+        isToday ? 'idag' : null,
+        hasWork ? `${formatHours(totals.worked)} timmar` : null,
+        hasAbsence ? `${formatHours(totals.absent)} timmar frånvaro` : null,
+        hasAny ? null : 'inget rapporterat',
+      ].filter(Boolean).join(', ')}
+      className={cn(
+        '!min-h-[60px] !flex-col !justify-center !gap-0.5 !px-0.5 !py-1.5 rounded-xl border text-center transition',
+        isSelected
+          ? 'border-solid border-transparent text-white shadow-sm'
+          : hasAny
+            ? 'border-solid border-[#cfdcc9] bg-white text-slate-900 hover:border-slate-400'
+            : 'border-dashed border-[#d3ddce] bg-transparent text-slate-400 hover:border-slate-400',
+        !isSelected && isToday ? 'ring-2 ring-emerald-300' : '',
+      )}
+      style={isSelected ? { backgroundColor: 'var(--crm-primary)' } : undefined}
+    >
+      <span className={cn('text-[10px] font-semibold uppercase tracking-wide', isSelected ? 'text-white/70' : 'text-slate-400')}>
+        {day.weekday}
+      </span>
+      <span className="text-sm font-bold tabular-nums leading-none">{day.date.getDate()}</span>
+      {hasWork ? (
+        <span className={cn('text-[11px] font-semibold tabular-nums leading-none', isSelected ? 'text-white' : 'text-slate-700')}>
+          {compactHours(totals.worked)}
+        </span>
+      ) : hasAbsence ? (
+        <span className={cn('text-[11px] font-semibold tabular-nums leading-none', isSelected ? 'text-white' : 'text-amber-700')}>
+          {compactHours(totals.absent)}
+        </span>
+      ) : (
+        // En prick, inte ett tomrum: utan den hoppar rutans höjd mellan tomma och fyllda dagar.
+        <span className={cn('text-[11px] leading-none', isSelected ? 'text-white/50' : 'text-slate-300')} aria-hidden>·</span>
+      )}
+    </button>
+  );
+}
+
+function DayTotals({ totals }: { totals: { worked: number; absent: number } }) {
+  if (totals.worked === 0 && totals.absent === 0) return null;
+  return (
+    <span className="flex items-baseline gap-2 text-sm">
+      {totals.worked > 0 ? <strong className="tabular-nums text-slate-900">{formatHours(totals.worked)} h</strong> : null}
+      {totals.absent > 0 ? <span className="tabular-nums text-amber-700">{formatHours(totals.absent)} h frånvaro</span> : null}
+    </span>
+  );
+}
+
+/**
+ * En tidrad.
+ *
+ * Radad i stället för radbruten: klockslaget ankrar till vänster och timmarna till höger, med
+ * beskrivningen på egen rad under. Den förra versionen la sex uppgifter i ett `flex-wrap` som blev
+ * tre till fyra ojämna rader på en telefon, med Ändra/Ta bort flytande i slutet.
+ */
+function EntryCard({
+  entry, locked, busy, onEdit, onDelete,
+}: {
+  entry: EntryRow;
+  locked: boolean;
+  busy: boolean;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const minutes = entryMinutes(entry);
+  const isAbsence = entry.kind === 'absence';
+  const clock = entry.start_time ? `${entry.start_time.slice(0, 5)}–${(entry.end_time || '').slice(0, 5)}` : null;
+
+  return (
+    <li className="grid gap-1 rounded-xl border border-solid border-[#e4ebe0] bg-white px-3 py-2.5">
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="font-semibold tabular-nums text-slate-900">{clock ?? (isAbsence ? 'Frånvaro' : `${formatHours(minutes)} h`)}</span>
+        <span className={cn('shrink-0 text-sm font-semibold tabular-nums', isAbsence ? 'text-amber-700' : 'text-slate-700')}>
+          {formatHours(minutes)} h
+        </span>
+      </div>
+
+      <div className="text-sm text-slate-600">
+        {entryLabel(entry)}
+        {entry.break_minutes > 0 ? <span className="text-slate-400"> · rast {entry.break_minutes} min</span> : null}
+      </div>
+
+      {entry.note ? <div className="text-sm text-slate-400">{entry.note}</div> : null}
+
+      {!locked ? (
+        <div className="flex justify-end gap-1 pt-0.5">
+          <button type="button" onClick={onEdit} className="!px-2 !py-1 rounded-lg text-sm font-medium text-slate-600 underline underline-offset-2">
+            Ändra
+          </button>
+          <button
+            type="button"
+            onClick={onDelete}
+            disabled={busy}
+            className="!px-2 !py-1 rounded-lg text-sm font-medium text-rose-600 underline underline-offset-2 disabled:opacity-50"
+          >
+            Ta bort
+          </button>
+        </div>
+      ) : null}
+    </li>
+  );
+}
+
 // Månadens inlämning. Kortet finns för EN fråga — "är den här månaden klar?" — och den ska gå att
-// besvara utan att räkna ihop något själv, därför står summorna på knappen.
+// besvara utan att räkna ihop något själv, därför står summorna här.
+//
+// Ligger LÄNGST NER av samma skäl: det är en syssla en gång i månaden, och den ska inte konkurrera
+// med dagens knapp om uppmärksamheten. Månadssiffrorna följer med hit av samma anledning — de är
+// underlaget för just det här beslutet.
 //
 // `submitted` låser skrivningen men den anställde kan ta tillbaka den själv ända fram till attest
 // (Williams beslut 2026-08-12). Efter `approved` krävs en attestansvarig, och kortet säger det rakt
 // ut i stället för att bara sakna knapp — annars läser folk låset som en bugg.
 function PeriodCard({
-  periodStart, period, status, approval, workMinutes, absenceMinutes, onChanged, onError,
+  periodStart, period, status, approval, workMinutes, absenceMinutes, byReason, onChanged, onError,
 }: {
   periodStart: string;
   period: string;
@@ -407,6 +595,7 @@ function PeriodCard({
   approval: TimeApprovalRow | null;
   workMinutes: number;
   absenceMinutes: number;
+  byReason: Array<[string, number]>;
   onChanged: () => Promise<void> | void;
   onError: (message: string) => void;
 }) {
@@ -434,50 +623,63 @@ function PeriodCard({
   const tone =
     status === 'approved' ? 'border-emerald-200 bg-emerald-50'
     : status === 'submitted' ? 'border-amber-200 bg-amber-50'
-    : 'border-slate-200 bg-white';
+    : 'border-[#e0e8dc] bg-[#f9fbf7]';
 
   return (
-    <section className={cn('grid gap-2 rounded-xl border border-solid px-4 py-3', tone)}>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="grid gap-0.5">
-          <strong className="text-sm text-slate-900">
-            {label} · {TIME_PERIOD_STATUS_LABELS[status]}
-          </strong>
-          <span className="text-sm text-slate-600">
-            {status === 'open'
-              ? `Arbetat ${formatHours(workMinutes)} h${absenceMinutes > 0 ? `, frånvaro ${formatHours(absenceMinutes)} h` : ''}. Lämna in när månaden är färdigrapporterad.`
-              : status === 'submitted'
-                ? `Inlämnad ${formatStamp(approval?.submitted_at ?? null)}. Månaden är låst — ångra inlämningen om du behöver ändra något.`
-                : `Attesterad ${formatStamp(approval?.approved_at ?? null)}. Månaden är låst; kontakta en attestansvarig om något behöver rättas.`}
-          </span>
-          {approval?.note && status === 'open' ? (
-            // Anledningen admin skrev när perioden öppnades igen — det är själva uppmaningen att
-            // göra något, och den ska inte bara finnas i adminvyn.
-            <span className="text-sm text-amber-800">Öppnad igen: {approval.note}</span>
-          ) : null}
-        </div>
-
-        {status === 'open' ? (
-          <button
-            type="button"
-            onClick={() => void setStatus('submitted')}
-            disabled={busy}
-            className="rounded-xl px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:brightness-95 disabled:opacity-60"
-            style={{ backgroundColor: 'var(--crm-primary)' }}
-          >
-            Lämna in {label}
-          </button>
-        ) : status === 'submitted' ? (
-          <button
-            type="button"
-            onClick={() => void setStatus('open')}
-            disabled={busy}
-            className="rounded-xl border border-solid border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-400 disabled:opacity-60"
-          >
-            Ångra inlämning
-          </button>
-        ) : null}
+    <section className={cn('grid gap-3 rounded-2xl border border-solid px-3.5 py-3', tone)}>
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        <strong className="text-sm capitalize text-slate-900">{label}</strong>
+        <span className="text-sm text-slate-600">
+          Arbetat <strong className="tabular-nums text-slate-900">{formatHours(workMinutes)} h</strong>
+          {absenceMinutes > 0 ? <> · frånvaro <strong className="tabular-nums text-amber-800">{formatHours(absenceMinutes)} h</strong></> : null}
+        </span>
       </div>
+
+      {/* Vilken ledighet, inte bara hur mycket — orsakerna har olika lönesort. Först här, vid
+          inlämningen: det är då man kontrollerar dem, inte när man för in dagens pass. */}
+      {byReason.length > 0 ? (
+        <div className="flex flex-wrap gap-1.5">
+          {byReason.map(([reason, minutes]) => (
+            <span key={reason} className="rounded-lg bg-white/70 px-2 py-1 text-xs text-slate-600">
+              {reason} <span className="tabular-nums">{formatHours(minutes)} h</span>
+            </span>
+          ))}
+        </div>
+      ) : null}
+
+      <p className="m-0 text-sm text-slate-600">
+        {status === 'open'
+          ? 'Lämna in när månaden är färdigrapporterad.'
+          : status === 'submitted'
+            ? `Inlämnad ${formatStamp(approval?.submitted_at ?? null)}. Månaden är låst — ångra inlämningen om du behöver ändra något.`
+            : `Attesterad ${formatStamp(approval?.approved_at ?? null)}. Månaden är låst; kontakta en attestansvarig om något behöver rättas.`}
+      </p>
+
+      {approval?.note && status === 'open' ? (
+        // Anledningen admin skrev när perioden öppnades igen — det är själva uppmaningen att göra
+        // något, och den ska inte bara finnas i adminvyn.
+        <p className="m-0 text-sm font-medium text-amber-800">Öppnad igen: {approval.note}</p>
+      ) : null}
+
+      {status === 'open' ? (
+        <button
+          type="button"
+          onClick={() => void setStatus('submitted')}
+          disabled={busy}
+          className="!py-2.5 w-full rounded-xl border border-solid border-[#cfdcc9] bg-white text-sm font-semibold text-slate-800 transition hover:border-slate-400 disabled:opacity-60"
+        >
+          Lämna in {label}
+        </button>
+      ) : status === 'submitted' ? (
+        <button
+          type="button"
+          onClick={() => void setStatus('open')}
+          disabled={busy}
+          className="!py-2.5 w-full rounded-xl border border-solid border-slate-300 bg-white text-sm font-semibold text-slate-700 transition hover:border-slate-400 disabled:opacity-60"
+        >
+          Ångra inlämning
+        </button>
+      ) : null}
     </section>
   );
 }
@@ -485,6 +687,11 @@ function PeriodCard({
 // Traktamenten, utlägg och milersättning. Egen lista med flit: de har eget datum och hör inte till
 // ett arbetspass — ett utlägg kan finnas en dag man inte jobbat. Visas per MÅNAD, till skillnad från
 // tiden ovan: de är enstaka poster man går igenom när perioden ska lämnas in, inte en daglig syssla.
+//
+// HOPFÄLLD som standard, med summorna i rubriken. Just för att den är en månadssyssla ska den inte
+// ligga utfälld under varje dagligt besök — men summan är det man vill se i förbifarten, så den
+// står kvar när innehållet är dolt. Tabellen är borta: 620 px minsta bredd på en telefon blev
+// vågrät skrollning, och en post har fem fält som ryms på två rader i ett kort.
 function CompensationSection({
   items, totals, monthLabel, monthStart, monthEnd, todayIso, locked, onChanged, onError,
 }: {
@@ -498,6 +705,7 @@ function CompensationSection({
   onChanged: () => Promise<void> | void;
   onError: (message: string) => void;
 }) {
+  const [open, setOpen] = React.useState(false);
   const [kind, setKind] = React.useState<CompensationKind>('travel');
   // Förifyllt datum måste ligga i den månad listan visar, annars sparas posten och FÖRSVINNER
   // direkt ur vyn — vilket bjuder in till att lägga in den en gång till. Står man i en annan månad
@@ -517,6 +725,8 @@ function CompensationSection({
   // ger NaN på tusentalsmellanslag, och med `|| 0` hade det tyst sparats som 0 kr.
   const parsedAmount = parseDecimal(amount, NaN);
   const amountValid = Number.isFinite(parsedAmount) && parsedAmount > 0;
+
+  const grandTotal = totals.reduce((sum, total) => sum + total.amount, 0);
 
   async function add() {
     if (!amountValid) { onError('Ange ett belopp i kronor'); return; }
@@ -556,102 +766,111 @@ function CompensationSection({
   }
 
   return (
-    <section className={cn(crm.card, 'grid gap-3')}>
-      <div className="flex flex-wrap items-baseline gap-2 px-1">
-        <h2 className="m-0 text-base font-bold text-slate-900">Traktamente, utlägg och milersättning</h2>
-        <span className="text-sm text-slate-500">{monthLabel}</span>
-        {totals.map((total) => (
-          <Badge key={total.kind}>
-            {COMPENSATION_LABELS[total.kind]} {formatAmount(total.amount)} kr
-            {COMPENSATION_UNITS[total.kind] ? ` · ${total.quantity} ${COMPENSATION_UNITS[total.kind]}` : ''}
-          </Badge>
-        ))}
-      </div>
+    <section className={cn(crm.cardInner, 'grid gap-3')}>
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        className="!flex-row !justify-between !gap-3 !p-0 !text-left w-full"
+      >
+        <span className="grid gap-0.5">
+          <span className="text-sm font-bold text-slate-900">Utlägg och ersättning</span>
+          <span className="text-xs text-slate-500">
+            {items.length === 0
+              ? `Inget inlagt i ${monthLabel.toLowerCase()}`
+              : `${items.length} ${items.length === 1 ? 'post' : 'poster'} · ${formatAmount(grandTotal)} kr`}
+          </span>
+        </span>
+        <span className="shrink-0 text-sm text-slate-400" aria-hidden>{open ? '▲' : '▼'}</span>
+      </button>
 
-      {items.length > 0 ? (
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[620px] border-collapse text-sm">
-            <thead>
-              <tr className="border-b border-solid border-slate-200 text-left text-[11px] font-extrabold uppercase tracking-wide text-slate-500">
-                <th className="px-3 py-2">Datum</th>
-                <th className="px-3 py-2">Typ</th>
-                <th className="px-3 py-2">Antal</th>
-                <th className="px-3 py-2">Belopp</th>
-                <th className="px-3 py-2">Anteckning</th>
-                <th className="px-3 py-2" />
-              </tr>
-            </thead>
-            <tbody>
+      {open ? (
+        <>
+          {totals.length > 0 ? (
+            <div className="flex flex-wrap gap-1.5">
+              {totals.map((total) => (
+                <Badge key={total.kind}>
+                  {COMPENSATION_LABELS[total.kind]} {formatAmount(total.amount)} kr
+                  {COMPENSATION_UNITS[total.kind] ? ` · ${total.quantity} ${COMPENSATION_UNITS[total.kind]}` : ''}
+                </Badge>
+              ))}
+            </div>
+          ) : null}
+
+          {items.length > 0 ? (
+            <ul className="m-0 grid list-none gap-2 p-0">
               {items.map((item) => (
-                <tr key={item.id} className="border-b border-solid border-slate-100">
-                  <td className="px-3 py-2 whitespace-nowrap">{item.entry_date}</td>
-                  <td className="px-3 py-2">{COMPENSATION_LABELS[item.kind]}</td>
-                  <td className="px-3 py-2 text-slate-600">
-                    {item.quantity != null ? `${item.quantity} ${COMPENSATION_UNITS[item.kind] ?? ''}` : '—'}
-                  </td>
-                  <td className="px-3 py-2 font-medium">{formatAmount(Number(item.amount))} kr</td>
-                  <td className="px-3 py-2 text-slate-500">{item.note || ''}</td>
-                  <td className="px-3 py-2 text-right">
-                    {!locked ? (
-                      <button type="button" onClick={() => void remove(item.id)} className="px-2 py-1 text-sm text-rose-600 underline">
+                <li key={item.id} className="grid gap-1 rounded-xl border border-solid border-[#e4ebe0] bg-white px-3 py-2.5">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span className="text-sm font-semibold text-slate-900">{COMPENSATION_LABELS[item.kind]}</span>
+                    <span className="shrink-0 text-sm font-semibold tabular-nums text-slate-700">{formatAmount(Number(item.amount))} kr</span>
+                  </div>
+                  <div className="text-sm text-slate-500">
+                    <span className="tabular-nums">{shortDate(item.entry_date)}</span>
+                    {item.quantity != null ? <> · <span className="tabular-nums">{item.quantity}</span> {COMPENSATION_UNITS[item.kind] ?? ''}</> : null}
+                    {item.note ? ` · ${item.note}` : ''}
+                  </div>
+                  {!locked ? (
+                    <div className="flex justify-end">
+                      <button type="button" onClick={() => void remove(item.id)} className="!px-2 !py-1 rounded-lg text-sm font-medium text-rose-600 underline underline-offset-2">
                         Ta bort
                       </button>
-                    ) : null}
-                  </td>
-                </tr>
+                    </div>
+                  ) : null}
+                </li>
               ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <p className="m-0 px-1 text-sm text-slate-500">Inget inlagt i {monthLabel.toLowerCase()}.</p>
-      )}
+            </ul>
+          ) : null}
 
-      {/* Inmatningen försvinner när månaden är inlämnad — ersättningar är löneunderlag och fryser
-          med perioden, precis som timmarna. Villkorlig rendering och inte `hidden`: preflight är av,
-          så `hidden` och `flex` bråkar om display på samma element. */}
-      {locked ? null : (
-      <div className="flex flex-wrap items-end gap-2 px-1">
-        <label className="grid gap-1">
-          <span className="text-xs font-semibold text-slate-600">Typ</span>
-          <select
-            value={kind}
-            onChange={(e) => setKind(e.target.value as CompensationKind)}
-            className="rounded-lg border border-solid border-slate-200 px-2.5 py-1.5 text-sm"
-          >
-            {COMPENSATION_KINDS.map((option) => (
-              <option key={option} value={option}>{COMPENSATION_LABELS[option]}</option>
-            ))}
-          </select>
-        </label>
-        <label className="grid gap-1">
-          <span className="text-xs font-semibold text-slate-600">Datum</span>
-          <span className="inline-block w-40"><Input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></span>
-        </label>
-        {unit ? (
-          <label className="grid gap-1">
-            <span className="text-xs font-semibold text-slate-600">Antal ({unit})</span>
-            <span className="inline-block w-24"><Input inputMode="decimal" value={quantity} onChange={(e) => setQuantity(e.target.value)} /></span>
-          </label>
-        ) : null}
-        <label className="grid gap-1">
-          <span className="text-xs font-semibold text-slate-600">Belopp (kr)</span>
-          <span className="inline-block w-28"><Input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} /></span>
-        </label>
-        <label className="grid flex-1 gap-1" style={{ minWidth: 160 }}>
-          <span className="text-xs font-semibold text-slate-600">Anteckning</span>
-          <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="T.ex. parkering Uppsala" />
-        </label>
-        <button
-          type="button"
-          onClick={() => void add()}
-          disabled={saving || !amountValid}
-          className="rounded-lg border border-solid border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:border-slate-400 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          Lägg till
-        </button>
-      </div>
-      )}
+          {/* Inmatningen försvinner när månaden är inlämnad — ersättningar är löneunderlag och fryser
+              med perioden, precis som timmarna. Villkorlig rendering och inte `hidden`: preflight är
+              av, så `hidden` och `flex` bråkar om display på samma element. */}
+          {locked ? null : (
+            <div className="grid gap-2 rounded-xl bg-[#f1f5ee] p-3">
+              <div className="grid gap-2 sm:grid-cols-2">
+                <label className="grid gap-1">
+                  <span className={crm.sectionTitle}>Typ</span>
+                  <select
+                    value={kind}
+                    onChange={(e) => setKind(e.target.value as CompensationKind)}
+                    className="w-full rounded-lg border border-solid border-slate-200 bg-white px-2.5 py-2 text-sm"
+                  >
+                    {COMPENSATION_KINDS.map((option) => (
+                      <option key={option} value={option}>{COMPENSATION_LABELS[option]}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="grid gap-1">
+                  <span className={crm.sectionTitle}>Datum</span>
+                  <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+                </label>
+                {unit ? (
+                  <label className="grid gap-1">
+                    <span className={crm.sectionTitle}>Antal ({unit})</span>
+                    <Input inputMode="decimal" value={quantity} onChange={(e) => setQuantity(e.target.value)} />
+                  </label>
+                ) : null}
+                <label className="grid gap-1">
+                  <span className={crm.sectionTitle}>Belopp (kr)</span>
+                  <Input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} />
+                </label>
+              </div>
+              <label className="grid gap-1">
+                <span className={crm.sectionTitle}>Anteckning</span>
+                <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="T.ex. parkering Uppsala" />
+              </label>
+              <button
+                type="button"
+                onClick={() => void add()}
+                disabled={saving || !amountValid}
+                className="!py-2.5 w-full rounded-xl border border-solid border-[#cfdcc9] bg-white text-sm font-semibold text-slate-800 transition hover:border-slate-400 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Lägg till
+              </button>
+            </div>
+          )}
+        </>
+      ) : null}
     </section>
   );
 }
