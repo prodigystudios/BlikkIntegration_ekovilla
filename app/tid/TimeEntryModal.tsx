@@ -3,6 +3,8 @@ import React from 'react';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import CrmModal from '@/app/crm/components/CrmModal';
 import Input from '@/components/ui/Input';
+import { crm } from '@/app/crm/lib/crmTokens';
+import { cn } from '@/lib/shared/cn';
 import { minutesToHours, workedMinutes } from '@/lib/domains/time/hours';
 import type { TimeReferenceItem } from '@/lib/domains/time/reference';
 
@@ -15,6 +17,14 @@ import type { TimeReferenceItem } from '@/lib/domains/time/reference';
 //
 // Frånvaro har INGA klockslag: byrån vill ha "Frånvarotimmar", och en halv dag VAB är fyra timmar,
 // inte 08:00–12:00.
+//
+// ⚠️ Det här är CRM-modalen och den används BARA av app/tid/TidClient.tsx. Blikks tidrapportering
+// har sin egen, components/dashboard/TimeReportModal.tsx, som inte delar en rad med den här. Att
+// ändra här kan alltså inte röra vägen mot Blikk — kontrollera det innan du tror något annat.
+//
+// FORM (omdesign 2026-08-14, i takt med /tid): sage-paletten i stället för slate, och summan står
+// DÄR DEN UPPSTÅR — i passblocket, bredvid rasten — inte i en grå ruta längst ner under
+// anteckningen, dit man på en telefon behöver skrolla för att se om man skrev rätt.
 
 export type TimeEntryKind = 'work_order' | 'internal' | 'absence';
 
@@ -49,9 +59,17 @@ const KINDS: Array<{ key: TimeEntryKind; label: string }> = [
   { key: 'absence', label: 'Frånvaro' },
 ];
 
+// Fältstil på ett ställe. Preflight är av, så `border` utan `border-solid` ritar ingen linje —
+// och globals.css ger <select>/<textarea> ingen egen ram att ärva.
+const FIELD = 'w-full rounded-xl border border-solid border-[#dbe4d6] bg-white px-3 py-2 text-sm text-slate-900';
+
 // 'HH:MM:SS' från Postgres → 'HH:MM' som <input type="time"> vill ha.
 function toTimeInput(value: string | null): string {
   return value ? value.slice(0, 5) : '';
+}
+
+function formatHours(minutes: number): string {
+  return minutesToHours(minutes).toFixed(2).replace('.', ',');
 }
 
 export default function TimeEntryModal({
@@ -225,7 +243,7 @@ export default function TimeEntryModal({
           <button
             type="button"
             onClick={onClose}
-            className="flex-1 rounded-xl border border-solid border-slate-200 bg-white py-2.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 sm:flex-none sm:px-5"
+            className="!py-2.5 flex-1 rounded-xl border border-solid border-[#dbe4d6] bg-white text-sm font-semibold text-slate-600 transition hover:border-slate-400 sm:flex-none sm:!px-5"
           >
             Avbryt
           </button>
@@ -233,7 +251,7 @@ export default function TimeEntryModal({
             type="button"
             onClick={() => void save()}
             disabled={!canSave}
-            className="flex-1 rounded-xl py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60 sm:ml-auto sm:flex-none sm:px-5"
+            className="!py-2.5 flex-1 rounded-xl text-sm font-semibold text-white shadow-sm transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60 sm:ml-auto sm:flex-none sm:!px-5"
             style={{ backgroundColor: 'var(--crm-primary)' }}
           >
             {saving ? 'Sparar…' : 'Spara'}
@@ -246,16 +264,18 @@ export default function TimeEntryModal({
           <div className="rounded-xl border border-solid border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>
         ) : null}
 
-        <div className="flex gap-1 rounded-xl bg-slate-100 p-1">
+        {/* Sorten först: den avgör vilka fält som ens är relevanta nedanför. */}
+        <div className="flex gap-1 rounded-xl bg-[#eef3ea] p-1">
           {KINDS.map((option) => (
             <button
               key={option.key}
               type="button"
               onClick={() => setKind(option.key)}
-              className={
-                'flex-1 rounded-lg px-3 py-1.5 text-sm font-semibold transition ' +
-                (kind === option.key ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500')
-              }
+              aria-pressed={kind === option.key}
+              className={cn(
+                '!px-2 !py-2 flex-1 rounded-lg text-sm font-semibold transition',
+                kind === option.key ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500',
+              )}
             >
               {option.label}
             </button>
@@ -263,59 +283,63 @@ export default function TimeEntryModal({
         </div>
 
         <label className="grid gap-1">
-          <span className="text-xs font-semibold text-slate-600">Datum</span>
+          <span className={crm.sectionTitle}>Datum</span>
           <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
         </label>
 
         {kind === 'absence' ? (
           <>
             <label className="grid gap-1">
-              <span className="text-xs font-semibold text-slate-600">Frånvaroorsak</span>
-              <select
-                value={absenceId}
-                onChange={(e) => setAbsenceId(e.target.value)}
-                className="rounded-xl border border-solid border-slate-200 px-3 py-2 text-sm"
-              >
+              <span className={crm.sectionTitle}>Frånvaroorsak</span>
+              <select value={absenceId} onChange={(e) => setAbsenceId(e.target.value)} className={FIELD}>
                 <option value="">Välj…</option>
                 {reference.absence_type.map((item) => (
                   <option key={item.id} value={item.id}>{item.name}</option>
                 ))}
               </select>
             </label>
+            {/* Ingen summering här: talet man skriver ÄR summan. Att eka det i en egen ruta hade
+                sett ut som en uträkning utan att vara en. */}
             <label className="grid gap-1">
-              <span className="text-xs font-semibold text-slate-600">Antal timmar</span>
-              <Input
-                inputMode="decimal"
-                value={absenceHours}
-                onChange={(e) => setAbsenceHours(e.target.value)}
-                placeholder="8"
-              />
+              <span className={crm.sectionTitle}>Antal timmar</span>
+              <Input inputMode="decimal" value={absenceHours} onChange={(e) => setAbsenceHours(e.target.value)} placeholder="8" />
             </label>
           </>
         ) : (
           <>
             {kind === 'work_order' ? (
-              <div className="grid gap-1">
-                <span className="text-xs font-semibold text-slate-600">Jobb</span>
+              <div className="grid gap-1.5">
+                <span className={crm.sectionTitle}>Jobb</span>
                 {jobsLoading ? (
                   <span className="text-sm text-slate-400">Hämtar dagens jobb…</span>
                 ) : jobs.length === 0 ? (
-                  <span className="rounded-xl border border-solid border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-                    Inga jobb schemalagda på dig den dagen. Rapportera som <strong>Intern</strong> om du jobbat ändå.
-                  </span>
+                  // Tomt läge som går att agera på, inte bara en upplysning: knappen gör det den
+                  // föreslår, i stället för att be någon leta rätt på fliken själv.
+                  <div className="grid gap-2 rounded-xl border border-solid border-amber-200 bg-amber-50 px-3 py-2.5">
+                    <p className="m-0 text-sm text-amber-900">Inga jobb schemalagda på dig den dagen.</p>
+                    <button
+                      type="button"
+                      onClick={() => setKind('internal')}
+                      className="!px-3 !py-1.5 justify-self-start rounded-lg border border-solid border-amber-300 bg-white text-sm font-semibold text-amber-900 transition hover:border-amber-400"
+                    >
+                      Rapportera som intern tid
+                    </button>
+                  </div>
                 ) : (
-                  <div className="flex flex-wrap gap-1.5">
+                  <div className="grid gap-1.5">
                     {jobs.map((job) => (
                       <button
                         key={job.work_order_id}
                         type="button"
                         onClick={() => setWorkOrderId(job.work_order_id)}
-                        className={
-                          'rounded-full border border-solid px-3 py-1.5 text-left text-sm transition ' +
-                          (workOrderId === job.work_order_id
-                            ? 'border-slate-900 bg-slate-900 text-white'
-                            : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300')
-                        }
+                        aria-pressed={workOrderId === job.work_order_id}
+                        className={cn(
+                          '!px-3 !py-2.5 !justify-start !text-left w-full rounded-xl border border-solid text-sm transition',
+                          workOrderId === job.work_order_id
+                            ? 'border-transparent text-white shadow-sm'
+                            : 'border-[#dbe4d6] bg-white text-slate-700 hover:border-slate-400',
+                        )}
+                        style={workOrderId === job.work_order_id ? { backgroundColor: 'var(--crm-primary)' } : undefined}
                       >
                         {job.order_number ? `#${job.order_number} · ` : ''}{job.customer || job.project_name || 'Jobb'}
                       </button>
@@ -325,12 +349,8 @@ export default function TimeEntryModal({
               </div>
             ) : (
               <label className="grid gap-1">
-                <span className="text-xs font-semibold text-slate-600">Internprojekt</span>
-                <select
-                  value={internalId}
-                  onChange={(e) => setInternalId(e.target.value)}
-                  className="rounded-xl border border-solid border-slate-200 px-3 py-2 text-sm"
-                >
+                <span className={crm.sectionTitle}>Internprojekt</span>
+                <select value={internalId} onChange={(e) => setInternalId(e.target.value)} className={FIELD}>
                   <option value="">Välj…</option>
                   {reference.internal_project.map((item) => (
                     <option key={item.id} value={item.id}>{item.name}</option>
@@ -339,31 +359,47 @@ export default function TimeEntryModal({
               </label>
             )}
 
-            <div className="grid grid-cols-3 gap-2">
-              <label className="grid gap-1">
-                <span className="text-xs font-semibold text-slate-600">Start</span>
-                <Input type="time" value={start} onChange={(e) => setStart(e.target.value)} />
-              </label>
-              <label className="grid gap-1">
-                <span className="text-xs font-semibold text-slate-600">Slut</span>
-                <Input type="time" value={end} onChange={(e) => setEnd(e.target.value)} />
-              </label>
-              <label className="grid gap-1">
-                <span className="text-xs font-semibold text-slate-600">Rast (min)</span>
-                <Input inputMode="numeric" value={breakMinutes} onChange={(e) => setBreakMinutes(e.target.value)} />
-              </label>
+            {/* Passet i ett block, och SUMMAN INUTI DET. Den var tidigare en grå ruta längst ner,
+                efter anteckningen — alltså utanför skärmen på en telefon, trots att den är hela
+                svaret på "skrev jag rätt?". Nu står den bredvid rasten som drar av den. */}
+            <div className="grid gap-3 rounded-2xl border border-solid border-[#e0e8dc] bg-[#f6f9f4] p-3">
+              <div className="grid grid-cols-2 gap-2">
+                <label className="grid gap-1">
+                  <span className={crm.sectionTitle}>Start</span>
+                  <Input type="time" value={start} onChange={(e) => setStart(e.target.value)} />
+                </label>
+                <label className="grid gap-1">
+                  <span className={crm.sectionTitle}>Slut</span>
+                  <Input type="time" value={end} onChange={(e) => setEnd(e.target.value)} />
+                </label>
+              </div>
+
+              <div className="flex items-end justify-between gap-3">
+                <label className="grid gap-1">
+                  <span className={crm.sectionTitle}>Rast (min)</span>
+                  <span className="block w-24">
+                    <Input inputMode="numeric" value={breakMinutes} onChange={(e) => setBreakMinutes(e.target.value)} />
+                  </span>
+                </label>
+                <div className="text-right">
+                  <div className={crm.sectionTitle}>Arbetad tid</div>
+                  <div className={cn('text-2xl font-bold tabular-nums leading-tight', previewMinutes > 0 ? 'text-slate-900' : 'text-slate-300')}>
+                    {formatHours(previewMinutes)} h
+                  </div>
+                </div>
+              </div>
+
+              {previewMinutes <= 0 ? (
+                <p className="m-0 text-sm text-rose-600">Rasten är längre än passet.</p>
+              ) : null}
             </div>
           </>
         )}
 
         {reference.time_code.length > 0 ? (
           <label className="grid gap-1">
-            <span className="text-xs font-semibold text-slate-600">Tidkod (valfri)</span>
-            <select
-              value={timeCodeId}
-              onChange={(e) => setTimeCodeId(e.target.value)}
-              className="rounded-xl border border-solid border-slate-200 px-3 py-2 text-sm"
-            >
+            <span className={crm.sectionTitle}>Tidkod (valfri)</span>
+            <select value={timeCodeId} onChange={(e) => setTimeCodeId(e.target.value)} className={FIELD}>
               <option value="">—</option>
               {reference.time_code.map((item) => (
                 <option key={item.id} value={item.id}>{item.name}</option>
@@ -373,25 +409,15 @@ export default function TimeEntryModal({
         ) : null}
 
         <label className="grid gap-1">
-          <span className="text-xs font-semibold text-slate-600">
-            Anteckning{requiresNote ? ' (krävs)' : ''}
-          </span>
+          <span className={crm.sectionTitle}>Anteckning{requiresNote ? ' (krävs)' : ''}</span>
           <textarea
             value={note}
             onChange={(e) => setNote(e.target.value)}
             rows={2}
-            className="rounded-xl border border-solid border-slate-200 px-3 py-2 text-sm"
+            className={FIELD}
             placeholder="Valfri information om dagen"
           />
         </label>
-
-        <div className="rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-700">
-          {kind === 'absence' ? 'Frånvaro' : 'Arbetad tid'}:{' '}
-          <strong>{minutesToHours(previewMinutes).toString().replace('.', ',')} h</strong>
-          {kind !== 'absence' && Number(breakMinutes) > 0 ? (
-            <span className="text-slate-500"> (efter {breakMinutes} min rast)</span>
-          ) : null}
-        </div>
       </div>
     </CrmModal>
   );
