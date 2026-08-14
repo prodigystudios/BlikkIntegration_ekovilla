@@ -21,6 +21,7 @@ import {
 import type { PersonPeriodSummary } from '../../../lib/domains/time/summary';
 import {
   auditActionLabel,
+  auditWorkDate,
   describeAuditChange,
   type TimeEntryAuditRow,
 } from '../../../lib/domains/time/audit';
@@ -1069,14 +1070,20 @@ function AuditTrail({ rows, failed }: { rows: TimeEntryAuditRow[]; failed: boole
       <ul className="m-0 grid list-none gap-1.5 p-0">
         {rows.map((row) => {
           const changes = describeAuditChange(row);
+          // Dagen först: utan den går raden inte att koppla till något i tabellen ovanför.
+          const day = auditWorkDate(row);
           return (
             <li key={row.id} className="rounded-xl border border-solid border-[#e4ebe0] bg-white px-3 py-2 text-sm">
               <div className="flex flex-wrap items-baseline gap-x-2 text-slate-700">
-                <span className="font-semibold">{auditActionLabel(row.action)}</span>
+                <span className="font-semibold">{day ? formatDay(day) : 'Okänd dag'}</span>
+                <span>{auditActionLabel(row.action).toLowerCase()}</span>
                 <span className="text-slate-500">
                   {row.changed_by_profile?.full_name || 'okänd användare'} · {formatStamp(row.created_at)}
                 </span>
               </div>
+              {changes.length === 0 && row.action === 'update' ? (
+                <p className="m-0 mt-1 text-slate-500">Inga värden ändrades.</p>
+              ) : null}
               {changes.length > 0 ? (
                 <ul className="m-0 mt-1 grid list-none gap-0.5 p-0 text-slate-600">
                   {changes.map((change) => (

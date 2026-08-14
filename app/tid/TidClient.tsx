@@ -10,7 +10,7 @@ import { parseDecimal } from '@/lib/shared/number';
 import { addDays, buildWeekDays, fmtISO, isoWeek, startOfWeek, type WeekDay } from '@/app/crm/planering/planningDates';
 import { COMPENSATION_KINDS, COMPENSATION_LABELS, COMPENSATION_UNITS, summarizeCompensations, type CompensationItem, type CompensationKind } from '@/lib/domains/time/compensations';
 import { isPeriodLocked, periodLabel, TIME_PERIOD_STATUS_LABELS, type TimeApprovalRow, type TimePeriodStatus } from '@/lib/domains/time/approvals';
-import { auditActionLabel, describeAuditChange, type TimeEntryAuditRow } from '@/lib/domains/time/audit';
+import { auditActionLabel, auditWorkDate, describeAuditChange, type TimeEntryAuditRow } from '@/lib/domains/time/audit';
 import TimeEntryModal, { type EditableEntry, type ReferenceData } from './TimeEntryModal';
 
 // Tidrapporten, CRM-versionen. Ligger på /tid bredvid gamla /tidrapport (som fortsätter mot Blikk)
@@ -972,15 +972,24 @@ function AuditNotice({ rows }: { rows: TimeEntryAuditRow[] }) {
       <ul className="m-0 grid list-none gap-1.5 p-0 text-sm text-amber-900">
         {rows.map((row) => {
           const changes = describeAuditChange(row);
+          // ⚠️ DAGEN MÅSTE STÅ MED. Utan den säger rutan att någon rört din tid men inte vilken rad,
+          // och då går den inte att kontrollera — vilket är hela poängen med att visa den.
+          const day = auditWorkDate(row);
           return (
             <li key={row.id}>
-              <span className="font-medium">{auditActionLabel(row.action)}</span>
-              {' — '}
+              <span className="font-medium">
+                {day ? longDayLabel(day) : 'Okänd dag'} — {auditActionLabel(row.action).toLowerCase()}
+              </span>
+              {' av '}
               {row.changed_by_profile?.full_name || 'okänd användare'}, {formatStamp(row.created_at)}
               {changes.length > 0 ? (
                 <span className="block text-amber-800">
                   {changes.map((change) => `${change.label}: ${change.from ?? '—'} → ${change.to ?? '—'}`).join(' · ')}
                 </span>
+              ) : row.action === 'update' ? (
+                // En uppdatering som inte ändrade något värde. Säg det — en tom rad läser som att
+                // detaljerna saknas, inte som att det inte fanns några.
+                <span className="block text-amber-800">Inga värden ändrades.</span>
               ) : null}
             </li>
           );
