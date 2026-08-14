@@ -19,6 +19,11 @@ import {
   type TimePeriodStatus,
 } from '../../../lib/domains/time/approvals';
 import type { PersonPeriodSummary } from '../../../lib/domains/time/summary';
+import {
+  auditActionLabel,
+  describeAuditChange,
+  type TimeEntryAuditRow,
+} from '../../../lib/domains/time/audit';
 
 // Admin → Attest. En kalendermånad per person, och knappen som fryser den.
 //
@@ -125,9 +130,13 @@ type PersonDetail = {
   error: string | null;
   summary: PersonPeriodSummary | null;
   compensations: CompensationItem[];
+  audit: TimeEntryAuditRow[];
+  auditFailed: boolean;
 };
 
-const EMPTY_DETAIL: PersonDetail = { loading: true, error: null, summary: null, compensations: [] };
+const EMPTY_DETAIL: PersonDetail = {
+  loading: true, error: null, summary: null, compensations: [], audit: [], auditFailed: false,
+};
 
 export default function AdminTimeApprovals() {
   const [period, setPeriod] = React.useState(currentPeriod);
@@ -228,12 +237,14 @@ export default function AdminTimeApprovals() {
         error: null,
         summary: body.data as PersonPeriodSummary,
         compensations: (body.data.compensations || []) as CompensationItem[],
+        audit: (body.data.audit || []) as TimeEntryAuditRow[],
+        auditFailed: !!body.data.audit_failed,
       });
     } catch (e) {
       // Hela tillståndet skrivs om, inte bara felet: lämnas summary kvar visas föregående persons
       // dagar under felrutan. Samma fälla som redan kostat en gång i den här vyn.
       if (seq === detailSeq.current) {
-        setDetail({ loading: false, error: (e as Error).message, summary: null, compensations: [] });
+        setDetail({ loading: false, error: (e as Error).message, summary: null, compensations: [], audit: [], auditFailed: false });
       }
     }
   }, [period]);
@@ -911,6 +922,8 @@ function PersonDays({
         </div>
       ) : null}
 
+      <AuditTrail rows={detail.audit} failed={detail.auditFailed} />
+
       {detail.compensations.length > 0 ? (
         <div className="grid gap-1">
           <p className={cn(LABEL, 'm-0')}>Ersättningar</p>
@@ -1020,5 +1033,58 @@ function DayRowCells({
         </td>
       ) : null}
     </tr>
+  );
+}
+
+/**
+ * Vem som rört månaden, och vad de gjorde.
+ *
+ * Det här är andra halvan av att låta en admin rätta någon annans timmar. Utan en läsbar logg är
+ * skrivrätten bara en försäkran; med den är den granskbar. Raderna skrivs av en databastrigger som
+ * ingen väg går förbi.
+ *
+ * ⚠️ TOM LOGG BETYDER "INGEN ANNAN HAR RÖRT MÅNADEN", inte "ingenting har hänt". Triggern hoppar
+ * över personens egna sparningar med flit — annars hade varje inmatning i /tid dränkt de rader man
+ * öppnar loggen för att hitta. Därför visas sektionen bara när det finns något att visa.
+ */
+function AuditTrail({ rows, failed }: { rows: TimeEntryAuditRow[]; failed: boolean }) {
+  if (failed) {
+    return (
+      <p className="m-0 text-sm text-amber-800">
+        Ändringsloggen kunde inte läsas. Dagarna ovan är oberoende av den.
+      </p>
+    );
+  }
+  if (rows.length === 0) return null;
+
+  return (
+    <div className="grid gap-1.5">
+      <p className={cn(LABEL, 'm-0')}>Ändrat av någon annan</p>
+      <ul className="m-0 grid list-none gap-1.5 p-0">
+        {rows.map((row) => {
+          const changes = describeAuditChange(row);
+          return (
+            <li key={row.id} className="rounded-xl border border-solid border-[#e4ebe0] bg-white px-3 py-2 text-sm">
+              <div className="flex flex-wrap items-baseline gap-x-2 text-slate-700">
+                <span className="font-semibold">{auditActionLabel(row.action)}</span>
+                <span className="text-slate-500">
+                  {row.changed_by_profile?.full_name || 'okänd användare'} · {formatStamp(row.created_at)}
+                </span>
+              </div>
+              {changes.length > 0 ? (
+                <ul className="m-0 mt-1 grid list-none gap-0.5 p-0 text-slate-600">
+                  {changes.map((change) => (
+                    <li key={change.label}>
+                      {change.label}: <span className="tabular-nums">{change.from ?? '—'}</span>
+                      {change.to !== null ? <> → <span className="font-medium tabular-nums text-slate-900">{change.to}</span></> : null}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }
