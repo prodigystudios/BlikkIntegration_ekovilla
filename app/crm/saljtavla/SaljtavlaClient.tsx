@@ -9,6 +9,8 @@ import DocumentNumberBadge from '@/app/crm/components/DocumentNumberBadge';
 import { documentRef, formatCurrency } from '@/app/crm/lib/format';
 import { resolveQuoteVatBreakdown, quoteAmountDisplay } from '@/lib/domains/crm/pricing';
 import { crm, quoteStatusMeta, type QuoteStatus } from '@/app/crm/lib/crmTokens';
+import { quoteCustomerName, isQuoteOverdue } from '@/app/crm/lib/quoteDisplay';
+import QuoteDetailPanel from '@/app/crm/components/QuoteDetailPanel';
 import {
   quoteBoardColumn,
   isQuoteCardLocked,
@@ -35,7 +37,14 @@ type BoardQuote = {
   assigned_to: string | null;
   quote_type: 'private' | 'business';
   customer_name: string | null;
-  customer_snapshot: { customer_name?: string | null; company_name?: string | null } | null;
+  customer_snapshot: { customer_name?: string | null; company_name?: string | null; email?: string | null } | null;
+  // Declared because the shared detail panel reads them. They were always in the payload — the board
+  // simply didn't type them, since its cards don't show them.
+  customer_source: { kind?: string | null } | null;
+  fortnox_sync_status: 'not_synced' | 'pending' | 'synced' | 'failed' | null;
+  description: string | null;
+  notes: string | null;
+  valid_until: string | null;
   prospect: { company_name: string } | Array<{ company_name: string }> | null;
   pricing_summary: { subtotal?: number; vat?: number; total?: number } | null;
   amount: number | string;
@@ -59,24 +68,6 @@ const COLUMN_DEF: Record<SaljtavlaColumn, { label: string; hint: string; accent:
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function getCustomerName(item: BoardQuote) {
-  const prospect = Array.isArray(item.prospect) ? item.prospect[0] : item.prospect;
-  return prospect?.company_name
-    || item.customer_snapshot?.customer_name
-    || item.customer_snapshot?.company_name
-    || item.customer_name
-    || 'Okänd kund';
-}
-
-function todayIso() {
-  const t = new Date();
-  return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
-}
-
-function isOverdue(item: BoardQuote) {
-  if (!item.follow_up_date || item.status === 'won' || item.status === 'lost') return false;
-  return item.follow_up_date < todayIso();
-}
 
 // ─── SaljtavlaClient ───────────────────────────────────────────────────────────
 
@@ -100,6 +91,9 @@ export default function SaljtavlaClient({ currentUserId }: { currentUserId: stri
   // number lives on crm_work_orders. Index it once (work_order_id → fortnox number)
   // so won cards can lead with the Fortnox number the customer recognises.
   const [workOrderFortnoxById, setWorkOrderFortnoxById] = useState<Map<string, string | null>>(new Map());
+  // Opening a card used to navigate to the offer list just to show its modal. The panel is shared
+  // now, so the board keeps you where you are.
+  const [detailQuoteId, setDetailQuoteId] = useState<string | null>(null);
 
   // Load quotes (all statuses — the board groups them client-side).
   useEffect(() => {
@@ -151,6 +145,13 @@ export default function SaljtavlaClient({ currentUserId }: { currentUserId: stri
     for (const q of quotes) m.set(q.id, quoteAmountDisplay(q.quote_type, resolveQuoteVatBreakdown(q)).primary);
     return m;
   }, [quotes]);
+
+  // Resolved from the live list rather than stored, so an action inside the panel (status change,
+  // work order, Fortnox push) re-renders it from the same row the board shows.
+  const detailQuote = useMemo(
+    () => (detailQuoteId ? quotes.find((q) => q.id === detailQuoteId) ?? null : null),
+    [detailQuoteId, quotes],
+  );
 
   // Scope to the chosen "Ansvarig" filter (default = mine).
   const scopedQuotes = useMemo(
@@ -305,13 +306,22 @@ export default function SaljtavlaClient({ currentUserId }: { currentUserId: stri
                 ) : items.length === 0 ? (
                   <p className="px-1 py-6 text-center text-[11px] italic text-slate-400">{def.hint}</p>
                 ) : (
-                  items.map((item) => <BoardCard key={item.id} item={item} amount={primaryById.get(item.id) ?? 0} fortnoxOrderNumber={item.work_order_id ? (workOrderFortnoxById.get(item.work_order_id) ?? null) : null} moving={movingId === item.id} onOpen={() => router.push(`/crm/offerter?quote_id=${item.id}`)} onDragStart={() => setDraggedId(item.id)} onDragEnd={() => { setDraggedId(null); setDragOverColumn(null); }} />)
+                  items.map((item) => <BoardCard key={item.id} item={item} amount={primaryById.get(item.id) ?? 0} fortnoxOrderNumber={item.work_order_id ? (workOrderFortnoxById.get(item.work_order_id) ?? null) : null} moving={movingId === item.id} onOpen={() => setDetailQuoteId(item.id)} onDragStart={() => setDraggedId(item.id)} onDragEnd={() => { setDraggedId(null); setDragOverColumn(null); }} />)
                 )}
               </div>
             </div>
           );
         })}
       </div>
+
+      {detailQuote ? (
+        <QuoteDetailPanel
+          quote={detailQuote}
+          workOrderFortnoxNumber={detailQuote.work_order_id ? (workOrderFortnoxById.get(detailQuote.work_order_id) ?? null) : null}
+          onClose={() => setDetailQuoteId(null)}
+          onQuoteChanged={(updated) => setQuotes((current) => current.map((q) => (q.id === updated.id ? updated : q)))}
+        />
+      ) : null}
     </div>
   );
 }
@@ -337,7 +347,7 @@ function BoardCard({
 }) {
   const meta = quoteStatusMeta[item.status];
   const locked = isQuoteCardLocked(item);
-  const overdue = isOverdue(item);
+  const overdue = isQuoteOverdue(item);
 
   return (
     <div
@@ -364,7 +374,7 @@ function BoardCard({
             {item.quote_type === 'private' ? 'Privat' : 'Företag'}
           </span>
         </div>
-        <p className="mt-1 truncate text-[13px] font-bold text-slate-900">{getCustomerName(item)}</p>
+        <p className="mt-1 truncate text-[13px] font-bold text-slate-900">{quoteCustomerName(item)}</p>
         {item.project_name && <p className="truncate text-[11px] text-slate-500">{item.project_name}</p>}
         <div className="mt-1.5 flex items-center justify-between gap-2">
           <span className="text-[12px] font-semibold tabular-nums text-slate-800">{formatCurrency(amount, item.currency_code)}</span>
