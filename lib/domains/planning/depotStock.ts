@@ -165,9 +165,15 @@ async function derivePlannedDemandRows(supabase: SupabaseClient): Promise<StockR
   const truckDepot = new Map((trucks ?? []).map((t: any) => [t.id as string, (t.depot_id as string | null) ?? null]));
 
   // Open work orders first, then only THEIR segments — the same two-step listSchedulableWorkOrders
-  // and getPlanningInsights use. Reading every ops_segments row ever created and filtering in JS
-  // grew with the table and put the result within reach of PostgREST's row cap, which would have
-  // quietly hollowed out the demand figure (and the shortfall warning) with no error anywhere.
+  // and getPlanningInsights use. This bounds the read to the working set instead of every
+  // ops_segments row ever created, which grew with the table forever.
+  //
+  // ⚠️ It is NOT an absolute bound. Open orders (draft especially) still accumulate, and neither
+  // this query nor its siblings paginate, so past PostgREST's max-rows the map silently loses
+  // entries: those segments fall out of the flatMap below, `planned` under-counts, `shortfall`
+  // floors to 0 and the depot banner stays quiet on a real shortage — with no error anywhere.
+  // Same exposure as listSchedulableWorkOrders/computeBacklogValue; worth solving for all three at
+  // once rather than paginating this one call site into a pattern the rest of the domain lacks.
   const { data: openWos } = await supabase
     .from('crm_work_orders')
     .select('id, status, line_items')
