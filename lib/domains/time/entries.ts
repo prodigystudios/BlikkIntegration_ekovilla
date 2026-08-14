@@ -32,7 +32,7 @@ export const timeEntrySelect = `
   work_order:crm_work_orders(id, order_number, fortnox_order_number, project_name, client_name),
   internal_project:crm_internal_projects(id, name),
   absence_type:crm_absence_types(id, name, payroll_code),
-  time_code:crm_time_codes(id, name, code, payroll_code)
+  time_code:crm_time_codes(id, name, code)
 `;
 
 export type TimeEntryRow = {
@@ -54,7 +54,7 @@ export type TimeEntryRow = {
   work_order?: { id: string; order_number: string | null; fortnox_order_number: string | null; project_name: string | null; client_name: string | null } | null;
   internal_project?: { id: string; name: string } | null;
   absence_type?: { id: string; name: string; payroll_code: string | null } | null;
-  time_code?: { id: string; name: string; code: string | null; payroll_code?: string | null } | null;
+  time_code?: { id: string; name: string; code: string | null } | null;
 };
 
 export type TimeEntryInput = {
@@ -143,9 +143,14 @@ export function buildTimeEntryRow(input: TimeEntryInput, userId: string): BuiltT
  * `listTimeEntries` känner inte till byråns kolumner — den här funktionen är fogen, och den är ren
  * så den går att testa utan databas.
  *
- * `minutesWorked` skickas med för raderna som saknar klockslag: frånvaro (som anges i timmar med
- * flit) och `legacy_office`-raderna från tiden före omformningen. workedMinutes faller tillbaka på
- * den när grossMinutes inte kan räknas.
+ * `minutesWorked` skickas med för raderna som saknar klockslag, och `hours` är fallbacken för den.
+ *
+ * ⚠️ `minutes_worked` ÄR NULL PÅ DE GAMLA KONTORSRADERNA. Kolumnen lades till nullbar utan backfill
+ * (20260811_time_entries_reshape.sql), CHECK:en tillåter null, och triggern härleder `hours` UR
+ * minuterna — aldrig tvärtom. Kontorets Tid-flik skriver fortfarande bara datum + timmar, så de
+ * raderna har timmar men inga minuter. Utan fallbacken blir de noll timmar i dagvyn, tyst, och
+ * summan längst ner motsäger aggregatet i raden ovanför. Samma coalesce finns i RPC:n
+ * time_approval_overview (20260812_time_approvals.sql) — ändras den ena måste den andra följa med.
  */
 export function toSummarizableEntry(row: TimeEntryRow): SummarizableEntry {
   const workOrder = row.work_order;
@@ -162,14 +167,13 @@ export function toSummarizableEntry(row: TimeEntryRow): SummarizableEntry {
     startTime: row.start_time,
     endTime: row.end_time,
     breakMinutes: row.break_minutes ?? 0,
-    minutesWorked: row.minutes_worked,
+    minutesWorked: row.minutes_worked ?? (row.hours != null ? Math.round(row.hours * 60) : null),
     kind: row.kind,
     userId: row.user_id,
     absenceReason: row.absence_type?.name ?? null,
-    // Lönesorten tas från den referensrad som faktiskt valdes på tidraden: frånvaroorsaken för
-    // frånvaro, tidkoden för arbetad tid. Internprojektets egen payroll_code används inte — raden
-    // bär en tidkod, och två källor hade kunnat säga olika.
-    payrollCode: row.kind === 'absence' ? row.absence_type?.payroll_code ?? null : row.time_code?.payroll_code ?? null,
+    // Frånvaroorsakens lönesort. Arbetstidens (tidkodens) hämtas inte: ingen läser den i dag, och
+    // en kolumn i timEntrySelect kostar payload på varje läsning av /tid utan att någon ser den.
+    payrollCode: row.absence_type?.payroll_code ?? null,
     note: row.note,
     label: row.kind === 'internal' ? row.internal_project?.name ?? null : workOrderLabel,
   };

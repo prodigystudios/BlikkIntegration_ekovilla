@@ -194,6 +194,30 @@ describe('GET /api/admin/time/entries — underlaget', () => {
     expect(json.data.workMinutes).toBe(0);
   });
 
+  // Regression från kodgranskningen. Zods uuid() släpper igenom versaler och Postgres jämför uuid
+  // skiftlägesokänsligt, så raderna kommer tillbaka — med gemena user_id, som summarizePersons
+  // strikta jämförelse annars filtrerar bort allihop. Utfallet vore en tom månad med status 200
+  // för någon som rapporterat hela augusti, alltså ett falskt negativt på en attestyta.
+  it('normaliserar ett versalt user_id i stället för att svara med en tom månad', async () => {
+    mockEntries.mockResolvedValue({ data: [shiftRow], error: null } as any);
+    const json = await (await GET(req(`/api/admin/time/entries?period=2026-08&user_id=${ANNA.toUpperCase()}`))).json();
+    expect(mockEntries).toHaveBeenCalledWith(expect.anything(), expect.anything(), { userId: ANNA });
+    expect(json.data.rows).toHaveLength(1);
+    expect(json.data.workMinutes).toBe(540);
+  });
+
+  // Kontorets Tid-flik skriver rader utan minutes_worked. Utan hours-fallbacken i mapparen visar
+  // dagvyn "Totalt 0,00 h" rakt under en aggregatrad som säger något helt annat.
+  it('räknar de gamla kontorsraderna på hours i stället för att visa noll', async () => {
+    mockEntries.mockResolvedValue({
+      data: [{ ...shiftRow, source: 'legacy_office', start_time: null, end_time: null, minutes_worked: null, hours: 7.5, work_order: null }],
+      error: null,
+    } as any);
+    const json = await (await GET(req(URL_OK))).json();
+    expect(json.data.rows[0].workMinutes).toBe(450);
+    expect(json.data.workMinutes).toBe(450);
+  });
+
   it('svarar 500 med databasens meddelande när läsningen fallerar', async () => {
     mockEntries.mockResolvedValue({ data: null, error: { message: 'permission denied' } } as any);
     const res = await GET(req(URL_OK));

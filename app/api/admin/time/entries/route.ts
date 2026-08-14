@@ -37,13 +37,18 @@ export async function GET(req: Request) {
 
     const periodStart = periodStartOf(parsed.data.period);
     const range = periodRange(periodStart);
+    // Gemener. Postgres jämför `uuid` skiftlägesokänsligt och zods uuid() släpper igenom versaler,
+    // så en versal parameter hade gett rader tillbaka — med gemena user_id, som summarizePersons
+    // strikta jämförelse sedan filtrerat bort allihop. Svaret hade blivit en tom månad med status
+    // 200: "har inte rapporterat något" om någon som rapporterat hela augusti.
+    const userId = parsed.data.user_id.toLowerCase();
     const supabase = createRouteHandlerClient({ cookies });
 
     // Sessionsklient, inte getSupabaseAdmin(): read.all-grenen i RLS är redan svaret på "får den
     // här personen se andras tid", och service-role hade öppnat hela databasen för att slippa den.
     const [entries, compensations] = await Promise.all([
-      listTimeEntries(supabase, range, { userId: parsed.data.user_id }),
-      listCompensations(supabase, range, { userId: parsed.data.user_id }),
+      listTimeEntries(supabase, range, { userId }),
+      listCompensations(supabase, range, { userId }),
     ]);
     if (entries.error) return routeError(500, 'time_entries_failed', entries.error.message);
     if (compensations.error) return routeError(500, 'time_compensations_failed', compensations.error.message);
@@ -51,12 +56,12 @@ export async function GET(req: Request) {
     const summary = summarizePerson(
       ((entries.data ?? []) as unknown as TimeEntryRow[]).map(toSummarizableEntry),
       range,
-      parsed.data.user_id,
+      userId,
     );
 
     return ok({
       period_start: periodStart,
-      user_id: parsed.data.user_id,
+      user_id: userId,
       ...summary,
       compensations: compensations.data ?? [],
     });

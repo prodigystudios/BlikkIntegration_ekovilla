@@ -181,6 +181,26 @@ describe('toSummarizableEntry', () => {
     expect(mapped.minutesWorked).toBe(240);
   });
 
+  // Regression från kodgranskningen. minutes_worked lades till NULLBAR utan backfill, och kontorets
+  // Tid-flik skriver fortfarande bara datum + timmar — triggern härleder hours UR minuterna, aldrig
+  // tvärtom. Utan fallbacken visar dagvyn noll timmar på just de raderna, och summan längst ner
+  // motsäger aggregatet i raden ovanför. Samma coalesce som i RPC:n time_approval_overview.
+  it('faller tillbaka på hours när minutes_worked är null — de gamla kontorsraderna', () => {
+    const mapped = toSummarizableEntry(row({
+      source: 'legacy_office', start_time: null, end_time: null, minutes_worked: null, hours: 7.5,
+    }));
+    expect(mapped.minutesWorked).toBe(450);
+  });
+
+  it('avrundar den fallbacken till hela minuter', () => {
+    expect(toSummarizableEntry(row({ start_time: null, end_time: null, minutes_worked: null, hours: 0.51 })).minutesWorked).toBe(31);
+  });
+
+  it('låter minutes_worked vinna när båda finns — minuterna är sanningen', () => {
+    const mapped = toSummarizableEntry(row({ start_time: null, end_time: null, minutes_worked: 455, hours: 7.5 }));
+    expect(mapped.minutesWorked).toBe(455);
+  });
+
   it('namnger arbetsordern med ordernummer och projekt', () => {
     const mapped = toSummarizableEntry(row({
       work_order: { id: 'wo1', order_number: 'AO-1', fortnox_order_number: '12', project_name: 'Villa Ek', client_name: 'Ekbergs' },
@@ -203,16 +223,12 @@ describe('toSummarizableEntry', () => {
     expect(mapped.label).toBe('Verkstad');
   });
 
-  it('tar lönesorten från frånvaroorsaken vid frånvaro och från tidkoden annars', () => {
+  it('tar frånvaroorsakens namn och lönesort', () => {
     const absence = toSummarizableEntry(row({
-      kind: 'absence', start_time: null, end_time: null,
+      kind: 'absence', start_time: null, end_time: null, minutes_worked: 240,
       absence_type: { id: 'a1', name: 'VAB', payroll_code: 'LÖN300' },
-      time_code: { id: 'tc1', name: 'Arbetstid', code: '1', payroll_code: 'LÖN100' },
     }));
     expect(absence.absenceReason).toBe('VAB');
     expect(absence.payrollCode).toBe('LÖN300');
-
-    const work = toSummarizableEntry(row({ time_code: { id: 'tc1', name: 'Arbetstid', code: '1', payroll_code: 'LÖN100' } }));
-    expect(work.payrollCode).toBe('LÖN100');
   });
 });
