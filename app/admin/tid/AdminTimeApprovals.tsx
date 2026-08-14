@@ -276,11 +276,15 @@ export default function AdminTimeApprovals() {
       if (failure) failures.push(`${row.full_name || 'Okänd'}: ${failure}`);
     }
 
+    // ⚠️ LADDA OM FÖRST, SKRIV BESKEDET SEN. `load()` nollställer felrutan som sitt första steg, så
+    // ett besked satt före anropet hann aldrig synas — och misslyckades ALLA blev det varken notis
+    // eller fel: massattesten såg ut att ha gått igenom fast ingen period rörde sig.
+    await load();
+
     const done = submitted.length - failures.length;
     if (done > 0) setNotice(`${done} av ${submitted.length} attesterade för ${periodLabel(periodStartOf(period))}.`);
     if (failures.length > 0) setError(`Gick inte att attestera ${failures.length}: ${failures.join(' · ')}`);
 
-    await load();
     setBulkBusy(false);
   }
 
@@ -345,7 +349,16 @@ export default function AdminTimeApprovals() {
           <label className="grid gap-1">
             <span className={LABEL}>Period</span>
             <span className="inline-block w-40">
-              <Input type="month" value={period} onChange={(e) => setPeriod(e.target.value || currentPeriod())} />
+              {/* Låst under massattesten. Loopen tar sekunder, och dess avslutande omladdning gäller
+                  den period den startade i: byter man månad mitt i vinner den sist startade
+                  hämtningen och målar föregående månads rader under den nya rubriken — varpå nästa
+                  "Attestera" postar fel månad på siffror som hör till en annan. */}
+              <Input
+                type="month"
+                value={period}
+                disabled={bulkBusy}
+                onChange={(e) => setPeriod(e.target.value || currentPeriod())}
+              />
             </span>
           </label>
 
@@ -480,9 +493,15 @@ export default function AdminTimeApprovals() {
           periodStart={periodStartOf(period)}
           onClose={() => setReopening(null)}
           onSubmit={async (note) => {
-            const row = reopening;
+            // Modalen stängs FÖRST när anropet lyckats. Stängdes den före anropet försvann den
+            // skrivna anledningen vid ett 409 eller ett nätverksfel — och det är hela beskedet till
+            // den anställde om vad som ska rättas, alltså det dyraste i rutan att tappa.
+            const failure = await postStatus(reopening.user_id, 'open', note);
+            if (failure) return failure;
+            setNotice(`${periodLabel(periodStartOf(period))} öppnad igen för ${reopening.full_name || 'personen'}.`);
             setReopening(null);
-            await setStatus(row, 'open', note);
+            await load();
+            return null;
           }}
         />
       ) : null}
@@ -628,10 +647,12 @@ function ReopenModal({
   row: TimeApprovalOverviewRow;
   periodStart: string;
   onClose: () => void;
-  onSubmit: (note?: string) => Promise<void>;
+  /** Felmeddelandet, eller null när det gick bra. Vid fel stannar modalen kvar med texten i behåll. */
+  onSubmit: (note?: string) => Promise<string | null>;
 }) {
   const [note, setNote] = React.useState(row.note || '');
   const [busy, setBusy] = React.useState(false);
+  const [failure, setFailure] = React.useState<string | null>(null);
 
   return (
     <CrmModal
@@ -657,7 +678,13 @@ function ReopenModal({
           </button>
           <button
             type="button"
-            onClick={async () => { setBusy(true); await onSubmit(note.trim() || undefined); }}
+            onClick={async () => {
+              setBusy(true);
+              setFailure(null);
+              const result = await onSubmit(note.trim() || undefined);
+              // Lyckades det avmonterar föräldern oss — då finns ingen state kvar att skriva till.
+              if (result) { setFailure(result); setBusy(false); }
+            }}
             disabled={busy}
             className="!py-2.5 flex-1 rounded-xl text-sm font-semibold text-white shadow-sm transition hover:brightness-95 disabled:opacity-60 sm:ml-auto sm:flex-none sm:!px-5"
             style={{ backgroundColor: 'var(--crm-primary)' }}
@@ -667,6 +694,10 @@ function ReopenModal({
         </>
       }
     >
+      {failure ? (
+        <div className="mb-3 rounded-xl border border-solid border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{failure}</div>
+      ) : null}
+
       <label className="grid gap-1">
         <span className={LABEL}>Anledning (valfri)</span>
         <textarea
