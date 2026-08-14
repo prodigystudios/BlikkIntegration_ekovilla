@@ -66,14 +66,21 @@ export const createTimeEntrySchema = z.object({
   note: optionalText.optional().default(null),
 });
 
-// Adminrättelse: BARA klockslagen, rasten, frånvarotimmarna och anteckningen. Allt utelämnat ärvs
-// från raden som redan finns (se mergeCorrection i lib/domains/time/entries.ts).
+// Adminrättelse. Allt är valfritt — det som utelämnas ärvs från raden som redan finns
+// (mergeCorrection i lib/domains/time/entries.ts).
 //
-// ⚠️ Varken `kind`, `work_date` eller måltavlan finns här, och det är avsiktligt. En rättelse ska
-// kunna laga ett felskrivet klockslag — inte flytta någons timmar till ett annat jobb eller göra om
-// arbetstid till frånvaro. Det är skillnaden mellan att rätta ett fel och att skriva om ett
-// löneunderlag, och den skillnaden ska synas i schemat.
+// ⚠️ `user_id` finns INTE med, och ska aldrig göra det. Att rätta ett fel är en sak; att flytta
+// någons timmar till en annan persons löneunderlag är en annan. Routen läser ägaren ur databasen.
+//
+// Allt annat går att rätta, inklusive vilket jobb raden hör till: att ha rapporterat på fel
+// arbetsorder är precis den sortens misstag rättelsen finns för.
 export const correctTimeEntrySchema = z.object({
+  kind: z.enum(['work_order', 'internal', 'absence']).optional(),
+  work_date: isoDateSchema.optional(),
+  work_order_id: z.string().uuid().nullable().optional(),
+  internal_project_id: z.string().uuid().nullable().optional(),
+  absence_type_id: z.string().uuid().nullable().optional(),
+  time_code_id: z.string().uuid().nullable().optional(),
   start_time: clockSchema.nullable().optional(),
   end_time: clockSchema.nullable().optional(),
   break_minutes: z.coerce.number().int().min(0).max(1439).optional(),

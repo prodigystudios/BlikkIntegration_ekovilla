@@ -257,8 +257,26 @@ export async function getTimeEntryForCorrection(supabase: SupabaseClient, id: st
     .maybeSingle();
 }
 
-/** Fälten en admin får rätta. Allt annat ärvs från raden. */
+/**
+ * Fälten en admin får rätta. Allt som utelämnas ärvs från raden.
+ *
+ * ⚠️ `user_id` finns INTE här, och kommer aldrig att göra det. Att rätta ett fel är en sak; att
+ * flytta någons timmar till en annan persons löneunderlag är en annan, och den ska inte gå att
+ * göra av misstag eller med en handskriven request.
+ *
+ * Allt annat ÄR rättbart — inklusive `kind`, datum och vilket jobb raden hör till. Det var
+ * ursprungligen låst av mig, men William 2026-08-14: "kan ju varit så att dom råkat rapportera på
+ * fel projekt eller liknande". Att rapportera på fel arbetsorder är precis den sortens misstag
+ * rättelsen finns för, och en rättelse som inte kan laga det hade skickat folk till att radera och
+ * skriva om raden i stället — vilket ger sämre spår, inte bättre.
+ */
 export type TimeEntryCorrection = {
+  kind?: TimeEntryKind;
+  work_date?: string;
+  work_order_id?: string | null;
+  internal_project_id?: string | null;
+  absence_type_id?: string | null;
+  time_code_id?: string | null;
   start_time?: string | null;
   end_time?: string | null;
   break_minutes?: number;
@@ -267,7 +285,13 @@ export type TimeEntryCorrection = {
   note?: string | null;
 };
 
-/** Befintlig rad + rättelse → indata till buildTimeEntryRow. Ren, så sammanslagningen går att testa. */
+/**
+ * Befintlig rad + rättelse → indata till buildTimeEntryRow. Ren, så sammanslagningen går att testa.
+ *
+ * Byts `kind` nollställer buildTimeEntryRow de mål som inte hör till den nya sorten, och kräver att
+ * det nya målet finns — en halvfärdig ändring blir alltså ett läsbart fel i stället för en rad som
+ * påstår sig vara arbetsordertid utan arbetsorder.
+ */
 export function mergeCorrection(
   existing: {
     kind: TimeEntryKind;
@@ -286,13 +310,12 @@ export function mergeCorrection(
 ): TimeEntryInput {
   const pick = <T,>(next: T | undefined, current: T): T => (next === undefined ? current : next);
   return {
-    // Aldrig från anropet: diskriminatorn, datumet och måltavlan hör till raden.
-    kind: existing.kind,
-    work_date: existing.work_date,
-    work_order_id: existing.work_order_id,
-    internal_project_id: existing.internal_project_id,
-    absence_type_id: existing.absence_type_id,
-    time_code_id: existing.time_code_id,
+    kind: pick(patch.kind, existing.kind),
+    work_date: pick(patch.work_date, existing.work_date),
+    work_order_id: pick(patch.work_order_id, existing.work_order_id),
+    internal_project_id: pick(patch.internal_project_id, existing.internal_project_id),
+    absence_type_id: pick(patch.absence_type_id, existing.absence_type_id),
+    time_code_id: pick(patch.time_code_id, existing.time_code_id),
     start_time: pick(patch.start_time, existing.start_time),
     end_time: pick(patch.end_time, existing.end_time),
     break_minutes: pick(patch.break_minutes, existing.break_minutes ?? 0),

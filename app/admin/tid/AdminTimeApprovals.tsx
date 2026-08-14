@@ -1,6 +1,7 @@
 "use client";
 import React from 'react';
 import CrmModal from '@/app/crm/components/CrmModal';
+import AdminTimeCorrectionModal, { type CorrectionReference } from './AdminTimeCorrectionModal';
 import Input from '../../../components/ui/Input';
 import { cn } from '../../../lib/shared/cn';
 import { minutesToHours } from '../../../lib/domains/time/hours';
@@ -137,6 +138,20 @@ export default function AdminTimeApprovals() {
   const [confirmBulk, setConfirmBulk] = React.useState(false);
   const [bulkBusy, setBulkBusy] = React.useState(false);
   const [reopening, setReopening] = React.useState<TimeApprovalOverviewRow | null>(null);
+  const [correcting, setCorrecting] = React.useState<PersonPeriodSummary['rows'][number] | null>(null);
+  // Referenslistorna behövs bara när en rättelse öppnas, men hämtas en gång: de ändras sällan och
+  // ett anrop per modalöppning hade gjort knappen trög utan att ge något.
+  const [reference, setReference] = React.useState<CorrectionReference>({ time_code: [], internal_project: [], absence_type: [] });
+
+  React.useEffect(() => {
+    let active = true;
+    (async () => {
+      const res = await fetch('/api/time/reference', { cache: 'no-store', credentials: 'same-origin' });
+      const body = await res.json().catch(() => null);
+      if (active && res.ok && body?.ok) setReference(body.data);
+    })();
+    return () => { active = false; };
+  }, []);
 
   // En person i taget öppen. Fler samtidiga hade betytt fler tillstånd att hålla i takt med
   // perioden, och dagvyn läses en person åt gången ändå.
@@ -218,7 +233,7 @@ export default function AdminTimeApprovals() {
    *
    * Både dagvyn och personens summor ändras av en rättelse, så båda laddas om.
    */
-  const correctEntry = React.useCallback(async (entryId: string, patch: Record<string, unknown> | null) => {
+  const correctEntry = React.useCallback(async (entryId: string, patch: Record<string, unknown> | null): Promise<string | null> => {
     setError(null);
     setNotice(null);
     try {
@@ -228,14 +243,15 @@ export default function AdminTimeApprovals() {
         ...(patch ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) } : {}),
       });
       const body = await res.json().catch(() => null);
-      if (!res.ok || !body?.ok) { setError(body?.error || `Fel (${res.status})`); return false; }
+      // Felet RETURNERAS i stället för att bara skrivas i sidans felruta: rättelsen sker i en modal,
+      // och ett meddelande bakom den är ett meddelande ingen ser.
+      if (!res.ok || !body?.ok) return body?.error || `Fel (${res.status})`;
       setNotice(patch ? 'Tidraden rättad.' : 'Tidraden borttagen.');
       if (expandedId) await loadDetail(expandedId);
       await load();
-      return true;
+      return null;
     } catch {
-      setError('Kunde inte spara ändringen — kontrollera uppkopplingen');
-      return false;
+      return 'Kunde inte spara ändringen — kontrollera uppkopplingen';
     }
   }, [expandedId, loadDetail, load]);
 
@@ -522,11 +538,30 @@ export default function AdminTimeApprovals() {
               onToggle={() => toggleDetail(row.user_id)}
               onApprove={() => void setStatus(row, 'approved')}
               onReopen={() => setReopening(row)}
-              onCorrect={correctEntry}
+              onEdit={setCorrecting}
+              onDelete={async (entryId) => {
+                const failure = await correctEntry(entryId, null);
+                if (failure) setError(failure);
+                return !failure;
+              }}
             />
           ))}
         </ul>
       )}
+
+      {correcting ? (
+        <AdminTimeCorrectionModal
+          day={correcting}
+          reference={reference}
+          onClose={() => setCorrecting(null)}
+          onSave={async (patch) => {
+            const failure = await correctEntry(correcting.entryId!, patch);
+            if (failure) return failure;
+            setCorrecting(null);
+            return null;
+          }}
+        />
+      ) : null}
 
       {reopening ? (
         <ReopenModal
@@ -558,7 +593,7 @@ export default function AdminTimeApprovals() {
  * en månad med mycket frånvaro har kort arbetsstapel av ett skäl man ska kunna se, inte gissa.
  */
 function PersonRow({
-  row, scaleMinutes, expanded, detail, busy, onToggle, onApprove, onReopen, onCorrect,
+  row, scaleMinutes, expanded, detail, busy, onToggle, onApprove, onReopen, onEdit, onDelete,
 }: {
   row: TimeApprovalOverviewRow;
   scaleMinutes: number;
@@ -568,7 +603,8 @@ function PersonRow({
   onToggle: () => void;
   onApprove: () => void;
   onReopen: () => void;
-  onCorrect: (entryId: string, patch: Record<string, unknown> | null) => Promise<boolean>;
+  onEdit: (day: PersonPeriodSummary['rows'][number]) => void;
+  onDelete: (entryId: string) => Promise<boolean>;
 }) {
   const locked = isPeriodLocked(row.status);
   const workPercent = Math.round((row.work_minutes / scaleMinutes) * 100);
@@ -672,7 +708,7 @@ function PersonRow({
         <div className="border-x-0 border-b-0 border-t border-solid border-[#e4ebe0] bg-[#f9fbf7] px-4 py-3">
           {/* Rättelse bara i en öppen period. Är månaden inlämnad eller attesterad avvisar databasen
               ändringen ändå — knappen döljs för att slippa be någon trycka på något som inte går. */}
-          <PersonDays detail={detail} name={row.full_name} canCorrect={!locked} onCorrect={onCorrect} />
+          <PersonDays detail={detail} name={row.full_name} canCorrect={!locked} onEdit={onEdit} onDelete={onDelete} />
         </div>
       ) : null}
     </li>
@@ -778,12 +814,13 @@ function ReopenModal({
  * en detalj, "saknas" är en uppgift.
  */
 function PersonDays({
-  detail, name, canCorrect, onCorrect,
+  detail, name, canCorrect, onEdit, onDelete,
 }: {
   detail: PersonDetail | null;
   name: string | null;
   canCorrect: boolean;
-  onCorrect: (entryId: string, patch: Record<string, unknown> | null) => Promise<boolean>;
+  onEdit: (day: PersonPeriodSummary['rows'][number]) => void;
+  onDelete: (entryId: string) => Promise<boolean>;
 }) {
   if (!detail || detail.loading) return <p className="m-0 text-sm text-slate-400">Laddar dagar…</p>;
   if (detail.error) {
@@ -827,7 +864,8 @@ function PersonDays({
                   key={day.entryId || `${day.date}-${index}`}
                   day={day}
                   canCorrect={canCorrect}
-                  onCorrect={onCorrect}
+                  onEdit={onEdit}
+                  onDelete={onDelete}
                 />
               ))}
             </tbody>
@@ -892,13 +930,13 @@ function PersonDays({
  * Frånvaro har inga klockslag — byrån vill ha den i timmar — så den får ett timfält i stället.
  */
 function DayRowCells({
-  day, canCorrect, onCorrect,
+  day, canCorrect, onEdit, onDelete,
 }: {
   day: PersonPeriodSummary['rows'][number];
   canCorrect: boolean;
-  onCorrect: (entryId: string, patch: Record<string, unknown> | null) => Promise<boolean>;
+  onEdit: (day: PersonPeriodSummary['rows'][number]) => void;
+  onDelete: (entryId: string) => Promise<boolean>;
 }) {
-  const [editing, setEditing] = React.useState(false);
   const [confirmDelete, setConfirmDelete] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
 
@@ -906,77 +944,10 @@ function DayRowCells({
   const end = formatClock(day.endTime);
   const isAbsence = day.absenceMinutes > 0;
 
-  const [draftStart, setDraftStart] = React.useState(start || '');
-  const [draftEnd, setDraftEnd] = React.useState(end || '');
-  const [draftBreak, setDraftBreak] = React.useState(String(day.breakMinutes));
-  const [draftHours, setDraftHours] = React.useState(String(minutesToHours(day.absenceMinutes)));
 
   // Rättelse kräver att raden går att peka ut. Saknas id:t är den läsbar men inte ändringsbar —
   // hellre ingen knapp än en som svarar 404.
   const editable = canCorrect && !!day.entryId;
-
-  async function save() {
-    if (!day.entryId) return;
-    setBusy(true);
-    const patch = isAbsence
-      ? { hours: Number(draftHours.replace(',', '.')) }
-      : { start_time: draftStart, end_time: draftEnd, break_minutes: Number(draftBreak) || 0 };
-    const okDone = await onCorrect(day.entryId, patch);
-    setBusy(false);
-    if (okDone) setEditing(false);
-  }
-
-  if (editing) {
-    return (
-      <tr className="border-x-0 border-b-0 border-t border-solid border-slate-200 align-top">
-        <td className="whitespace-nowrap px-2 py-1.5 text-slate-700">{formatDay(day.date)}</td>
-        <td className="px-2 py-1.5" colSpan={5}>
-          <div className="flex flex-wrap items-end gap-2">
-            {isAbsence ? (
-              <label className="grid gap-1">
-                <span className={LABEL}>Frånvarotimmar</span>
-                <span className="inline-block w-24">
-                  <Input inputMode="decimal" value={draftHours} onChange={(e) => setDraftHours(e.target.value)} />
-                </span>
-              </label>
-            ) : (
-              <>
-                <label className="grid gap-1">
-                  <span className={LABEL}>Start</span>
-                  <span className="inline-block w-28"><Input type="time" value={draftStart} onChange={(e) => setDraftStart(e.target.value)} /></span>
-                </label>
-                <label className="grid gap-1">
-                  <span className={LABEL}>Slut</span>
-                  <span className="inline-block w-28"><Input type="time" value={draftEnd} onChange={(e) => setDraftEnd(e.target.value)} /></span>
-                </label>
-                <label className="grid gap-1">
-                  <span className={LABEL}>Rast (min)</span>
-                  <span className="inline-block w-20"><Input inputMode="numeric" value={draftBreak} onChange={(e) => setDraftBreak(e.target.value)} /></span>
-                </label>
-              </>
-            )}
-          </div>
-        </td>
-        <td className="whitespace-nowrap px-2 py-1.5 text-right">
-          <button
-            type="button"
-            onClick={() => void save()}
-            disabled={busy}
-            className="!px-3 !py-1.5 rounded-lg border border-solid border-emerald-300 bg-emerald-50 text-sm font-semibold text-emerald-800 disabled:opacity-60"
-          >
-            {busy ? 'Sparar…' : 'Spara'}
-          </button>
-          <button
-            type="button"
-            onClick={() => setEditing(false)}
-            className="!px-2 !py-1.5 ml-1 rounded-lg text-sm font-semibold text-slate-500"
-          >
-            Avbryt
-          </button>
-        </td>
-      </tr>
-    );
-  }
 
   return (
     <tr className="border-x-0 border-b-0 border-t border-solid border-slate-200 align-top">
@@ -1007,7 +978,7 @@ function DayRowCells({
               <span className="text-slate-500">Ta bort?</span>
               <button
                 type="button"
-                onClick={async () => { setBusy(true); await onCorrect(day.entryId!, null); setBusy(false); setConfirmDelete(false); }}
+                onClick={async () => { setBusy(true); await onDelete(day.entryId!); setBusy(false); setConfirmDelete(false); }}
                 disabled={busy}
                 className="!p-0 font-semibold text-rose-600 disabled:opacity-50"
               >
@@ -1019,16 +990,7 @@ function DayRowCells({
             <span className="flex items-center justify-end gap-3 text-sm">
               <button
                 type="button"
-                onClick={() => {
-                  // ⚠️ RASTEN MÅSTE SÅS OM. Utan den raden ligger formulärets nolla kvar och
-                  // rättelsen skickar break_minutes: 0 — servern räknar då om passet UTAN
-                  // rastavdrag och lägger till minuter på någons lön.
-                  setDraftStart(start || '');
-                  setDraftEnd(end || '');
-                  setDraftBreak(String(day.breakMinutes));
-                  setDraftHours(String(minutesToHours(day.absenceMinutes)));
-                  setEditing(true);
-                }}
+                onClick={() => onEdit(day)}
                 className="!p-0 font-medium text-slate-600 underline underline-offset-2"
               >
                 Rätta

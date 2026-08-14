@@ -266,15 +266,28 @@ describe('mergeCorrection', () => {
     expect(merged.note).toBe('Vindsbjälklag');
   });
 
-  // Det farligaste en rättelse kan göra är att tyst byta vems eller vilket jobb timmarna hör till.
-  it('behåller kind, datum och måltavla oavsett vad som skickas in', () => {
-    const merged = mergeCorrection(current, {
-      ...({ kind: 'absence', work_date: '2026-01-01', work_order_id: 'wo-2' } as any),
-      start_time: '08:00',
-    });
-    expect(merged.kind).toBe('work_order');
-    expect(merged.work_date).toBe('2026-08-14');
+  // Att ha rapporterat på fel arbetsorder är precis den sortens misstag rättelsen finns för
+  // (William 2026-08-14), så målet SKA gå att flytta.
+  it('flyttar raden till ett annat jobb när det efterfrågas', () => {
+    const merged = mergeCorrection(current, { work_order_id: 'wo-2' });
+    expect(merged.work_order_id).toBe('wo-2');
+    expect(merged.start_time).toBe('07:00:00');
+  });
+
+  it('byter sort och tar det nya målet med sig', () => {
+    const merged = mergeCorrection(current, { kind: 'internal', internal_project_id: 'ip-1' });
+    expect(merged.kind).toBe('internal');
+    expect(merged.internal_project_id).toBe('ip-1');
+    // buildTimeEntryRow nollar målen som inte hör till den nya sorten — mergeCorrection bär bara
+    // vidare, den städar inte.
     expect(merged.work_order_id).toBe('wo-1');
+  });
+
+  // Det enda som ALDRIG går att flytta. `user_id` finns inte ens i typen, så en rättelse kan inte
+  // hamna i någon annans löneunderlag — och routen läser ägaren ur databasen, aldrig ur anropet.
+  it('har ingen väg att byta ägare', () => {
+    const merged = mergeCorrection(current, { ...({ user_id: 'någon-annan' } as any) });
+    expect(merged).not.toHaveProperty('user_id');
   });
 
   it('skiljer utelämnat från null — en tömd anteckning ska gå att spara', () => {
