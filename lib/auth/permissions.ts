@@ -43,6 +43,10 @@ export const PERMISSION_KEYS = [
   // Note these are NOT crm.* keys: time is company-wide (every employee reports), not a CRM surface.
   'time.entry.write', 'time.entry.read.all',
   'time.approve', 'time.payroll.read', 'time.reference.manage',
+  // Rätta ANDRAS tidrader i en öppen period. Egen nyckel och inte `time.approve`: att attestera är
+  // att godkänna det någon annan skrivit, att rätta är att skriva i deras ställe. Varje ändring
+  // loggas av en databastrigger (20260814_time_admin_corrections.sql).
+  'time.entry.write.all',
   // Coarse meta keys backing the legacy requireCrmUser/Writer/Admin guards 1:1
   'crm.access', 'crm.write', 'crm.admin',
 ] as const;

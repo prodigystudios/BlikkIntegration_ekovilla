@@ -209,6 +209,36 @@ export default function AdminTimeApprovals() {
     }
   }, [period]);
 
+  /**
+   * Rätta eller ta bort någon annans tidrad.
+   *
+   * Går bara i en ÖPPEN period — låstriggern prövar radens ägare, så en attesterad månad avvisas av
+   * databasen även om knappen skulle råka visas. Varje ändring loggas av en databastrigger, inte
+   * härifrån: en väg som glömmer logga ska inte kunna finnas.
+   *
+   * Både dagvyn och personens summor ändras av en rättelse, så båda laddas om.
+   */
+  const correctEntry = React.useCallback(async (entryId: string, patch: Record<string, unknown> | null) => {
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await fetch(`/api/admin/time/entries/${entryId}`, {
+        method: patch ? 'PATCH' : 'DELETE',
+        credentials: 'same-origin',
+        ...(patch ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) } : {}),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok || !body?.ok) { setError(body?.error || `Fel (${res.status})`); return false; }
+      setNotice(patch ? 'Tidraden rättad.' : 'Tidraden borttagen.');
+      if (expandedId) await loadDetail(expandedId);
+      await load();
+      return true;
+    } catch {
+      setError('Kunde inte spara ändringen — kontrollera uppkopplingen');
+      return false;
+    }
+  }, [expandedId, loadDetail, load]);
+
   function toggleDetail(userId: string) {
     if (expandedId === userId) {
       detailSeq.current++;
@@ -492,6 +522,7 @@ export default function AdminTimeApprovals() {
               onToggle={() => toggleDetail(row.user_id)}
               onApprove={() => void setStatus(row, 'approved')}
               onReopen={() => setReopening(row)}
+              onCorrect={correctEntry}
             />
           ))}
         </ul>
@@ -527,7 +558,7 @@ export default function AdminTimeApprovals() {
  * en månad med mycket frånvaro har kort arbetsstapel av ett skäl man ska kunna se, inte gissa.
  */
 function PersonRow({
-  row, scaleMinutes, expanded, detail, busy, onToggle, onApprove, onReopen,
+  row, scaleMinutes, expanded, detail, busy, onToggle, onApprove, onReopen, onCorrect,
 }: {
   row: TimeApprovalOverviewRow;
   scaleMinutes: number;
@@ -537,6 +568,7 @@ function PersonRow({
   onToggle: () => void;
   onApprove: () => void;
   onReopen: () => void;
+  onCorrect: (entryId: string, patch: Record<string, unknown> | null) => Promise<boolean>;
 }) {
   const locked = isPeriodLocked(row.status);
   const workPercent = Math.round((row.work_minutes / scaleMinutes) * 100);
@@ -638,7 +670,9 @@ function PersonRow({
 
       {expanded ? (
         <div className="border-x-0 border-b-0 border-t border-solid border-[#e4ebe0] bg-[#f9fbf7] px-4 py-3">
-          <PersonDays detail={detail} name={row.full_name} />
+          {/* Rättelse bara i en öppen period. Är månaden inlämnad eller attesterad avvisar databasen
+              ändringen ändå — knappen döljs för att slippa be någon trycka på något som inte går. */}
+          <PersonDays detail={detail} name={row.full_name} canCorrect={!locked} onCorrect={onCorrect} />
         </div>
       ) : null}
     </li>
@@ -743,7 +777,14 @@ function ReopenModal({
  * Rader utan klockslag flaggas i stället för att visa ett tankstreck: en tom ruta hade sett ut som
  * en detalj, "saknas" är en uppgift.
  */
-function PersonDays({ detail, name }: { detail: PersonDetail | null; name: string | null }) {
+function PersonDays({
+  detail, name, canCorrect, onCorrect,
+}: {
+  detail: PersonDetail | null;
+  name: string | null;
+  canCorrect: boolean;
+  onCorrect: (entryId: string, patch: Record<string, unknown> | null) => Promise<boolean>;
+}) {
   if (!detail || detail.loading) return <p className="m-0 text-sm text-slate-400">Laddar dagar…</p>;
   if (detail.error) {
     return (
@@ -777,38 +818,18 @@ function PersonDays({ detail, name }: { detail: PersonDetail | null; name: strin
                 <th className="px-2 py-1.5 text-right">Frånvaro</th>
                 <th className="px-2 py-1.5">Orsak / jobb</th>
                 <th className="px-2 py-1.5">Anteckning</th>
+                {canCorrect ? <th className="px-2 py-1.5" /> : null}
               </tr>
             </thead>
             <tbody>
-              {summary.rows.map((day, index) => {
-                const start = formatClock(day.startTime);
-                const end = formatClock(day.endTime);
-                const isAbsence = day.absenceMinutes > 0;
-                return (
-                  <tr key={`${day.date}-${index}`} className="border-x-0 border-b-0 border-t border-solid border-slate-200 align-top">
-                    <td className="whitespace-nowrap px-2 py-1.5 text-slate-700">{formatDay(day.date)}</td>
-                    <td className="whitespace-nowrap px-2 py-1.5 tabular-nums text-slate-700">
-                      {start && end ? (
-                        `${start}–${end}`
-                      ) : isAbsence ? (
-                        <span className="text-slate-400">—</span>
-                      ) : (
-                        <span className="font-semibold text-amber-700">saknas</span>
-                      )}
-                    </td>
-                    <td className="whitespace-nowrap px-2 py-1.5 text-right tabular-nums text-slate-900">
-                      {day.workMinutes > 0 ? `${formatHours(day.workMinutes)} h` : '—'}
-                    </td>
-                    <td className="whitespace-nowrap px-2 py-1.5 text-right tabular-nums text-slate-600">
-                      {day.absenceMinutes > 0 ? `${formatHours(day.absenceMinutes)} h` : '—'}
-                    </td>
-                    <td className="px-2 py-1.5 text-slate-600">
-                      {day.absenceReasons.length > 0 ? day.absenceReasons.join(', ') : day.label || '—'}
-                    </td>
-                    <td className="px-2 py-1.5 text-slate-500">{day.note || ''}</td>
-                  </tr>
-                );
-              })}
+              {summary.rows.map((day, index) => (
+                <DayRowCells
+                  key={day.entryId || `${day.date}-${index}`}
+                  day={day}
+                  canCorrect={canCorrect}
+                  onCorrect={onCorrect}
+                />
+              ))}
             </tbody>
             <tfoot>
               <tr className="border-x-0 border-b-0 border-t-2 border-solid border-slate-300 font-semibold text-slate-900">
@@ -817,7 +838,7 @@ function PersonDays({ detail, name }: { detail: PersonDetail | null; name: strin
                 <td className="whitespace-nowrap px-2 py-2 text-right tabular-nums">
                   {summary.absenceMinutes > 0 ? `${formatHours(summary.absenceMinutes)} h` : '—'}
                 </td>
-                <td colSpan={2} />
+                <td colSpan={canCorrect ? 3 : 2} />
               </tr>
             </tfoot>
           </table>
@@ -857,5 +878,164 @@ function PersonDays({ detail, name }: { detail: PersonDetail | null; name: strin
         </div>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * En dag i underlaget — och, i en öppen period, raden man rättar.
+ *
+ * Rättelsen ändrar BARA klockslag, rast och frånvarotimmar. Vilket jobb raden hör till, vilken dag
+ * den ligger på och om den är arbete eller frånvaro kommer alltid från raden själv (mergeCorrection
+ * i lib/domains/time/entries.ts). Skillnaden är avsiktlig: att laga ett felskrivet klockslag är en
+ * sak, att skriva om någons löneunderlag en annan.
+ *
+ * Frånvaro har inga klockslag — byrån vill ha den i timmar — så den får ett timfält i stället.
+ */
+function DayRowCells({
+  day, canCorrect, onCorrect,
+}: {
+  day: PersonPeriodSummary['rows'][number];
+  canCorrect: boolean;
+  onCorrect: (entryId: string, patch: Record<string, unknown> | null) => Promise<boolean>;
+}) {
+  const [editing, setEditing] = React.useState(false);
+  const [confirmDelete, setConfirmDelete] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
+
+  const start = formatClock(day.startTime);
+  const end = formatClock(day.endTime);
+  const isAbsence = day.absenceMinutes > 0;
+
+  const [draftStart, setDraftStart] = React.useState(start || '');
+  const [draftEnd, setDraftEnd] = React.useState(end || '');
+  const [draftBreak, setDraftBreak] = React.useState('0');
+  const [draftHours, setDraftHours] = React.useState(String(minutesToHours(day.absenceMinutes)));
+
+  // Rättelse kräver att raden går att peka ut. Saknas id:t är den läsbar men inte ändringsbar —
+  // hellre ingen knapp än en som svarar 404.
+  const editable = canCorrect && !!day.entryId;
+
+  async function save() {
+    if (!day.entryId) return;
+    setBusy(true);
+    const patch = isAbsence
+      ? { hours: Number(draftHours.replace(',', '.')) }
+      : { start_time: draftStart, end_time: draftEnd, break_minutes: Number(draftBreak) || 0 };
+    const okDone = await onCorrect(day.entryId, patch);
+    setBusy(false);
+    if (okDone) setEditing(false);
+  }
+
+  if (editing) {
+    return (
+      <tr className="border-x-0 border-b-0 border-t border-solid border-slate-200 align-top">
+        <td className="whitespace-nowrap px-2 py-1.5 text-slate-700">{formatDay(day.date)}</td>
+        <td className="px-2 py-1.5" colSpan={4}>
+          <div className="flex flex-wrap items-end gap-2">
+            {isAbsence ? (
+              <label className="grid gap-1">
+                <span className={LABEL}>Frånvarotimmar</span>
+                <span className="inline-block w-24">
+                  <Input inputMode="decimal" value={draftHours} onChange={(e) => setDraftHours(e.target.value)} />
+                </span>
+              </label>
+            ) : (
+              <>
+                <label className="grid gap-1">
+                  <span className={LABEL}>Start</span>
+                  <span className="inline-block w-28"><Input type="time" value={draftStart} onChange={(e) => setDraftStart(e.target.value)} /></span>
+                </label>
+                <label className="grid gap-1">
+                  <span className={LABEL}>Slut</span>
+                  <span className="inline-block w-28"><Input type="time" value={draftEnd} onChange={(e) => setDraftEnd(e.target.value)} /></span>
+                </label>
+                <label className="grid gap-1">
+                  <span className={LABEL}>Rast (min)</span>
+                  <span className="inline-block w-20"><Input inputMode="numeric" value={draftBreak} onChange={(e) => setDraftBreak(e.target.value)} /></span>
+                </label>
+              </>
+            )}
+          </div>
+        </td>
+        <td className="whitespace-nowrap px-2 py-1.5 text-right">
+          <button
+            type="button"
+            onClick={() => void save()}
+            disabled={busy}
+            className="!px-3 !py-1.5 rounded-lg border border-solid border-emerald-300 bg-emerald-50 text-sm font-semibold text-emerald-800 disabled:opacity-60"
+          >
+            {busy ? 'Sparar…' : 'Spara'}
+          </button>
+          <button
+            type="button"
+            onClick={() => setEditing(false)}
+            className="!px-2 !py-1.5 ml-1 rounded-lg text-sm font-semibold text-slate-500"
+          >
+            Avbryt
+          </button>
+        </td>
+      </tr>
+    );
+  }
+
+  return (
+    <tr className="border-x-0 border-b-0 border-t border-solid border-slate-200 align-top">
+      <td className="whitespace-nowrap px-2 py-1.5 text-slate-700">{formatDay(day.date)}</td>
+      <td className="whitespace-nowrap px-2 py-1.5 tabular-nums text-slate-700">
+        {start && end ? (
+          `${start}–${end}`
+        ) : isAbsence ? (
+          <span className="text-slate-400">—</span>
+        ) : (
+          <span className="font-semibold text-amber-700">saknas</span>
+        )}
+      </td>
+      <td className="whitespace-nowrap px-2 py-1.5 text-right tabular-nums text-slate-900">
+        {day.workMinutes > 0 ? `${formatHours(day.workMinutes)} h` : '—'}
+      </td>
+      <td className="whitespace-nowrap px-2 py-1.5 text-right tabular-nums text-slate-600">
+        {day.absenceMinutes > 0 ? `${formatHours(day.absenceMinutes)} h` : '—'}
+      </td>
+      <td className="px-2 py-1.5 text-slate-600">
+        {day.absenceReasons.length > 0 ? day.absenceReasons.join(', ') : day.label || '—'}
+      </td>
+      <td className="px-2 py-1.5 text-slate-500">{day.note || ''}</td>
+      {canCorrect ? (
+        <td className="whitespace-nowrap px-2 py-1.5 text-right">
+          {!editable ? null : confirmDelete ? (
+            <span className="flex items-center justify-end gap-2 text-sm">
+              <span className="text-slate-500">Ta bort?</span>
+              <button
+                type="button"
+                onClick={async () => { setBusy(true); await onCorrect(day.entryId!, null); setBusy(false); setConfirmDelete(false); }}
+                disabled={busy}
+                className="!p-0 font-semibold text-rose-600 disabled:opacity-50"
+              >
+                Ja
+              </button>
+              <button type="button" onClick={() => setConfirmDelete(false)} className="!p-0 text-slate-400">Nej</button>
+            </span>
+          ) : (
+            <span className="flex items-center justify-end gap-3 text-sm">
+              <button
+                type="button"
+                onClick={() => {
+                  setDraftStart(start || '');
+                  setDraftEnd(end || '');
+                  setDraftHours(String(minutesToHours(day.absenceMinutes)));
+                  setEditing(true);
+                }}
+                className="!p-0 font-medium text-slate-600 underline underline-offset-2"
+              >
+                Rätta
+              </button>
+              <button type="button" onClick={() => setConfirmDelete(true)} className="!p-0 font-medium text-slate-400 hover:text-rose-600">
+                Ta bort
+              </button>
+            </span>
+          )}
+        </td>
+      ) : null}
+    </tr>
   );
 }

@@ -15,6 +15,8 @@ export type TimeEntryKind = 'work_order' | 'internal' | 'absence';
 export type SummarizableEntry = ShiftInput & {
   kind: TimeEntryKind;
   userId: string;
+  /** Tidradens id. Underlaget är en LÄSVY, men attesten måste kunna peka ut raden som ska rättas. */
+  id?: string;
   /** Frånvaroorsakens namn (crm_absence_types.name) — hamnar i underlagets frånvarokolumn. */
   absenceReason?: string | null;
   /** Byråns lönesort, från referensraden. */
@@ -42,6 +44,8 @@ export type DayRow = {
   note: string | null;
   /** Arbetsordern eller internprojektet raden hör till. Null på frånvaro. */
   label: string | null;
+  /** Tidraden bakom dagraden, när den är känd — annars går raden inte att rätta. */
+  entryId: string | null;
 };
 
 // En rad per tidrad, inte per dag: byrån vill se klockslagen, och två pass samma dag har två par.
@@ -61,6 +65,7 @@ export function buildDayRows(entries: SummarizableEntry[]): DayRow[] {
         absenceReasons: isAbsence && entry.absenceReason ? [entry.absenceReason] : [],
         note: entry.note ?? null,
         label: isAbsence ? null : entry.label ?? null,
+        entryId: entry.id ?? null,
       };
     });
 }

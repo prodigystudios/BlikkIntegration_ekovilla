@@ -234,3 +234,57 @@ describe('toSummarizableEntry', () => {
     expect(absence.payrollCode).toBe('LÖN300');
   });
 });
+
+// ---------------------------------------------------------------------------
+// mergeCorrection — adminrättelsens gräns
+// ---------------------------------------------------------------------------
+// En rättelse ska kunna laga ett felskrivet klockslag, aldrig flytta någons timmar till ett annat
+// jobb eller göra om arbetstid till frånvaro. Gränsen bor här, inte i UI:t.
+
+import { mergeCorrection } from '@/lib/domains/time/entries';
+
+const current = {
+  kind: 'work_order' as const,
+  work_date: '2026-08-14',
+  work_order_id: 'wo-1',
+  internal_project_id: null,
+  absence_type_id: null,
+  start_time: '07:00:00',
+  end_time: '16:00:00',
+  break_minutes: 30,
+  minutes_worked: 510,
+  time_code_id: 'tc-1',
+  note: 'Vindsbjälklag',
+};
+
+describe('mergeCorrection', () => {
+  it('tar klockslagen ur rättelsen och resten ur raden', () => {
+    const merged = mergeCorrection(current, { start_time: '08:00', end_time: '17:00' });
+    expect(merged.start_time).toBe('08:00');
+    expect(merged.end_time).toBe('17:00');
+    expect(merged.break_minutes).toBe(30);
+    expect(merged.note).toBe('Vindsbjälklag');
+  });
+
+  // Det farligaste en rättelse kan göra är att tyst byta vems eller vilket jobb timmarna hör till.
+  it('behåller kind, datum och måltavla oavsett vad som skickas in', () => {
+    const merged = mergeCorrection(current, {
+      ...({ kind: 'absence', work_date: '2026-01-01', work_order_id: 'wo-2' } as any),
+      start_time: '08:00',
+    });
+    expect(merged.kind).toBe('work_order');
+    expect(merged.work_date).toBe('2026-08-14');
+    expect(merged.work_order_id).toBe('wo-1');
+  });
+
+  it('skiljer utelämnat från null — en tömd anteckning ska gå att spara', () => {
+    expect(mergeCorrection(current, {}).note).toBe('Vindsbjälklag');
+    expect(mergeCorrection(current, { note: null }).note).toBeNull();
+  });
+
+  it('räknar om frånvarons timmar ur minuterna när de inte skickas med', () => {
+    const absence = { ...current, kind: 'absence' as const, work_order_id: null, absence_type_id: 'vab', minutes_worked: 240 };
+    expect(mergeCorrection(absence, {}).hours).toBe(4);
+    expect(mergeCorrection(absence, { hours: 8 }).hours).toBe(8);
+  });
+});

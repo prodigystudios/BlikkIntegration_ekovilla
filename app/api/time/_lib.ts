@@ -66,6 +66,21 @@ export const createTimeEntrySchema = z.object({
   note: optionalText.optional().default(null),
 });
 
+// Adminrättelse: BARA klockslagen, rasten, frånvarotimmarna och anteckningen. Allt utelämnat ärvs
+// från raden som redan finns (se mergeCorrection i lib/domains/time/entries.ts).
+//
+// ⚠️ Varken `kind`, `work_date` eller måltavlan finns här, och det är avsiktligt. En rättelse ska
+// kunna laga ett felskrivet klockslag — inte flytta någons timmar till ett annat jobb eller göra om
+// arbetstid till frånvaro. Det är skillnaden mellan att rätta ett fel och att skriva om ett
+// löneunderlag, och den skillnaden ska synas i schemat.
+export const correctTimeEntrySchema = z.object({
+  start_time: clockSchema.nullable().optional(),
+  end_time: clockSchema.nullable().optional(),
+  break_minutes: z.coerce.number().int().min(0).max(1439).optional(),
+  hours: z.coerce.number().min(0).max(24).nullable().optional(),
+  note: optionalText.optional(),
+});
+
 // ── Attest ───────────────────────────────────────────────────────────────────
 
 // Perioden anges som månad ('2026-08') och aldrig som ett fritt datumintervall: attesten ÄR en
