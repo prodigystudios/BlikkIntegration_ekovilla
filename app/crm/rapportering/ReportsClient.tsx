@@ -6,6 +6,12 @@ import {
 } from 'recharts';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
+import {
+  REPORT_RANGE_LABELS,
+  reportRange,
+  today,
+  type ReportRangeKey,
+} from './reportRanges';
 
 // ── Types (mirror lib/domains/crm/reports.ts) ──
 type SalesOverTimePoint = { period: string; quoteValue: number; orderValue: number; invoicedValue: number };
@@ -35,6 +41,14 @@ function formatMonth(period: string) {
   if (!y || !m) return period;
   return new Intl.DateTimeFormat('sv-SE', { month: 'short', year: '2-digit' }).format(new Date(Date.UTC(y, m - 1, 1)));
 }
+// UTC-pinned: the bare dates are calendar days, and letting the browser's zone touch them
+// would shift the label a day for anyone west of Greenwich.
+function formatRangeLabel(from: string, to: string) {
+  const fmt = new Intl.DateTimeFormat('sv-SE', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+  const start = fmt.format(new Date(`${from}T00:00:00Z`));
+  const end = fmt.format(new Date(`${to}T00:00:00Z`));
+  return start === end ? start : `${start} – ${end}`;
+}
 function percent(part: number, whole: number) {
   if (whole <= 0) return '–';
   return `${Math.round((part / whole) * 100)} %`;
@@ -56,11 +70,11 @@ function downloadCsv(filename: string, header: string[], rows: Array<Array<strin
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-function defaultFrom() {
-  const now = new Date();
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 11, 1)).toISOString().slice(0, 10);
-}
-function today() { return new Date().toISOString().slice(0, 10); }
+// The last-12-months preset is also the landing state, so the page opens on a range the
+// quick filters can recognise and highlight.
+const DEFAULT_RANGE_KEY: ReportRangeKey = 'last12';
+
+function defaultFrom() { return reportRange(DEFAULT_RANGE_KEY).from; }
 
 function ExportButton({ onClick }: { onClick: () => void }) {
   return (
@@ -92,26 +106,61 @@ export default function ReportsClient() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
+  // The highlight tracks what was clicked rather than being derived back from the dates:
+  // presets collide (on a Monday the 1st, this week and this month are the same range),
+  // and no amount of comparing could tell which one the user meant.
+  const [activeRangeKey, setActiveRangeKey] = useState<ReportRangeKey | null>(DEFAULT_RANGE_KEY);
+
+  const applyRange = (key: ReportRangeKey) => {
+    const range = reportRange(key);
+    setActiveRangeKey(key);
+    setFrom(range.from);
+    setTo(range.to);
+  };
+
+  // One click per period makes it easy to outrun the previous request, and a 12-month
+  // report takes far longer than a one-week one. Without the abort, the slower earlier
+  // request resolves last and paints a year's data under a "Denna vecka" chip.
+  const load = useCallback(async (signal: AbortSignal) => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/crm/reports?from=${from}&to=${to}`, { cache: 'no-store' });
+      const res = await fetch(`/api/crm/reports?from=${from}&to=${to}`, { cache: 'no-store', signal });
+      if (signal.aborted) return;
+      // The abort can land mid-body, and this catch would turn that into an empty object
+      // that reads as a failed report — a stale error banner over the successor's data.
       const json = await res.json().catch(() => ({}));
+      if (signal.aborted) return;
       if (!res.ok || !json.ok) { setError(json?.error || 'Kunde inte ladda rapporten.'); setReport(null); return; }
       setReport(json.data as SalesReport);
-    } catch {
+    } catch (e) {
+      if (signal.aborted || (e instanceof DOMException && e.name === 'AbortError')) return;
       setError('Kunde inte ladda rapporten.');
       setReport(null);
     } finally {
-      setLoading(false);
+      // An aborted request has a successor already loading; clearing the flag here would
+      // flash the charts back in between periods.
+      if (!signal.aborted) setLoading(false);
     }
   }, [from, to]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    const controller = new AbortController();
+    void load(controller.signal);
+    return () => controller.abort();
+  }, [load]);
 
+  // A range inside one calendar month collapses to a single monthly bucket. Labelling that
+  // point "aug -26" would present a week's figures as the whole month's — so when there is
+  // only one bucket it is named after the period actually asked for.
+  const singlePoint = (report?.salesOverTime.length ?? 0) === 1;
   const salesChartData = useMemo(
-    () => (report?.salesOverTime || []).map((p) => ({ ...p, label: formatMonth(p.period) })),
+    () => (report?.salesOverTime || []).map((p) => ({
+      ...p,
+      label: report && report.salesOverTime.length === 1
+        ? formatRangeLabel(report.range.from, report.range.to)
+        : formatMonth(p.period),
+    })),
     [report],
   );
   const sellerChartData = useMemo(
@@ -138,20 +187,44 @@ export default function ReportsClient() {
   return (
     <div className="grid grid-cols-1 gap-6">
       {/* Header */}
-      <div className="flex flex-wrap items-end justify-between gap-4">
+      <div className="grid gap-3">
         <div>
           <h1 className={cn('m-0', crm.pageTitle)}>Rapportering</h1>
           <p className={cn('m-0 mt-1', crm.pageSubtitle)}>Försäljning, säljarprestation och konvertering för vald period.</p>
         </div>
-        <div className="flex flex-wrap items-end gap-2">
-          <label className="grid gap-1">
-            <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Från</span>
-            <input type="date" value={from} max={to} onChange={(e) => setFrom(e.target.value)} className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700" />
-          </label>
-          <label className="grid gap-1">
-            <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Till</span>
-            <input type="date" value={to} min={from} max={today()} onChange={(e) => setTo(e.target.value)} className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700" />
-          </label>
+        {/* Quick periods on the left as the everyday control, the manual dates on the
+            right for the odd range that no preset covers. */}
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div className="flex flex-wrap gap-2">
+            {REPORT_RANGE_LABELS.map(([key, label]) => {
+              const active = activeRangeKey === key;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => applyRange(key)}
+                  className={cn(
+                    'rounded-full border px-2.5 py-1 text-[13px] font-semibold transition',
+                    active ? 'text-white' : 'border-[#e0e8dc] bg-[#f9fbf7] text-slate-600 hover:border-[#cfdcc9]',
+                  )}
+                  style={active ? { backgroundColor: 'var(--crm-primary)', borderColor: 'var(--crm-primary)' } : undefined}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="grid gap-1">
+              <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Från</span>
+              <input type="date" value={from} max={to} onChange={(e) => { setActiveRangeKey(null); setFrom(e.target.value); }} className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700" />
+            </label>
+            <label className="grid gap-1">
+              <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Till</span>
+              <input type="date" value={to} min={from} max={today()} onChange={(e) => { setActiveRangeKey(null); setTo(e.target.value); }} className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700" />
+            </label>
+          </div>
         </div>
       </div>
 
@@ -171,11 +244,16 @@ export default function ReportsClient() {
           {/* 1. Försäljning över tid */}
           <SectionCard
             title="Försäljning över tid"
-            subtitle="Offertvärde, ordervärde och fakturerat per månad"
+            subtitle={singlePoint
+              ? 'Offertvärde, ordervärde och fakturerat för hela den valda perioden'
+              : 'Offertvärde, ordervärde och fakturerat per månad'}
             action={<ExportButton onClick={() => downloadCsv(
               `forsaljning-over-tid_${report.range.from}_${report.range.to}.csv`,
-              ['Månad', 'Offertvärde', 'Ordervärde', 'Fakturerat'],
-              report.salesOverTime.map((p) => [p.period, p.quoteValue, p.orderValue, p.invoicedValue]),
+              [singlePoint ? 'Period' : 'Månad', 'Offertvärde', 'Ordervärde', 'Fakturerat'],
+              report.salesOverTime.map((p) => [
+                singlePoint ? `${report.range.from} – ${report.range.to}` : p.period,
+                p.quoteValue, p.orderValue, p.invoicedValue,
+              ]),
             )} />}
           >
             {salesChartData.length === 0 ? <EmptyChart /> : (
@@ -187,9 +265,12 @@ export default function ReportsClient() {
                     <YAxis tickFormatter={formatCompact} tick={{ fontSize: 12, fill: '#64748b' }} width={56} />
                     <Tooltip formatter={(value) => formatCurrency(Number(value))} labelStyle={{ color: '#0f172a' }} />
                     <Legend wrapperStyle={{ fontSize: 12 }} />
-                    <Line type="monotone" dataKey="quoteValue" name="Offertvärde" stroke={COLOR_QUOTE} strokeWidth={2} dot={false} />
-                    <Line type="monotone" dataKey="orderValue" name="Ordervärde" stroke={COLOR_ORDER} strokeWidth={2} dot={false} />
-                    <Line type="monotone" dataKey="invoicedValue" name="Fakturerat" stroke={COLOR_INVOICED} strokeWidth={2} dot={false} />
+                    {/* Buckets are monthly, so a week/month range yields a single point —
+                        and a line through one point draws nothing. Show the dot instead of
+                        an empty canvas. */}
+                    <Line type="monotone" dataKey="quoteValue" name="Offertvärde" stroke={COLOR_QUOTE} strokeWidth={2} dot={singlePoint} />
+                    <Line type="monotone" dataKey="orderValue" name="Ordervärde" stroke={COLOR_ORDER} strokeWidth={2} dot={singlePoint} />
+                    <Line type="monotone" dataKey="invoicedValue" name="Fakturerat" stroke={COLOR_INVOICED} strokeWidth={2} dot={singlePoint} />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
