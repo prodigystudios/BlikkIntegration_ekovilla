@@ -344,44 +344,49 @@ export default function AdminTimeApprovals() {
 
       {/* Periodhuvud. Två frågor, åtskilda med flit: hur långt har jag kommit (framstegen) och hur
           stora är summorna (underlaget). Förut låg båda som sex likadana badges i rad. */}
-      <section className="grid gap-3 rounded-2xl border border-solid border-[#e0e8dc] bg-[#f9fbf7] p-3.5">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <label className="grid gap-1">
-            <span className={LABEL}>Period</span>
-            <span className="inline-block w-40">
-              {/* Låst under massattesten. Loopen tar sekunder, och dess avslutande omladdning gäller
-                  den period den startade i: byter man månad mitt i vinner den sist startade
-                  hämtningen och målar föregående månads rader under den nya rubriken — varpå nästa
-                  "Attestera" postar fel månad på siffror som hör till en annan. */}
-              <Input
-                type="month"
-                value={period}
-                disabled={bulkBusy}
-                onChange={(e) => setPeriod(e.target.value || currentPeriod())}
-              />
-            </span>
-          </label>
-
-          <div className="grid gap-1 text-right">
-            <span className={LABEL}>Attesterade</span>
-            <span className="text-lg font-bold tabular-nums text-slate-900">
-              {totals.approved} <span className="text-sm font-semibold text-slate-500">av {people.length}</span>
-            </span>
-          </div>
-        </div>
+      {/* En rad, tre kolumner — inte tre fullbreddsblock under varandra. På en 1200 px-yta blir
+          staplade block bara innehåll som klistras mot ytterkanterna med luft i mitten. */}
+      <section className="flex flex-wrap items-end gap-x-6 gap-y-3 rounded-2xl border border-solid border-[#e0e8dc] bg-[#f9fbf7] p-3.5">
+        <label className="grid gap-1">
+          <span className={LABEL}>Period</span>
+          <span className="inline-block w-40">
+            {/* Låst under massattesten. Loopen tar sekunder, och dess avslutande omladdning gäller
+                den period den startade i: byter man månad mitt i vinner den sist startade
+                hämtningen och målar föregående månads rader under den nya rubriken — varpå nästa
+                "Attestera" postar fel månad på siffror som hör till en annan. */}
+            <Input
+              type="month"
+              value={period}
+              disabled={bulkBusy}
+              onChange={(e) => setPeriod(e.target.value || currentPeriod())}
+            />
+          </span>
+        </label>
 
         {people.length > 0 ? (
-          <div className="flex h-2 gap-0.5 overflow-hidden rounded-full">
-            {people.map((row) => (
-              <span key={row.user_id} className={cn('flex-1', STATUS_RAIL[row.status])} aria-hidden />
-            ))}
+          <div className="grid min-w-[220px] max-w-[420px] flex-1 gap-1">
+            <span className={LABEL}>Attesterade</span>
+            <span className="flex items-center gap-3">
+              <span className="whitespace-nowrap text-lg font-bold leading-none tabular-nums text-slate-900">
+                {totals.approved} <span className="text-sm font-semibold text-slate-500">av {people.length}</span>
+              </span>
+              {/* Ett segment per person, färgat av status: månadens form på en blick. */}
+              <span className="flex h-2 flex-1 gap-0.5 overflow-hidden rounded-full">
+                {people.map((row) => (
+                  <span key={row.user_id} className={cn('flex-1', STATUS_RAIL[row.status])} aria-hidden />
+                ))}
+              </span>
+            </span>
           </div>
         ) : null}
 
-        <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-600">
-          <span>Arbetat <strong className="tabular-nums text-slate-900">{formatHours(totals.work)} h</strong></span>
-          {totals.absence > 0 ? <span>Frånvaro <strong className="tabular-nums text-amber-800">{formatHours(totals.absence)} h</strong></span> : null}
-          {totals.compensation > 0 ? <span>Ersättningar <strong className="tabular-nums text-slate-900">{formatAmount(totals.compensation)} kr</strong></span> : null}
+        <div className="grid gap-1">
+          <span className={LABEL}>Underlag</span>
+          <span className="flex flex-wrap gap-x-4 gap-y-1 text-sm leading-none text-slate-600">
+            <span>Arbetat <strong className="tabular-nums text-slate-900">{formatHours(totals.work)} h</strong></span>
+            {totals.absence > 0 ? <span>Frånvaro <strong className="tabular-nums text-amber-800">{formatHours(totals.absence)} h</strong></span> : null}
+            {totals.compensation > 0 ? <span>Ersättningar <strong className="tabular-nums text-slate-900">{formatAmount(totals.compensation)} kr</strong></span> : null}
+          </span>
         </div>
       </section>
 
@@ -534,90 +539,91 @@ function PersonRow({
 
   return (
     <li className="overflow-hidden rounded-2xl border border-solid border-[#e0e8dc] bg-[#f9fbf7]">
+      {/* EN rad med kolumner, inte tre band under varandra. Staplade fullbreddsblock på en yta som
+          är över tusen pixlar bred ger innehåll klistrat mot ytterkanterna och luft i mitten — och
+          en stapel som spänner hela bredden läser som en trasig avdelare, inte som ett mått.
+          Kolumnerna radbryts i stället på smala skärmar. */}
       <div className="flex">
         <span className={cn('w-1 shrink-0', STATUS_RAIL[row.status])} aria-hidden />
 
-        <div className="min-w-0 flex-1 grid gap-2 px-3.5 py-3">
-          <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
-            <button
-              type="button"
-              onClick={onToggle}
-              aria-expanded={expanded}
-              className="!inline-flex !items-baseline !justify-start !gap-2 !p-0 !text-left min-w-0"
-            >
-              <span aria-hidden className={cn('text-slate-400 transition-transform', expanded ? 'rotate-90' : '')}>›</span>
-              <span className="min-w-0">
-                <span className="block truncate font-semibold text-slate-900 underline-offset-2 hover:underline">
-                  {row.full_name || '(namn saknas)'}
-                </span>
-                <span className="block text-xs text-slate-400">{row.role}</span>
+        <div className="min-w-0 flex-1 flex flex-wrap items-center gap-x-5 gap-y-2 px-4 py-2.5">
+          {/* Namn + den lilla historiken. Roll och tidsstämpel på samma rad sparar ett band. */}
+          <button
+            type="button"
+            onClick={onToggle}
+            aria-expanded={expanded}
+            className="!inline-flex !items-baseline !justify-start !gap-2 !p-0 !text-left min-w-[180px] flex-1"
+          >
+            <span aria-hidden className={cn('shrink-0 text-slate-400 transition-transform', expanded ? 'rotate-90' : '')}>›</span>
+            <span className="min-w-0">
+              <span className="block truncate font-semibold text-slate-900 underline-offset-2 hover:underline">
+                {row.full_name || '(namn saknas)'}
               </span>
-            </button>
-
-            <div className="flex flex-wrap items-center gap-2">
-              {/* Noll rader på en person som ska ha rapporterat är det attesten finns för att
-                  upptäcka — därför en egen flagga och inte bara en siffra i en kolumn. */}
-              {row.entry_count === 0 ? (
-                <span className="whitespace-nowrap rounded-full border border-solid border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[11px] font-semibold text-amber-800">
-                  Inget rapporterat
-                </span>
-              ) : null}
-              <span className={cn('whitespace-nowrap rounded-full px-2.5 py-0.5 text-[11px] font-semibold', STATUS_TONE[row.status])}>
-                {TIME_PERIOD_STATUS_LABELS[row.status]}
+              <span className="block truncate text-xs text-slate-400">
+                {row.role}
+                {row.status === 'submitted' && row.submitted_at ? ` · Inlämnad ${formatStamp(row.submitted_at)}` : null}
+                {row.status === 'approved' && row.approved_at
+                  ? ` · Attesterad ${formatStamp(row.approved_at)}${row.approved_by_name ? ` av ${row.approved_by_name}` : ''}`
+                  : null}
+                {row.status === 'open' && row.note ? ` · Öppnad igen: ${row.note}` : null}
               </span>
-            </div>
-          </div>
+            </span>
+          </button>
 
-          <div className="grid gap-1">
-            <div className="flex h-1.5 overflow-hidden rounded-full bg-[#e8eee4]">
+          {/* Måttet: stapeln är avgränsad och står bredvid talet den mäter, inte över hela raden. */}
+          <div className="flex min-w-[210px] flex-1 items-center gap-3">
+            <span className="flex h-1.5 w-24 shrink-0 overflow-hidden rounded-full bg-[#e8eee4]">
               <span className="bg-[#4a7a58]" style={{ width: `${workPercent}%` }} aria-hidden />
               <span className="bg-amber-400" style={{ width: `${absencePercent}%` }} aria-hidden />
-            </div>
-            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-sm">
+            </span>
+            <span className="flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5 text-sm">
               <strong className="tabular-nums text-slate-900">{formatHours(row.work_minutes)} h</strong>
               {row.absence_minutes > 0 ? (
-                <span className="tabular-nums text-amber-800">{formatHours(row.absence_minutes)} h frånvaro</span>
+                <span className="whitespace-nowrap tabular-nums text-amber-800">{formatHours(row.absence_minutes)} h frånvaro</span>
               ) : null}
-              <span className="text-slate-500">
+              <span className="whitespace-nowrap text-slate-500">
                 <span className="tabular-nums">{row.entry_count}</span> {row.entry_count === 1 ? 'rad' : 'rader'}
               </span>
               {row.compensation_count > 0 ? (
-                <span className="text-slate-500"><span className="tabular-nums">{formatAmount(row.compensation_amount)}</span> kr i ersättning</span>
+                <span className="whitespace-nowrap text-slate-500"><span className="tabular-nums">{formatAmount(row.compensation_amount)}</span> kr</span>
               ) : null}
-            </div>
+            </span>
           </div>
 
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className="text-xs text-slate-500">
-              {row.status === 'submitted' && row.submitted_at ? `Inlämnad ${formatStamp(row.submitted_at)}` : null}
-              {row.status === 'approved' && row.approved_at
-                ? `Attesterad ${formatStamp(row.approved_at)}${row.approved_by_name ? ` av ${row.approved_by_name}` : ''}`
-                : null}
-              {row.status === 'open' && row.note ? `Öppnad igen: ${row.note}` : null}
+          <div className="flex shrink-0 items-center gap-2">
+            {/* Noll rader på en person som ska ha rapporterat är det attesten finns för att
+                upptäcka — därför en egen flagga och inte bara en siffra i en kolumn. */}
+            {row.entry_count === 0 ? (
+              <span className="whitespace-nowrap rounded-full border border-solid border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[11px] font-semibold text-amber-800">
+                Inget rapporterat
+              </span>
+            ) : null}
+            <span className={cn('whitespace-nowrap rounded-full px-2.5 py-0.5 text-[11px] font-semibold', STATUS_TONE[row.status])}>
+              {TIME_PERIOD_STATUS_LABELS[row.status]}
             </span>
+          </div>
 
-            <span className="flex flex-wrap gap-2">
-              {row.status !== 'approved' ? (
-                <button
-                  type="button"
-                  onClick={onApprove}
-                  disabled={busy}
-                  className="!px-3 !py-1.5 rounded-lg border border-solid border-emerald-300 bg-emerald-50 text-sm font-semibold text-emerald-800 transition hover:border-emerald-400 disabled:opacity-60"
-                >
-                  Attestera
-                </button>
-              ) : null}
-              {locked ? (
-                <button
-                  type="button"
-                  onClick={onReopen}
-                  disabled={busy}
-                  className="!px-3 !py-1.5 rounded-lg border border-solid border-[#dbe4d6] bg-white text-sm font-semibold text-slate-700 transition hover:border-slate-400 disabled:opacity-60"
-                >
-                  Öppna igen
-                </button>
-              ) : null}
-            </span>
+          <div className="flex shrink-0 gap-2">
+            {row.status !== 'approved' ? (
+              <button
+                type="button"
+                onClick={onApprove}
+                disabled={busy}
+                className="!px-3 !py-1.5 rounded-lg border border-solid border-emerald-300 bg-emerald-50 text-sm font-semibold text-emerald-800 transition hover:border-emerald-400 disabled:opacity-60"
+              >
+                Attestera
+              </button>
+            ) : null}
+            {locked ? (
+              <button
+                type="button"
+                onClick={onReopen}
+                disabled={busy}
+                className="!px-3 !py-1.5 rounded-lg border border-solid border-[#dbe4d6] bg-white text-sm font-semibold text-slate-700 transition hover:border-slate-400 disabled:opacity-60"
+              >
+                Öppna igen
+              </button>
+            ) : null}
           </div>
         </div>
       </div>
