@@ -73,3 +73,21 @@ describe('compareBoardOrder', () => {
     expect(byGroup).toEqual(['b', 'a', 'c']);
   });
 });
+
+// Why placeSegment assigns max+1 instead of taking the column default of 0.
+describe('a newly placed job must not disturb an order someone set', () => {
+  it('lands last when it gets max+1', () => {
+    // A day someone ordered deliberately with the arrows: A first, B second.
+    const ordered = [s('aaa', 't1', 'd', 0), s('bbb', 't1', 'd', 1)];
+    const placedLast = [...ordered, s('000-new', 't1', 'd', 2)]; // nextSortIndex → max+1
+    expect(placedLast.sort(compareBoardOrder).map((x) => x.id)).toEqual(['aaa', 'bbb', '000-new']);
+  });
+
+  it('would cut into the middle of that order if it took the default 0', () => {
+    // The regression this guards: at sort_index 0 the newcomer ties with A, and the id tiebreak
+    // decides — so a job placed later can jump ahead of one the planner deliberately put first.
+    const ordered = [s('aaa', 't1', 'd', 0), s('bbb', 't1', 'd', 1)];
+    const placedAtZero = [...ordered, s('000-new', 't1', 'd', 0)];
+    expect(placedAtZero.sort(compareBoardOrder).map((x) => x.id)).toEqual(['000-new', 'aaa', 'bbb']);
+  });
+});
