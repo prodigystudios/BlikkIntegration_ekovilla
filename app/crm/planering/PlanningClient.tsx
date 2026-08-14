@@ -9,12 +9,13 @@ import { crm, workOrderStatusAccent } from '@/app/crm/lib/crmTokens';
 import type { OpsSegment, OpsTruck, SchedulableWorkOrder } from '@/lib/domains/planning/types';
 import type { AssignablePerson, CrewMember } from '@/lib/domains/planning/crew';
 import type { DayNote } from '@/lib/domains/planning/dayNotes';
-import type { TruckCrewMember } from '@/lib/domains/planning/truckCrew';
+import { crewForTruckInRange, type TruckCrewMember } from '@/lib/domains/planning/truckCrew';
 import type { DefaultCrewMember } from '@/lib/domains/planning/defaultCrew';
 import type { DepotBalance } from '@/lib/domains/planning/depotStock';
 import { DEFAULT_JOB_TYPES, type JobType, type JobTypeRow } from '@/lib/domains/planning/jobTypes';
 import {
-  addDays, addDaysISO, buildMonthWeeks, buildWeekDays, daysBetweenInclusive, fmtISO, isoWeek, startOfWeek, swedishMonthYear,
+  addDays, addDaysISO, buildMonthWeeks, buildWeekDays, daysBetweenInclusive, fmtISO, isoWeek,
+  startOfWeek, stockholmToday, swedishMonthYear,
 } from './planningDates';
 import Backlog from './Backlog';
 import WeekBoard from './WeekBoard';
@@ -79,10 +80,22 @@ export default function PlanningClient({
   const [placeholderOpen, setPlaceholderOpen] = useState(false);
 
   const dragRef = useRef<DragData | null>(null);
-  const todayISO = useMemo(() => fmtISO(new Date()), []);
+  // ONE clock read for the whole board, anchored to Europe/Stockholm.
+  //
+  // The zone matters because this component is server-rendered before it hydrates and the server
+  // runs on UTC — see stockholmToday in ./planningDates. Reading it once matters for a different
+  // reason: "today" and the week/month offsets have to agree. When they each called the clock
+  // separately, a board left open across midnight resolved them against different days, so
+  // stepping to "next week" on a Sunday night jumped two weeks.
+  //
+  // (The anchor is still fixed at mount, so the today-highlight on a board left open overnight goes
+  // stale until the next navigation. Consistently stale, which is the harmless kind — refreshing it
+  // live needs a timer and belongs in its own change.)
+  const todayAnchor = useMemo(() => stockholmToday(), []);
+  const todayISO = useMemo(() => fmtISO(todayAnchor), [todayAnchor]);
 
   // ── visible range (depends on view + offset) ──────────────────────────────
-  const weekMonday = useMemo(() => addDays(startOfWeek(new Date()), weekOffset * 7), [weekOffset]);
+  const weekMonday = useMemo(() => addDays(startOfWeek(todayAnchor), weekOffset * 7), [todayAnchor, weekOffset]);
   const weekDays = useMemo(() => buildWeekDays(weekMonday), [weekMonday]);
   // "Hela månaden"-toggle: stack this week + each following week through the month end, each as
   // its own WeekBoard (otherwise just the single current week).
@@ -96,12 +109,11 @@ export default function PlanningClient({
   }, [view, stackWeeks, weekMonday]);
   const weekDaysList = useMemo(() => weekMondays.map((m) => buildWeekDays(m)), [weekMondays]);
   const monthAnchor = useMemo(() => {
-    const b = new Date();
-    b.setHours(0, 0, 0, 0);
+    const b = new Date(todayAnchor); // copy — todayAnchor is shared and the setters below mutate
     b.setDate(1);
     b.setMonth(b.getMonth() + monthOffset);
     return b;
-  }, [monthOffset]);
+  }, [todayAnchor, monthOffset]);
   const monthWeeks = useMemo(() => buildMonthWeeks(monthAnchor), [monthAnchor]);
 
   const range = useMemo(() => {
@@ -511,9 +523,13 @@ export default function PlanningClient({
     [toast],
   );
 
+  // The week matters: in "Hela månaden" the loaded range spans several weeks, so truckCrew holds one
+  // row per week per person. Resolving on (truck, member) alone deleted whichever week happened to
+  // come first — pick the row from the same week the caller clicked, using the very predicate the
+  // board rendered that week's crew with.
   const removeTruckCrew = useCallback(
-    async (truckId: string, memberId: string) => {
-      const row = truckCrew.find((c) => c.truck_id === truckId && c.member_id === memberId);
+    async (truckId: string, memberId: string, startDay: string, endDay: string) => {
+      const row = crewForTruckInRange(truckCrew, truckId, startDay, endDay).find((c) => c.member_id === memberId);
       if (!row) return;
       setTruckCrew((prev) => prev.filter((c) => c.id !== row.id));
       const r = await fetch(`${API}/truck-crew/${row.id}`, { method: 'DELETE' });

@@ -76,7 +76,11 @@ export async function listSegments(
     .lte('start_day', range.to)
     .gte('end_day', range.from)
     .order('start_day', { ascending: true })
-    .order('sort_index', { ascending: true });
+    .order('sort_index', { ascending: true })
+    // Final tiebreak. sort_index defaults to 0 on every row, so without this the rows that share a
+    // day come back in whatever order the executor produced — and it produces a different one after
+    // any UPDATE to the table. Matches compareBoardOrder, which the boards render with.
+    .order('id', { ascending: true });
 
   if (error) return { data: [], error };
 
@@ -118,6 +122,32 @@ export type PlaceSegmentInput = {
   actorName?: string | null;
 };
 
+/**
+ * The sort_index a newly placed job should get on its truck+day: one past whatever is already
+ * booked there, so the order you place jobs in IS the order they're run in.
+ *
+ * Until this existed every placement took the column default of 0, so a day's jobs were all ties and
+ * their displayed order fell to the id tiebreak — a random UUID comparison. The "Ordning på dagen"
+ * badge still counted 1, 2, 3 (it renders a position, not a stored value), which made the board look
+ * like it had an order it had never actually recorded.
+ *
+ * Two planners placing on the same truck+day in the same instant can both read the same max and land
+ * on the same index. That is fine: compareBoardOrder still gives a stable total order, and the
+ * up/down arrows renumber the group cleanly. Not worth a lock.
+ */
+async function nextSortIndex(supabase: SupabaseClient, truckId: string, startDay: string): Promise<number> {
+  const { data } = await supabase
+    .from('ops_segments')
+    .select('sort_index')
+    .eq('truck_id', truckId)
+    .eq('start_day', startDay)
+    .order('sort_index', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const highest = (data as { sort_index: number } | null)?.sort_index;
+  return typeof highest === 'number' ? highest + 1 : 0;
+}
+
 // created_by must equal the caller (RLS insert policy checks created_by = auth.uid()).
 export async function placeSegment(
   supabase: SupabaseClient,
@@ -130,7 +160,7 @@ export async function placeSegment(
       truck_id: input.truckId,
       start_day: input.startDay,
       end_day: input.endDay,
-      sort_index: input.sortIndex ?? 0,
+      sort_index: input.sortIndex ?? (await nextSortIndex(supabase, input.truckId, input.startDay)),
       job_type: input.jobType ?? null,
       created_by: input.actorUserId,
       created_by_name: input.actorName ?? null,
@@ -167,6 +197,8 @@ export async function createPlaceholderSegment(
       truck_id: input.truckId,
       start_day: input.startDay,
       end_day: input.endDay,
+      // Same rule as a real placement — a blocked slot queues behind what's already on that day.
+      sort_index: await nextSortIndex(supabase, input.truckId, input.startDay),
       job_type: input.jobType ?? null,
       created_by: input.actorUserId,
       created_by_name: input.actorName ?? null,

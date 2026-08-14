@@ -1,5 +1,10 @@
-// Pure date helpers for the planning board (week + month). No Date.now() inside — callers pass
-// the reference date — so the building functions are deterministic and unit-testable.
+// Pure date helpers for the planning board (week + month). The building functions take their
+// reference date as an argument — no clock inside — so they stay deterministic and unit-testable.
+//
+// The one clock read the board needs is stockholmToday/stockholmTodayISO, which live in the domain
+// (lib/domains/planning/timezone) because the insights route needs the same anchor. Re-exported
+// here so the board keeps importing all its date helpers from one place.
+export { stockholmToday, stockholmTodayISO } from '@/lib/domains/planning/timezone';
 
 export const WEEKDAYS_SHORT = ['mån', 'tis', 'ons', 'tor', 'fre', 'lör', 'sön'] as const;
 

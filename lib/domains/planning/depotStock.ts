@@ -122,6 +122,38 @@ async function deriveConsumptionRows(supabase: SupabaseClient): Promise<StockRow
   return rows;
 }
 
+// One scheduled segment, already resolved down to the fields the attribution needs.
+export type PlannedDemandSegment = {
+  work_order_id: string | null;
+  depot_id: string | null;
+  status: string | null;
+  material: string | null;
+  sacks: number;
+};
+
+/**
+ * Pure: one planned-demand row per open work order, attributed to the first segment (in the given
+ * order) that resolves to BOTH a depot and a material.
+ *
+ * ⚠️ A work order counts as seen only once it has actually been counted. Marking it seen before the
+ * validity check — which is what this did — meant a job whose first segment sat on a truck with no
+ * depot was dropped entirely, and the dedup then skipped its remaining segments too. The demand
+ * silently vanished and the shortfall banner stayed quiet. Splitting a job across two trucks is a
+ * normal move on the board ("Kopiera till bil"), so this was reachable.
+ */
+export function attributePlannedDemand(segments: PlannedDemandSegment[]): StockRow[] {
+  const open = new Set(SCHEDULABLE_WORK_ORDER_STATUSES as unknown as string[]);
+  const seen = new Set<string>();
+  const rows: StockRow[] = [];
+  for (const s of segments) {
+    if (!s.work_order_id || !s.status || !open.has(s.status) || seen.has(s.work_order_id)) continue;
+    if (!s.depot_id || !s.material || !(s.sacks > 0)) continue;
+    seen.add(s.work_order_id);
+    rows.push({ depot_id: s.depot_id, material: s.material, sacks: s.sacks });
+  }
+  return rows;
+}
+
 // Planned demand rows: for each OPEN scheduled job (work order still draft/scheduled/in_progress),
 // the sacks it's booked to blow → its segment's truck → that truck's depot, attributed to the work
 // order's material. Deduped by work order so a multi-segment job counts once. This is what the booked
@@ -132,23 +164,52 @@ async function derivePlannedDemandRows(supabase: SupabaseClient): Promise<StockR
   const { data: trucks } = await supabase.from('ops_trucks').select('id, depot_id');
   const truckDepot = new Map((trucks ?? []).map((t: any) => [t.id as string, (t.depot_id as string | null) ?? null]));
 
+  // Open work orders first, then only THEIR segments — the same two-step listSchedulableWorkOrders
+  // and getPlanningInsights use. This bounds the read to the working set instead of every
+  // ops_segments row ever created, which grew with the table forever.
+  //
+  // ⚠️ It is NOT an absolute bound. Open orders (draft especially) still accumulate, and neither
+  // this query nor its siblings paginate, so past PostgREST's max-rows the map silently loses
+  // entries: those segments fall out of the flatMap below, `planned` under-counts, `shortfall`
+  // floors to 0 and the depot banner stays quiet on a real shortage — with no error anywhere.
+  // Same exposure as listSchedulableWorkOrders/computeBacklogValue; worth solving for all three at
+  // once rather than paginating this one call site into a pattern the rest of the domain lacks.
+  const { data: openWos } = await supabase
+    .from('crm_work_orders')
+    .select('id, status, line_items')
+    .in('status', SCHEDULABLE_WORK_ORDER_STATUSES as unknown as string[]);
+
+  // Parsed once per work order, not once per segment: line_items is the expensive part and a job's
+  // material/sack count is the same on every segment it spans.
+  const woById = new Map(
+    (openWos ?? []).map((w: any) => [
+      w.id as string,
+      { status: (w.status as string | null) ?? null, material: materialShortFromLineItems(w.line_items), sacks: totalSacks(w.line_items) },
+    ]),
+  );
+  if (woById.size === 0) return [];
+
+  // Ordered so the attribution is deterministic: a job split across trucks is booked against its
+  // EARLIEST segment's depot, not whichever row came back first. Cheap now that the set is bounded.
   const { data: segs } = await supabase
     .from('ops_segments')
-    .select('work_order_id, truck_id, work_order:crm_work_orders(status, line_items)');
+    .select('id, work_order_id, truck_id, start_day')
+    .in('work_order_id', [...woById.keys()])
+    .order('start_day', { ascending: true })
+    .order('id', { ascending: true });
 
-  const open = new Set(SCHEDULABLE_WORK_ORDER_STATUSES as unknown as string[]);
-  const seen = new Set<string>();
-  const rows: StockRow[] = [];
-  for (const s of (segs ?? []) as Array<Record<string, any>>) {
-    const wo = Array.isArray(s.work_order) ? s.work_order[0] : s.work_order;
-    if (!wo || !open.has(wo.status) || !s.work_order_id || seen.has(s.work_order_id)) continue;
-    seen.add(s.work_order_id);
-    const depotId = truckDepot.get(s.truck_id);
-    const material = materialShortFromLineItems(wo.line_items);
-    const sacks = totalSacks(wo.line_items);
-    if (depotId && material && sacks > 0) rows.push({ depot_id: depotId, material, sacks });
-  }
-  return rows;
+  const candidates: PlannedDemandSegment[] = ((segs ?? []) as Array<Record<string, any>>).flatMap((s) => {
+    const wo = woById.get(s.work_order_id as string);
+    if (!wo) return [];
+    return [{
+      work_order_id: (s.work_order_id as string | null) ?? null,
+      depot_id: truckDepot.get(s.truck_id) ?? null,
+      status: wo.status,
+      material: wo.material,
+      sacks: wo.sacks,
+    }];
+  });
+  return attributePlannedDemand(candidates);
 }
 
 // Per-depot, per-material balances + planned demand for the stock view. RLS (planning.schedule.read).

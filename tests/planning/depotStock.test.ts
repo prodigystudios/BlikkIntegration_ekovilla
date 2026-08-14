@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { computeDepotBalances, type StockRow } from '@/lib/domains/planning/depotStock';
+import {
+  attributePlannedDemand, computeDepotBalances,
+  type PlannedDemandSegment, type StockRow,
+} from '@/lib/domains/planning/depotStock';
 import { materialShortFromLineItems, MATERIAL_SHORTS } from '@/lib/domains/crm/materials';
 
 describe('computeDepotBalances', () => {
@@ -58,5 +61,55 @@ describe('materialShortFromLineItems', () => {
   it('returns null when no material is recognised', () => {
     expect(materialShortFromLineItems([{ article_name: 'Arbete' }])).toBeNull();
     expect(materialShortFromLineItems(null)).toBeNull();
+  });
+});
+
+describe('attributePlannedDemand', () => {
+  const seg = (over: Partial<PlannedDemandSegment> = {}): PlannedDemandSegment => ({
+    work_order_id: 'wo1',
+    depot_id: 'd1',
+    status: 'scheduled',
+    material: 'EKOVILLA',
+    sacks: 40,
+    ...over,
+  });
+
+  it('counts a work order once even when it spans several segments', () => {
+    expect(attributePlannedDemand([seg(), seg(), seg()])).toEqual([
+      { depot_id: 'd1', material: 'EKOVILLA', sacks: 40 },
+    ]);
+  });
+
+  it('falls through to the next segment when the first truck has no depot', () => {
+    // Regression: the work order used to be marked seen before the depot check, so a job whose
+    // earliest segment sat on a depot-less truck vanished from planned demand entirely — taking
+    // the shortfall warning with it.
+    const rows = attributePlannedDemand([seg({ depot_id: null }), seg({ depot_id: 'd2' })]);
+    expect(rows).toEqual([{ depot_id: 'd2', material: 'EKOVILLA', sacks: 40 }]);
+  });
+
+  it('still drops a work order that never resolves to a depot', () => {
+    expect(attributePlannedDemand([seg({ depot_id: null }), seg({ depot_id: null })])).toEqual([]);
+  });
+
+  it('attributes to the first valid segment, so input order decides the depot', () => {
+    const rows = attributePlannedDemand([seg({ depot_id: 'd2' }), seg({ depot_id: 'd1' })]);
+    expect(rows).toEqual([{ depot_id: 'd2', material: 'EKOVILLA', sacks: 40 }]);
+  });
+
+  it('ignores closed work orders and rows with nothing to blow', () => {
+    expect(attributePlannedDemand([seg({ status: 'completed' })])).toEqual([]);
+    expect(attributePlannedDemand([seg({ status: null })])).toEqual([]);
+    expect(attributePlannedDemand([seg({ sacks: 0 })])).toEqual([]);
+    expect(attributePlannedDemand([seg({ material: null })])).toEqual([]);
+    expect(attributePlannedDemand([seg({ work_order_id: null })])).toEqual([]);
+  });
+
+  it('keeps separate work orders apart', () => {
+    const rows = attributePlannedDemand([seg(), seg({ work_order_id: 'wo2', depot_id: 'd2', sacks: 12 })]);
+    expect(rows).toEqual([
+      { depot_id: 'd1', material: 'EKOVILLA', sacks: 40 },
+      { depot_id: 'd2', material: 'EKOVILLA', sacks: 12 },
+    ]);
   });
 });
