@@ -201,18 +201,20 @@ describe('toSummarizableEntry', () => {
     expect(mapped.minutesWorked).toBe(455);
   });
 
-  it('namnger arbetsordern med ordernummer och projekt', () => {
+  // Fortnox-numret leder, precis som documentRef gör på varje annan CRM-yta: det interna
+  // AO-numret är ingen utanför systemet känner igen, allra minst den som granskar lönen.
+  it('namnger arbetsordern med FORTNOX-numret och projektet', () => {
     const mapped = toSummarizableEntry(row({
       work_order: { id: 'wo1', order_number: 'AO-1', fortnox_order_number: '12', project_name: 'Villa Ek', client_name: 'Ekbergs' },
     }));
-    expect(mapped.label).toBe('AO-1 · Villa Ek');
+    expect(mapped.label).toBe('#12 · Villa Ek');
   });
 
-  it('faller tillbaka på Fortnox-numret och kundnamnet när CRM-fälten saknas', () => {
+  it('faller tillbaka på det interna numret först när Fortnox-numret saknas — och utan brädgård', () => {
     const mapped = toSummarizableEntry(row({
-      work_order: { id: 'wo1', order_number: null, fortnox_order_number: '12', project_name: null, client_name: 'Ekbergs' },
+      work_order: { id: 'wo1', order_number: 'AO-1', fortnox_order_number: null, project_name: null, client_name: 'Ekbergs' },
     }));
-    expect(mapped.label).toBe('12 · Ekbergs');
+    expect(mapped.label).toBe('AO-1 · Ekbergs');
   });
 
   it('använder internprojektets namn på interntid', () => {

@@ -154,12 +154,21 @@ export function buildTimeEntryRow(input: TimeEntryInput, userId: string): BuiltT
  */
 export function toSummarizableEntry(row: TimeEntryRow): SummarizableEntry {
   const workOrder = row.work_order;
-  // Ordernumret först: det är vad kontoret känner igen ett jobb på. Projekt- eller kundnamn läggs
-  // till när det finns, så en rad går att placera utan att slå upp ordern.
+
+  // ⚠️ FORTNOX-NUMRET LEDER, det interna är reserven — och `#` sätts bara på Fortnox-numret.
+  //
+  // Samma regel som `documentRef` i app/crm/lib/format.ts, som är husets konvention på varje annan
+  // CRM-yta. Skälet är praktiskt: kunder, fakturor, offerter och ordrar visar alla Fortnox-numret,
+  // så ett internt AO-nummer i attesten är ett nummer ingen som granskar känner igen. Regeln
+  // upprepas här i stället för att importeras: en domänmodul ska inte hänga på en UI-hjälpare.
+  //
+  // Projekt- eller kundnamnet läggs till när det finns, så en rad går att placera utan att slå upp
+  // ordern.
+  const orderRef = workOrder?.fortnox_order_number
+    ? `#${workOrder.fortnox_order_number}`
+    : workOrder?.order_number || null;
   const workOrderLabel = workOrder
-    ? [workOrder.order_number || workOrder.fortnox_order_number, workOrder.project_name || workOrder.client_name]
-        .filter(Boolean)
-        .join(' · ') || null
+    ? [orderRef, workOrder.project_name || workOrder.client_name].filter(Boolean).join(' · ') || null
     : null;
 
   return {

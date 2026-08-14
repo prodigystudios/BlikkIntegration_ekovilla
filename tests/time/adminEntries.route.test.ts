@@ -153,6 +153,17 @@ describe('GET /api/admin/time/entries — underlaget', () => {
     expect(json.data.rows[0].label).toBe('AO-20260729-42E7C4 · Villa Ek');
   });
 
+  // Regression: mapparen ledde med det INTERNA numret, så attesten visade ett AO-nummer medan
+  // /tid visade Fortnox-numret för samma rad. Fortnox-numret är det enda någon känner igen.
+  it('visar Fortnox-numret när det finns, inte det interna', async () => {
+    mockEntries.mockResolvedValue({
+      data: [{ ...shiftRow, work_order: { ...shiftRow.work_order, fortnox_order_number: '10241' } }],
+      error: null,
+    } as any);
+    const json = await (await GET(req(URL_OK))).json();
+    expect(json.data.rows[0].label).toBe('#10241 · Villa Ek');
+  });
+
   it('håller frånvaro utanför arbetstiden och namnger orsaken', async () => {
     mockEntries.mockResolvedValue({
       data: [
