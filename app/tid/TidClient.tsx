@@ -87,6 +87,36 @@ function weekRangeLabel(days: WeekDay[]): string {
     : `${first.getDate()} ${MONTHS_SHORT[first.getMonth()]}–${last.getDate()} ${MONTHS_SHORT[last.getMonth()]}`;
 }
 
+/**
+ * Dagens datum i Sverige, som lokal midnatt.
+ *
+ * Sidan server-renderas innan den hydreras, och servern går på UTC. `new Date()` avläst med lokala
+ * getters ger därför OLIKA datum på server och klient mellan 00:00 och 02:00 svensk tid: ett
+ * hydreringsfel, och en vecka som pekar på fel dagar. Samma fälla kostade redan en gång i
+ * rapporteringen (PR #69).
+ *
+ * ⚠️ LOKAL midnatt, inte UTC-midnatt som `stockholmDay` i app/crm/rapportering/reportRanges.ts.
+ * Skillnaden är inte godtycklig: den funktionen matar helpers som räknar med UTC-getters, medan
+ * planningDates (startOfWeek/addDays/fmtISO) räknar med LOKALA. Fel ankare här hade flyttat hela
+ * veckan ett dygn i en zon väster om UTC.
+ *
+ * (Tredje kopian av samma zonupplåsning i repot — planning och rapportering har egna. Kandidat för
+ * lib/shared när någon rör alla tre; att bryta ut den nu skulle kräva ändringar i den skyddade
+ * planeringsdomänen.)
+ */
+const STOCKHOLM_DATE_PARTS = new Intl.DateTimeFormat('sv-SE', {
+  timeZone: 'Europe/Stockholm',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+
+function stockholmToday(): Date {
+  const parts = STOCKHOLM_DATE_PARTS.formatToParts(new Date());
+  const value = (type: string) => Number(parts.find((part) => part.type === type)?.value);
+  return new Date(value('year'), value('month') - 1, value('day'));
+}
+
 function entryMinutes(entry: EntryRow): number {
   return entry.minutes_worked ?? Math.round(Number(entry.hours || 0) * 60);
 }
@@ -108,9 +138,9 @@ const STATUS_TONE: Record<TimePeriodStatus, string> = {
 
 export default function TidClient() {
   const [weekOffset, setWeekOffset] = React.useState(0);
-  const monday = React.useMemo(() => addDays(startOfWeek(new Date()), weekOffset * 7), [weekOffset]);
+  const monday = React.useMemo(() => addDays(startOfWeek(stockholmToday()), weekOffset * 7), [weekOffset]);
   const weekDays = React.useMemo(() => buildWeekDays(monday), [monday]);
-  const todayIso = React.useMemo(() => fmtISO(new Date()), []);
+  const todayIso = React.useMemo(() => fmtISO(stockholmToday()), []);
 
   // Månaden som veckans måndag ligger i — det är den perioden lönen räknar på.
   const monthAnchor = React.useMemo(() => ({ year: monday.getFullYear(), month: monday.getMonth() }), [monday]);
