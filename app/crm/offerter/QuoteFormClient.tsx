@@ -336,6 +336,44 @@ function getDraftCustomerSource(source: QuoteCustomerSource | null | undefined, 
   };
 }
 
+/**
+ * Fetch the live customer row for the picker, WITHOUT touching the draft.
+ *
+ * The distinction matters: applySelectedCustomer prefills the draft from the card, which is right
+ * when you pick a customer and wrong when you merely need the customer object back. `selectedCustomer`
+ * drives the picker chip, the contact dropdown and the reverse-VAT hint — restore a draft without it
+ * and those three silently disappear even though the draft still holds the data.
+ *
+ * Returns null on any failure; every caller treats a missing customer as "just don't show the chip".
+ */
+async function fetchCustomerLite(id: string): Promise<CrmCustomerLite | null> {
+  try {
+    const res = await fetch(`/api/crm/customers/${id}`, { cache: 'no-store' });
+    const json = await res.json().catch(() => ({}));
+    const c = json?.data?.item;
+    if (!c) return null;
+    return {
+      id: c.id,
+      customer_type: c.customer_type,
+      company_name: c.company_name ?? null,
+      first_name: c.first_name ?? null,
+      last_name: c.last_name ?? null,
+      organization_number: c.organization_number ?? null,
+      personal_number: c.personal_number ?? null,
+      fortnox_customer_id: c.fortnox_customer_id ?? null,
+      email: c.email ?? null,
+      phone: c.phone ?? null,
+      mobile: c.mobile ?? null,
+      reverse_vat: c.reverse_vat ?? null,
+      visit_address: c.visit_address ?? null,
+      delivery_address: c.delivery_address ?? null,
+      contacts: c.contacts ?? [],
+    };
+  } catch {
+    return null;
+  }
+}
+
 function buildCustomerSource(customer: CrmCustomerLite | null): QuoteDraft['customer_source'] {
   if (!customer) return { kind: 'local', sync_intent: 'local_only', fortnox_customer_id: '', fortnox_customer_name: '' };
   if (customer.fortnox_customer_id) {
@@ -1155,6 +1193,11 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
 
   // Load a stashed draft back into the form, re-deriving the two UI toggles that aren't part of the
   // draft object. Shared by the customer round-trip restore and the "resume draft?" banner.
+  //
+  // The customer object is NOT part of the draft (only its id is), so it has to be re-fetched — see
+  // fetchCustomerLite. Without it a resumed draft looks like no customer was ever picked: no chip,
+  // no contact dropdown, no reverse-VAT hint. Deliberately fire-and-forget: the draft is already
+  // applied synchronously above, and a failed lookup only costs the chip.
   function applyRestoredDraft(restored: QuoteDraft) {
     // Backfill any fields absent from an older-shaped stash (e.g. saved before `labor_cost` existed)
     // from the initial draft / an empty line item, so every field/Input stays controlled.
@@ -1164,6 +1207,9 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     setCustomEndContact(Boolean(
       restored.end_contact_name || restored.end_contact_phone || restored.end_contact_email,
     ));
+    if (restored.customer_id) {
+      void fetchCustomerLite(restored.customer_id).then((c) => { if (c) setSelectedCustomer(c); });
+    }
   }
 
   // Populate the draft from a chosen customer. Shared by the search picker and the
@@ -1291,31 +1337,9 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
         // Show the linked customer in the picker so editing doesn't look like no
         // customer is selected. Fetch the live row (silently ignored if it 404s).
         if (item.customer_id) {
-          fetch(`/api/crm/customers/${item.customer_id}`, { cache: 'no-store' })
-            .then((r) => r.json().catch(() => ({})))
-            .then((cj) => {
-              if (!active) return;
-              const c = cj?.data?.item;
-              if (!c) return;
-              setSelectedCustomer({
-                id: c.id,
-                customer_type: c.customer_type,
-                company_name: c.company_name ?? null,
-                first_name: c.first_name ?? null,
-                last_name: c.last_name ?? null,
-                organization_number: c.organization_number ?? null,
-                personal_number: c.personal_number ?? null,
-                fortnox_customer_id: c.fortnox_customer_id ?? null,
-                email: c.email ?? null,
-                phone: c.phone ?? null,
-                mobile: c.mobile ?? null,
-                reverse_vat: c.reverse_vat ?? null,
-                visit_address: c.visit_address ?? null,
-                delivery_address: c.delivery_address ?? null,
-                contacts: c.contacts ?? [],
-              });
-            })
-            .catch(() => {});
+          fetchCustomerLite(item.customer_id).then((c) => {
+            if (active && c) setSelectedCustomer(c);
+          });
         }
       })
       .catch(() => { if (active) { toast.error('Kunde inte ladda offert'); router.push('/crm/offerter'); } })
@@ -1350,34 +1374,46 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     const restoreQuote = searchParams.get('restore_quote');
     if (!createdCustomerId && !restoreQuote) return;
 
-    // Restore the draft we stashed before navigating away (new quotes only — in edit
-    // mode the loaded quote stays and only the customer is swapped in below).
-    if (!isEditing) {
-      try {
-        const raw = localStorage.getItem(draftStorageKey);
-        if (raw) {
-          const envelope = JSON.parse(raw);
-          const fresh = envelope && typeof envelope.savedAt === 'number'
-            && Date.now() - envelope.savedAt < DRAFT_RECOVERY_TTL_MS && envelope.draft;
-          if (fresh) {
-            // Route through applyRestoredDraft so an older-shaped stash gets the same per-item/field
-            // backfill as the resume banner (keeps every Input controlled).
-            applyRestoredDraft(envelope.draft as QuoteDraft);
-          }
+    // Restore the draft we stashed before navigating away.
+    //
+    // ⚠️ Edit mode restores too. It used to be skipped ("the loaded quote stays"), but the stash is
+    // keyed per quote (crm:quote-draft:edit:<id>) and holds the seller's UNSAVED edits to exactly
+    // this quote — dropping it meant a trip to the customer card silently threw away everything
+    // typed since the last save. The stash is cleared below either way, so skipping the restore
+    // only ever lost work.
+    let restoredCustomerId: string | null = null;
+    try {
+      const raw = localStorage.getItem(draftStorageKey);
+      if (raw) {
+        const envelope = JSON.parse(raw);
+        const fresh = envelope && typeof envelope.savedAt === 'number'
+          && Date.now() - envelope.savedAt < DRAFT_RECOVERY_TTL_MS && envelope.draft;
+        if (fresh) {
+          // Route through applyRestoredDraft so an older-shaped stash gets the same per-item/field
+          // backfill as the resume banner (keeps every Input controlled).
+          const restored = envelope.draft as QuoteDraft;
+          applyRestoredDraft(restored);
+          restoredCustomerId = restored.customer_id ?? null;
         }
-      } catch { /* ignore malformed draft */ }
-    }
+      }
+    } catch { /* ignore malformed draft */ }
     clearPersistedDraft();
 
-    // Only auto-select when a customer was actually created (save path, not cancel).
-    if (createdCustomerId) {
-      fetch(`/api/crm/customers/${createdCustomerId}`, { cache: 'no-store' })
-        .then((r) => r.json().catch(() => ({})))
-        .then((json) => {
-          if (json?.ok && json?.data?.item) applySelectedCustomer(json.data.item as CrmCustomerLite);
-          else toast.error('Kunde inte hämta vald kund');
-        })
-        .catch(() => toast.error('Kunde inte hämta vald kund'));
+    // ⚠️ Only PREFILL from the card when this is a DIFFERENT customer than the draft already carries.
+    //
+    // Coming back from a customer card, `created_customer_id` is appended even when nothing was
+    // created — CustomerDetailClient reuses the param for plain returns. So this branch used to run
+    // applySelectedCustomer over the just-restored draft and overwrite Er referens, phone, e-mail
+    // and every address field with the card's values. The seller's own edits vanished on a round
+    // trip they made precisely to look something up.
+    //
+    // The same-customer case needs nothing here: applyRestoredDraft above already put the customer
+    // object back (chip, contact dropdown, reverse-VAT hint) without touching the draft.
+    if (createdCustomerId && createdCustomerId !== restoredCustomerId) {
+      fetchCustomerLite(createdCustomerId).then((customer) => {
+        if (customer) applySelectedCustomer(customer);
+        else toast.error('Kunde inte hämta vald kund');
+      });
     }
 
     // Strip the param so a refresh doesn't re-run this.
