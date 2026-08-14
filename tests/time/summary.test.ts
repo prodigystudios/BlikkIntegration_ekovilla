@@ -167,3 +167,17 @@ describe('buildDayRows — rasten', () => {
     expect(rows[0].absenceMinutes).toBe(240);
   });
 });
+
+// Regression: sorten måste följa med dagraden. En internrad har arbetade minuter precis som en
+// arbetsorderrad, så en rättelse som gissade sorten ur siffrorna öppnade internraden som
+// "Arbetsorder" — och ett valt jobb föll då tyst bort medan UI:t sa att raden var rättad.
+describe('buildDayRows — sorten', () => {
+  it('bär radens kind, som inte går att härleda ur minuterna', () => {
+    const rows = buildDayRows([
+      entry({ kind: 'work_order' }),
+      entry({ kind: 'internal' }),
+      entry({ kind: 'absence', startTime: null, endTime: null, minutesWorked: 240 }),
+    ]);
+    expect(rows.map((row) => row.kind)).toEqual(['work_order', 'internal', 'absence']);
+  });
+});

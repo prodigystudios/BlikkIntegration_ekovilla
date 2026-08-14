@@ -59,14 +59,15 @@ export default function AdminTimeCorrectionModal({
   /** Returnerar felmeddelandet, eller null när det gick bra. */
   onSave: (patch: Record<string, unknown>) => Promise<string | null>;
 }) {
-  const isAbsenceRow = day.absenceMinutes > 0;
-
-  const [kind, setKind] = React.useState<Kind>(isAbsenceRow ? 'absence' : 'work_order');
+  // Sorten kommer från RADEN, inte ur siffrorna: en internrad har arbetade minuter precis som en
+  // arbetsorderrad, så en gissning öppnade den som "Arbetsorder" och tappade sedan valt jobb tyst.
+  const [kind, setKind] = React.useState<Kind>(day.kind);
   const [date, setDate] = React.useState(day.date);
   const [start, setStart] = React.useState((day.startTime || '').slice(0, 5));
   const [end, setEnd] = React.useState((day.endTime || '').slice(0, 5));
   const [breakMinutes, setBreakMinutes] = React.useState(String(day.breakMinutes));
   const [absenceHours, setAbsenceHours] = React.useState(String(minutesToHours(day.absenceMinutes) || 8));
+  const isAbsenceRow = day.kind === 'absence';
   const [workOrderId, setWorkOrderId] = React.useState('');
   const [internalId, setInternalId] = React.useState('');
   const [absenceId, setAbsenceId] = React.useState('');
@@ -85,7 +86,9 @@ export default function AdminTimeCorrectionModal({
   React.useEffect(() => {
     if (kind !== 'work_order') return;
     const term = query.trim();
-    if (term.length < 2) { setHits([]); return; }
+    // setSearching(false) också här: utan den satt "Söker…" kvar för alltid när man backade ned
+    // under två tecken, eftersom den grenen aldrig nådde finally.
+    if (term.length < 2) { setHits([]); setSearching(false); return; }
     const seq = ++searchSeq.current;
     setSearching(true);
     // Fördröjning så en sökning inte skickas per tangenttryck.
@@ -115,7 +118,7 @@ export default function AdminTimeCorrectionModal({
   // Målet behöver bara väljas när man BYTER det. Rör man inte väljaren ärver raden sitt nuvarande
   // mål av servern, så en ren klockslagsrättelse ska inte kräva att man letar upp jobbet igen.
   const targetChanged = kind === 'work_order' ? !!workOrderId : kind === 'internal' ? !!internalId : !!absenceId;
-  const kindChanged = kind !== (isAbsenceRow ? 'absence' : 'work_order');
+  const kindChanged = kind !== day.kind;
   const needsTarget = kindChanged && !targetChanged;
 
   async function save() {

@@ -47,6 +47,15 @@ export type DayRow = {
   /** Tidraden bakom dagraden, när den är känd — annars går raden inte att rätta. */
   entryId: string | null;
   /**
+   * Radens sort.
+   *
+   * ⚠️ Går inte att härleda ur siffrorna. En internrad har arbetade minuter precis som en
+   * arbetsorderrad, så en rättelse som gissade sorten ur `absenceMinutes` öppnade internraden som
+   * "Arbetsorder" — och ett valt jobb föll då tyst bort i sammanslagningen medan UI:t sa att raden
+   * var rättad.
+   */
+  kind: TimeEntryKind;
+  /**
    * Rastavdraget i minuter.
    *
    * ⚠️ Måste följa med. Den som RÄTTAR raden skickar tillbaka rasten tillsammans med klockslagen,
@@ -75,6 +84,7 @@ export function buildDayRows(entries: SummarizableEntry[]): DayRow[] {
         note: entry.note ?? null,
         label: isAbsence ? null : entry.label ?? null,
         entryId: entry.id ?? null,
+        kind: entry.kind,
         breakMinutes: isAbsence ? 0 : entry.breakMinutes ?? 0,
       };
     });

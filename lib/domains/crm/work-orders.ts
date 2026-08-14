@@ -438,8 +438,12 @@ function applyWorkOrderListFilters<Q extends {
   or: (f: string) => Q; eq: (c: string, v: string) => Q; in: (c: string, v: string[]) => Q;
 }>(query: Q, options: WorkOrderListFilters): Q {
   if (options.search) {
+    // ⚠️ `fortnox_order_number` är med sedan 2026-08-14. Den saknades, vilket betydde att numret
+    // appen VISAR överallt (documentRef leder med Fortnox-numret) var det enda man inte kunde söka
+    // på — man fick leta upp ordern på kundnamn för att hitta ett nummer man redan hade framför
+    // sig. Söktermen städas av anroparen; samma interpolering som de övriga termerna.
     query = query.or(
-      `order_number.ilike.%${options.search}%,project_name.ilike.%${options.search}%,client_name.ilike.%${options.search}%,notes.ilike.%${options.search}%`,
+      `order_number.ilike.%${options.search}%,fortnox_order_number.ilike.%${options.search}%,project_name.ilike.%${options.search}%,client_name.ilike.%${options.search}%,notes.ilike.%${options.search}%`,
     );
   }
   const statuses = options.filter ? BOARD_FILTER_STATUSES[options.filter] : null;

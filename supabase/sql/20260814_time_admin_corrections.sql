@@ -88,30 +88,52 @@ security definer
 set search_path = public
 as $$
 declare
-  v_actor uuid := auth.uid();
-  v_owner uuid := coalesce(new.user_id, old.user_id);
+  v_actor  uuid := auth.uid();
+  v_owner  uuid;
+  v_entry  uuid;
+  v_before jsonb;
+  v_after  jsonb;
 begin
+  -- ⚠️ EN GREN PER OPERATION, aldrig `coalesce(new.x, old.x)`.
+  --
+  -- I plpgsql är NEW OALLOKERAD i en delete-trigger och OLD i en insert-trigger, och att läsa ett
+  -- fält ur en oallokerad record är ett fel — inte null. coalesce hjälper inte, den evaluerar båda
+  -- argumenten. En sådan funktion hade fått VARJE insert och VARJE delete på crm_time_entries att
+  -- misslyckas, alltså all tidrapportering och inte bara adminrättelserna.
+  --
+  -- enforce_time_period_lock i 20260812_time_approvals.sql undviker samma sak med flit; dess
+  -- kommentar om "två grenar i stället för ett CASE" är samma fälla.
+  if tg_op = 'DELETE' then
+    v_owner := old.user_id; v_entry := old.id; v_before := to_jsonb(old); v_after := null;
+  elsif tg_op = 'INSERT' then
+    v_owner := new.user_id; v_entry := new.id; v_before := null;             v_after := to_jsonb(new);
+  else
+    v_owner := new.user_id; v_entry := new.id; v_before := to_jsonb(old);    v_after := to_jsonb(new);
+  end if;
+
   -- Egna ändringar loggas inte. Den normala vägen i /tid ska inte fylla loggen med brus; det är
   -- ändringar av NÅGON ANNANS tid som behöver kunna spåras.
   --
   -- v_actor är null när ändringen kommer från en servicenyckel eller ett SQL-editor-anrop. Då
   -- loggas den — en ändring utan känd användare är precis det man vill hitta i efterhand.
   if v_actor is not null and v_actor = v_owner then
-    return coalesce(new, old);
+    return null;
   end if;
 
   insert into public.crm_time_entry_audit (entry_id, user_id, changed_by, action, before_data, after_data)
   values (
-    coalesce(new.id, old.id),
+    v_entry,
     v_owner,
     -- changed_by är not null: en okänd aktör bokförs som nollan i stället för att raden faller bort.
     coalesce(v_actor, '00000000-0000-0000-0000-000000000000'::uuid),
     lower(tg_op),
-    case when tg_op in ('UPDATE','DELETE') then to_jsonb(old) end,
-    case when tg_op in ('UPDATE','INSERT') then to_jsonb(new) end
+    v_before,
+    v_after
   );
 
-  return coalesce(new, old);
+  -- AFTER-triggerns returvärde ignoreras, så null är rätt svar — och slipper röra record-variabler
+  -- en gång till.
+  return null;
 end;
 $$;
 
