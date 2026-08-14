@@ -144,7 +144,7 @@ export default function TidClient() {
   const [modalDate, setModalDate] = React.useState<string | null>(null);
   const [editing, setEditing] = React.useState<EditableEntry | null>(null);
   const [busyId, setBusyId] = React.useState<string | null>(null);
-  const [selectedIso, setSelectedIso] = React.useState(todayIso);
+  const [pickedIso, setPickedIso] = React.useState(todayIso);
 
   // Kapplöpningsvakt: klickar man snabbt genom veckorna kan ett tidigare svar komma sist och rita
   // fel veckas rader. Bara den senaste hämtningen får skriva.
@@ -197,14 +197,15 @@ export default function TidClient() {
 
   React.useEffect(() => { void load(); }, [load]);
 
-  // Den valda dagen måste följa med när veckan byts, annars visar panelen en dag som inte längre
-  // står i remsan. Idag väljs när den ligger i veckan, annars måndagen — man bläddrar bakåt för att
-  // titta på en vecka, och då är dess början rätt startpunkt.
-  React.useEffect(() => {
-    const isoList = weekDays.map((day) => day.iso);
-    if (isoList.includes(selectedIso)) return;
-    setSelectedIso(isoList.includes(todayIso) ? todayIso : isoList[0]);
-  }, [weekDays, selectedIso, todayIso]);
+  // Den valda dagen HÄRLEDS, den synkas inte i en effekt. Byts veckan pekar det valda datumet på en
+  // dag som inte längre står i remsan, och rättelsen måste ske i samma rendering — en effekt kör
+  // efter målningen, så en bildruta hade visat den nya veckans remsa under den gamla dagens rubrik,
+  // rader och låsläge. Idag väljs när den ligger i veckan, annars måndagen: man bläddrar bakåt för
+  // att titta på en vecka, och då är dess början rätt startpunkt.
+  const weekIsos = React.useMemo(() => weekDays.map((day) => day.iso), [weekDays]);
+  const selectedIso = weekIsos.includes(pickedIso)
+    ? pickedIso
+    : weekIsos.includes(todayIso) ? todayIso : weekIsos[0];
 
   const byDate = React.useMemo(() => {
     const map = new Map<string, EntryRow[]>();
@@ -308,7 +309,7 @@ export default function TidClient() {
           <div className="min-w-0 flex-1 text-center">
             <div className="truncate text-sm font-semibold text-slate-900">{weekRangeLabel(weekDays)}</div>
             <div className="text-xs text-slate-500">
-              v.{isoWeek(monday)} · <span className="tabular-nums">{formatHours(weekTotal)} h</span>
+              v.{isoWeek(monday)} · {loading ? '—' : <span className="tabular-nums">{formatHours(weekTotal)} h</span>}
             </div>
           </div>
           <StepButton label="Nästa vecka" onClick={() => goToWeek(1)}>→</StepButton>
@@ -322,9 +323,10 @@ export default function TidClient() {
               key={day.iso}
               day={day}
               totals={dayTotals.get(day.iso) ?? { worked: 0, absent: 0 }}
+              loading={loading}
               isToday={day.iso === todayIso}
               isSelected={day.iso === selectedIso}
-              onSelect={() => setSelectedIso(day.iso)}
+              onSelect={() => setPickedIso(day.iso)}
             />
           ))}
         </div>
@@ -454,16 +456,21 @@ function StepButton({ label, onClick, children }: { label: string; onClick: () =
  * Rutan är minst 60 px hög — den ska gå att träffa med en tumme i en handske.
  */
 function DayTile({
-  day, totals, isToday, isSelected, onSelect,
+  day, totals, loading, isToday, isSelected, onSelect,
 }: {
   day: WeekDay;
   totals: { worked: number; absent: number };
+  loading: boolean;
   isToday: boolean;
   isSelected: boolean;
   onSelect: () => void;
 }) {
-  const hasWork = totals.worked > 0;
-  const hasAbsence = totals.absent > 0;
+  // ⚠️ EN OLÄST RUTA FÅR INTE SE TOM UT. Under hämtningen är totalerna noll — vid ett veckobyte för
+  // att raderna fortfarande hör till förra veckans datum — och en tom ruta betyder "inget
+  // rapporterat". Utan det här läget svarar remsan alltså med självsäkerhet på sidans enda fråga
+  // innan den vet svaret, och den som faktiskt rapporterat hela veckan ser sju tomma rutor.
+  const hasWork = !loading && totals.worked > 0;
+  const hasAbsence = !loading && totals.absent > 0;
   const hasAny = hasWork || hasAbsence;
 
   // Fyllningen bär informationen visuellt; aria-label bär samma sak för den som inte ser rutan.
@@ -476,17 +483,20 @@ function DayTile({
       aria-label={[
         `${day.weekday} ${day.date.getDate()}`,
         isToday ? 'idag' : null,
+        loading ? 'läser in' : null,
         hasWork ? `${formatHours(totals.worked)} timmar` : null,
         hasAbsence ? `${formatHours(totals.absent)} timmar frånvaro` : null,
-        hasAny ? null : 'inget rapporterat',
+        loading || hasAny ? null : 'inget rapporterat',
       ].filter(Boolean).join(', ')}
       className={cn(
         '!min-h-[60px] !flex-col !justify-center !gap-0.5 !px-0.5 !py-1.5 rounded-xl border text-center transition',
         isSelected
           ? 'border-solid border-transparent text-white shadow-sm'
-          : hasAny
-            ? 'border-solid border-[#cfdcc9] bg-white text-slate-900 hover:border-slate-400'
-            : 'border-dashed border-[#d3ddce] bg-transparent text-slate-400 hover:border-slate-400',
+          : loading
+            ? 'border-solid border-[#e4ebe0] bg-white text-slate-400'
+            : hasAny
+              ? 'border-solid border-[#cfdcc9] bg-white text-slate-900 hover:border-slate-400'
+              : 'border-dashed border-[#d3ddce] bg-transparent text-slate-400 hover:border-slate-400',
         !isSelected && isToday ? 'ring-2 ring-emerald-300' : '',
       )}
       style={isSelected ? { backgroundColor: 'var(--crm-primary)' } : undefined}
@@ -495,7 +505,10 @@ function DayTile({
         {day.weekday}
       </span>
       <span className="text-sm font-bold tabular-nums leading-none">{day.date.getDate()}</span>
-      {hasWork ? (
+      {loading ? (
+        // Ett streck, inte en prick: pricken är "inget rapporterat" och får inte betyda två saker.
+        <span className={cn('h-[11px] w-4 animate-pulse rounded-full', isSelected ? 'bg-white/40' : 'bg-slate-200')} aria-hidden />
+      ) : hasWork ? (
         <span className={cn('text-[11px] font-semibold tabular-nums leading-none', isSelected ? 'text-white' : 'text-slate-700')}>
           {compactHours(totals.worked)}
         </span>
