@@ -9,7 +9,8 @@ import { quoteStatusMeta } from '@/app/crm/lib/crmTokens';
 import { openFortnoxPdf } from '@/app/crm/lib/fortnoxDoc';
 import { resolveQuoteVatBreakdown, quoteAmountDisplay } from '@/lib/domains/crm/pricing';
 import { quoteCustomerName, isQuoteOverdue } from '@/app/crm/lib/quoteDisplay';
-import useDocumentEmail from '@/app/crm/components/useDocumentEmail';
+import type { EmailableDocument } from '@/app/crm/components/useDocumentEmail';
+import { isQuoteCardLocked } from '@/lib/domains/crm/quoteBoard';
 
 // The quote detail modal, shared by the offer list and the Säljtavla board.
 //
@@ -75,19 +76,31 @@ function mergeQuote<T extends QuoteDetailItem>(base: T, patch: Partial<QuoteDeta
 export default function QuoteDetailPanel<T extends QuoteDetailItem>({
   quote,
   workOrderFortnoxNumber,
+  returnTo,
   onClose,
   onQuoteChanged,
+  documentEmail,
 }: {
   quote: T;
   /** Fortnox order number for this quote's work order, if the consumer has indexed it. */
   workOrderFortnoxNumber: string | null;
+  /**
+   * Where the customer-card link should return to. Supplied per surface: hardcoding the offer list
+   * would have dumped a board user onto the list — reintroducing the very detour this panel removes.
+   */
+  returnTo: string;
   onClose: () => void;
   /** The updated row after any action, so the consumer can patch its own list/board state. */
   onQuoteChanged: (updated: T) => void;
+  /**
+   * Owned by the CONSUMER, not by this panel. The e-mail flow has its own dismissable progress
+   * overlay and outlives the modal it was started from — a hook living here would be torn down with
+   * the panel, silently dropping a half-finished send.
+   */
+  documentEmail: { sendingId: string | null; start: (doc: EmailableDocument) => void };
 }) {
   const router = useRouter();
   const toast = useToast();
-  const documentEmail = useDocumentEmail();
 
   const [moving, setMoving] = useState(false);
   const [creatingWorkOrder, setCreatingWorkOrder] = useState(false);
@@ -98,11 +111,25 @@ export default function QuoteDetailPanel<T extends QuoteDetailItem>({
   // A work order locks the offer in Fortnox — unless the last sync failed, in which case the
   // re-sync button stays available so the user can recover.
   const offerLocked = Boolean(quote.work_order_id) && quote.fortnox_sync_status !== 'failed';
+  // The board refuses to DRAG a won card that already has a work order (isQuoteCardLocked). Letting
+  // the same card be clicked out of 'won' in this panel would make that guard decorative — and
+  // moving it would strand the work order that was already created from it.
+  const statusLocked = isQuoteCardLocked(quote);
   const display = quoteAmountDisplay(quote.quote_type, resolveQuoteVatBreakdown(quote));
   const customerName = quoteCustomerName(quote);
 
   async function moveQuoteToStatus(nextStatus: QuoteDetailItem['status']) {
     if (quote.status === nextStatus) return;
+    // Won is a meaningful transition — confirm it, exactly as the board's drag-and-drop does. A
+    // linked prospect is converted to a customer server-side and that cannot be undone from here,
+    // so the same board offering two different safety levels for one transition would be worse than
+    // offering none.
+    if (nextStatus === 'won') {
+      const message = quote.prospect_id
+        ? 'Markera offerten som vunnen? En kopplad prospekt konverteras då till kund.'
+        : 'Markera offerten som vunnen?';
+      if (!window.confirm(message)) return;
+    }
     setMoving(true);
     try {
       const res = await fetch(`/api/crm/quotes/${quote.id}`, {
@@ -203,9 +230,8 @@ export default function QuoteDetailPanel<T extends QuoteDetailItem>({
   }
 
   return (
-    <>
-      <div
-        className="fixed inset-0 z-[2800] flex items-end justify-center bg-slate-950/50 [backdrop-filter:blur(4px)] sm:items-center sm:p-4"
+    <div
+      className="fixed inset-0 z-[2800] flex items-end justify-center bg-slate-950/50 [backdrop-filter:blur(4px)] sm:items-center sm:p-4"
         onClick={onClose}
       >
         <div
@@ -233,7 +259,7 @@ export default function QuoteDetailPanel<T extends QuoteDetailItem>({
                   open-then-return workflow as the offer form). */}
               {quote.customer_id ? (
                 <Link
-                  href={`/crm/kunder/${quote.customer_id}?returnTo=${encodeURIComponent(`/crm/offerter?quote_id=${quote.id}`)}`}
+                  href={`/crm/kunder/${quote.customer_id}?returnTo=${encodeURIComponent(returnTo)}`}
                   className="m-0 inline-flex max-w-full items-center gap-1 text-sm text-slate-500 transition-colors hover:text-emerald-700"
                 >
                   <span className="truncate underline-offset-2 hover:underline">{customerName}</span>
@@ -296,7 +322,10 @@ export default function QuoteDetailPanel<T extends QuoteDetailItem>({
 
             {/* Status changer */}
             <div className="grid gap-2">
-              <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Byt status</span>
+              <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                Byt status
+                {statusLocked ? <span className="ml-2 font-medium normal-case tracking-normal text-slate-400">— låst, arbetsorder är skapad</span> : null}
+              </span>
               <div className="flex flex-wrap gap-2">
                 {(Object.entries(quoteStatusMeta) as Array<[QuoteDetailItem['status'], typeof quoteStatusMeta[QuoteDetailItem['status']]]>).map(([s, meta]) => {
                   const isCurrent = quote.status === s;
@@ -304,7 +333,7 @@ export default function QuoteDetailPanel<T extends QuoteDetailItem>({
                     <button
                       key={s}
                       type="button"
-                      disabled={moving || isCurrent}
+                      disabled={moving || isCurrent || statusLocked}
                       onClick={() => void moveQuoteToStatus(s)}
                       className={cn(
                         'inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition',
@@ -530,12 +559,6 @@ export default function QuoteDetailPanel<T extends QuoteDetailItem>({
             ) : null}
           </div>
         </div>
-      </div>
-
-      {/* Rendered as a sibling AFTER the panel, matching where it sat when this lived in
-          QuotesClient: CrmModal uses the same z-[2800], so document order decides which paints on
-          top. Nesting it inside the panel would have it fight its own container. */}
-      {documentEmail.modal}
-    </>
+    </div>
   );
 }

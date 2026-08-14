@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Input from '../../../components/ui/Input';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
@@ -11,6 +11,7 @@ import { resolveQuoteVatBreakdown, quoteAmountDisplay } from '@/lib/domains/crm/
 import { crm, quoteStatusMeta, type QuoteStatus } from '@/app/crm/lib/crmTokens';
 import { quoteCustomerName, isQuoteOverdue } from '@/app/crm/lib/quoteDisplay';
 import QuoteDetailPanel from '@/app/crm/components/QuoteDetailPanel';
+import useDocumentEmail from '@/app/crm/components/useDocumentEmail';
 import {
   quoteBoardColumn,
   isQuoteCardLocked,
@@ -74,6 +75,7 @@ const COLUMN_DEF: Record<SaljtavlaColumn, { label: string; hint: string; accent:
 export default function SaljtavlaClient({ currentUserId }: { currentUserId: string | null }) {
   const toast = useToast();
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   const [quotes, setQuotes] = useState<BoardQuote[]>([]);
   const [loading, setLoading] = useState(true);
@@ -94,6 +96,22 @@ export default function SaljtavlaClient({ currentUserId }: { currentUserId: stri
   // Opening a card used to navigate to the offer list just to show its modal. The panel is shared
   // now, so the board keeps you where you are.
   const [detailQuoteId, setDetailQuoteId] = useState<string | null>(null);
+  // Owned here so a send in progress survives closing the panel — see the panel's prop docs.
+  const documentEmail = useDocumentEmail();
+  const [hasHandledQuotePreset, setHasHandledQuotePreset] = useState(false);
+  const presetQuoteId = searchParams.get('quote_id') || '';
+
+  // Deep-link: reopen a card's panel when arriving with ?quote_id=, which is how the customer-card
+  // round trip gets you back here. Waits for the quote to be loaded, and runs once, so closing the
+  // panel by hand doesn't immediately re-open it.
+  useEffect(() => { setHasHandledQuotePreset(false); }, [presetQuoteId]);
+
+  useEffect(() => {
+    if (!presetQuoteId || hasHandledQuotePreset || loading) return;
+    if (!quotes.some((q) => q.id === presetQuoteId)) return;
+    setDetailQuoteId(presetQuoteId);
+    setHasHandledQuotePreset(true);
+  }, [presetQuoteId, hasHandledQuotePreset, loading, quotes]);
 
   // Load quotes (all statuses — the board groups them client-side).
   useEffect(() => {
@@ -318,10 +336,14 @@ export default function SaljtavlaClient({ currentUserId }: { currentUserId: stri
         <QuoteDetailPanel
           quote={detailQuote}
           workOrderFortnoxNumber={detailQuote.work_order_id ? (workOrderFortnoxById.get(detailQuote.work_order_id) ?? null) : null}
+          returnTo={`/crm/saljtavla?quote_id=${detailQuote.id}`}
+          documentEmail={documentEmail}
           onClose={() => setDetailQuoteId(null)}
           onQuoteChanged={(updated) => setQuotes((current) => current.map((q) => (q.id === updated.id ? updated : q)))}
         />
       ) : null}
+
+      {documentEmail.modal}
     </div>
   );
 }

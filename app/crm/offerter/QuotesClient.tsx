@@ -11,6 +11,7 @@ import { resolveQuoteVatBreakdown, quoteAmountDisplay } from '@/lib/domains/crm/
 import { quoteStatusMeta } from '@/app/crm/lib/crmTokens';
 import { quoteCustomerName, isQuoteOverdue } from '@/app/crm/lib/quoteDisplay';
 import QuoteDetailPanel from '@/app/crm/components/QuoteDetailPanel';
+import useDocumentEmail from '@/app/crm/components/useDocumentEmail';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -125,6 +126,9 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
   // doesn't carry it). Fetched once from the work-orders list (one request, no per-row
   // fetch, no DB join needed).
   const [workOrderFortnoxById, setWorkOrderFortnoxById] = useState<Map<string, string | null>>(new Map());
+  // Held here, not in the panel: the send flow has a dismissable progress overlay that must survive
+  // the modal being closed.
+  const documentEmail = useDocumentEmail();
   const [detailPanelOpen, setDetailPanelOpen] = useState(false);
   const [detailQuoteId, setDetailQuoteId] = useState<string | null>(null);
   const [hasHandledPreset, setHasHandledPreset] = useState(false);
@@ -426,10 +430,14 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
         <QuoteDetailPanel
           quote={detailQuote}
           workOrderFortnoxNumber={detailQuote.work_order_id ? (workOrderFortnoxById.get(detailQuote.work_order_id) ?? null) : null}
+          returnTo={`/crm/offerter?quote_id=${detailQuote.id}`}
+          documentEmail={documentEmail}
           onClose={() => setDetailPanelOpen(false)}
           onQuoteChanged={(updated) => setQuotes((current) => current.map((q) => (q.id === updated.id ? { ...q, ...updated } : q)))}
         />
       ) : null}
+
+      {documentEmail.modal}
     </div>
   );
 }

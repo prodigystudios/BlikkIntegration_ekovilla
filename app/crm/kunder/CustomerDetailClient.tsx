@@ -239,13 +239,18 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
     const rt = searchParams.get('returnTo');
     if (!rt) return null;
     const isOfferPath = rt === '/crm/offerter' || rt.startsWith('/crm/offerter/') || rt.startsWith('/crm/offerter?');
-    return isOfferPath || rt.startsWith('/crm/arbetsorder/') ? rt : null;
+    // The Säljtavla opens the same quote panel as the offer list, so its customer link needs the
+    // same round trip. Without it the allow-list silently drops the returnTo and the seller is
+    // dumped in the customer register instead of back on the board.
+    const isBoardPath = rt === '/crm/saljtavla' || rt.startsWith('/crm/saljtavla?');
+    return isOfferPath || isBoardPath || rt.startsWith('/crm/arbetsorder/') ? rt : null;
   })();
   // The offer FORM (/crm/offerter/ny · /[id]/redigera) re-selects this customer via
   // created_customer_id so edited details flow into the draft. The offer LIST (/crm/offerter?quote_id=,
   // opened from a quote's detail modal) just returns to reopen the modal — no customer injection.
   const isOfferFormReturn = returnTo?.startsWith('/crm/offerter/') ?? false;
-  const isOfferReturn = returnTo === '/crm/offerter' || returnTo?.startsWith('/crm/offerter/') || returnTo?.startsWith('/crm/offerter?') || false;
+  const isOfferReturn = returnTo === '/crm/offerter' || returnTo?.startsWith('/crm/offerter/') || returnTo?.startsWith('/crm/offerter?')
+    || returnTo === '/crm/saljtavla' || returnTo?.startsWith('/crm/saljtavla?') || false;
   const sep = returnTo?.includes('?') ? '&' : '?';
   const backTo = returnTo
     ? (isOfferFormReturn ? `${returnTo}${sep}created_customer_id=${customerId}` : returnTo)
