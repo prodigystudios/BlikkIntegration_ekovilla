@@ -154,15 +154,25 @@ export function buildTimeEntryRow(input: TimeEntryInput, userId: string): BuiltT
  */
 export function toSummarizableEntry(row: TimeEntryRow): SummarizableEntry {
   const workOrder = row.work_order;
-  // Ordernumret först: det är vad kontoret känner igen ett jobb på. Projekt- eller kundnamn läggs
-  // till när det finns, så en rad går att placera utan att slå upp ordern.
+
+  // ⚠️ FORTNOX-NUMRET LEDER, det interna är reserven — och `#` sätts bara på Fortnox-numret.
+  //
+  // Samma regel som `documentRef` i app/crm/lib/format.ts, som är husets konvention på varje annan
+  // CRM-yta. Skälet är praktiskt: kunder, fakturor, offerter och ordrar visar alla Fortnox-numret,
+  // så ett internt AO-nummer i attesten är ett nummer ingen som granskar känner igen. Regeln
+  // upprepas här i stället för att importeras: en domänmodul ska inte hänga på en UI-hjälpare.
+  //
+  // Projekt- eller kundnamnet läggs till när det finns, så en rad går att placera utan att slå upp
+  // ordern.
+  const orderRef = workOrder?.fortnox_order_number
+    ? `#${workOrder.fortnox_order_number}`
+    : workOrder?.order_number || null;
   const workOrderLabel = workOrder
-    ? [workOrder.order_number || workOrder.fortnox_order_number, workOrder.project_name || workOrder.client_name]
-        .filter(Boolean)
-        .join(' · ') || null
+    ? [orderRef, workOrder.project_name || workOrder.client_name].filter(Boolean).join(' · ') || null
     : null;
 
   return {
+    id: row.id,
     workDate: row.work_date,
     startTime: row.start_time,
     endTime: row.end_time,
@@ -218,6 +228,131 @@ export async function updateTimeEntry(
     .eq('id', id)
     .eq('user_id', userId)
     .select(timeEntrySelect)
+    .maybeSingle();
+}
+
+// ── Adminrättelser ───────────────────────────────────────────────────────────
+// Funktionerna nedan är INTE ägarskopade, och det är hela poängen: en admin rättar någon annans
+// rad. Säkerhetsgränsen är RLS (`time.entry.write.all` i 20260814_time_admin_corrections.sql), och
+// varje ändring loggas av en databastrigger — inte av koden här, så en serverväg som glömmer logga
+// inte kan finnas.
+//
+// Periodlåset gäller oförändrat och prövas mot RADENS ÄGARE. Admin måste alltså öppna personens
+// period först; attesterad tid går inte att röra ens härifrån.
+
+/**
+ * Raden som den ser ut nu — underlaget för en rättelse.
+ *
+ * Hela raden och inte bara ägaren: en rättelse SLÅS IHOP med det som redan står. `kind` och
+ * måltavlan (arbetsorder, internprojekt, frånvaroorsak) kommer alltid härifrån och aldrig från
+ * anropet, så en rättelse kan ändra klockslagen men aldrig flytta timmarna till ett annat jobb
+ * eller göra om arbetstid till frånvaro. Det är inte en begränsning som råkade bli så — det är
+ * skillnaden mellan att rätta ett fel och att skriva om någons löneunderlag.
+ */
+export async function getTimeEntryForCorrection(supabase: SupabaseClient, id: string) {
+  return supabase
+    .from('crm_time_entries')
+    .select('id, user_id, kind, work_date, work_order_id, internal_project_id, absence_type_id, start_time, end_time, break_minutes, minutes_worked, hours, time_code_id, note')
+    .eq('id', id)
+    .maybeSingle();
+}
+
+/**
+ * Fälten en admin får rätta. Allt som utelämnas ärvs från raden.
+ *
+ * ⚠️ `user_id` finns INTE här, och kommer aldrig att göra det. Att rätta ett fel är en sak; att
+ * flytta någons timmar till en annan persons löneunderlag är en annan, och den ska inte gå att
+ * göra av misstag eller med en handskriven request.
+ *
+ * Allt annat ÄR rättbart — inklusive `kind`, datum och vilket jobb raden hör till. Det var
+ * ursprungligen låst av mig, men William 2026-08-14: "kan ju varit så att dom råkat rapportera på
+ * fel projekt eller liknande". Att rapportera på fel arbetsorder är precis den sortens misstag
+ * rättelsen finns för, och en rättelse som inte kan laga det hade skickat folk till att radera och
+ * skriva om raden i stället — vilket ger sämre spår, inte bättre.
+ */
+export type TimeEntryCorrection = {
+  kind?: TimeEntryKind;
+  work_date?: string;
+  work_order_id?: string | null;
+  internal_project_id?: string | null;
+  absence_type_id?: string | null;
+  time_code_id?: string | null;
+  start_time?: string | null;
+  end_time?: string | null;
+  break_minutes?: number;
+  /** Bara för frånvaro, som anges i timmar. */
+  hours?: number | null;
+  note?: string | null;
+};
+
+/**
+ * Befintlig rad + rättelse → indata till buildTimeEntryRow. Ren, så sammanslagningen går att testa.
+ *
+ * Byts `kind` nollställer buildTimeEntryRow de mål som inte hör till den nya sorten, och kräver att
+ * det nya målet finns — en halvfärdig ändring blir alltså ett läsbart fel i stället för en rad som
+ * påstår sig vara arbetsordertid utan arbetsorder.
+ */
+export function mergeCorrection(
+  existing: {
+    kind: TimeEntryKind;
+    work_date: string;
+    work_order_id: string | null;
+    internal_project_id: string | null;
+    absence_type_id: string | null;
+    start_time: string | null;
+    end_time: string | null;
+    break_minutes: number | null;
+    minutes_worked: number | null;
+    /** Fallbacken för de gamla kontorsraderna, där minutes_worked är NULL men hours satt. */
+    hours: number | null;
+    time_code_id: string | null;
+    note: string | null;
+  },
+  patch: TimeEntryCorrection,
+): TimeEntryInput {
+  const pick = <T,>(next: T | undefined, current: T): T => (next === undefined ? current : next);
+  return {
+    kind: pick(patch.kind, existing.kind),
+    work_date: pick(patch.work_date, existing.work_date),
+    work_order_id: pick(patch.work_order_id, existing.work_order_id),
+    internal_project_id: pick(patch.internal_project_id, existing.internal_project_id),
+    absence_type_id: pick(patch.absence_type_id, existing.absence_type_id),
+    time_code_id: pick(patch.time_code_id, existing.time_code_id),
+    start_time: pick(patch.start_time, existing.start_time),
+    end_time: pick(patch.end_time, existing.end_time),
+    break_minutes: pick(patch.break_minutes, existing.break_minutes ?? 0),
+    // Frånvaro anges i timmar. Utelämnas de behålls radens nuvarande värde.
+    //
+    // ⚠️ `hours` är fallbacken och måste vara med. På de gamla kontorsraderna är minutes_worked NULL
+    // men hours satt; utan fallbacken blev timtalet null, buildTimeEntryRow krävde klockslag som
+    // raden aldrig haft, och admin fick hitta på tider — varpå triggern skrev om radens hours till
+    // något helt annat. En rättelse av ARBETSORDERN hade då tyst ändrat lönetimmarna.
+    hours: pick(
+      patch.hours,
+      existing.minutes_worked != null ? existing.minutes_worked / 60 : existing.hours,
+    ),
+    note: pick(patch.note, existing.note),
+  };
+}
+
+export async function adminUpdateTimeEntry(supabase: SupabaseClient, id: string, row: Record<string, unknown>) {
+  // `user_id` skalas bort. Att rätta en rad är en sak, att flytta den till en annan persons
+  // löneunderlag en helt annan — och den andra ska inte gå att göra av misstag.
+  const { user_id: _ignored, ...patch } = row;
+  return supabase
+    .from('crm_time_entries')
+    .update(patch)
+    .eq('id', id)
+    .select(timeEntrySelect)
+    .maybeSingle();
+}
+
+export async function adminDeleteTimeEntry(supabase: SupabaseClient, id: string) {
+  return supabase
+    .from('crm_time_entries')
+    .delete()
+    .eq('id', id)
+    .select('id')
     .maybeSingle();
 }
 

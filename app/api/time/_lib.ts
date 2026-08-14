@@ -66,6 +66,28 @@ export const createTimeEntrySchema = z.object({
   note: optionalText.optional().default(null),
 });
 
+// Adminrättelse. Allt är valfritt — det som utelämnas ärvs från raden som redan finns
+// (mergeCorrection i lib/domains/time/entries.ts).
+//
+// ⚠️ `user_id` finns INTE med, och ska aldrig göra det. Att rätta ett fel är en sak; att flytta
+// någons timmar till en annan persons löneunderlag är en annan. Routen läser ägaren ur databasen.
+//
+// Allt annat går att rätta, inklusive vilket jobb raden hör till: att ha rapporterat på fel
+// arbetsorder är precis den sortens misstag rättelsen finns för.
+export const correctTimeEntrySchema = z.object({
+  kind: z.enum(['work_order', 'internal', 'absence']).optional(),
+  work_date: isoDateSchema.optional(),
+  work_order_id: z.string().uuid().nullable().optional(),
+  internal_project_id: z.string().uuid().nullable().optional(),
+  absence_type_id: z.string().uuid().nullable().optional(),
+  time_code_id: z.string().uuid().nullable().optional(),
+  start_time: clockSchema.nullable().optional(),
+  end_time: clockSchema.nullable().optional(),
+  break_minutes: z.coerce.number().int().min(0).max(1439).optional(),
+  hours: z.coerce.number().min(0).max(24).nullable().optional(),
+  note: optionalText.optional(),
+});
+
 // ── Attest ───────────────────────────────────────────────────────────────────
 
 // Perioden anges som månad ('2026-08') och aldrig som ett fritt datumintervall: attesten ÄR en

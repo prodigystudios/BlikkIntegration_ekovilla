@@ -15,6 +15,8 @@ export type TimeEntryKind = 'work_order' | 'internal' | 'absence';
 export type SummarizableEntry = ShiftInput & {
   kind: TimeEntryKind;
   userId: string;
+  /** Tidradens id. Underlaget är en LÄSVY, men attesten måste kunna peka ut raden som ska rättas. */
+  id?: string;
   /** Frånvaroorsakens namn (crm_absence_types.name) — hamnar i underlagets frånvarokolumn. */
   absenceReason?: string | null;
   /** Byråns lönesort, från referensraden. */
@@ -42,6 +44,26 @@ export type DayRow = {
   note: string | null;
   /** Arbetsordern eller internprojektet raden hör till. Null på frånvaro. */
   label: string | null;
+  /** Tidraden bakom dagraden, när den är känd — annars går raden inte att rätta. */
+  entryId: string | null;
+  /**
+   * Radens sort.
+   *
+   * ⚠️ Går inte att härleda ur siffrorna. En internrad har arbetade minuter precis som en
+   * arbetsorderrad, så en rättelse som gissade sorten ur `absenceMinutes` öppnade internraden som
+   * "Arbetsorder" — och ett valt jobb föll då tyst bort i sammanslagningen medan UI:t sa att raden
+   * var rättad.
+   */
+  kind: TimeEntryKind;
+  /**
+   * Rastavdraget i minuter.
+   *
+   * ⚠️ Måste följa med. Den som RÄTTAR raden skickar tillbaka rasten tillsammans med klockslagen,
+   * och servern räknar om minuterna ur alla tre. Saknas den här defaultar formuläret till noll och
+   * en rättad 07:00–16:00 med halvtimmes rast går från 510 till 540 minuter — trettio minuter
+   * tillagda på någons lön, tyst, vid varje rättelse.
+   */
+  breakMinutes: number;
 };
 
 // En rad per tidrad, inte per dag: byrån vill se klockslagen, och två pass samma dag har två par.
@@ -61,6 +83,9 @@ export function buildDayRows(entries: SummarizableEntry[]): DayRow[] {
         absenceReasons: isAbsence && entry.absenceReason ? [entry.absenceReason] : [],
         note: entry.note ?? null,
         label: isAbsence ? null : entry.label ?? null,
+        entryId: entry.id ?? null,
+        kind: entry.kind,
+        breakMinutes: isAbsence ? 0 : entry.breakMinutes ?? 0,
       };
     });
 }

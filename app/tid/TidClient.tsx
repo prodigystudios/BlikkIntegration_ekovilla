@@ -10,6 +10,7 @@ import { parseDecimal } from '@/lib/shared/number';
 import { addDays, buildWeekDays, fmtISO, isoWeek, startOfWeek, type WeekDay } from '@/app/crm/planering/planningDates';
 import { COMPENSATION_KINDS, COMPENSATION_LABELS, COMPENSATION_UNITS, summarizeCompensations, type CompensationItem, type CompensationKind } from '@/lib/domains/time/compensations';
 import { isPeriodLocked, periodLabel, TIME_PERIOD_STATUS_LABELS, type TimeApprovalRow, type TimePeriodStatus } from '@/lib/domains/time/approvals';
+import { auditActionLabel, auditWorkDate, describeAuditChange, type TimeEntryAuditRow } from '@/lib/domains/time/audit';
 import TimeEntryModal, { type EditableEntry, type ReferenceData } from './TimeEntryModal';
 
 // Tidrapporten, CRM-versionen. Ligger på /tid bredvid gamla /tidrapport (som fortsätter mot Blikk)
@@ -177,6 +178,7 @@ export default function TidClient() {
 
   const [entries, setEntries] = React.useState<EntryRow[]>([]);
   const [compensations, setCompensations] = React.useState<CompensationItem[]>([]);
+  const [audit, setAudit] = React.useState<TimeEntryAuditRow[]>([]);
   const [approval, setApproval] = React.useState<TimeApprovalRow | null>(null);
   const [approvalStatus, setApprovalStatus] = React.useState<TimePeriodStatus>('open');
   const [reference, setReference] = React.useState<ReferenceData>({ time_code: [], internal_project: [], absence_type: [] });
@@ -203,17 +205,21 @@ export default function TidClient() {
     const seq = ++loadSeq.current;
     setError(null);
     try {
-      const [entriesRes, compsRes, refRes, approvalRes] = await Promise.all([
+      const [entriesRes, compsRes, refRes, approvalRes, auditRes] = await Promise.all([
         fetch(`/api/time/entries?from=${fetchRange.from}&to=${fetchRange.to}`, { cache: 'no-store' }),
         fetch(`/api/time/compensations?from=${fetchRange.monthStart}&to=${fetchRange.monthEnd}`, { cache: 'no-store' }),
         fetch('/api/time/reference', { cache: 'no-store' }),
         fetch(`/api/time/approvals?period=${fetchRange.period}`, { cache: 'no-store' }),
+        // "Har någon annan rört min tid?" Loggen innehåller BARA andras ändringar — triggern hoppar
+        // över egna sparningar — så en tom lista är ett rakt svar och inte ett tomt.
+        fetch(`/api/time/audit?from=${fetchRange.from}&to=${fetchRange.to}`, { cache: 'no-store' }),
       ]);
-      const [entriesJson, compsJson, refJson, approvalJson] = await Promise.all([
+      const [entriesJson, compsJson, refJson, approvalJson, auditJson] = await Promise.all([
         entriesRes.json().catch(() => ({})),
         compsRes.json().catch(() => ({})),
         refRes.json().catch(() => ({})),
         approvalRes.json().catch(() => ({})),
+        auditRes.json().catch(() => ({})),
       ]);
       if (seq !== loadSeq.current) return;
 
@@ -231,6 +237,8 @@ export default function TidClient() {
       if (!entriesRes.ok || !entriesJson.ok) throw new Error(entriesJson?.error || 'Kunde inte hämta tidrader');
       setEntries(entriesJson.data.items || []);
       if (compsRes.ok && compsJson.ok) setCompensations(compsJson.data.items || []);
+      // Tilläggsinformation: fallerar den ska veckan ändå ritas.
+      setAudit(auditRes.ok && auditJson.ok ? (auditJson.data.items || []) : []);
       if (refRes.ok && refJson.ok) setReference(refJson.data);
     } catch (e) {
       if (seq === loadSeq.current) {
@@ -454,6 +462,8 @@ export default function TidClient() {
         onChanged={load}
         onError={setError}
       />
+
+      <AuditNotice rows={audit} />
 
       <CompensationSection
         items={compensations}
@@ -933,6 +943,61 @@ function CompensationSection({
           )}
         </>
       ) : null}
+    </section>
+  );
+}
+
+/**
+ * "Någon annan har ändrat i din tid."
+ *
+ * Att kontoret kan rätta en tidrad är försvarbart bara om den vars lön det gäller kan se att det
+ * hänt. Utan den här rutan är revisionsloggen en försäkring för kontoret och inte för den anställde
+ * — och då är den inte värd namnet.
+ *
+ * Visas bara när det finns något: loggen innehåller enbart ANDRAS ändringar (triggern hoppar över
+ * egna sparningar med flit), så en tom lista betyder att ingen rört månaden.
+ */
+function AuditNotice({ rows }: { rows: TimeEntryAuditRow[] }) {
+  if (rows.length === 0) return null;
+
+  // Antal RADER, inte antal händelser: tre rättelser av samma rad är en rad som ändrats tre gånger,
+  // inte tre ändrade rader.
+  const touched = new Set(rows.map((row) => row.entry_id)).size;
+
+  return (
+    <section className="grid gap-2 rounded-2xl border border-solid border-amber-200 bg-amber-50 px-3.5 py-3">
+      <p className="m-0 text-sm font-semibold text-amber-900">
+        {touched === 1 ? 'En rad' : `${touched} rader`} i din tid har ändrats av någon annan
+      </p>
+      <ul className="m-0 grid list-none gap-1.5 p-0 text-sm text-amber-900">
+        {rows.map((row) => {
+          const changes = describeAuditChange(row);
+          // ⚠️ DAGEN MÅSTE STÅ MED. Utan den säger rutan att någon rört din tid men inte vilken rad,
+          // och då går den inte att kontrollera — vilket är hela poängen med att visa den.
+          const day = auditWorkDate(row);
+          return (
+            <li key={row.id}>
+              <span className="font-medium">
+                {day ? longDayLabel(day) : 'Okänd dag'} — {auditActionLabel(row.action).toLowerCase()}
+              </span>
+              {' av '}
+              {row.changed_by_profile?.full_name || 'okänd användare'}, {formatStamp(row.created_at)}
+              {changes.length > 0 ? (
+                <span className="block text-amber-800">
+                  {changes.map((change) => `${change.label}: ${change.from ?? '—'} → ${change.to ?? '—'}`).join(' · ')}
+                </span>
+              ) : row.action === 'update' ? (
+                // En uppdatering som inte ändrade något värde. Säg det — en tom rad läser som att
+                // detaljerna saknas, inte som att det inte fanns några.
+                <span className="block text-amber-800">Inga värden ändrades.</span>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+      <p className="m-0 text-xs text-amber-800">
+        Stämmer det inte? Säg till innan du lämnar in månaden.
+      </p>
     </section>
   );
 }

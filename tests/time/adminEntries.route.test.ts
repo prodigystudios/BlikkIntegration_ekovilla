@@ -21,6 +21,12 @@ vi.mock('@/lib/domains/time/entries', async (importOriginal) => {
   return { ...actual, listTimeEntries: vi.fn() };
 });
 
+// Loggen hämtas i samma svar som dagarna sedan 2026-08-14.
+vi.mock('@/lib/domains/time/audit', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/domains/time/audit')>();
+  return { ...actual, listTimeEntryAudit: vi.fn() };
+});
+
 vi.mock('@/lib/domains/time/compensations', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/domains/time/compensations')>();
   return { ...actual, listCompensations: vi.fn() };
@@ -33,12 +39,14 @@ import { getCurrentUser } from '@/lib/auth/route';
 import { getEffectivePermissions } from '@/lib/auth/permissions';
 import { listTimeEntries } from '@/lib/domains/time/entries';
 import { listCompensations } from '@/lib/domains/time/compensations';
+import { listTimeEntryAudit } from '@/lib/domains/time/audit';
 
 const { GET } = await import('@/app/api/admin/time/entries/route');
 
 const mockUser = vi.mocked(getCurrentUser);
 const mockEntries = vi.mocked(listTimeEntries);
 const mockCompensations = vi.mocked(listCompensations);
+const mockAudit = vi.mocked(listTimeEntryAudit);
 
 const ANNA = '44444444-4444-4444-8444-444444444444';
 
@@ -71,6 +79,7 @@ beforeEach(() => {
     effectivePermissionsForRole((await vi.mocked(getCurrentUser)())?.role));
   mockEntries.mockResolvedValue({ data: [], error: null } as any);
   mockCompensations.mockResolvedValue({ data: [], error: null } as any);
+  mockAudit.mockResolvedValue({ data: [], error: null } as any);
 });
 
 describe('GET /api/admin/time/entries — åtkomst', () => {
@@ -153,6 +162,17 @@ describe('GET /api/admin/time/entries — underlaget', () => {
     expect(json.data.rows[0].label).toBe('AO-20260729-42E7C4 · Villa Ek');
   });
 
+  // Regression: mapparen ledde med det INTERNA numret, så attesten visade ett AO-nummer medan
+  // /tid visade Fortnox-numret för samma rad. Fortnox-numret är det enda någon känner igen.
+  it('visar Fortnox-numret när det finns, inte det interna', async () => {
+    mockEntries.mockResolvedValue({
+      data: [{ ...shiftRow, work_order: { ...shiftRow.work_order, fortnox_order_number: '10241' } }],
+      error: null,
+    } as any);
+    const json = await (await GET(req(URL_OK))).json();
+    expect(json.data.rows[0].label).toBe('#10241 · Villa Ek');
+  });
+
   it('håller frånvaro utanför arbetstiden och namnger orsaken', async () => {
     mockEntries.mockResolvedValue({
       data: [
@@ -216,6 +236,19 @@ describe('GET /api/admin/time/entries — underlaget', () => {
     const json = await (await GET(req(URL_OK))).json();
     expect(json.data.rows[0].workMinutes).toBe(450);
     expect(json.data.workMinutes).toBe(450);
+  });
+
+  // Loggen är tilläggsinformation. Fallerar den ska dagarna ändå visas — att vägra rita månaden för
+  // att revisionsraderna inte gick att läsa vore att göra granskningen omöjlig av fel skäl.
+  it('visar dagarna även när ändringsloggen fallerar', async () => {
+    mockEntries.mockResolvedValue({ data: [shiftRow], error: null } as any);
+    mockAudit.mockResolvedValue({ data: null, error: { message: 'permission denied' } } as any);
+    const res = await GET(req(URL_OK));
+    const json = await res.json();
+    expect(res.status).toBe(200);
+    expect(json.data.rows).toHaveLength(1);
+    expect(json.data.audit).toEqual([]);
+    expect(json.data.audit_failed).toBe(true);
   });
 
   it('svarar 500 med databasens meddelande när läsningen fallerar', async () => {

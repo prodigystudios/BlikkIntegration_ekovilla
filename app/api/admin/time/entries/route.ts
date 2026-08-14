@@ -2,6 +2,7 @@ import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { periodRange, periodStartOf } from '@/lib/domains/time/approvals';
 import { listCompensations } from '@/lib/domains/time/compensations';
+import { auditInRange, listTimeEntryAudit, type TimeEntryAuditRow } from '@/lib/domains/time/audit';
 import { listTimeEntries, toSummarizableEntry, type TimeEntryRow } from '@/lib/domains/time/entries';
 import { summarizePerson } from '@/lib/domains/time/summary';
 import { ok, personPeriodQuerySchema, requirePermission, routeError, validationError } from '@/app/api/time/_lib';
@@ -46,12 +47,20 @@ export async function GET(req: Request) {
 
     // Sessionsklient, inte getSupabaseAdmin(): read.all-grenen i RLS är redan svaret på "får den
     // här personen se andras tid", och service-role hade öppnat hela databasen för att slippa den.
-    const [entries, compensations] = await Promise.all([
+    const [entries, compensations, audit] = await Promise.all([
       listTimeEntries(supabase, range, { userId }),
       listCompensations(supabase, range, { userId }),
+      // Loggen följer med samma hämtning: den hör till granskningen av månaden, och en egen
+      // rundtur per utfälld person hade gjort dagvyn segare utan att ge något.
+      listTimeEntryAudit(supabase, { userId }),
     ]);
     if (entries.error) return routeError(500, 'time_entries_failed', entries.error.message);
     if (compensations.error) return routeError(500, 'time_compensations_failed', compensations.error.message);
+    // Loggen är TILLÄGGSINFORMATION. Fallerar den ska dagarna ändå visas — att vägra rita månaden
+    // för att revisionsraderna inte gick att läsa vore att göra granskningen omöjlig av fel skäl.
+    const auditRows = audit.error
+      ? []
+      : ((audit.data ?? []) as unknown as TimeEntryAuditRow[]).filter((row) => auditInRange(row, range));
 
     const summary = summarizePerson(
       ((entries.data ?? []) as unknown as TimeEntryRow[]).map(toSummarizableEntry),
@@ -64,6 +73,8 @@ export async function GET(req: Request) {
       user_id: userId,
       ...summary,
       compensations: compensations.data ?? [],
+      audit: auditRows,
+      audit_failed: !!audit.error,
     });
   } catch (e: any) {
     return routeError(500, 'admin_time_entries_unexpected', e?.message || 'Kunde inte hämta personens tid');

@@ -20,7 +20,7 @@ describe('PERMISSION_KEYS catalog', () => {
   // Mirrors the SQL `permissions` catalog in 20260608_permissions_model.sql. If you add a key
   // there, add it here too (and to the seed + parity assert) — this guards the count.
   it('has the expected count and no duplicates', () => {
-    expect(PERMISSION_KEYS.length).toBe(44);
+    expect(PERMISSION_KEYS.length).toBe(45);
     expect(new Set(PERMISSION_KEYS).size).toBe(PERMISSION_KEYS.length);
   });
 
@@ -61,7 +61,7 @@ describe('PERMISSION_KEYS catalog', () => {
   // the CRM meta guards (crm.access/crm.write) and quietly lock installers out of their own hours.
   it('keeps the time keys outside the crm.* namespace', () => {
     const timeKeys = PERMISSION_KEYS.filter((key) => key.startsWith('time.'));
-    expect(timeKeys.length).toBe(5);
+    expect(timeKeys.length).toBe(6);
     for (const key of timeKeys) expect(key.startsWith('crm.')).toBe(false);
   });
 });

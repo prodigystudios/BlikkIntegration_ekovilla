@@ -146,3 +146,40 @@ describe('buildDayRows — vad tiden lades på', () => {
     expect(rows[0].absenceReasons).toEqual(['VAB']);
   });
 });
+
+// Regression, och den dyraste sorten: rastavdraget måste följa med dagraden.
+//
+// Attestens rättelse skickar tillbaka rasten tillsammans med klockslagen, och servern räknar om
+// minuterna ur alla tre. Tappas den här defaultar formuläret till noll, och en rättad 07:00–16:00
+// med halvtimmes rast går från 510 till 540 minuter — trettio minuter tillagda på någons lön, tyst.
+describe('buildDayRows — rasten', () => {
+  it('bär rastavdraget vidare på arbetad tid', () => {
+    const rows = buildDayRows([entry({ startTime: '07:00', endTime: '16:00', breakMinutes: 30 })]);
+    expect(rows[0].breakMinutes).toBe(30);
+    expect(rows[0].workMinutes).toBe(510);
+  });
+
+  it('nollar rasten på frånvaro — den anges i timmar och har inget pass att dra från', () => {
+    const rows = buildDayRows([
+      entry({ kind: 'absence', startTime: null, endTime: null, minutesWorked: 240, breakMinutes: 30 }),
+    ]);
+    expect(rows[0].breakMinutes).toBe(0);
+    expect(rows[0].absenceMinutes).toBe(240);
+  });
+});
+
+// Regression: sorten måste följa med dagraden. En internrad har arbetade minuter precis som en
+// arbetsorderrad, så en rättelse som gissade sorten ur siffrorna öppnade internraden som
+// "Arbetsorder" — och ett valt jobb föll då tyst bort medan UI:t sa att raden var rättad.
+describe('buildDayRows — sorten', () => {
+  it('bär radens kind, som inte går att härleda ur minuterna', () => {
+    // Egna datum: buildDayRows sorterar på datum och starttid, och en frånvarorad utan klockslag
+    // hamnar annars först — ordningen är inte poängen här, sorten är.
+    const rows = buildDayRows([
+      entry({ kind: 'work_order', workDate: '2026-08-11' }),
+      entry({ kind: 'internal', workDate: '2026-08-12' }),
+      entry({ kind: 'absence', workDate: '2026-08-13', startTime: null, endTime: null, minutesWorked: 240 }),
+    ]);
+    expect(rows.map((row) => row.kind)).toEqual(['work_order', 'internal', 'absence']);
+  });
+});

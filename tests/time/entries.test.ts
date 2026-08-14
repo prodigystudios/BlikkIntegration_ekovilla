@@ -201,18 +201,20 @@ describe('toSummarizableEntry', () => {
     expect(mapped.minutesWorked).toBe(455);
   });
 
-  it('namnger arbetsordern med ordernummer och projekt', () => {
+  // Fortnox-numret leder, precis som documentRef gör på varje annan CRM-yta: det interna
+  // AO-numret är ingen utanför systemet känner igen, allra minst den som granskar lönen.
+  it('namnger arbetsordern med FORTNOX-numret och projektet', () => {
     const mapped = toSummarizableEntry(row({
       work_order: { id: 'wo1', order_number: 'AO-1', fortnox_order_number: '12', project_name: 'Villa Ek', client_name: 'Ekbergs' },
     }));
-    expect(mapped.label).toBe('AO-1 · Villa Ek');
+    expect(mapped.label).toBe('#12 · Villa Ek');
   });
 
-  it('faller tillbaka på Fortnox-numret och kundnamnet när CRM-fälten saknas', () => {
+  it('faller tillbaka på det interna numret först när Fortnox-numret saknas — och utan brädgård', () => {
     const mapped = toSummarizableEntry(row({
-      work_order: { id: 'wo1', order_number: null, fortnox_order_number: '12', project_name: null, client_name: 'Ekbergs' },
+      work_order: { id: 'wo1', order_number: 'AO-1', fortnox_order_number: null, project_name: null, client_name: 'Ekbergs' },
     }));
-    expect(mapped.label).toBe('12 · Ekbergs');
+    expect(mapped.label).toBe('AO-1 · Ekbergs');
   });
 
   it('använder internprojektets namn på interntid', () => {
@@ -230,5 +232,81 @@ describe('toSummarizableEntry', () => {
     }));
     expect(absence.absenceReason).toBe('VAB');
     expect(absence.payrollCode).toBe('LÖN300');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// mergeCorrection — adminrättelsens gräns
+// ---------------------------------------------------------------------------
+// En rättelse ska kunna laga ett felskrivet klockslag, aldrig flytta någons timmar till ett annat
+// jobb eller göra om arbetstid till frånvaro. Gränsen bor här, inte i UI:t.
+
+import { mergeCorrection } from '@/lib/domains/time/entries';
+
+const current = {
+  kind: 'work_order' as const,
+  work_date: '2026-08-14',
+  work_order_id: 'wo-1',
+  internal_project_id: null,
+  absence_type_id: null,
+  start_time: '07:00:00',
+  end_time: '16:00:00',
+  break_minutes: 30,
+  minutes_worked: 510,
+  hours: 8.5,
+  time_code_id: 'tc-1',
+  note: 'Vindsbjälklag',
+};
+
+describe('mergeCorrection', () => {
+  it('tar klockslagen ur rättelsen och resten ur raden', () => {
+    const merged = mergeCorrection(current, { start_time: '08:00', end_time: '17:00' });
+    expect(merged.start_time).toBe('08:00');
+    expect(merged.end_time).toBe('17:00');
+    expect(merged.break_minutes).toBe(30);
+    expect(merged.note).toBe('Vindsbjälklag');
+  });
+
+  // Att ha rapporterat på fel arbetsorder är precis den sortens misstag rättelsen finns för
+  // (William 2026-08-14), så målet SKA gå att flytta.
+  it('flyttar raden till ett annat jobb när det efterfrågas', () => {
+    const merged = mergeCorrection(current, { work_order_id: 'wo-2' });
+    expect(merged.work_order_id).toBe('wo-2');
+    expect(merged.start_time).toBe('07:00:00');
+  });
+
+  it('byter sort och tar det nya målet med sig', () => {
+    const merged = mergeCorrection(current, { kind: 'internal', internal_project_id: 'ip-1' });
+    expect(merged.kind).toBe('internal');
+    expect(merged.internal_project_id).toBe('ip-1');
+    // buildTimeEntryRow nollar målen som inte hör till den nya sorten — mergeCorrection bär bara
+    // vidare, den städar inte.
+    expect(merged.work_order_id).toBe('wo-1');
+  });
+
+  // Det enda som ALDRIG går att flytta. `user_id` finns inte ens i typen, så en rättelse kan inte
+  // hamna i någon annans löneunderlag — och routen läser ägaren ur databasen, aldrig ur anropet.
+  it('har ingen väg att byta ägare', () => {
+    const merged = mergeCorrection(current, { ...({ user_id: 'någon-annan' } as any) });
+    expect(merged).not.toHaveProperty('user_id');
+  });
+
+  it('skiljer utelämnat från null — en tömd anteckning ska gå att spara', () => {
+    expect(mergeCorrection(current, {}).note).toBe('Vindsbjälklag');
+    expect(mergeCorrection(current, { note: null }).note).toBeNull();
+  });
+
+  it('räknar om frånvarons timmar ur minuterna när de inte skickas med', () => {
+    const absence = { ...current, kind: 'absence' as const, work_order_id: null, absence_type_id: 'vab', minutes_worked: 240 };
+    expect(mergeCorrection(absence, {}).hours).toBe(4);
+    expect(mergeCorrection(absence, { hours: 8 }).hours).toBe(8);
+  });
+
+  // Regression: de gamla kontorsraderna har minutes_worked NULL men hours satt. Utan fallbacken
+  // blev timtalet null, buildTimeEntryRow krävde klockslag raden aldrig haft, och den admin som
+  // bara ville flytta raden till rätt jobb tvingades hitta på tider — som sedan skrev om lönetimmarna.
+  it('faller tillbaka på hours när minutes_worked är null', () => {
+    const legacy = { ...current, minutes_worked: null, hours: 6.5, start_time: null, end_time: null };
+    expect(mergeCorrection(legacy, {}).hours).toBe(6.5);
   });
 });

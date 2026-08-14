@@ -438,8 +438,19 @@ function applyWorkOrderListFilters<Q extends {
   or: (f: string) => Q; eq: (c: string, v: string) => Q; in: (c: string, v: string[]) => Q;
 }>(query: Q, options: WorkOrderListFilters): Q {
   if (options.search) {
+    // ⚠️ KOMMATECKEN OCH PARENTESER MÅSTE BORT. PostgREST läser `or=(...)` som en villkorslista
+    // separerad med komma, så ett kundnamn som "Ekbergs Bygg, AB" delar uttrycket mitt itu och hela
+    // frågan svarar 400 — vilket väljaren visar som "inga träffar" och orderlistan som ett fel. En
+    // term som `x,status.eq.invoiced` hade dessutom smugit in en egen gren i filtret.
+    const term = options.search.replace(/[,()]/g, ' ').trim();
+    if (!term) return query;
+
+    // ⚠️ `fortnox_order_number` är med sedan 2026-08-14. Den saknades, vilket betydde att numret
+    // appen VISAR överallt (documentRef leder med Fortnox-numret) var det enda man inte kunde söka
+    // på — man fick leta upp ordern på kundnamn för att hitta ett nummer man redan hade framför
+    // sig.
     query = query.or(
-      `order_number.ilike.%${options.search}%,project_name.ilike.%${options.search}%,client_name.ilike.%${options.search}%,notes.ilike.%${options.search}%`,
+      `order_number.ilike.%${term}%,fortnox_order_number.ilike.%${term}%,project_name.ilike.%${term}%,client_name.ilike.%${term}%,notes.ilike.%${term}%`,
     );
   }
   const statuses = options.filter ? BOARD_FILTER_STATUSES[options.filter] : null;
