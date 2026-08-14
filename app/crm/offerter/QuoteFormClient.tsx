@@ -1155,6 +1155,12 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     });
   }
   const restoredRef = useRef(false);
+  // Generation counter for customer lookups. Several paths can have one in flight at once (the
+  // edit-mode load, a restored draft, the returning-customer branch), and without this the LAST
+  // response wins — so a stale lookup could leave the picker describing a different customer than
+  // the draft holds, or resurrect a customer the seller just cleared. Every deliberate change of
+  // the selected customer bumps it, which invalidates whatever is still in the air.
+  const customerLookupRef = useRef(0);
   // Local draft recovery: the "clean" draft JSON captured after the form's starting state settles
   // (initial draft for a new quote, loaded quote for an edit). Anything that differs from it is
   // unsaved work → auto-saved to localStorage and guarded on unload.
@@ -1207,14 +1213,22 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     setCustomEndContact(Boolean(
       restored.end_contact_name || restored.end_contact_phone || restored.end_contact_email,
     ));
-    if (restored.customer_id) {
-      void fetchCustomerLite(restored.customer_id).then((c) => { if (c) setSelectedCustomer(c); });
-    }
+    if (restored.customer_id) hydrateSelectedCustomer(restored.customer_id);
   }
 
   // Populate the draft from a chosen customer. Shared by the search picker and the
   // post-create round-trip so both paths fill identical fields.
+  // Look up a customer for the picker only — never touches the draft. Guarded so a slow response
+  // can't overwrite a newer selection; see customerLookupRef.
+  function hydrateSelectedCustomer(customerId: string) {
+    const generation = ++customerLookupRef.current;
+    void fetchCustomerLite(customerId).then((customer) => {
+      if (customer && customerLookupRef.current === generation) setSelectedCustomer(customer);
+    });
+  }
+
   function applySelectedCustomer(customer: CrmCustomerLite) {
+    customerLookupRef.current += 1; // a deliberate pick outranks any lookup still in flight
     setSelectedCustomer(customer);
     // Primary contact first, then the customer card's own e-mail/phone — a customer with no
     // contact rows (the common case) would otherwise leave both fields empty.
@@ -1336,11 +1350,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
 
         // Show the linked customer in the picker so editing doesn't look like no
         // customer is selected. Fetch the live row (silently ignored if it 404s).
-        if (item.customer_id) {
-          fetchCustomerLite(item.customer_id).then((c) => {
-            if (active && c) setSelectedCustomer(c);
-          });
-        }
+        if (item.customer_id) hydrateSelectedCustomer(item.customer_id);
       })
       .catch(() => { if (active) { toast.error('Kunde inte ladda offert'); router.push('/crm/offerter'); } })
       .finally(() => { if (active) setLoading(false); });
@@ -2062,6 +2072,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
               selectedCustomer={selectedCustomer}
               onSelect={applySelectedCustomer}
               onClear={() => {
+                customerLookupRef.current += 1; // clearing outranks any lookup still in flight
                 setSelectedCustomer(null);
                 setCustomWorkAddress(false);
                 setDraft((current) => ({
