@@ -543,7 +543,10 @@ function PersonRow({
   const absencePercent = Math.round((row.absence_minutes / scaleMinutes) * 100);
 
   return (
-    <li className="overflow-hidden rounded-2xl border border-solid border-[#e0e8dc] bg-[#f9fbf7]">
+    // Vit fyllning, inte sage. Fliken renderas i en `crm.card` som REDAN är #f9fbf7 — ett kort i
+    // samma ton på samma ton skiljs bara av en hårlinje i #e0e8dc, och då läser raderna som en enda
+    // yta. Samma grepp som tidraderna i /tid: vitt kort på sage-underlag.
+    <li className="overflow-hidden rounded-2xl border border-solid border-[#e0e8dc] bg-white">
       {/* EN rad med kolumner, inte tre band under varandra. Staplade fullbreddsblock på en yta som
           är över tusen pixlar bred ger innehåll klistrat mot ytterkanterna och luft i mitten — och
           en stapel som spänner hela bredden läser som en trasig avdelare, inte som ett mått.
@@ -634,7 +637,7 @@ function PersonRow({
       </div>
 
       {expanded ? (
-        <div className="border-t border-solid border-[#e4ebe0] bg-white px-3.5 py-3">
+        <div className="border-t border-solid border-[#e4ebe0] bg-[#f9fbf7] px-4 py-3">
           <PersonDays detail={detail} name={row.full_name} />
         </div>
       ) : null}
