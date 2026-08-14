@@ -111,17 +111,16 @@ export function computePricing(
 export type MarginTier = 'good' | 'watch' | 'bad' | 'unknown';
 
 /**
- * ⚠️ PRELIMINÄRA TRÖSKLAR — SÄLJCHEFEN SKA SÄTTA DE SKARPA.
+ * SÄLJCHEFENS TRÖSKLAR, satta 2026-08-14: under 25 % rött, 25–40 % gult, över 40 % grönt.
  *
- * Satta kring registrets faktiska median (53,7 % mätt 2026-08-13, tionde percentilen 40,3 %), så
- * ungefär hälften av artiklarna hamnar grönt på listpris och rött triggar vid rejäl rabatt.
- * De styr en färg som säljare kommer att lita på — ändra dem HÄR och ingen annanstans.
+ * Ersätter de preliminära (50/35) som var gissade kring registrets median. De styr en färg säljare
+ * litar på — ändra dem HÄR och ingen annanstans.
  */
 export const MARGIN_THRESHOLDS = {
-  /** TG ≥ detta = grönt. */
-  good: 50,
-  /** TG ≥ detta men under `good` = gult. Under detta = rött. */
-  watch: 35,
+  /** TG ÖVER detta = grönt. Exakt värdet är gult — se marginTier. */
+  good: 40,
+  /** TG under detta = rött. Från och med detta upp till `good` = gult. */
+  watch: 25,
 } as const;
 
 /**
@@ -162,15 +161,24 @@ export function rowMarginPercent(row: MarginRow): number | null {
   return ((row.revenue - cost) / row.revenue) * 100;
 }
 
-/** Färgnivån för en TG. `null` (okänt inköpspris) ger `unknown` — inte rött. */
+/**
+ * Färgnivån för en TG. `null` (okänt inköpspris) ger `unknown` — inte rött.
+ *
+ * ⚠️ GRÄNSERNA LÄSES SOM SÄLJCHEFEN SKREV DEM: under 25 rött, 25–40 gult, ÖVER 40 grönt. Exakt
+ * 40,0 % är alltså GULT, inte grönt — `good` är exklusiv medan `watch` är inklusiv.
+ *
+ * Asymmetrin är inte slarv och skillnaden inte teoretisk: 1 000 kr intäkt mot 600 kr inköp ger
+ * exakt 40,0 %, och runda priser är just vad säljare skriver. Tidigare var båda gränserna
+ * inklusiva, vilket hade gjort den offerten grön mot beskedet.
+ */
 export function marginTier(
   marginPercent: number | null | undefined,
   thresholds: { good: number; watch: number } = MARGIN_THRESHOLDS,
 ): MarginTier {
   if (marginPercent == null || !Number.isFinite(marginPercent)) return 'unknown';
-  if (marginPercent >= thresholds.good) return 'good';
-  if (marginPercent >= thresholds.watch) return 'watch';
-  return 'bad';
+  if (marginPercent < thresholds.watch) return 'bad';
+  if (marginPercent > thresholds.good) return 'good';
+  return 'watch';
 }
 
 /**

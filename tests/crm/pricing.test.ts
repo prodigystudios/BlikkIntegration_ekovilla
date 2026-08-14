@@ -197,10 +197,19 @@ describe('rowMarginPercent', () => {
 });
 
 describe('marginTier', () => {
-  it('delar in efter trösklarna, gränsvärdet inklusive', () => {
+  // Skillnaden är inte teoretisk: 1 000 kr intäkt mot 600 kr inköp ger exakt 40,0 %, och runda
+  // priser är just vad säljare skriver.
+  it('40,0 % är gult, inte grönt — runda priser träffar gränsen på pricken', () => {
+    expect(rowMarginPercent({ revenue: 1000, quantity: 1, purchasePrice: 600 })).toBe(40);
+    expect(marginTier(rowMarginPercent({ revenue: 1000, quantity: 1, purchasePrice: 600 }))).toBe('watch');
+  });
+
+  // Säljchefens formulering, 2026-08-14: "Under 25% - röd / 25-40 - gul / >40 - grön".
+  // Övre gränsen är alltså EXKLUSIV och den undre inklusiv — 40,0 är gult, 25,0 är gult.
+  it('delar in efter trösklarna: undre gränsen inklusiv, övre exklusiv', () => {
     expect(marginTier(60)).toBe('good');
-    expect(marginTier(MARGIN_THRESHOLDS.good)).toBe('good');
-    expect(marginTier(MARGIN_THRESHOLDS.good - 0.1)).toBe('watch');
+    expect(marginTier(MARGIN_THRESHOLDS.good + 0.1)).toBe('good');
+    expect(marginTier(MARGIN_THRESHOLDS.good)).toBe('watch');
     expect(marginTier(MARGIN_THRESHOLDS.watch)).toBe('watch');
     expect(marginTier(MARGIN_THRESHOLDS.watch - 0.1)).toBe('bad');
     expect(marginTier(-10)).toBe('bad');

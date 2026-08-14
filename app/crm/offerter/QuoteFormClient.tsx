@@ -853,7 +853,7 @@ function MarginBadge({ marginPercent, className }: { marginPercent: number | nul
   };
   const titles: Record<Exclude<MarginTier, 'unknown'>, string> = {
     good: `Täckningsgrad ${marginPercent.toFixed(1)} % – över ${MARGIN_THRESHOLDS.good} %`,
-    watch: `Täckningsgrad ${marginPercent.toFixed(1)} % – under ${MARGIN_THRESHOLDS.good} %, se över priset`,
+    watch: `Täckningsgrad ${marginPercent.toFixed(1)} % – grönt kräver över ${MARGIN_THRESHOLDS.good} %, se över priset`,
     bad: `Täckningsgrad ${marginPercent.toFixed(1)} % – under ${MARGIN_THRESHOLDS.watch} %, offerten kräver godkännande`,
   };
 
@@ -2693,7 +2693,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
                           </p>
                         ) : quoteMarginTier === 'watch' ? (
                           <p className="m-0 text-[11px] leading-snug text-amber-700">
-                            Under {MARGIN_THRESHOLDS.good} % — se över priset innan du skickar.
+                            Grönt kräver över {MARGIN_THRESHOLDS.good} % — se över priset innan du skickar.
                           </p>
                         ) : null}
                       </div>
