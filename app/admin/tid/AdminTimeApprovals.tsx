@@ -129,7 +129,13 @@ const EMPTY_DETAIL: PersonDetail = { loading: true, error: null, summary: null, 
 export default function AdminTimeApprovals() {
   const [period, setPeriod] = React.useState(currentPeriod);
   const [people, setPeople] = React.useState<TimeApprovalOverviewRow[]>([]);
-  const [loading, setLoading] = React.useState(true);
+  // Skelettet härleds ur VILKEN PERIOD som faktiskt är hämtad, det sätts inte för hand.
+  //
+  // Förut satte varje load() `loading = true`, även omladdningen efter en rättelse. Då byttes hela
+  // listan mot "Laddar…", sidan blev kort, och webbläsaren tappade scrollpositionen — man kastades
+  // till toppen efter varje sparning. Datan måste hämtas om (timmar, radantal och gruppens
+  // stapelskala kommer ur RPC:n), men vyn behöver inte rivas ner för det.
+  const [loadedPeriod, setLoadedPeriod] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [notice, setNotice] = React.useState<string | null>(null);
   const [busyId, setBusyId] = React.useState<string | null>(null);
@@ -165,7 +171,6 @@ export default function AdminTimeApprovals() {
 
   const load = React.useCallback(async () => {
     const seq = ++loadSeq.current;
-    setLoading(true);
     setError(null);
     try {
       const res = await fetch(`/api/admin/time/approvals?period=${period}`, { cache: 'no-store', credentials: 'same-origin' });
@@ -182,9 +187,12 @@ export default function AdminTimeApprovals() {
         setPeople([]);
       }
     } finally {
-      if (seq === loadSeq.current) setLoading(false);
+      // Även efter ett fel: felrutan förklarar vad som hände, ett evigt skelett gör det inte.
+      if (seq === loadSeq.current) setLoadedPeriod(period);
     }
   }, [period]);
+
+  const loading = loadedPeriod !== period;
 
   React.useEffect(() => { void load(); }, [load]);
 
@@ -198,9 +206,12 @@ export default function AdminTimeApprovals() {
     setConfirmBulk(false);
   }, [period]);
 
-  const loadDetail = React.useCallback(async (userId: string) => {
+  const loadDetail = React.useCallback(async (userId: string, opts?: { keepVisible?: boolean }) => {
     const seq = ++detailSeq.current;
-    setDetail(EMPTY_DETAIL);
+    // `keepVisible` vid omladdning efter en rättelse: raderna byts ut när svaret kommer i stället
+    // för att ersättas av "Laddar dagar…" och tillbaka igen. En rad som blinkar bort och kommer
+    // åter flyttar allt under sig — och blicken med.
+    if (!opts?.keepVisible) setDetail(EMPTY_DETAIL);
     try {
       const res = await fetch(`/api/admin/time/entries?period=${period}&user_id=${userId}`, {
         cache: 'no-store',
@@ -247,7 +258,7 @@ export default function AdminTimeApprovals() {
       // och ett meddelande bakom den är ett meddelande ingen ser.
       if (!res.ok || !body?.ok) return body?.error || `Fel (${res.status})`;
       setNotice(patch ? 'Tidraden rättad.' : 'Tidraden borttagen.');
-      if (expandedId) await loadDetail(expandedId);
+      if (expandedId) await loadDetail(expandedId, { keepVisible: true });
       await load();
       return null;
     } catch {
