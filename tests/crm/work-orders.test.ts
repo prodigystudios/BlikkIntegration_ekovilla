@@ -226,11 +226,15 @@ import { makeSupabaseMock } from './helpers/supabase';
 describe('updateCrmWorkOrderTimeEntry', () => {
   // Raden byggs med ordern ur URL:en. Gick den vidare till patchen kunde en PATCH mot en ANNAN
   // orders adress flytta någons tidrad dit — och timmarna hade följt med till fel jobb.
-  it('skalar bort work_order_id och user_id ur patchen', async () => {
+  it('skalar bort work_order_id, user_id och time_code_id ur patchen', async () => {
     const supabase = makeSupabaseMock({ data: { id: 'e1' }, error: null });
     await updateCrmWorkOrderTimeEntry(supabase as any, 'e1', 'anna', {
       user_id: 'någon-annan',
       work_order_id: 'en-annan-order',
+      // buildTimeEntryRow sätter ALLTID time_code_id, och kontorsfliken har ingen väljare — den
+      // skickar alltså null. En rad som skapats i /tid med en tidkod syns i fliken, så en ändrad
+      // anteckning hade tyst raderat radens lönesort.
+      time_code_id: null,
       work_date: '2026-08-14',
       start_time: '08:00',
       end_time: '18:00',
@@ -242,6 +246,7 @@ describe('updateCrmWorkOrderTimeEntry', () => {
     const patch = (supabase._query.update as any).mock.calls[0][0];
     expect(patch).not.toHaveProperty('work_order_id');
     expect(patch).not.toHaveProperty('user_id');
+    expect(patch).not.toHaveProperty('time_code_id');
     expect(patch.minutes_worked).toBe(540);
     expect(patch.start_time).toBe('08:00');
   });

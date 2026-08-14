@@ -808,10 +808,19 @@ export async function updateCrmWorkOrderTimeEntry(
   userId: string,
   row: Record<string, unknown>,
 ) {
-  // `user_id` och `work_order_id` skalas bort. Ägarbytet är självklart, men orderbytet är det inte:
-  // raden byggs med ordern ur URL:en, så en PATCH mot fel orders adress hade FLYTTAT tidraden dit.
-  // Fliken kan bara ändra sin egen rads innehåll, aldrig vilket jobb den tillhör.
-  const { user_id: _ignoredUser, work_order_id: _ignoredOrder, ...patch } = row;
+  // Tre fält skalas bort ur den byggda raden.
+  //
+  // `user_id` — ägarbytet, självklart.
+  //
+  // `work_order_id` — raden byggs med ordern ur URL:en, så en PATCH mot fel orders adress hade
+  // FLYTTAT tidraden dit. Fliken ändrar sin rads innehåll, aldrig vilket jobb den hör till.
+  //
+  // `time_code_id` — mindre uppenbart och därför farligare: buildTimeEntryRow sätter alltid fältet,
+  // och kontorsfliken har ingen tidkodsväljare, så den skulle skicka null. En rad som skapats i
+  // /tid MED en tidkod syns i den här fliken (listan filtrerar bara på ordern), och att rätta ett
+  // stavfel i anteckningen hade då tyst raderat radens lönesort. Fältet lämnas orört i stället —
+  // det som inte går att sätta här får inte heller gå att nollställa här.
+  const { user_id: _ignoredUser, work_order_id: _ignoredOrder, time_code_id: _ignoredCode, ...patch } = row;
   return supabase
     .from('crm_time_entries')
     .update(patch)

@@ -53,17 +53,23 @@ function toClockInput(value: string | null): string {
   return value ? value.slice(0, 5) : '';
 }
 
-/** Förhandsvisning av arbetad tid. Tom sträng när passet inte går att räkna ut än. */
-function draftHours(draft: TimeDraft): string | null {
-  if (!draft.start_time || !draft.end_time) return null;
+/**
+ * Förhandsvisning av arbetad tid.
+ *
+ * Tre utfall, inte två: ofyllt, orimligt och räknat. Slås de två första ihop står det "fyll i
+ * start- och sluttid" på fält som ÄR ifyllda, och den verkliga orsaken — att rasten är längre än
+ * passet — dyker upp först som ett rött meddelande när man redan tryckt spara.
+ */
+function draftHours(draft: TimeDraft): { tone: 'hint' | 'error' | 'ok'; text: string } {
+  if (!draft.start_time || !draft.end_time) return { tone: 'hint', text: 'Fyll i start- och sluttid.' };
   const minutes = workedMinutes({
     workDate: draft.work_date,
     startTime: draft.start_time,
     endTime: draft.end_time,
     breakMinutes: Number(draft.break_minutes || 0),
   });
-  if (minutes <= 0) return null;
-  return `${minutesToHours(minutes).toFixed(2).replace('.', ',')} h`;
+  if (minutes <= 0) return { tone: 'error', text: 'Rasten är längre än passet.' };
+  return { tone: 'ok', text: `${minutesToHours(minutes).toFixed(2).replace('.', ',')} h` };
 }
 
 type Props = {
@@ -98,8 +104,10 @@ function DraftFields({ draft, onChange }: { draft: TimeDraft; onChange: (next: T
           <Input value={draft.end_time} onChange={(e) => onChange({ ...draft, end_time: e.target.value })} type="time" />
         </label>
       </div>
-      <p className="m-0 text-xs text-slate-500">
-        {preview ? <>Arbetad tid efter rastavdrag: <strong className="text-slate-700">{preview}</strong></> : 'Fyll i start- och sluttid.'}
+      <p className={cn('m-0 text-xs', preview.tone === 'error' ? 'text-rose-600' : 'text-slate-500')}>
+        {preview.tone === 'ok'
+          ? <>Arbetad tid efter rastavdrag: <strong className="text-slate-700">{preview.text}</strong></>
+          : preview.text}
       </p>
     </>
   );
