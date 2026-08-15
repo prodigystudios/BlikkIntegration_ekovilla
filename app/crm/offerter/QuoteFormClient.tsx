@@ -1383,7 +1383,13 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
         // closes the direct-URL hole the detail card's hidden "Redigera" button left open.
         if (item.work_order_id || item.work_order_number) {
           toast.info('Offerten är låst – en arbetsorder har skapats, så den kan inte längre redigeras.');
-          router.replace(backTo);
+          // Tillbaka till YTAN, utan `?quote_id=` — alltså inte in i panelen igen.
+          //
+          // Panelens låsning är lösare än formulärets: den släpper fram "Redigera" när sista
+          // Fortnox-synken misslyckats (så återsynken går att nå), medan formuläret nekar så
+          // fort det finns en arbetsorder. För en sådan offert hade återgången till panelen
+          // blivit en klickrunda utan utgång — den gamla listomdirigeringen bröt den av misstag.
+          router.replace(backTo.split('?')[0]);
           return;
         }
         setLoadedQuote(item);
@@ -2182,7 +2188,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
             <path d="M9 2L4 7l5 5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
-          Offerter
+          {backTo.startsWith('/crm/saljtavla') ? 'Säljtavlan' : 'Offerter'}
         </button>
         <h1 className={crm.pageTitle}>
           {isEditing ? (draft.project_name || 'Redigera offert') : 'Ny offert'}

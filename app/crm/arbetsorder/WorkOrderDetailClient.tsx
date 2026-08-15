@@ -10,7 +10,7 @@ import { cn } from '@/lib/shared/cn';
 import { crm, syncStatusLabel, syncStatusClass, workOrderStatusLabel, workOrderStatusClass, WORK_ORDER_STATUS_FLOW, WORK_ORDER_STATUS_OPTIONS } from '@/app/crm/lib/crmTokens';
 import { PhoneLink, EmailLink, AddressLink } from '@/app/crm/components/ContactLinks';
 import AddressAutocompleteInput from '@/app/crm/components/AddressAutocompleteInput';
-import { safeReturnTo } from '@/app/crm/lib/returnTo';
+import { safeReturnTo, withReturnTo } from '@/app/crm/lib/returnTo';
 import { resolveCrmContact } from '@/lib/domains/crm/contacts';
 import {
   buildMeasurementLines,
@@ -571,7 +571,14 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
               <span>{workOrder.quote_type === 'private' ? 'Privatkund' : 'Företag'}</span>
               {workOrder.customer_id ? (
                 <a
-                  href={`/crm/kunder/${workOrder.customer_id}?returnTo=${encodeURIComponent(`/crm/arbetsorder/${workOrder.id}`)}`}
+                  // Bär med varifrån ordern öppnades, annars tappas planeringen vid en sväng
+                  // förbi kundkortet: tillbaka till ordern, men ordern vet inte längre om tavlan.
+                  href={withReturnTo(
+                    `/crm/kunder/${workOrder.customer_id}`,
+                    backTo === '/crm/arbetsorder'
+                      ? `/crm/arbetsorder/${workOrder.id}`
+                      : withReturnTo(`/crm/arbetsorder/${workOrder.id}`, backTo),
+                  )}
                   className="font-medium text-emerald-700 transition hover:text-emerald-800 hover:underline"
                 >
                   Öppna kundkort →
