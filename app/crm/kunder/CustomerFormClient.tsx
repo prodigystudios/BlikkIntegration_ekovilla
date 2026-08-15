@@ -109,8 +109,10 @@ function buildAddress(street: string, postalCode: string, city: string) {
   return { street: street || null, postal_code: postalCode || null, city: city || null };
 }
 
-// Only allow returning into the offer form (allowlist guards against open redirect).
-function safeReturnTo(returnTo: string | null): string | null {
+// Medvetet SNÄVARE än den delade `safeReturnTo` i app/crm/lib/returnTo.ts: hit kommer man bara
+// från offertformuläret, så bara den vägen tillbaka godtas. Eget namn för att skillnaden inte
+// ska förväxlas — den delade släpper igenom hela /crm/.
+function safeOfferFormReturnTo(returnTo: string | null): string | null {
   return returnTo && returnTo.startsWith('/crm/offerter/') ? returnTo : null;
 }
 
@@ -191,10 +193,17 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const toast = useToast();
-  const returnTo = safeReturnTo(searchParams.get('returnTo'));
+  const returnTo = safeOfferFormReturnTo(searchParams.get('returnTo'));
   // Where the back/cancel controls go. When we came from the offer form, return there
   // (restore_quote tells it to restore the stashed draft, without selecting a customer).
-  const cancelTo = returnTo ? `${returnTo}?restore_quote=1` : '/crm/kunder';
+  //
+  // ⚠️ Separatorn måste väljas, inte antas: offertformulärets adress bär numera sin egen
+  // `?returnTo=` när resan startade i säljtavlan. Ett hårdkodat `?` gav två frågetecken —
+  // `restore_quote` slutade räknas som parameter (utkastet återställdes inte) och hamnade
+  // i stället inuti returnTo-värdet, så tavlan aldrig återöppnade kortet.
+  const cancelTo = returnTo
+    ? `${returnTo}${returnTo.includes('?') ? '&' : '?'}restore_quote=1`
+    : '/crm/kunder';
   const [draft, setDraft] = useState<Draft>(initial);
   const [createInFortnox, setCreateInFortnox] = useState(false);
   const [saving, setSaving] = useState(false);

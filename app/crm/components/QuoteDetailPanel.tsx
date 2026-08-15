@@ -7,6 +7,7 @@ import { useToast } from '@/lib/Toast';
 import { documentRef } from '@/app/crm/lib/format';
 import { quoteStatusMeta } from '@/app/crm/lib/crmTokens';
 import { openFortnoxPdf } from '@/app/crm/lib/fortnoxDoc';
+import { withReturnTo } from '@/app/crm/lib/returnTo';
 import { resolveQuoteVatBreakdown, quoteAmountDisplay } from '@/lib/domains/crm/pricing';
 import { quoteCustomerName, isQuoteOverdue } from '@/app/crm/lib/quoteDisplay';
 import type { EmailableDocument } from '@/app/crm/components/useDocumentEmail';
@@ -568,7 +569,7 @@ export default function QuoteDetailPanel({
             {!offerLocked ? (
               <button
                 type="button"
-                onClick={() => { onClose(); router.push(`/crm/offerter/${quote.id}/redigera`); }}
+                onClick={() => { onClose(); router.push(withReturnTo(`/crm/offerter/${quote.id}/redigera`, returnTo)); }}
                 className="flex-1 rounded-xl py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-95 sm:ml-auto sm:flex-none sm:px-5"
                 style={{ backgroundColor: 'var(--crm-primary)' }}
               >

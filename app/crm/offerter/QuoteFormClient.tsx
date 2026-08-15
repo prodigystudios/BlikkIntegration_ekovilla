@@ -33,6 +33,7 @@ import {
   OFFER_VALIDITY_PRESETS,
   type CustomerDerivedValues,
 } from './quoteSerializers';
+import { safeReturnTo, withReturnTo } from '@/app/crm/lib/returnTo';
 import { resolveCrmContact } from '@/lib/domains/crm/contacts';
 import {
   buildMeasurementLines,
@@ -1109,6 +1110,10 @@ const DRAFT_AUTOSAVE_DEBOUNCE_MS = 800;
 export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  // Offertformuläret nås både från offertlistan och från säljtavlan. Utan det här landade
+  // säljaren i listan efter att ha sparat, alltså inte på tavlan hen kom ifrån.
+  const returnToParam = safeReturnTo(searchParams.get('returnTo'));
+  const backTo = returnToParam ?? '/crm/offerter';
   const toast = useToast();
   const isEditing = Boolean(quoteId);
 
@@ -1197,7 +1202,10 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   // Per-form storage key so a new-quote draft never collides with an edit draft.
   const draftStorageKey = quoteId ? `crm:quote-draft:edit:${quoteId}` : 'crm:quote-draft:new';
   // This offer's own URL — used as returnTo when leaving to create/edit a customer.
-  const offerSelfUrl = isEditing ? `/crm/offerter/${quoteId}/redigera` : '/crm/offerter/ny';
+  // Kundkortsresan kommer tillbaka hit, så returnTo måste följa med i adressen — annars är det
+  // borta när säljaren väl sparar, och tavlan tappas efter en sväng förbi kunden.
+  const offerSelfPath = isEditing ? `/crm/offerter/${quoteId}/redigera` : '/crm/offerter/ny';
+  const offerSelfUrl = returnToParam ? withReturnTo(offerSelfPath, returnToParam) : offerSelfPath;
 
   // Stash the draft and leave to a customer page; we return via returnTo.
   function goToCustomerPage(path: string) {
@@ -1369,13 +1377,19 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
       .then((json) => {
         if (!active) return;
         const item = json?.data?.item as QuoteItem | undefined;
-        if (!item) { toast.error('Kunde inte ladda offert'); router.push('/crm/offerter'); return; }
+        if (!item) { toast.error('Kunde inte ladda offert'); router.push(backTo); return; }
         // Locked: once a work order exists the offer is converted (and locked in Fortnox);
         // editing it would diverge the CRM quote from the created order. Bounce back — this
         // closes the direct-URL hole the detail card's hidden "Redigera" button left open.
         if (item.work_order_id || item.work_order_number) {
           toast.info('Offerten är låst – en arbetsorder har skapats, så den kan inte längre redigeras.');
-          router.replace('/crm/offerter');
+          // Tillbaka till YTAN, utan `?quote_id=` — alltså inte in i panelen igen.
+          //
+          // Panelens låsning är lösare än formulärets: den släpper fram "Redigera" när sista
+          // Fortnox-synken misslyckats (så återsynken går att nå), medan formuläret nekar så
+          // fort det finns en arbetsorder. För en sådan offert hade återgången till panelen
+          // blivit en klickrunda utan utgång — den gamla listomdirigeringen bröt den av misstag.
+          router.replace(backTo.split('?')[0]);
           return;
         }
         setLoadedQuote(item);
@@ -1452,7 +1466,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
         // turn on omvänd skattskyldighet, come back" happens most.
         if (item.customer_id) hydrateSelectedCustomer(item.customer_id, { seedApplied: true });
       })
-      .catch(() => { if (active) { toast.error('Kunde inte ladda offert'); router.push('/crm/offerter'); } })
+      .catch(() => { if (active) { toast.error('Kunde inte ladda offert'); router.push(backTo); } })
       .finally(() => { if (active) setLoading(false); });
 
     return () => { active = false; };
@@ -1818,15 +1832,15 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   function handleBack() {
     // Going back is a possible accident too. With unsaved work, show our own informative confirm
     // (the native beforeunload text isn't customisable); with nothing to keep, just leave.
-    if (isDirty) { setPendingLeaveHref('/crm/offerter'); return; }
+    if (isDirty) { setPendingLeaveHref(backTo); return; }
     clearPersistedDraft();
-    router.push('/crm/offerter');
+    router.push(backTo);
   }
 
   // Confirmed leaving with unsaved changes: flush the draft so it's recoverable, then navigate to
   // whatever destination triggered the dialog (back button or an intercepted link).
   function confirmLeave() {
-    const href = pendingLeaveHref ?? '/crm/offerter';
+    const href = pendingLeaveHref ?? backTo;
     persistDraft();
     setPendingLeaveHref(null);
     router.push(href);
@@ -1944,7 +1958,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
       } else {
         toast.success(isEditing ? 'Offert uppdaterad' : 'Offert skapad');
       }
-      router.push('/crm/offerter');
+      router.push(backTo);
     } catch {
       toast.error('Fel vid sparande av offert');
     } finally {
@@ -2174,7 +2188,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
             <path d="M9 2L4 7l5 5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
-          Offerter
+          {backTo.startsWith('/crm/saljtavla') ? 'Säljtavlan' : 'Offerter'}
         </button>
         <h1 className={crm.pageTitle}>
           {isEditing ? (draft.project_name || 'Redigera offert') : 'Ny offert'}

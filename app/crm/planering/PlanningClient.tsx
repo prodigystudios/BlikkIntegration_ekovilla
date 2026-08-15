@@ -6,6 +6,7 @@ import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { cn } from '@/lib/shared/cn';
 import { useToast } from '@/lib/Toast';
 import { crm, workOrderStatusAccent } from '@/app/crm/lib/crmTokens';
+import { withReturnTo } from '@/app/crm/lib/returnTo';
 import type { OpsSegment, OpsTruck, SchedulableWorkOrder } from '@/lib/domains/planning/types';
 import type { AssignablePerson, CrewMember } from '@/lib/domains/planning/crew';
 import type { DayNote } from '@/lib/domains/planning/dayNotes';
@@ -457,7 +458,9 @@ export default function PlanningClient({
   // Placeholders have no work order to open; clicking one is a no-op (edit/link comes in a later slice).
   const onSegClick = useCallback(
     (seg: OpsSegment) => {
-      if (seg.work_order_id) router.push(`/crm/arbetsorder/${seg.work_order_id}`);
+      // Tillbaka till tavlan, inte till orderlistan. (Vald vecka är komponentstate och ligger
+      // inte i URL:en, så återkomsten landar på innevarande vecka.)
+      if (seg.work_order_id) router.push(withReturnTo(`/crm/arbetsorder/${seg.work_order_id}`, '/crm/planering'));
     },
     [router],
   );

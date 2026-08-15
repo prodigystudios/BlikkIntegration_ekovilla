@@ -9,6 +9,7 @@ import DocumentNumberBadge from '@/app/crm/components/DocumentNumberBadge';
 import { documentRef, formatCurrency } from '@/app/crm/lib/format';
 import { resolveQuoteVatBreakdown, quoteAmountDisplay } from '@/lib/domains/crm/pricing';
 import { crm, quoteStatusMeta, type QuoteStatus } from '@/app/crm/lib/crmTokens';
+import { withReturnTo } from '@/app/crm/lib/returnTo';
 import { quoteCustomerName, isQuoteOverdue } from '@/app/crm/lib/quoteDisplay';
 import QuoteDetailPanel from '@/app/crm/components/QuoteDetailPanel';
 import useDocumentEmail from '@/app/crm/components/useDocumentEmail';
@@ -265,7 +266,7 @@ export default function SaljtavlaClient({ currentUserId }: { currentUserId: stri
         </div>
         <button
           type="button"
-          onClick={() => router.push('/crm/offerter/ny')}
+          onClick={() => router.push(withReturnTo('/crm/offerter/ny', '/crm/saljtavla'))}
           className={crm.primaryButton}
           style={{ backgroundColor: 'var(--crm-primary)' }}
         >
