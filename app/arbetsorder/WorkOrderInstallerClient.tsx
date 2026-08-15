@@ -62,7 +62,11 @@ export default function WorkOrderInstallerClient({
   // Ritningar och bilder. Samma hook och samma flikkomponent som kontorsvyn; RLS avgör vad
   // besättningen får se (interna filer filtreras bort i databasen) och routen svarar med om den
   // här personen får ladda upp.
-  const files = useWorkOrderFiles(workOrderId);
+  //
+  // Hämtas först när fliken öppnats — samma skäl som `includeTimeEntries` ovan: en telefon i fält
+  // ska inte betala en rundtur, plus signering av varje bild på servern, för en lista som ingenting
+  // renderar.
+  const files = useWorkOrderFiles(workOrderId, { enabled: activeTab === 'files' });
 
   // ⚠️ ALLA HOOKS MÅSTE LIGGA FÖRE DE TIDIGA RETURERNA NEDAN (`if (loading)`, `if (error)`).
   // Den här summan används först längst ner, men får inte deklareras där: första rendern går ut

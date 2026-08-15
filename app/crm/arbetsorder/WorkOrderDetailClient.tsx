@@ -251,7 +251,9 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   } = useWorkOrderActivity(workOrderId);
 
   // Ritningar och bilder på jobbet. Egen hook — fältvyn monterar samma flik med samma hook.
-  const workOrderFiles = useWorkOrderFiles(workOrderId);
+  // Hämtas först när fliken öppnats: listsvaret signerar en URL per bild på servern, och en order
+  // öppnas ofta för Ekonomi eller Artiklar utan att Filer någonsin visas.
+  const workOrderFiles = useWorkOrderFiles(workOrderId, { enabled: activeTab === 'files' });
 
   // Load work order
   useEffect(() => {
