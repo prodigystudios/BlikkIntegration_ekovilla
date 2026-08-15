@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
+  CUSTOMER_DERIVED_KEYS,
+  mergeUntouchedCustomerFields,
+  pickCustomerDerived,
   getEffectiveCustomerName,
   buildCustomerSnapshot,
   buildRotDetails,
@@ -373,5 +376,74 @@ describe('addDaysIso — ogiltigt dagantal', () => {
     expect(addDaysIso('2026-08-13', Number.NaN)).toBe('2026-08-13');
     expect(addDaysIso('2026-08-13', Number('custom'))).toBe('2026-08-13');
     expect(addDaysIso('2026-08-13', Infinity)).toBe('2026-08-13');
+  });
+});
+
+describe('mergeUntouchedCustomerFields', () => {
+  // What the card gave when the customer was picked.
+  const applied = pickCustomerDerived({
+    quote_type: 'business', vat_percent: '25', company_name: 'Byggarna AB',
+    customer_name: 'Byggarna AB', organization_number: '556677-8899', personal_number: '',
+    contact_name: 'Anna Andersson', phone: '0701234567', email: 'anna@byggarna.se',
+    street_address: 'Storgatan 1', postal_code: '11122', city: 'Stockholm',
+    delivery_address: '', delivery_postal_code: '', delivery_city: '',
+  });
+
+  it('pulls in omvänd skattskyldighet switched on while the seller was away', () => {
+    // The case that made this necessary: without the merge vat_percent stayed at 25 while the
+    // yellow notice (which reads the customer card) claimed 0 % — the quote saved the wrong VAT.
+    const current = { ...applied };
+    const next = { ...applied, vat_percent: '0' };
+    expect(mergeUntouchedCustomerFields(current, applied, next).vat_percent).toBe('0');
+  });
+
+  it('keeps a reference the seller typed, even though the card says otherwise', () => {
+    const current = { ...applied, contact_name: 'Platschef Bengt' };
+    const next = { ...applied, contact_name: 'Anna Andersson' };
+    expect(mergeUntouchedCustomerFields(current, applied, next).contact_name).toBe('Platschef Bengt');
+  });
+
+  it('does both at once — that is the whole point', () => {
+    const current = { ...applied, contact_name: 'Platschef Bengt' };   // seller edited
+    const next = { ...applied, vat_percent: '0', city: 'Göteborg' };   // card corrected
+    const merged = mergeUntouchedCustomerFields(current, applied, next);
+    expect(merged.contact_name).toBe('Platschef Bengt');
+    expect(merged.vat_percent).toBe('0');
+    expect(merged.city).toBe('Göteborg');
+  });
+
+  it('leaves an edited field alone even when the card changed it too', () => {
+    const current = { ...applied, city: 'Uppsala' };   // seller's value
+    const next = { ...applied, city: 'Göteborg' };     // card's new value
+    expect(mergeUntouchedCustomerFields(current, applied, next).city).toBe('Uppsala');
+  });
+
+  it('treats clearing a prefilled field as an edit', () => {
+    const current = { ...applied, phone: '' };
+    const next = { ...applied, phone: '0709999999' };
+    expect(mergeUntouchedCustomerFields(current, applied, next).phone).toBe('');
+  });
+
+  it('returns every key, so a spread onto the draft never drops a field', () => {
+    const merged = mergeUntouchedCustomerFields({ ...applied }, applied, { ...applied });
+    expect(Object.keys(merged).sort()).toEqual([...CUSTOMER_DERIVED_KEYS].sort());
+  });
+});
+
+describe('pickCustomerDerived', () => {
+  it('normalises missing/nullish fields to empty strings', () => {
+    const picked = pickCustomerDerived({ contact_name: 'Anna', phone: null, email: undefined });
+    expect(picked.contact_name).toBe('Anna');
+    expect(picked.phone).toBe('');
+    expect(picked.email).toBe('');
+  });
+
+  it('ignores draft fields that are not customer-derived', () => {
+    // Passed as a variable, the way the form passes a whole QuoteDraft — an object literal would
+    // trip TypeScript's excess-property check and hide what this is actually asserting.
+    const draftLike = { project_name: 'Tak', contact_name: 'Anna' };
+    const picked = pickCustomerDerived(draftLike);
+    expect(Object.keys(picked)).not.toContain('project_name');
+    expect(picked.contact_name).toBe('Anna');
   });
 });
