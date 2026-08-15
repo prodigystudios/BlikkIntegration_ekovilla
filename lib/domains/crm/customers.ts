@@ -296,8 +296,54 @@ export async function getCrmCustomer(supabase: SupabaseClient, id: string) {
   return supabase.from('crm_customers').select(crmCustomerSelect).eq('id', id).single();
 }
 
+// Privatkundens kontaktperson: personen ÄR kunden, så namnet står redan på kortet.
+// Returnerar null för företag — där heter kontaktpersonen nästan aldrig samma sak som
+// bolaget, så ett härlett namn vore fel — och för en privatkund utan ifyllt namn.
+export function privateCustomerContactName(input: {
+  customer_type: CrmCustomerType;
+  first_name?: string | null;
+  last_name?: string | null;
+}): string | null {
+  if (input.customer_type !== 'private') return null;
+  const name = [input.first_name, input.last_name]
+    .map((part) => part?.trim() || '')
+    .filter(Boolean)
+    .join(' ');
+  return name || null;
+}
+
+// Skapar kunden och — för privatkunder — en primär kontaktperson med BARA namnet.
+//
+// Varför raden behövs: utan den returnerar `resolveCrmContact` tom sträng som namn, och
+// offertens "Er referens" (obligatorisk, går till Fortnox YourReference) står tom trots att
+// kontaktpersonen bevisligen är kunden själv. Prospektformuläret fyller redan i sin halva
+// (se createCrmProspect) — det här stänger luckan från kundhållet.
+//
+// Varför BARA namnet: `resolveCrmContact` löser fält för fält och låter kontaktraden vinna
+// över kortet. Kopierades telefon och e-post hit skulle en adress som rättas på kortet i
+// efterhand tyst förbli oanvänd på offerter och mejl. Med enbart namnet fylls "Er referens"
+// i av sig själv medan kortet förblir enda källan för telefon och e-post.
+//
+// Raden lever sitt eget liv efter skapandet — den speglar inte ett senare namnbyte på kortet.
+// Den syns i kundkortets kontaktlista och rättas där.
 export async function createCrmCustomer(supabase: SupabaseClient, input: CreateCrmCustomerInput) {
-  return supabase.from('crm_customers').insert(input).select(crmCustomerSelect).single();
+  const created = await supabase.from('crm_customers').insert(input).select(crmCustomerSelect).single();
+  if (created.error || !created.data) return created;
+
+  const contactName = privateCustomerContactName(input);
+  if (!contactName) return created;
+
+  const customerId = created.data.id as string;
+  const { error: contactError } = await supabase
+    .from('crm_customer_contacts')
+    .insert({ customer_id: customerId, name: contactName, is_primary: true });
+  // Icke-kritiskt: kunden är skapad. Utan kontaktraden faller allt tillbaka på kortet,
+  // precis som det gjorde före den här ändringen — bättre än att fela hela skapandet.
+  if (contactError) return created;
+
+  // Hämta om så svaret bär med sig den nya kontakten (samma mönster som createCrmProspect).
+  const refetched = await supabase.from('crm_customers').select(crmCustomerSelect).eq('id', customerId).single();
+  return refetched.error || !refetched.data ? created : refetched;
 }
 
 export async function updateCrmCustomer(supabase: SupabaseClient, id: string, input: UpdateCrmCustomerInput) {

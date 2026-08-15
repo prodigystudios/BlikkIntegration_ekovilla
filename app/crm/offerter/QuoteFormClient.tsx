@@ -2347,7 +2347,12 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
                   value={selectedCustomer.contacts.find((c) => c.name === draft.contact_name)?.id ?? ''}
                   onChange={(e) => {
                     const c = selectedCustomer.contacts.find((x) => x.id === e.target.value);
-                    if (c) setDraft((d) => ({ ...d, contact_name: c.name, phone: c.phone || '', email: c.email || '' }));
+                    if (!c) return;
+                    // Fält för fält mot kundkortet (delad regel) — en kontaktrad utan telefon
+                    // eller e-post ska ärva kortets, inte tömma fälten. Privatkundens
+                    // automatiska rad bär bara namnet, så råa c.phone/c.email raderade numret.
+                    const resolved = resolveCrmContact(selectedCustomer, c);
+                    setDraft((d) => ({ ...d, contact_name: resolved.name, phone: resolved.phone, email: resolved.email }));
                   }}
                 >
                   <option value="">Skriv manuellt…</option>

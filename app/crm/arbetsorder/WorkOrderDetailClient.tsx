@@ -10,6 +10,7 @@ import { cn } from '@/lib/shared/cn';
 import { crm, syncStatusLabel, syncStatusClass, workOrderStatusLabel, workOrderStatusClass, WORK_ORDER_STATUS_FLOW, WORK_ORDER_STATUS_OPTIONS } from '@/app/crm/lib/crmTokens';
 import { PhoneLink, EmailLink, AddressLink } from '@/app/crm/components/ContactLinks';
 import AddressAutocompleteInput from '@/app/crm/components/AddressAutocompleteInput';
+import { resolveCrmContact } from '@/lib/domains/crm/contacts';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
 import { lineItemEffectiveUnitPrice } from '@/lib/domains/crm/pricing';
 import { inferMaterialFromArticle, sacksFor } from '@/lib/domains/crm/materials';
@@ -200,15 +201,23 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
 
   // The linked customer's contacts, for the "change responsible contact" picker (in case the
   // contact changed between offer→order). Empty for standalone orders with no linked customer.
+  // The card's own channels come along too: a contact row without phone/e-mail (a private
+  // customer's auto-created row carries only the name) must fall back to them on pick.
   const [customerContacts, setCustomerContacts] = useState<Array<{ id: string; name: string; role: string | null; phone: string | null; email: string | null; is_primary: boolean }>>([]);
+  const [customerCard, setCustomerCard] = useState<{ email: string | null; phone: string | null; mobile: string | null } | null>(null);
   useEffect(() => {
     const cid = workOrder?.customer_id;
-    if (!cid) { setCustomerContacts([]); return; }
+    if (!cid) { setCustomerContacts([]); setCustomerCard(null); return; }
     let active = true;
     fetch(`/api/crm/customers/${cid}`, { cache: 'no-store' })
       .then((r) => r.json().catch(() => ({})))
-      .then((json) => { if (active) setCustomerContacts(json?.ok && Array.isArray(json.data?.item?.contacts) ? json.data.item.contacts : []); })
-      .catch(() => { if (active) setCustomerContacts([]); });
+      .then((json) => {
+        if (!active) return;
+        const item = json?.ok ? json.data?.item : null;
+        setCustomerContacts(Array.isArray(item?.contacts) ? item.contacts : []);
+        setCustomerCard(item ? { email: item.email ?? null, phone: item.phone ?? null, mobile: item.mobile ?? null } : null);
+      })
+      .catch(() => { if (active) { setCustomerContacts([]); setCustomerCard(null); } });
     return () => { active = false; };
   }, [workOrder?.customer_id]);
 
@@ -766,7 +775,12 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                     value={customerContacts.find((c) => c.name === draft.contact_name)?.id ?? ''}
                     onChange={(e) => {
                       const c = customerContacts.find((x) => x.id === e.target.value);
-                      if (c) setDraft((d) => (d ? { ...d, contact_name: c.name, contact_phone: c.phone || '', contact_email: c.email || '' } : d));
+                      if (!c) return;
+                      // Delad regel, fält för fält: kontaktraden vinner där den har ett värde,
+                      // kortet fyller luckorna. Råa c.phone/c.email tömde fälten när raden
+                      // saknade dem (privatkundens automatiska kontakt bär bara namnet).
+                      const resolved = resolveCrmContact({ ...customerCard, contacts: customerContacts }, c);
+                      setDraft((d) => (d ? { ...d, contact_name: resolved.name, contact_phone: resolved.phone, contact_email: resolved.email } : d));
                     }}
                   >
                     <option value="">Skriv manuellt…</option>

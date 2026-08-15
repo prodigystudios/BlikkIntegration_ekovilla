@@ -7,7 +7,9 @@ import {
   updateCrmCustomer,
   convertProspectToCustomer,
   getCrmCustomerDisplayName,
+  privateCustomerContactName,
 } from '@/lib/domains/crm/customers';
+import { resolveCrmContact } from '@/lib/domains/crm/contacts';
 
 beforeEach(() => vi.clearAllMocks());
 
@@ -157,6 +159,116 @@ describe('createCrmCustomer', () => {
     const result = await createCrmCustomer(sb as any, validInput);
 
     expect((result as any).error).toBeTruthy();
+  });
+
+  it('skapar INGEN kontaktperson för företagskund', async () => {
+    const sb = makeSupabaseMock({ data: { id: 'new-1', ...validInput }, error: null });
+
+    await createCrmCustomer(sb as any, validInput);
+
+    expect(sb.from).not.toHaveBeenCalledWith('crm_customer_contacts');
+  });
+
+  it('skapar en primär kontaktperson med BARA namnet för privatkund', async () => {
+    const privateInput = {
+      customer_type: 'private' as const,
+      first_name: 'Anna',
+      last_name: 'Svensson',
+      phone: '070-123 45 67',
+      email: 'anna@example.se',
+      assigned_to: 'user-1',
+      created_by: 'user-1',
+    };
+    const sb = makeSupabaseMock({ data: { id: 'new-1', ...privateInput }, error: null });
+
+    await createCrmCustomer(sb as any, privateInput);
+
+    expect(sb.from).toHaveBeenCalledWith('crm_customer_contacts');
+    // Telefon och e-post lämnas MED FLIT utanför raden: kontakten vinner över kortet i
+    // resolveCrmContact, så en kopia här skulle frysa en adress som senare rättas på kortet.
+    expect(sb._query.insert).toHaveBeenCalledWith({
+      customer_id: 'new-1',
+      name: 'Anna Svensson',
+      is_primary: true,
+    });
+  });
+
+  it('skapar ingen kontaktperson för privatkund utan namn', async () => {
+    const sb = makeSupabaseMock({ data: { id: 'new-1' }, error: null });
+
+    await createCrmCustomer(sb as any, {
+      customer_type: 'private',
+      first_name: null,
+      last_name: null,
+      assigned_to: 'user-1',
+      created_by: 'user-1',
+    });
+
+    expect(sb.from).not.toHaveBeenCalledWith('crm_customer_contacts');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// privateCustomerContactName — ren funktion
+// ---------------------------------------------------------------------------
+
+describe('privateCustomerContactName', () => {
+  it('sätter ihop för- och efternamn för privatkund', () => {
+    expect(
+      privateCustomerContactName({ customer_type: 'private', first_name: 'Anna', last_name: 'Svensson' })
+    ).toBe('Anna Svensson');
+  });
+
+  it('klarar att bara ett av namnen är ifyllt', () => {
+    expect(privateCustomerContactName({ customer_type: 'private', first_name: 'Anna', last_name: null })).toBe('Anna');
+    expect(privateCustomerContactName({ customer_type: 'private', first_name: '  ', last_name: 'Svensson' })).toBe('Svensson');
+  });
+
+  it('returnerar null för företag — kontaktpersonen heter inte samma sak som bolaget', () => {
+    expect(
+      privateCustomerContactName({ customer_type: 'business', first_name: 'Anna', last_name: 'Svensson' })
+    ).toBeNull();
+  });
+
+  it('returnerar null när privatkunden saknar namn', () => {
+    expect(privateCustomerContactName({ customer_type: 'private', first_name: '', last_name: '   ' })).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Namn-bara-kontakten mot den delade resolveCrmContact-regeln.
+//
+// Hela poängen med att bara skriva namnet är att telefon och e-post ska fortsätta komma
+// från kundkortet. Går den fältvisa fallbacken sönder får ordern en kontaktperson utan
+// nummer — och installatören står utan sätt att nå kunden.
+// ---------------------------------------------------------------------------
+
+describe('privatkundens automatiska kontakt + resolveCrmContact', () => {
+  const card = {
+    email: 'anna@example.se',
+    phone: '070-123 45 67',
+    mobile: null,
+    contacts: [{ name: 'Anna Svensson', phone: null, email: null, is_primary: true }],
+  };
+
+  it('ger namnet från kontakten och telefon/e-post från kortet', () => {
+    expect(resolveCrmContact(card)).toEqual({
+      name: 'Anna Svensson',
+      email: 'anna@example.se',
+      phone: '070-123 45 67',
+    });
+  });
+
+  it('faller vidare till mobil när kortet saknar fast telefon', () => {
+    expect(resolveCrmContact({ ...card, phone: null, mobile: '070-999 88 77' }).phone).toBe('070-999 88 77');
+  });
+
+  it('ger samma resultat när raden väljs uttryckligen i en väljare (preferContact)', () => {
+    expect(resolveCrmContact(card, card.contacts[0])).toEqual({
+      name: 'Anna Svensson',
+      email: 'anna@example.se',
+      phone: '070-123 45 67',
+    });
   });
 });
 
