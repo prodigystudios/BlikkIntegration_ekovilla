@@ -1,16 +1,15 @@
 "use client";
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import Link from 'next/link';
 import Input from '../../../components/ui/Input';
-import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
 import AssigneeFilter, { matchesAssignee, type AssigneeFilterValue, type AssigneeOption } from '@/app/crm/components/AssigneeFilter';
-import { openFortnoxPdf } from '@/app/crm/lib/fortnoxDoc';
 import { documentRef } from '@/app/crm/lib/format';
 import DocumentNumberBadge from '@/app/crm/components/DocumentNumberBadge';
 import { resolveQuoteVatBreakdown, quoteAmountDisplay } from '@/lib/domains/crm/pricing';
 import { quoteStatusMeta } from '@/app/crm/lib/crmTokens';
+import { quoteCustomerName, isQuoteOverdue } from '@/app/crm/lib/quoteDisplay';
+import QuoteDetailPanel from '@/app/crm/components/QuoteDetailPanel';
 import useDocumentEmail from '@/app/crm/components/useDocumentEmail';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -76,11 +75,6 @@ function formatDate(value: string | null | undefined) {
   return new Intl.DateTimeFormat('sv-SE', { dateStyle: 'medium' }).format(date);
 }
 
-function getProspectFromQuote(item: QuoteItem) {
-  if (Array.isArray(item.prospect)) return item.prospect[0] || null;
-  return item.prospect || null;
-}
-
 function initialsOf(name: string | null | undefined) {
   if (!name) return '–';
   const parts = name.trim().split(/\s+/).filter(Boolean);
@@ -89,24 +83,10 @@ function initialsOf(name: string | null | undefined) {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
-function getQuoteCustomerName(item: QuoteItem) {
-  return getProspectFromQuote(item)?.company_name
-    || item.customer_snapshot?.customer_name
-    || item.customer_snapshot?.company_name
-    || item.customer_name
-    || 'Okänd kund';
-}
-
-function isOverdue(item: QuoteItem) {
-  if (!item.follow_up_date || item.status === 'won' || item.status === 'lost') return false;
-  const today = new Date();
-  const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-  return item.follow_up_date < todayIso;
-}
 
 function compareQuotes(a: QuoteItem, b: QuoteItem) {
-  const aOverdue = isOverdue(a);
-  const bOverdue = isOverdue(b);
+  const aOverdue = isQuoteOverdue(a);
+  const bOverdue = isQuoteOverdue(b);
   if (aOverdue !== bOverdue) return aOverdue ? -1 : 1;
   if (a.follow_up_date && b.follow_up_date && a.follow_up_date !== b.follow_up_date) {
     return a.follow_up_date.localeCompare(b.follow_up_date);
@@ -118,7 +98,6 @@ function compareQuotes(a: QuoteItem, b: QuoteItem) {
 // ─── QuotesClient ─────────────────────────────────────────────────────────────
 
 export default function QuotesClient({ currentUserId }: { currentUserId: string | null }) {
-  const toast = useToast();
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -139,18 +118,15 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
       .catch(() => { if (active) setAssignees([]); });
     return () => { active = false; };
   }, []);
-  const [movingQuoteId, setMovingQuoteId] = useState<string | null>(null);
-  const [creatingWorkOrderId, setCreatingWorkOrderId] = useState<string | null>(null);
-  const [pushingFortnoxId, setPushingFortnoxId] = useState<string | null>(null);
-  const [pdfLoadingId, setPdfLoadingId] = useState<string | null>(null);
   // Offer + order-confirmation e-mail (own mail client, with recipient resolution).
-  const documentEmail = useDocumentEmail();
-  const [orderPdfId, setOrderPdfId] = useState<string | null>(null);
   // Map of work_order_id → its Fortnox order number, so the offer list AO-chip and the
   // modal's work-order reference can lead with the Fortnox number (the quote row itself
   // doesn't carry it). Fetched once from the work-orders list (one request, no per-row
   // fetch, no DB join needed).
   const [workOrderFortnoxById, setWorkOrderFortnoxById] = useState<Map<string, string | null>>(new Map());
+  // Held here, not in the panel: the send flow has a dismissable progress overlay that must survive
+  // the modal being closed.
+  const documentEmail = useDocumentEmail();
   const [detailPanelOpen, setDetailPanelOpen] = useState(false);
   const [detailQuoteId, setDetailQuoteId] = useState<string | null>(null);
   const [hasHandledPreset, setHasHandledPreset] = useState(false);
@@ -250,10 +226,8 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
   // The offer is locked in Fortnox only once it's been converted to an order (a work
   // order exists) AND its sync didn't fail. If the sync failed we must NOT show "Låst"
   // / hide re-sync — the salesperson still needs to recover.
-  const offerLocked = Boolean(detailQuote?.work_order_id) && detailQuote?.fortnox_sync_status !== 'failed';
 
   // Amount display for the detail hero follows the same convention as the list rows.
-  const detailDisplay = detailQuote ? quoteAmountDisplay(detailQuote.quote_type, resolveQuoteVatBreakdown(detailQuote)) : null;
 
   // Load the work-orders list once and index Fortnox order numbers by work_order_id.
   useEffect(() => {
@@ -268,131 +242,6 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
       .catch(() => { if (active) setWorkOrderFortnoxById(new Map()); });
     return () => { active = false; };
   }, []);
-
-  async function moveQuoteToStatus(quoteId: string, nextStatus: QuoteItem['status']) {
-    const currentItem = quotes.find((q) => q.id === quoteId);
-    if (!currentItem || currentItem.status === nextStatus) return;
-
-    setMovingQuoteId(quoteId);
-    const optimistic = { ...currentItem, status: nextStatus, updated_at: new Date().toISOString() };
-    setQuotes((current) => current.map((q) => (q.id === quoteId ? optimistic : q)));
-
-    try {
-      const res = await fetch(`/api/crm/quotes/${quoteId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prospect_id: currentItem.prospect_id,
-          customer_name: currentItem.customer_name,
-          quote_type: currentItem.quote_type,
-          customer_source: currentItem.customer_source,
-          customer_snapshot: currentItem.customer_snapshot,
-          pricing_summary: currentItem.pricing_summary,
-          project_name: currentItem.project_name,
-          description: currentItem.description,
-          amount: currentItem.amount,
-          currency_code: currentItem.currency_code,
-          vat_percent: currentItem.vat_percent,
-          valid_until: currentItem.valid_until,
-          status: nextStatus,
-          quote_date: currentItem.quote_date,
-          follow_up_date: currentItem.follow_up_date,
-          notes: currentItem.notes,
-        }),
-      });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok || !json.ok) {
-        setQuotes((current) => current.map((q) => (q.id === quoteId ? currentItem : q)));
-        toast.error(json?.error || 'Kunde inte byta status');
-        return;
-      }
-      const updated = json?.data?.item as QuoteItem | undefined;
-      if (updated) setQuotes((current) => current.map((q) => (q.id === updated.id ? updated : q)));
-    } catch {
-      setQuotes((current) => current.map((q) => (q.id === quoteId ? currentItem : q)));
-      toast.error('Kunde inte byta status');
-    } finally {
-      setMovingQuoteId(null);
-    }
-  }
-
-  async function createWorkOrder(quoteId: string) {
-    const item = quotes.find((q) => q.id === quoteId);
-    if (!item || item.status !== 'won') { toast.error('Arbetsorder kan bara skapas från vunnen offert'); return; }
-    if (item.work_order_id) { toast.info('Arbetsorder finns redan'); return; }
-
-    setCreatingWorkOrderId(quoteId);
-    try {
-      const res = await fetch(`/api/crm/quotes/${quoteId}/work-order`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte skapa arbetsorder'); return; }
-      const updated = json?.data?.item as QuoteItem | undefined;
-      if (updated) setQuotes((current) => current.map((q) => (q.id === updated.id ? updated : q)));
-      const workOrder = json?.data?.workOrder as { id?: string; order_number?: string } | undefined;
-      if (json?.data?.fortnox_error) {
-        toast.error(`Arbetsorder skapad men Fortnox-synk misslyckades: ${json.data.fortnox_error}`);
-      } else {
-        toast.success(workOrder?.order_number ? `Arbetsorder skapad: ${workOrder.order_number}` : 'Arbetsorder skapad');
-      }
-      // Don't auto-navigate — the button flips to "Gå till arbetsorder" so the user
-      // can choose to go there when ready.
-    } catch { toast.error('Kunde inte skapa arbetsorder'); } finally { setCreatingWorkOrderId(null); }
-  }
-
-  async function pushToFortnox(quoteId: string) {
-    setPushingFortnoxId(quoteId);
-    try {
-      const res = await fetch('/api/fortnox/offers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ quote_id: quoteId }),
-      });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok || !json.ok) {
-        toast.error(json?.error || 'Kunde inte skicka till Fortnox');
-        return;
-      }
-      const offerNumber = json?.data?.fortnox_offer_number as string | undefined;
-      const wasUpdated = json?.data?.updated as boolean | undefined;
-      toast.success(
-        offerNumber
-          ? `Fortnox-offert #${offerNumber} ${wasUpdated ? 'uppdaterad' : 'skapad'}`
-          : 'Skickad till Fortnox',
-      );
-      // Refresh list to pick up new fortnox_offer_number and sync_status
-      setQuotes((current) =>
-        current.map((q) =>
-          q.id === quoteId
-            ? {
-                ...q,
-                fortnox_offer_number: offerNumber ?? q.fortnox_offer_number,
-                fortnox_sync_status: 'synced',
-                fortnox_synced_at: new Date().toISOString(),
-              }
-            : q,
-        ),
-      );
-    } catch {
-      toast.error('Kunde inte skicka till Fortnox');
-    } finally {
-      setPushingFortnoxId(null);
-    }
-  }
-
-  // Offer PDF + email, and order-confirmation PDF + email (for the work order created
-  // from this quote). Shared fetch/popup/email logic lives in lib/fortnoxDoc.
-  async function openOfferPdf(quoteId: string) {
-    setPdfLoadingId(quoteId);
-    await openFortnoxPdf(`/api/fortnox/offers/${quoteId}/pdf`, toast.error);
-    setPdfLoadingId(null);
-  }
-
-  async function openOrderPdf(workOrderId: string) {
-    setOrderPdfId(workOrderId);
-    await openFortnoxPdf(`/api/crm/work-orders/${workOrderId}/fortnox/pdf`, toast.error);
-    setOrderPdfId(null);
-  }
-
 
   return (
     <div className="grid grid-cols-1 gap-4">
@@ -487,7 +336,7 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
         {!loading && visibleQuotes.length > 0 ? (
           <div className="grid gap-1">
             {sortedVisibleQuotes.map((item) => {
-              const overdue = isOverdue(item);
+              const overdue = isQuoteOverdue(item);
               const statusMeta = quoteStatusMeta[item.status];
               const sellerName = item.assigned_to ? (assigneeNameById.get(item.assigned_to) || 'Okänd') : null;
               // Private → show price incl moms; business → show ex moms (with the basis tagged).
@@ -501,7 +350,6 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
                   className={cn(
                     'group relative flex items-stretch overflow-hidden rounded-lg border bg-white text-left shadow-[0_1px_2px_rgba(15,23,42,0.05)] transition hover:border-[#cfdcc9] hover:shadow-[0_8px_20px_-10px_rgba(20,44,27,0.30)]',
                     overdue ? 'border-amber-200' : 'border-[#e3e9df]',
-                    movingQuoteId === item.id ? 'opacity-60' : null,
                   )}
                 >
                   {/* Status accent rail */}
@@ -513,7 +361,7 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
                       <DocumentNumberBadge label="Offert" value={documentRef(item.fortnox_offer_number, item.quote_number)} />
                       <div className="grid min-w-0 gap-0.5">
                         <strong className="truncate text-[13px] font-bold text-slate-900">{item.project_name}</strong>
-                        <span className="truncate text-[11px] text-slate-500">{getQuoteCustomerName(item)}</span>
+                        <span className="truncate text-[11px] text-slate-500">{quoteCustomerName(item)}</span>
                         <div className="flex flex-wrap items-center gap-1 pt-0.5">
                           <span className={cn('inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-semibold', statusMeta.className)}>
                             {statusMeta.label}
@@ -577,333 +425,14 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
 
       {/* ── Detail panel ── */}
       {detailPanelOpen && detailQuote ? (
-        <div
-          className="fixed inset-0 z-[2800] flex items-end justify-center bg-slate-950/50 [backdrop-filter:blur(4px)] sm:items-center sm:p-4"
-          onClick={() => setDetailPanelOpen(false)}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-label={`Offert ${detailQuote.project_name}`}
-            onClick={(e) => e.stopPropagation()}
-            className="flex h-[100dvh] max-h-[100dvh] w-full max-w-[600px] flex-col overflow-hidden rounded-none bg-white shadow-[0_-12px_50px_rgba(15,23,42,0.30)] sm:h-auto sm:max-h-[88vh] sm:rounded-2xl sm:shadow-[0_30px_80px_rgba(15,23,42,0.28)]"
-          >
-            {/* Sticky header */}
-            <div className="flex items-start justify-between gap-3 border-b border-slate-100 px-5 pb-4 [padding-top:calc(1rem+env(safe-area-inset-top))] sm:pt-4">
-              <div className="grid min-w-0 gap-1.5">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className={cn('rounded-full border px-2.5 py-0.5 text-[11px] font-semibold', quoteStatusMeta[detailQuote.status].className)}>
-                    {quoteStatusMeta[detailQuote.status].label}
-                  </span>
-                  {detailQuote.quote_number ? (
-                    <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">{documentRef(detailQuote.fortnox_offer_number, detailQuote.quote_number)}</span>
-                  ) : null}
-                </div>
-                <strong className="truncate text-lg font-bold tracking-tight text-slate-950">{detailQuote.project_name}</strong>
-                {/* Link to the customer card when the quote is tied to a saved CRM customer; a
-                    prospect/snapshot-only quote (no customer_id) keeps a plain name. returnTo points
-                    back at the list WITH ?quote_id so the detail modal re-opens on return (same
-                    open-then-return workflow as the offer form). */}
-                {detailQuote.customer_id ? (
-                  <Link
-                    href={`/crm/kunder/${detailQuote.customer_id}?returnTo=${encodeURIComponent(`/crm/offerter?quote_id=${detailQuote.id}`)}`}
-                    className="m-0 inline-flex max-w-full items-center gap-1 text-sm text-slate-500 transition-colors hover:text-emerald-700"
-                  >
-                    <span className="truncate underline-offset-2 hover:underline">{getQuoteCustomerName(detailQuote)}</span>
-                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden className="shrink-0">
-                      <path d="M4.5 2.5L8 6l-3.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  </Link>
-                ) : (
-                  <p className="m-0 truncate text-sm text-slate-500">{getQuoteCustomerName(detailQuote)}</p>
-                )}
-              </div>
-              <button
-                type="button"
-                aria-label="Stäng"
-                onClick={() => setDetailPanelOpen(false)}
-                className="!h-9 !w-9 shrink-0 !rounded-full !border !border-slate-200 !bg-white !p-0 text-slate-500 transition hover:!border-slate-300 hover:text-slate-700"
-              >
-                <svg className="mx-auto" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M18 6L6 18M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-
-            {/* Scrollable body */}
-            <div className="grid flex-1 gap-5 overflow-y-auto px-5 py-5">
-              {/* Hero: amount + key dates */}
-              <div className="rounded-xl border border-[#e3e9df] bg-[#f6f9f3] p-4">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">{detailDisplay?.primaryLabel ?? 'Belopp'}</div>
-                <div className="mt-0.5 text-[1.75rem] font-bold leading-none tracking-tight text-slate-900 tabular-nums">
-                  {formatCurrency(detailDisplay?.primary ?? detailQuote.amount, detailQuote.currency_code)}
-                </div>
-                {detailDisplay ? (
-                  <div className="mt-2 flex flex-wrap gap-x-4 gap-y-0.5 text-[11px] text-slate-500">
-                    <span>Ex moms <span className="font-medium text-slate-600 tabular-nums">{formatCurrency(detailDisplay.subtotal, detailQuote.currency_code)}</span></span>
-                    <span>Moms ({detailDisplay.vatPercent} %) <span className="font-medium text-slate-600 tabular-nums">{formatCurrency(detailDisplay.vat, detailQuote.currency_code)}</span></span>
-                    <span>Inkl. moms <span className="font-medium text-slate-600 tabular-nums">{formatCurrency(detailDisplay.total, detailQuote.currency_code)}</span></span>
-                  </div>
-                ) : null}
-                <div className="mt-4 grid grid-cols-3 gap-3 border-t border-[#dce6d6] pt-3">
-                  {([
-                    ['Offertdatum', formatDate(detailQuote.quote_date), false],
-                    ['Följ upp', formatDate(detailQuote.follow_up_date), isOverdue(detailQuote)],
-                    ['Giltig till', formatDate(detailQuote.valid_until), false],
-                  ] as Array<[string, string, boolean]>).map(([lbl, val, warn]) => (
-                    <div key={lbl} className="grid gap-0.5">
-                      <span className="text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-400">{lbl}</span>
-                      <span className={cn('text-sm font-medium', warn ? 'text-amber-700' : 'text-slate-700')}>{warn ? '⚠ ' : ''}{val}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Description */}
-              {detailQuote.description ? (
-                <div className="grid gap-1.5">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Beskrivning</span>
-                  <p className="m-0 text-sm leading-6 text-slate-700">{detailQuote.description}</p>
-                </div>
-              ) : null}
-
-              {/* Status changer */}
-              <div className="grid gap-2">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Byt status</span>
-                <div className="flex flex-wrap gap-2">
-                  {(Object.entries(quoteStatusMeta) as Array<[QuoteItem['status'], typeof quoteStatusMeta[QuoteItem['status']]]>).map(([s, meta]) => {
-                    const isCurrent = detailQuote.status === s;
-                    return (
-                      <button
-                        key={s}
-                        type="button"
-                        disabled={movingQuoteId === detailQuote.id || isCurrent}
-                        onClick={() => void moveQuoteToStatus(detailQuote.id, s)}
-                        className={cn(
-                          'inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition',
-                          isCurrent
-                            ? cn(meta.className, 'cursor-default')
-                            : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50 disabled:opacity-50',
-                        )}
-                      >
-                        {isCurrent ? <span className={cn('h-1.5 w-1.5 rounded-full', meta.accent)} /> : null}
-                        {meta.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Notes */}
-              {detailQuote.notes ? (
-                <div className="grid gap-1.5 rounded-xl border border-amber-100 bg-amber-50/60 p-3.5">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-700/80">Anteckningar</span>
-                  <p className="m-0 whitespace-pre-wrap text-sm leading-6 text-slate-700">{detailQuote.notes}</p>
-                </div>
-              ) : null}
-
-              {/* Action cards */}
-              <div className="grid gap-3">
-                {/* Work order */}
-                <div className="rounded-xl border border-[#e3e9df] bg-[#f9fbf7] p-4">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="flex min-w-0 items-start gap-3">
-                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-100 text-emerald-700">
-                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                          <rect x="5" y="4" width="14" height="17" rx="2" /><path d="M9 4V2.5h6V4M9 11h6M9 15h4" />
-                        </svg>
-                      </span>
-                      <div className="grid min-w-0 gap-0.5">
-                        <span className="text-sm font-semibold text-slate-800">Arbetsorder</span>
-                        <span className="text-xs leading-5 text-slate-500">
-                          {detailQuote.work_order_id
-                            ? `${documentRef(workOrderFortnoxById.get(detailQuote.work_order_id) ?? null, detailQuote.work_order_number)} är skapad.`
-                            : detailQuote.status === 'won'
-                              ? 'Klar att bli en intern arbetsorder.'
-                              : 'Sätt offerten till vunnen för att skapa.'}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="flex shrink-0 gap-2">
-                      {detailQuote.work_order_id ? (
-                        <button
-                          type="button"
-                          onClick={() => router.push(`/crm/arbetsorder/${detailQuote.work_order_id}`)}
-                          className="rounded-lg border border-emerald-700 bg-emerald-700 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-emerald-800"
-                        >
-                          Gå till arbetsorder
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => void createWorkOrder(detailQuote.id)}
-                          disabled={detailQuote.status !== 'won' || creatingWorkOrderId === detailQuote.id}
-                          className="rounded-lg border border-emerald-700 bg-emerald-700 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-white disabled:text-slate-400"
-                        >
-                          {creatingWorkOrderId === detailQuote.id ? 'Skapar…' : 'Skapa arbetsorder'}
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Order confirmation — once a work order (Fortnox order) exists */}
-                  {detailQuote.work_order_id ? (
-                    <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[#e3e9df] pt-3">
-                      <span className="mr-auto text-xs font-medium text-slate-500">Orderbekräftelse</span>
-                      <button
-                        type="button"
-                        onClick={() => void openOrderPdf(detailQuote.work_order_id!)}
-                        disabled={orderPdfId === detailQuote.work_order_id}
-                        className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {orderPdfId === detailQuote.work_order_id ? 'Hämtar…' : 'Hämta PDF'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => documentEmail.start({
-                          id: detailQuote.work_order_id!,
-                          kind: 'order',
-                          ref: documentRef(workOrderFortnoxById.get(detailQuote.work_order_id!) ?? null, detailQuote.work_order_number),
-                          projectName: detailQuote.project_name,
-                          customerName: getQuoteCustomerName(detailQuote),
-                          snapshotEmail: detailQuote.customer_snapshot?.email,
-                          customerId: detailQuote.customer_id,
-                          pdfUrl: `/api/crm/work-orders/${detailQuote.work_order_id}/fortnox/pdf`,
-                        })}
-                        disabled={documentEmail.sendingId === detailQuote.work_order_id}
-                        className="rounded-lg border border-indigo-600 bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {documentEmail.sendingId === detailQuote.work_order_id ? 'Mejlar…' : 'Mejla order'}
-                      </button>
-                    </div>
-                  ) : null}
-                </div>
-
-                {/* Fortnox */}
-                <div className="rounded-xl border border-[#e3e9df] bg-[#f9fbf7] p-4">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="flex min-w-0 items-start gap-3">
-                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-100 text-indigo-700">
-                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                          <path d="M12 16V4M8 8l4-4 4 4M5 20h14" />
-                        </svg>
-                      </span>
-                      <div className="grid min-w-0 gap-0.5">
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <span className="text-sm font-semibold text-slate-800">Fortnox</span>
-                          {offerLocked ? (
-                            <span className="inline-flex items-center gap-1 rounded-md border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">
-                              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                                <rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 018 0v4" />
-                              </svg>
-                              Låst
-                            </span>
-                          ) : null}
-                        </div>
-                        <span className="text-xs leading-5 text-slate-500">
-                          {detailQuote.fortnox_offer_number
-                            ? `Offert #${detailQuote.fortnox_offer_number} skapad.`
-                            : 'Skicka offerten till Fortnox.'}
-                        </span>
-                        {detailQuote.fortnox_sync_status === 'failed' ? (
-                          <span className="text-xs font-semibold text-rose-600">Senaste synk misslyckades.</span>
-                        ) : null}
-                      </div>
-                    </div>
-                    <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-                      {detailQuote.fortnox_offer_number ? (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => void openOfferPdf(detailQuote.id)}
-                            disabled={pdfLoadingId === detailQuote.id}
-                            className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            {pdfLoadingId === detailQuote.id ? 'Hämtar…' : 'Hämta PDF'}
-                          </button>
-                          {/* Ett enda mejlsätt: eget mejlprogram. Fortnox egen offertutskick är
-                              borttaget — mottagaren gick inte att styra därifrån och används inte. */}
-                          <button
-                            type="button"
-                            onClick={() => documentEmail.start({
-                              id: detailQuote.id,
-                              kind: 'offer',
-                              ref: documentRef(detailQuote.fortnox_offer_number, detailQuote.quote_number),
-                              projectName: detailQuote.project_name,
-                              customerName: getQuoteCustomerName(detailQuote),
-                              snapshotEmail: detailQuote.customer_snapshot?.email,
-                              customerId: detailQuote.customer_id,
-                              pdfUrl: `/api/fortnox/offers/${detailQuote.id}/pdf`,
-                            })}
-                            disabled={documentEmail.sendingId === detailQuote.id}
-                            title="Öppnar ditt mejlprogram – PDF:en laddas ner att bifoga."
-                            className="inline-flex items-center rounded-lg border border-indigo-600 bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            {documentEmail.sendingId === detailQuote.id ? 'Mejlar…' : 'Mejla offert'}
-                          </button>
-                        </>
-                      ) : null}
-                      {/* Sync/re-sync hidden once a work order locks the offer in Fortnox
-                          (but still shown if the sync failed, so the user can recover) */}
-                      {!offerLocked ? (
-                        <button
-                          type="button"
-                          onClick={() => void pushToFortnox(detailQuote.id)}
-                          disabled={pushingFortnoxId === detailQuote.id || detailQuote.fortnox_sync_status === 'pending'}
-                          className={cn(
-                            'rounded-lg border px-3 py-1.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50',
-                            detailQuote.fortnox_offer_number
-                              ? 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
-                              : 'border-indigo-600 bg-indigo-600 text-white hover:bg-indigo-700',
-                          )}
-                        >
-                          {pushingFortnoxId === detailQuote.id ? 'Skickar…' : detailQuote.fortnox_offer_number ? 'Skicka igen' : 'Skicka'}
-                        </button>
-                      ) : null}
-                    </div>
-                  </div>
-
-                  {/* Locked explanation — offer can no longer be edited/re-synced */}
-                  {offerLocked ? (
-                    <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2.5 text-xs leading-5 text-amber-900">
-                      <svg className="mt-0.5 shrink-0" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 018 0v4" />
-                      </svg>
-                      <span>
-                        Offerten är <strong>låst</strong>{detailQuote.work_order_number ? ` – arbetsorder ${detailQuote.work_order_number} är skapad` : ' – en arbetsorder har skapats'}, så den kan inte längre ändras eller synkas om i Fortnox. Du kan fortfarande hämta PDF:en och mejla den till kunden.
-                      </span>
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-            </div>
-
-            {/* Sticky footer — a locked offer (work order created) can't be edited or
-                re-synced, so the edit action is hidden and "Stäng" fills the row. */}
-            <div className="flex items-center gap-2 border-t border-slate-100 px-5 py-3 [padding-bottom:calc(0.75rem+env(safe-area-inset-bottom))] sm:[padding-bottom:0.75rem]">
-              <button
-                type="button"
-                onClick={() => setDetailPanelOpen(false)}
-                className={cn(
-                  'flex-1 rounded-xl border border-slate-200 bg-white py-2.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300',
-                  !offerLocked && 'sm:flex-none sm:px-5',
-                )}
-              >
-                Stäng
-              </button>
-              {!offerLocked ? (
-                <button
-                  type="button"
-                  onClick={() => { setDetailPanelOpen(false); router.push(`/crm/offerter/${detailQuote.id}/redigera`); }}
-                  className="flex-1 rounded-xl py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-95 sm:ml-auto sm:flex-none sm:px-5"
-                  style={{ backgroundColor: 'var(--crm-primary)' }}
-                >
-                  Redigera offert
-                </button>
-              ) : null}
-            </div>
-          </div>
-        </div>
+        <QuoteDetailPanel
+          quote={detailQuote}
+          workOrderFortnoxNumber={detailQuote.work_order_id ? (workOrderFortnoxById.get(detailQuote.work_order_id) ?? null) : null}
+          returnTo={`/crm/offerter?quote_id=${detailQuote.id}`}
+          documentEmail={documentEmail}
+          onClose={() => setDetailPanelOpen(false)}
+          onQuoteChanged={(patch) => setQuotes((current) => current.map((q) => (q.id === patch.id ? { ...q, ...patch } : q)))}
+        />
       ) : null}
 
       {documentEmail.modal}
