@@ -25,7 +25,6 @@ import {
   buildCustomerSnapshot,
   buildRotDetails,
   buildInternalHandoff,
-  buildMeasurementLines,
   addDaysIso,
   matchedValidityPreset,
   mergeUntouchedCustomerFields,
@@ -35,6 +34,11 @@ import {
   type CustomerDerivedValues,
 } from './quoteSerializers';
 import { resolveCrmContact } from '@/lib/domains/crm/contacts';
+import {
+  buildMeasurementLines,
+  hasMeasurementBlock,
+  replaceMeasurementBlock,
+} from '@/lib/domains/crm/measurementBlock';
 import { ROT_HOUSE_WORK_TYPES } from '@/lib/domains/fortnox/types';
 
 // Swedish labels for the Fortnox ROT HouseWorkType codes shown in the ROT section.
@@ -1228,6 +1232,8 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     // from the initial draft / an empty line item, so every field/Input stays controlled.
     const items = (restored.items ?? []).map((line) => ({ ...createEmptyLineItem(), ...line }));
     setDraft({ ...initialDraft, ...restored, items: items.length ? items : [createEmptyLineItem()] });
+    // Måttblocket i den återställda texten är redan insatt — annars lägger automatiken en dubblett.
+    adoptExistingMeasurementBlock(items, restored.handoff_notes ?? '');
     setCustomWorkAddress(Boolean(restored.delivery_address));
     setCustomEndContact(Boolean(
       restored.end_contact_name || restored.end_contact_phone || restored.end_contact_email,
@@ -1420,10 +1426,19 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           notes: item.notes || '',
           create_follow_up_task: false,
         };
-        setDraft(loadedDraft);
+        // Måttblocket sätts in HÄR, före baslinjen — inte av automatik-effekten efteråt.
+        //
+        // Gör man tvärtom blir en nyss laddad offert omedelbart "ändrad", och det river sönder
+        // utkastskyddet: återuppta-bannern stängs av dirty-vakten (den tolkar ändringen som att
+        // säljaren börjat skriva) innan man hunnit klicka, och autosparet skriver sedan över
+        // stashen. Osparat arbete på just den offerten går förlorat. Att bara flytta in blocket
+        // i baslinjen gör öppnandet neutralt igen.
+        const seededDraft = seedMeasurementBlock(loadedDraft);
+        setDraft(seededDraft);
+        adoptExistingMeasurementBlock(seededDraft.items, seededDraft.handoff_notes);
         // The loaded quote IS the clean baseline for an edit — unsaved-change detection compares
         // against it, so editing an untouched loaded offer isn't flagged dirty.
-        baselineRef.current = JSON.stringify(loadedDraft);
+        baselineRef.current = JSON.stringify(seededDraft);
         setCustomWorkAddress(Boolean(item.customer_snapshot?.delivery_address));
         setCustomEndContact(Boolean(
           item.customer_snapshot?.end_contact_name || item.customer_snapshot?.end_contact_phone || item.customer_snapshot?.end_contact_email,
@@ -1677,24 +1692,88 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     return { subtotal, vat, total, rotDeduction, toPay: total - rotDeduction, carvedLabor };
   }, [draft.vat_percent, draft.quote_type, draft.rot_enabled, draft.rot_percent, draft.rot_max_deduction, effectiveRows]);
 
-  // Prefill the work description with a grouped measurement block (material headline →
-  // rows → total sacks). Prepends the block and keeps the seller's manual text below.
-  // Re-clicking replaces the previously inserted block (tracked in a ref) instead of
-  // stacking duplicates.
+  // ── Måttblocket i arbetsbeskrivningen ──────────────────────────────────────────────────
+  //
+  // Blocket (materialrubrik → rader → totalt antal säckar) fylls i AUTOMATISKT så snart en
+  // artikelrad har både yta och tjocklek, och hålls i takt när måtten ändras. Tidigare satt
+  // det bakom knappen "Hämta mått från rader" — och den missades. Missen upptäcks först i
+  // fält, för när offerten väl konverterats till arbetsorder är den låst för redigering
+  // (se laddningen ovan) och arbetsordern har ingen motsvarande knapp: enda vägen tillbaka
+  // var att skriva måtten för hand.
+  //
+  // Blocket ligger överst, säljarens egen text står kvar under det.
   const lastMeasurementBlockRef = useRef('');
-  function addMeasurementsToHandoff() {
-    const lines = buildMeasurementLines(draft.items);
-    if (lines.length === 0) { toast.error('Inga m³-rader med ifyllda mått att hämta'); return; }
-    const block = lines.join('\n');
-    setDraft((d) => {
-      let rest = d.handoff_notes;
-      const prev = lastMeasurementBlockRef.current;
-      if (prev && rest.startsWith(prev)) {
-        rest = rest.slice(prev.length).replace(/^\n+/, '');
-      }
+  // Sant när säljaren har redigerat blocket själv. Då slutar automatiken röra texten — att
+  // skriva över en handgjord rättelse vore värre än att missa en uppdatering. STATE, inte ref:
+  // läget måste synas i UI:t, annars fryser blocket tyst på gamla mått och den felaktiga
+  // uppgiften följer med till arbetsordern — precis det den här funktionen finns för att stoppa.
+  const [measurementBlockLocked, setMeasurementBlockLocked] = useState(false);
+
+  // Sätt in blocket i en färdig draft (utan att gå via state). Används vid laddning, så blocket
+  // ingår i baslinjen och offerten inte ser ändrad ut direkt när den öppnas.
+  function seedMeasurementBlock(d: QuoteDraft): QuoteDraft {
+    const block = buildMeasurementLines(d.items).join('\n');
+    if (!block || hasMeasurementBlock(d.handoff_notes)) return d;
+    const next = replaceMeasurementBlock(d.handoff_notes, '', block);
+    return next === null || next === d.handoff_notes ? d : { ...d, handoff_notes: next };
+  }
+
+  // En laddad eller återställd arbetsbeskrivning bär redan ett block. Utan den här
+  // synkroniseringen ser automatiken den som "inget block insatt" och lägger en dubblett
+  // ovanpå. Tre vägar in hit: redigeringsläget, utkast-återställningen och kundkortsresan.
+  function adoptExistingMeasurementBlock(items: QuoteLineItem[], handoffNotes: string) {
+    const block = buildMeasurementLines(items).join('\n');
+    if (block && handoffNotes.startsWith(block)) {
       lastMeasurementBlockRef.current = block;
-      return { ...d, handoff_notes: rest.trim() ? `${block}\n\n${rest}` : block };
-    });
+      setMeasurementBlockLocked(false);
+      return;
+    }
+    lastMeasurementBlockRef.current = '';
+    // Texten bär måttrader vi inte känner igen → säljaren har redigerat dem. Håll händerna borta.
+    setMeasurementBlockLocked(hasMeasurementBlock(handoffNotes));
+  }
+
+  // Håll blocket i takt med raderna. Kör på varje ändring i artikelraderna; `block === prev`
+  // kortsluter de allra flesta anropen, och blocket beräknas ur en ren funktion.
+  //
+  // Pausad medan offerten laddas och medan återuppta-bannern är öppen: en skrivning där skulle
+  // göra draften "ändrad", vilket stänger bannern åt säljaren och låter autosparet skriva över
+  // stashen den handlar om. Samma paus som autosparet och lämna-vakten redan har.
+  useEffect(() => {
+    if (loading || recoverableDraft || measurementBlockLocked) return;
+    const block = buildMeasurementLines(draft.items).join('\n');
+    const prev = lastMeasurementBlockRef.current;
+    if (block === prev) return;
+
+    // Första insättningen på en text som redan bär mått: säljaren har skrivit dem för hand
+    // (eller klistrat in dem). Lägg inte ett block ovanpå — då står måtten två gånger och
+    // notisen påstår dessutom att blocket hålls uppdaterat. Lämna över på samma sätt som
+    // adoptExistingMeasurementBlock gör vid laddning.
+    if (!prev && hasMeasurementBlock(draft.handoff_notes)) {
+      setMeasurementBlockLocked(true);
+      return;
+    }
+
+    const next = replaceMeasurementBlock(draft.handoff_notes, prev, block);
+    if (next === null) {
+      // Säljaren har redigerat blocket sedan vi la dit det — lämna över ägarskapet.
+      setMeasurementBlockLocked(true);
+      return;
+    }
+    lastMeasurementBlockRef.current = block;
+    if (next !== draft.handoff_notes) setDraft((d) => ({ ...d, handoff_notes: next }));
+  }, [draft.items, draft.handoff_notes, loading, recoverableDraft, measurementBlockLocked]);
+
+  // Uttryckligt klick: skriver även när säljaren tagit över texten, och tar tillbaka
+  // ägarskapet så automatiken följer med igen.
+  function addMeasurementsToHandoff() {
+    const block = buildMeasurementLines(draft.items).join('\n');
+    if (!block) { toast.error('Inga m³-rader med ifyllda mått att hämta'); return; }
+    const next = replaceMeasurementBlock(draft.handoff_notes, lastMeasurementBlockRef.current, block, { force: true });
+    if (next === null) return;
+    lastMeasurementBlockRef.current = block;
+    setMeasurementBlockLocked(false);
+    setDraft((d) => ({ ...d, handoff_notes: next }));
   }
 
   const issues = useMemo(() => getValidationIssues(draft, effectiveRows), [draft, effectiveRows]);
@@ -2700,6 +2779,18 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
                   </button>
                 </div>
                 <Textarea value={draft.handoff_notes} onChange={(e) => setDraft((d) => ({ ...d, handoff_notes: e.target.value }))} rows={3} placeholder="Arbetsbeskrivning för installatör / arbetsorder" />
+                {/* Utan den här raden fryser blocket tyst: säljaren ändrar en tjocklek, ser
+                    beskrivningen stå kvar på gamla mått, och den siffran följer med till
+                    arbetsordern där knappen inte finns. Låsningen måste synas. */}
+                {measurementBlockLocked ? (
+                  <p className="text-[11px] leading-snug text-amber-700">
+                    Måtten uppdateras inte längre automatiskt — du har ändrat i måttblocket. Klicka ”Hämta mått från rader” för att hämta om dem från raderna.
+                  </p>
+                ) : (
+                  <p className="text-[11px] leading-snug text-slate-400">
+                    Måtten från artikelraderna fylls i automatiskt och hålls uppdaterade. Text du skriver själv står kvar under dem.
+                  </p>
+                )}
               </div>
               <Field label="Interna anteckningar" className="md:col-span-2">
                 <Textarea value={draft.notes} onChange={(e) => setDraft((d) => ({ ...d, notes: e.target.value }))} rows={4} placeholder="Det här ska vi komma ihåg inför uppföljningen" />
