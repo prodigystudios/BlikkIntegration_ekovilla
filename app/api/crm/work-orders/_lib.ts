@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { quoteLineItemSchema } from '../quotes/_lib';
+import { WORK_ORDER_FILE_CATEGORIES } from '@/lib/domains/crm/workOrderFiles/types';
 export { ok, routeError, validationError, invalidUuidParam, isNoRowsError, requireCrmUser, requireCrmWriter, requirePermission, requireSignedInUser, pickProvidedFields } from '../_shared';
 
 // Reuses the quote line-item schema so work order article edits validate identically.
@@ -58,6 +59,40 @@ export const createWorkOrderTimeEntrySchema = z.object({
   end_time: clockSchema,
   break_minutes: z.coerce.number().int().min(0).max(1439).optional().default(0),
   note: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
+});
+
+// ── Filer på ordern ─────────────────────────────────────────────────────────
+//
+// Uppladdningen sker i två steg: klienten ber om en signerad URL, laddar upp direkt till lagringen,
+// och bekräftar sedan. Byten passerar aldrig en route handler — en ritning på 20 MB är vanlig och
+// ska inte behöva rymmas i en request-kropp.
+//
+// Steg 1: klienten talar om vad den TÄNKER ladda upp. Allt här är påståenden — de duger för att
+// avvisa uppenbart fel tidigt (innan vi ens myntar en URL), men servern litar aldrig på dem: i
+// steg 2 läses filens faktiska storlek och mimetype ur lagringen.
+export const workOrderFileUploadUrlSchema = z.object({
+  file_name: z.string().trim().min(1, 'Filnamn krävs').max(255, 'Filnamnet är för långt'),
+  content_type: z.string().trim().max(255).optional().default(''),
+  size_bytes: z.coerce.number().int().min(0, 'Ogiltig filstorlek'),
+});
+
+// Steg 2: bekräfta att uppladdningen gick igenom och skapa raden.
+// `storage_path` valideras mot ordern i routen (isWorkOrderFilePath) — en klient som hittar på en
+// sökväg får inte kunna koppla ett Support/- eller Documents/-objekt till sin arbetsorder.
+export const createWorkOrderFileSchema = z.object({
+  storage_path: z.string().trim().min(1, 'Sökväg krävs'),
+  file_name: z.string().trim().min(1, 'Filnamn krävs').max(255, 'Filnamnet är för långt'),
+  category: z.enum(WORK_ORDER_FILE_CATEGORIES).default('other'),
+  // Nekas för den som saknar crm.workorder.write — routen tvingar false, och RLS gör om samma
+  // kontroll så en handskriven POST inte kan gömma en fil för besättningen.
+  //
+  // INTE z.coerce.boolean(): den gör Boolean(värde), och `Boolean("false") === true`. Strängen
+  // "false" hade alltså DOLT filen för besättningen — raka motsatsen till vad avsändaren bad om,
+  // och tyst. Bara ett riktigt booleskt värde eller de två strängarna räknas.
+  is_internal: z
+    .union([z.boolean(), z.enum(['true', 'false']).transform((value) => value === 'true')])
+    .optional()
+    .default(false),
 });
 
 export const createWorkOrderCommentSchema = z.object({

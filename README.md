@@ -241,6 +241,27 @@ Notes:
 - Read access: all authenticated users.
 - Write access (create folders, upload/delete): admins only.
 
+Work order files (ritningar, förberedelser, foto före/efter)
+
+Setup:
+
+- Run migration: `supabase/sql/20260815_crm_work_order_files.sql` in the Supabase SQL editor. **Run
+  it before deploying the code** — the upload URL is minted before the row is written, so without
+  the table a user pays for an upload that then fails to save.
+- No new bucket. Files live under the prefix `Arbetsorder/<work_order_id>/` in the existing private
+  bucket. `SUPABASE_WORK_ORDER_FILES_BUCKET` overrides it (fallback: `SUPABASE_BUCKET`, default:
+  `pdfs`) — set it only if these files must be split off later.
+
+Notes:
+
+- The browser uploads **straight to Storage** with a signed upload URL; bytes never pass through a
+  route handler, so a 20 MB drawing is not a problem. The server mints the URL, then re-reads the
+  object's real size and mime type before writing the row.
+- Read access: office (`crm.workorder.read`), the uploader, and crew scheduled on the job
+  (`is_user_on_work_order`). Crew never see files marked internal.
+- Write access: office (`crm.workorder.write`) and crew on the job. `konsult` is read-only.
+- Delete: your own uploads always; office deletes anything on the order.
+
 Auth
 
 - A simple email magic link sign-in is available at `/auth/sign-in`.
