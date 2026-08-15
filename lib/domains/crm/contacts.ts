@@ -8,15 +8,22 @@
 //                                            has no contact-person entity, it only carries the
 //                                            chosen person's NAME as the YourReference string.
 //
-// The trouble was never the split — it was that no write path fills both halves (the customer
-// form writes only the card, the prospect form writes only a contact row) and every read site
-// then guessed its own precedence. Three different orders across eight call sites meant the
-// same customer could get the offer, the order confirmation and the Fortnox e-mail at three
+// The trouble was never the split — it was that no write path filled both halves (the customer
+// form wrote only the card, the prospect form only a contact row) and every read site then
+// guessed its own precedence. Three different orders across eight call sites meant the same
+// customer could get the offer, the order confirmation and the Fortnox e-mail at three
 // different addresses.
 //
 // One rule, everywhere: a named contact person wins when one exists, otherwise the card.
 // Resolved FIELD BY FIELD, so a contact with a name but no e-mail still falls back to the
 // card's address instead of resolving to nothing.
+//
+// The field-by-field part is now load-bearing, not just defensive: a PRIVATE customer gets an
+// automatic primary contact row carrying ONLY the person's name (createCrmCustomer), precisely
+// so "Er referens" fills itself while telephone and e-mail keep coming from the card. Copying
+// the channels into that row would freeze an address that is later corrected on the card.
+// Anything reading a contact row directly must go through here — two pickers that read
+// `contact.phone` raw would otherwise blank a number the card had already supplied.
 //
 // Deliberately pure and dependency-free so both server domain code and client components can
 // import it (same as `pricing.ts`).

@@ -7,7 +7,11 @@ import {
   updateCrmCustomer,
   convertProspectToCustomer,
   getCrmCustomerDisplayName,
+  privateCustomerContactName,
+  createCrmCustomerContact,
+  updateCrmCustomerContact,
 } from '@/lib/domains/crm/customers';
+import { resolveCrmContact } from '@/lib/domains/crm/contacts';
 
 beforeEach(() => vi.clearAllMocks());
 
@@ -157,6 +161,166 @@ describe('createCrmCustomer', () => {
     const result = await createCrmCustomer(sb as any, validInput);
 
     expect((result as any).error).toBeTruthy();
+  });
+
+  it('skapar INGEN kontaktperson för företagskund', async () => {
+    const sb = makeSupabaseMock({ data: { id: 'new-1', ...validInput }, error: null });
+
+    await createCrmCustomer(sb as any, validInput);
+
+    expect(sb.from).not.toHaveBeenCalledWith('crm_customer_contacts');
+  });
+
+  it('skapar en primär kontaktperson med BARA namnet för privatkund', async () => {
+    const privateInput = {
+      customer_type: 'private' as const,
+      first_name: 'Anna',
+      last_name: 'Svensson',
+      phone: '070-123 45 67',
+      email: 'anna@example.se',
+      assigned_to: 'user-1',
+      created_by: 'user-1',
+    };
+    const sb = makeSupabaseMock({ data: { id: 'new-1', ...privateInput }, error: null });
+
+    await createCrmCustomer(sb as any, privateInput);
+
+    expect(sb.from).toHaveBeenCalledWith('crm_customer_contacts');
+    // Telefon och e-post lämnas MED FLIT utanför raden: kontakten vinner över kortet i
+    // resolveCrmContact, så en kopia här skulle frysa en adress som senare rättas på kortet.
+    expect(sb._query.insert).toHaveBeenCalledWith({
+      customer_id: 'new-1',
+      name: 'Anna Svensson',
+      is_primary: true,
+    });
+  });
+
+  it('skapar ingen kontaktperson för privatkund utan namn', async () => {
+    const sb = makeSupabaseMock({ data: { id: 'new-1' }, error: null });
+
+    await createCrmCustomer(sb as any, {
+      customer_type: 'private',
+      first_name: null,
+      last_name: null,
+      assigned_to: 'user-1',
+      created_by: 'user-1',
+    });
+
+    expect(sb.from).not.toHaveBeenCalledWith('crm_customer_contacts');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Primärkontakt-invarianten: bara EN per kund.
+//
+// `is_primary` saknar unikt index och trigger i databasen, och primaryCrmContact gör
+// .find() över en oordnad embed. Två primärrader = godtyckligt utfall, och kontakten
+// säljaren pekade ut kan tyst förlora mot privatkundens automatiska rad.
+// ---------------------------------------------------------------------------
+
+describe('createCrmCustomerContact', () => {
+  it('degraderar tidigare primärkontakter innan en ny primär skrivs', async () => {
+    const sb = makeSupabaseMock({ data: { id: 'ct-2' }, error: null });
+
+    await createCrmCustomerContact(sb as any, { customer_id: 'c1', name: 'Erik', is_primary: true });
+
+    expect(sb._query.update).toHaveBeenCalledWith({ is_primary: false });
+    expect(sb._query.eq).toHaveBeenCalledWith('customer_id', 'c1');
+    // Degraderingen måste ske FÖRE insert, annars städar den nya raden bort sig själv.
+    const updateOrder = (sb._query.update as any).mock.invocationCallOrder[0];
+    const insertOrder = (sb._query.insert as any).mock.invocationCallOrder[0];
+    expect(updateOrder).toBeLessThan(insertOrder);
+  });
+
+  it('rör inga andra rader när kontakten inte är primär', async () => {
+    const sb = makeSupabaseMock({ data: { id: 'ct-2' }, error: null });
+
+    await createCrmCustomerContact(sb as any, { customer_id: 'c1', name: 'Erik', is_primary: false });
+
+    expect(sb._query.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('updateCrmCustomerContact', () => {
+  it('degraderar syskonen men inte raden som görs primär', async () => {
+    const sb = makeSupabaseMock({ data: { customer_id: 'c1' }, error: null });
+
+    await updateCrmCustomerContact(sb as any, 'ct-2', { is_primary: true });
+
+    expect(sb._query.update).toHaveBeenCalledWith({ is_primary: false });
+    expect(sb._query.neq).toHaveBeenCalledWith('id', 'ct-2');
+  });
+
+  it('degraderar ingen när is_primary inte sätts', async () => {
+    const sb = makeSupabaseMock({ data: { id: 'ct-2' }, error: null });
+
+    await updateCrmCustomerContact(sb as any, 'ct-2', { phone: '070-1' });
+
+    expect(sb._query.neq).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// privateCustomerContactName — ren funktion
+// ---------------------------------------------------------------------------
+
+describe('privateCustomerContactName', () => {
+  it('sätter ihop för- och efternamn för privatkund', () => {
+    expect(
+      privateCustomerContactName({ customer_type: 'private', first_name: 'Anna', last_name: 'Svensson' })
+    ).toBe('Anna Svensson');
+  });
+
+  it('klarar att bara ett av namnen är ifyllt', () => {
+    expect(privateCustomerContactName({ customer_type: 'private', first_name: 'Anna', last_name: null })).toBe('Anna');
+    expect(privateCustomerContactName({ customer_type: 'private', first_name: '  ', last_name: 'Svensson' })).toBe('Svensson');
+  });
+
+  it('returnerar null för företag — kontaktpersonen heter inte samma sak som bolaget', () => {
+    expect(
+      privateCustomerContactName({ customer_type: 'business', first_name: 'Anna', last_name: 'Svensson' })
+    ).toBeNull();
+  });
+
+  it('returnerar null när privatkunden saknar namn', () => {
+    expect(privateCustomerContactName({ customer_type: 'private', first_name: '', last_name: '   ' })).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Namn-bara-kontakten mot den delade resolveCrmContact-regeln.
+//
+// Hela poängen med att bara skriva namnet är att telefon och e-post ska fortsätta komma
+// från kundkortet. Går den fältvisa fallbacken sönder får ordern en kontaktperson utan
+// nummer — och installatören står utan sätt att nå kunden.
+// ---------------------------------------------------------------------------
+
+describe('privatkundens automatiska kontakt + resolveCrmContact', () => {
+  const card = {
+    email: 'anna@example.se',
+    phone: '070-123 45 67',
+    mobile: null,
+    contacts: [{ name: 'Anna Svensson', phone: null, email: null, is_primary: true }],
+  };
+
+  it('ger namnet från kontakten och telefon/e-post från kortet', () => {
+    expect(resolveCrmContact(card)).toEqual({
+      name: 'Anna Svensson',
+      email: 'anna@example.se',
+      phone: '070-123 45 67',
+    });
+  });
+
+  it('faller vidare till mobil när kortet saknar fast telefon', () => {
+    expect(resolveCrmContact({ ...card, phone: null, mobile: '070-999 88 77' }).phone).toBe('070-999 88 77');
+  });
+
+  it('ger samma resultat när raden väljs uttryckligen i en väljare (preferContact)', () => {
+    expect(resolveCrmContact(card, card.contacts[0])).toEqual({
+      name: 'Anna Svensson',
+      email: 'anna@example.se',
+      phone: '070-123 45 67',
+    });
   });
 });
 
