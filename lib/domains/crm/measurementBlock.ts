@@ -5,7 +5,7 @@
 // arbetsordern (där artiklar rättas i efterhand och beskrivningen måste kunna hämtas om).
 // Rent och sidoeffektfritt, så det kan unit-testas och importeras från klientkomponenter.
 
-import { inferMaterialFromArticle, lineItemSacks } from './materials';
+import { inferMaterialFromArticle, lineItemSacks, MATERIAL_SHORTS } from './materials';
 
 const CONSTRUCTION_LABELS: Record<string, string> = { vagg: 'Vägg', snedtak: 'Snedtak', vind: 'Vind' };
 
@@ -74,48 +74,79 @@ export function hasMeasurementBlock(notes: string): boolean {
 }
 
 /**
- * Plocka bort ett måttblock som ligger först i texten, även när det inte matchar exakt det vi
- * la dit sist (säljaren har redigerat i det).
- *
- * Behövs för knappen: den är enda vägen tillbaka när automatiken lämnat över ägarskapet, och
- * utan en strukturell borttagning staplade den ett nytt block ovanpå det redigerade — två
- * uppsättningar mått i samma arbetsbeskrivning, den inaktuella underst.
- *
- * Strukturen matchar exakt vad `buildMeasurementLines` producerar: tomma rader, måttrader,
- * "Totalt: N säck", och materialrubriker. En rubrik är i sig bara ett ord och går inte att
- * känna igen ensam — den godtas därför bara när NÄSTA rad är en måttrad, vilket är den enda
- * plats en rubrik kan stå.
- */
-/**
- * Bygg blocket från grunden: plocka bort ett befintligt block strukturellt och lägg det nya
- * överst, med säljarens egen text kvar under.
+ * Bygg blocket från grunden: plocka bort ett befintligt block och lägg det nya överst, med
+ * texten som skrivits omkring det kvar.
  *
  * För ytor UTAN automatik — arbetsordern, där artiklar rättas i efterhand och det inte finns
  * något "senast insatta block" att jämföra mot. Ett klick betyder alltid "hämta om måtten",
  * så det finns inget ägarskap att ta hänsyn till.
  */
 export function regenerateMeasurementBlock(notes: string, nextBlock: string): string {
-  const rest = stripLeadingMeasurementBlock(notes);
-  if (!nextBlock) return rest.trim() ? rest : '';
-  return rest.trim() ? `${nextBlock}\n\n${rest}` : nextBlock;
+  return prependBlock(stripMeasurementBlock(notes), nextBlock);
 }
 
-export function stripLeadingMeasurementBlock(notes: string): string {
+function isMeasurementLine(line: string): boolean {
+  return MEASUREMENT_LINE_RE.test(line);
+}
+
+// En materialrubrik måste vara ETT AV DE KÄNDA materialnamnen och stå direkt ovanför en
+// måttrad. Regeln "vilken rad som helst som följs av en måttrad" såg rimlig ut men raderade
+// säljarens egen text: "Porten är låst" på raden ovanför blocket åts upp som rubrik.
+function isHeadingLine(lines: string[], i: number): boolean {
+  return MATERIAL_SHORTS.includes(lines[i].trim())
+    && i + 1 < lines.length && isMeasurementLine(lines[i + 1]);
+}
+
+function isBlockLine(lines: string[], i: number): boolean {
+  const line = lines[i].trim();
+  if (line === '') return false; // tomrader avgörs av vad som kommer efter dem
+  return isMeasurementLine(line) || TOTAL_LINE_RE.test(line) || isHeadingLine(lines, i);
+}
+
+/**
+ * Plocka bort måttblocket ur texten, även när det inte matchar exakt det vi la dit sist
+ * (någon har redigerat i det).
+ *
+ * Blocket söks VAR SOM HELST i texten, inte bara först. På arbetsordern skriver kontoret ofta
+ * en rad överst ("OBS! Ring Kalle") — letade vi bara i position 0 blev det gamla blocket
+ * kvar under det nya, och installatören fick två uppsättningar mått med den inaktuella sist.
+ *
+ * Strukturen matchar exakt vad `buildMeasurementLines` producerar: måttrader,
+ * "Totalt: N säck", materialrubriker, samt tomrader som har fler blockrader efter sig.
+ * Allt annat är någons egen text och lämnas orört.
+ */
+export function stripMeasurementBlock(notes: string): string {
   const lines = notes.split('\n');
-  let i = 0;
+  const first = lines.findIndex(isMeasurementLine);
+  if (first === -1) return notes;
+
+  // Bakåt: ta med materialrubriken direkt ovanför måttraden.
+  const start = first > 0 && isHeadingLine(lines, first - 1) ? first - 1 : first;
+
+  // Framåt: blockrader, och tomrader som följs av fler blockrader (blocket har egna tomrader
+  // mellan materialgrupperna och före "Totalt"). Första raden som inte hör till blocket stoppar.
+  let end = first;
+  let i = first;
   while (i < lines.length) {
-    const line = lines[i].trim();
-    const isBlank = line === '';
-    const isMeasurement = MEASUREMENT_LINE_RE.test(line);
-    const isTotal = TOTAL_LINE_RE.test(line);
-    const isHeading = !isBlank && !isMeasurement && !isTotal
-      && i + 1 < lines.length && MEASUREMENT_LINE_RE.test(lines[i + 1]);
-    if (!isBlank && !isMeasurement && !isTotal && !isHeading) break;
-    i += 1;
+    if (isBlockLine(lines, i)) { i += 1; end = i; continue; }
+    if (lines[i].trim() === '') {
+      let j = i;
+      while (j < lines.length && lines[j].trim() === '') j += 1;
+      if (j < lines.length && isBlockLine(lines, j)) { i = j; continue; }
+    }
+    break;
   }
-  // Inget block hittat → lämna texten orörd (annars äts en inledande tomrad utan anledning).
-  if (i === 0) return notes;
-  return lines.slice(i).join('\n').replace(/^\n+/, '');
+
+  const before = lines.slice(0, start).join('\n').replace(/\s+$/, '');
+  const after = lines.slice(end).join('\n').replace(/^\s+/, '');
+  if (!before) return after;
+  if (!after) return before;
+  return `${before}\n\n${after}`;
+}
+
+function prependBlock(rest: string, nextBlock: string): string {
+  if (!nextBlock) return rest.trim() ? rest : '';
+  return rest.trim() ? `${nextBlock}\n\n${rest}` : nextBlock;
 }
 
 /**
@@ -130,6 +161,11 @@ export function stripLeadingMeasurementBlock(notes: string): string {
  * bort det redigerade blocket strukturellt och skriver ett färskt — det är hela poängen med ett
  * uttryckligt klick, och enda vägen tillbaka när automatiken lämnat över.
  *
+ * ⚠️ `force` måste städa ÄVEN när `prevBlock` är tomt. Just den kombinationen är läget efter att
+ * automatiken lämnat över ägarskapet (ingen referens sparad, låset satt), alltså precis när
+ * knappen är enda vägen tillbaka — och utan städningen la den ett nytt block ovanpå det gamla
+ * och gjorde de inaktuella måtten permanenta.
+ *
  * Tomt `nextBlock` (måtten har raderats från raderna) tar bort blocket i stället för att lämna
  * kvar en inaktuell uppgift som installatören annars bygger efter.
  */
@@ -139,22 +175,18 @@ export function replaceMeasurementBlock(
   nextBlock: string,
   options: { force?: boolean } = {},
 ): string | null {
-  let rest = notes;
-  if (prevBlock) {
-    // Blocket måste sluta där en rad slutar. Enbart `startsWith` räcker inte: har säljaren
-    // skrivit till på blockets SISTA rad ("… × 200 mm (mätt på plats)") matchar prefixet
-    // ändå, och tillägget hade blivit hängande kvar som lös text när blocket byttes ut.
-    const ownsBlock = notes === prevBlock || notes.startsWith(`${prevBlock}\n`);
-    if (ownsBlock) {
-      rest = notes.slice(prevBlock.length).replace(/^\n+/, '');
-    } else if (options.force) {
-      // Blocket är redigerat — ta bort det strukturellt, annars hamnar det nya ovanpå det
-      // gamla och arbetsbeskrivningen bär två uppsättningar mått.
-      rest = stripLeadingMeasurementBlock(notes);
-    } else {
-      return null;
-    }
+  // Blocket måste sluta där en rad slutar. Enbart `startsWith` räcker inte: har säljaren
+  // skrivit till på blockets SISTA rad ("… × 200 mm (mätt på plats)") matchar prefixet
+  // ändå, och tillägget hade blivit hängande kvar som lös text när blocket byttes ut.
+  const ownsBlock = prevBlock !== '' && (notes === prevBlock || notes.startsWith(`${prevBlock}\n`));
+
+  if (ownsBlock) {
+    return prependBlock(notes.slice(prevBlock.length).replace(/^\n+/, ''), nextBlock);
   }
-  if (!nextBlock) return rest.trim() ? rest : '';
-  return rest.trim() ? `${nextBlock}\n\n${rest}` : nextBlock;
+  if (options.force) {
+    return prependBlock(stripMeasurementBlock(notes), nextBlock);
+  }
+  // Ingen referens sparad än → första insättningen, lägg blocket överst.
+  if (!prevBlock) return prependBlock(notes, nextBlock);
+  return null;
 }

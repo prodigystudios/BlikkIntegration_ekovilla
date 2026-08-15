@@ -1745,6 +1745,15 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     const prev = lastMeasurementBlockRef.current;
     if (block === prev) return;
 
+    // Första insättningen på en text som redan bär mått: säljaren har skrivit dem för hand
+    // (eller klistrat in dem). Lägg inte ett block ovanpå — då står måtten två gånger och
+    // notisen påstår dessutom att blocket hålls uppdaterat. Lämna över på samma sätt som
+    // adoptExistingMeasurementBlock gör vid laddning.
+    if (!prev && hasMeasurementBlock(draft.handoff_notes)) {
+      setMeasurementBlockLocked(true);
+      return;
+    }
+
     const next = replaceMeasurementBlock(draft.handoff_notes, prev, block);
     if (next === null) {
       // Säljaren har redigerat blocket sedan vi la dit det — lämna över ägarskapet.

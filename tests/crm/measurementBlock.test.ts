@@ -4,7 +4,7 @@ import {
   hasMeasurementBlock,
   replaceMeasurementBlock,
   regenerateMeasurementBlock,
-  stripLeadingMeasurementBlock,
+  stripMeasurementBlock,
 } from '@/lib/domains/crm/measurementBlock';
 
 // Måttblocket blir arbetsbeskrivningen installatören bygger efter. Två ytor matar det:
@@ -117,6 +117,21 @@ describe('måttblocket', () => {
       expect(result).not.toContain('90 m²');
     });
 
+    // ⚠️ Läget efter att automatiken lämnat över: ingen referens sparad OCH låset satt. Det är
+    // exakt då knappen är enda vägen tillbaka. Städade force inte här la klicket ett nytt block
+    // ovanpå det gamla — och eftersom klicket sedan tar tillbaka ägarskapet blev de inaktuella
+    // måtten permanenta, hela vägen ut till arbetsordern.
+    it('force städar ÄVEN när ingen referens finns sparad', () => {
+      const edited = 'Vägg – 90 m² × 200 mm\n\nRing innan ankomst';
+      const result = replaceMeasurementBlock(edited, '', NEXT, { force: true });
+      expect(result).toBe(`${NEXT}\n\nRing innan ankomst`);
+      expect(result).not.toContain('90 m²');
+    });
+
+    it('utan force och utan referens läggs blocket bara överst (första insättningen)', () => {
+      expect(replaceMeasurementBlock('Ring innan ankomst', '', BLOCK)).toBe(`${BLOCK}\n\nRing innan ankomst`);
+    });
+
     it('tomt nextBlock tar bort blocket men behåller säljarens text', () => {
       const withBlock = `${BLOCK}\n\nRing innan ankomst`;
       expect(replaceMeasurementBlock(withBlock, BLOCK, '')).toBe('Ring innan ankomst');
@@ -127,28 +142,37 @@ describe('måttblocket', () => {
     });
   });
 
-  describe('stripLeadingMeasurementBlock', () => {
+  describe('stripMeasurementBlock', () => {
     it('tar bort ett helt block med rubrik, mått och total', () => {
       const notes = 'EKOVILLA\nVägg – 100 m² × 200 mm @ 45 kg/m³ – 65 säck\n\nTotalt: 65 säck\n\nRing innan ankomst';
-      expect(stripLeadingMeasurementBlock(notes)).toBe('Ring innan ankomst');
+      expect(stripMeasurementBlock(notes)).toBe('Ring innan ankomst');
     });
 
     it('tar bort ett REDIGERAT block — det är hela poängen', () => {
-      expect(stripLeadingMeasurementBlock('Vägg – 90 m² × 200 mm (mätt på plats)\n\nEgen text')).toBe('Egen text');
+      expect(stripMeasurementBlock('Vägg – 90 m² × 200 mm (mätt på plats)\n\nEgen text')).toBe('Egen text');
     });
 
     it('lämnar text utan block orörd', () => {
-      expect(stripLeadingMeasurementBlock('Ring innan ankomst\nPorten är låst')).toBe('Ring innan ankomst\nPorten är låst');
+      expect(stripMeasurementBlock('Ring innan ankomst\nPorten är låst')).toBe('Ring innan ankomst\nPorten är låst');
     });
 
-    it('äter inte säljarens text som råkar stå först', () => {
-      const notes = 'Ring innan ankomst\n\nVägg – 100 m² × 200 mm';
-      expect(stripLeadingMeasurementBlock(notes)).toBe(notes);
+    // Blocket söks var som helst, inte bara först: på arbetsordern skriver kontoret ofta en
+    // rad överst, och letade vi bara i position 0 blev det gamla blocket kvar under det nya.
+    it('hittar blocket även när text står ovanför det', () => {
+      expect(stripMeasurementBlock('Ring innan ankomst\n\nVägg – 100 m² × 200 mm')).toBe('Ring innan ankomst');
+      expect(stripMeasurementBlock('OBS! Ring Kalle\n\nEKOVILLA\nVägg – 80 m² × 200 mm @ 45 kg/m³ – 52 säck\n\nTotalt: 52 säck'))
+        .toBe('OBS! Ring Kalle');
     });
 
-    it('godtar bara en rubrik som följs av en måttrad', () => {
-      // "Anteckning" följs inte av mått → ingen rubrik, inget block, texten står kvar.
-      expect(stripLeadingMeasurementBlock('Anteckning\nRing innan')).toBe('Anteckning\nRing innan');
+    // En rubrik måste vara ett KÄNT materialnamn. Regeln "vilken rad som helst som följs av
+    // en måttrad" raderade säljarens egen text när den stod direkt ovanför blocket.
+    it('raderar inte en egen rad som råkar stå direkt ovanför måttraden', () => {
+      expect(stripMeasurementBlock('Porten är låst\nVägg – 100 m² × 200 mm\n\nEgen text'))
+        .toBe('Porten är låst\n\nEgen text');
+    });
+
+    it('lämnar text utan måttrader helt orörd', () => {
+      expect(stripMeasurementBlock('Anteckning\nRing innan')).toBe('Anteckning\nRing innan');
     });
   });
 
