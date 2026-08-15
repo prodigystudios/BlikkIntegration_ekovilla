@@ -4,6 +4,7 @@ import { resolveCrmContact, type CrmContactSource } from './contacts';
 import { computePricing, type PricingLineItem } from './pricing';
 import { activeLineItems, computeInvoiceState, validateLineItemEdit, type InvoiceRound } from '@/lib/domains/fortnox/partialInvoices';
 import { isValidPersonalNumber, PERSONAL_NUMBER_ERROR } from './personalNumber';
+import type { CreateWorkOrderFileInput } from './workOrderFiles/types';
 
 export const crmWorkOrderSelect = `
   id,
@@ -880,4 +881,100 @@ export async function deleteCrmWorkOrderComment(supabase: SupabaseClient, id: st
     .eq('created_by', userId)
     .select('id')
     .maybeSingle();
+}
+
+// ── Filer på ordern (ritningar, förberedelser, foto före/efter) ──────────────
+//
+// INGEN profiles-join, till skillnad från crmWorkOrderCommentSelect ovan. `profiles` är
+// self-read-only (profiles_select_self i auth_roles_setup.sql:71 är enda SELECT-policyn), så
+// `uploader:profiles(full_name)` hade gett null för alla utom en själv — det är samma skäl som
+// gör att listMentionableProfiles går via admin-klienten. Uppladdarens namn snapshottas därför i
+// created_by_name när raden skapas.
+export const crmWorkOrderFileSelect = `
+  id,
+  work_order_id,
+  category,
+  is_internal,
+  file_name,
+  storage_bucket,
+  storage_path,
+  content_type,
+  size_bytes,
+  created_by,
+  created_by_name,
+  created_at
+`;
+
+export async function listCrmWorkOrderFiles(supabase: SupabaseClient, workOrderId: string) {
+  return supabase
+    .from('crm_work_order_files')
+    .select(crmWorkOrderFileSelect)
+    .eq('work_order_id', workOrderId)
+    .order('created_at', { ascending: false });
+}
+
+export async function createCrmWorkOrderFile(supabase: SupabaseClient, input: CreateWorkOrderFileInput) {
+  return supabase.from('crm_work_order_files').insert(input).select(crmWorkOrderFileSelect).single();
+}
+
+// Finns redan en rad som pekar på det här objektet?
+//
+// Bekräftelsesteget städar bort objektet när raden inte kan skrivas, och den städningen får ALDRIG
+// träffa en fil som redan tillhör någon. Sökvägen till en bild går att läsa ut ur den signerade
+// URL:en i listan, så en klient kan spela tillbaka en sökväg som redan är registrerad — och utan
+// den här kontrollen hade ett nekat insert då raderat den befintliga filens byte.
+// Ett unikt index på storage_path är backstoppen; det här är det begripliga svaret (409).
+export async function findCrmWorkOrderFileByPath(supabase: SupabaseClient, storagePath: string) {
+  return supabase
+    .from('crm_work_order_files')
+    .select('id')
+    .eq('storage_path', storagePath)
+    .maybeSingle();
+}
+
+export async function getCrmWorkOrderFile(supabase: SupabaseClient, fileId: string, workOrderId: string) {
+  return supabase
+    .from('crm_work_order_files')
+    .select(crmWorkOrderFileSelect)
+    .eq('id', fileId)
+    .eq('work_order_id', workOrderId)
+    .maybeSingle();
+}
+
+// `ownerId = null` betyder kontoret (crm.workorder.write) — ingen ägarfiltrering. Annars filtreras
+// raden på uppladdaren, så en installatör bara kan ta bort sitt eget.
+//
+// Ägarskapet uttrycks som predikat i queryn och inte som en assert, precis som
+// deleteCrmWorkOrderComment: en främmande rad matchar helt enkelt ingenting och routen svarar 404.
+// `.eq('work_order_id', ...)` är inte överflödigt trots att id:t är unikt — utan den kan ett
+// fil-id från en ANNAN order raderas genom den här orderns adress.
+//
+// Raden raderas FÖRE objektet och returnerar sin adress i samma vända, till skillnad från
+// dokumentbiblioteket som läser först och raderar sen. En rundtur i stället för två, och
+// radraderingen blir atomär. Misslyckas storage-städningen efteråt ligger byte kvar utan rad —
+// osynligt skräp, vilket är den bättre av de två felmoderna (en rad som pekar på ingenting ger
+// ett trasigt kort i listan).
+export async function deleteCrmWorkOrderFile(
+  supabase: SupabaseClient,
+  fileId: string,
+  workOrderId: string,
+  ownerId: string | null,
+) {
+  const query = supabase
+    .from('crm_work_order_files')
+    .delete()
+    .eq('id', fileId)
+    .eq('work_order_id', workOrderId);
+
+  if (ownerId) query.eq('created_by', ownerId);
+
+  return query.select('id, storage_bucket, storage_path').maybeSingle();
+}
+
+// Besättningsfrågan, ställd till samma SECURITY DEFINER-funktion som RLS-policyerna kallar
+// (20260810_crm_work_order_crew_access.sql). Routen som gatar en skrivning måste ge SAMMA svar som
+// policyn — härleder den i stället svaret ur rollen glider de två isär, och användaren får ett
+// 200 på något databasen sedan tyst nekar.
+export async function isUserOnWorkOrder(supabase: SupabaseClient, userId: string, workOrderId: string) {
+  return supabase.rpc('is_user_on_work_order', { p_uid: userId, p_wo: workOrderId });
 }

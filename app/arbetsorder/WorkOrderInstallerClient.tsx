@@ -8,7 +8,9 @@ import { PhoneLink, EmailLink, AddressLink } from '@/app/crm/components/ContactL
 import WorkOrderCommentsTab from '@/app/crm/arbetsorder/WorkOrderCommentsTab';
 import WorkOrderArticlesTab, { type ArticleLineItem } from '@/app/crm/arbetsorder/WorkOrderArticlesTab';
 import WorkOrderTimeTab from '@/app/crm/arbetsorder/WorkOrderTimeTab';
+import WorkOrderFilesTab from '@/app/crm/arbetsorder/WorkOrderFilesTab';
 import { useWorkOrderActivity } from '@/app/crm/arbetsorder/useWorkOrderActivity';
+import { useWorkOrderFiles } from '@/app/crm/arbetsorder/useWorkOrderFiles';
 import { useCustomerContact } from '@/app/crm/arbetsorder/useCustomerContact';
 import { formatDate, joinAddress, documentRef } from '@/app/crm/lib/format';
 
@@ -35,7 +37,7 @@ type InstallerWorkOrder = {
   status: WorkOrderStatus;
 };
 
-type InstallerTab = 'info' | 'articles' | 'time';
+type InstallerTab = 'info' | 'articles' | 'files' | 'time';
 
 export default function WorkOrderInstallerClient({
   workOrderId,
@@ -56,6 +58,15 @@ export default function WorkOrderInstallerClient({
 
   // Utan Tid-fliken finns ingen konsument för tidraderna — hämta dem inte då.
   const activity = useWorkOrderActivity(workOrderId, { includeTimeEntries: canReportTime });
+
+  // Ritningar och bilder. Samma hook och samma flikkomponent som kontorsvyn; RLS avgör vad
+  // besättningen får se (interna filer filtreras bort i databasen) och routen svarar med om den
+  // här personen får ladda upp.
+  //
+  // Hämtas först när fliken öppnats — samma skäl som `includeTimeEntries` ovan: en telefon i fält
+  // ska inte betala en rundtur, plus signering av varje bild på servern, för en lista som ingenting
+  // renderar.
+  const files = useWorkOrderFiles(workOrderId, { enabled: activeTab === 'files' });
 
   // ⚠️ ALLA HOOKS MÅSTE LIGGA FÖRE DE TIDIGA RETURERNA NEDAN (`if (loading)`, `if (error)`).
   // Den här summan används först längst ner, men får inte deklareras där: första rendern går ut
@@ -124,8 +135,12 @@ export default function WorkOrderInstallerClient({
   // Villkoret är alltså ett testfönster (William 2026-08-14: "jag måste ändå kunna testa"), inte en
   // behörighetsmodell. Vid cutovern tas `canReportTime` bort härifrån och ur page.tsx, och den gula
   // rutan nedan med den.
+  //
+  // Filer-fliken är däremot ALLTID med. Den är hela skälet till att besättningen öppnar ordern
+  // kvällen före — ritningen och förberedelserna ligger där — och den har ingen motsvarighet till
+  // Blikk-problemet ovan.
   const tabs: Array<[InstallerTab, string]> = [
-    ['info', 'Info'], ['articles', 'Artiklar'],
+    ['info', 'Info'], ['articles', 'Artiklar'], ['files', 'Filer'],
     ...(canReportTime ? [['time', 'Tid'] as [InstallerTab, string]] : []),
   ];
 
@@ -234,6 +249,23 @@ export default function WorkOrderInstallerClient({
           fortnoxConnected={false}
           canEdit={false}
           onSave={async () => false}
+        />
+      ) : null}
+
+      {/* Filer — samma komponent som kontorets flik. Interna filer har redan filtrerats bort av
+          RLS innan de nådde hit, och `canUpload` kommer från routen (besättning på jobbet). */}
+      {activeTab === 'files' ? (
+        <WorkOrderFilesTab
+          workOrderId={workOrderId}
+          files={files.files}
+          loading={files.loading}
+          currentUserId={currentUserId}
+          canUpload={files.canUpload}
+          canMarkInternal={files.canMarkInternal}
+          canDeleteAny={files.canDeleteAny}
+          uploadProgress={files.uploadProgress}
+          onUpload={files.uploadFiles}
+          onDelete={files.deleteFile}
         />
       ) : null}
 

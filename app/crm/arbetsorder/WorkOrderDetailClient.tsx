@@ -24,8 +24,10 @@ import { parseDecimal } from '@/lib/shared/number';
 import WorkOrderTimeTab from './WorkOrderTimeTab';
 import WorkOrderCommentsTab from './WorkOrderCommentsTab';
 import WorkOrderArticlesTab, { type ArticleLineItem } from './WorkOrderArticlesTab';
+import WorkOrderFilesTab from './WorkOrderFilesTab';
 import WorkOrderPartialInvoiceModal, { type PartialInvoiceLine } from './WorkOrderPartialInvoiceModal';
 import { useWorkOrderActivity } from './useWorkOrderActivity';
+import { useWorkOrderFiles } from './useWorkOrderFiles';
 import { useCustomerContact } from './useCustomerContact';
 import { formatDate, formatDateTime, formatCurrency, joinAddress, isWorkOrderOverdue, documentRef } from '@/app/crm/lib/format';
 import { openFortnoxPdf } from '@/app/crm/lib/fortnoxDoc';
@@ -34,7 +36,7 @@ import useDocumentEmail from '@/app/crm/components/useDocumentEmail';
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 type WorkOrderStatus = 'draft' | 'scheduled' | 'ready' | 'in_progress' | 'completed' | 'partially_invoiced' | 'invoiced' | 'cancelled';
-type WorkOrderTab = 'overview' | 'economy' | 'articles' | 'time';
+type WorkOrderTab = 'overview' | 'economy' | 'articles' | 'files' | 'time';
 type FortnoxSyncStatus = 'not_synced' | 'pending' | 'synced' | 'failed';
 
 // One delfakturering round: the per-article quantities billed + the Fortnox invoice it produced.
@@ -247,6 +249,11 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
     timeEntries, comments, mentionUsers, timeEntriesLoading, commentsLoading,
     createTimeEntry, updateTimeEntry, deleteTimeEntry, createComment, updateComment, deleteComment,
   } = useWorkOrderActivity(workOrderId);
+
+  // Ritningar och bilder på jobbet. Egen hook — fältvyn monterar samma flik med samma hook.
+  // Hämtas först när fliken öppnats: listsvaret signerar en URL per bild på servern, och en order
+  // öppnas ofta för Ekonomi eller Artiklar utan att Filer någonsin visas.
+  const workOrderFiles = useWorkOrderFiles(workOrderId, { enabled: activeTab === 'files' });
 
   // Load work order
   useEffect(() => {
@@ -526,7 +533,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   // Comments live at the bottom of the overview (not a separate tab), so an @-mention notification
   // lands you straight on the thread without hunting for a tab.
   const tabs: Array<[WorkOrderTab, string]> = [
-    ['overview', 'Översikt'], ['economy', 'Ekonomi'], ['articles', 'Artiklar'], ['time', 'Tid'],
+    ['overview', 'Översikt'], ['economy', 'Ekonomi'], ['articles', 'Artiklar'], ['files', 'Filer'], ['time', 'Tid'],
   ];
 
   // Read-only field display used when the overview is locked.
@@ -1088,6 +1095,22 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
           // Avskrivning finns kvar även när editorn är låst — det är hela poängen. Utom på en
           // färdigfakturerad order, där det inte finns något kvar att skriva av.
           onSave={saveArticles}
+        />
+      ) : null}
+
+      {/* ─── Files ─── */}
+      {activeTab === 'files' ? (
+        <WorkOrderFilesTab
+          workOrderId={workOrderId}
+          files={workOrderFiles.files}
+          loading={workOrderFiles.loading}
+          currentUserId={currentUserId}
+          canUpload={workOrderFiles.canUpload}
+          canMarkInternal={workOrderFiles.canMarkInternal}
+          canDeleteAny={workOrderFiles.canDeleteAny}
+          uploadProgress={workOrderFiles.uploadProgress}
+          onUpload={workOrderFiles.uploadFiles}
+          onDelete={workOrderFiles.deleteFile}
         />
       ) : null}
 
