@@ -1424,13 +1424,19 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           notes: item.notes || '',
           create_follow_up_task: false,
         };
-        setDraft(loadedDraft);
-        // Ett måttblock som redan står i den sparade texten är vårt — utan det här skulle
-        // automatiken lägga en dubblett ovanpå så fort offerten öppnades för redigering.
-        adoptExistingMeasurementBlock(loadedDraft.items, loadedDraft.handoff_notes);
+        // Måttblocket sätts in HÄR, före baslinjen — inte av automatik-effekten efteråt.
+        //
+        // Gör man tvärtom blir en nyss laddad offert omedelbart "ändrad", och det river sönder
+        // utkastskyddet: återuppta-bannern stängs av dirty-vakten (den tolkar ändringen som att
+        // säljaren börjat skriva) innan man hunnit klicka, och autosparet skriver sedan över
+        // stashen. Osparat arbete på just den offerten går förlorat. Att bara flytta in blocket
+        // i baslinjen gör öppnandet neutralt igen.
+        const seededDraft = seedMeasurementBlock(loadedDraft);
+        setDraft(seededDraft);
+        adoptExistingMeasurementBlock(seededDraft.items, seededDraft.handoff_notes);
         // The loaded quote IS the clean baseline for an edit — unsaved-change detection compares
         // against it, so editing an untouched loaded offer isn't flagged dirty.
-        baselineRef.current = JSON.stringify(loadedDraft);
+        baselineRef.current = JSON.stringify(seededDraft);
         setCustomWorkAddress(Boolean(item.customer_snapshot?.delivery_address));
         setCustomEndContact(Boolean(
           item.customer_snapshot?.end_contact_name || item.customer_snapshot?.end_contact_phone || item.customer_snapshot?.end_contact_email,
@@ -1696,9 +1702,19 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   // Blocket ligger överst, säljarens egen text står kvar under det.
   const lastMeasurementBlockRef = useRef('');
   // Sant när säljaren har redigerat blocket själv. Då slutar automatiken röra texten — att
-  // skriva över en handgjord rättelse vore värre än att missa en uppdatering. Knappen finns
-  // kvar som väg tillbaka.
-  const measurementBlockLockedRef = useRef(false);
+  // skriva över en handgjord rättelse vore värre än att missa en uppdatering. STATE, inte ref:
+  // läget måste synas i UI:t, annars fryser blocket tyst på gamla mått och den felaktiga
+  // uppgiften följer med till arbetsordern — precis det den här funktionen finns för att stoppa.
+  const [measurementBlockLocked, setMeasurementBlockLocked] = useState(false);
+
+  // Sätt in blocket i en färdig draft (utan att gå via state). Används vid laddning, så blocket
+  // ingår i baslinjen och offerten inte ser ändrad ut direkt när den öppnas.
+  function seedMeasurementBlock(d: QuoteDraft): QuoteDraft {
+    const block = buildMeasurementLines(d.items).join('\n');
+    if (!block || hasMeasurementBlock(d.handoff_notes)) return d;
+    const next = replaceMeasurementBlock(d.handoff_notes, '', block);
+    return next === null || next === d.handoff_notes ? d : { ...d, handoff_notes: next };
+  }
 
   // En laddad eller återställd arbetsbeskrivning bär redan ett block. Utan den här
   // synkroniseringen ser automatiken den som "inget block insatt" och lägger en dubblett
@@ -1707,18 +1723,22 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     const block = buildMeasurementLines(items).join('\n');
     if (block && handoffNotes.startsWith(block)) {
       lastMeasurementBlockRef.current = block;
-      measurementBlockLockedRef.current = false;
+      setMeasurementBlockLocked(false);
       return;
     }
     lastMeasurementBlockRef.current = '';
     // Texten bär måttrader vi inte känner igen → säljaren har redigerat dem. Håll händerna borta.
-    measurementBlockLockedRef.current = hasMeasurementBlock(handoffNotes);
+    setMeasurementBlockLocked(hasMeasurementBlock(handoffNotes));
   }
 
   // Håll blocket i takt med raderna. Kör på varje ändring i artikelraderna; `block === prev`
   // kortsluter de allra flesta anropen, och blocket beräknas ur en ren funktion.
+  //
+  // Pausad medan offerten laddas och medan återuppta-bannern är öppen: en skrivning där skulle
+  // göra draften "ändrad", vilket stänger bannern åt säljaren och låter autosparet skriva över
+  // stashen den handlar om. Samma paus som autosparet och lämna-vakten redan har.
   useEffect(() => {
-    if (measurementBlockLockedRef.current) return;
+    if (loading || recoverableDraft || measurementBlockLocked) return;
     const block = buildMeasurementLines(draft.items).join('\n');
     const prev = lastMeasurementBlockRef.current;
     if (block === prev) return;
@@ -1726,12 +1746,12 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     const next = replaceMeasurementBlock(draft.handoff_notes, prev, block);
     if (next === null) {
       // Säljaren har redigerat blocket sedan vi la dit det — lämna över ägarskapet.
-      measurementBlockLockedRef.current = true;
+      setMeasurementBlockLocked(true);
       return;
     }
     lastMeasurementBlockRef.current = block;
     if (next !== draft.handoff_notes) setDraft((d) => ({ ...d, handoff_notes: next }));
-  }, [draft.items, draft.handoff_notes]);
+  }, [draft.items, draft.handoff_notes, loading, recoverableDraft, measurementBlockLocked]);
 
   // Uttryckligt klick: skriver även när säljaren tagit över texten, och tar tillbaka
   // ägarskapet så automatiken följer med igen.
@@ -1741,7 +1761,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     const next = replaceMeasurementBlock(draft.handoff_notes, lastMeasurementBlockRef.current, block, { force: true });
     if (next === null) return;
     lastMeasurementBlockRef.current = block;
-    measurementBlockLockedRef.current = false;
+    setMeasurementBlockLocked(false);
     setDraft((d) => ({ ...d, handoff_notes: next }));
   }
 
@@ -2748,6 +2768,18 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
                   </button>
                 </div>
                 <Textarea value={draft.handoff_notes} onChange={(e) => setDraft((d) => ({ ...d, handoff_notes: e.target.value }))} rows={3} placeholder="Arbetsbeskrivning för installatör / arbetsorder" />
+                {/* Utan den här raden fryser blocket tyst: säljaren ändrar en tjocklek, ser
+                    beskrivningen stå kvar på gamla mått, och den siffran följer med till
+                    arbetsordern där knappen inte finns. Låsningen måste synas. */}
+                {measurementBlockLocked ? (
+                  <p className="text-[11px] leading-snug text-amber-700">
+                    Måtten uppdateras inte längre automatiskt — du har ändrat i måttblocket. Klicka ”Hämta mått från rader” för att hämta om dem från raderna.
+                  </p>
+                ) : (
+                  <p className="text-[11px] leading-snug text-slate-400">
+                    Måtten från artikelraderna fylls i automatiskt och hålls uppdaterade. Text du skriver själv står kvar under dem.
+                  </p>
+                )}
               </div>
               <Field label="Interna anteckningar" className="md:col-span-2">
                 <Textarea value={draft.notes} onChange={(e) => setDraft((d) => ({ ...d, notes: e.target.value }))} rows={4} placeholder="Det här ska vi komma ihåg inför uppföljningen" />
