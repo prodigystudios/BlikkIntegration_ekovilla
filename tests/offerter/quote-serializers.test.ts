@@ -8,6 +8,8 @@ import {
   buildRotDetails,
   buildInternalHandoff,
   buildMeasurementLines,
+  hasMeasurementBlock,
+  replaceMeasurementBlock,
   addDaysIso,
   daysBetweenIso,
   matchedValidityPreset,
@@ -275,6 +277,68 @@ describe('buildRotDetails', () => {
     expect(buildMeasurementLines([
       { pricing_mode: 'm3', construction: 'vagg', article_name: 'Glasull okänt', m2: '100', thickness_mm: '200', density: '45' },
     ])).toEqual(['Vägg – 100 m² × 200 mm']);
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Måttblocket fylls i AUTOMATISKT när en artikelrad får mått. Det gör de här
+  // reglerna skarpa: automatiken kör på varje tangenttryckning i måttfälten, så en
+  // trasig ersättning staplar dubbletter i stället för att synas en gång.
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  describe('replaceMeasurementBlock', () => {
+    const BLOCK = 'Vägg – 100 m² × 200 mm';
+    const NEXT = 'Vägg – 120 m² × 200 mm';
+
+    it('lägger blocket överst i en tom arbetsbeskrivning', () => {
+      expect(replaceMeasurementBlock('', '', BLOCK)).toBe(BLOCK);
+    });
+
+    it('behåller säljarens egen text under blocket', () => {
+      expect(replaceMeasurementBlock('Ring innan ankomst', '', BLOCK)).toBe(`${BLOCK}\n\nRing innan ankomst`);
+    });
+
+    it('BYTER UT föregående block i stället för att stapla dubbletter', () => {
+      const first = replaceMeasurementBlock('Ring innan ankomst', '', BLOCK)!;
+      const second = replaceMeasurementBlock(first, BLOCK, NEXT);
+      expect(second).toBe(`${NEXT}\n\nRing innan ankomst`);
+      // Det gamla måttet får inte ligga kvar någonstans i texten.
+      expect(second).not.toContain('100 m²');
+    });
+
+    it('returnerar null när säljaren har redigerat blocket — texten är deras nu', () => {
+      expect(replaceMeasurementBlock('Vägg – 90 m² × 200 mm', BLOCK, NEXT)).toBeNull();
+    });
+
+    // Regression: enbart `startsWith` matchade även här, och tillägget blev hängande kvar
+    // som lös text när blocket byttes ut.
+    it('returnerar null när säljaren skrivit till på blockets sista rad', () => {
+      expect(replaceMeasurementBlock(`${BLOCK} (mätt på plats)`, BLOCK, NEXT)).toBeNull();
+    });
+
+    it('force skriver ändå — knappen är ett uttryckligt klick', () => {
+      expect(replaceMeasurementBlock('Egen text', BLOCK, NEXT, { force: true })).toBe(`${NEXT}\n\nEgen text`);
+    });
+
+    it('tomt nextBlock tar bort blocket men behåller säljarens text', () => {
+      const withBlock = `${BLOCK}\n\nRing innan ankomst`;
+      expect(replaceMeasurementBlock(withBlock, BLOCK, '')).toBe('Ring innan ankomst');
+    });
+
+    it('tomt nextBlock på en text som BARA var block ger tom sträng', () => {
+      expect(replaceMeasurementBlock(BLOCK, BLOCK, '')).toBe('');
+    });
+  });
+
+  describe('hasMeasurementBlock', () => {
+    it('känner igen en måttrad', () => {
+      expect(hasMeasurementBlock('Vägg – 100 m² × 200 mm')).toBe(true);
+      expect(hasMeasurementBlock('EKOVILLA\nVind – 50 m² × 400 mm @ 30 kg/m³ – 40 säck')).toBe(true);
+    });
+
+    it('slår inte till på vanlig löptext', () => {
+      expect(hasMeasurementBlock('Ring innan ankomst, 200 kvm vind')).toBe(false);
+      expect(hasMeasurementBlock('')).toBe(false);
+    });
   });
 
   it('max_deduction och brf_org_number bevaras när aktiverad, defaultar/nullas annars', () => {

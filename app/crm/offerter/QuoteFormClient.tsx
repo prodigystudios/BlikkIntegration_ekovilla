@@ -26,6 +26,8 @@ import {
   buildRotDetails,
   buildInternalHandoff,
   buildMeasurementLines,
+  hasMeasurementBlock,
+  replaceMeasurementBlock,
   addDaysIso,
   matchedValidityPreset,
   mergeUntouchedCustomerFields,
@@ -1228,6 +1230,8 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     // from the initial draft / an empty line item, so every field/Input stays controlled.
     const items = (restored.items ?? []).map((line) => ({ ...createEmptyLineItem(), ...line }));
     setDraft({ ...initialDraft, ...restored, items: items.length ? items : [createEmptyLineItem()] });
+    // Måttblocket i den återställda texten är redan insatt — annars lägger automatiken en dubblett.
+    adoptExistingMeasurementBlock(items, restored.handoff_notes ?? '');
     setCustomWorkAddress(Boolean(restored.delivery_address));
     setCustomEndContact(Boolean(
       restored.end_contact_name || restored.end_contact_phone || restored.end_contact_email,
@@ -1421,6 +1425,9 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           create_follow_up_task: false,
         };
         setDraft(loadedDraft);
+        // Ett måttblock som redan står i den sparade texten är vårt — utan det här skulle
+        // automatiken lägga en dubblett ovanpå så fort offerten öppnades för redigering.
+        adoptExistingMeasurementBlock(loadedDraft.items, loadedDraft.handoff_notes);
         // The loaded quote IS the clean baseline for an edit — unsaved-change detection compares
         // against it, so editing an untouched loaded offer isn't flagged dirty.
         baselineRef.current = JSON.stringify(loadedDraft);
@@ -1677,24 +1684,65 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     return { subtotal, vat, total, rotDeduction, toPay: total - rotDeduction, carvedLabor };
   }, [draft.vat_percent, draft.quote_type, draft.rot_enabled, draft.rot_percent, draft.rot_max_deduction, effectiveRows]);
 
-  // Prefill the work description with a grouped measurement block (material headline →
-  // rows → total sacks). Prepends the block and keeps the seller's manual text below.
-  // Re-clicking replaces the previously inserted block (tracked in a ref) instead of
-  // stacking duplicates.
+  // ── Måttblocket i arbetsbeskrivningen ──────────────────────────────────────────────────
+  //
+  // Blocket (materialrubrik → rader → totalt antal säckar) fylls i AUTOMATISKT så snart en
+  // artikelrad har både yta och tjocklek, och hålls i takt när måtten ändras. Tidigare satt
+  // det bakom knappen "Hämta mått från rader" — och den missades. Missen upptäcks först i
+  // fält, för när offerten väl konverterats till arbetsorder är den låst för redigering
+  // (se laddningen ovan) och arbetsordern har ingen motsvarande knapp: enda vägen tillbaka
+  // var att skriva måtten för hand.
+  //
+  // Blocket ligger överst, säljarens egen text står kvar under det.
   const lastMeasurementBlockRef = useRef('');
-  function addMeasurementsToHandoff() {
-    const lines = buildMeasurementLines(draft.items);
-    if (lines.length === 0) { toast.error('Inga m³-rader med ifyllda mått att hämta'); return; }
-    const block = lines.join('\n');
-    setDraft((d) => {
-      let rest = d.handoff_notes;
-      const prev = lastMeasurementBlockRef.current;
-      if (prev && rest.startsWith(prev)) {
-        rest = rest.slice(prev.length).replace(/^\n+/, '');
-      }
+  // Sant när säljaren har redigerat blocket själv. Då slutar automatiken röra texten — att
+  // skriva över en handgjord rättelse vore värre än att missa en uppdatering. Knappen finns
+  // kvar som väg tillbaka.
+  const measurementBlockLockedRef = useRef(false);
+
+  // En laddad eller återställd arbetsbeskrivning bär redan ett block. Utan den här
+  // synkroniseringen ser automatiken den som "inget block insatt" och lägger en dubblett
+  // ovanpå. Tre vägar in hit: redigeringsläget, utkast-återställningen och kundkortsresan.
+  function adoptExistingMeasurementBlock(items: QuoteLineItem[], handoffNotes: string) {
+    const block = buildMeasurementLines(items).join('\n');
+    if (block && handoffNotes.startsWith(block)) {
       lastMeasurementBlockRef.current = block;
-      return { ...d, handoff_notes: rest.trim() ? `${block}\n\n${rest}` : block };
-    });
+      measurementBlockLockedRef.current = false;
+      return;
+    }
+    lastMeasurementBlockRef.current = '';
+    // Texten bär måttrader vi inte känner igen → säljaren har redigerat dem. Håll händerna borta.
+    measurementBlockLockedRef.current = hasMeasurementBlock(handoffNotes);
+  }
+
+  // Håll blocket i takt med raderna. Kör på varje ändring i artikelraderna; `block === prev`
+  // kortsluter de allra flesta anropen, och blocket beräknas ur en ren funktion.
+  useEffect(() => {
+    if (measurementBlockLockedRef.current) return;
+    const block = buildMeasurementLines(draft.items).join('\n');
+    const prev = lastMeasurementBlockRef.current;
+    if (block === prev) return;
+
+    const next = replaceMeasurementBlock(draft.handoff_notes, prev, block);
+    if (next === null) {
+      // Säljaren har redigerat blocket sedan vi la dit det — lämna över ägarskapet.
+      measurementBlockLockedRef.current = true;
+      return;
+    }
+    lastMeasurementBlockRef.current = block;
+    if (next !== draft.handoff_notes) setDraft((d) => ({ ...d, handoff_notes: next }));
+  }, [draft.items, draft.handoff_notes]);
+
+  // Uttryckligt klick: skriver även när säljaren tagit över texten, och tar tillbaka
+  // ägarskapet så automatiken följer med igen.
+  function addMeasurementsToHandoff() {
+    const block = buildMeasurementLines(draft.items).join('\n');
+    if (!block) { toast.error('Inga m³-rader med ifyllda mått att hämta'); return; }
+    const next = replaceMeasurementBlock(draft.handoff_notes, lastMeasurementBlockRef.current, block, { force: true });
+    if (next === null) return;
+    lastMeasurementBlockRef.current = block;
+    measurementBlockLockedRef.current = false;
+    setDraft((d) => ({ ...d, handoff_notes: next }));
   }
 
   const issues = useMemo(() => getValidationIssues(draft, effectiveRows), [draft, effectiveRows]);
