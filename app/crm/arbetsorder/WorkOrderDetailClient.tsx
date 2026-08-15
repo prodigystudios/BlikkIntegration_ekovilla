@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Input from '../../../components/ui/Input';
 import Select from '../../../components/ui/Select';
 import Textarea from '../../../components/ui/Textarea';
@@ -10,6 +10,7 @@ import { cn } from '@/lib/shared/cn';
 import { crm, syncStatusLabel, syncStatusClass, workOrderStatusLabel, workOrderStatusClass, WORK_ORDER_STATUS_FLOW, WORK_ORDER_STATUS_OPTIONS } from '@/app/crm/lib/crmTokens';
 import { PhoneLink, EmailLink, AddressLink } from '@/app/crm/components/ContactLinks';
 import AddressAutocompleteInput from '@/app/crm/components/AddressAutocompleteInput';
+import { safeReturnTo } from '@/app/crm/lib/returnTo';
 import { resolveCrmContact } from '@/lib/domains/crm/contacts';
 import {
   buildMeasurementLines,
@@ -172,6 +173,11 @@ function roundLineBreakdown(
 
 export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, currentUserId }: { workOrderId: string; fortnoxConnected: boolean; currentUserId: string | null }) {
   const router = useRouter();
+  // Arbetsordern öppnas både från sin egen lista och från planeringskalendern. Utan det här
+  // landade planeraren i orderlistan i stället för på tavlan hen kom ifrån.
+  const searchParams = useSearchParams();
+  const backTo = safeReturnTo(searchParams.get('returnTo')) ?? '/crm/arbetsorder';
+  const backLabel = backTo.startsWith('/crm/planering') ? 'Planering' : 'Arbetsorder';
   const toast = useToast();
 
   const [workOrder, setWorkOrder] = useState<WorkOrderItem | null>(null);
@@ -492,8 +498,8 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   if (error || !workOrder || !draft) {
     return (
       <div className="grid gap-4">
-        <button type="button" onClick={() => router.push('/crm/arbetsorder')} className="inline-flex w-fit items-center gap-1.5 text-sm text-slate-500 transition hover:text-slate-800">
-          <BackArrow /> Arbetsorder
+        <button type="button" onClick={() => router.push(backTo)} className="inline-flex w-fit items-center gap-1.5 text-sm text-slate-500 transition hover:text-slate-800">
+          <BackArrow /> {backLabel}
         </button>
         <div className="rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm text-rose-700">{error || 'Arbetsordern hittades inte.'}</div>
       </div>
@@ -536,8 +542,8 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
 
       {/* Header */}
       <div>
-        <button type="button" onClick={() => router.push('/crm/arbetsorder')} className="mb-2 inline-flex w-fit items-center gap-1.5 text-sm text-slate-500 transition hover:text-slate-800">
-          <BackArrow /> Arbetsorder
+        <button type="button" onClick={() => router.push(backTo)} className="mb-2 inline-flex w-fit items-center gap-1.5 text-sm text-slate-500 transition hover:text-slate-800">
+          <BackArrow /> {backLabel}
         </button>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="grid min-w-0 gap-1.5">
