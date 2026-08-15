@@ -11,6 +11,11 @@ import { crm, syncStatusLabel, syncStatusClass, workOrderStatusLabel, workOrderS
 import { PhoneLink, EmailLink, AddressLink } from '@/app/crm/components/ContactLinks';
 import AddressAutocompleteInput from '@/app/crm/components/AddressAutocompleteInput';
 import { resolveCrmContact } from '@/lib/domains/crm/contacts';
+import {
+  buildMeasurementLines,
+  regenerateMeasurementBlock,
+  type MeasurementLineItem,
+} from '@/lib/domains/crm/measurementBlock';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
 import { lineItemEffectiveUnitPrice } from '@/lib/domains/crm/pricing';
 import { inferMaterialFromArticle, sacksFor } from '@/lib/domains/crm/materials';
@@ -358,6 +363,20 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
       }
     } catch { toast.error('Kunde inte spara arbetsorder'); }
     finally { setSaving(false); }
+  }
+
+  // Bygg om måttblocket ur orderns artikelrader och lägg det överst i överlämningsnoteringen.
+  //
+  // Till skillnad från offertformuläret finns här ingen automatik som äger texten, och därmed
+  // inget "senast insatta block" att jämföra mot. Ett klick betyder alltid "hämta om måtten":
+  // regenerateMeasurementBlock plockar bort ett befintligt block strukturellt så det inte
+  // staplas, och behåller det som skrivits under. Ändringen sparas med resten via Spara.
+  function addMeasurementsToHandoff() {
+    if (!draft) return;
+    const block = buildMeasurementLines((workOrder?.line_items || []) as MeasurementLineItem[]).join('\n');
+    if (!block) { toast.error('Inga m³-rader med ifyllda mått att hämta'); return; }
+    const next = regenerateMeasurementBlock(draft.handoff_notes, block);
+    setDraft((d) => (d ? { ...d, handoff_notes: next } : d));
   }
 
   // Discard unsaved overview edits and relock.
@@ -714,10 +733,26 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                     <span className={crm.sectionTitle}>Arbetets scope</span>
                     <Input value={draft.work_scope} onChange={(e) => setField('work_scope', e.target.value)} placeholder="Kort operativ scope" />
                   </label>
-                  <label className="grid gap-1 text-sm text-slate-600">
-                    <span className={crm.sectionTitle}>Överlämningsnotering</span>
+                  {/* Måttblocket kan hämtas om här. Artiklarna rättas ofta EFTER att ordern
+                      skapats, och då står beskrivningen kvar på offertens mått — installatören
+                      bygger efter en siffra som inte gäller längre. Offerten är låst vid det
+                      laget, så det här är enda stället att komma åt det. */}
+                  <div className="grid gap-1 text-sm text-slate-600">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className={crm.sectionTitle}>Överlämningsnotering</span>
+                      <button
+                        type="button"
+                        onClick={addMeasurementsToHandoff}
+                        className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-800"
+                      >
+                        Hämta mått från rader
+                      </button>
+                    </div>
                     <Textarea value={draft.handoff_notes} onChange={(e) => setField('handoff_notes', e.target.value)} rows={4} placeholder="Detaljer till teamet" />
-                  </label>
+                    <p className="text-[11px] leading-snug text-slate-400">
+                      Hämtar måtten från orderns artikelrader. Text du skrivit själv står kvar under dem.
+                    </p>
+                  </div>
                   <label className="grid gap-1 text-sm text-slate-600">
                     <span className={crm.sectionTitle}>Interna anteckningar</span>
                     <Textarea value={draft.notes} onChange={(e) => setField('notes', e.target.value)} rows={4} placeholder="Internt orderunderlag" />

@@ -25,9 +25,6 @@ import {
   buildCustomerSnapshot,
   buildRotDetails,
   buildInternalHandoff,
-  buildMeasurementLines,
-  hasMeasurementBlock,
-  replaceMeasurementBlock,
   addDaysIso,
   matchedValidityPreset,
   mergeUntouchedCustomerFields,
@@ -37,6 +34,11 @@ import {
   type CustomerDerivedValues,
 } from './quoteSerializers';
 import { resolveCrmContact } from '@/lib/domains/crm/contacts';
+import {
+  buildMeasurementLines,
+  hasMeasurementBlock,
+  replaceMeasurementBlock,
+} from '@/lib/domains/crm/measurementBlock';
 import { ROT_HOUSE_WORK_TYPES } from '@/lib/domains/fortnox/types';
 
 // Swedish labels for the Fortnox ROT HouseWorkType codes shown in the ROT section.
