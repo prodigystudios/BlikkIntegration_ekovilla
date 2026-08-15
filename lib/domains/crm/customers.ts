@@ -361,7 +361,28 @@ export async function saveCrmCustomerCreditReport(
   return supabase.from('crm_customers').update(input).eq('id', id).select(crmCustomerSelect).single();
 }
 
+// Bara EN primärkontakt per kund. `is_primary` är en vanlig boolean utan unikt index eller
+// trigger (20260602_crm_customers.sql), så invarianten måste hållas här — annars kan en kund
+// få två primärrader, och `primaryCrmContact` gör `.find(c => c.is_primary)` över en OORDNAD
+// PostgREST-embed: vilken som vinner blir godtyckligt, och den kontakt säljaren medvetet
+// pekade ut kan tyst ignoreras.
+//
+// Blev akut i och med att privatkunder nu får en automatisk primärrad vid skapandet: utan
+// degraderingen förlorar den kontaktperson säljaren lägger till EFTERÅT mot den automatiska.
+// Tidigare fanns ingen rad alls, så säljarens val vann alltid.
+//
+// Degradera FÖRE skrivningen, annars nollas den nya raden av sin egen städning. Två anrop
+// utan transaktion: slår skrivningen fel efteråt står kunden utan primär, och
+// `primaryCrmContact` faller tillbaka på `contacts[0]` — den kan alltså fortfarande nå en
+// kontakt. Alternativet vore ett partiellt unikt index, men det kräver en migrering.
+async function demoteOtherPrimaryContacts(supabase: SupabaseClient, customerId: string, exceptId?: string) {
+  let query = supabase.from('crm_customer_contacts').update({ is_primary: false }).eq('customer_id', customerId);
+  if (exceptId) query = query.neq('id', exceptId);
+  await query;
+}
+
 export async function createCrmCustomerContact(supabase: SupabaseClient, input: CreateCrmCustomerContactInput) {
+  if (input.is_primary) await demoteOtherPrimaryContacts(supabase, input.customer_id);
   return supabase.from('crm_customer_contacts').insert(input).select('id, name, role, phone, email, is_primary').single();
 }
 
@@ -370,6 +391,15 @@ export async function updateCrmCustomerContact(
   id: string,
   input: UpdateCrmCustomerContactInput
 ) {
+  // Kontaktraden bär kundens id, så vi måste läsa den innan vi kan degradera syskonen.
+  if (input.is_primary) {
+    const { data: existing } = await supabase
+      .from('crm_customer_contacts')
+      .select('customer_id')
+      .eq('id', id)
+      .maybeSingle();
+    if (existing?.customer_id) await demoteOtherPrimaryContacts(supabase, existing.customer_id as string, id);
+  }
   return supabase
     .from('crm_customer_contacts')
     .update(input)

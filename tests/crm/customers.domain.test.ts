@@ -8,6 +8,8 @@ import {
   convertProspectToCustomer,
   getCrmCustomerDisplayName,
   privateCustomerContactName,
+  createCrmCustomerContact,
+  updateCrmCustomerContact,
 } from '@/lib/domains/crm/customers';
 import { resolveCrmContact } from '@/lib/domains/crm/contacts';
 
@@ -205,6 +207,56 @@ describe('createCrmCustomer', () => {
     });
 
     expect(sb.from).not.toHaveBeenCalledWith('crm_customer_contacts');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Primärkontakt-invarianten: bara EN per kund.
+//
+// `is_primary` saknar unikt index och trigger i databasen, och primaryCrmContact gör
+// .find() över en oordnad embed. Två primärrader = godtyckligt utfall, och kontakten
+// säljaren pekade ut kan tyst förlora mot privatkundens automatiska rad.
+// ---------------------------------------------------------------------------
+
+describe('createCrmCustomerContact', () => {
+  it('degraderar tidigare primärkontakter innan en ny primär skrivs', async () => {
+    const sb = makeSupabaseMock({ data: { id: 'ct-2' }, error: null });
+
+    await createCrmCustomerContact(sb as any, { customer_id: 'c1', name: 'Erik', is_primary: true });
+
+    expect(sb._query.update).toHaveBeenCalledWith({ is_primary: false });
+    expect(sb._query.eq).toHaveBeenCalledWith('customer_id', 'c1');
+    // Degraderingen måste ske FÖRE insert, annars städar den nya raden bort sig själv.
+    const updateOrder = (sb._query.update as any).mock.invocationCallOrder[0];
+    const insertOrder = (sb._query.insert as any).mock.invocationCallOrder[0];
+    expect(updateOrder).toBeLessThan(insertOrder);
+  });
+
+  it('rör inga andra rader när kontakten inte är primär', async () => {
+    const sb = makeSupabaseMock({ data: { id: 'ct-2' }, error: null });
+
+    await createCrmCustomerContact(sb as any, { customer_id: 'c1', name: 'Erik', is_primary: false });
+
+    expect(sb._query.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('updateCrmCustomerContact', () => {
+  it('degraderar syskonen men inte raden som görs primär', async () => {
+    const sb = makeSupabaseMock({ data: { customer_id: 'c1' }, error: null });
+
+    await updateCrmCustomerContact(sb as any, 'ct-2', { is_primary: true });
+
+    expect(sb._query.update).toHaveBeenCalledWith({ is_primary: false });
+    expect(sb._query.neq).toHaveBeenCalledWith('id', 'ct-2');
+  });
+
+  it('degraderar ingen när is_primary inte sätts', async () => {
+    const sb = makeSupabaseMock({ data: { id: 'ct-2' }, error: null });
+
+    await updateCrmCustomerContact(sb as any, 'ct-2', { phone: '070-1' });
+
+    expect(sb._query.neq).not.toHaveBeenCalled();
   });
 });
 
