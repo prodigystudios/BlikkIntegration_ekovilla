@@ -35,12 +35,17 @@ export default function AdminPromptDialog({
   const isPrompt = defaultValue !== undefined;
   const [value, setValue] = useState(defaultValue ?? '');
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const confirmRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
+    // Prompt-läget fokuserar inputen; confirm-läget fokuserar bekräfta-knappen så
+    // fokus hamnar innanför dialogen (CrmModal har ingen egen fokusfälla).
     if (isPrompt) inputRef.current?.focus();
+    else confirmRef.current?.focus();
   }, [isPrompt]);
 
   function submit() {
+    if (busy) return; // Enter i prompt-läget får inte dubbelskjuta onConfirm mitt i en pågående operation.
     const trimmed = value.trim();
     if (isPrompt && !trimmed) return;
     onConfirm(trimmed);
@@ -48,7 +53,11 @@ export default function AdminPromptDialog({
 
   return (
     <CrmModal
-      onClose={onClose}
+      // Escape/overlay/X får inte stänga mitt i en pågående operation — dialogen
+      // såg annars avbruten ut medan t.ex. en DELETE fullföljdes i bakgrunden.
+      onClose={() => {
+        if (!busy) onClose();
+      }}
       ariaLabel={title}
       maxWidth="sm:max-w-[420px]"
       header={<h2 className="text-base font-bold text-slate-900">{title}</h2>}
@@ -58,6 +67,7 @@ export default function AdminPromptDialog({
             Avbryt
           </button>
           <button
+            ref={confirmRef}
             type="button"
             form="admin-prompt-form"
             onClick={submit}

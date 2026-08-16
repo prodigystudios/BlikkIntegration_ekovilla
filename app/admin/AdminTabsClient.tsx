@@ -1,22 +1,27 @@
 "use client";
 import React from 'react';
-import AdminUsers from './users/AdminUsers';
 import dynamic from 'next/dynamic';
-import AdminBlikkUsersMapping from './blikk/AdminBlikkUsersMapping';
-import Badge from '../../components/ui/Badge';
+// AdminUsers är default-fliken och importeras statiskt med flit: som dynamic-chunk
+// betalade varje /admin-besök en extra nätverksrunda (chunk → mount → API-fetch)
+// och visade en tom panel innan komponenten dök upp.
+import AdminUsers from './users/AdminUsers';
 import PageShell from '../../components/ui/PageShell';
 import { TabsList, TabsTrigger } from '../../components/ui/Tabs';
 import { crm } from '../crm/lib/crmTokens';
 import { cn } from '../../lib/shared/cn';
 
-const AdminContacts = dynamic(() => import('./contacts/AdminContacts'), { ssr: false });
-const AdminDepotUsage = dynamic(() => import('./depots/AdminDepotUsage'), { ssr: false });
-const AdminNews = dynamic(() => import('./news/AdminNews'), { ssr: false });
-const AdminPermissions = dynamic(() => import('./permissions/AdminPermissions'), { ssr: false });
-const AdminTimeReference = dynamic(() => import('./tid/AdminTimeReference'), { ssr: false });
-const AdminTimeApprovals = dynamic(() => import('./tid/AdminTimeApprovals'), { ssr: false });
-const AdminSupportTickets = dynamic(() => import('./support/AdminSupportTickets'), { ssr: false });
-const AdminChangelog = dynamic(() => import('./changelog/AdminChangelog'), { ssr: false });
+// Övriga flikar lazy-laddas; fallbacken förhindrar tom-panel-blink vid flikbyte
+// (crm.card saknar padding — p-5 här matchar flikkropparnas egen padding).
+const tabLoading = () => <p className="m-0 p-5 text-sm text-slate-400">Laddar…</p>;
+const AdminBlikkUsersMapping = dynamic(() => import('./blikk/AdminBlikkUsersMapping'), { ssr: false, loading: tabLoading });
+const AdminContacts = dynamic(() => import('./contacts/AdminContacts'), { ssr: false, loading: tabLoading });
+const AdminDepotUsage = dynamic(() => import('./depots/AdminDepotUsage'), { ssr: false, loading: tabLoading });
+const AdminNews = dynamic(() => import('./news/AdminNews'), { ssr: false, loading: tabLoading });
+const AdminPermissions = dynamic(() => import('./permissions/AdminPermissions'), { ssr: false, loading: tabLoading });
+const AdminTimeReference = dynamic(() => import('./tid/AdminTimeReference'), { ssr: false, loading: tabLoading });
+const AdminTimeApprovals = dynamic(() => import('./tid/AdminTimeApprovals'), { ssr: false, loading: tabLoading });
+const AdminSupportTickets = dynamic(() => import('./support/AdminSupportTickets'), { ssr: false, loading: tabLoading });
+const AdminChangelog = dynamic(() => import('./changelog/AdminChangelog'), { ssr: false, loading: tabLoading });
 
 type AdminTab = 'users'|'permissions'|'contacts'|'depots'|'blikk'|'tid'|'attest'|'news'|'arenden'|'changelog';
 
@@ -62,25 +67,16 @@ export default function AdminTabsClient() {
   return (
     <PageShell className="max-w-[1460px]">
       <section className={cn(crm.cardInner, 'grid gap-4')}>
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="grid max-w-[760px] gap-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge variant="accent" className="px-2.5 py-1 text-[11px] uppercase tracking-[0.35px]">
-                Admincenter
-              </Badge>
-              <Badge>{tabs.length} arbetsytor</Badge>
-            </div>
-            <h1 className={crm.pageTitle}>Administration</h1>
-            <p className={crm.pageSubtitle}>
-              Hantera användare, behörigheter, kontakter, depåer, Blikk-matchning och nyheter från en gemensam adminyta.
-            </p>
-          </div>
-        </div>
+        <h1 className={cn('m-0', crm.pageTitle)}>Administration</h1>
 
         <TabsList aria-label="Adminytor" className="gap-2">
           {tabs.map((tabDef) => (
             <TabsTrigger
               key={tabDef.id}
+              id={`admin-tab-${tabDef.id}`}
+              // Bara aktiv flik har sin panel i DOM — aria-controls på inaktiva
+              // flikar vore dinglande referenser (axe: aria-valid-attr-value).
+              aria-controls={tab === tabDef.id ? `admin-tabpanel-${tabDef.id}` : undefined}
               onClick={() => setTab(tabDef.id)}
               active={tab === tabDef.id}
               title={tabDef.summary}
@@ -91,7 +87,12 @@ export default function AdminTabsClient() {
         </TabsList>
       </section>
 
-      <section className={crm.card}>
+      <section
+        role="tabpanel"
+        id={`admin-tabpanel-${tab}`}
+        aria-labelledby={`admin-tab-${tab}`}
+        className={crm.card}
+      >
         {tab==='users' && <AdminUsers />}
         {tab==='permissions' && <AdminPermissions />}
         {tab==='contacts' && <AdminContacts />}
