@@ -1,8 +1,8 @@
-import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import { adminSupabase } from '../../../../lib/adminSupabase';
 import { getUserProfile } from '../../../../lib/getUserProfile';
 import PageShell from '../../../../components/ui/PageShell';
+import { crm } from '../../../crm/lib/crmTokens';
 import AdminUserProfileEditor from './AdminUserProfileEditor';
 import {
   asRecord,
@@ -24,9 +24,9 @@ export default async function AdminUserProfilePage({ params }: { params: { id: s
 
   if (!adminSupabase) {
     return (
-      <PageShell className="max-w-[1280px] gap-5">
-        <section className="rounded-[24px] border border-ui-border bg-white p-[22px] shadow-[0_12px_32px_rgba(15,23,42,0.04)]">
-          Service role saknas. Kan inte visa användarprofilen.
+      <PageShell className="max-w-[1280px]">
+        <section className={crm.cardInner}>
+          <p className="m-0 text-sm text-slate-600">Service role saknas. Kan inte visa användarprofilen.</p>
         </section>
       </PageShell>
     );
@@ -46,9 +46,9 @@ export default async function AdminUserProfilePage({ params }: { params: { id: s
 
   if (profileError || detailError || sensitiveError) {
     return (
-      <PageShell className="max-w-[1280px] gap-5">
-        <section className="rounded-[24px] border border-ui-border bg-white p-[22px] shadow-[0_12px_32px_rgba(15,23,42,0.04)]">
-          Kunde inte ladda användarprofilen.
+      <PageShell className="max-w-[1280px]">
+        <section className={crm.cardInner}>
+          <p className="m-0 text-sm text-slate-600">Kunde inte ladda användarprofilen.</p>
         </section>
       </PageShell>
     );
