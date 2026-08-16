@@ -120,6 +120,25 @@ const baseExtra: Record<string, Omit<QuickLink, 'href' | 'title'>> = {
 
 const cardClass = cn(crm.cardInner, 'min-h-0');
 
+/**
+ * Klockan i sidhuvudet, förankrad i Europe/Stockholm.
+ *
+ * ⚠️ SIDAN SERVER-RENDERAS (`export const dynamic = 'force-dynamic'` i app/page.tsx) och servern går
+ * på UTC. `new Date()` avläst med lokala getters gav därför olika svar på server och klient: hela
+ * sommaren låg serverns klocka två timmar efter, så mellan 08:00 och 10:00 svensk tid skrev servern
+ * "God morgon" och klienten "Hej", och mellan 00:00 och 02:00 stod fel veckodag och fel datum.
+ *
+ * Samma zonfälla som rapporteringen redan betalat för (PR #69), och samma lösning som /tid.
+ */
+const STOCKHOLM_HEADER_PARTS = new Intl.DateTimeFormat('sv-SE', {
+  timeZone: 'Europe/Stockholm',
+  weekday: 'long',
+  day: 'numeric',
+  month: 'long',
+  hour: 'numeric',
+  hourCycle: 'h23',
+});
+
 export function ClientDashboard({ role }: { role: UserRole | null }) {
   const NEWS_SEEN_KEY = 'dashboard.news.lastSeenId';
 
@@ -225,12 +244,13 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
   const toast = useToast();
 
   const todayMeta = useMemo(() => {
-    const now = new Date();
-    const weekday = now.toLocaleDateString('sv-SE', { weekday: 'long' });
-    const monthDay = now.toLocaleDateString('sv-SE', { day: 'numeric', month: 'long' });
-    const hour = now.getHours();
-    const greeting = hour < 10 ? 'God morgon' : hour < 17 ? 'Hej' : 'God kväll';
-    return { greeting, weekday: weekday.charAt(0).toUpperCase() + weekday.slice(1), monthDay };
+    const parts = STOCKHOLM_HEADER_PARTS.formatToParts(new Date());
+    const value = (type: string) => parts.find((part) => part.type === type)?.value ?? '';
+    const hour = Number(value('hour'));
+    return {
+      greeting: hour < 10 ? 'God morgon' : hour < 17 ? 'Hej' : 'God kväll',
+      date: `${value('weekday')} ${value('day')} ${value('month')}`,
+    };
   }, []);
 
   const isMember = effectiveRole === 'member';
@@ -252,21 +272,19 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
       {newsItem && <NewsModal open={newsOpen} item={newsItem} onClose={closeNews} />}
 
       <div className="mx-auto grid w-full max-w-[1200px] grid-cols-1 gap-4">
-        {/* Header */}
-        <div className="flex flex-wrap items-start justify-between gap-4">
+        {/* Sidhuvud. Samma form som resten av CRM: titel, EN underrad, åtgärden till höger.
+            Den gröna "God morgon ● Lördag"-pillen är borta — hälsningen och veckodagen var samma
+            information som underraden och behövde inte ett eget element. Kvar av underraden är
+            hälsningen och datumet; "fokus på det viktigaste först" sa ingenting man kan agera på. */}
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <div className="inline-flex w-fit items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.06em] text-emerald-700">
-              {todayMeta.greeting}
-              <span className="h-1 w-1 rounded-full bg-emerald-500" />
-              {todayMeta.weekday}
-            </div>
-            <h1 className="m-0 mt-1.5 text-xl font-bold tracking-tight text-slate-900">Översikt</h1>
-            <p className="m-0 mt-1 text-sm text-slate-500">{todayMeta.monthDay} · fokus på det viktigaste först</p>
+            <h1 className={cn('m-0', crm.pageTitle)}>Startsida</h1>
+            <p className={cn('m-0 mt-1', crm.pageSubtitle)}>{todayMeta.greeting} · {todayMeta.date}</p>
           </div>
           <button
             type="button"
             onClick={() => { setTimePrefill(null); setTimeModalOpen(true); }}
-            className="inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-sm font-semibold text-white transition hover:opacity-90"
+            className={crm.primaryButton}
             style={{ backgroundColor: 'var(--crm-primary)' }}
           >
             <svg width="16" height="16" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" fill="none" aria-hidden><path d="M12 5v14M5 12h14" strokeLinecap="round" strokeLinejoin="round" /></svg>
@@ -277,10 +295,13 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
         {/* Installers (members) get the work schedule first — their most important view */}
         {isMember && scheduleSection}
 
-        {/* Quick links — only on phone/tablet; on desktop the sidebar is always open so
-            these would be redundant and just take space. */}
-        <section className={cn(crm.cardInner, 'lg:hidden')}>
-          <p className={cn('mb-3', crm.sectionTitle)}>Snabba genvägar</p>
+        {/* Snabba genvägar — bara på telefon/platta; på desktop står sidomenyn alltid öppen och
+            genvägarna vore bara en andra kopia av den.
+
+            Rubriken "Snabba genvägar" är borta: en grid av ikoner med titlar under säger redan vad
+            den är, och etiketten kostade en rad högst upp vid varje besök. Namnet ligger kvar som
+            aria-label, där en samling länkar faktiskt behöver ett. */}
+        <section className={cn(crm.cardInner, 'lg:hidden')} aria-label="Snabba genvägar">
           <QuickLinksGrid links={links} compact={isSmall} />
         </section>
 

@@ -5,7 +5,34 @@ import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { cn } from '@/lib/shared/cn';
 import Input from '../ui/Input';
 import Textarea from '../ui/Textarea';
+import Badge from '../ui/Badge';
+import DashboardCardHeader from './DashboardCardHeader';
 import { crmJobToScheduleItem, type CrmJobRow } from '@/lib/domains/planning/myJobs';
+
+const MONTHS_SHORT = ['jan', 'feb', 'mar', 'apr', 'maj', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'dec'];
+
+/**
+ * '2026-08-17' + '2026-08-23' → '17–23 aug', eller '28 jul–3 aug' över ett månadsskifte.
+ *
+ * Veckoväljaren visade tidigare de råa ISO-datumen ('2026-08-17 – 2026-08-23').
+ *
+ * Fälten plockas ur strängen i stället för via `new Date()`, så själva formateringen inte kan flytta
+ * dagen. ⚠️ MEN INDATA KAN DET: `range` byggs av `startOfISOWeek(new Date())` med LOKALA getters, och
+ * servern går på UTC. Måndag 01:30 svensk tid landar därför på föregående ISO-vecka i server-
+ * renderingen och rättas först vid hydreringen — hela komponenten hämtar då fel veckas jobb, inte
+ * bara etiketten. Befintlig bugg som ligger utanför den här omgången (att flytta ankaret ändrar
+ * vilka rader RPC:erna får tillbaka, alltså beteende och inte form). Samma felklass som PR #69.
+ */
+function weekRangeLabel(startISO: string, endISO: string): string {
+  const start = startISO.split('-').map(Number);
+  const end = endISO.split('-').map(Number);
+  if (start.length !== 3 || end.length !== 3 || start.some(Number.isNaN) || end.some(Number.isNaN)) {
+    return `${startISO} – ${endISO}`;
+  }
+  return start[1] === end[1]
+    ? `${start[2]}–${end[2]} ${MONTHS_SHORT[end[1] - 1]}`
+    : `${start[2]} ${MONTHS_SHORT[start[1] - 1]}–${end[2]} ${MONTHS_SHORT[end[1] - 1]}`;
+}
 
 // A CRM-planned job carries source: 'crm'; legacy rows from get_my_jobs have no source field.
 // The enrichment queries, the detail modal and time reporting all assume the legacy world, so
@@ -525,118 +552,84 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
     return { accent: '#64748b', badgeBg: '#f1f5f9', badgeFg: '#334155', label: null as string | null };
   }, []);
 
-  const selectedDayLabel = dayIdx == null ? 'Alla dagar' : ['Måndag', 'Tisdag', 'Onsdag', 'Torsdag', 'Fredag'][dayIdx];
   const visibleJobCount = grouped.reduce((sum, group) => sum + group.arr.length, 0);
-  const scheduleCardStyle: React.CSSProperties = {
-    border: '1px solid #e0e8dc',
-    background: '#f9fbf7',
-    borderRadius: compact ? 18 : 22,
-    padding: compact ? 12 : 18,
-    display: 'grid',
-    gap: compact ? 10 : 14,
-    boxShadow: '0 1px 3px rgba(20,44,27,0.06), 0 18px 36px -18px rgba(20,44,27,0.24)'
-  };
-  const weekNavButtonClass = cn(
-    'w-fit rounded-[12px] border border-[#dce4d8] bg-white font-semibold text-slate-700 shadow-[0_1px_2px_rgba(15,23,42,0.05)] transition-[transform,background-color,border-color,box-shadow] hover:-translate-y-0.5 hover:border-[#cfdcc9] hover:bg-[#f9fbf7] hover:text-slate-900 hover:shadow-[0_8px_20px_-10px_rgba(20,44,27,0.30)] active:translate-y-0',
-    compact ? 'min-w-[100px] px-2.5 py-[5px] text-[11px]' : 'min-w-[112px] px-3 py-1.5 text-xs'
-  );
-  const metaPillClass = cn(
-    'inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-[#e0e8dc] bg-[linear-gradient(180deg,#ffffff_0%,#f9fbf7_100%)] font-semibold text-slate-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.78)]',
-    compact ? 'px-[9px] py-[5px] text-[10.5px]' : 'px-[9px] py-[5px] text-[11.5px]'
+  const dayButtonClass = (active: boolean) => cn(
+    'w-full justify-center rounded-lg border border-solid px-1 py-1.5 text-xs transition',
+    active
+      ? 'border-transparent font-bold text-white shadow-sm [background:var(--crm-primary)]'
+      : 'border-[#d9e2d4] bg-white font-medium text-slate-600 hover:border-slate-400 hover:text-slate-900',
   );
 
+  // ⚠️ INGEN EGEN KORTRAM HÄR. ClientDashboard renderar redan <section className={cardClass}> runt
+  // den här komponenten, och det gjorde schemat till ett kort inuti ett kort: dubbel kant, dubbel
+  // bakgrund, dubbel skugga och dubbel padding. Det var därför schemat såg tyngre ut än allt annat
+  // på sidan. Uppgifter, Dokument och Arbetsytan returnerar alla en naken <div> — samma sak här nu.
   return (
-    <section
-      style={scheduleCardStyle}
-    >
-      <div className={cn('grid', compact ? 'gap-2' : 'gap-2.5')}>
-        <div className={cn('flex flex-wrap items-start justify-between', compact ? 'gap-2' : 'gap-3')}>
-          <div className="grid gap-1">
-            <div className="inline-flex flex-wrap items-center gap-2">
-              <h2 className={cn('m-0 text-slate-900', compact ? 'text-[15px]' : 'text-lg')}>Arbetsschema</h2>
-              <span className={cn('inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 font-bold text-emerald-700', compact ? 'px-2 py-1 text-[10.5px]' : 'px-2 py-1 text-[11px]')}>
-                Vecka {range.weekNumber}
-              </span>
-            </div>
-            <span className={cn('text-slate-500', compact ? 'text-[11px]' : 'text-xs')}>{range.label} • {range.startISO} – {range.endISO}</span>
-            <div className={cn('flex items-center gap-2', compact ? 'max-w-full flex-nowrap overflow-x-auto pb-0.5 pr-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden' : 'flex-wrap')}>
-              <span className={metaPillClass}>
-                {visibleJobCount} {visibleJobCount === 1 ? 'jobb' : 'jobb'}
-              </span>
-              <span className={metaPillClass}>
-                {selectedDayLabel}
-              </span>
-            </div>
-          </div>
-        </div>
+    <div className="grid gap-3">
+      {/* "Vecka 33" stod tidigare BÅDE i en badge här och i veckoväljaren under. Veckan hör hemma i
+          väljaren — det är där man ändrar den. Kvar i rubriken: antalet jobb, som inte står någon
+          annanstans. Metapillen "Alla dagar" är borta; dagväljaren visar redan vilken dag som är
+          vald genom vilken knapp som är intryckt. */}
+      <DashboardCardHeader
+        title="Arbetsschema"
+        meta={<Badge variant="accent">{visibleJobCount} jobb</Badge>}
+      />
 
-        <div className={cn('grid w-full box-border items-center gap-1.5 rounded-[16px] border border-[#e0e8dc] bg-[linear-gradient(180deg,#ffffff_0%,#f9fbf7_100%)] shadow-[inset_0_1px_0_rgba(255,255,255,0.85)] [grid-template-columns:minmax(0,1fr)_auto_minmax(0,1fr)]', compact ? 'p-1.5' : 'p-2.5')}>
-          <button
-            type="button"
-            onClick={()=>setWeekOffset(prev => prev - 1)}
-            className={cn(weekNavButtonClass, 'justify-self-start')}
-          >
-            <span aria-hidden="true" className="text-[12px] leading-none">←</span>
-            <span className="leading-none">Föregående</span>
-          </button>
-          <div className={cn('inline-flex items-center justify-center rounded-[10px] font-bold text-slate-900', compact ? 'min-w-[116px] px-2.5 py-[5px] text-[11px]' : 'min-w-[132px] px-3 py-1.5 text-xs')}>
-            Vecka {range.weekNumber}
-          </div>
-          <button
-            type="button"
-            onClick={()=>setWeekOffset(prev => prev + 1)}
-            className={cn(weekNavButtonClass, 'justify-self-end')}
-          >
-            <span className="leading-none">Nästa</span>
-            <span aria-hidden="true" className="text-[12px] leading-none">→</span>
-          </button>
+      {/* Veckoväljaren, samma form som /tid: pilar i kanterna, veckan och datumen i mitten. */}
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setWeekOffset(prev => prev - 1)}
+          aria-label="Föregående vecka"
+          className="h-10 w-10 shrink-0 rounded-xl border border-solid border-[#d9e2d4] bg-white p-0 text-slate-600 transition hover:border-slate-400"
+        >
+          ←
+        </button>
+        <div className="min-w-0 flex-1 text-center">
+          <div className="text-sm font-semibold text-slate-900">Vecka {range.weekNumber}</div>
+          <div className="text-xs tabular-nums text-slate-500">{weekRangeLabel(range.startISO, range.endISO)}</div>
         </div>
+        <button
+          type="button"
+          onClick={() => setWeekOffset(prev => prev + 1)}
+          aria-label="Nästa vecka"
+          className="h-10 w-10 shrink-0 rounded-xl border border-solid border-[#d9e2d4] bg-white p-0 text-slate-600 transition hover:border-slate-400"
+        >
+          →
+        </button>
       </div>
 
-      {/* Mon–Fri selector */}
-      <div className={cn('grid gap-2 rounded-[20px] border border-[#e0e8dc] bg-[linear-gradient(180deg,#ffffff_0%,#f9fbf7_100%)] shadow-[0_10px_22px_rgba(20,44,27,0.05)]', compact ? 'px-2.5 pb-2 pt-2.5' : 'p-3.5')}>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <span className="text-xs font-semibold text-slate-500">Visa dag</span>
-          <span className={cn('text-slate-500', compact ? 'text-[10.5px]' : 'text-[11.5px]')}>{selectedDayLabel}</span>
-        </div>
-        <div className="grid w-full grid-cols-6 items-stretch gap-1.5">
-        {['Mån','Tis','Ons','Tor','Fre'].map((label, idx) => {
-          const active = dayIdx===idx;
-          return (
-            <button
-              key={label}
-              type="button"
-              onClick={() => setDayIdx(idx)}
-              aria-pressed={active}
-              className={cn(
-                'w-full justify-center rounded-full border transition-[background,color,border-color,box-shadow]',
-                compact ? 'px-2.5 py-[5px] text-[11px]' : 'px-3 py-1.5 text-xs',
-                active
-                  ? 'border-transparent font-bold text-white shadow-[0_8px_18px_rgba(20,44,27,0.24)] [background:var(--crm-primary)]'
-                  : 'border-[#dce4d8] bg-white font-medium text-slate-700 shadow-[0_1px_2px_rgba(15,23,42,0.05)] hover:border-[#cfdcc9] hover:bg-[#f9fbf7] hover:text-slate-900'
-              )}
-              title={range.days[idx]}
-            >{label}</button>
-          );
-        })}
-        {(() => {
-          const active = dayIdx==null;
-          return (
-            <button
-              type="button"
-              onClick={() => setDayIdx(null)}
-              aria-pressed={active}
-              className={cn(
-                'w-full justify-center rounded-full border transition-[background,color,border-color,box-shadow]',
-                compact ? 'px-2.5 py-[5px] text-[11px]' : 'px-3 py-1.5 text-xs',
-                active
-                  ? 'border-transparent font-bold text-white shadow-[0_8px_18px_rgba(20,44,27,0.24)] [background:var(--crm-primary)]'
-                  : 'border-[#dce4d8] bg-white font-medium text-slate-700 shadow-[0_1px_2px_rgba(15,23,42,0.05)] hover:border-[#cfdcc9] hover:bg-[#f9fbf7] hover:text-slate-900'
-              )}
-            >Alla</button>
-          );
-        })()}
-        </div>
+      {/* Ersätter etiketten "Denna vecka / Förra veckan": en knapp som tar dig tillbaka säger samma
+          sak och gör något åt det, och den syns bara när du faktiskt är bortbläddrad. */}
+      {weekOffset !== 0 ? (
+        <button
+          type="button"
+          onClick={() => setWeekOffset(0)}
+          className="justify-self-center rounded-lg py-1.5 text-sm font-semibold text-slate-600 underline underline-offset-2"
+        >
+          Gå till denna vecka
+        </button>
+      ) : null}
+
+      {/* Mån–fre plus "Alla". Rubriken "Visa dag" och den upprepade dagetiketten bredvid den är
+          borta — knapparna heter redan Mån…Fre, och den intryckta knappen är svaret. */}
+      <div className="grid grid-cols-6 gap-1.5">
+        {['Mån','Tis','Ons','Tor','Fre'].map((label, idx) => (
+          <button
+            key={label}
+            type="button"
+            onClick={() => setDayIdx(idx)}
+            aria-pressed={dayIdx === idx}
+            className={dayButtonClass(dayIdx === idx)}
+            title={range.days[idx]}
+          >{label}</button>
+        ))}
+        <button
+          type="button"
+          onClick={() => setDayIdx(null)}
+          aria-pressed={dayIdx == null}
+          className={dayButtonClass(dayIdx == null)}
+        >Alla</button>
       </div>
 
       {loading && <div className="px-0.5 pt-0 text-xs text-slate-500">Laddar…</div>}
@@ -1155,6 +1148,6 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
           </div>
         );
       })()}
-    </section>
+    </div>
   );
 }

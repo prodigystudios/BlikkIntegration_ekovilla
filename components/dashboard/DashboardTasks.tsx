@@ -4,6 +4,7 @@ import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { cn } from '@/lib/shared/cn';
 import Button from '../ui/Button';
 import Badge from '../ui/Badge';
+import DashboardCardHeader from './DashboardCardHeader';
 
 type Task = {
   id: string;
@@ -24,7 +25,6 @@ export default function DashboardTasks({ compact, hideWhenEmpty, onVisibilityCha
   const [items, setItems] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [live, setLive] = useState<'connecting'|'on'|'off'>('off');
   const mounted = useRef(false);
 
   useEffect(() => {
@@ -55,7 +55,6 @@ export default function DashboardTasks({ compact, hideWhenEmpty, onVisibilityCha
   // Realtime for assigned + created
   useEffect(() => {
     if (!userId) return;
-    setLive('connecting');
     const channel = supabase
       .channel('realtime:tasks')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, (payload) => {
@@ -80,11 +79,8 @@ export default function DashboardTasks({ compact, hideWhenEmpty, onVisibilityCha
           }
         });
       })
-      .subscribe(status => {
-        if (status === 'SUBSCRIBED') setLive('on');
-        if (status === 'CHANNEL_ERROR' || status === 'CLOSED') setLive('off');
-      });
-    return () => { supabase.removeChannel(channel); setLive('off'); };
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
   }, [supabase, userId]);
 
   const grouped = useMemo(() => {
@@ -111,37 +107,14 @@ export default function DashboardTasks({ compact, hideWhenEmpty, onVisibilityCha
     return null;
   }
 
-  const liveTextClass =
-    live === 'on'
-      ? 'text-emerald-700'
-      : live === 'connecting'
-        ? 'text-amber-600'
-        : 'text-slate-500';
-
-  const liveDotClass =
-    live === 'on'
-      ? 'bg-emerald-500'
-      : live === 'connecting'
-        ? 'bg-amber-500'
-        : 'bg-slate-400';
-
   return (
-    <div className={cn('flex flex-col', compact ? 'gap-3' : 'gap-4')}>
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="grid gap-1">
-          <h2 className={cn('m-0 flex flex-wrap items-center gap-2 font-bold text-slate-900', compact ? 'text-base' : 'text-xl')}>
-            Uppgifter
-            <span className={cn('inline-flex items-center gap-1 text-[11px] font-medium', liveTextClass)}>
-              <span className={cn('h-2 w-2 rounded-full', liveDotClass)} />
-              {live==='on' ? 'Live' : live==='connecting' ? 'Ansluter…' : 'Offline'}
-            </span>
-          </h2>
-          {(!compact || grouped.open.length > 0) && <p className={cn('m-0 text-slate-500', compact ? 'text-xs' : 'text-[13px]')}>Visa det som fortfarande kräver åtgärd först, och dölj resten tills det behövs.</p>}
-        </div>
-        <Badge className="gap-2 px-2.5 py-1 text-[11.5px] text-slate-700">
-          {grouped.open.length} öppna
-        </Badge>
-      </div>
+    <div className="flex flex-col gap-3">
+      {/* Räknaren visas bara när det FINNS öppna uppgifter. Vid noll stod "0 öppna" i badgen och
+          "Inga öppna uppgifter just nu." i rutan strax under — samma besked två gånger. */}
+      <DashboardCardHeader
+        title="Uppgifter"
+        meta={grouped.open.length > 0 ? <Badge variant="accent">{grouped.open.length} öppna</Badge> : null}
+      />
       {loading && <p className="m-0 text-xs text-slate-500">Laddar…</p>}
       {error && <p className="m-0 text-xs text-red-700">{error}</p>}
       {!loading && grouped.open.length === 0 && grouped.done.length === 0 && (
