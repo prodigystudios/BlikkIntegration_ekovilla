@@ -6,7 +6,7 @@ import Select from '../../../components/ui/Select';
 import { crm } from '../../crm/lib/crmTokens';
 import { cn } from '../../../lib/shared/cn';
 import AdminPromptDialog from '../components/AdminPromptDialog';
-import { ADMIN_EMPTY_BOX, ADMIN_ERROR_BOX, ADMIN_LABEL, AdminField, AdminFilterChip, roleBadgeClass } from '../components/adminUi';
+import { ADMIN_CARD, ADMIN_ERROR_BOX, ADMIN_INSET, ADMIN_LABEL, AdminEmptyState, AdminField, AdminFilterChip, roleBadgeClass } from '../components/adminUi';
 
 interface AdminUserRow {
   id: string;
@@ -107,7 +107,7 @@ export default function AdminUsers() {
       </div>
 
       <section className="grid gap-4 xl:[grid-template-columns:minmax(300px,380px)_minmax(0,1fr)]">
-        <section className="grid content-start gap-3 rounded-2xl border border-[#e0e8dc] bg-white p-4">
+        <section className={cn(ADMIN_CARD, 'grid content-start gap-3 p-4')}>
           <h3 className="m-0 text-base font-bold text-slate-900">Skapa konto</h3>
 
           <form onSubmit={createUser} className="grid gap-3">
@@ -131,7 +131,7 @@ export default function AdminUsers() {
           </form>
         </section>
 
-        <section className="grid gap-4 rounded-2xl border border-[#e0e8dc] bg-white p-4">
+        <section className={cn(ADMIN_CARD, 'grid gap-4 p-4')}>
           <div className="flex flex-wrap items-start justify-between gap-3">
             <h3 className="m-0 text-base font-bold text-slate-900">Alla användare</h3>
             <Input
@@ -156,10 +156,7 @@ export default function AdminUsers() {
           {loadError && <div role="alert" className={ADMIN_ERROR_BOX}>{loadError}</div>}
           {loading && <p role="status" className="m-0 text-sm text-slate-400">Laddar…</p>}
           {!loading && users.length === 0 && !loadError && (
-            <div className={ADMIN_EMPTY_BOX}>
-              <strong className="text-sm font-semibold text-slate-700">Inga användare hittades</strong>
-              <p className="m-0 mt-1 text-sm text-slate-500">Skapa första kontot eller uppdatera sidan igen senare.</p>
-            </div>
+            <AdminEmptyState title="Inga användare hittades" description="Skapa första kontot eller uppdatera sidan igen senare." />
           )}
           {!loading && users.length > 0 && (
           <div className="grid gap-3">
@@ -169,10 +166,7 @@ export default function AdminUsers() {
           </div>
         )}
           {!loading && users.length > 0 && filteredUsers.length === 0 && (
-            <div className={ADMIN_EMPTY_BOX}>
-              <strong className="text-sm font-semibold text-slate-700">Ingen användare matchar</strong>
-              <p className="m-0 mt-1 text-sm text-slate-500">Justera sökningen eller rollfiltret för att visa fler resultat.</p>
-            </div>
+            <AdminEmptyState title="Ingen användare matchar" description="Justera sökningen eller rollfiltret för att visa fler resultat." />
           )}
         </section>
       </section>
@@ -219,7 +213,7 @@ function UserCard({ user, onChanged, onDeleted }: { user: AdminUserRow; onChange
   }
 
   return (
-    <article className="grid gap-3 rounded-xl border border-[#e0e8dc] bg-[#f9fbf7] p-3.5">
+    <article className={cn(ADMIN_INSET, 'grid gap-3 p-3.5')}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="grid min-w-0 flex-1 gap-1 basis-[280px]">
           <div className="flex flex-wrap items-center gap-2">
@@ -229,7 +223,7 @@ function UserCard({ user, onChanged, onDeleted }: { user: AdminUserRow; onChange
           <span className="break-all text-[11px] text-slate-500">{user.email}</span>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-[11px] text-slate-400">Skapad {new Date(user.created_at).toLocaleDateString()}</span>
+          <span className="text-[11px] text-slate-500">Skapad {new Date(user.created_at).toLocaleDateString()}</span>
           <Link href={`/admin/users/${user.id}`} className={crm.ghostButton}>
             Öppna profil
           </Link>
@@ -253,7 +247,7 @@ function UserCard({ user, onChanged, onDeleted }: { user: AdminUserRow; onChange
               onClick={saveChanges}
               disabled={saving}
               className={crm.formButton}
-              style={{ backgroundColor: 'var(--crm-primary)' }}
+              style={{ backgroundColor: 'var(--crm-primary, #1a3f26)' }}
             >
               {saving ? '...' : 'Spara'}
             </button>
