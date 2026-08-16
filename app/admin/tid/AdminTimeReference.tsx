@@ -2,10 +2,9 @@
 import React from 'react';
 import { crm } from '../../crm/lib/crmTokens';
 import { cn } from '../../../lib/shared/cn';
-import { ADMIN_CARD, ADMIN_COLHEAD, ADMIN_ERROR_BOX, ADMIN_NOTICE_BOX } from '../components/adminUi';
+import { ADMIN_CARD, ADMIN_CHECKBOX, ADMIN_COLHEAD, ADMIN_ERROR_BOX, ADMIN_NOTICE_BOX } from '../components/adminUi';
 import type { TimeReferenceItem, TimeReferenceKind } from '../../../lib/domains/time/reference';
 
-const CHECKBOX_CLASS = 'h-4 w-4 rounded border-slate-300 accent-emerald-600';
 
 // Admin → Tidkoder. Referensdatan för tidrapporteringen (fas 4.1).
 //
@@ -236,7 +235,7 @@ export default function AdminTimeReference() {
                             checked={item.requires_note}
                             disabled={busy}
                             onChange={(e) => void patchItem(section.kind, item, { requires_note: e.target.checked })}
-                            className={CHECKBOX_CLASS}
+                            className={ADMIN_CHECKBOX}
                             aria-label={`Kommentar krävs för ${item.name}`}
                           />
                         </td>
@@ -247,7 +246,7 @@ export default function AdminTimeReference() {
                               checked={item.billable === true}
                               disabled={busy}
                               onChange={(e) => void patchItem(section.kind, item, { billable: e.target.checked })}
-                              className={CHECKBOX_CLASS}
+                              className={ADMIN_CHECKBOX}
                               aria-label={`Debiterbar: ${item.name}`}
                             />
                           </td>
@@ -260,7 +259,7 @@ export default function AdminTimeReference() {
                             checked={item.is_active}
                             disabled={busy}
                             onChange={(e) => void patchItem(section.kind, item, { is_active: e.target.checked })}
-                            className={CHECKBOX_CLASS}
+                            className={ADMIN_CHECKBOX}
                             aria-label={`Aktiv: ${item.name}`}
                           />
                         </td>

@@ -3,6 +3,8 @@ import React from 'react';
 import CrmModal from '@/app/crm/components/CrmModal';
 import AdminTimeCorrectionModal, { type CorrectionReference } from './AdminTimeCorrectionModal';
 import Input from '../../../components/ui/Input';
+import { crm } from '../../crm/lib/crmTokens';
+import { ADMIN_ERROR_BOX, ADMIN_NOTICE_BOX } from '../components/adminUi';
 import { cn } from '../../../lib/shared/cn';
 import { minutesToHours } from '../../../lib/domains/time/hours';
 import {
@@ -423,7 +425,7 @@ export default function AdminTimeApprovals() {
           stora är summorna (underlaget). Förut låg båda som sex likadana badges i rad. */}
       {/* En rad, tre kolumner — inte tre fullbreddsblock under varandra. På en 1200 px-yta blir
           staplade block bara innehåll som klistras mot ytterkanterna med luft i mitten. */}
-      <section className="flex flex-wrap items-end gap-x-6 gap-y-3 rounded-2xl border border-solid border-[#e0e8dc] bg-[#f9fbf7] p-3.5">
+      <section className="flex flex-wrap items-end gap-x-6 gap-y-3 rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] p-3.5">
         <label className="grid gap-1">
           <span className={LABEL}>Period</span>
           <span className="inline-block w-40">
@@ -468,10 +470,10 @@ export default function AdminTimeApprovals() {
       </section>
 
       {error ? (
-        <div className="rounded-xl border border-solid border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div>
+        <div role="alert" className={ADMIN_ERROR_BOX}>{error}</div>
       ) : null}
       {notice ? (
-        <div className="rounded-xl border border-solid border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">{notice}</div>
+        <div role="status" className={ADMIN_NOTICE_BOX}>{notice}</div>
       ) : null}
 
       {/* Filtren är granskningens arbetsredskap: de tar en rakt till dem som inte lämnat in eller
@@ -486,7 +488,7 @@ export default function AdminTimeApprovals() {
               onClick={() => setFilter(key)}
               aria-pressed={filter === key}
               className={cn(
-                'px-3 py-1.5 rounded-full border border-solid text-sm font-semibold transition',
+                'px-3 py-1.5 rounded-full border text-sm font-semibold transition',
                 filter === key
                   ? 'border-transparent bg-slate-900 text-white'
                   : 'border-[#dbe4d6] bg-white text-slate-600 hover:border-slate-400',
@@ -504,7 +506,7 @@ export default function AdminTimeApprovals() {
             <select
               value={sort}
               onChange={(e) => setSort(e.target.value as Sort)}
-              className="rounded-lg border border-solid border-[#dbe4d6] bg-white px-2.5 py-1.5 text-sm"
+              className="rounded-lg border border-[#dbe4d6] bg-white px-2.5 py-1.5 text-sm"
             >
               <option value="name">Namn</option>
               <option value="hours_asc">Timmar, lägst först</option>
@@ -522,7 +524,7 @@ export default function AdminTimeApprovals() {
                 <button
                   type="button"
                   onClick={() => void approveAllSubmitted()}
-                  className="px-3 py-1.5 rounded-lg border border-solid border-emerald-300 bg-emerald-50 text-sm font-semibold text-emerald-800"
+                  className="px-3 py-1.5 rounded-lg border border-emerald-300 bg-emerald-50 text-sm font-semibold text-emerald-800"
                 >
                   Ja, attestera
                 </button>
@@ -539,7 +541,7 @@ export default function AdminTimeApprovals() {
                 type="button"
                 onClick={() => setConfirmBulk(true)}
                 disabled={bulkBusy}
-                className="px-3 py-1.5 rounded-lg border border-solid border-emerald-300 bg-emerald-50 text-sm font-semibold text-emerald-800 transition hover:border-emerald-400 disabled:opacity-60"
+                className="px-3 py-1.5 rounded-lg border border-emerald-300 bg-emerald-50 text-sm font-semibold text-emerald-800 transition hover:border-emerald-400 disabled:opacity-60"
               >
                 {bulkBusy ? 'Attesterar…' : `Attestera alla inlämnade (${submitted.length})`}
               </button>
@@ -643,7 +645,7 @@ function PersonRow({
     // Vit fyllning, inte sage. Fliken renderas i en `crm.card` som REDAN är #f9fbf7 — ett kort i
     // samma ton på samma ton skiljs bara av en hårlinje i #e0e8dc, och då läser raderna som en enda
     // yta. Samma grepp som tidraderna i /tid: vitt kort på sage-underlag.
-    <li className="overflow-hidden rounded-2xl border border-solid border-[#e0e8dc] bg-white">
+    <li className="overflow-hidden rounded-2xl border border-[#e0e8dc] bg-white">
       {/* EN rad med kolumner, inte tre band under varandra. Staplade fullbreddsblock på en yta som
           är över tusen pixlar bred ger innehåll klistrat mot ytterkanterna och luft i mitten — och
           en stapel som spänner hela bredden läser som en trasig avdelare, inte som ett mått.
@@ -699,7 +701,7 @@ function PersonRow({
             {/* Noll rader på en person som ska ha rapporterat är det attesten finns för att
                 upptäcka — därför en egen flagga och inte bara en siffra i en kolumn. */}
             {row.entry_count === 0 ? (
-              <span className="whitespace-nowrap rounded-full border border-solid border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[11px] font-semibold text-amber-800">
+              <span className="whitespace-nowrap rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[11px] font-semibold text-amber-800">
                 Inget rapporterat
               </span>
             ) : null}
@@ -714,7 +716,7 @@ function PersonRow({
                 type="button"
                 onClick={onApprove}
                 disabled={busy}
-                className="px-3 py-1.5 rounded-lg border border-solid border-emerald-300 bg-emerald-50 text-sm font-semibold text-emerald-800 transition hover:border-emerald-400 disabled:opacity-60"
+                className="px-3 py-1.5 rounded-lg border border-emerald-300 bg-emerald-50 text-sm font-semibold text-emerald-800 transition hover:border-emerald-400 disabled:opacity-60"
               >
                 Attestera
               </button>
@@ -724,7 +726,7 @@ function PersonRow({
                 type="button"
                 onClick={onReopen}
                 disabled={busy}
-                className="px-3 py-1.5 rounded-lg border border-solid border-[#dbe4d6] bg-white text-sm font-semibold text-slate-700 transition hover:border-slate-400 disabled:opacity-60"
+                className="px-3 py-1.5 rounded-lg border border-[#dbe4d6] bg-white text-sm font-semibold text-slate-700 transition hover:border-slate-400 disabled:opacity-60"
               >
                 Öppna igen
               </button>
@@ -734,7 +736,7 @@ function PersonRow({
       </div>
 
       {expanded ? (
-        <div className="border-x-0 border-b-0 border-t border-solid border-[#e4ebe0] bg-[#f9fbf7] px-4 py-3">
+        <div className="border-x-0 border-b-0 border-t border-[#e4ebe0] bg-[#f9fbf7] px-4 py-3">
           {/* Rättelse bara i en öppen period. Är månaden inlämnad eller attesterad avvisar databasen
               ändringen ändå — knappen döljs för att slippa be någon trycka på något som inte går. */}
           <PersonDays detail={detail} name={row.full_name} canCorrect={!locked} onEdit={onEdit} onDelete={onDelete} />
@@ -785,7 +787,7 @@ function ReopenModal({
           <button
             type="button"
             onClick={onClose}
-            className="py-2.5 flex-1 rounded-xl border border-solid border-[#dbe4d6] bg-white text-sm font-semibold text-slate-600 transition hover:border-slate-400 sm:flex-none sm:px-5"
+            className={cn(crm.ghostButton, 'h-auto flex-1 py-2.5 sm:flex-none sm:px-5')}
           >
             Avbryt
           </button>
@@ -799,8 +801,8 @@ function ReopenModal({
               if (result) { setFailure(result); setBusy(false); }
             }}
             disabled={busy}
-            className="py-2.5 flex-1 rounded-xl text-sm font-semibold text-white shadow-sm transition hover:brightness-95 disabled:opacity-60 sm:ml-auto sm:flex-none sm:px-5"
-            style={{ backgroundColor: 'var(--crm-primary)' }}
+            className={cn(crm.formButton, 'h-auto flex-1 py-2.5 sm:ml-auto sm:flex-none sm:px-5')}
+            style={{ backgroundColor: 'var(--crm-primary, #1a3f26)' }}
           >
             {busy ? 'Öppnar…' : 'Öppna igen'}
           </button>
@@ -808,7 +810,7 @@ function ReopenModal({
       }
     >
       {failure ? (
-        <div className="mb-3 rounded-xl border border-solid border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{failure}</div>
+        <div className="mb-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{failure}</div>
       ) : null}
 
       <label className="grid gap-1">
@@ -818,7 +820,7 @@ function ReopenModal({
           onChange={(e) => setNote(e.target.value)}
           rows={3}
           autoFocus
-          className="w-full rounded-xl border border-solid border-[#dbe4d6] bg-white px-3 py-2 text-sm text-slate-900"
+          className="w-full rounded-xl border border-[#dbe4d6] bg-white px-3 py-2 text-sm text-slate-900"
           placeholder="T.ex. Onsdag 12/8 saknar klockslag — fyll i och lämna in igen."
         />
         <span className="text-xs text-slate-500">Syns för {row.full_name || 'personen'} i Tidrapport.</span>
@@ -854,7 +856,7 @@ function PersonDays({
   if (!detail || detail.loading) return <p className="m-0 text-sm text-slate-400">Laddar dagar…</p>;
   if (detail.error) {
     return (
-      <div className="rounded-lg border border-solid border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+      <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
         {detail.error}
       </div>
     );
@@ -905,7 +907,7 @@ function PersonDays({
               ))}
             </tbody>
             <tfoot>
-              <tr className="border-x-0 border-b-0 border-t-2 border-solid border-slate-300 font-semibold text-slate-900">
+              <tr className="border-x-0 border-b-0 border-t-2 border-slate-300 font-semibold text-slate-900">
                 <td className="px-2 py-2" colSpan={2}>Totalt</td>
                 <td className="whitespace-nowrap px-2 py-2 text-right tabular-nums">{formatHours(summary.workMinutes)} h</td>
                 <td className="whitespace-nowrap px-2 py-2 text-right tabular-nums">
@@ -922,7 +924,7 @@ function PersonDays({
       {summary.absenceByReason.length > 0 ? (
         <div className="flex flex-wrap gap-2 text-xs text-slate-600">
           {summary.absenceByReason.map((item) => (
-            <span key={item.reason} className="rounded-lg border border-solid border-slate-200 bg-white px-2 py-1">
+            <span key={item.reason} className="rounded-lg border border-slate-200 bg-white px-2 py-1">
               {item.reason}: {formatHours(item.minutes)} h
             </span>
           ))}
@@ -987,7 +989,7 @@ function DayRowCells({
   const editable = canCorrect && !!day.entryId;
 
   return (
-    <tr className="border-x-0 border-b-0 border-t border-solid border-slate-200 align-top">
+    <tr className="border-x-0 border-b-0 border-t border-slate-200 align-top">
       <td className="whitespace-nowrap px-2 py-1.5 text-slate-700">{formatDay(day.date)}</td>
       <td className="whitespace-nowrap px-2 py-1.5 tabular-nums text-slate-700">
         {start && end ? (
@@ -1073,7 +1075,7 @@ function AuditTrail({ rows, failed }: { rows: TimeEntryAuditRow[]; failed: boole
           // Dagen först: utan den går raden inte att koppla till något i tabellen ovanför.
           const day = auditWorkDate(row);
           return (
-            <li key={row.id} className="rounded-xl border border-solid border-[#e4ebe0] bg-white px-3 py-2 text-sm">
+            <li key={row.id} className="rounded-xl border border-[#e4ebe0] bg-white px-3 py-2 text-sm">
               <div className="flex flex-wrap items-baseline gap-x-2 text-slate-700">
                 <span className="font-semibold">{day ? formatDay(day) : 'Okänd dag'}</span>
                 <span>{auditActionLabel(row.action).toLowerCase()}</span>

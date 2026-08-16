@@ -6,6 +6,7 @@ import { crm } from '../../crm/lib/crmTokens';
 import CrmModal from '../../crm/components/CrmModal';
 import Textarea from '../../../components/ui/Textarea';
 import Select from '../../../components/ui/Select';
+import { ADMIN_CHECKBOX, ADMIN_EMPTY_BOX, ADMIN_ERROR_BOX, AdminFilterChip } from '../components/adminUi';
 import { ticketKindGlyph, ticketKindGlyphClass, ticketStatusMeta } from '../../_lib/supportTokens';
 import {
   TICKET_KINDS,
@@ -103,29 +104,29 @@ export default function AdminSupportTickets() {
 
       <div className="flex flex-wrap items-center gap-2">
         {(['open', 'closed', 'any'] as StateFilter[]).map((s) => (
-          <FilterChip key={s} active={stateFilter === s} onClick={() => setStateFilter(s)}>
+          <AdminFilterChip key={s} active={stateFilter === s} onClick={() => setStateFilter(s)}>
             {STATE_LABEL[s]}
-          </FilterChip>
+          </AdminFilterChip>
         ))}
         <span className="mx-1 h-5 w-px shrink-0 bg-slate-200" aria-hidden />
-        <FilterChip active={kindFilter === 'all'} onClick={() => setKindFilter('all')}>
+        <AdminFilterChip active={kindFilter === 'all'} onClick={() => setKindFilter('all')}>
           Allt
-        </FilterChip>
+        </AdminFilterChip>
         {TICKET_KINDS.map((k) => (
-          <FilterChip key={k} active={kindFilter === k} onClick={() => setKindFilter(k)}>
+          <AdminFilterChip key={k} active={kindFilter === k} onClick={() => setKindFilter(k)}>
             {kindLabel[k]}
-          </FilterChip>
+          </AdminFilterChip>
         ))}
       </div>
 
       {error ? (
-        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div>
+        <div role="alert" className={ADMIN_ERROR_BOX}>{error}</div>
       ) : null}
 
       {loading ? (
         <p className="m-0 text-sm text-slate-400">Laddar…</p>
       ) : items.length === 0 && !error ? (
-        <div className="rounded-2xl border border-dashed border-[#d5e0cf] bg-[#f4f8f1] px-4 py-8 text-center">
+        <div className={ADMIN_EMPTY_BOX}>
           <p className="m-0 text-sm text-slate-500">
             {stateFilter === 'open' ? 'Inget kvar att göra just nu.' : 'Inga ärenden att visa.'}
           </p>
@@ -152,23 +153,6 @@ export default function AdminSupportTickets() {
         />
       ) : null}
     </div>
-  );
-}
-
-function FilterChip({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        'rounded-full border px-2.5 py-1 text-[13px] font-semibold transition-colors',
-        active
-          ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-          : 'border-[#e0e8dc] bg-white text-slate-600 hover:border-emerald-200',
-      )}
-    >
-      {children}
-    </button>
   );
 }
 
@@ -378,7 +362,7 @@ function TicketModal({
                 onClick={save}
                 disabled={busy}
                 className={cn(crm.formButton, 'shrink-0')}
-                style={{ backgroundColor: 'var(--crm-primary)' }}
+                style={{ backgroundColor: 'var(--crm-primary, #1a3f26)' }}
               >
                 {saving ? 'Sparar…' : 'Spara'}
               </button>
@@ -465,7 +449,7 @@ function TicketModal({
               checked={publish}
               onChange={(e) => setPublish(e.target.checked)}
               disabled={busy}
-              className="w-4 shrink-0"
+              className={cn(ADMIN_CHECKBOX, 'shrink-0')}
             />
             Visa i changeloggen
           </label>

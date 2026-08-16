@@ -6,6 +6,7 @@ import { crm } from '../../crm/lib/crmTokens';
 import Input from '../../../components/ui/Input';
 import Select from '../../../components/ui/Select';
 import Textarea from '../../../components/ui/Textarea';
+import { ADMIN_EMPTY_BOX, ADMIN_ERROR_BOX } from '../components/adminUi';
 import { changelogCategoryMeta, formatChangelogStamp } from '../../_lib/changelogTokens';
 import {
   CHANGELOG_CATEGORIES,
@@ -59,13 +60,13 @@ export default function AdminChangelog() {
       <NewEntryForm onSaved={load} />
 
       {error ? (
-        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div>
+        <div role="alert" className={ADMIN_ERROR_BOX}>{error}</div>
       ) : null}
 
       {loading ? (
         <p className="m-0 text-sm text-slate-400">Laddar…</p>
       ) : entries.length === 0 && !error ? (
-        <div className="rounded-2xl border border-dashed border-[#d5e0cf] bg-[#f4f8f1] px-4 py-8 text-center">
+        <div className={ADMIN_EMPTY_BOX}>
           <p className="m-0 text-sm text-slate-500">Inga egna poster ännu.</p>
         </div>
       ) : (
