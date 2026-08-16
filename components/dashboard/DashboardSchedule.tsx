@@ -8,6 +8,8 @@ import Textarea from '../ui/Textarea';
 import Badge from '../ui/Badge';
 import DashboardCardHeader from './DashboardCardHeader';
 import { crmJobToScheduleItem, type CrmJobRow } from '@/lib/domains/planning/myJobs';
+import { defaultScheduleDayIndex, scheduleWeekRange } from '@/lib/domains/planning/scheduleWeek';
+import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 
 const MONTHS_SHORT = ['jan', 'feb', 'mar', 'apr', 'maj', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'dec'];
 
@@ -16,12 +18,8 @@ const MONTHS_SHORT = ['jan', 'feb', 'mar', 'apr', 'maj', 'jun', 'jul', 'aug', 's
  *
  * Veckoväljaren visade tidigare de råa ISO-datumen ('2026-08-17 – 2026-08-23').
  *
- * Fälten plockas ur strängen i stället för via `new Date()`, så själva formateringen inte kan flytta
- * dagen. ⚠️ MEN INDATA KAN DET: `range` byggs av `startOfISOWeek(new Date())` med LOKALA getters, och
- * servern går på UTC. Måndag 01:30 svensk tid landar därför på föregående ISO-vecka i server-
- * renderingen och rättas först vid hydreringen — hela komponenten hämtar då fel veckas jobb, inte
- * bara etiketten. Befintlig bugg som ligger utanför den här omgången (att flytta ankaret ändrar
- * vilka rader RPC:erna får tillbaka, alltså beteende och inte form). Samma felklass som PR #69.
+ * Fälten plockas ur strängen i stället för via `new Date()`, så formateringen inte kan flytta dagen.
+ * Indata är sedan 2026-08-16 förankrade i svensk tid — se `scheduleWeekRange`.
  */
 function weekRangeLabel(startISO: string, endISO: string): string {
   const start = startISO.split('-').map(Number);
@@ -39,23 +37,6 @@ function weekRangeLabel(startISO: string, endISO: string): string {
 // every one of them has to skip these rows.
 const isCrmItem = (it: { source?: string } | null | undefined) => it?.source === 'crm';
 
-function startOfISOWeek(d: Date) {
-  const day = d.getDay(); // 0..6, 1=Mon
-  const mondayDelta = (day + 6) % 7; // days since Monday
-  const res = new Date(d);
-  res.setHours(0, 0, 0, 0);
-  res.setDate(res.getDate() - mondayDelta);
-  return res;
-}
-function addDays(d: Date, n: number) { const x = new Date(d); x.setDate(x.getDate() + n); return x; }
-function toISODateLocal(d: Date) { const y = d.getFullYear(); const m = String(d.getMonth()+1).padStart(2,'0'); const dd = String(d.getDate()).padStart(2,'0'); return `${y}-${m}-${dd}`; }
-function getISOWeekNumber(d: Date) {
-  const date = new Date(d);
-  date.setHours(0, 0, 0, 0);
-  date.setDate(date.getDate() + 3 - ((date.getDay() + 6) % 7));
-  const week1 = new Date(date.getFullYear(), 0, 4);
-  return 1 + Math.round(((date.getTime() - week1.getTime()) / 86400000 - 3 + ((week1.getDay() + 6) % 7)) / 7);
-}
 function normalizePersonName(value: string | null | undefined) {
   return String(value || '')
     .normalize('NFD')
@@ -81,11 +62,8 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
   const [segmentSortIndexMap, setSegmentSortIndexMap] = useState<Record<string, number | null>>({});
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [currentUserName, setCurrentUserName] = useState<string | null>(null);
-  const [dayIdx, setDayIdx] = useState<number | null>(() => {
-    // Default to current weekday (Mon=0..Fri=4). On weekend, show all (null).
-    const dow = new Date().getDay(); // Sun=0 .. Sat=6
-    return dow >= 1 && dow <= 5 ? dow - 1 : null;
-  }); // 0=Mon .. 4=Fri, null=all
+  // 0=mån .. 4=fre, null=alla. Svensk veckodag, inte serverns — se scheduleWeek.ts.
+  const [dayIdx, setDayIdx] = useState<number | null>(() => defaultScheduleDayIndex());
 
   // Detail modal state
   const [detailOpen, setDetailOpen] = useState(false);
@@ -154,7 +132,9 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
     try {
   const s = (it.job_day as string) || (it.start_day as string) || null;
   const e = (it.job_day as string) || (it.end_day as string) || s;
-      const today = toISODateLocal(new Date());
+      // Svensk dag, inte enhetens: värdet är förifyllt i säckrapporten och SPARAS som den dag
+      // rapporten gäller, så en telefon i fel zon hade skrivit rapporten på fel datum.
+      const today = stockholmTodayISO();
       const def = s && e && s <= today && today <= e ? today : (s || today);
       setReportDraft({ day: def, amount: '' });
     } catch { setReportDraft({ day: '', amount: '' }); }
@@ -212,19 +192,10 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
     setCommentsExpanded(false);
   }, []);
 
-  const range = useMemo(() => {
-    const today = new Date();
-    const weekStart = startOfISOWeek(today);
-    const base = addDays(weekStart, weekOffset * 7);
-    const startISO = toISODateLocal(base);
-    const endISO = toISODateLocal(addDays(base, 6));
-    const weekNumber = getISOWeekNumber(base);
-    const year = base.getFullYear();
-    const label = weekOffset === 0 ? 'Denna vecka' : weekOffset === -1 ? 'Förra veckan' : weekOffset === 1 ? 'Nästa vecka' : weekOffset < 0 ? `${Math.abs(weekOffset)} veckor bak` : `${weekOffset} veckor fram`;
-    // Build Mon..Sun ISO dates; only show Mon..Fri selector
-    const days = Array.from({ length: 7 }, (_, i) => toISODateLocal(addDays(base, i)));
-    return { startISO, endISO, label, weekNumber, year, weekStartISO: startISO, days };
-  }, [weekOffset]);
+  // startISO/endISO går rakt in i get_my_jobs / get_my_crm_jobs, alltså avgör de VILKA JOBB som
+  // hämtas — inte bara vad etiketten säger. Beräkningen och dess tidszonsankare ligger i
+  // lib/domains/planning/scheduleWeek.ts med tester (tests/planning/scheduleWeek.test.ts).
+  const range = useMemo(() => scheduleWeekRange(weekOffset), [weekOffset]);
 
   useEffect(() => {
     // Load current user and name
