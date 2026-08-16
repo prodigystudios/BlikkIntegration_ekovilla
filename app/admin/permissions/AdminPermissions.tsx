@@ -1,6 +1,10 @@
 "use client";
 import React from 'react';
-import Badge from '../../../components/ui/Badge';
+import { crm } from '../../crm/lib/crmTokens';
+import { cn } from '../../../lib/shared/cn';
+import { ADMIN_CARD, ADMIN_ERROR_BOX, ADMIN_LABEL, ADMIN_NOTICE_BOX, AdminFilterChip } from '../components/adminUi';
+
+const CHECKBOX_CLASS = 'h-4 w-4 rounded border-slate-300 accent-emerald-600';
 
 type CatalogEntry = { key: string; description: string };
 type RoleBundles = Record<string, string[]>;
@@ -128,40 +132,38 @@ export default function AdminPermissions() {
     }
   }
 
-  if (loading) return <div className="p-6 text-sm text-slate-500">Laddar behörigheter…</div>;
+  if (loading) return <p role="status" className="m-0 p-5 text-sm text-slate-400">Laddar…</p>;
 
   return (
-    <div className="grid gap-6 p-5">
+    <div className="grid gap-4 p-5">
+      <div className="grid gap-1">
+        <h2 className="m-0 text-lg font-bold text-slate-900">Behörigheter</h2>
+        <p className="m-0 text-sm text-slate-600">Roller är knippen av behörigheter; per-användar-overrides läggs ovanpå (neka vinner).</p>
+      </div>
+
       {error ? (
-        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+        <div role="alert" className={ADMIN_ERROR_BOX}>
           {error}
           <button type="button" onClick={() => setError(null)} className="ml-3 underline">Stäng</button>
         </div>
       ) : null}
 
-      <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
-        Roller är knippen av behörigheter. Per-användar-overrides läggs <strong>ovanpå</strong> rollen
-        (revoke vinner). Ändringar slår igenom direkt i både appen och databasen (RLS).
+      <div className={ADMIN_NOTICE_BOX}>
+        Ändringar slår igenom direkt i både appen och databasen (RLS).
       </div>
 
       {/* ── Role bundles ─────────────────────────────────────────── */}
       <section className="grid gap-3">
-        <h2 className="m-0 text-lg font-bold text-slate-900">Rollbehörigheter</h2>
+        <h3 className="m-0 text-base font-bold text-slate-900">Rollbehörigheter</h3>
         <div className="flex flex-wrap gap-2">
           {roles.map((role) => (
-            <button
+            <AdminFilterChip
               key={role}
-              type="button"
+              active={selectedRole === role}
               onClick={() => setSelectedRole(role)}
-              className={
-                'rounded-full border px-3.5 py-1.5 text-sm font-semibold transition ' +
-                (selectedRole === role
-                  ? 'border-slate-900 bg-slate-900 text-white'
-                  : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300')
-              }
             >
               {ROLE_LABELS[role] ?? role}
-            </button>
+            </AdminFilterChip>
           ))}
         </div>
 
@@ -171,20 +173,20 @@ export default function AdminPermissions() {
 
         <div className="grid gap-4">
           {grouped.map(([domain, entries]) => (
-            <div key={domain} className="rounded-xl border border-slate-200 bg-white p-4">
-              <div className="mb-2 text-[11px] font-extrabold uppercase tracking-wide text-slate-500">{domain}</div>
+            <div key={domain} className={cn(ADMIN_CARD, 'p-4')}>
+              <div className={cn('mb-2', ADMIN_LABEL)}>{domain}</div>
               <div className="grid gap-1.5 sm:grid-cols-2">
                 {entries.map((entry) => {
                   const checked = (roleBundles[selectedRole] ?? []).includes(entry.key);
                   const disabled = selectedRole === 'admin' || busyKey === `role:${entry.key}`;
                   return (
-                    <label key={entry.key} className="flex items-start gap-2.5 rounded-lg px-2 py-1.5 hover:bg-slate-50">
+                    <label key={entry.key} className="flex w-auto items-start gap-2.5 rounded-lg px-2 py-1.5 hover:bg-[#f9fbf7]">
                       <input
                         type="checkbox"
                         checked={checked}
                         disabled={disabled}
                         onChange={(e) => toggleRole(entry.key, e.target.checked)}
-                        className="mt-0.5 h-4 w-4"
+                        className={cn('mt-0.5', CHECKBOX_CLASS)}
                       />
                       <span className="grid">
                         <span className="font-mono text-[12px] text-slate-800">{entry.key}</span>
@@ -201,11 +203,11 @@ export default function AdminPermissions() {
 
       {/* ── Per-user overrides ───────────────────────────────────── */}
       <section className="grid gap-3">
-        <h2 className="m-0 text-lg font-bold text-slate-900">Per användare</h2>
+        <h3 className="m-0 text-base font-bold text-slate-900">Per användare</h3>
         <select
           value={selectedUserId}
           onChange={(e) => loadUser(e.target.value)}
-          className="max-w-md rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+          className={cn(crm.select, 'max-w-md')}
         >
           <option value="">Välj användare…</option>
           {users.map((u) => (
@@ -215,17 +217,17 @@ export default function AdminPermissions() {
           ))}
         </select>
 
-        {userLoading ? <div className="text-sm text-slate-500">Laddar…</div> : null}
+        {userLoading ? <p role="status" className="m-0 text-sm text-slate-400">Laddar…</p> : null}
 
         {userState ? (
           <div className="grid gap-4">
-            <div className="flex flex-wrap items-center gap-2 text-sm text-slate-600">
-              <Badge>Roll: {ROLE_LABELS[userState.role] ?? userState.role}</Badge>
-              <Badge>{userState.effective.length} effektiva behörigheter</Badge>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className={cn(crm.badge, 'border-slate-200 bg-slate-50 text-slate-600')}>Roll: {ROLE_LABELS[userState.role] ?? userState.role}</span>
+              <span className={cn(crm.badge, 'border-slate-200 bg-slate-50 text-slate-600 tabular-nums')}>{userState.effective.length} effektiva behörigheter</span>
             </div>
             {grouped.map(([domain, entries]) => (
-              <div key={domain} className="rounded-xl border border-slate-200 bg-white p-4">
-                <div className="mb-2 text-[11px] font-extrabold uppercase tracking-wide text-slate-500">{domain}</div>
+              <div key={domain} className={cn(ADMIN_CARD, 'p-4')}>
+                <div className={cn('mb-2', ADMIN_LABEL)}>{domain}</div>
                 <div className="grid gap-1.5">
                   {entries.map((entry) => {
                     const fromRole = userState.roleKeys.includes(entry.key);
@@ -234,29 +236,35 @@ export default function AdminPermissions() {
                     const busy = busyKey === `user:${entry.key}`;
                     const current: 'inherit' | 'grant' | 'revoke' = override?.effect ?? 'inherit';
                     return (
-                      <div key={entry.key} className="flex flex-wrap items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-slate-50">
+                      <div key={entry.key} className="flex flex-wrap items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-[#f9fbf7]">
                         <span className="min-w-[200px] grow">
                           <span className="font-mono text-[12px] text-slate-800">{entry.key}</span>
-                          <span className="ml-2 text-[11px] text-slate-400">{fromRole ? 'i rollen' : 'ej i rollen'}</span>
+                          <span className="ml-2 text-[11px] text-slate-500">{fromRole ? 'i rollen' : 'ej i rollen'}</span>
                         </span>
-                        <Badge variant={effective ? 'accent' : undefined}>{effective ? 'aktiv' : 'av'}</Badge>
-                        <div className="flex overflow-hidden rounded-lg border border-slate-200">
+                        <span className={cn(crm.badge, effective ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-slate-50 text-slate-500')}>
+                          {effective ? 'aktiv' : 'av'}
+                        </span>
+                        {/* Segmenterad trestatuskontroll — strukturen behålls med flit
+                            (Ärv/Ge/Neka är ett val, inte tre knappar); precedent i
+                            AdminTimeCorrectionModal:s kind-väljare. */}
+                        <div className="flex overflow-hidden rounded-lg border border-[#e0e8dc]">
                           {(['inherit', 'grant', 'revoke'] as const).map((mode) => (
                             <button
                               key={mode}
                               type="button"
+                              aria-pressed={current === mode}
                               disabled={busy || (mode === 'revoke' && entry.key === 'crm.admin' && userState.role === 'admin')}
                               onClick={() => setUserOverride(entry.key, mode === 'inherit' ? null : mode)}
-                              className={
-                                'px-2.5 py-1 text-[11px] font-semibold ' +
-                                (current === mode
+                              className={cn(
+                                'px-2.5 py-1 text-[11px] font-semibold transition',
+                                current === mode
                                   ? mode === 'revoke'
                                     ? 'bg-rose-600 text-white'
                                     : mode === 'grant'
                                       ? 'bg-emerald-600 text-white'
                                       : 'bg-slate-700 text-white'
-                                  : 'bg-white text-slate-600 hover:bg-slate-100')
-                              }
+                                  : 'bg-white text-slate-600 hover:bg-[#f9fbf7]',
+                              )}
                             >
                               {mode === 'inherit' ? 'Ärv' : mode === 'grant' ? 'Ge' : 'Neka'}
                             </button>

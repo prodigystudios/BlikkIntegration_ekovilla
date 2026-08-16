@@ -1,7 +1,11 @@
 "use client";
 import React from 'react';
-import Badge from '../../../components/ui/Badge';
+import { crm } from '../../crm/lib/crmTokens';
+import { cn } from '../../../lib/shared/cn';
+import { ADMIN_CARD, ADMIN_COLHEAD, ADMIN_ERROR_BOX, ADMIN_NOTICE_BOX } from '../components/adminUi';
 import type { TimeReferenceItem, TimeReferenceKind } from '../../../lib/domains/time/reference';
+
+const CHECKBOX_CLASS = 'h-4 w-4 rounded border-slate-300 accent-emerald-600';
 
 // Admin → Tidkoder. Referensdatan för tidrapporteringen (fas 4.1).
 //
@@ -125,19 +129,19 @@ export default function AdminTimeReference() {
     }
   }
 
-  if (loading) return <div className="p-6 text-sm text-slate-500">Laddar referensdata…</div>;
+  if (loading) return <p role="status" className="m-0 p-5 text-sm text-slate-400">Laddar…</p>;
 
   return (
-    <div className="grid gap-6 p-5">
+    <div className="grid gap-4 p-5">
       {error ? (
-        <div className="rounded-xl border border-solid border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+        <div role="alert" className={ADMIN_ERROR_BOX}>
           {error}
           <button type="button" onClick={() => setError(null)} className="ml-3 underline">Stäng</button>
         </div>
       ) : null}
 
       {notice ? (
-        <div className="rounded-xl border border-solid border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+        <div role="status" className={ADMIN_NOTICE_BOX}>
           {notice}
           <button type="button" onClick={() => setNotice(null)} className="ml-3 underline">Stäng</button>
         </div>
@@ -146,7 +150,7 @@ export default function AdminTimeReference() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="grid max-w-[720px] gap-1">
           <h2 className="m-0 text-lg font-bold text-slate-900">Tidkoder och referensdata</h2>
-          <p className="m-0 text-sm text-slate-500">
+          <p className="m-0 text-sm text-slate-600">
             Listorna som tidrapporteringen väljer ur. De hämtas en gång från Blikk och underhålls sedan här —
             efter att Blikk kopplats bort är det här enda stället de finns.
           </p>
@@ -155,14 +159,14 @@ export default function AdminTimeReference() {
           type="button"
           onClick={() => void importFromBlikk()}
           disabled={importing}
-          className="rounded-xl border border-solid border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-400 disabled:cursor-not-allowed disabled:opacity-60"
+          className={crm.ghostButton}
         >
           {importing ? 'Hämtar…' : 'Hämta från Blikk'}
         </button>
       </div>
 
       {missingPayrollCode > 0 ? (
-        <div className="rounded-xl border border-solid border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           <strong>{missingPayrollCode}</strong> aktiva rader saknar lönesort. Löneunderlaget kan inte placera deras
           timmar förrän fältet är ifyllt — Blikk-importen tar inte med det, det är er byrås benämning.
         </div>
@@ -174,14 +178,14 @@ export default function AdminTimeReference() {
           <section key={section.kind} className="grid gap-2">
             <div className="flex flex-wrap items-baseline gap-2">
               <h3 className="m-0 text-base font-bold text-slate-900">{section.label}</h3>
-              <Badge>{items.length}</Badge>
+              <span className={cn(crm.badge, 'border-slate-200 bg-slate-50 text-slate-600 tabular-nums')}>{items.length}</span>
               <span className="text-sm text-slate-500">{section.help}</span>
             </div>
 
-            <div className="overflow-x-auto rounded-xl border border-solid border-slate-200 bg-white">
+            <div className={cn(ADMIN_CARD, 'overflow-x-auto')}>
               <table className="w-full min-w-[720px] border-collapse text-sm">
                 <thead>
-                  <tr className="border-x-0 border-t-0 border-b border-solid border-slate-200 text-left text-[11px] font-extrabold uppercase tracking-wide text-slate-500">
+                  <tr className={cn('border-x-0 border-t-0 border-b border-[#e0e8dc] bg-[#f9fbf7] text-left', ADMIN_COLHEAD)}>
                     <th className="px-3 py-2">Namn</th>
                     <th className="px-3 py-2">Kod</th>
                     <th className="px-3 py-2">Lönesort</th>
@@ -201,31 +205,30 @@ export default function AdminTimeReference() {
                   {items.map((item) => {
                     const busy = busyKey === `${section.kind}:${item.id}`;
                     return (
-                      <tr key={item.id} className={'border-x-0 border-t-0 border-b border-solid border-slate-100 ' + (item.is_active ? '' : 'text-slate-400')}>
+                      <tr key={item.id} className={cn('border-x-0 border-t-0 border-b border-slate-100', !item.is_active && 'text-slate-400')}>
                         <td className="px-3 py-2 font-medium">
                           {item.name}
-                          {item.blikk_id ? <span className="ml-2 text-xs text-slate-400">Blikk #{item.blikk_id}</span> : null}
+                          {item.blikk_id ? <span className="ml-2 text-xs text-slate-500">Blikk #{item.blikk_id}</span> : null}
                         </td>
                         <td className="px-3 py-2 text-slate-500">{item.code || '—'}</td>
                         <td className="px-3 py-2">
                           {/* Sparas på blur, inte per tangenttryck: fältet är fritext och admin skriver
                               av byråns benämning i lugn och ro. */}
-                          <span className="inline-block w-32">
-                            <input
-                              defaultValue={item.payroll_code || ''}
-                              onBlur={(e) => {
-                                const value = e.target.value.trim();
-                                if (value === (item.payroll_code || '')) return;
-                                void patchItem(section.kind, item, { payroll_code: value || null });
-                              }}
-                              placeholder="—"
-                              disabled={busy}
-                              className={
-                                'rounded-lg border border-solid px-2 py-1 text-sm ' +
-                                (item.is_active && !item.payroll_code ? 'border-amber-300 bg-amber-50' : 'border-slate-200')
-                              }
-                            />
-                          </span>
+                          <input
+                            defaultValue={item.payroll_code || ''}
+                            onBlur={(e) => {
+                              const value = e.target.value.trim();
+                              if (value === (item.payroll_code || '')) return;
+                              void patchItem(section.kind, item, { payroll_code: value || null });
+                            }}
+                            placeholder="—"
+                            disabled={busy}
+                            className={cn(
+                              crm.input,
+                              'h-8 w-32 px-2',
+                              item.is_active && !item.payroll_code && 'border-amber-300 bg-amber-50',
+                            )}
+                          />
                         </td>
                         <td className="px-3 py-2">
                           <input
@@ -233,6 +236,8 @@ export default function AdminTimeReference() {
                             checked={item.requires_note}
                             disabled={busy}
                             onChange={(e) => void patchItem(section.kind, item, { requires_note: e.target.checked })}
+                            className={CHECKBOX_CLASS}
+                            aria-label={`Kommentar krävs för ${item.name}`}
                           />
                         </td>
                         {section.kind === 'time_code' ? (
@@ -242,6 +247,8 @@ export default function AdminTimeReference() {
                               checked={item.billable === true}
                               disabled={busy}
                               onChange={(e) => void patchItem(section.kind, item, { billable: e.target.checked })}
+                              className={CHECKBOX_CLASS}
+                              aria-label={`Debiterbar: ${item.name}`}
                             />
                           </td>
                         ) : null}
@@ -253,6 +260,8 @@ export default function AdminTimeReference() {
                             checked={item.is_active}
                             disabled={busy}
                             onChange={(e) => void patchItem(section.kind, item, { is_active: e.target.checked })}
+                            className={CHECKBOX_CLASS}
+                            aria-label={`Aktiv: ${item.name}`}
                           />
                         </td>
                       </tr>
@@ -263,20 +272,19 @@ export default function AdminTimeReference() {
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              <span className="inline-block w-64">
-                <input
-                  value={newName[section.kind] || ''}
-                  onChange={(e) => setNewName((prev) => ({ ...prev, [section.kind]: e.target.value }))}
-                  onKeyDown={(e) => { if (e.key === 'Enter') void addItem(section.kind); }}
-                  placeholder={`Ny ${section.label.toLowerCase().replace(/er$/, '')}…`}
-                  className="rounded-lg border border-solid border-slate-200 px-2.5 py-1.5 text-sm"
-                />
-              </span>
+              <input
+                value={newName[section.kind] || ''}
+                onChange={(e) => setNewName((prev) => ({ ...prev, [section.kind]: e.target.value }))}
+                onKeyDown={(e) => { if (e.key === 'Enter') void addItem(section.kind); }}
+                placeholder={`Ny ${section.label.toLowerCase().replace(/er$/, '')}…`}
+                className={cn(crm.input, 'w-64')}
+              />
               <button
                 type="button"
                 onClick={() => void addItem(section.kind)}
                 disabled={!((newName[section.kind] || '').trim()) || busyKey === `${section.kind}:new`}
-                className="rounded-lg border border-solid border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:border-slate-400 disabled:cursor-not-allowed disabled:opacity-60"
+                className={crm.formButton}
+                style={{ backgroundColor: 'var(--crm-primary, #1a3f26)' }}
               >
                 Lägg till
               </button>

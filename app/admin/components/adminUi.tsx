@@ -9,9 +9,10 @@ import { cn } from '../../../lib/shared/cn';
 // under WCAG AA som instruerande text).
 export const ADMIN_LABEL = 'text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600';
 
-// Kolumnhuvudsraden i listkort (CustomersClient-receptet).
-// Konsumeras från våg 3–4 av admin-migreringen (Kontakter/Tidkoder).
-export const ADMIN_COLHEAD = 'text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400';
+// Kolumnhuvudsraden i listkort och tabeller. CRM:s recept men i slate-500, inte
+// slate-400: i admin är kolumnrubriken ofta ENDA etiketten för sin kolumn (t.ex.
+// Tidkoders kryssrutekolumner), och slate-400 @10px ligger under WCAG AA.
+export const ADMIN_COLHEAD = 'text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500';
 
 // Inline-tillståndsrutor — dialekt B-recepten som Ärenden/Changelog/Behörigheter redan använder.
 // Sätt role="alert" på felrutan så skärmläsare annonserar den.
@@ -71,6 +72,8 @@ export function AdminFilterChip({
     <button
       type="button"
       onClick={onClick}
+      // aria-pressed: aktivt läge signaleras annars bara med bakgrundsfärg.
+      aria-pressed={active}
       className={cn(
         'inline-flex shrink-0 items-center gap-1.5 rounded-xl border px-2.5 py-1 text-[13px] font-semibold transition',
         active ? 'border-transparent text-white' : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300',
