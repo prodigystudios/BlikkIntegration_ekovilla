@@ -58,9 +58,8 @@ const KINDS: Array<{ key: TimeEntryKind; label: string }> = [
   { key: 'absence', label: 'Frånvaro' },
 ];
 
-// Fältstil på ett ställe. Preflight är av, så `border` utan `border-solid` ritar ingen linje —
-// och globals.css ger <select>/<textarea> ingen egen ram att ärva.
-const FIELD = 'w-full rounded-xl border border-solid border-[#dbe4d6] bg-white px-3 py-2 text-sm text-slate-900';
+// Fältstil på ett ställe.
+const FIELD = 'w-full rounded-xl border border-[#dbe4d6] bg-white px-3 py-2 text-sm text-slate-900';
 
 /**
  * Etikett för ETT FÄLT — medvetet inte `crm.sectionTitle`.

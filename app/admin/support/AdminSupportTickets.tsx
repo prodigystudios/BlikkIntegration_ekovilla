@@ -29,13 +29,6 @@ import {
 // jämföra ärenden med varandra. Modalen är dessutom mönstret på varje annan CRM-yta (offert, kund,
 // felanmälan), så den är redan inlärd.
 //
-// OBS preflight är av (tailwind.config.js), så border-utilities beter sig INTE som i vanlig Tailwind
-// — därför bär rot-elementet klassen `support-surface`, som återställer reseten (globals.css). Utan
-// den ritar `border` på en <div> ingen linje alls, och `border-t border-solid` blir en LÅDA: stilen
-// sätts på alla fyra sidor men bredden bara på toppen, så de tre andra faller tillbaka på
-// webbläsarens `medium` (~3px). Med klassen på plats: skriv `border`/`border-t` som vanligt, och
-// lägg ALDRIG till `border-solid` här.
-
 type StateFilter = 'open' | 'closed' | 'any';
 
 const STATE_LABEL: Record<StateFilter, string> = {
@@ -98,9 +91,8 @@ export default function AdminSupportTickets() {
 
   return (
     // p-5 matchar de andra adminflikarna (Behörigheter, Tidkoder) — AdminTabsClient lägger inget
-    // innerutrymme i sitt kort. `support-surface` återställer border-reseten för hela trädet,
-    // modalen inkluderad (den renderas som barn här nere).
-    <div className="support-surface grid grid-cols-1 gap-4 p-5">
+    // innerutrymme i sitt kort.
+    <div className="grid grid-cols-1 gap-4 p-5">
       <div className="grid gap-1">
         <h2 className="m-0 text-lg font-bold text-slate-900">Ärenden</h2>
         <p className="m-0 text-sm text-slate-600">

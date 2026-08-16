@@ -2,49 +2,36 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Tailwind preflight is disabled project-wide (see tailwind.config.js → corePlugins.preflight:false),
-   so there is no global `border-width: 0 / border-style: solid` reset. A plain `border` utility on a
-   <div>/<span> then draws NOTHING (style defaults to none), and a `border-solid` without a width util
-   gets a phantom `medium` (~3px) border. Restore Tailwind's own preflight border reset scoped to the
-   whole planning surface (in @layer base so real width utilities like `border`/`border-l` still win),
-   so every bordered element — cards, grid lines, badges, the backlog — draws a clean hairline with no
-   phantom borders. The app-wide fix is deferred (would surface hidden borders on not-yet-rebuilt
-   non-CRM surfaces), hence the scope to .planning-density. */
+/* Tailwind preflight är PÅ (2026-08-16). Dess border-reset (`border-width: 0; border-style: solid`
+   på allt) gäller nu app-vitt, så `border`/`border-t` beter sig som i vanlig Tailwind överallt: en
+   `<div>` med `border` ritar en hairline, och sidor utan breddklass får 0 istället för webbläsarens
+   `medium` (~3px). De tre scopade reseterna som simulerade detta för `.planning-density`,
+   `.planning-modal` och `.support-surface` är därmed borttagna — de var en brygga med slutdatum.
+
+   ⚠️ Lägg INTE till `border-solid` i nya komponenter. Det var lösningen medan preflight var av och
+   är nu bara överflödigt — det kan INTE återinföra fantomkanten, eftersom preflightens
+   `*{border-width:0}` nollar varje sida som saknar breddklass. De ~100 som redan står kvar i koden
+   är ofarliga; ta bort dem när du ändå är i filen, inte som en egen vandring.
+
+   Preflight ändrar mer än kanter, och tre av dem är värda att känna till:
+   - `box-sizing: border-box` gäller nu ALLA element (bara input/label/.spinner hade det förut), så
+     bredd/höjd inkluderar padding och kant.
+   - `html { line-height: 1.5 }` ersätter webbläsarens ~1.2. Tailwinds `text-*` bär egen line-height,
+     så de ytorna är opåverkade; inline-stylade äldre ytor blir ~25 % högre per rad.
+   - `input/select/textarea` ärver nu body-typsnittet i stället för webbläsarens formulärtypsnitt.
+
+   Kvar att veta: element-reglerna längre ner i den här filen (`button { padding: 10px 14px }`,
+   `input { width: 100% }`, `label { display: block }`) ligger UTANFÖR `@layer base` och vinner
+   därför fortfarande över preflight. De är en separat städning. */
+
 @layer base {
-  .planning-density *,
-  .planning-density *::before,
-  .planning-density *::after {
-    border-width: 0;
-    border-style: solid;
-  }
-
-  /* The custom planning overlays (admin, activity log, placeholder) use plain `border` utilities on
-     <div>s, which render nothing with preflight off (no border-style). Restore Tailwind's own
-     preflight border reset (width:0 + style:solid) scoped to those modals, so width utilities draw a
-     hairline and elements without one get no phantom `medium` border. */
-  .planning-modal *,
-  .planning-modal *::before,
-  .planning-modal *::after {
-    border-width: 0;
-    border-style: solid;
-  }
-
-  /* Appärendena (Rapportera-knappen + backloggen i admin) OCH changeloggen — samma familj: det
-     användarna säger in, och det som går ut till dem. Samma reset, samma skäl — men värt att stava
-     ut vilket fel den tar bort, för det var inte uppenbart: `border-t border-solid` sätter stilen
-     på ALLA fyra sidor och bredden bara på toppen, så de tre andra föll tillbaka på webbläsarens
-     `medium` (~3px) och en tänkt avdelarlinje blev en låda runt hela sektionen. Med reseten beter
-     sig varje border-utility som i vanlig Tailwind, och `border-solid` behöver inte strös ut i
-     komponenterna.
-
-     ⚠️ TEMPORÄR. Preflight ska slås på app-vitt när de gamla ytorna stängts ner — då ska den här
-     regeln och sina syskon ovan raderas, inte utökas med fler selektorer. */
-  .support-surface *,
-  .support-surface *::before,
-  .support-surface *::after {
-    border-width: 0;
-    border-style: solid;
-  }
+  /* Preflight sätter `h1–h6 { font-weight: inherit }`. Ett sextiotal rubriker i appen sätter bara
+     storlek och litar på webbläsarens fetstil — de skulle annars renderas i brödtextvikt, bland
+     annat "Tack!" och "Beställningsbekräftelse" på den KUNDVÄNDA offertsigneringssidan. Återställ
+     UA-vikten här i base-lagret: utilities-lagret ligger efter, så varje `font-normal`/`font-medium`
+     och varje inline `fontWeight` vinner fortfarande. Storleken återställs medvetet INTE — den är
+     explicit satt överallt utom i gamla `app/plannering`, som får vara ful. */
+  h1, h2, h3, h4, h5, h6 { font-weight: bold; }
 }
 
 /* Planning density: the board was designed a touch large, so scale the whole planning surface down

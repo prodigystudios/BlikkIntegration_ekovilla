@@ -10,9 +10,8 @@ import type { TimeReferenceItem, TimeReferenceKind } from '../../../lib/domains/
 // kolumn lönebyrån bryr sig om — den är tom efter importen och måste fyllas i för hand, så den
 // har en egen varningsruta högst upp.
 //
-// OBS globala element-regler i app/globals.css (preflight är av): en <div> med bara `border` ritar
-// INGEN linje utan `border-solid`, och <input> får `width: 100%` — därför breddstyrning på
-// omslutande element i stället för på fältet.
+// OBS en global element-regel i app/globals.css ger <input> `width: 100%` och vinner över Tailwinds
+// breddklasser — därför breddstyrning på omslutande element i stället för på fältet.
 
 type Section = { kind: TimeReferenceKind; label: string; help: string };
 
