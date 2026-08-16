@@ -64,7 +64,7 @@ export default function CrmModal({
             type="button"
             aria-label="Stäng"
             onClick={onClose}
-            className="!h-9 !w-9 shrink-0 !rounded-full !border !border-solid !border-slate-200 !bg-white !p-0 text-slate-500 transition hover:!border-slate-300 hover:text-slate-700"
+            className="h-9 w-9 shrink-0 rounded-full border border-solid border-slate-200 bg-white p-0 text-slate-500 transition hover:border-slate-300 hover:text-slate-700"
           >
             <svg className="mx-auto" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M18 6L6 18M6 6l12 12" />

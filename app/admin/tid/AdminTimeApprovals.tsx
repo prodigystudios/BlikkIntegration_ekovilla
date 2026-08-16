@@ -50,8 +50,8 @@ import {
 // även härifrån, och varje rättelse av någon annans rad skrivs till crm_time_entry_audit av en
 // databastrigger.
 //
-// OBS <input> får `width: 100%` från en global element-regel i globals.css, som vinner över
-// Tailwinds breddklasser.
+// OBS <input> är 100 % brett som default (globals.css). Regeln ligger i `:where()` sedan
+// 2026-08-16, så en breddklass på fältet vinner utan `!`.
 
 const STATUS_TONE: Record<TimePeriodStatus, string> = {
   open: 'bg-slate-100 text-slate-600',
@@ -486,7 +486,7 @@ export default function AdminTimeApprovals() {
               onClick={() => setFilter(key)}
               aria-pressed={filter === key}
               className={cn(
-                '!px-3 !py-1.5 rounded-full border border-solid text-sm font-semibold transition',
+                'px-3 py-1.5 rounded-full border border-solid text-sm font-semibold transition',
                 filter === key
                   ? 'border-transparent bg-slate-900 text-white'
                   : 'border-[#dbe4d6] bg-white text-slate-600 hover:border-slate-400',
@@ -522,14 +522,14 @@ export default function AdminTimeApprovals() {
                 <button
                   type="button"
                   onClick={() => void approveAllSubmitted()}
-                  className="!px-3 !py-1.5 rounded-lg border border-solid border-emerald-300 bg-emerald-50 text-sm font-semibold text-emerald-800"
+                  className="px-3 py-1.5 rounded-lg border border-solid border-emerald-300 bg-emerald-50 text-sm font-semibold text-emerald-800"
                 >
                   Ja, attestera
                 </button>
                 <button
                   type="button"
                   onClick={() => setConfirmBulk(false)}
-                  className="!px-2 !py-1.5 rounded-lg text-sm font-semibold text-slate-500"
+                  className="px-2 py-1.5 rounded-lg text-sm font-semibold text-slate-500"
                 >
                   Avbryt
                 </button>
@@ -539,7 +539,7 @@ export default function AdminTimeApprovals() {
                 type="button"
                 onClick={() => setConfirmBulk(true)}
                 disabled={bulkBusy}
-                className="!px-3 !py-1.5 rounded-lg border border-solid border-emerald-300 bg-emerald-50 text-sm font-semibold text-emerald-800 transition hover:border-emerald-400 disabled:opacity-60"
+                className="px-3 py-1.5 rounded-lg border border-solid border-emerald-300 bg-emerald-50 text-sm font-semibold text-emerald-800 transition hover:border-emerald-400 disabled:opacity-60"
               >
                 {bulkBusy ? 'Attesterar…' : `Attestera alla inlämnade (${submitted.length})`}
               </button>
@@ -657,7 +657,7 @@ function PersonRow({
             type="button"
             onClick={onToggle}
             aria-expanded={expanded}
-            className="!inline-flex !items-baseline !justify-start !gap-2 !p-0 !text-left min-w-[180px] flex-1"
+            className="inline-flex items-baseline justify-start gap-2 p-0 text-left min-w-[180px] flex-1"
           >
             <span aria-hidden className={cn('shrink-0 text-slate-400 transition-transform', expanded ? 'rotate-90' : '')}>›</span>
             <span className="min-w-0">
@@ -714,7 +714,7 @@ function PersonRow({
                 type="button"
                 onClick={onApprove}
                 disabled={busy}
-                className="!px-3 !py-1.5 rounded-lg border border-solid border-emerald-300 bg-emerald-50 text-sm font-semibold text-emerald-800 transition hover:border-emerald-400 disabled:opacity-60"
+                className="px-3 py-1.5 rounded-lg border border-solid border-emerald-300 bg-emerald-50 text-sm font-semibold text-emerald-800 transition hover:border-emerald-400 disabled:opacity-60"
               >
                 Attestera
               </button>
@@ -724,7 +724,7 @@ function PersonRow({
                 type="button"
                 onClick={onReopen}
                 disabled={busy}
-                className="!px-3 !py-1.5 rounded-lg border border-solid border-[#dbe4d6] bg-white text-sm font-semibold text-slate-700 transition hover:border-slate-400 disabled:opacity-60"
+                className="px-3 py-1.5 rounded-lg border border-solid border-[#dbe4d6] bg-white text-sm font-semibold text-slate-700 transition hover:border-slate-400 disabled:opacity-60"
               >
                 Öppna igen
               </button>
@@ -785,7 +785,7 @@ function ReopenModal({
           <button
             type="button"
             onClick={onClose}
-            className="!py-2.5 flex-1 rounded-xl border border-solid border-[#dbe4d6] bg-white text-sm font-semibold text-slate-600 transition hover:border-slate-400 sm:flex-none sm:!px-5"
+            className="py-2.5 flex-1 rounded-xl border border-solid border-[#dbe4d6] bg-white text-sm font-semibold text-slate-600 transition hover:border-slate-400 sm:flex-none sm:px-5"
           >
             Avbryt
           </button>
@@ -799,7 +799,7 @@ function ReopenModal({
               if (result) { setFailure(result); setBusy(false); }
             }}
             disabled={busy}
-            className="!py-2.5 flex-1 rounded-xl text-sm font-semibold text-white shadow-sm transition hover:brightness-95 disabled:opacity-60 sm:ml-auto sm:flex-none sm:!px-5"
+            className="py-2.5 flex-1 rounded-xl text-sm font-semibold text-white shadow-sm transition hover:brightness-95 disabled:opacity-60 sm:ml-auto sm:flex-none sm:px-5"
             style={{ backgroundColor: 'var(--crm-primary)' }}
           >
             {busy ? 'Öppnar…' : 'Öppna igen'}
@@ -1017,22 +1017,22 @@ function DayRowCells({
                 type="button"
                 onClick={async () => { setBusy(true); await onDelete(day.entryId!); setBusy(false); setConfirmDelete(false); }}
                 disabled={busy}
-                className="!p-0 font-semibold text-rose-600 disabled:opacity-50"
+                className="p-0 font-semibold text-rose-600 disabled:opacity-50"
               >
                 Ja
               </button>
-              <button type="button" onClick={() => setConfirmDelete(false)} className="!p-0 text-slate-400">Nej</button>
+              <button type="button" onClick={() => setConfirmDelete(false)} className="p-0 text-slate-400">Nej</button>
             </span>
           ) : (
             <span className="flex items-center justify-end gap-3 text-sm">
               <button
                 type="button"
                 onClick={() => onEdit(day)}
-                className="!p-0 font-medium text-slate-600 underline underline-offset-2"
+                className="p-0 font-medium text-slate-600 underline underline-offset-2"
               >
                 Rätta
               </button>
-              <button type="button" onClick={() => setConfirmDelete(true)} className="!p-0 font-medium text-slate-400 hover:text-rose-600">
+              <button type="button" onClick={() => setConfirmDelete(true)} className="p-0 font-medium text-slate-400 hover:text-rose-600">
                 Ta bort
               </button>
             </span>

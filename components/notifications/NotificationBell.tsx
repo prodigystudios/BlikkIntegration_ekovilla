@@ -183,7 +183,7 @@ export default function NotificationBell({ className, collapsed = false }: { cla
                   type="button"
                   aria-label="Stäng"
                   onClick={() => setOpen(false)}
-                  className="flex h-8 w-8 items-center justify-center !rounded-full !border !border-slate-200 !bg-slate-50 !p-0 text-slate-500 transition hover:!bg-slate-100 hover:text-slate-700"
+                  className="flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-slate-50 p-0 text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
                 >
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                     <path d="M18 6L6 18M6 6l12 12" />

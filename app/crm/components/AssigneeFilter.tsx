@@ -86,7 +86,7 @@ export default function AssigneeFilter({
               <button
                 type="button"
                 onClick={() => onChange([])}
-                className="!p-0 text-[11px] font-semibold text-emerald-700 hover:text-emerald-800"
+                className="p-0 text-[11px] font-semibold text-emerald-700 hover:text-emerald-800"
               >
                 Rensa
               </button>

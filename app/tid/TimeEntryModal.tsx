@@ -252,7 +252,7 @@ export default function TimeEntryModal({
           <button
             type="button"
             onClick={onClose}
-            className="!py-2.5 flex-1 rounded-xl border border-solid border-[#dbe4d6] bg-white text-sm font-semibold text-slate-600 transition hover:border-slate-400 sm:flex-none sm:!px-5"
+            className="py-2.5 flex-1 rounded-xl border border-solid border-[#dbe4d6] bg-white text-sm font-semibold text-slate-600 transition hover:border-slate-400 sm:flex-none sm:px-5"
           >
             Avbryt
           </button>
@@ -260,7 +260,7 @@ export default function TimeEntryModal({
             type="button"
             onClick={() => void save()}
             disabled={!canSave}
-            className="!py-2.5 flex-1 rounded-xl text-sm font-semibold text-white shadow-sm transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60 sm:ml-auto sm:flex-none sm:!px-5"
+            className="py-2.5 flex-1 rounded-xl text-sm font-semibold text-white shadow-sm transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60 sm:ml-auto sm:flex-none sm:px-5"
             style={{ backgroundColor: 'var(--crm-primary)' }}
           >
             {saving ? 'Sparar…' : 'Spara'}
@@ -282,7 +282,7 @@ export default function TimeEntryModal({
               onClick={() => setKind(option.key)}
               aria-pressed={kind === option.key}
               className={cn(
-                '!px-2 !py-2 flex-1 rounded-lg text-sm font-semibold transition',
+                'px-2 py-2 flex-1 rounded-lg text-sm font-semibold transition',
                 kind === option.key ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500',
               )}
             >
@@ -334,7 +334,7 @@ export default function TimeEntryModal({
                     <button
                       type="button"
                       onClick={() => setKind('internal')}
-                      className="!px-3 !py-1.5 justify-self-start rounded-lg border border-solid border-amber-300 bg-white text-sm font-semibold text-amber-900 transition hover:border-amber-400"
+                      className="px-3 py-1.5 justify-self-start rounded-lg border border-solid border-amber-300 bg-white text-sm font-semibold text-amber-900 transition hover:border-amber-400"
                     >
                       Rapportera som intern tid
                     </button>
@@ -348,7 +348,7 @@ export default function TimeEntryModal({
                         onClick={() => setWorkOrderId(job.work_order_id)}
                         aria-pressed={workOrderId === job.work_order_id}
                         className={cn(
-                          '!px-3 !py-2.5 !justify-start !text-left w-full rounded-xl border border-solid text-sm transition',
+                          'px-3 py-2.5 justify-start text-left w-full rounded-xl border border-solid text-sm transition',
                           workOrderId === job.work_order_id
                             ? 'border-transparent text-white shadow-sm'
                             : 'border-[#dbe4d6] bg-white text-slate-700 hover:border-slate-400',

@@ -9,10 +9,10 @@ import type { PersonPeriodSummary } from '../../../lib/domains/time/summary';
 
 // Adminrättelse av en tidrad, i en modal.
 //
-// ⚠️ MODAL OCH INTE INLINE I TABELLEN, av två skäl. Det första är att `globals.css` sätter
-// `label { display: block; width: 100% }` utan lager, så fälten staplades på höjden i tabellcellen
-// hur mycket flex man än la på — samma familj som knapparnas padding. Det andra väger tyngre: att
-// byta arbetsorder kräver en sökbar väljare, och den får inte plats i en tabellrad.
+// ⚠️ MODAL OCH INTE INLINE I TABELLEN. Skälet som väger är att byta arbetsorder kräver en sökbar
+// väljare, och den får inte plats i en tabellrad. (Det fanns ett andra skäl: `label { width: 100% }`
+// i globals.css staplade fälten på höjden hur mycket flex man än la på. Den regeln ligger i
+// `:where()` sedan 2026-08-16 och går numera att överrida med en klass, så den binder inte längre.)
 //
 // ⚠️ VAD SOM GÅR ATT RÄTTA: allt utom vem tiden tillhör. Ägaren läses ur databasen i routen och
 // finns inte ens i schemat — att rätta ett fel är en sak, att flytta någons timmar till en annan
@@ -195,7 +195,7 @@ export default function AdminTimeCorrectionModal({
           <button
             type="button"
             onClick={onClose}
-            className="!py-2.5 flex-1 rounded-xl border border-solid border-[#dbe4d6] bg-white text-sm font-semibold text-slate-600 transition hover:border-slate-400 sm:flex-none sm:!px-5"
+            className="py-2.5 flex-1 rounded-xl border border-solid border-[#dbe4d6] bg-white text-sm font-semibold text-slate-600 transition hover:border-slate-400 sm:flex-none sm:px-5"
           >
             Avbryt
           </button>
@@ -203,7 +203,7 @@ export default function AdminTimeCorrectionModal({
             type="button"
             onClick={() => void save()}
             disabled={busy || previewMinutes <= 0 || needsTarget || sameClock || !date}
-            className="!py-2.5 flex-1 rounded-xl text-sm font-semibold text-white shadow-sm transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60 sm:ml-auto sm:flex-none sm:!px-5"
+            className="py-2.5 flex-1 rounded-xl text-sm font-semibold text-white shadow-sm transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60 sm:ml-auto sm:flex-none sm:px-5"
             style={{ backgroundColor: 'var(--crm-primary)' }}
           >
             {busy ? 'Sparar…' : 'Spara rättelse'}
@@ -224,7 +224,7 @@ export default function AdminTimeCorrectionModal({
               onClick={() => setKind(option.key)}
               aria-pressed={kind === option.key}
               className={cn(
-                '!px-2 !py-2 flex-1 rounded-lg text-sm font-semibold transition',
+                'px-2 py-2 flex-1 rounded-lg text-sm font-semibold transition',
                 kind === option.key ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500',
               )}
             >
@@ -233,9 +233,9 @@ export default function AdminTimeCorrectionModal({
           ))}
         </div>
 
-        {/* ⚠️ `!w-auto` på varje label: globals.css ger <label> `width: 100%` utan att ligga i ett
-            lager, så utan den staplas fälten på höjden oavsett grid eller flex. */}
-        <label className="!w-auto grid gap-1">
+        {/* `w-auto` på varje label: <label> är 100 % brett som default (globals.css), vilket skulle
+            stapla fälten på höjden i griden. Klassen räcker — regeln ligger i `:where()`. */}
+        <label className="w-auto grid gap-1">
           <span className={LABEL}>Datum</span>
           <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
         </label>
@@ -253,7 +253,7 @@ export default function AdminTimeCorrectionModal({
                 <button
                   type="button"
                   onClick={() => { setWorkOrderId(''); setChosen(null); }}
-                  className="!p-0 text-sm font-semibold text-emerald-800 underline underline-offset-2"
+                  className="p-0 text-sm font-semibold text-emerald-800 underline underline-offset-2"
                 >
                   Ångra
                 </button>
@@ -270,7 +270,7 @@ export default function AdminTimeCorrectionModal({
                     onClick={() => { setWorkOrderId(order.id); setChosen(order); }}
                     aria-pressed={workOrderId === order.id}
                     className={cn(
-                      '!px-3 !py-2.5 !justify-start !text-left w-full rounded-xl border border-solid text-sm transition',
+                      'px-3 py-2.5 justify-start text-left w-full rounded-xl border border-solid text-sm transition',
                       workOrderId === order.id
                         ? 'border-transparent text-white shadow-sm'
                         : 'border-[#dbe4d6] bg-white text-slate-700 hover:border-slate-400',
@@ -284,7 +284,7 @@ export default function AdminTimeCorrectionModal({
             ) : null}
           </div>
         ) : kind === 'internal' ? (
-          <label className="!w-auto grid gap-1">
+          <label className="w-auto grid gap-1">
             <span className={LABEL}>Internprojekt</span>
             <select value={internalId} onChange={(e) => setInternalId(e.target.value)} className={FIELD}>
               <option value="">{kindChanged ? 'Välj…' : 'Oförändrat'}</option>
@@ -294,7 +294,7 @@ export default function AdminTimeCorrectionModal({
             </select>
           </label>
         ) : (
-          <label className="!w-auto grid gap-1">
+          <label className="w-auto grid gap-1">
             <span className={LABEL}>Frånvaroorsak</span>
             <select value={absenceId} onChange={(e) => setAbsenceId(e.target.value)} className={FIELD}>
               <option value="">{kindChanged ? 'Välj…' : 'Oförändrad'}</option>
@@ -306,24 +306,24 @@ export default function AdminTimeCorrectionModal({
         )}
 
         {kind === 'absence' ? (
-          <label className="!w-auto grid gap-1">
+          <label className="w-auto grid gap-1">
             <span className={LABEL}>Antal timmar</span>
             <Input inputMode="decimal" value={absenceHours} onChange={(e) => setAbsenceHours(e.target.value)} />
           </label>
         ) : (
           <div className="grid gap-3 rounded-2xl border border-solid border-[#e0e8dc] bg-[#f6f9f4] p-3">
             <div className="grid grid-cols-2 gap-2">
-              <label className="!w-auto grid gap-1">
+              <label className="w-auto grid gap-1">
                 <span className={LABEL}>Start</span>
                 <Input type="time" value={start} onChange={(e) => setStart(e.target.value)} />
               </label>
-              <label className="!w-auto grid gap-1">
+              <label className="w-auto grid gap-1">
                 <span className={LABEL}>Slut</span>
                 <Input type="time" value={end} onChange={(e) => setEnd(e.target.value)} />
               </label>
             </div>
             <div className="flex items-end justify-between gap-3">
-              <label className="!w-auto grid gap-1">
+              <label className="w-auto grid gap-1">
                 <span className={LABEL}>Rast (min)</span>
                 <span className="block w-24">
                   <Input inputMode="numeric" value={breakMinutes} onChange={(e) => setBreakMinutes(e.target.value)} />
