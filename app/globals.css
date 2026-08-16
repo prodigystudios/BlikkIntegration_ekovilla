@@ -21,8 +21,9 @@
    - `input/select/textarea` ärver nu body-typsnittet i stället för webbläsarens formulärtypsnitt.
 
    Kvar att veta: element-reglerna längre ner i den här filen (`button { padding: 10px 14px }`,
-   `input { width: 100% }`, `label { display: block }`) ligger UTANFÖR `@layer base` och vinner
-   därför fortfarande över preflight. De är en separat städning. */
+   `input { width: 100% }`, `label { display: block }`) ligger utanför `@layer base`. Knappblocket
+   vinner därför över preflight på källordning — och MÅSTE fortsätta göra det; se den utförliga
+   noteringen vid reglerna om varför just det blocket inte får svepas i `:where()`. */
 
 @layer base {
   /* Preflight sätter `h1–h6 { font-weight: inherit }`. Ett sextiotal rubriker i appen sätter bara
@@ -89,26 +90,30 @@ input, select, textarea { font-size: 16px; }
   input[type="date"], input[type="time"] { -webkit-appearance: none; appearance: none; }
 }
 /* ─────────────────────────────────────────────────────────────────────────────
-   OM `:where()` PÅ ELEMENTREGLERNA NEDAN (2026-08-16)
+   `:where()` PÅ FÄLT- OCH LABELREGLERNA — OCH VARFÖR INTE PÅ KNAPPARNA (2026-08-16)
 
-   De tre reglerna (fält, label, knapp) är DEFAULTS, inte beslut. De ska gälla tills någon säger
-   något annat med en klass — men utan `:where()` gjorde de inte det, för specificiteten avgjorde
-   i stället för avsikten:
+   Reglerna här nere är DEFAULTS, inte beslut: de ska gälla tills någon säger något annat med en
+   klass. En av dem gjorde inte det, för specificiteten avgjorde i stället för avsikten:
 
-     input:not([type='checkbox']):not([type='radio'])   (0,2,1)   slog .w-10 (0,1,0)
-     button:disabled / button:focus-visible             (0,1,1)   slog .opacity-100 / .outline-none
+     input:not([type='checkbox']):not([type='radio'])   (0,2,1)   slog varje .w-* (0,1,0)
 
-   Det tvingade fram `!`-prefix i komponenterna, och `!` säger inte vilken regel den slåss mot — så
-   de spreds även dit de inte behövdes (nio st på stängkryssets <button> i CrmModal, där `button`
-   ändå bara är (0,0,1) och varje Tailwind-klass redan vann).
+   Den ligger nu i `:where()` (specificitet noll) och går att skriva över med en vanlig klass.
+   Samma för `label`, som är ofarlig att sänka. Tailwind 3 har inga riktiga cascade layers (det kom
+   i v4), så `@layer base` hade bara flyttat regeln i filen — `:where()` är det som sänker den.
 
-   `:where()` har specificitet noll. Reglerna gäller precis som förut när ingen säger emot, och
-   varje utility vinner utan `!`. Tailwind 3 har inga riktiga cascade layers (det kom i v4), så
-   `@layer base` hade bara flyttat regeln i filen — inte sänkt specificiteten. `:where()` gör det.
+   ⛔ MEN INTE PÅ KNAPPBLOCKET, OCH INTE PÅ `:disabled`/`:focus-visible`.
+   Sedan preflight slogs på finns Tailwinds egen elementregel
+   `button,input,optgroup,select,textarea { padding: 0; line-height: inherit }` på (0,0,1), plus
+   `:disabled { cursor: default }` på (0,1,0). Sveper man våra motsvarigheter i `:where()` faller
+   de till (0,0,0), preflight vinner, och de 395 knappar som saknar egen padding kollapsar till
+   noll. Det testades och blev exakt så. De blocken måste ligga kvar på elementspecificitet och
+   vinna på källordning — globals.css kommer efter preflight.
 
-   ⚠️ Defaulterna finns kvar med flit. 395 av appens 578 <button> har varken egen padding eller
-   fast storlek och står helt på `padding: 10px 14px` här. Radera inte regeln utan att först
-   migrera dem till en knappkomponent.
+   Läxan: `:where()` sänker inte bara mot dina utilities, utan mot ALLT — preflight inkluderat.
+   Använd den bara där du vet vad mer som rör samma property.
+
+   ⚠️ Knappdefaulten finns kvar med flit. Radera den inte utan att först migrera de 395 knapparna
+   till en knappkomponent.
    ───────────────────────────────────────────────────────────────────────────── */
 
 /* Make text-like form controls fill their container and be consistent */
@@ -121,11 +126,17 @@ input, select, textarea { font-size: 16px; }
    border-box so a padded full-width label (e.g. toggle rows) doesn't overflow by its padding. */
 :where(label) { display: block; width: 100%; box-sizing: border-box; }
 
-/* Consistent button look across iOS/Android */
-:where(button,
+/* Consistent button look across iOS/Android.
+   ⚠️ INGEN `:where()` här, och det är avsiktligt. Preflight sätter själv
+   `button,input,optgroup,select,textarea { padding: 0; line-height: inherit }` på (0,0,1). Sveps
+   det här blocket i `:where()` faller det till (0,0,0), preflight vinner, och de 395 knappar som
+   inte har egen padding kollapsar till noll. Blocket måste ligga kvar på elementspecificitet och
+   vinna på källordning (globals.css kommer efter preflight). Testat 2026-08-16 — det blev exakt
+   den regressionen. */
+button,
 input[type="button"],
 input[type="submit"],
-input[type="reset"]) {
+input[type="reset"] {
   -webkit-appearance: none;
   appearance: none;
   font: inherit;
@@ -173,10 +184,12 @@ input[type="reset"]) {
   transition: background-color .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease;
 }
 
-:where(button,
-input[type="button"],
-input[type="submit"],
-input[type="reset"]):where(:disabled) {
+/* ⚠️ Ingen `:where()` — preflight har `:disabled { cursor: default }` på (0,1,0). Svept hit faller
+   den här till (0,0,0) och disablade knappar tappar sin blockerade markör. */
+button:disabled,
+input[type="button"]:disabled,
+input[type="submit"]:disabled,
+input[type="reset"]:disabled {
   opacity: 0.6;
   cursor: not-allowed;
 }
@@ -190,12 +203,13 @@ a.btn--success[aria-disabled="true"] {
   pointer-events: none;
 }
 
-/* Fokusringen är en TILLGÄNGLIGHETSDEFAULT, inte dekoration — men den ska gå att byta ut mot en
-   egen ring utan `!`. `:where()` gör den överridbar; ta inte bort den, ersätt den. */
-:where(button,
-input[type="button"],
-input[type="submit"],
-input[type="reset"]):where(:focus-visible) {
+/* Fokusringen är en tillgänglighetsdefault. ⚠️ Ingen `:where()` — `.btn--danger:focus-visible` m.fl.
+   längre ner byter färg på den och ligger på (0,1,1); svept hit hade den här tappat mot dem i fel
+   ordning. Ska en yta ha egen ring: ersätt den, ta inte bort den. */
+button:focus-visible,
+input[type="button"]:focus-visible,
+input[type="submit"]:focus-visible,
+input[type="reset"]:focus-visible {
   outline: 2px solid #2563eb; /* blue-600 */
   outline-offset: 2px;
 }
