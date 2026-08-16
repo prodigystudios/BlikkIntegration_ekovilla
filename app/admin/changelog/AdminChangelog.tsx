@@ -23,9 +23,6 @@ import {
 // Utkast (published_at = null) finns för att en post oftast skrivs innan ändringen är ute. RLS
 // döljer dem för alla utom admin.
 //
-// OBS preflight är av (tailwind.config.js) — rot-elementet bär `support-surface`, som återställer
-// border-reseten. Skriv `border` som vanligt, lägg ALDRIG till `border-solid`.
-
 export default function AdminChangelog() {
   const [entries, setEntries] = React.useState<ChangelogDraftView[]>([]);
   const [loading, setLoading] = React.useState(true);
@@ -50,7 +47,7 @@ export default function AdminChangelog() {
   React.useEffect(() => { load(); }, [load]);
 
   return (
-    <div className="support-surface grid grid-cols-1 gap-4 p-5">
+    <div className="grid grid-cols-1 gap-4 p-5">
       <div className="grid gap-1">
         <h2 className="m-0 text-lg font-bold text-slate-900">Changelog</h2>
         <p className="m-0 text-sm text-slate-600">

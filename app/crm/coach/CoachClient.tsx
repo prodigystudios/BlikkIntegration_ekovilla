@@ -518,7 +518,7 @@ export default function CoachClient({ userName }: { userName: string | null }) {
                           ].map(({ title, items: listItems }) => (
                             <div key={title} className="grid gap-2 rounded-xl border border-slate-200 bg-white px-3 py-3">
                               <strong className="text-sm font-semibold text-slate-900">{title}</strong>
-                              <ul className="m-0 grid gap-1.5 pl-5 text-sm leading-5 text-slate-600">
+                              <ul className="m-0 grid list-disc gap-1.5 pl-5 text-sm leading-5 text-slate-600">
                                 {listItems.map((entry) => <li key={entry}>{entry}</li>)}
                               </ul>
                             </div>
@@ -606,7 +606,7 @@ export default function CoachClient({ userName }: { userName: string | null }) {
 
             <div className="grid gap-2 rounded-2xl border border-slate-100 bg-slate-50/60 p-4">
               <p className={crm.sectionTitle}>Framtidssäkrat</p>
-              <ul className="m-0 grid gap-2 pl-5 text-sm leading-5 text-slate-600">
+              <ul className="m-0 grid list-disc gap-2 pl-5 text-sm leading-5 text-slate-600">
                 <li>Frågan skickas redan genom en dedikerad coach-route.</li>
                 <li>Kontext väljs som tydlig referens i stället för att hårdkodas i UI:t.</li>
                 <li>Svaret kommer i ett kontrakt som senare kan fyllas av riktig AI-koppling.</li>

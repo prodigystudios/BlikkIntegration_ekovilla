@@ -895,8 +895,8 @@ function CompensationSection({
           ) : null}
 
           {/* Inmatningen försvinner när månaden är inlämnad — ersättningar är löneunderlag och fryser
-              med perioden, precis som timmarna. Villkorlig rendering och inte `hidden`: preflight är
-              av, så `hidden` och `flex` bråkar om display på samma element. */}
+              med perioden, precis som timmarna. Villkorlig rendering och inte `hidden`, eftersom
+              `hidden` och `flex` bråkar om display på samma element. */}
           {locked ? null : (
             <div className="grid gap-2 rounded-xl bg-[#f1f5ee] p-3">
               <div className="grid gap-2 sm:grid-cols-2">

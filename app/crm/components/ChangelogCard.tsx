@@ -30,10 +30,6 @@ import type { ChangelogItemView } from '@/lib/domains/changelog/types';
 // vid första besöket", vilket hade gjort själva lanseringen osynlig för alla utom den som råkade
 // titta efter nästa publicering.
 //
-// OBS preflight är av (tailwind.config.js) — rot-elementet bär `support-surface`, som återställer
-// border-reseten för hela trädet (globals.css). Skriv `border`/`border-t` som vanligt här, och lägg
-// ALDRIG till `border-solid`.
-
 const SEEN_KEY = 'crm.changelog.seenAt';
 const CARD_ITEM_COUNT = 3;
 
@@ -120,7 +116,7 @@ export default function ChangelogCard() {
   const preview = items.slice(0, CARD_ITEM_COUNT);
 
   return (
-    <section className={cn('support-surface', crm.cardInner, 'grid grid-cols-1 gap-2.5')} aria-labelledby="changelog-heading">
+    <section className={cn(crm.cardInner, 'grid grid-cols-1 gap-2.5')} aria-labelledby="changelog-heading">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <h2 id="changelog-heading" className={crm.sectionTitle}>Nytt i appen</h2>

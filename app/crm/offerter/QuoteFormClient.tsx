@@ -2946,11 +2946,7 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
                         ovägt snitt av radernas procent hade låtit en småpostrad väga lika tungt
                         som huvudposten. Visas bara när minst en rad går att bedöma.
 
-                        INGEN ram och särskilt inte `border-t border-solid`: med preflight av
-                        sätter border-solid stilen på ALLA fyra sidor medan border-t bara sätter
-                        bredden upptill, så övriga sidor ärver webbläsarens `medium` (3px) och det
-                        blir en fantomram runt hela blocket. Se FRONTEND_SYSTEM.md. Raderna ovanför
-                        separeras med luft, så den här gör likadant. */}
+                        Ingen ram — raderna ovanför separeras med luft, så den här gör likadant. */}
                     {quoteMarginResult.marginPercent != null ? (
                       <div className="mt-2.5 grid gap-1">
                         <div className="flex items-center justify-between text-xs">

@@ -50,8 +50,8 @@ import {
 // även härifrån, och varje rättelse av någon annans rad skrivs till crm_time_entry_audit av en
 // databastrigger.
 //
-// OBS preflight är av (tailwind.config.js): `border` på en <div> ritar ingen linje utan
-// `border-solid`, och <input> får `width: 100%` från globals.css.
+// OBS <input> får `width: 100%` från en global element-regel i globals.css, som vinner över
+// Tailwinds breddklasser.
 
 const STATUS_TONE: Record<TimePeriodStatus, string> = {
   open: 'bg-slate-100 text-slate-600',

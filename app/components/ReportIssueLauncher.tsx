@@ -55,13 +55,8 @@ export default function ReportIssueLauncher({ loggedIn }: { loggedIn: boolean })
     // Utan den var `var(--crm-primary)` odefinierad och Skicka-knappen blev vit text på ingen
     // bakgrund: osynlig.
     //
-    // `support-surface` återställer Tailwinds border-reset (preflight är av). Utan den ritar
-    // `border` på en <div> ingen linje, och `border-t border-solid` blir en LÅDA — bredden sätts
-    // bara på toppen medan de tre andra sidorna faller tillbaka på webbläsarens `medium` (~3px).
-    // Med den: skriv `border`/`border-t` som vanligt och lägg ALDRIG till `border-solid` här.
-    //
     // Div:en är layoutneutral: allt inuti är `fixed`.
-    <div className="crm-shell support-surface">
+    <div className="crm-shell">
       <button
         type="button"
         onClick={() => {

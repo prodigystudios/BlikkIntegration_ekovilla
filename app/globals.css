@@ -8,12 +8,31 @@
    `medium` (~3px). De tre scopade reseterna som simulerade detta för `.planning-density`,
    `.planning-modal` och `.support-surface` är därmed borttagna — de var en brygga med slutdatum.
 
-   ⚠️ Lägg INTE till `border-solid` i nya komponenter. Det var lösningen medan preflight var av; nu
-   sätter det bara stilen på alla fyra sidor igen och återinför fantomkanten på sidor utan bredd.
+   ⚠️ Lägg INTE till `border-solid` i nya komponenter. Det var lösningen medan preflight var av och
+   är nu bara överflödigt — det kan INTE återinföra fantomkanten, eftersom preflightens
+   `*{border-width:0}` nollar varje sida som saknar breddklass. De ~100 som redan står kvar i koden
+   är ofarliga; ta bort dem när du ändå är i filen, inte som en egen vandring.
+
+   Preflight ändrar mer än kanter, och tre av dem är värda att känna till:
+   - `box-sizing: border-box` gäller nu ALLA element (bara input/label/.spinner hade det förut), så
+     bredd/höjd inkluderar padding och kant.
+   - `html { line-height: 1.5 }` ersätter webbläsarens ~1.2. Tailwinds `text-*` bär egen line-height,
+     så de ytorna är opåverkade; inline-stylade äldre ytor blir ~25 % högre per rad.
+   - `input/select/textarea` ärver nu body-typsnittet i stället för webbläsarens formulärtypsnitt.
 
    Kvar att veta: element-reglerna längre ner i den här filen (`button { padding: 10px 14px }`,
    `input { width: 100% }`, `label { display: block }`) ligger UTANFÖR `@layer base` och vinner
    därför fortfarande över preflight. De är en separat städning. */
+
+@layer base {
+  /* Preflight sätter `h1–h6 { font-weight: inherit }`. Ett sextiotal rubriker i appen sätter bara
+     storlek och litar på webbläsarens fetstil — de skulle annars renderas i brödtextvikt, bland
+     annat "Tack!" och "Beställningsbekräftelse" på den KUNDVÄNDA offertsigneringssidan. Återställ
+     UA-vikten här i base-lagret: utilities-lagret ligger efter, så varje `font-normal`/`font-medium`
+     och varje inline `fontWeight` vinner fortfarande. Storleken återställs medvetet INTE — den är
+     explicit satt överallt utom i gamla `app/plannering`, som får vara ful. */
+  h1, h2, h3, h4, h5, h6 { font-weight: bold; }
+}
 
 /* Planning density: the board was designed a touch large, so scale the whole planning surface down
    to a denser default (≈ two Safari zoom-out notches). `zoom` re-rasterises like browser zoom, so

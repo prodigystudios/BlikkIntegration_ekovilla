@@ -23,7 +23,7 @@ export default function CrmPlaceholder({
 
       <SectionCard className="grid gap-3 p-5 md:p-6">
         <strong className="text-base font-bold text-slate-900">Planerad första implementation</strong>
-        <ul className="m-0 grid gap-2 pl-5 text-sm leading-6 text-slate-600">
+        <ul className="m-0 grid list-disc gap-2 pl-5 text-sm leading-6 text-slate-600">
           {bullets.map((bullet) => (
             <li key={bullet}>{bullet}</li>
           ))}
