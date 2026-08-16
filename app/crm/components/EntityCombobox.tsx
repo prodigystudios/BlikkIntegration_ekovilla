@@ -74,7 +74,7 @@ export default function EntityCombobox({
           type="button"
           onClick={onClear}
           disabled={disabled}
-          className="!p-0 shrink-0 text-xs font-semibold text-slate-500 transition hover:text-rose-600"
+          className="p-0 shrink-0 text-xs font-semibold text-slate-500 transition hover:text-rose-600"
         >
           Ändra
         </button>

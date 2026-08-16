@@ -508,7 +508,7 @@ export default function AppSidebar({
                 gone before it opens. It can't be left to the mouse: the overlay is inserted
                 under a stationary cursor, and no mouseleave fires until the pointer moves. */}
             <span onClickCapture={endPeek} className="contents">
-              <NotificationBell collapsed={!pinned} className="!h-8 !w-8 !rounded-lg !border !border-white/20 !bg-transparent !p-0 !text-white/80 hover:!border-white/30 hover:!bg-white/10 hover:!text-white" />
+              <NotificationBell collapsed={!pinned} className="h-8 w-8 rounded-lg border border-white/20 bg-transparent p-0 text-white/80 hover:border-white/30 hover:bg-white/10 hover:text-white" />
             </span>
             <button
               type="button"

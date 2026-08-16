@@ -88,21 +88,44 @@ input, select, textarea { font-size: 16px; }
      tap. iOS-scoped, so desktop keeps the native control. */
   input[type="date"], input[type="time"] { -webkit-appearance: none; appearance: none; }
 }
+/* ─────────────────────────────────────────────────────────────────────────────
+   OM `:where()` PÅ ELEMENTREGLERNA NEDAN (2026-08-16)
+
+   De tre reglerna (fält, label, knapp) är DEFAULTS, inte beslut. De ska gälla tills någon säger
+   något annat med en klass — men utan `:where()` gjorde de inte det, för specificiteten avgjorde
+   i stället för avsikten:
+
+     input:not([type='checkbox']):not([type='radio'])   (0,2,1)   slog .w-10 (0,1,0)
+     button:disabled / button:focus-visible             (0,1,1)   slog .opacity-100 / .outline-none
+
+   Det tvingade fram `!`-prefix i komponenterna, och `!` säger inte vilken regel den slåss mot — så
+   de spreds även dit de inte behövdes (nio st på stängkryssets <button> i CrmModal, där `button`
+   ändå bara är (0,0,1) och varje Tailwind-klass redan vann).
+
+   `:where()` har specificitet noll. Reglerna gäller precis som förut när ingen säger emot, och
+   varje utility vinner utan `!`. Tailwind 3 har inga riktiga cascade layers (det kom i v4), så
+   `@layer base` hade bara flyttat regeln i filen — inte sänkt specificiteten. `:where()` gör det.
+
+   ⚠️ Defaulterna finns kvar med flit. 395 av appens 578 <button> har varken egen padding eller
+   fast storlek och står helt på `padding: 10px 14px` här. Radera inte regeln utan att först
+   migrera dem till en knappkomponent.
+   ───────────────────────────────────────────────────────────────────────────── */
+
 /* Make text-like form controls fill their container and be consistent */
-input:not([type='checkbox']):not([type='radio']), select, textarea {
+:where(input:not([type='checkbox']):not([type='radio']), select, textarea) {
   width: 100%;
   max-width: 100%;
   box-sizing: border-box;
 }
 /* Ensure labels expand to container so child inputs at width:100% can fill.
    border-box so a padded full-width label (e.g. toggle rows) doesn't overflow by its padding. */
-label { display: block; width: 100%; box-sizing: border-box; }
+:where(label) { display: block; width: 100%; box-sizing: border-box; }
 
 /* Consistent button look across iOS/Android */
-button,
+:where(button,
 input[type="button"],
 input[type="submit"],
-input[type="reset"] {
+input[type="reset"]) {
   -webkit-appearance: none;
   appearance: none;
   font: inherit;
@@ -150,10 +173,10 @@ input[type="reset"] {
   transition: background-color .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease;
 }
 
-button:disabled,
-input[type="button"]:disabled,
-input[type="submit"]:disabled,
-input[type="reset"]:disabled {
+:where(button,
+input[type="button"],
+input[type="submit"],
+input[type="reset"]):where(:disabled) {
   opacity: 0.6;
   cursor: not-allowed;
 }
@@ -167,10 +190,12 @@ a.btn--success[aria-disabled="true"] {
   pointer-events: none;
 }
 
-button:focus-visible,
-input[type="button"]:focus-visible,
-input[type="submit"]:focus-visible,
-input[type="reset"]:focus-visible {
+/* Fokusringen är en TILLGÄNGLIGHETSDEFAULT, inte dekoration — men den ska gå att byta ut mot en
+   egen ring utan `!`. `:where()` gör den överridbar; ta inte bort den, ersätt den. */
+:where(button,
+input[type="button"],
+input[type="submit"],
+input[type="reset"]):where(:focus-visible) {
   outline: 2px solid #2563eb; /* blue-600 */
   outline-offset: 2px;
 }

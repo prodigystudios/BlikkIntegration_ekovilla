@@ -367,7 +367,7 @@ function TicketModal({
                 type="button"
                 onClick={() => setConfirmDelete(true)}
                 disabled={busy}
-                className={cn(crm.ghostButton, 'shrink-0 hover:!border-rose-300 hover:!text-rose-600')}
+                className={cn(crm.ghostButton, 'shrink-0 hover:border-rose-300 hover:text-rose-600')}
                 title="Ta bort ärendet — för dubbletter och skräp"
               >
                 Ta bort
@@ -465,7 +465,7 @@ function TicketModal({
               checked={publish}
               onChange={(e) => setPublish(e.target.checked)}
               disabled={busy}
-              className="!w-4 shrink-0"
+              className="w-4 shrink-0"
             />
             Visa i changeloggen
           </label>

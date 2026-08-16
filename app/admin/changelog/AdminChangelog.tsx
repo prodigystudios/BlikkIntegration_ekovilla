@@ -287,7 +287,7 @@ function EntryRow({ entry, onChanged }: { entry: ChangelogDraftView; onChanged: 
             type="button"
             onClick={() => setConfirmDelete(true)}
             disabled={busy}
-            className={cn(crm.ghostButton, 'h-8 hover:!border-rose-300 hover:!text-rose-600')}
+            className={cn(crm.ghostButton, 'h-8 hover:border-rose-300 hover:text-rose-600')}
           >
             Ta bort
           </button>

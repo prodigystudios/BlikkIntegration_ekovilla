@@ -10,8 +10,9 @@ import type { TimeReferenceItem, TimeReferenceKind } from '../../../lib/domains/
 // kolumn lönebyrån bryr sig om — den är tom efter importen och måste fyllas i för hand, så den
 // har en egen varningsruta högst upp.
 //
-// OBS en global element-regel i app/globals.css ger <input> `width: 100%` och vinner över Tailwinds
-// breddklasser — därför breddstyrning på omslutande element i stället för på fältet.
+// OBS <input> är 100 % brett som default (globals.css). Sedan 2026-08-16 ligger den regeln i
+// `:where()` och har specificitet noll, så en breddklass på fältet vinner numera — men vyn styr
+// fortfarande bredden på omslutande element, vilket är det som redan är inlärt här.
 
 type Section = { kind: TimeReferenceKind; label: string; help: string };
 

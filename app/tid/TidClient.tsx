@@ -392,7 +392,7 @@ export default function TidClient() {
           <button
             type="button"
             onClick={() => setWeekOffset(0)}
-            className="!py-1.5 justify-self-center rounded-lg text-sm font-semibold text-slate-600 underline underline-offset-2"
+            className="py-1.5 justify-self-center rounded-lg text-sm font-semibold text-slate-600 underline underline-offset-2"
           >
             Gå till denna vecka
           </button>
@@ -402,7 +402,7 @@ export default function TidClient() {
       {error ? (
         <div className="rounded-xl border border-solid border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
           {error}
-          <button type="button" onClick={() => setError(null)} className="!p-0 ml-3 underline">Stäng</button>
+          <button type="button" onClick={() => setError(null)} className="p-0 ml-3 underline">Stäng</button>
         </div>
       ) : null}
 
@@ -443,7 +443,7 @@ export default function TidClient() {
           <button
             type="button"
             onClick={() => { setEditing(null); setModalDate(selectedIso); }}
-            className="!py-2.5 w-full rounded-xl text-sm font-semibold text-white shadow-sm transition hover:brightness-95"
+            className="py-2.5 w-full rounded-xl text-sm font-semibold text-white shadow-sm transition hover:brightness-95"
             style={{ backgroundColor: 'var(--crm-primary)' }}
           >
             Rapportera tid
@@ -490,15 +490,16 @@ export default function TidClient() {
   );
 }
 
-// globals.css ger varje <button> `padding: 10px 14px` och centrering utan att ligga i ett lager, så
-// Tailwind måste gå före med `!`. Samma sak överallt i den här filen där en knapp har egen form.
+// globals.css ger varje <button> `padding: 10px 14px` och centrering som default. En knapp med egen
+// form skriver bara över det med vanliga klasser — regeln ligger i `:where()` sedan 2026-08-16 och
+// har specificitet noll, så `!` behövs inte (och behövdes aldrig här: `button` är (0,0,1)).
 function StepButton({ label, onClick, children }: { label: string; onClick: () => void; children: React.ReactNode }) {
   return (
     <button
       type="button"
       onClick={onClick}
       aria-label={label}
-      className="!h-11 !w-11 !p-0 shrink-0 rounded-xl border border-solid border-[#d9e2d4] bg-white text-slate-600 transition hover:border-slate-400"
+      className="h-11 w-11 p-0 shrink-0 rounded-xl border border-solid border-[#d9e2d4] bg-white text-slate-600 transition hover:border-slate-400"
     >
       {children}
     </button>
@@ -548,7 +549,7 @@ function DayTile({
         loading || hasAny ? null : 'inget rapporterat',
       ].filter(Boolean).join(', ')}
       className={cn(
-        '!min-h-[60px] !flex-col !justify-center !gap-0.5 !px-0.5 !py-1.5 rounded-xl border text-center transition',
+        'min-h-[60px] flex-col justify-center gap-0.5 px-0.5 py-1.5 rounded-xl border text-center transition',
         isSelected
           ? 'border-solid border-transparent text-white shadow-sm'
           : loading
@@ -631,14 +632,14 @@ function EntryCard({
 
       {!locked ? (
         <div className="flex justify-end gap-1 pt-0.5">
-          <button type="button" onClick={onEdit} className="!px-2 !py-1 rounded-lg text-sm font-medium text-slate-600 underline underline-offset-2">
+          <button type="button" onClick={onEdit} className="px-2 py-1 rounded-lg text-sm font-medium text-slate-600 underline underline-offset-2">
             Ändra
           </button>
           <button
             type="button"
             onClick={onDelete}
             disabled={busy}
-            className="!px-2 !py-1 rounded-lg text-sm font-medium text-rose-600 underline underline-offset-2 disabled:opacity-50"
+            className="px-2 py-1 rounded-lg text-sm font-medium text-rose-600 underline underline-offset-2 disabled:opacity-50"
           >
             Ta bort
           </button>
@@ -738,7 +739,7 @@ function PeriodCard({
           type="button"
           onClick={() => void setStatus('submitted')}
           disabled={busy}
-          className="!py-2.5 w-full rounded-xl border border-solid border-[#cfdcc9] bg-white text-sm font-semibold text-slate-800 transition hover:border-slate-400 disabled:opacity-60"
+          className="py-2.5 w-full rounded-xl border border-solid border-[#cfdcc9] bg-white text-sm font-semibold text-slate-800 transition hover:border-slate-400 disabled:opacity-60"
         >
           Lämna in {label}
         </button>
@@ -747,7 +748,7 @@ function PeriodCard({
           type="button"
           onClick={() => void setStatus('open')}
           disabled={busy}
-          className="!py-2.5 w-full rounded-xl border border-solid border-slate-300 bg-white text-sm font-semibold text-slate-700 transition hover:border-slate-400 disabled:opacity-60"
+          className="py-2.5 w-full rounded-xl border border-solid border-slate-300 bg-white text-sm font-semibold text-slate-700 transition hover:border-slate-400 disabled:opacity-60"
         >
           Ångra inlämning
         </button>
@@ -843,7 +844,7 @@ function CompensationSection({
         type="button"
         onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
-        className="!flex-row !justify-between !gap-3 !p-0 !text-left w-full"
+        className="flex-row justify-between gap-3 p-0 text-left w-full"
       >
         <span className="grid gap-0.5">
           <span className="text-sm font-bold text-slate-900">Utlägg och ersättning</span>
@@ -884,7 +885,7 @@ function CompensationSection({
                   </div>
                   {!locked ? (
                     <div className="flex justify-end">
-                      <button type="button" onClick={() => void remove(item.id)} className="!px-2 !py-1 rounded-lg text-sm font-medium text-rose-600 underline underline-offset-2">
+                      <button type="button" onClick={() => void remove(item.id)} className="px-2 py-1 rounded-lg text-sm font-medium text-rose-600 underline underline-offset-2">
                         Ta bort
                       </button>
                     </div>
@@ -935,7 +936,7 @@ function CompensationSection({
                 type="button"
                 onClick={() => void add()}
                 disabled={saving || !amountValid}
-                className="!py-2.5 w-full rounded-xl border border-solid border-[#cfdcc9] bg-white text-sm font-semibold text-slate-800 transition hover:border-slate-400 disabled:cursor-not-allowed disabled:opacity-60"
+                className="py-2.5 w-full rounded-xl border border-solid border-[#cfdcc9] bg-white text-sm font-semibold text-slate-800 transition hover:border-slate-400 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 Lägg till
               </button>
