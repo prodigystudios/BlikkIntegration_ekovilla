@@ -29,26 +29,32 @@ function QuickLinkInner({
   className,
   iconClassName,
   titleClassName,
-  descClassName,
-  showDescription,
 }: {
   link: QuickLink;
   className: string;
   iconClassName: string;
   titleClassName: string;
-  descClassName?: string;
-  showDescription?: boolean;
 }) {
   return (
     <div className={className} aria-disabled={link.disabled || undefined}>
       <span className={iconClassName}>{link.icon}</span>
       <div className={titleClassName}>{link.title}</div>
-      {showDescription ? <div className={descClassName}>{link.desc}</div> : null}
       {link.disabled ? <DisabledBadge note={link.disabledNote} /> : null}
     </div>
   );
 }
 
+/**
+ * Genvägarna på startsidan: ikon och titel, ingenting mer.
+ *
+ * Rutorna hade tidigare två utseenden. Under 769 px en naken bricka, över 769 px ett eget kort med
+ * kant, skugga OCH en beskrivningsrad ("Skapa & arkivera egenkontroller" under rubriken "Skapa
+ * egenkontroll"). Det andra utseendet var en olyckshändelse och inte ett val: sektionen som ritar
+ * gridden är `lg:hidden`, så kortvarianten kunde bara någonsin synas i bandet 769–1023 px — och där
+ * la den ett kort inuti sektionens kort och upprepade titeln med andra ord.
+ *
+ * Ett utseende nu. Titeln namnger målet; beskrivningen sa om samma sak.
+ */
 export function QuickLinksGrid({ links, compact, extraCompact }: { links: QuickLink[]; compact?: boolean; extraCompact?: boolean }) {
   return (
     <div
@@ -62,14 +68,15 @@ export function QuickLinksGrid({ links, compact, extraCompact }: { links: QuickL
       )}
     >
       {links.map(link => {
-        const isDesktopy = !compact && !extraCompact;
         const content = (
           <QuickLinkInner
             link={link}
             className={cn(
-              'flex flex-col items-center justify-start gap-1.5 border-none text-center outline-none',
-              extraCompact ? 'p-2.5' : compact ? 'p-3' : 'p-2.5',
-              link.disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
+              // `active:` och inte bara `hover:` — sektionen är `lg:hidden`, alltså syns gridden
+              // bara på pekskärmar där :hover aldrig utlöses. Utan tryckläget vore återkopplingen
+              // en ren skrivbordsdekoration som ingen av de faktiska användarna ser.
+              'flex flex-col items-center justify-start gap-1.5 rounded-xl border-none p-3 text-center outline-none transition',
+              link.disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer hover:bg-white active:bg-white'
             )}
             iconClassName={cn(
               'inline-flex items-center justify-center rounded-xl bg-emerald-50 text-emerald-700',
@@ -77,36 +84,11 @@ export function QuickLinksGrid({ links, compact, extraCompact }: { links: QuickL
             )}
             titleClassName={cn(
               'text-center font-bold leading-tight tracking-[-0.2px] text-slate-900',
-              extraCompact ? 'text-xs' : compact ? 'text-[13px]' : 'text-sm'
+              extraCompact ? 'text-xs' : 'text-[13px]'
             )}
-            descClassName="text-center text-xs leading-5 text-slate-500"
-            showDescription={isDesktopy}
           />
         );
 
-        // For desktop-sized tiles, wrap with a bordered card to bring back visual affordance
-        if (isDesktopy) {
-          const wrapper = (
-            <div
-              className={cn(
-                'relative flex flex-col gap-2 rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] px-4 pb-[18px] pt-4 text-slate-900 shadow-[0_1px_3px_rgba(20,44,27,0.06)] outline-none transition-[border-color,box-shadow,transform]',
-                link.disabled
-                  ? 'cursor-not-allowed opacity-70'
-                  : 'cursor-pointer hover:border-[#cfdcc9] hover:shadow-[0_8px_20px_-10px_rgba(20,44,27,0.30)]'
-              )}
-            >
-              {content}
-            </div>
-          );
-          if (link.disabled) return <div key={link.href}>{wrapper}</div>;
-          return (
-            <Link key={link.href} href={link.href} className="no-underline">
-              {wrapper}
-            </Link>
-          );
-        }
-
-        // Compact/extra-compact: keep minimal, no outer card
         if (link.disabled) return <div key={link.href}>{content}</div>;
         return (
           <Link key={link.href} href={link.href} className="no-underline">

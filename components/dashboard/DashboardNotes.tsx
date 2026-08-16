@@ -7,6 +7,7 @@ import Badge from '../ui/Badge';
 import Button from '../ui/Button';
 import Input from '../ui/Input';
 import Textarea from '../ui/Textarea';
+import DashboardCardHeader from './DashboardCardHeader';
 
 interface NoteItem {
   id: string;
@@ -74,7 +75,6 @@ export function DashboardNotes({ compact, desktopMode }: { compact?: boolean; de
   const supabase = createClientComponentClient();
   const mounted = useRef(false);
   const [userId, setUserId] = useState<string | null>(null);
-  const [live, setLive] = useState<'connecting'|'on'|'off'>('off');
 
   const syncPushState = useCallback(async () => {
     if (typeof window === 'undefined') return;
@@ -190,7 +190,6 @@ export function DashboardNotes({ compact, desktopMode }: { compact?: boolean; de
   // Realtime subscription
   useEffect(() => {
     if (!userId) return;
-    setLive('connecting');
     const channel = supabase
       .channel('realtime:dashboard_notes')
       .on('postgres_changes', {
@@ -219,14 +218,10 @@ export function DashboardNotes({ compact, desktopMode }: { compact?: boolean; de
           }
         });
       })
-      .subscribe(status => {
-        if (status === 'SUBSCRIBED') setLive('on');
-        if (status === 'CHANNEL_ERROR' || status === 'CLOSED') setLive('off');
-      });
+      .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
-      setLive('off');
     };
   }, [supabase, userId]);
 
@@ -621,85 +616,50 @@ export function DashboardNotes({ compact, desktopMode }: { compact?: boolean; de
     return priority?.label === 'Påminnelse sen';
   }).length;
   const activeNotesWithoutReminderCount = items.filter(item => item.status === 'active' && item.kind === 'note' && !item.remindAt).length;
-  const filterHelperText = getFilterHelperText(filter, {
-    openCount,
-    meetingCount,
-    todayCount,
-    doneCount,
-    overdueReminderCount,
-    urgentMeetingCount,
-    activeNotesWithoutReminderCount,
-  });
-  const liveTextClass =
-    live === 'on'
-      ? 'text-emerald-700'
-      : live === 'connecting'
-        ? 'text-amber-600'
-        : 'text-slate-500';
-  const liveDotClass =
-    live === 'on'
-      ? 'bg-emerald-500 shadow-[0_0_4px_#10b981]'
-      : live === 'connecting'
-        ? 'bg-amber-500'
-        : 'bg-slate-400';
   const composerFieldLabelClass = cn('grid gap-1 text-slate-700', compact ? 'text-[13px]' : 'text-xs');
   const composerInputClass = cn(compact ? 'min-h-11 px-3 py-2.5 text-[13px]' : 'min-h-10 px-3 py-2.5 text-sm');
 
   return (
-    <div className={cn('flex flex-col', compact ? 'gap-3' : 'gap-4')}>
-      <div className={cn('flex flex-wrap items-start', compact ? 'gap-2' : 'gap-3')}>
-        <div className="grid gap-1.5">
-          <h2 className={cn('m-0 flex flex-wrap items-center gap-2 font-bold text-slate-900', compact ? 'text-base' : 'text-xl')}>
-          Arbetsyta
-          <span className={cn('inline-flex items-center gap-1 text-[11px] font-medium', liveTextClass)}>
-            <span className={cn('h-2 w-2 rounded-full', liveDotClass)} />
-            {live==='on' ? 'Live' : live==='connecting' ? 'Ansluter…' : 'Offline'}
-          </span>
-          </h2>
-          <div className="flex flex-wrap gap-2">
-            <Badge className="px-2.5 py-1 text-[11px]">{openCount} öppna</Badge>
-            <span style={statusPillOpen}>{meetingCount} möten</span>
-            <Badge className="px-2.5 py-1 text-[11px]">{doneCount} klara</Badge>
-          </div>
-          <p className="m-0 text-xs leading-[1.5] text-slate-500">
-            {filterHelperText}
-          </p>
-        </div>
-        <div className={cn('ml-auto flex flex-wrap justify-end', compact ? 'gap-1' : 'gap-1.5')}>
-          {([
-            ['all', 'Alla'],
-            ['open', 'Öppna'],
-            ['meetings', `Möten ${meetingCount}`],
-            ['notes', 'Anteckningar'],
-            ['today', `Idag ${todayCount}`],
-            ['done', 'Klart'],
-          ] as const).map(([value, label]) => (
-            <button key={value} onClick={()=>setFilter(value)} style={{ ...filterBtn, ...(filter===value? filterBtnActive : {}), ...(compact ? compactFilterBtn : {}) }}>{label}</button>
-          ))}
-        </div>
+    <div className="flex flex-col gap-3">
+      {/* Rubriken bar tidigare tre badges (öppna / möten / klara) OCH en förklarande mening som
+          bytte text per filter. Mötesantalet står redan på filterknappen "Möten N", så badgen sa om
+          det; meningen beskrev vad filtret visar, vilket filterknappen redan gör. */}
+      <DashboardCardHeader
+        title="Arbetsyta"
+        meta={openCount > 0 ? <Badge variant="accent">{openCount} öppna</Badge> : null}
+      />
+
+      <div className="flex flex-wrap gap-1.5">
+        {([
+          ['all', 'Alla'],
+          ['open', 'Öppna'],
+          ['meetings', `Möten ${meetingCount}`],
+          ['notes', 'Anteckningar'],
+          ['today', `Idag ${todayCount}`],
+          ['done', `Klart ${doneCount}`],
+        ] as const).map(([value, label]) => (
+          <button key={value} onClick={()=>setFilter(value)} style={{ ...filterBtn, ...(filter===value? filterBtnActive : {}), ...(compact ? compactFilterBtn : {}) }}>{label}</button>
+        ))}
       </div>
       {error && (
         <div className="text-xs text-red-700">{error}</div>
       )}
-      <section style={utilityCardStyle}>
-        <div style={summaryGridStyle}>
-          <div style={summaryInfoCardStyle}>
-            <span style={summaryInfoLabelStyle}>Nästa möte</span>
-            <strong style={summaryInfoValueStyle}>{nextMeeting ? nextMeeting.title : 'Inget möte bokat'}</strong>
-            <span style={summaryInfoHintStyle}>{nextMeeting?.startsAt ? formatReminderLabel(nextMeeting.startsAt) : 'Skapa ett möte när du vill blocka tid eller följa upp något.'}</span>
-          </div>
-          <div style={summaryInfoCardStyle}>
-            <span style={summaryInfoLabelStyle}>Påminnelser att agera på</span>
-            <strong style={summaryInfoValueStyle}>{overdueReminderCount}</strong>
-            <span style={summaryInfoHintStyle}>{overdueReminderCount > 0 ? 'Det finns poster där påminnelsen redan passerat.' : 'Inga sena påminnelser just nu.'}</span>
-          </div>
-          <div style={summaryInfoCardStyle}>
-            <span style={summaryInfoLabelStyle}>Anteckningar utan tid</span>
-            <strong style={summaryInfoValueStyle}>{activeNotesWithoutReminderCount}</strong>
-            <span style={summaryInfoHintStyle}>{activeNotesWithoutReminderCount > 0 ? 'Bra för lösa idéer, men lägg gärna påminnelse på sådant som inte får tappas.' : 'Alla öppna anteckningar har redan en tidsmarkör eller är möten.'}</span>
-          </div>
-        </div>
-      </section>
+      {/* Tre siffror, inte tre stycken prosa. Varje kort hade tidigare en hel mening under värdet
+          ("Bra för lösa idéer, men lägg gärna påminnelse på sådant som inte får tappas") som gav råd
+          i stället för att svara på något.
+
+          Etiketterna står kvar med flit, till skillnad från t.ex. "Snabba genvägar": en naken tvåa
+          betyder ingenting, så här BÄR etiketten informationen. Nästa möte får behålla sin undertext
+          — den är mötets tid, alltså data och inte en uppmaning. */}
+      <div className="grid gap-2.5 rounded-xl border border-solid border-[#e3e9df] bg-white px-3 py-2.5 sm:grid-cols-3 sm:gap-3">
+        <SummaryStat
+          label="Nästa möte"
+          value={nextMeeting ? nextMeeting.title : 'Inget bokat'}
+          hint={nextMeeting?.startsAt ? formatReminderLabel(nextMeeting.startsAt) : undefined}
+        />
+        <SummaryStat label="Sena påminnelser" value={String(overdueReminderCount)} />
+        <SummaryStat label="Utan påminnelse" value={String(activeNotesWithoutReminderCount)} />
+      </div>
       <section style={utilityCardStyle}>
         <div className="grid gap-2.5">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1297,35 +1257,21 @@ function getRelevantTime(item: NoteItem) {
   return Number.isNaN(time) ? Number.MAX_SAFE_INTEGER : time;
 }
 
-function getFilterHelperText(filter: 'all'|'open'|'meetings'|'notes'|'today'|'done', stats: { openCount: number; meetingCount: number; todayCount: number; doneCount: number; overdueReminderCount: number; urgentMeetingCount: number; activeNotesWithoutReminderCount: number; }) {
-  switch (filter) {
-    case 'all':
-      return stats.urgentMeetingCount > 0
-        ? `${stats.urgentMeetingCount} möten behöver extra uppmärksamhet just nu. Resten ligger kvar i arbetsytan för överblick.`
-        : 'Här ser du hela din personliga arbetsyta med möten, anteckningar och sådant som redan är klart.';
-    case 'open':
-      return stats.overdueReminderCount > 0
-        ? `${stats.openCount} öppna poster, varav ${stats.overdueReminderCount} har en påminnelse som redan passerat.`
-        : `${stats.openCount} öppna poster som fortfarande kräver någon form av handling eller uppföljning.`;
-    case 'meetings':
-      return stats.meetingCount > 0
-        ? `${stats.meetingCount} aktiva möten. Lägg plats, länk och påminnelse för att göra dem självbärande.`
-        : 'Här samlas alla aktiva möten så att du snabbt ser vad som är bokat.';
-    case 'notes':
-      return stats.activeNotesWithoutReminderCount > 0
-        ? `${stats.activeNotesWithoutReminderCount} anteckningar saknar tid eller påminnelse och fungerar som fria kom-ihåg-poster.`
-        : 'Här ser du dina öppna anteckningar och uppföljningar som inte är bokade som möten.';
-    case 'today':
-      return stats.todayCount > 0
-        ? `${stats.todayCount} poster är tidsatta för idag via mötestid eller påminnelse.`
-        : 'Den här vyn hjälper dig fokusera på det som faktiskt landar idag.';
-    case 'done':
-      return stats.doneCount > 0
-        ? `${stats.doneCount} poster är klara eller stängda och ligger kvar för snabb återblick tills du rensar dem.`
-        : 'Här visas sådant som redan är klart eller avslutat.';
-    default:
-      return '';
-  }
+/**
+ * En siffra i arbetsytans sammanfattningsrad.
+ *
+ * `hint` är för data som hör till värdet (mötets tid), inte för råd om vad man borde göra med det.
+ */
+function SummaryStat({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  return (
+    <div className="grid min-w-0 content-start gap-0.5">
+      <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-slate-500">{label}</span>
+      {/* ⚠️ INTE `truncate`. Värdet är oftast en siffra, men "Nästa möte" är en mötestitel som
+          användaren själv skrivit — klipptes den på en telefon fanns ingen väg att läsa resten. */}
+      <strong className="break-words text-sm text-slate-900">{value}</strong>
+      {hint ? <span className="break-words text-[11.5px] text-slate-500">{hint}</span> : null}
+    </div>
+  );
 }
 
 function getEmptyStateTitle(filter: 'all'|'open'|'meetings'|'notes'|'today'|'done') {
@@ -1587,11 +1533,6 @@ const checkBtnDone: React.CSSProperties = { background:'#16a34a', border:'1px so
 const pushStateBadge: React.CSSProperties = { display:'inline-flex', alignItems:'center', padding:'6px 10px', borderRadius:999, border:'1px solid #d1d5db', fontSize:11.5, fontWeight:700 };
 const sectionCard: React.CSSProperties = { display:'grid', gap:10, padding:'16px 18px', border:'1px solid #e0e8dc', borderRadius:18, background:'#f9fbf7', boxShadow:'0 1px 3px rgba(20,44,27,0.06), 0 18px 36px -18px rgba(20,44,27,0.24)' };
 const compactUtilityCard: React.CSSProperties = { display:'grid', gap:8, padding:'12px 14px', border:'1px solid #e0e8dc', borderRadius:16, background:'#f9fbf7', boxShadow:'0 1px 3px rgba(20,44,27,0.06)' };
-const summaryGridStyle: React.CSSProperties = { display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(160px, 1fr))', gap:10 };
-const summaryInfoCardStyle: React.CSSProperties = { display:'grid', gap:4, padding:'12px 14px', border:'1px solid #e3e9df', borderRadius:16, background:'#ffffff', boxShadow:'0 1px 2px rgba(15,23,42,0.05)' };
-const summaryInfoLabelStyle: React.CSSProperties = { fontSize:11.5, color:'#64748b', fontWeight:700, textTransform:'uppercase', letterSpacing:'0.04em' };
-const summaryInfoValueStyle: React.CSSProperties = { fontSize:14, color:'#0f172a' };
-const summaryInfoHintStyle: React.CSSProperties = { fontSize:11.5, color:'#64748b', lineHeight:1.45 };
 const sectionTitle: React.CSSProperties = { fontSize:14, color:'#0f172a' };
 const helperText: React.CSSProperties = { fontSize:12, color:'#64748b', lineHeight:1.5 };
 const fieldLabel: React.CSSProperties = { fontSize:12, fontWeight:700, color:'#334155', letterSpacing:'0.01em' };
