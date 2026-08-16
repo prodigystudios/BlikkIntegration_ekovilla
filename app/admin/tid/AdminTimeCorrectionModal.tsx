@@ -2,6 +2,7 @@
 import React from 'react';
 import CrmModal from '@/app/crm/components/CrmModal';
 import Input from '../../../components/ui/Input';
+import { crm } from '../../crm/lib/crmTokens';
 import { cn } from '../../../lib/shared/cn';
 import { minutesToHours, workedMinutes } from '../../../lib/domains/time/hours';
 import type { TimeReferenceItem } from '../../../lib/domains/time/reference';
@@ -37,7 +38,7 @@ const KINDS: Array<{ key: Kind; label: string }> = [
   { key: 'absence', label: 'Frånvaro' },
 ];
 
-const FIELD = 'w-full rounded-xl border border-solid border-[#dbe4d6] bg-white px-3 py-2 text-sm text-slate-900';
+const FIELD = 'w-full rounded-xl border border-[#dbe4d6] bg-white px-3 py-2 text-sm text-slate-900';
 const LABEL = 'text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600';
 
 /**
@@ -195,7 +196,7 @@ export default function AdminTimeCorrectionModal({
           <button
             type="button"
             onClick={onClose}
-            className="py-2.5 flex-1 rounded-xl border border-solid border-[#dbe4d6] bg-white text-sm font-semibold text-slate-600 transition hover:border-slate-400 sm:flex-none sm:px-5"
+            className={cn(crm.ghostButton, 'h-auto flex-1 py-2.5 sm:flex-none sm:px-5')}
           >
             Avbryt
           </button>
@@ -203,8 +204,8 @@ export default function AdminTimeCorrectionModal({
             type="button"
             onClick={() => void save()}
             disabled={busy || previewMinutes <= 0 || needsTarget || sameClock || !date}
-            className="py-2.5 flex-1 rounded-xl text-sm font-semibold text-white shadow-sm transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60 sm:ml-auto sm:flex-none sm:px-5"
-            style={{ backgroundColor: 'var(--crm-primary)' }}
+            className={cn(crm.formButton, 'h-auto flex-1 py-2.5 sm:ml-auto sm:flex-none sm:px-5')}
+            style={{ backgroundColor: 'var(--crm-primary, #1a3f26)' }}
           >
             {busy ? 'Sparar…' : 'Spara rättelse'}
           </button>
@@ -213,7 +214,7 @@ export default function AdminTimeCorrectionModal({
     >
       <div className="grid gap-4">
         {failure ? (
-          <div className="rounded-xl border border-solid border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{failure}</div>
+          <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{failure}</div>
         ) : null}
 
         <div className="flex gap-1 rounded-xl bg-[#eef3ea] p-1">
@@ -248,7 +249,7 @@ export default function AdminTimeCorrectionModal({
               Sök bara om raden ska flyttas till ett annat jobb.
             </p>
             {chosen ? (
-              <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-solid border-emerald-200 bg-emerald-50 px-3 py-2 text-sm">
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm">
                 <span className="font-semibold text-emerald-900">Flyttas till {orderLabel(chosen)}</span>
                 <button
                   type="button"
@@ -270,12 +271,12 @@ export default function AdminTimeCorrectionModal({
                     onClick={() => { setWorkOrderId(order.id); setChosen(order); }}
                     aria-pressed={workOrderId === order.id}
                     className={cn(
-                      'px-3 py-2.5 justify-start text-left w-full rounded-xl border border-solid text-sm transition',
+                      'px-3 py-2.5 justify-start text-left w-full rounded-xl border text-sm transition',
                       workOrderId === order.id
                         ? 'border-transparent text-white shadow-sm'
                         : 'border-[#dbe4d6] bg-white text-slate-700 hover:border-slate-400',
                     )}
-                    style={workOrderId === order.id ? { backgroundColor: 'var(--crm-primary)' } : undefined}
+                    style={workOrderId === order.id ? { backgroundColor: 'var(--crm-primary, #1a3f26)' } : undefined}
                   >
                     {orderLabel(order)}
                   </button>
@@ -311,7 +312,7 @@ export default function AdminTimeCorrectionModal({
             <Input inputMode="decimal" value={absenceHours} onChange={(e) => setAbsenceHours(e.target.value)} />
           </label>
         ) : (
-          <div className="grid gap-3 rounded-2xl border border-solid border-[#e0e8dc] bg-[#f6f9f4] p-3">
+          <div className="grid gap-3 rounded-2xl border border-[#e0e8dc] bg-[#f6f9f4] p-3">
             <div className="grid grid-cols-2 gap-2">
               <label className="w-auto grid gap-1">
                 <span className={LABEL}>Start</span>

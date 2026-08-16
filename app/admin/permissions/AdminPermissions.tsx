@@ -2,9 +2,8 @@
 import React from 'react';
 import { crm } from '../../crm/lib/crmTokens';
 import { cn } from '../../../lib/shared/cn';
-import { ADMIN_CARD, ADMIN_ERROR_BOX, ADMIN_LABEL, ADMIN_NOTICE_BOX, AdminFilterChip } from '../components/adminUi';
+import { ADMIN_CARD, ADMIN_CHECKBOX, ADMIN_ERROR_BOX, ADMIN_LABEL, ADMIN_NOTICE_BOX, AdminFilterChip } from '../components/adminUi';
 
-const CHECKBOX_CLASS = 'h-4 w-4 rounded border-slate-300 accent-emerald-600';
 
 type CatalogEntry = { key: string; description: string };
 type RoleBundles = Record<string, string[]>;
@@ -186,7 +185,7 @@ export default function AdminPermissions() {
                         checked={checked}
                         disabled={disabled}
                         onChange={(e) => toggleRole(entry.key, e.target.checked)}
-                        className={cn('mt-0.5', CHECKBOX_CLASS)}
+                        className={cn('mt-0.5', ADMIN_CHECKBOX)}
                       />
                       <span className="grid">
                         <span className="font-mono text-[12px] text-slate-800">{entry.key}</span>

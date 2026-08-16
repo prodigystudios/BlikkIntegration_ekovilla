@@ -22,6 +22,11 @@ export const ADMIN_NOTICE_BOX = 'rounded-xl border border-emerald-200 bg-emerald
 export const ADMIN_EMPTY_BOX = 'rounded-2xl border border-dashed border-[#d5e0cf] bg-[#f4f8f1] px-4 py-8 text-center';
 // Laddar: <p role="status" className="m-0 text-sm text-slate-400">Laddar…</p> (ingen hjälpare behövs)
 
+// Native kryssruta (dokumenterat undantag — ingen primitiv finns). Medvetet BARA
+// storlek + accentfärg: `rounded`/`border-*` är verkningslöst på en native checkbox
+// (preflight nollar border-width och globals.css återställer den bara för knappar).
+export const ADMIN_CHECKBOX = 'h-4 w-4 accent-emerald-600';
+
 // Innehållskort (vitt på flikkortets sage) respektive inre inset (sage på vitt).
 // Padding ägs av anropsplatsen (p-4 för kort, px-3 py-2.5/p-3.5 för inset).
 export const ADMIN_CARD = 'rounded-2xl border border-[#e0e8dc] bg-white';
