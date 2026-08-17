@@ -482,7 +482,13 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
 
       {/* Main content grid */}
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(280px,0.6fr)]">
-        <div className="grid gap-4">
+        {/* ⚠️ `content-start` — utan den STRÄCKS korten här. Kolumnerna är grid-syskon och blir
+            lika höga, och den här kolumnens auto-rader ärver `align-content: normal`, som för grid
+            löser till stretch: raderna blåses upp och fyller vad statusbilden + topplistan bestämt.
+            Effekten är att innehållshöjd inte styr något — en trimning av "Nästa fokus" åt kortet
+            upp direkt, och korten under låg kvar. Mätt i Chrome 2026-08-17: fokuskortet 90 px
+            naturligt, 317 px utsträckt. */}
+        <div className="grid content-start gap-4">
           {/* Next actions. Kortet är medvetet tight: det tar högst tre rader (buildOverviewActions
               kapar där) och allt som ligger under det — offert- och orderkorten — ska synas utan
               att man scrollar förbi en rubrik med luft omkring sig. */}
