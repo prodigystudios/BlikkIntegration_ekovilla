@@ -483,12 +483,14 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
       {/* Main content grid */}
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(280px,0.6fr)]">
         <div className="grid gap-4">
-          {/* Next actions */}
+          {/* Next actions. Kortet är medvetet tight: det tar högst tre rader (buildOverviewActions
+              kapar där) och allt som ligger under det — offert- och orderkorten — ska synas utan
+              att man scrollar förbi en rubrik med luft omkring sig. */}
           <div className={crm.cardInner}>
-            <div className="mb-4 flex items-center justify-between gap-3">
+            <div className="mb-3 flex items-center justify-between gap-3">
               <div>
-                <p className={cn('mb-1', crm.sectionTitle)}>Att agera på</p>
-                <h2 className="m-0 text-lg font-bold tracking-tight text-slate-900">Nästa fokus</h2>
+                <p className={cn('mb-0.5', crm.sectionTitle)}>Att agera på</p>
+                <h2 className="m-0 text-base font-bold tracking-tight text-slate-900">Nästa fokus</h2>
               </div>
               {!loading && (
                 <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">
@@ -498,21 +500,21 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
             </div>
             {loading ? <OverviewLoadingRows /> : null}
             {!loading && nextActions.length === 0 ? (
-              <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-800">
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800">
                 Läget är lugnt — inget blockerande i CRM-flödet just nu.
               </div>
             ) : null}
             {!loading && nextActions.length > 0 ? (
-              <div className="grid gap-2">
+              <div className="grid gap-1.5">
                 {nextActions.map((action) => (
                   <Link
                     key={action.title}
                     href={action.href}
-                    className="flex items-start justify-between gap-3 rounded-xl border border-slate-200 p-3.5 no-underline transition hover:border-slate-300 hover:bg-slate-50"
+                    className="flex min-w-0 items-start justify-between gap-3 rounded-xl border border-slate-200 px-3.5 py-2.5 no-underline transition hover:border-slate-300 hover:bg-slate-50"
                   >
-                    <div className="grid gap-0.5">
+                    <div className="grid min-w-0 gap-0.5">
                       <strong className="text-sm font-semibold text-slate-900">{action.title}</strong>
-                      <p className="m-0 text-xs leading-5 text-slate-500">{action.description}</p>
+                      <p className="m-0 text-xs leading-snug text-slate-500">{action.description}</p>
                     </div>
                     <span className="mt-0.5 shrink-0 text-xs font-semibold text-emerald-700">Öppna →</span>
                   </Link>
@@ -525,11 +527,16 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
               first row, then the two activity lists. Prospects had their own card here until
               2026-08-17 and were dropped — that stage isn't in use right now. */}
           <div className="grid gap-4 xl:grid-cols-2">
+            {/* ⚠️ Raderna bär `min-w-0` på själva länken, inte bara på textkolumnen. Raden är ett
+                GRID-item i listan nedan, och ett auto-spår får inte bli smalare än itemets
+                min-content — som med `truncate` (white-space: nowrap) är hela projektnamnets bredd.
+                Textkolumnens min-w-0 räcker alltså inte: raden växte förbi kortet och sköt ut
+                statusbadgen utanför kanten så fort namnet var långt. Mätt i Chrome 2026-08-17. */}
             <RecentCard title="Senaste offertlägen" href="/crm/offerter" loading={loading}>
               {state.quotes.length === 0 ? <EmptyState description="Inga offertsteg registrerade ännu." /> : (
                 <div className="grid gap-2">
                   {state.quotes.map((quote) => (
-                    <Link key={quote.id} href="/crm/offerter" className="flex items-start justify-between gap-3 rounded-xl border border-slate-100 p-3 no-underline transition hover:border-slate-200 hover:bg-slate-50">
+                    <Link key={quote.id} href="/crm/offerter" className="flex min-w-0 items-start justify-between gap-3 rounded-xl border border-slate-100 p-3 no-underline transition hover:border-slate-200 hover:bg-slate-50">
                       <div className="min-w-0">
                         <strong className="block truncate text-sm font-semibold text-slate-900">{quote.project_name}</strong>
                         <p className="m-0 truncate text-xs text-slate-500">{getQuoteCustomerName(quote)} · {formatCurrency(quote.amount, quote.currency_code)}</p>
@@ -545,7 +552,7 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
               {state.workOrders.length === 0 ? <EmptyState description="Inga arbetsordrar ännu." /> : (
                 <div className="grid gap-2">
                   {state.workOrders.map((order) => (
-                    <Link key={order.id} href={`/crm/arbetsorder/${order.id}`} className="flex items-start justify-between gap-3 rounded-xl border border-slate-100 p-3 no-underline transition hover:border-slate-200 hover:bg-slate-50">
+                    <Link key={order.id} href={`/crm/arbetsorder/${order.id}`} className="flex min-w-0 items-start justify-between gap-3 rounded-xl border border-slate-100 p-3 no-underline transition hover:border-slate-200 hover:bg-slate-50">
                       <div className="min-w-0">
                         <strong className="block truncate text-sm font-semibold text-slate-900">{order.project_name}</strong>
                         <p className="m-0 truncate text-xs text-slate-500">{order.client_name} · {formatCurrency(order.amount, order.currency_code)}</p>
@@ -561,7 +568,7 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
               {nextTasks.length === 0 ? <EmptyState description="Inga öppna uppgifter just nu." /> : (
                 <div className="grid gap-2">
                   {nextTasks.map((task) => (
-                    <Link key={task.id} href="/crm/uppgifter" className="flex items-start justify-between gap-3 rounded-xl border border-slate-100 p-3 no-underline transition hover:border-slate-200 hover:bg-slate-50">
+                    <Link key={task.id} href="/crm/uppgifter" className="flex min-w-0 items-start justify-between gap-3 rounded-xl border border-slate-100 p-3 no-underline transition hover:border-slate-200 hover:bg-slate-50">
                       <div className="min-w-0">
                         <strong className="block truncate text-sm font-semibold text-slate-900">{task.title}</strong>
                         <p className="m-0 truncate text-xs text-slate-500">{formatDate(task.due_date)}</p>
@@ -577,7 +584,7 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
               {recentCalls.length === 0 ? <EmptyState description="Inga samtal loggade ännu." /> : (
                 <div className="grid gap-2">
                   {recentCalls.map((call) => (
-                    <Link key={call.id} href="/crm/samtal" className="flex items-start justify-between gap-3 rounded-xl border border-slate-100 p-3 no-underline transition hover:border-slate-200 hover:bg-slate-50">
+                    <Link key={call.id} href="/crm/samtal" className="flex min-w-0 items-start justify-between gap-3 rounded-xl border border-slate-100 p-3 no-underline transition hover:border-slate-200 hover:bg-slate-50">
                       <div className="min-w-0">
                         <strong className="block truncate text-sm font-semibold text-slate-900">{getCallCompanyName(call)}</strong>
                         <p className="m-0 truncate text-xs text-slate-500">{formatDateTime(call.call_at)}</p>
