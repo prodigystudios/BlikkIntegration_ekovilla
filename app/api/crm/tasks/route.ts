@@ -35,7 +35,9 @@ export async function GET(req: Request) {
     // Uppgifter man delegerat tillhör mottagaren och ligger utanför den egna RLS-vyn. Skaparen
     // kommer alltid från sessionen, aldrig från frågesträngen — filtret är slutet om anroparen.
     if (parsedQuery.data.scope === 'delegated') {
-      const { data, error } = await listCrmTasksDelegatedBy(getSupabaseAdmin(), crmUser.currentUser.id);
+      const { data, error } = await listCrmTasksDelegatedBy(getSupabaseAdmin(), crmUser.currentUser.id, {
+        search: parsedQuery.data.q,
+      });
       if (error) return routeError(500, 'crm_tasks_delegated_failed', error.message);
       return ok({ items: mapCrmTaskRows(data as any[] | null | undefined) });
     }

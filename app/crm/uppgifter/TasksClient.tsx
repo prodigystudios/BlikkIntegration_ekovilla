@@ -359,17 +359,26 @@ export default function TasksClient({ canDelegate = false }: { canDelegate?: boo
       }
 
       const item = json?.data?.item as TaskItem | undefined;
+      // Den nya raden läggs bara till om den hör hemma i den lista som visas. En uppgift man
+      // lagt på någon annan tillhör MOTTAGAREN — hade den prependats i den egna listan skulle
+      // den räknats bland ens egna öppna uppgifter och märkts "Från: <sig själv>" tills nästa
+      // omladdning. Samma sak omvänt: en egen uppgift hör inte hemma i "Jag har lagt ut".
+      const belongsInView = item ? (filter === 'delegated' ? item.delegated : !item.delegated) : false;
       if (item) {
         setTasks((current) => {
           if (isEditing) return current.map((entry) => (entry.id === item.id ? item : entry));
-          return [item, ...current];
+          return belongsInView ? [item, ...current] : current;
         });
       }
 
       setModalOpen(false);
       setEditingTaskId(null);
       setDraft(initialDraft);
-      toast.success(isEditing ? 'Uppgift uppdaterad' : 'Uppgift skapad');
+      toast.success(
+        isEditing ? 'Uppgift uppdaterad'
+          : item?.delegated ? 'Uppgift skapad och notis skickad — finns under "Jag har lagt ut"'
+          : 'Uppgift skapad',
+      );
     } catch {
       toast.error('Fel vid sparande av uppgift');
     } finally {
@@ -605,8 +614,19 @@ export default function TasksClient({ canDelegate = false }: { canDelegate?: boo
                       )}
                     </div>
 
-                    {/* Actions */}
+                    {/* Actions.
+                        Den delegerade vyn är LÄSVY. Raderna tillhör mottagaren, och både PATCH
+                        och DELETE kör på sessionsklienten mot en tabell vars RLS är egen-bara —
+                        varje knapptryck här hade matchat noll rader och gett ett 500-fel. Att
+                        visa knappar som inte kan fungera är sämre än att inte visa dem: uppgiften
+                        är säljarens att göra klar, chefens att följa. */}
                     <div className="flex flex-wrap items-center gap-2 md:w-36 md:flex-col md:items-stretch">
+                      {filter === 'delegated' ? (
+                        <p className="text-[11px] leading-snug text-slate-400 md:text-right">
+                          {task.status === 'done' ? 'Avklarad av säljaren' : 'Väntar på säljaren'}
+                        </p>
+                      ) : (
+                      <>
                       <button
                         type="button"
                         onClick={() => toggleTaskStatus(task)}
@@ -628,6 +648,8 @@ export default function TasksClient({ canDelegate = false }: { canDelegate?: boo
                       >
                         Redigera
                       </button>
+                      </>
+                      )}
                     </div>
                   </div>
                 );

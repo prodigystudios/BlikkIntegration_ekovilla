@@ -150,13 +150,25 @@ export async function listCrmTasks(supabase: SupabaseClient, options: ListCrmTas
  * vara hen, och `user_id` måste vara någon annan. Inget annat blir läsbart. Anropas ALDRIG med
  * ett creatorUserId som kommer från klienten — bara från den inloggade sessionen.
  */
-export async function listCrmTasksDelegatedBy(admin: SupabaseClient, creatorUserId: string) {
-  return admin
+export async function listCrmTasksDelegatedBy(
+  admin: SupabaseClient,
+  creatorUserId: string,
+  options: { search?: string } = {}
+) {
+  let query = admin
     .from('dashboard_work_items')
     .select(crmTaskSelect)
     .eq('kind', 'note')
     .eq('created_by', creatorUserId)
-    .neq('user_id', creatorUserId)
+    .neq('user_id', creatorUserId);
+
+  // Sökningen måste tillämpas här också. Klienten skickar samma `q` oavsett vy, och utan den
+  // här grenen hade en sökning i den delegerade vyn tyst gett hela listan tillbaka.
+  if (options.search) {
+    query = query.or(`title.ilike.%${options.search}%,body.ilike.%${options.search}%`);
+  }
+
+  return query
     .order('status', { ascending: true })
     .order('due_at', { ascending: true, nullsFirst: false })
     .order('created_at', { ascending: false })
