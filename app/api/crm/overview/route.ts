@@ -8,6 +8,17 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Ogiltigt datum (ÅÅÅÅ-MM-DD)');
+
+// The overview asks for eight days at most (today plus the rolling seven). The margin is for a
+// reader whose calendar day differs from the server's, not for arbitrary history.
+const MAX_WINDOW_DAYS = 31;
+
+function daysBetween(fromDay: string, toDay: string) {
+  const from = Date.parse(`${fromDay}T00:00:00Z`);
+  const to = Date.parse(`${toDay}T00:00:00Z`);
+  return Math.round((to - from) / 86_400_000);
+}
+
 const querySchema = z.object({
   today: dateSchema,
   since: dateSchema,
@@ -43,6 +54,12 @@ export async function GET(req: Request) {
     };
     if (window.since > window.today) return routeError(400, 'invalid_window', 'Fönstrets start måste ligga före idag.');
     if (window.weekStart >= window.weekEnd) return routeError(400, 'invalid_window', 'Veckans start måste ligga före dess slut.');
+    // A ceiling on the width, not just the direction. The window is client-supplied, and
+    // `since=1970-01-01` would turn three bounded reads into full-table scans on demand — for any
+    // authenticated CRM user, konsult included. The page never asks for more than eight days.
+    if (daysBetween(window.since, window.today) > MAX_WINDOW_DAYS) {
+      return routeError(400, 'invalid_window', `Fönstret får vara högst ${MAX_WINDOW_DAYS} dagar.`);
+    }
 
     // Session client on purpose: RLS decides what the reader may count, exactly as it did when the
     // page counted list rows. The task figures are personal precisely because of that policy.

@@ -9,8 +9,8 @@ import type { UserRole } from '@/lib/roles';
 import { getVisibleCrmNavItems } from '../_lib/nav';
 import { cn } from '@/lib/shared/cn';
 import { crm, workOrderStatusClass, workOrderStatusLabel, type WorkOrderStatus } from '@/app/crm/lib/crmTokens';
-import { formatLocalDateOnly, getCurrentWeekStartDate, weeklyFromMonthly } from '@/lib/domains/crm/goals';
-import type { CrmOverviewSummary, CrmOverviewWindow } from '@/lib/domains/crm/overviewSummary';
+import { getCrmOverviewWindow, weeklyFromMonthly } from '@/lib/domains/crm/goals';
+import type { CrmOverviewSummary } from '@/lib/domains/crm/overviewSummary';
 
 type ProspectStatus = 'new' | 'contacted' | 'qualified' | 'quoted' | 'won' | 'lost';
 
@@ -78,7 +78,6 @@ type QuoteItem = {
 
 type WorkOrderItem = {
   id: string;
-  order_number: string;
   project_name: string;
   client_name: string;
   amount: number | string;
@@ -183,11 +182,11 @@ const RECENT_ITEM_LIMIT = 5;
 // rather than blanking. Matches what the empty lists produced before the server did the counting.
 const EMPTY_SUMMARY: CrmOverviewSummary = {
   pipelineProspects: 0, newProspects: 0, quotedProspects: 0, qualifiedProspects: 0,
-  activeQuotes: 0, activeQuoteValue: 0, quoteFollowUps: 0, quotesLast7Days: 0, quoteValueLast7Days: 0,
+  activeQuotes: 0, activeQuoteValue: 0, quoteFollowUps: 0,
   openWorkOrders: 0, openOrderValue: 0, workOrdersToInvoice: 0, toInvoiceOrderValue: 0,
-  orderValueLast7Days: 0, invoicedValueLast7Days: 0,
   callsLast7Days: 0, followUpCalls: 0, standaloneCalls: 0,
   openTasks: 0, overdueTasks: 0, todayTasks: 0,
+  weekTeam: { calls: 0, quotes: 0, quoteValue: 0, orderCount: 0, orderValue: 0, invoicedValue: 0 },
   weekByUser: {},
   truncated: [],
 };
@@ -210,34 +209,6 @@ function formatCurrency(value: number | string, currencyCode: string) {
   const numeric = typeof value === 'number' ? value : Number(String(value));
   if (!Number.isFinite(numeric)) return '–';
   return new Intl.NumberFormat('sv-SE', { style: 'currency', currency: currencyCode || 'SEK', maximumFractionDigits: 0 }).format(numeric);
-}
-
-function startOfToday() {
-  const now = new Date();
-  return new Date(now.getFullYear(), now.getMonth(), now.getDate());
-}
-
-function addDays(date: Date, days: number) {
-  const next = new Date(date);
-  next.setDate(next.getDate() + days);
-  return next;
-}
-
-// The window the server counts inside, built from the READER's clock — the route runs on UTC, so
-// deciding "this week" there would move the boundary for anyone whose calendar day differs from the
-// server's. The Monday comes from goals.ts, the same definition the weekly targets are keyed on, so
-// the actuals and the budget can't disagree about which week it is.
-function currentOverviewWindow(): CrmOverviewWindow {
-  const today = startOfToday();
-  const weekStart = getCurrentWeekStartDate();
-  // Noon anchor: adding days to a midnight Date can land on 23:00 the same day across a DST shift.
-  const weekEndDate = addDays(new Date(`${weekStart}T12:00:00`), 7);
-  return {
-    today: formatLocalDateOnly(today),
-    since: formatLocalDateOnly(addDays(today, -7)),
-    weekStart,
-    weekEnd: formatLocalDateOnly(weekEndDate),
-  };
 }
 
 function sortTasks(taskA: TaskItem, taskB: TaskItem) {
@@ -283,7 +254,7 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
       setError(null);
 
       try {
-        const overviewWindow = currentOverviewWindow();
+        const overviewWindow = getCrmOverviewWindow();
         const summaryQuery = new URLSearchParams({
           today: overviewWindow.today,
           since: overviewWindow.since,
@@ -365,11 +336,12 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
     };
   }, [state.summary, state.goals]);
 
-  const recentCalls = useMemo(() => [...state.calls].sort((a, b) => b.call_at.localeCompare(a.call_at)).slice(0, RECENT_ITEM_LIMIT), [state.calls]);
-  const recentQuotes = useMemo(() => [...state.quotes].sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, RECENT_ITEM_LIMIT), [state.quotes]);
-  // Newest orders first, on creation date — "senaste" means the ones that just came in, not the
-  // ones somebody last touched.
-  const recentWorkOrders = useMemo(() => [...state.workOrders].sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, RECENT_ITEM_LIMIT), [state.workOrders]);
+  // Quotes and orders arrive already ordered and already five rows long — the fetches ask for
+  // sort=updated_desc / sort=created_desc with limit=5, and re-sorting them here would leave two
+  // competing definitions of the same card's order, with the query's parameter looking
+  // authoritative. Calls and tasks come from routes without those parameters, so they are shaped
+  // here: calls arrive newest-first (call_at desc) and only need the slice; tasks need both.
+  const recentCalls = useMemo(() => state.calls.slice(0, RECENT_ITEM_LIMIT), [state.calls]);
   const nextTasks = useMemo(() => [...state.tasks].filter((task) => task.status === 'open').sort(sortTasks).slice(0, RECENT_ITEM_LIMIT), [state.tasks]);
   const nextActions = buildOverviewActions({ overdueTasks: summary.overdueTasks, followUpCalls: summary.followUpCalls, newProspects: summary.newProspects, standaloneCalls: summary.standaloneCalls, quoteFollowUps: summary.quoteFollowUps });
   const teamLeaderboard = useMemo(() => {
@@ -554,9 +526,9 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
               2026-08-17 and were dropped — that stage isn't in use right now. */}
           <div className="grid gap-4 xl:grid-cols-2">
             <RecentCard title="Senaste offertlägen" href="/crm/offerter" loading={loading}>
-              {recentQuotes.length === 0 ? <EmptyState description="Inga offertsteg registrerade ännu." /> : (
+              {state.quotes.length === 0 ? <EmptyState description="Inga offertsteg registrerade ännu." /> : (
                 <div className="grid gap-2">
-                  {recentQuotes.map((quote) => (
+                  {state.quotes.map((quote) => (
                     <Link key={quote.id} href="/crm/offerter" className="flex items-start justify-between gap-3 rounded-xl border border-slate-100 p-3 no-underline transition hover:border-slate-200 hover:bg-slate-50">
                       <div className="min-w-0">
                         <strong className="block truncate text-sm font-semibold text-slate-900">{quote.project_name}</strong>
@@ -570,9 +542,9 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
             </RecentCard>
 
             <RecentCard title="Senaste ordrar" href="/crm/arbetsorder" loading={loading}>
-              {recentWorkOrders.length === 0 ? <EmptyState description="Inga arbetsordrar ännu." /> : (
+              {state.workOrders.length === 0 ? <EmptyState description="Inga arbetsordrar ännu." /> : (
                 <div className="grid gap-2">
-                  {recentWorkOrders.map((order) => (
+                  {state.workOrders.map((order) => (
                     <Link key={order.id} href={`/crm/arbetsorder/${order.id}`} className="flex items-start justify-between gap-3 rounded-xl border border-slate-100 p-3 no-underline transition hover:border-slate-200 hover:bg-slate-50">
                       <div className="min-w-0">
                         <strong className="block truncate text-sm font-semibold text-slate-900">{order.project_name}</strong>
@@ -634,11 +606,15 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
                 <StatusStrip label="Aktiva offerter" value={summary.activeQuoteValue} scale={summary.flowScale} tone="emerald" currency helper={`${summary.activeQuotes} st`} />
                 <StatusStrip label="Öppna ordrar" value={summary.openOrderValue} scale={summary.flowScale} tone="teal" currency helper={`${summary.openWorkOrders} st`} />
                 <StatusStrip label="Att fakturera" value={summary.toInvoiceOrderValue} scale={summary.flowScale} tone="amber" currency helper={`${summary.workOrdersToInvoice} st`} />
-                <StatusStrip label="Fakturerat, 7 dagar" value={summary.invoicedValueLast7Days} tone="violet" currency />
+                <StatusStrip label="Fakturerat i veckan" value={summary.weekTeam.invoicedValue} tone="violet" currency />
                 <div className="my-1 h-px bg-slate-100" />
-                <StatusStrip label="Offerter mot mål" value={summary.quotesLast7Days} goal={summary.quotesTarget} tone="emerald" />
-                <StatusStrip label="Ordervärde mot mål" value={summary.orderValueLast7Days} goal={summary.orderValueTarget} tone="teal" currency />
-                <StatusStrip label="Samtal mot mål" value={summary.callsLast7Days} goal={summary.callsTarget} tone="sky" />
+                {/* Everything below is measured against a WEEKLY target, so the actuals are the
+                    week's — the same window the topplista under this card uses per säljare. With a
+                    rolling 7 days the team row could never equal the sum of the seller rows beside
+                    it, and one of the two would have to be read as broken. */}
+                <StatusStrip label="Offerter mot mål" value={summary.weekTeam.quotes} goal={summary.quotesTarget} tone="emerald" />
+                <StatusStrip label="Ordervärde mot mål" value={summary.weekTeam.orderValue} goal={summary.orderValueTarget} tone="teal" currency />
+                <StatusStrip label="Samtal mot mål" value={summary.weekTeam.calls} goal={summary.callsTarget} tone="sky" />
                 <StatusStrip label="Sena uppgifter" value={summary.overdueTasks} tone="rose" />
                 {/* Only ever shows if a query hit its row cap. The point of counting server-side
                     was that a truncated read stops being silent — so it says so. */}

@@ -3,6 +3,7 @@ import {
   composeCrmOverviewSummary,
   OPEN_WORK_ORDER_STATUSES,
   TO_INVOICE_WORK_ORDER_STATUSES,
+  ACTIVE_QUOTE_STATUSES,
   type CrmOverviewRows,
   type CrmOverviewWindow,
 } from '@/lib/domains/crm/overviewSummary';
@@ -11,6 +12,12 @@ import {
 // webbläsaren ser dem (PostgREST svarar med max 1000 rader, CRM-rutterna kapar lägre) — en siffra
 // räknad ur en kapad lista krymper tyst när tabellen växer. Det som testas här är den rena halvan:
 // rader in, läsmodell ut. Ingen databas, inga mockar.
+//
+// TVÅ FÖNSTER, med flit:
+//  · veckan — allt som mäts mot ett veckomål, för laget och per säljare i samma svep, så att
+//    lagraden och topplistans rader för samma mått går att stämma av mot varandra.
+//  · rullande 7 dagar — bara samtalen, för det är det enda talet vars etikett säger det
+//    ("Samtal senaste 7 dagar").
 
 const WINDOW: CrmOverviewWindow = {
   today: '2026-08-17',      // en måndag
@@ -22,6 +29,16 @@ const WINDOW: CrmOverviewWindow = {
 const ANNA = 'user-anna';
 const BOSSE = 'user-bosse';
 
+function call(userId: string | null, callAt: string, extra: { outcome?: string; prospect_id?: string | null } = {}) {
+  return {
+    user_id: userId as string,
+    call_at: callAt,
+    outcome: extra.outcome ?? 'positive',
+    // Not `?? 'p1'`: null is the value under test (a call without a prospect), and ?? would swallow it.
+    prospect_id: 'prospect_id' in extra ? extra.prospect_id ?? null : 'p1',
+  };
+}
+
 function rows(overrides: Partial<CrmOverviewRows> = {}): CrmOverviewRows {
   return {
     quoteStocks: [],
@@ -30,14 +47,7 @@ function rows(overrides: Partial<CrmOverviewRows> = {}): CrmOverviewRows {
     orderWindow: [],
     callWindow: [],
     openTasks: [],
-    counts: {
-      pipelineProspects: 0,
-      newProspects: 0,
-      quotedProspects: 0,
-      qualifiedProspects: 0,
-      followUpCalls: 0,
-      standaloneCalls: 0,
-    },
+    counts: { pipelineProspects: 0, newProspects: 0, quotedProspects: 0, qualifiedProspects: 0 },
     truncated: [],
     ...overrides,
   };
@@ -82,39 +92,41 @@ describe('composeCrmOverviewSummary — lagren', () => {
     expect(summary.toInvoiceOrderValue).toBe(48_000);
   });
 
-  it('statusgrupperna kommer från orderbrädans egna definitioner', () => {
-    // Grupperna får inte drifta ifrån brädans chip-filter — då hade en ny status kunnat falla ur
-    // både "Öppna ordrar" och "Att fakturera" utan att någon märkte det.
+  it('statusgrupperna kommer från vyernas egna definitioner, inte från kopior', () => {
+    // Grupperna får inte drifta ifrån orderbrädans chip-filter och offertlistans flikar — då hade
+    // en ny status kunnat falla ur översiktens lager utan att något test gick sönder.
     expect(OPEN_WORK_ORDER_STATUSES).toEqual(['draft', 'scheduled', 'ready', 'in_progress']);
     expect(TO_INVOICE_WORK_ORDER_STATUSES).toEqual(['completed', 'partially_invoiced']);
+    expect(ACTIVE_QUOTE_STATUSES).toEqual(['draft', 'sent', 'follow_up']);
   });
 });
 
 describe('composeCrmOverviewSummary — fakturerat bucketas på fakturadatumet', () => {
-  // Det här är felklassen PR #70 rättade i rapporten: ordrar hämtade och bucketade på created_at
-  // dolde 371 323 kr av 450 101 kr i en månad, eftersom eftersläpningen order→faktura är ungefär
-  // en månad. De två datumen är alltså inte utbytbara.
-  it('räknar en gammal order som fakturerades i fönstret', () => {
+  // Det här är felklassen PR #70 rättade i rapporten: ordrar bucketade på created_at dolde
+  // 371 323 kr av 450 101 kr i en månad, eftersom eftersläpningen order→faktura är ungefär en
+  // månad. De två datumen är alltså inte utbytbara.
+  it('räknar en gammal order som fakturerades i veckan', () => {
     const summary = composeCrmOverviewSummary(rows({
       orderWindow: [
-        { status: 'invoiced', amount: 100_000, created_at: '2026-06-01T08:00:00+00:00', fortnox_invoiced_at: '2026-08-14T09:00:00+00:00', assigned_to: ANNA },
+        { status: 'invoiced', amount: 100_000, created_at: '2026-06-01T08:00:00+00:00', fortnox_invoiced_at: '2026-08-19T09:00:00+00:00', assigned_to: ANNA },
       ],
     }), WINDOW);
 
-    expect(summary.invoicedValueLast7Days).toBe(100_000);
-    // Ordern skapades långt utanför fönstret, så ordervärdet ska INTE räknas.
-    expect(summary.orderValueLast7Days).toBe(0);
+    expect(summary.weekTeam.invoicedValue).toBe(100_000);
+    // Ordern skapades långt utanför veckan, så ordervärdet ska INTE räknas.
+    expect(summary.weekTeam.orderValue).toBe(0);
+    expect(summary.weekTeam.orderCount).toBe(0);
   });
 
-  it('räknar inte en order som skapades i fönstret men faktureras senare', () => {
+  it('räknar inte en order som skapades i veckan men faktureras senare', () => {
     const summary = composeCrmOverviewSummary(rows({
       orderWindow: [
-        { status: 'in_progress', amount: 70_000, created_at: '2026-08-12T08:00:00+00:00', fortnox_invoiced_at: null, assigned_to: ANNA },
+        { status: 'in_progress', amount: 70_000, created_at: '2026-08-18T08:00:00+00:00', fortnox_invoiced_at: null, assigned_to: ANNA },
       ],
     }), WINDOW);
 
-    expect(summary.orderValueLast7Days).toBe(70_000);
-    expect(summary.invoicedValueLast7Days).toBe(0);
+    expect(summary.weekTeam.orderValue).toBe(70_000);
+    expect(summary.weekTeam.invoicedValue).toBe(0);
   });
 
   it('kräver både statusen och stämpeln', () => {
@@ -123,34 +135,35 @@ describe('composeCrmOverviewSummary — fakturerat bucketas på fakturadatumet',
         // Status invoiced men ingen stämpel: en gammal rad från före kolumnen fanns. Ingen
         // created_at-fallback här — raden ska summera till topplistans fakturerat, och den
         // kräver stämpeln.
-        { status: 'invoiced', amount: 50_000, created_at: '2026-08-12T08:00:00+00:00', fortnox_invoiced_at: null, assigned_to: ANNA },
+        { status: 'invoiced', amount: 50_000, created_at: '2026-08-18T08:00:00+00:00', fortnox_invoiced_at: null, assigned_to: ANNA },
         // Stämpel men inte fakturerad status: ska inte kunna hända, och räknas inte.
-        { status: 'completed', amount: 60_000, created_at: '2026-06-01T08:00:00+00:00', fortnox_invoiced_at: '2026-08-13T08:00:00+00:00', assigned_to: ANNA },
+        { status: 'completed', amount: 60_000, created_at: '2026-06-01T08:00:00+00:00', fortnox_invoiced_at: '2026-08-19T08:00:00+00:00', assigned_to: ANNA },
       ],
     }), WINDOW);
 
-    expect(summary.invoicedValueLast7Days).toBe(0);
+    expect(summary.weekTeam.invoicedValue).toBe(0);
   });
 
-  it('tar med randdagen (since är inklusive) men inte dagen före', () => {
+  it('veckans start är inklusive och dess slut exklusive', () => {
     const summary = composeCrmOverviewSummary(rows({
       orderWindow: [
-        { status: 'draft', amount: 1_000, created_at: '2026-08-10T23:30:00+00:00', fortnox_invoiced_at: null, assigned_to: ANNA },
-        { status: 'draft', amount: 2_000, created_at: '2026-08-09T23:30:00+00:00', fortnox_invoiced_at: null, assigned_to: ANNA },
+        { status: 'draft', amount: 1_000, created_at: '2026-08-17T23:30:00+00:00', fortnox_invoiced_at: null, assigned_to: ANNA }, // måndag — inne
+        { status: 'draft', amount: 2_000, created_at: '2026-08-16T23:30:00+00:00', fortnox_invoiced_at: null, assigned_to: ANNA }, // söndagen före — ute
+        { status: 'draft', amount: 4_000, created_at: '2026-08-24T00:30:00+00:00', fortnox_invoiced_at: null, assigned_to: ANNA }, // nästa måndag — ute
       ],
     }), WINDOW);
 
-    expect(summary.orderValueLast7Days).toBe(1_000);
+    expect(summary.weekTeam.orderValue).toBe(1_000);
   });
 });
 
-describe('composeCrmOverviewSummary — veckans utfall per säljare', () => {
-  it('fördelar samtal, offerter, ordrar och fakturerat på rätt användare', () => {
+describe('composeCrmOverviewSummary — laget och säljarna räknas i samma svep', () => {
+  it('fördelar samtal, offerter, ordrar och fakturerat på rätt säljare — och summerar laget', () => {
     const summary = composeCrmOverviewSummary(rows({
       callWindow: [
-        { user_id: ANNA, call_at: '2026-08-17T09:00:00+00:00' },
-        { user_id: ANNA, call_at: '2026-08-18T09:00:00+00:00' },
-        { user_id: BOSSE, call_at: '2026-08-19T09:00:00+00:00' },
+        call(ANNA, '2026-08-17T09:00:00+00:00'),
+        call(ANNA, '2026-08-18T09:00:00+00:00'),
+        call(BOSSE, '2026-08-19T09:00:00+00:00'),
       ],
       quoteWindow: [
         { amount: '12000', quote_date: '2026-08-17', assigned_to: ANNA },
@@ -168,23 +181,13 @@ describe('composeCrmOverviewSummary — veckans utfall per säljare', () => {
     expect(summary.weekByUser[BOSSE]).toEqual({
       calls: 1, quotes: 1, quoteValue: 8_000, orderCount: 0, orderValue: 0, invoicedValue: 30_000,
     });
+    // Lagraden MÅSTE vara summan av säljarraderna — statusbilden visar den ovanför topplistan.
+    expect(summary.weekTeam).toEqual({
+      calls: 3, quotes: 2, quoteValue: 20_000, orderCount: 1, orderValue: 40_000, invoicedValue: 30_000,
+    });
   });
 
-  it('veckans slut är exklusive, och förra veckans rader hör inte hit', () => {
-    const summary = composeCrmOverviewSummary(rows({
-      callWindow: [
-        { user_id: ANNA, call_at: '2026-08-24T08:00:00+00:00' }, // nästa måndag — utanför
-        { user_id: ANNA, call_at: '2026-08-16T08:00:00+00:00' }, // söndagen före — utanför
-        { user_id: ANNA, call_at: '2026-08-23T08:00:00+00:00' }, // veckans söndag — inne
-      ],
-    }), WINDOW);
-
-    expect(summary.weekByUser[ANNA]).toMatchObject({ calls: 1 });
-    // Samtalsfönstret är de rullande 7 dagarna, alltså vidare än veckan: söndagen den 16:e är kvar.
-    expect(summary.callsLast7Days).toBe(3);
-  });
-
-  it('en order utan ansvarig hamnar inte på någon säljare', () => {
+  it('en order utan ansvarig hör till laget men till ingen säljare', () => {
     const summary = composeCrmOverviewSummary(rows({
       orderWindow: [
         { status: 'scheduled', amount: 5_000, created_at: '2026-08-18T10:00:00+00:00', fortnox_invoiced_at: null, assigned_to: null },
@@ -192,8 +195,45 @@ describe('composeCrmOverviewSummary — veckans utfall per säljare', () => {
     }), WINDOW);
 
     expect(summary.weekByUser).toEqual({});
-    // Lagsiffran ska däremot inte tappa ordern bara för att ingen är utsedd.
-    expect(summary.orderValueLast7Days).toBe(5_000);
+    expect(summary.weekTeam.orderValue).toBe(5_000);
+  });
+
+  it('förra veckans rader hör inte till veckan, men kan ligga i samtalens 7 dagar', () => {
+    const summary = composeCrmOverviewSummary(rows({
+      callWindow: [
+        call(ANNA, '2026-08-24T08:00:00+00:00'), // nästa måndag — utanför VECKAN (slutet är exklusive)
+        call(ANNA, '2026-08-16T08:00:00+00:00'), // söndagen före — utanför veckan, inne i 7 dagar
+        call(ANNA, '2026-08-23T08:00:00+00:00'), // veckans söndag — inne i båda
+        call(ANNA, '2026-08-09T08:00:00+00:00'), // åtta dagar bak — utanför båda
+      ],
+    }), WINDOW);
+
+    expect(summary.weekTeam.calls).toBe(1);
+    // 3, inte 2: de rullande 7 dagarna har en undre gräns men INGEN övre, precis som klientkoden
+    // hade före flytten. Ett samtal med framtidsdatum räknas alltså med. Det är inte en olycka som
+    // ska tystas här — vill man ha ett tak är det en ändring av vad siffran betyder.
+    expect(summary.callsLast7Days).toBe(3);
+  });
+});
+
+describe('composeCrmOverviewSummary — samtalen som driver "Att agera på"', () => {
+  it('räknar uppföljning och fristående samtal INOM fönstret, inte över all tid', () => {
+    // `outcome` är ett permanent historiskt faktum utan kvitteringsflagga. Räknat över all tid
+    // hade siffran bara vuxit, och ett samtal märkt "följ upp" i juni hade fortsatt kräva
+    // uppmärksamhet i december.
+    const summary = composeCrmOverviewSummary(rows({
+      callWindow: [
+        call(ANNA, '2026-08-15T09:00:00+00:00', { outcome: 'follow_up' }),
+        call(ANNA, '2026-08-16T09:00:00+00:00', { outcome: 'follow_up', prospect_id: null }),
+        call(ANNA, '2026-08-11T09:00:00+00:00', { outcome: 'positive', prospect_id: null }),
+        // Utanför de rullande 7 dagarna — ska inte räknas alls.
+        call(ANNA, '2026-06-01T09:00:00+00:00', { outcome: 'follow_up', prospect_id: null }),
+      ],
+    }), WINDOW);
+
+    expect(summary.callsLast7Days).toBe(3);
+    expect(summary.followUpCalls).toBe(2);
+    expect(summary.standaloneCalls).toBe(2);
   });
 });
 
@@ -216,10 +256,7 @@ describe('composeCrmOverviewSummary — uppgifter och genomsläpp', () => {
 
   it('släpper igenom head-räkningarna och kapningsflaggan orörda', () => {
     const summary = composeCrmOverviewSummary(rows({
-      counts: {
-        pipelineProspects: 778, newProspects: 12, quotedProspects: 3, qualifiedProspects: 9,
-        followUpCalls: 4, standaloneCalls: 2,
-      },
+      counts: { pipelineProspects: 778, newProspects: 12, quotedProspects: 3, qualifiedProspects: 9 },
       truncated: ['quote_window'],
     }), WINDOW);
 
@@ -227,8 +264,6 @@ describe('composeCrmOverviewSummary — uppgifter och genomsläpp', () => {
     expect(summary.newProspects).toBe(12);
     expect(summary.quotedProspects).toBe(3);
     expect(summary.qualifiedProspects).toBe(9);
-    expect(summary.followUpCalls).toBe(4);
-    expect(summary.standaloneCalls).toBe(2);
     expect(summary.truncated).toEqual(['quote_window']);
   });
 

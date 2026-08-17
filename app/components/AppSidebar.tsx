@@ -622,9 +622,11 @@ export default function AppSidebar({
 
         {/* User + account menu */}
         <div className="mx-3 mt-2 mb-3 h-px" style={{ backgroundColor: 'var(--crm-sidebar-border)' }} />
-        {/* min-h-10 is the profile button's height (22px icon + padding + border): without it
-            the footer row shrinks to the avatar on the rail and the avatar hops on hover. */}
-        <div className={cn('flex items-center gap-2.5 px-4 pb-5 lg:min-h-10', rail && 'lg:justify-center lg:px-2')}>
+        {/* 3.75rem = the profile button's 40px (22px icon + 8px padding + 1px border, twice) PLUS
+            pb-5's 20px. Preflight makes this a border box, so min-height has to include the
+            padding — a 40px floor would sit under the rail's own 52px and do nothing at all, and
+            the avatar would keep hopping on hover. */}
+        <div className={cn('flex items-center gap-2.5 px-4 pb-5 lg:min-h-[3.75rem]', rail && 'lg:justify-center lg:px-2')}>
           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-700 text-xs font-bold text-white">
             {userInitial}
           </div>

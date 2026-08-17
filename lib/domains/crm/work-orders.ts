@@ -515,7 +515,10 @@ export async function getCrmWorkOrderFilterCounts(
         supabase.from('crm_work_orders').select('id', { count: 'exact', head: true }),
         { search: options.search, filter, assignedToIn: options.assignedToIn },
       );
-      const { count } = await query;
+      // Throw rather than fall back to 0 — a failed count would render as a chip reading 0 next to
+      // a list full of rows, with nothing saying the number is wrong. Same rule as the quote counts.
+      const { count, error } = await query;
+      if (error) throw new Error(`work_order_counts:${filter}: ${error.message}`);
       return [filter, count ?? 0] as const;
     }),
   );

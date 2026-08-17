@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Input from '../../../components/ui/Input';
 import { cn } from '@/lib/shared/cn';
@@ -114,7 +114,20 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
     [assigneeFilter, currentUserId],
   );
 
-  function buildListQuery(nextOffset: number) {
+  const presetProspectId = searchParams.get('prospect_id') || '';
+  const presetQuoteId = searchParams.get('quote_id') || '';
+  const shouldOpenCreate = searchParams.get('new') === '1';
+
+  // What the tab counts are computed over. They don't depend on the tab (every tab is counted) nor
+  // on the sort (order can't change a count), so re-requesting five exact COUNTs on a sort toggle
+  // would be five O(n) scans for a number that cannot move.
+  const countScope = `${search.trim()}|${assigneeParam}|${presetProspectId}`;
+  const countedScope = useRef<string | null>(null);
+
+  // Bumped when something happens that can move a row between tabs, to force a reload.
+  const [reloadKey, setReloadKey] = useState(0);
+
+  function buildListQuery(nextOffset: number, withCounts: boolean) {
     const query = new URLSearchParams();
     if (search.trim()) query.set('q', search.trim());
     if (presetProspectId) query.set('prospect_id', presetProspectId);
@@ -123,17 +136,21 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
     if (assigneeParam) query.set('assignee', assigneeParam);
     query.set('offset', String(nextOffset));
     query.set('limit', String(PAGE_SIZE));
-    // Tab counts only need recomputing on a fresh first page, not on "Visa fler".
-    if (nextOffset === 0) query.set('counts', '1');
+    if (withCounts) query.set('counts', '1');
     return query.toString();
   }
 
   async function loadMore() {
     if (loadingMore || quotes.length >= total) return;
     setLoadingMore(true);
+    // The page being appended belongs to the query it was asked for. Change the sort mid-flight and
+    // the first-page effect replaces the list under it; appending then mixes two orderings and
+    // duplicates rows, so a response whose request no longer describes the visible list is dropped.
+    const requestedFor = `${countScope}|${filter}|${sort}`;
     try {
-      const res = await fetch(`/api/crm/quotes?${buildListQuery(quotes.length)}`, { cache: 'no-store' });
+      const res = await fetch(`/api/crm/quotes?${buildListQuery(quotes.length, false)}`, { cache: 'no-store' });
       const json = await res.json().catch(() => ({}));
+      if (requestedFor !== `${countScope}|${filter}|${sort}`) return;
       if (!res.ok || !json.ok) { setError(json?.error || 'Kunde inte ladda fler offerter.'); return; }
       const items = Array.isArray(json?.data?.items) ? json.data.items : [];
       setQuotes((prev) => [...prev, ...items]);
@@ -168,9 +185,6 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
   const [linkedQuote, setLinkedQuote] = useState<QuoteItem | null>(null);
   const [hasHandledPreset, setHasHandledPreset] = useState(false);
 
-  const presetProspectId = searchParams.get('prospect_id') || '';
-  const presetQuoteId = searchParams.get('quote_id') || '';
-  const shouldOpenCreate = searchParams.get('new') === '1';
   const [hasHandledQuotePreset, setHasHandledQuotePreset] = useState(false);
 
   // Redirect preset "new=1" links to the form page
@@ -190,23 +204,24 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
   // starts a fresh page rather than re-filtering what happens to be in the browser.
   useEffect(() => {
     let active = true;
+    const wantCounts = countedScope.current !== countScope;
     async function load() {
       setLoading(true); setError(null);
       try {
-        const res = await fetch(`/api/crm/quotes?${buildListQuery(0)}`, { cache: 'no-store' });
+        const res = await fetch(`/api/crm/quotes?${buildListQuery(0, wantCounts)}`, { cache: 'no-store' });
         const json = await res.json().catch(() => ({}));
         if (!active) return;
         if (!res.ok || !json.ok) { setError(json?.error || 'Kunde inte ladda offerter.'); setQuotes([]); setTotal(0); return; }
         setQuotes(Array.isArray(json?.data?.items) ? json.data.items : []);
         setTotal(json?.data?.total ?? 0);
-        if (json?.data?.counts) setCounts(json.data.counts);
+        if (json?.data?.counts) { setCounts(json.data.counts); countedScope.current = countScope; }
       } catch { if (active) { setError('Kunde inte ladda offerter.'); setQuotes([]); setTotal(0); } }
       finally { if (active) setLoading(false); }
     }
     void load();
     return () => { active = false; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [presetProspectId, search, filter, sort, assigneeParam]);
+  }, [presetProspectId, search, filter, sort, assigneeParam, reloadKey]);
 
   // Deep-link: open a specific quote's detail panel when arriving with ?quote_id= (e.g. from a
   // customer's related list). Handled once the matching quote is loaded so a manual close isn't
@@ -490,9 +505,18 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
           onClose={() => setDetailPanelOpen(false)}
           onQuoteChanged={(patch) => {
             setQuotes((current) => current.map((q) => (q.id === patch.id ? { ...q, ...patch } : q)));
-            // The deep-linked quote lives outside the list, so it needs the same patch — otherwise
-            // an edit made in the panel wouldn't show in the panel it was made in.
-            setLinkedQuote((current) => (current && current.id === patch.id ? { ...current, ...patch } : current));
+            // Keep the open panel alive across a reload that may drop its row from the page: hold
+            // the patched quote outside the list. Without this, marking a draft "Vunnen" from the
+            // "Aktiva" tab would reload the list, lose the row, and unmount the panel mid-click.
+            const patched = quotes.find((q) => q.id === patch.id) ?? linkedQuote;
+            if (patched && patched.id === patch.id) setLinkedQuote({ ...patched, ...patch });
+            // A status change moves the row between tabs and moves two counters. The tabs are
+            // server-side now, so the browser can no longer make that happen by re-filtering an
+            // array — it has to ask again, counts included.
+            if (patch.status && patch.status !== patched?.status) {
+              countedScope.current = null;
+              setReloadKey((key) => key + 1);
+            }
           }}
         />
       ) : null}

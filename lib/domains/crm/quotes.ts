@@ -41,7 +41,7 @@ export const crmQuoteSelect = `
   )
 `;
 
-type CrmQuoteStatus = 'draft' | 'sent' | 'follow_up' | 'won' | 'lost';
+export type CrmQuoteStatus = 'draft' | 'sent' | 'follow_up' | 'won' | 'lost';
 type CrmQuoteType = 'private' | 'business';
 
 type CustomerSource = {
@@ -160,7 +160,7 @@ export type CrmQuoteSort = 'status_asc' | 'updated_desc' | 'created_desc' | 'fol
 // BOARD_FILTER_STATUSES for work orders.
 export type CrmQuoteListFilter = 'all' | 'active' | 'follow_up' | 'won' | 'lost';
 export const CRM_QUOTE_LIST_FILTERS: CrmQuoteListFilter[] = ['all', 'active', 'follow_up', 'won', 'lost'];
-const QUOTE_FILTER_STATUSES: Record<CrmQuoteListFilter, CrmQuoteStatus[] | null> = {
+export const QUOTE_FILTER_STATUSES: Record<CrmQuoteListFilter, CrmQuoteStatus[] | null> = {
   all: null,
   // "Aktiva" = still in play: not won, not lost.
   active: ['draft', 'sent', 'follow_up'],
@@ -238,7 +238,11 @@ export async function getCrmQuoteFilterCounts(
         supabase.from('crm_quotes').select('id', { count: 'exact', head: true }),
         { ...options, filter },
       );
-      const { count } = await query;
+      // Throw rather than fall back to 0: a failed count would otherwise render as "Alla 0" beside
+      // a hundred visible rows, with nothing telling the reader the number is wrong. Silent zeros
+      // are the failure mode this whole change exists to remove.
+      const { count, error } = await query;
+      if (error) throw new Error(`quote_counts:${filter}: ${error.message}`);
       return [filter, count ?? 0] as const;
     }),
   );
