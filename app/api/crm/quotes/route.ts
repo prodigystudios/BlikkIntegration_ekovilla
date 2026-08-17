@@ -1,6 +1,6 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { createCrmQuote, getCrmQuote, listCrmQuotesWithFilters } from '@/lib/domains/crm/quotes';
+import { createCrmQuote, getCrmQuote, getCrmQuoteFilterCounts, listCrmQuotesWithFilters, CRM_QUOTES_PAGE_SIZE } from '@/lib/domains/crm/quotes';
 import { pushQuoteToFortnox } from '@/lib/domains/fortnox/offers';
 import { FortnoxNotConnectedError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
 import {
@@ -26,25 +26,51 @@ export async function GET(req: Request) {
       prospect_id: url.searchParams.get('prospect_id') || undefined,
       customer_id: url.searchParams.get('customer_id') || undefined,
       limit: url.searchParams.get('limit') || undefined,
+      offset: url.searchParams.get('offset') || undefined,
+      filter: url.searchParams.get('filter') || undefined,
+      assignee: url.searchParams.get('assignee') || undefined,
+      sort: url.searchParams.get('sort') || undefined,
     });
 
     if (!parsedQuery.success) return validationError(parsedQuery.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
-    const query = await listCrmQuotesWithFilters(supabase, {
+    // Assignee scope: a comma-separated list of user ids (the client resolves 'mine' to the
+    // current user id before sending). Empty = everyone.
+    const assignedToIn = (parsedQuery.data.assignee || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const offset = parsedQuery.data.offset ?? 0;
+    const limit = parsedQuery.data.limit ?? CRM_QUOTES_PAGE_SIZE;
+    const scope = {
       search: parsedQuery.data.q,
-      status: parsedQuery.data.status,
+      assignedToIn,
       prospectId: parsedQuery.data.prospect_id,
       customerId: parsedQuery.data.customer_id,
-      limit: parsedQuery.data.limit,
+    };
+
+    const supabase = createRouteHandlerClient({ cookies });
+    const query = await listCrmQuotesWithFilters(supabase, {
+      ...scope,
+      status: parsedQuery.data.status,
+      filter: parsedQuery.data.filter,
+      limit,
+      offset,
+      sort: parsedQuery.data.sort,
     });
-    const { data, error } = await query;
+    const { data, error, count } = await query;
 
     if (error) {
       return routeError(500, 'crm_quotes_list_failed', error.message);
     }
 
-    return ok({ items: data || [] });
+    // Per-tab counts (scoped to the same search + assignee filter). Only the offer list asks for
+    // them (counts=1, first page); the board, the customer detail and the overview skip the extra
+    // count queries. Same contract as the work-orders route.
+    const wantCounts = url.searchParams.get('counts') === '1' && offset === 0;
+    const counts = wantCounts ? await getCrmQuoteFilterCounts(supabase, scope) : undefined;
+
+    return ok({ items: data || [], total: count ?? 0, offset, limit, counts });
   } catch (e: any) {
     return routeError(500, 'crm_quotes_unexpected', e?.message || 'Failed to list quotes');
   }

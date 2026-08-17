@@ -18,6 +18,7 @@ export async function GET(req: Request) {
       customer_id: url.searchParams.get('customer_id') || undefined,
       limit: url.searchParams.get('limit') || undefined,
       offset: url.searchParams.get('offset') || undefined,
+      sort: url.searchParams.get('sort') || undefined,
     });
 
     if (!parsedQuery.success) return validationError(parsedQuery.error);
@@ -43,6 +44,7 @@ export async function GET(req: Request) {
       customerId: parsedQuery.data.customer_id,
       limit,
       offset,
+      sort: parsedQuery.data.sort,
     });
     const { data, error, count } = await query;
 

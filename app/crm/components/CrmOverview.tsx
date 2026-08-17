@@ -8,18 +8,11 @@ import ChangelogCard from './ChangelogCard';
 import type { UserRole } from '@/lib/roles';
 import { getVisibleCrmNavItems } from '../_lib/nav';
 import { cn } from '@/lib/shared/cn';
-import { crm } from '@/app/crm/lib/crmTokens';
-import { weeklyFromMonthly } from '@/lib/domains/crm/goals';
+import { crm, workOrderStatusClass, workOrderStatusLabel, type WorkOrderStatus } from '@/app/crm/lib/crmTokens';
+import { getCrmOverviewWindow, weeklyFromMonthly } from '@/lib/domains/crm/goals';
+import type { CrmOverviewSummary } from '@/lib/domains/crm/overviewSummary';
 
-type ProspectItem = {
-  id: string;
-  company_name: string;
-  contact_name: string | null;
-  city: string | null;
-  status: 'new' | 'contacted' | 'qualified' | 'quoted' | 'won' | 'lost';
-  source: string | null;
-  updated_at: string;
-};
+type ProspectStatus = 'new' | 'contacted' | 'qualified' | 'quoted' | 'won' | 'lost';
 
 type CallProspect = {
   id: string;
@@ -27,7 +20,7 @@ type CallProspect = {
   contact_name: string | null;
   city: string | null;
   source: string | null;
-  status: ProspectItem['status'];
+  status: ProspectStatus;
 };
 
 type CallItem = {
@@ -65,7 +58,7 @@ type QuoteProspect = {
   company_name: string;
   contact_name: string | null;
   city: string | null;
-  status: ProspectItem['status'];
+  status: ProspectStatus;
 };
 
 type QuoteItem = {
@@ -85,16 +78,21 @@ type QuoteItem = {
 
 type WorkOrderItem = {
   id: string;
+  project_name: string;
+  client_name: string;
   amount: number | string;
   currency_code: string;
-  status: string;
+  status: WorkOrderStatus;
   assigned_to: string;
   created_at: string;
   fortnox_invoiced_at: string | null;
 };
 
+// The page's numbers come pre-counted from /api/crm/overview; the lists are only what the four
+// "senaste …"-cards render, five rows each. Counting list rows in the browser is what this
+// replaced — see lib/domains/crm/overviewSummary.ts for why that could not hold.
 type LoadState = {
-  prospects: ProspectItem[];
+  summary: CrmOverviewSummary | null;
   calls: CallItem[];
   tasks: TaskItem[];
   quotes: QuoteItem[];
@@ -148,15 +146,6 @@ const quoteStatusLabel: Record<QuoteItem['status'], string> = {
   lost: 'Förlorad',
 };
 
-const prospectStatusLabel: Record<ProspectItem['status'], string> = {
-  new: 'Ny',
-  contacted: 'Kontaktad',
-  qualified: 'Kvalificerad',
-  quoted: 'Offert',
-  won: 'Vunnen',
-  lost: 'Förlorad',
-};
-
 function getProspectFromCall(item: CallItem) {
   if (Array.isArray(item.prospect)) return item.prospect[0] || null;
   return item.prospect || null;
@@ -185,9 +174,22 @@ function hasActiveGoalTarget(goal: GoalItem) {
     || goal.order_count_target > 0 || Number(goal.order_value_target) > 0;
 }
 
-function isPipelineProspect(prospect: ProspectItem) {
-  return prospect.status === 'new' || prospect.status === 'contacted' || prospect.status === 'qualified' || prospect.status === 'quoted';
-}
+// Rows per "senaste …" card. Five fills the column next to the status panel and the leaderboard
+// without turning the overview into a list page — the cards' own "Visa alla" leads there.
+const RECENT_ITEM_LIMIT = 5;
+
+// Zeros while the summary is in flight or after a failed load, so the panels render their shape
+// rather than blanking. Matches what the empty lists produced before the server did the counting.
+const EMPTY_SUMMARY: CrmOverviewSummary = {
+  pipelineProspects: 0, newProspects: 0, quotedProspects: 0, qualifiedProspects: 0,
+  activeQuotes: 0, activeQuoteValue: 0, quoteFollowUps: 0,
+  openWorkOrders: 0, openOrderValue: 0, workOrdersToInvoice: 0, toInvoiceOrderValue: 0,
+  callsLast7Days: 0, followUpCalls: 0, standaloneCalls: 0,
+  openTasks: 0, overdueTasks: 0, todayTasks: 0,
+  weekTeam: { calls: 0, quotes: 0, quoteValue: 0, orderCount: 0, orderValue: 0, invoicedValue: 0 },
+  weekByUser: {},
+  truncated: [],
+};
 
 function formatDateTime(value: string | null | undefined) {
   if (!value) return '–';
@@ -207,63 +209,6 @@ function formatCurrency(value: number | string, currencyCode: string) {
   const numeric = typeof value === 'number' ? value : Number(String(value));
   if (!Number.isFinite(numeric)) return '–';
   return new Intl.NumberFormat('sv-SE', { style: 'currency', currency: currencyCode || 'SEK', maximumFractionDigits: 0 }).format(numeric);
-}
-
-function startOfToday() {
-  const now = new Date();
-  return new Date(now.getFullYear(), now.getMonth(), now.getDate());
-}
-
-function addDays(date: Date, days: number) {
-  const next = new Date(date);
-  next.setDate(next.getDate() + days);
-  return next;
-}
-
-function isWithinLastDays(value: string, days: number) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return false;
-  const from = addDays(startOfToday(), -days);
-  return date >= from;
-}
-
-// Current ISO week range [Monday 00:00, next Monday 00:00) in local time. The leaderboard
-// scopes its actuals to this so weekly targets compare against the current week's activity.
-function currentWeekRange() {
-  const start = startOfToday();
-  const mondayOffset = (start.getDay() + 6) % 7;
-  start.setDate(start.getDate() - mondayOffset);
-  return { start, end: addDays(start, 7) };
-}
-
-// Parse a call_at/created_at timestamp OR a quote_date (date-only) consistently in local time.
-function parseActivityDate(value: string | null | undefined): Date | null {
-  if (!value) return null;
-  const iso = value.length === 10 ? `${value}T12:00:00` : value;
-  const date = new Date(iso);
-  return Number.isNaN(date.getTime()) ? null : date;
-}
-
-function isWithin(value: string | null | undefined, range: { start: Date; end: Date }) {
-  const date = parseActivityDate(value);
-  return date != null && date >= range.start && date < range.end;
-}
-
-function isOverdue(task: TaskItem) {
-  if (task.status === 'done' || !task.due_date) return false;
-  const today = startOfToday();
-  const dueDate = new Date(`${task.due_date}T00:00:00`);
-  if (Number.isNaN(dueDate.getTime())) return false;
-  return dueDate < today;
-}
-
-function isDueToday(task: TaskItem) {
-  if (task.status === 'done' || !task.due_date) return false;
-  const today = startOfToday();
-  const dueDate = new Date(`${task.due_date}T00:00:00`);
-  return dueDate.getFullYear() === today.getFullYear()
-    && dueDate.getMonth() === today.getMonth()
-    && dueDate.getDate() === today.getDate();
 }
 
 function sortTasks(taskA: TaskItem, taskB: TaskItem) {
@@ -297,7 +242,7 @@ function buildOverviewActions(args: { overdueTasks: number; followUpCalls: numbe
 
 export default function CrmOverview({ role }: { role: UserRole | null }) {
   const items = getVisibleCrmNavItems(role).filter((item) => item.href !== '/crm');
-  const [state, setState] = useState<LoadState>({ prospects: [], calls: [], tasks: [], quotes: [], goals: [], workOrders: [] });
+  const [state, setState] = useState<LoadState>({ summary: null, calls: [], tasks: [], quotes: [], goals: [], workOrders: [] });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -309,17 +254,27 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
       setError(null);
 
       try {
-        const [prospectsRes, callsRes, tasksRes, quotesRes, goalsRes, workOrdersRes] = await Promise.all([
-          fetch('/api/crm/prospects', { cache: 'no-store' }),
+        const overviewWindow = getCrmOverviewWindow();
+        const summaryQuery = new URLSearchParams({
+          today: overviewWindow.today,
+          since: overviewWindow.since,
+          week_start: overviewWindow.weekStart,
+          week_end: overviewWindow.weekEnd,
+        });
+        const [summaryRes, callsRes, tasksRes, quotesRes, goalsRes, workOrdersRes] = await Promise.all([
+          fetch(`/api/crm/overview?${summaryQuery}`, { cache: 'no-store' }),
           fetch('/api/crm/calls', { cache: 'no-store' }),
           fetch('/api/crm/tasks', { cache: 'no-store' }),
-          fetch('/api/crm/quotes', { cache: 'no-store' }),
+          // These two lists are now only the cards' five rows. Both sorts have to be asked for:
+          // the offer list's default order leads with drafts and lost quotes, the order board's
+          // with the earliest installation date — so a brand new order is the table's last row.
+          fetch(`/api/crm/quotes?sort=updated_desc&limit=${RECENT_ITEM_LIMIT}`, { cache: 'no-store' }),
           fetch('/api/crm/goals?period_type=month', { cache: 'no-store' }),
-          fetch('/api/crm/work-orders', { cache: 'no-store' }),
+          fetch(`/api/crm/work-orders?sort=created_desc&limit=${RECENT_ITEM_LIMIT}`, { cache: 'no-store' }),
         ]);
 
-        const [prospectsJson, callsJson, tasksJson, quotesJson, goalsJson, workOrdersJson] = await Promise.all([
-          prospectsRes.json().catch(() => ({})),
+        const [summaryJson, callsJson, tasksJson, quotesJson, goalsJson, workOrdersJson] = await Promise.all([
+          summaryRes.json().catch(() => ({})),
           callsRes.json().catch(() => ({})),
           tasksRes.json().catch(() => ({})),
           quotesRes.json().catch(() => ({})),
@@ -327,18 +282,18 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
           workOrdersRes.json().catch(() => ({})),
         ]);
 
-        if (!prospectsRes.ok) throw new Error(prospectsJson?.error || 'Kunde inte läsa prospekt.');
+        if (!summaryRes.ok) throw new Error(summaryJson?.error || 'Kunde inte räkna översiktens siffror.');
         if (!callsRes.ok) throw new Error(callsJson?.error || 'Kunde inte läsa samtal.');
         if (!tasksRes.ok) throw new Error(tasksJson?.error || 'Kunde inte läsa uppgifter.');
         if (!quotesRes.ok) throw new Error(quotesJson?.error || 'Kunde inte läsa offerter.');
         if (!goalsRes.ok) throw new Error(goalsJson?.error || 'Kunde inte läsa mål.');
-        // Work orders feed the leaderboard's order-value rows; a failure there shouldn't
-        // blank the whole overview, so we tolerate it and fall back to an empty list.
+        // Work orders only feed the "senaste ordrar"-card now — the numbers come from the summary
+        // — so a failure there shouldn't blank the whole overview. Same tolerance as before.
 
         if (!active) return;
 
         setState({
-          prospects: Array.isArray(prospectsJson?.data?.items) ? prospectsJson.data.items : [],
+          summary: (summaryJson?.data?.summary as CrmOverviewSummary | undefined) ?? null,
           calls: Array.isArray(callsJson?.data?.items) ? callsJson.data.items : [],
           tasks: Array.isArray(tasksJson?.data?.items) ? tasksJson.data.items : [],
           quotes: Array.isArray(quotesJson?.data?.items) ? quotesJson.data.items : [],
@@ -348,7 +303,7 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
       } catch (loadError: any) {
         if (!active) return;
         setError(loadError?.message || 'Kunde inte ladda CRM-översikten.');
-        setState({ prospects: [], calls: [], tasks: [], quotes: [], goals: [], workOrders: [] });
+        setState({ summary: null, calls: [], tasks: [], quotes: [], goals: [], workOrders: [] });
       } finally {
         if (active) setLoading(false);
       }
@@ -361,98 +316,39 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
     };
   }, []);
 
+  // The figures are counted by /api/crm/overview; what's left here is the team's targets, which
+  // come from the goals list, and the flow bars' shared scale.
   const summary = useMemo(() => {
-    const openTasks = state.tasks.filter((task) => task.status === 'open');
-    const overdueTasks = openTasks.filter(isOverdue);
-    const todayTasks = openTasks.filter(isDueToday);
-    const recentCalls = state.calls.filter((call) => isWithinLastDays(call.call_at, 7));
-    const followUpCalls = state.calls.filter((call) => call.outcome === 'follow_up');
-    const standaloneCalls = state.calls.filter((call) => !getProspectFromCall(call));
-    const activeQuotes = state.quotes.filter((quote) => quote.status === 'draft' || quote.status === 'sent' || quote.status === 'follow_up');
-    const quoteFollowUps = state.quotes.filter((quote) => quote.status === 'follow_up');
-    const wonQuotes = state.quotes.filter((quote) => quote.status === 'won');
-    const recentQuotes = state.quotes.filter((quote) => isWithinLastDays(quote.quote_date, 7));
-    const quoteValueLast7Days = recentQuotes.reduce((total, quote) => {
-      const numeric = typeof quote.amount === 'number' ? quote.amount : Number(String(quote.amount));
-      return total + (Number.isFinite(numeric) ? numeric : 0);
-    }, 0);
-    const pipelineProspects = state.prospects.filter(isPipelineProspect);
-    const newProspects = state.prospects.filter((prospect) => prospect.status === 'new');
-    const quotedProspects = state.prospects.filter((prospect) => prospect.status === 'quoted');
-    const qualifiedProspects = state.prospects.filter((prospect) => prospect.status === 'qualified' || prospect.status === 'quoted');
-    const wonProspects = state.prospects.filter((prospect) => prospect.status === 'won');
+    const counted = state.summary ?? EMPTY_SUMMARY;
     // Monthly budgets → weekly targets (÷4) so the team summary compares against ~one week.
     const callsTarget = Math.round(weeklyFromMonthly(state.goals.reduce((total, goal) => total + goal.calls_target, 0)));
     const quotesTarget = Math.round(weeklyFromMonthly(state.goals.reduce((total, goal) => total + goal.quotes_target, 0)));
-    const quoteValueTarget = weeklyFromMonthly(state.goals.reduce((total, goal) => total + Number(goal.quote_value_target || 0), 0));
+    const orderValueTarget = weeklyFromMonthly(state.goals.reduce((total, goal) => total + Number(goal.order_value_target || 0), 0));
 
     return {
-      prospectsTotal: state.prospects.length,
-      pipelineProspects: pipelineProspects.length,
-      newProspects: newProspects.length,
-      quotedProspects: quotedProspects.length,
-      qualifiedProspects: qualifiedProspects.length,
-      wonProspects: wonProspects.length,
-      callsLast7Days: recentCalls.length,
-      followUpCalls: followUpCalls.length,
-      standaloneCalls: standaloneCalls.length,
-      activeQuotes: activeQuotes.length,
-      quoteFollowUps: quoteFollowUps.length,
-      wonQuotes: wonQuotes.length,
-      quotesLast7Days: recentQuotes.length,
-      quoteValueLast7Days,
-      openTasks: openTasks.length,
-      overdueTasks: overdueTasks.length,
-      todayTasks: todayTasks.length,
+      ...counted,
+      // Shared denominator for the three flow bars: the largest stock, so nothing can exceed
+      // the track and the bars stay proportional to each other.
+      flowScale: Math.max(counted.activeQuoteValue, counted.openOrderValue, counted.toInvoiceOrderValue),
       callsTarget,
       quotesTarget,
-      quoteValueTarget,
+      orderValueTarget,
     };
-  }, [state.calls, state.goals, state.prospects, state.quotes, state.tasks]);
+  }, [state.summary, state.goals]);
 
-  const recentProspects = useMemo(() => [...state.prospects].sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, 3), [state.prospects]);
-  const recentCalls = useMemo(() => [...state.calls].sort((a, b) => b.call_at.localeCompare(a.call_at)).slice(0, 3), [state.calls]);
-  const recentQuotes = useMemo(() => [...state.quotes].sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, 3), [state.quotes]);
-  const nextTasks = useMemo(() => [...state.tasks].filter((task) => task.status === 'open').sort(sortTasks).slice(0, 3), [state.tasks]);
+  // Quotes and orders arrive already ordered and already five rows long — the fetches ask for
+  // sort=updated_desc / sort=created_desc with limit=5, and re-sorting them here would leave two
+  // competing definitions of the same card's order, with the query's parameter looking
+  // authoritative. Calls and tasks come from routes without those parameters, so they are shaped
+  // here: calls arrive newest-first (call_at desc) and only need the slice; tasks need both.
+  const recentCalls = useMemo(() => state.calls.slice(0, RECENT_ITEM_LIMIT), [state.calls]);
+  const nextTasks = useMemo(() => [...state.tasks].filter((task) => task.status === 'open').sort(sortTasks).slice(0, RECENT_ITEM_LIMIT), [state.tasks]);
   const nextActions = buildOverviewActions({ overdueTasks: summary.overdueTasks, followUpCalls: summary.followUpCalls, newProspects: summary.newProspects, standaloneCalls: summary.standaloneCalls, quoteFollowUps: summary.quoteFollowUps });
   const teamLeaderboard = useMemo(() => {
-    // Goals are MONTHLY budgets; the leaderboard shows the weekly target (budget ÷ 4) against
-    // THIS WEEK's actuals — so every actual is scoped to the current ISO week.
-    const week = currentWeekRange();
-    const callsByUser = new Map<string, number>();
-    const quotesByUser = new Map<string, number>();
-    const quoteValueByUser = new Map<string, number>();
-    const orderCountByUser = new Map<string, number>();
-    const orderValueByUser = new Map<string, number>();
-    const invoicedValueByUser = new Map<string, number>();
-    const add = (map: Map<string, number>, key: string, value: number) => map.set(key, (map.get(key) || 0) + value);
-    const numeric = (value: number | string) => {
-      const n = typeof value === 'number' ? value : Number(String(value));
-      return Number.isFinite(n) ? n : 0;
-    };
-
-    for (const call of state.calls) {
-      if (isWithin(call.call_at, week)) add(callsByUser, call.user_id, 1);
-    }
-
-    for (const quote of state.quotes) {
-      if (!isWithin(quote.quote_date, week)) continue;
-      add(quotesByUser, quote.assigned_to, 1);
-      add(quoteValueByUser, quote.assigned_to, numeric(quote.amount));
-    }
-
-    for (const workOrder of state.workOrders) {
-      const amount = numeric(workOrder.amount);
-      // Order count + value: orders created this week.
-      if (isWithin(workOrder.created_at, week)) {
-        add(orderCountByUser, workOrder.assigned_to, 1);
-        add(orderValueByUser, workOrder.assigned_to, amount);
-      }
-      // "Fakturerat": value of orders invoiced this week (by the Fortnox invoice date).
-      if (workOrder.status === 'invoiced' && isWithin(workOrder.fortnox_invoiced_at, week)) {
-        add(invoicedValueByUser, workOrder.assigned_to, amount);
-      }
-    }
+    // Goals are MONTHLY budgets; the leaderboard shows the weekly target (budget ÷ 4) against THIS
+    // WEEK's actuals. The actuals are counted per user by /api/crm/overview — summing them here
+    // meant reading them out of a capped list, which is exactly what stopped being trustworthy.
+    const week = state.summary?.weekByUser ?? {};
 
     return state.goals
       .filter(hasActiveGoalTarget)
@@ -466,12 +362,13 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
         const orderCountTarget = Math.round(weeklyFromMonthly(goal.order_count_target));
         const orderValueTarget = weeklyFromMonthly(goal.order_value_target);
 
-        const callsDone = callsByUser.get(goal.user_id) || 0;
-        const quotesDone = quotesByUser.get(goal.user_id) || 0;
-        const quoteValueDone = quoteValueByUser.get(goal.user_id) || 0;
-        const orderCountDone = orderCountByUser.get(goal.user_id) || 0;
-        const orderValueDone = orderValueByUser.get(goal.user_id) || 0;
-        const invoicedValueDone = invoicedValueByUser.get(goal.user_id) || 0;
+        const actuals = week[goal.user_id];
+        const callsDone = actuals?.calls ?? 0;
+        const quotesDone = actuals?.quotes ?? 0;
+        const quoteValueDone = actuals?.quoteValue ?? 0;
+        const orderCountDone = actuals?.orderCount ?? 0;
+        const orderValueDone = actuals?.orderValue ?? 0;
+        const invoicedValueDone = actuals?.invoicedValue ?? 0;
         const progressValues = [
           callsTarget > 0 ? callsDone / callsTarget : null,
           quotesTarget > 0 ? quotesDone / quotesTarget : null,
@@ -507,7 +404,7 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
         if (right.callsDone !== left.callsDone) return right.callsDone - left.callsDone;
         return left.userName.localeCompare(right.userName, 'sv');
       });
-  }, [state.calls, state.goals, state.quotes, state.workOrders]);
+  }, [state.goals, state.summary]);
 
   return (
     <div className="grid grid-cols-1 gap-6">
@@ -624,34 +521,36 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
             ) : null}
           </div>
 
-          {/* Recent items grid */}
+          {/* Recent items grid. Order follows the flow the sellers work in: offert → order on the
+              first row, then the two activity lists. Prospects had their own card here until
+              2026-08-17 and were dropped — that stage isn't in use right now. */}
           <div className="grid gap-4 xl:grid-cols-2">
-            <RecentCard title="Senaste prospekt" href="/crm/prospekt" loading={loading}>
-              {recentProspects.length === 0 ? <EmptyState description="Inga prospekt ännu." /> : (
+            <RecentCard title="Senaste offertlägen" href="/crm/offerter" loading={loading}>
+              {state.quotes.length === 0 ? <EmptyState description="Inga offertsteg registrerade ännu." /> : (
                 <div className="grid gap-2">
-                  {recentProspects.map((prospect) => (
-                    <Link key={prospect.id} href="/crm/prospekt" className="flex items-start justify-between gap-3 rounded-xl border border-slate-100 p-3 no-underline transition hover:border-slate-200 hover:bg-slate-50">
+                  {state.quotes.map((quote) => (
+                    <Link key={quote.id} href="/crm/offerter" className="flex items-start justify-between gap-3 rounded-xl border border-slate-100 p-3 no-underline transition hover:border-slate-200 hover:bg-slate-50">
                       <div className="min-w-0">
-                        <strong className="block truncate text-sm font-semibold text-slate-900">{prospect.company_name}</strong>
-                        <p className="m-0 truncate text-xs text-slate-500">{[prospect.contact_name, prospect.city, prospect.source].filter(Boolean).join(' · ') || 'Ingen extra info'}</p>
+                        <strong className="block truncate text-sm font-semibold text-slate-900">{quote.project_name}</strong>
+                        <p className="m-0 truncate text-xs text-slate-500">{getQuoteCustomerName(quote)} · {formatCurrency(quote.amount, quote.currency_code)}</p>
                       </div>
-                      <span className="shrink-0 rounded-full border border-slate-200 bg-slate-100 px-2.5 py-0.5 text-[11px] font-semibold text-slate-600">{prospectStatusLabel[prospect.status]}</span>
+                      <span className="shrink-0 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[11px] font-semibold text-amber-700">{quoteStatusLabel[quote.status]}</span>
                     </Link>
                   ))}
                 </div>
               )}
             </RecentCard>
 
-            <RecentCard title="Senaste samtal" href="/crm/samtal" loading={loading}>
-              {recentCalls.length === 0 ? <EmptyState description="Inga samtal loggade ännu." /> : (
+            <RecentCard title="Senaste ordrar" href="/crm/arbetsorder" loading={loading}>
+              {state.workOrders.length === 0 ? <EmptyState description="Inga arbetsordrar ännu." /> : (
                 <div className="grid gap-2">
-                  {recentCalls.map((call) => (
-                    <Link key={call.id} href="/crm/samtal" className="flex items-start justify-between gap-3 rounded-xl border border-slate-100 p-3 no-underline transition hover:border-slate-200 hover:bg-slate-50">
+                  {state.workOrders.map((order) => (
+                    <Link key={order.id} href={`/crm/arbetsorder/${order.id}`} className="flex items-start justify-between gap-3 rounded-xl border border-slate-100 p-3 no-underline transition hover:border-slate-200 hover:bg-slate-50">
                       <div className="min-w-0">
-                        <strong className="block truncate text-sm font-semibold text-slate-900">{getCallCompanyName(call)}</strong>
-                        <p className="m-0 truncate text-xs text-slate-500">{formatDateTime(call.call_at)}</p>
+                        <strong className="block truncate text-sm font-semibold text-slate-900">{order.project_name}</strong>
+                        <p className="m-0 truncate text-xs text-slate-500">{order.client_name} · {formatCurrency(order.amount, order.currency_code)}</p>
                       </div>
-                      <span className="shrink-0 rounded-full border border-slate-200 bg-slate-100 px-2.5 py-0.5 text-[11px] font-semibold text-slate-600">{outcomeLabel[call.outcome]}</span>
+                      <span className={cn('shrink-0 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold', workOrderStatusClass[order.status])}>{workOrderStatusLabel[order.status]}</span>
                     </Link>
                   ))}
                 </div>
@@ -674,16 +573,16 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
               )}
             </RecentCard>
 
-            <RecentCard title="Senaste offertlägen" href="/crm/offerter" loading={loading}>
-              {recentQuotes.length === 0 ? <EmptyState description="Inga offertsteg registrerade ännu." /> : (
+            <RecentCard title="Senaste samtal" href="/crm/samtal" loading={loading}>
+              {recentCalls.length === 0 ? <EmptyState description="Inga samtal loggade ännu." /> : (
                 <div className="grid gap-2">
-                  {recentQuotes.map((quote) => (
-                    <Link key={quote.id} href="/crm/offerter" className="flex items-start justify-between gap-3 rounded-xl border border-slate-100 p-3 no-underline transition hover:border-slate-200 hover:bg-slate-50">
+                  {recentCalls.map((call) => (
+                    <Link key={call.id} href="/crm/samtal" className="flex items-start justify-between gap-3 rounded-xl border border-slate-100 p-3 no-underline transition hover:border-slate-200 hover:bg-slate-50">
                       <div className="min-w-0">
-                        <strong className="block truncate text-sm font-semibold text-slate-900">{quote.project_name}</strong>
-                        <p className="m-0 truncate text-xs text-slate-500">{getQuoteCustomerName(quote)} · {formatCurrency(quote.amount, quote.currency_code)}</p>
+                        <strong className="block truncate text-sm font-semibold text-slate-900">{getCallCompanyName(call)}</strong>
+                        <p className="m-0 truncate text-xs text-slate-500">{formatDateTime(call.call_at)}</p>
                       </div>
-                      <span className="shrink-0 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[11px] font-semibold text-amber-700">{quoteStatusLabel[quote.status]}</span>
+                      <span className="shrink-0 rounded-full border border-slate-200 bg-slate-100 px-2.5 py-0.5 text-[11px] font-semibold text-slate-600">{outcomeLabel[call.outcome]}</span>
                     </Link>
                   ))}
                 </div>
@@ -700,13 +599,30 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
             <h2 className="m-0 mb-4 text-lg font-bold tracking-tight text-slate-900">Fördelning och mål</h2>
             {loading ? <OverviewLoadingRows /> : (
               <div className="grid gap-3">
-                <StatusStrip label="Öppna prospekt" value={summary.pipelineProspects} tone="teal" />
-                <StatusStrip label="Nya prospekt" value={summary.newProspects} tone="slate" />
-                <StatusStrip label="Prospekt i offertläge" value={summary.quotedProspects} tone="amber" />
-                <StatusStrip label="Vunna prospekt" value={summary.wonProspects} tone="emerald" />
-                <StatusStrip label="Samtal mot mål" value={summary.callsLast7Days} goal={summary.callsTarget} tone="sky" />
-                <StatusStrip label="Offerter mot mål" value={summary.quotesLast7Days} goal={summary.quotesTarget} tone="emerald" />
+                {/* The three stocks in the flow share one scale, so the bars read as an actual
+                    distribution — where the money is sitting right now — instead of three
+                    unrelated bars. Fakturerat is a 7-day flow with no target to measure against,
+                    so it stays a plain figure (same convention as the leaderboard's value rows). */}
+                <StatusStrip label="Aktiva offerter" value={summary.activeQuoteValue} scale={summary.flowScale} tone="emerald" currency helper={`${summary.activeQuotes} st`} />
+                <StatusStrip label="Öppna ordrar" value={summary.openOrderValue} scale={summary.flowScale} tone="teal" currency helper={`${summary.openWorkOrders} st`} />
+                <StatusStrip label="Att fakturera" value={summary.toInvoiceOrderValue} scale={summary.flowScale} tone="amber" currency helper={`${summary.workOrdersToInvoice} st`} />
+                <StatusStrip label="Fakturerat i veckan" value={summary.weekTeam.invoicedValue} tone="violet" currency />
+                <div className="my-1 h-px bg-slate-100" />
+                {/* Everything below is measured against a WEEKLY target, so the actuals are the
+                    week's — the same window the topplista under this card uses per säljare. With a
+                    rolling 7 days the team row could never equal the sum of the seller rows beside
+                    it, and one of the two would have to be read as broken. */}
+                <StatusStrip label="Offerter mot mål" value={summary.weekTeam.quotes} goal={summary.quotesTarget} tone="emerald" />
+                <StatusStrip label="Ordervärde mot mål" value={summary.weekTeam.orderValue} goal={summary.orderValueTarget} tone="teal" currency />
+                <StatusStrip label="Samtal mot mål" value={summary.weekTeam.calls} goal={summary.callsTarget} tone="sky" />
                 <StatusStrip label="Sena uppgifter" value={summary.overdueTasks} tone="rose" />
+                {/* Only ever shows if a query hit its row cap. The point of counting server-side
+                    was that a truncated read stops being silent — so it says so. */}
+                {summary.truncated.length > 0 ? (
+                  <p className="m-0 text-[11px] leading-4 text-amber-700">
+                    Räknat på ett kapat urval ({summary.truncated.join(', ')}) — siffrorna kan vara för låga.
+                  </p>
+                ) : null}
               </div>
             )}
           </div>
@@ -747,22 +663,24 @@ function RecentCard({ title, href, loading, children }: { title: string; href: s
         <strong className="text-sm font-bold text-slate-900">{title}</strong>
         <Link href={href} className="text-xs font-semibold text-emerald-700 no-underline hover:text-emerald-800">Visa alla</Link>
       </div>
-      {loading ? <OverviewLoadingRows /> : children}
+      {loading ? <OverviewLoadingRows rows={RECENT_ITEM_LIMIT} /> : children}
     </div>
   );
 }
 
-function OverviewLoadingRows() {
+// Skeleton row count is per caller: the recent lists settle on five rows, so a three-row skeleton
+// would make the whole column jump when the data lands.
+function OverviewLoadingRows({ rows = 3 }: { rows?: number }) {
   return (
     <div className="grid gap-2">
-      {Array.from({ length: 3 }).map((_, i) => (
+      {Array.from({ length: rows }).map((_, i) => (
         <div key={i} className="h-14 animate-pulse rounded-xl border border-[#e0e8dc] bg-[#dfe6da]" />
       ))}
     </div>
   );
 }
 
-function StatusStrip({ label, value, tone, goal, currency = false }: { label: string; value: number; tone: 'slate' | 'sky' | 'amber' | 'rose' | 'emerald' | 'teal'; goal?: number; currency?: boolean }) {
+function StatusStrip({ label, value, tone, goal, scale, helper, currency = false }: { label: string; value: number; tone: 'slate' | 'sky' | 'amber' | 'rose' | 'emerald' | 'teal' | 'violet'; goal?: number; scale?: number; helper?: string; currency?: boolean }) {
   const toneClass = {
     slate: 'bg-slate-900',
     sky: 'bg-sky-500',
@@ -770,24 +688,37 @@ function StatusStrip({ label, value, tone, goal, currency = false }: { label: st
     rose: 'bg-rose-500',
     emerald: 'bg-emerald-500',
     teal: 'bg-teal-500',
+    violet: 'bg-violet-500',
   }[tone];
 
-  const width = goal && goal > 0
-    ? value <= 0 ? 0 : Math.min(100, (value / goal) * 100)
-    : value <= 0 ? 0 : Math.min(100, value * 16);
+  // The bar needs something to measure against: a goal, or an explicit scale shared with the
+  // sibling rows. Without either, a count keeps the old rough 16-%-per-unit fill and a money row
+  // shows a damped full bar — the same convention the leaderboard uses for a figure with no
+  // target, since a krona amount has no natural scale of its own.
+  const hasGoal = goal != null && goal > 0;
+  const hasScale = !hasGoal && scale != null && scale > 0;
+  const denominator = hasGoal ? goal! : hasScale ? scale! : null;
+  const width = denominator != null
+    ? value <= 0 ? 0 : Math.min(100, (value / denominator) * 100)
+    : currency
+      ? value > 0 ? 100 : 0
+      : value <= 0 ? 0 : Math.min(100, value * 16);
   const displayValue = currency ? formatCurrency(value, 'SEK') : value;
-  const displayGoal = goal != null && goal > 0
-    ? currency ? formatCurrency(goal, 'SEK') : String(goal)
+  const displayGoal = hasGoal
+    ? currency ? formatCurrency(goal!, 'SEK') : String(goal)
     : null;
 
   return (
     <div className="grid gap-1">
       <div className="flex items-center justify-between gap-3 text-xs text-slate-600">
-        <span>{label}</span>
-        <strong className="text-slate-800">{displayGoal ? `${displayValue} / ${displayGoal}` : displayValue}</strong>
+        <span className="min-w-0 truncate">
+          {label}
+          {helper ? <span className="text-slate-400"> · {helper}</span> : null}
+        </span>
+        <strong className="shrink-0 text-slate-800">{displayGoal ? `${displayValue} / ${displayGoal}` : displayValue}</strong>
       </div>
       <div className="h-1.5 rounded-full bg-slate-100">
-        <div className={`h-1.5 rounded-full transition-all ${toneClass}`} style={{ width: `${width}%` }} />
+        <div className={cn('h-1.5 rounded-full transition-all', toneClass, denominator == null && currency && 'opacity-40')} style={{ width: `${width}%` }} />
       </div>
     </div>
   );

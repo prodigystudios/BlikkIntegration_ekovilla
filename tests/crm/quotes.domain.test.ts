@@ -132,3 +132,116 @@ describe('markCrmQuoteWon — offertens ansvariga blir kundansvarig', () => {
     expect(mockSetAccountManager).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// listCrmQuotesWithFilters — radordningen
+//
+// Standardordningen är offertlistans arbetsordning: status stigande, alltså draft → follow_up →
+// lost → sent → won. Den ordningen kapar bort vunna och skickade offerter FÖRST vid radtaket,
+// vilket är precis de som pengarsiffrorna på översikten bygger på. Därför finns 'updated_desc'
+// för de anropare som vill ha det senast rörda — och kapningen sker på servern, så ordningen
+// kan inte lagas i webbläsaren.
+// ---------------------------------------------------------------------------
+
+import { listCrmQuotesWithFilters, getCrmQuoteFilterCounts, CRM_QUOTES_PAGE_SIZE } from '@/lib/domains/crm/quotes';
+import { makeSupabaseMock } from './helpers/supabase';
+
+describe('listCrmQuotesWithFilters — radordningen', () => {
+  it('sorterar som offertlistan som standard: status, närmaste uppföljning, senaste offertdatum', async () => {
+    const supabase = makeSupabaseMock({ data: [], error: null });
+    await listCrmQuotesWithFilters(supabase as any, {});
+    expect((supabase._query.order as any).mock.calls).toEqual([
+      ['status', { ascending: true }],
+      ['follow_up_date', { ascending: true, nullsFirst: false }],
+      ['quote_date', { ascending: false }],
+    ]);
+  });
+
+  it('sort=updated_desc sorterar på senast rörd och rör inte statusordningen', async () => {
+    const supabase = makeSupabaseMock({ data: [], error: null });
+    await listCrmQuotesWithFilters(supabase as any, { sort: 'updated_desc' });
+    expect((supabase._query.order as any).mock.calls).toEqual([['updated_at', { ascending: false }]]);
+  });
+
+  it('sort=created_desc sorterar nyast först — offertlistans standard', async () => {
+    const supabase = makeSupabaseMock({ data: [], error: null });
+    await listCrmQuotesWithFilters(supabase as any, { sort: 'created_desc' });
+    expect((supabase._query.order as any).mock.calls).toEqual([['created_at', { ascending: false }]]);
+  });
+
+  it('sort=follow_up_asc sorterar närmaste uppföljning först, och offerter utan datum sist', async () => {
+    // nullsFirst: false — en offert utan uppföljningsdatum är inte mer brådskande än en med.
+    const supabase = makeSupabaseMock({ data: [], error: null });
+    await listCrmQuotesWithFilters(supabase as any, { sort: 'follow_up_asc' });
+    expect((supabase._query.order as any).mock.calls).toEqual([
+      ['follow_up_date', { ascending: true, nullsFirst: false }],
+      ['created_at', { ascending: false }],
+    ]);
+  });
+});
+
+describe('listCrmQuotesWithFilters — sidindelning och flikfilter', () => {
+  // Flikarna och deras räknare låg i webbläsaren och filtrerade den hämtade arrayen. Radtaket kapar
+  // på servern, från sorteringens SVANS, så med statusordningen försvann vunna offerter först och
+  // skickade därefter — precis de grupper pengarsiffrorna byggs på. Filtret måste vara server-side.
+  it('sidindelar med range och begär ett exakt antal', async () => {
+    const supabase = makeSupabaseMock({ data: [], error: null });
+    await listCrmQuotesWithFilters(supabase as any, { offset: 100 });
+    expect((supabase._query.select as any).mock.calls[0][1]).toEqual({ count: 'exact' });
+    expect((supabase._query.range as any).mock.calls).toEqual([[100, 199]]);
+  });
+
+  it('första sidan är CRM_QUOTES_PAGE_SIZE rader', async () => {
+    const supabase = makeSupabaseMock({ data: [], error: null });
+    await listCrmQuotesWithFilters(supabase as any, {});
+    expect((supabase._query.range as any).mock.calls).toEqual([[0, CRM_QUOTES_PAGE_SIZE - 1]]);
+  });
+
+  it('"Aktiva" är de tre statusar som fortfarande är i spel', async () => {
+    const supabase = makeSupabaseMock({ data: [], error: null });
+    await listCrmQuotesWithFilters(supabase as any, { filter: 'active' });
+    expect((supabase._query.in as any).mock.calls).toEqual([['status', ['draft', 'sent', 'follow_up']]]);
+  });
+
+  it('"Alla" sätter inget statusfilter', async () => {
+    const supabase = makeSupabaseMock({ data: [], error: null });
+    await listCrmQuotesWithFilters(supabase as any, { filter: 'all' });
+    expect((supabase._query.in as any).mock.calls).toEqual([]);
+  });
+
+  it('ansvarig-filtret går till servern', async () => {
+    const supabase = makeSupabaseMock({ data: [], error: null });
+    await listCrmQuotesWithFilters(supabase as any, { filter: 'won', assignedToIn: ['anna', 'bosse'] });
+    expect((supabase._query.in as any).mock.calls).toEqual([
+      ['status', ['won']],
+      ['assigned_to', ['anna', 'bosse']],
+    ]);
+  });
+
+  it('söktermen städas på kommatecken och parenteser', async () => {
+    // PostgREST läser or=(...) som en kommaseparerad villkorslista, så "Ekbergs Bygg, AB" hade
+    // delat uttrycket mitt itu och hela frågan svarat 400 — vilket listan visar som "inga träffar".
+    const supabase = makeSupabaseMock({ data: [], error: null });
+    await listCrmQuotesWithFilters(supabase as any, { search: 'Ekbergs Bygg, AB (nya)' });
+    const filter = (supabase._query.or as any).mock.calls[0][0] as string;
+    expect(filter).not.toMatch(/[,()]Ekbergs|Bygg,|\(nya\)/);
+    expect(filter).toContain('Ekbergs Bygg  AB  nya');
+    // Numret som appen visar överallt måste gå att söka på — samma läxa som orderlistan fick.
+    expect(filter).toContain('quote_number.ilike');
+    expect(filter).toContain('fortnox_offer_number.ilike');
+  });
+});
+
+describe('getCrmQuoteFilterCounts', () => {
+  it('räknar varje flik med head-frågor i samma sök- och ansvarig-skop', async () => {
+    const supabase = makeSupabaseMock({ data: null, error: null, count: 7 } as any);
+    const counts = await getCrmQuoteFilterCounts(supabase as any, { search: 'tak', assignedToIn: ['anna'] });
+
+    expect(counts).toEqual({ all: 7, active: 7, follow_up: 7, won: 7, lost: 7 });
+    // head: true — räkningen ska inte dra över några rader.
+    expect((supabase._query.select as any).mock.calls[0]).toEqual(['id', { count: 'exact', head: true }]);
+    // Skopet appliceras på varje flik, annars beskriver räknarna en annan mängd än listan visar.
+    expect((supabase._query.or as any).mock.calls.length).toBe(5);
+    expect((supabase._query.in as any).mock.calls).toContainEqual(['assigned_to', ['anna']]);
+  });
+});

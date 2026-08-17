@@ -126,6 +126,17 @@ export const listCrmQuotesQuerySchema = z.object({
   // group ALL of a seller's quotes client-side pass a higher value so won/lost
   // quotes aren't truncated. Bounded to keep the query safe.
   limit: z.coerce.number().int().min(1).max(2000).optional(),
+  // Pagination offset for the offer list's "Visa fler".
+  offset: z.coerce.number().int().min(0).optional(),
+  // Tab filter (status group). Server-side so the paginated list is correct.
+  filter: z.enum(['all', 'active', 'follow_up', 'won', 'lost']).optional(),
+  // Assignee scope — comma-separated user ids ('mine' is resolved to the current user id on the
+  // client before sending). Empty/absent = everyone.
+  assignee: z.string().trim().optional(),
+  // Row order. Default (status_asc) is the historical working order; the offer list asks for
+  // 'created_desc' (newest first) or 'follow_up_asc' (most urgent first), the overview for
+  // 'updated_desc'.
+  sort: z.enum(['status_asc', 'updated_desc', 'created_desc', 'follow_up_asc']).optional(),
 });
 
 export const createCrmQuoteSchema = z.object({

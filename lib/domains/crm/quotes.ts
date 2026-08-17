@@ -41,7 +41,7 @@ export const crmQuoteSelect = `
   )
 `;
 
-type CrmQuoteStatus = 'draft' | 'sent' | 'follow_up' | 'won' | 'lost';
+export type CrmQuoteStatus = 'draft' | 'sent' | 'follow_up' | 'won' | 'lost';
 type CrmQuoteType = 'private' | 'business';
 
 type CustomerSource = {
@@ -140,42 +140,113 @@ type CreateCrmQuoteInput = {
 // öppnas här bara typmässigt.
 export type UpdateCrmQuoteInput = Omit<CreateCrmQuoteInput, 'created_by'>;
 
+// PostgREST row cap once the company accumulates quotes (see SUPABASE_CONVENTIONS.md). Mirrors
+// CRM_WORK_ORDERS_PAGE_SIZE — the offer list pages the same way the order board does.
+export const CRM_QUOTES_PAGE_SIZE = 100;
+
+// Sort orders, named after the leading key.
+//
+// 'created_desc' is what the offer list asks for: newest first, so the quote you just wrote is at
+// the top. 'follow_up_asc' is the same list's other view — the nearest follow-up first, most
+// urgent at the top. 'updated_desc' serves the overview's "senaste offertlägen". The historical
+// default, 'status_asc', is the old working order (status sorts draft → follow_up → lost → sent →
+// won, then nearest follow-up); it stays the default so every other caller is untouched, but note
+// what it does at the row cap: the cut happens server-side, from the tail, so WON quotes go first
+// and SENT ones next — the two groups the money figures are built on.
+export type CrmQuoteSort = 'status_asc' | 'updated_desc' | 'created_desc' | 'follow_up_asc';
+
+// The offer list's tabs → the concrete statuses each one covers, so the page filter and its chip
+// counts can never diverge from each other. 'all' = no status filter. Mirrors
+// BOARD_FILTER_STATUSES for work orders.
+export type CrmQuoteListFilter = 'all' | 'active' | 'follow_up' | 'won' | 'lost';
+export const CRM_QUOTE_LIST_FILTERS: CrmQuoteListFilter[] = ['all', 'active', 'follow_up', 'won', 'lost'];
+export const QUOTE_FILTER_STATUSES: Record<CrmQuoteListFilter, CrmQuoteStatus[] | null> = {
+  all: null,
+  // "Aktiva" = still in play: not won, not lost.
+  active: ['draft', 'sent', 'follow_up'],
+  follow_up: ['follow_up'],
+  won: ['won'],
+  lost: ['lost'],
+};
+
 type ListCrmQuotesOptions = {
   search?: string;
   status?: CrmQuoteStatus;
+  filter?: CrmQuoteListFilter;
+  assignedToIn?: string[];
   prospectId?: string;
   customerId?: string;
   limit?: number;
+  offset?: number;
+  sort?: CrmQuoteSort;
 };
 
-export async function listCrmQuotesWithFilters(supabase: SupabaseClient, options: ListCrmQuotesOptions) {
-  let query = supabase
-    .from('crm_quotes')
-    .select(crmQuoteSelect)
-    .order('status', { ascending: true })
-    .order('follow_up_date', { ascending: true, nullsFirst: false })
-    .order('quote_date', { ascending: false })
-    .limit(options.limit ?? 100);
-
+// Apply the shared WHERE clauses so the paginated list and the per-filter counts always use the
+// exact same predicates. Same shape — and the same comma/parenthesis hazard — as
+// applyWorkOrderListFilters: PostgREST reads `or=(...)` as a comma-separated condition list, so a
+// customer name like "Ekbergs Bygg, AB" would split the expression and answer 400.
+function applyQuoteListFilters<Q extends {
+  or: (f: string) => Q; eq: (c: string, v: string) => Q; in: (c: string, v: string[]) => Q;
+}>(query: Q, options: ListCrmQuotesOptions): Q {
   if (options.search) {
+    const term = options.search.replace(/[,()]/g, ' ').trim();
+    if (!term) return query;
     query = query.or(
-      `project_name.ilike.%${options.search}%,customer_name.ilike.%${options.search}%,description.ilike.%${options.search}%,notes.ilike.%${options.search}%`
+      `quote_number.ilike.%${term}%,fortnox_offer_number.ilike.%${term}%,project_name.ilike.%${term}%,customer_name.ilike.%${term}%,description.ilike.%${term}%,notes.ilike.%${term}%`,
     );
   }
-
-  if (options.status) {
-    query = query.eq('status', options.status);
-  }
-
-  if (options.prospectId) {
-    query = query.eq('prospect_id', options.prospectId);
-  }
-
-  if (options.customerId) {
-    query = query.eq('customer_id', options.customerId);
-  }
-
+  const statuses = options.filter ? QUOTE_FILTER_STATUSES[options.filter] : null;
+  if (statuses) query = query.in('status', statuses);
+  if (options.status) query = query.eq('status', options.status);
+  if (options.assignedToIn && options.assignedToIn.length > 0) query = query.in('assigned_to', options.assignedToIn);
+  if (options.prospectId) query = query.eq('prospect_id', options.prospectId);
+  if (options.customerId) query = query.eq('customer_id', options.customerId);
   return query;
+}
+
+export async function listCrmQuotesWithFilters(supabase: SupabaseClient, options: ListCrmQuotesOptions) {
+  const limit = options.limit ?? CRM_QUOTES_PAGE_SIZE;
+  const offset = options.offset ?? 0;
+  const selected = supabase.from('crm_quotes').select(crmQuoteSelect, { count: 'exact' });
+  const ordered = options.sort === 'updated_desc'
+    ? selected.order('updated_at', { ascending: false })
+    : options.sort === 'created_desc'
+      ? selected.order('created_at', { ascending: false })
+      : options.sort === 'follow_up_asc'
+        // Nulls last: a quote with no follow-up date set is not more urgent than one that has one.
+        ? selected
+          .order('follow_up_date', { ascending: true, nullsFirst: false })
+          .order('created_at', { ascending: false })
+        : selected
+          .order('status', { ascending: true })
+          .order('follow_up_date', { ascending: true, nullsFirst: false })
+          .order('quote_date', { ascending: false });
+
+  return applyQuoteListFilters(ordered.range(offset, offset + limit - 1), options);
+}
+
+// Per-filter counts for the offer list's tabs. One head-count query per tab (count only, no rows
+// transferred) so the numbers stay exact at any table size. The search and assignee scope is
+// applied so the counts describe the same set the list is showing.
+export async function getCrmQuoteFilterCounts(
+  supabase: SupabaseClient,
+  options: { search?: string; assignedToIn?: string[]; prospectId?: string; customerId?: string },
+): Promise<Record<CrmQuoteListFilter, number>> {
+  const entries = await Promise.all(
+    CRM_QUOTE_LIST_FILTERS.map(async (filter) => {
+      const query = applyQuoteListFilters(
+        supabase.from('crm_quotes').select('id', { count: 'exact', head: true }),
+        { ...options, filter },
+      );
+      // Throw rather than fall back to 0: a failed count would otherwise render as "Alla 0" beside
+      // a hundred visible rows, with nothing telling the reader the number is wrong. Silent zeros
+      // are the failure mode this whole change exists to remove.
+      const { count, error } = await query;
+      if (error) throw new Error(`quote_counts:${filter}: ${error.message}`);
+      return [filter, count ?? 0] as const;
+    }),
+  );
+  return Object.fromEntries(entries) as Record<CrmQuoteListFilter, number>;
 }
 
 export async function getCrmQuote(supabase: SupabaseClient, id: string) {

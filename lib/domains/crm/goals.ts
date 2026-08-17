@@ -90,6 +90,37 @@ export function getCurrentMonthStartDate() {
   return formatLocalDateOnly(new Date(now.getFullYear(), now.getMonth(), 1));
 }
 
+/**
+ * The window the CRM overview asks the server to count inside, built from the READER's clock: the
+ * route runs on UTC, so deciding "this week" there would move the boundary for anyone whose
+ * calendar day differs from the server's. Lives here, next to getCurrentWeekStartDate, so the
+ * actuals and the weekly budget can never disagree about which week it is — and so the arithmetic
+ * is reachable from a test, which it was not inside the client component.
+ *
+ * `now` is injectable for exactly that reason; production passes nothing.
+ */
+export function getCrmOverviewWindow(now: Date = new Date()) {
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const weekStart = new Date(today);
+  weekStart.setDate(weekStart.getDate() - ((weekStart.getDay() + 6) % 7));
+  // Noon anchors: adding days to a midnight Date can land on 23:00 the previous day across a DST
+  // shift, which would move the boundary by a day.
+  const noon = (date: Date, offsetDays: number) => {
+    const shifted = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 12);
+    shifted.setDate(shifted.getDate() + offsetDays);
+    return shifted;
+  };
+  return {
+    today: formatLocalDateOnly(today),
+    /** Inclusive first day of the rolling 7-day window. */
+    since: formatLocalDateOnly(noon(today, -7)),
+    /** Inclusive Monday of the current week. */
+    weekStart: formatLocalDateOnly(weekStart),
+    /** Exclusive Monday after the current week. */
+    weekEnd: formatLocalDateOnly(noon(weekStart, 7)),
+  };
+}
+
 // Derive the displayed weekly target from a monthly budget (budget ÷ 4, fixed).
 export function weeklyFromMonthly(monthly: number | string): number {
   const numeric = typeof monthly === 'number' ? monthly : Number(String(monthly));

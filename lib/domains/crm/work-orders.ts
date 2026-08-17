@@ -426,7 +426,7 @@ export const CRM_WORK_ORDERS_PAGE_SIZE = 100;
 // query and the per-filter counts can never diverge.
 export type CrmWorkOrderBoardFilter = 'all' | 'draft' | 'scheduled' | 'active' | 'completed' | 'invoiced';
 export const CRM_WORK_ORDER_BOARD_FILTERS: CrmWorkOrderBoardFilter[] = ['all', 'draft', 'scheduled', 'active', 'completed', 'invoiced'];
-const BOARD_FILTER_STATUSES: Record<CrmWorkOrderBoardFilter, CrmWorkOrderStatus[] | null> = {
+export const BOARD_FILTER_STATUSES: Record<CrmWorkOrderBoardFilter, CrmWorkOrderStatus[] | null> = {
   all: null,
   draft: ['draft'],
   scheduled: ['scheduled', 'ready'],
@@ -475,20 +475,31 @@ function applyWorkOrderListFilters<Q extends {
   return query;
 }
 
+// Sort orders, named after the leading key. The board is a work queue — earliest installation
+// date first — but a "senaste ordrar" list needs the other end of the table, and the order MUST
+// be chosen server-side: the page cap cuts the rows before the browser sees them, so sorting in
+// the client only reorders whatever survived the cut. With the default sort a newly created
+// order (installation date in the future) is the LAST row in the table, so once the company
+// passes CRM_WORK_ORDERS_PAGE_SIZE orders a client-sorted "latest" list would quietly show the
+// oldest jobs instead.
+export type CrmWorkOrderSort = 'installation_asc' | 'created_desc';
+
 export async function listCrmWorkOrdersWithFilters(
   supabase: SupabaseClient,
-  options: WorkOrderListFilters & { limit?: number; offset?: number },
+  options: WorkOrderListFilters & { limit?: number; offset?: number; sort?: CrmWorkOrderSort },
 ) {
   const limit = options.limit ?? CRM_WORK_ORDERS_PAGE_SIZE;
   const offset = options.offset ?? 0;
-  const query = supabase
+  const selected = supabase
     .from('crm_work_orders')
-    .select(crmWorkOrderSelect, { count: 'exact' })
-    .order('desired_installation_date', { ascending: true, nullsFirst: false })
-    .order('created_at', { ascending: false })
-    .range(offset, offset + limit - 1);
+    .select(crmWorkOrderSelect, { count: 'exact' });
+  const ordered = options.sort === 'created_desc'
+    ? selected.order('created_at', { ascending: false })
+    : selected
+      .order('desired_installation_date', { ascending: true, nullsFirst: false })
+      .order('created_at', { ascending: false });
 
-  return applyWorkOrderListFilters(query, options);
+  return applyWorkOrderListFilters(ordered.range(offset, offset + limit - 1), options);
 }
 
 // Per-filter counts for the board chips. One head-count query per filter (count-only, no rows
@@ -504,7 +515,10 @@ export async function getCrmWorkOrderFilterCounts(
         supabase.from('crm_work_orders').select('id', { count: 'exact', head: true }),
         { search: options.search, filter, assignedToIn: options.assignedToIn },
       );
-      const { count } = await query;
+      // Throw rather than fall back to 0 — a failed count would render as a chip reading 0 next to
+      // a list full of rows, with nothing saying the number is wrong. Same rule as the quote counts.
+      const { count, error } = await query;
+      if (error) throw new Error(`work_order_counts:${filter}: ${error.message}`);
       return [filter, count ?? 0] as const;
     }),
   );

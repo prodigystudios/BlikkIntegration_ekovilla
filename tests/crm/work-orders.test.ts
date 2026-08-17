@@ -308,3 +308,32 @@ describe('updateCrmWorkOrderTimeEntry', () => {
     expect((supabase._query.eq as any).mock.calls).toEqual([['id', 'e1'], ['user_id', 'anna']]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// listCrmWorkOrdersWithFilters — radordningen
+//
+// Ordningen måste väljas på servern. Sidtaket (CRM_WORK_ORDERS_PAGE_SIZE) kapar raderna innan
+// webbläsaren ser dem, så en klientsortering ordnar bara det som råkade överleva kapningen. Med
+// standardsorteringen ligger en nyskapad order SIST i tabellen — installationsdatumet ligger i
+// framtiden — så en klientsorterad "senaste ordrar"-lista hade tyst visat de äldsta jobben så
+// fort bolaget passerar taket. Testet vaktar att de två sorteringarna inte glider ihop igen.
+// ---------------------------------------------------------------------------
+
+import { listCrmWorkOrdersWithFilters } from '@/lib/domains/crm/work-orders';
+
+describe('listCrmWorkOrdersWithFilters — radordningen', () => {
+  it('sorterar som arbetskö som standard: tidigast installationsdatum först', async () => {
+    const supabase = makeSupabaseMock({ data: [], error: null });
+    await listCrmWorkOrdersWithFilters(supabase as any, {});
+    expect((supabase._query.order as any).mock.calls).toEqual([
+      ['desired_installation_date', { ascending: true, nullsFirst: false }],
+      ['created_at', { ascending: false }],
+    ]);
+  });
+
+  it('sort=created_desc sorterar nyast först och rör inte installationsdatumet', async () => {
+    const supabase = makeSupabaseMock({ data: [], error: null });
+    await listCrmWorkOrdersWithFilters(supabase as any, { sort: 'created_desc' });
+    expect((supabase._query.order as any).mock.calls).toEqual([['created_at', { ascending: false }]]);
+  });
+});
