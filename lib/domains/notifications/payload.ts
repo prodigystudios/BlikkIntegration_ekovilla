@@ -82,3 +82,30 @@ export function buildAppTicketCreatedNotification(input: {
     entity_id: input.ticketId,
   };
 }
+
+// Skickas till säljaren när någon annan lagt upp en CRM-uppgift åt hen.
+//
+// Vem som gett uppgiften är själva poängen med notisen och står därför i body:n — utan avsändare
+// blir det en uppgift man inte minns att man skrivit. Förfallodatumet följer med när det finns,
+// eftersom "gör det här" och "till när" är samma fråga för mottagaren.
+//
+// href går till uppgiftslistan med uppgiften öppnad. Mottagaren är alltid en säljare eller admin
+// (rutten validerar det mot säljarkatalogen), så /crm är en yta hen kan öppna — till skillnad
+// från arbetsorder-omnämnandena, som måste rollstyra sin länk.
+export function buildCrmTaskAssignedNotification(input: {
+  taskId: string;
+  title: string;
+  assignerName: string;
+  dueDate: string | null; // ISO-datum (YYYY-MM-DD)
+}): NotificationContent {
+  return {
+    type: 'crm_task.assigned',
+    title: `Ny uppgift: ${input.title}`,
+    body: input.dueDate
+      ? `${input.assignerName} har lagt en uppgift på dig · senast ${input.dueDate}`
+      : `${input.assignerName} har lagt en uppgift på dig`,
+    href: `/crm/uppgifter?task_id=${input.taskId}`,
+    entity_type: 'crm_task',
+    entity_id: input.taskId,
+  };
+}

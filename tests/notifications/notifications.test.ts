@@ -6,6 +6,7 @@ import {
   buildFaultReportCreatedNotification,
   buildFaultReportUpdatedNotification,
   buildWorkOrderCommentMentionNotification,
+  buildCrmTaskAssignedNotification,
 } from '@/lib/domains/notifications/payload';
 import type { NotificationRow } from '@/lib/domains/notifications/types';
 
@@ -105,6 +106,37 @@ describe('buildWorkOrderCommentMentionNotification', () => {
   it('routes the crm audience to the CRM detail view', () => {
     const n = buildWorkOrderCommentMentionNotification({ workOrderId: 'wo4', audience: 'crm' });
     expect(n.href).toBe('/crm/arbetsorder/wo4');
+  });
+});
+
+describe('buildCrmTaskAssignedNotification', () => {
+  // Vem som gett uppgiften är hela poängen med notisen: samma rad dyker upp bland mottagarens
+  // egna dashboard-anteckningar, och utan avsändare läses den som något hen själv skrivit.
+  it('namnger avsändaren och länkar till uppgiften', () => {
+    const n = buildCrmTaskAssignedNotification({
+      taskId: 't1',
+      title: 'Ring Bygg AB om offerten',
+      assignerName: 'Marcus Chef',
+      dueDate: '2026-08-20',
+    });
+    expect(n.type).toBe('crm_task.assigned');
+    expect(n.entity_type).toBe('crm_task');
+    expect(n.entity_id).toBe('t1');
+    expect(n.href).toBe('/crm/uppgifter?task_id=t1');
+    expect(n.title).toContain('Ring Bygg AB om offerten');
+    expect(n.body).toContain('Marcus Chef');
+    expect(n.body).toContain('2026-08-20');
+  });
+
+  it('utelämnar deadline-delen när uppgiften saknar datum', () => {
+    const n = buildCrmTaskAssignedNotification({
+      taskId: 't2',
+      title: 'Följ upp',
+      assignerName: 'Marcus Chef',
+      dueDate: null,
+    });
+    expect(n.body).toContain('Marcus Chef');
+    expect(n.body).not.toContain('senast');
   });
 });
 
