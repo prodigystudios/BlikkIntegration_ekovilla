@@ -3,6 +3,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 export const crmTaskSelect = `
   id,
   user_id,
+  created_by,
   kind,
   title,
   body,
@@ -28,6 +29,8 @@ type CreateCrmTaskInput = {
   related_id: string | null;
   related_label: string | null;
   user_id: string;
+  // Vem som skapade uppgiften. Skiljer sig från user_id när en chef lagt den på en säljare.
+  created_by: string;
   title: string;
   details: string | null;
   status: CrmTaskStatus;
@@ -38,7 +41,9 @@ type CreateCrmTaskInput = {
   completed_at: string | null;
 };
 
-type UpdateCrmTaskInput = Omit<CreateCrmTaskInput, 'user_id'>;
+// Varken ägare eller skapare ändras vid redigering: en uppgift flyttas inte mellan personer,
+// den skapas åt rätt person från början. Skaparen är dessutom ett historiskt faktum.
+type UpdateCrmTaskInput = Omit<CreateCrmTaskInput, 'user_id' | 'created_by'>;
 
 type ListCrmTasksOptions = {
   search?: string;
@@ -50,6 +55,7 @@ type ListCrmTasksOptions = {
 type RawCrmTaskRow = {
   id: string;
   user_id: string;
+  created_by: string | null;
   kind: string;
   title: string;
   body: string | null;
@@ -87,6 +93,11 @@ export function mapCrmTaskRow(row: RawCrmTaskRow) {
     // Back-compat: keep prospect_id populated when the relation is a prospect.
     prospect_id: relatedType === 'crm_prospect' ? row.related_id : null,
     user_id: row.user_id,
+    created_by: row.created_by ?? null,
+    // Uppgiften är delegerad när skaparen inte är den som ska göra den. Härleds här i stället
+    // för i varje vy — både uppgiftslistan och mottagarens rad behöver samma bedömning, och
+    // äldre rader (skapade före kolumnen fanns) har created_by null och är alltså inte delegerade.
+    delegated: Boolean(row.created_by && row.created_by !== row.user_id),
     title: row.title,
     details: row.body,
     status: row.status === 'done' ? 'done' : row.status === 'cancelled' ? 'cancelled' : 'open',
@@ -127,9 +138,47 @@ export async function listCrmTasks(supabase: SupabaseClient, options: ListCrmTas
   return query;
 }
 
+/**
+ * Uppgifter som `creatorUserId` skapat ÅT NÅGON ANNAN.
+ *
+ * Kräver en elevated klient: raderna tillhör mottagaren, och tabellens SELECT-policy är
+ * egen-bara. Policyn lämnas medvetet orörd — se huvudkommentaren i
+ * 20260817_dashboard_work_items_created_by.sql för varför en vidgad policy hade läckt in i
+ * den personliga dashboarden.
+ *
+ * Elevationen är ofarlig därför att filtret är slutet om anroparen själv: `created_by` måste
+ * vara hen, och `user_id` måste vara någon annan. Inget annat blir läsbart. Anropas ALDRIG med
+ * ett creatorUserId som kommer från klienten — bara från den inloggade sessionen.
+ */
+export async function listCrmTasksDelegatedBy(
+  admin: SupabaseClient,
+  creatorUserId: string,
+  options: { search?: string } = {}
+) {
+  let query = admin
+    .from('dashboard_work_items')
+    .select(crmTaskSelect)
+    .eq('kind', 'note')
+    .eq('created_by', creatorUserId)
+    .neq('user_id', creatorUserId);
+
+  // Sökningen måste tillämpas här också. Klienten skickar samma `q` oavsett vy, och utan den
+  // här grenen hade en sökning i den delegerade vyn tyst gett hela listan tillbaka.
+  if (options.search) {
+    query = query.or(`title.ilike.%${options.search}%,body.ilike.%${options.search}%`);
+  }
+
+  return query
+    .order('status', { ascending: true })
+    .order('due_at', { ascending: true, nullsFirst: false })
+    .order('created_at', { ascending: false })
+    .limit(100);
+}
+
 export async function createCrmTask(supabase: SupabaseClient, input: CreateCrmTaskInput) {
   const result = await supabase.from('dashboard_work_items').insert({
     user_id: input.user_id,
+    created_by: input.created_by,
     kind: 'note',
     title: input.title,
     body: input.details,

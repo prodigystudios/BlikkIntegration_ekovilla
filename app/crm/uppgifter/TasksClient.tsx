@@ -36,6 +36,9 @@ type TaskItem = {
   related_label: string | null;
   prospect_id: string | null;
   user_id: string;
+  created_by: string | null;
+  // Härleds i domänlagret: skaparen är inte den som ska göra uppgiften.
+  delegated: boolean;
   title: string;
   details: string | null;
   status: 'open' | 'done';
@@ -59,9 +62,14 @@ type TaskDraft = {
   remind_at: string;
   source: string;
   status: TaskItem['status'];
+  // Vem uppgiften ska ligga på. Tom sträng = jag själv. Sätts bara vid skapandet — en befintlig
+  // uppgift flyttas inte mellan personer.
+  user_id: string;
 };
 
-type TaskFilter = 'all' | 'open' | 'overdue' | 'done';
+// 'delegated' är inte ett filter på samma lista utan en egen hämtning: uppgifterna tillhör
+// mottagaren och ligger utanför den inloggades RLS-vy.
+type TaskFilter = 'all' | 'open' | 'overdue' | 'done' | 'delegated';
 
 const priorityMeta: Record<TaskItem['priority'], { label: string; className: string }> = {
   low: { label: 'Låg', className: 'border-slate-200 bg-slate-100 text-slate-700' },
@@ -88,6 +96,7 @@ const initialDraft: TaskDraft = {
   remind_at: '',
   source: '',
   status: 'open',
+  user_id: '',
 };
 
 function formatDate(value: string | null | undefined) {
@@ -130,7 +139,7 @@ function isOverdue(task: TaskItem) {
   return task.due_date < todayIso;
 }
 
-export default function TasksClient() {
+export default function TasksClient({ canDelegate = false }: { canDelegate?: boolean }) {
   const toast = useToast();
   const searchParams = useSearchParams();
   const [tasks, setTasks] = useState<TaskItem[]>([]);
@@ -144,6 +153,30 @@ export default function TasksClient() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [draft, setDraft] = useState<TaskDraft>(initialDraft);
+  // Säljarkatalogen bakom mottagarväljaren — och bakom "Från: X" på en uppgift man FÅTT.
+  // Hämtas därför av alla, inte bara den som får delegera: det är mottagaren som mest behöver
+  // veta vem som lagt uppgiften på hen, och utan katalogen hade hen bara sett ett uuid.
+  const [sellers, setSellers] = useState<{ id: string; full_name: string | null }[]>([]);
+  const [sellersLoaded, setSellersLoaded] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    fetch('/api/crm/sellers', { cache: 'no-store' })
+      .then((r) => r.json().catch(() => ({})))
+      .then((json) => {
+        if (!active) return;
+        setSellers(json?.ok ? json.data?.sellers || [] : []);
+        setSellersLoaded(Boolean(json?.ok));
+      })
+      .catch(() => { if (active) setSellers([]); });
+    return () => { active = false; };
+  }, []);
+
+  const sellerNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const seller of sellers) if (seller.full_name) map.set(seller.id, seller.full_name);
+    return map;
+  }, [sellers]);
 
   // Debounced server-side search for the relation picker — scales to any table size
   // (vs. preloading every customer/quote into a <select>).
@@ -191,6 +224,9 @@ export default function TasksClient() {
       try {
         const query = new URLSearchParams();
         if (search.trim()) query.set('q', search.trim());
+        // Delegerade uppgifter är en EGEN hämtning, inte ett filter över den vanliga listan:
+        // de tillhör mottagaren och kommer aldrig med i den inloggades egna rader.
+        if (filter === 'delegated') query.set('scope', 'delegated');
 
         // Linked entities (customer/quote/prospect) are searched on demand in the
         // modal via EntityCombobox, so the list view only needs the tasks themselves.
@@ -220,7 +256,9 @@ export default function TasksClient() {
     return () => {
       active = false;
     };
-  }, [search]);
+    // filter är med som beroende BARA för att 'delegated' byter datakälla — de övriga filtren
+    // är rena klientfilter över samma hämtning och ska inte kosta en ny request.
+  }, [search, filter === 'delegated']); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Deep-link: open a specific task's edit modal when arriving with ?task_id=
   // (e.g. from a customer's related list). Handled once the task is loaded.
@@ -246,18 +284,22 @@ export default function TasksClient() {
   }, [modalOpen]);
 
   const visibleTasks = useMemo(() => {
-    if (filter === 'all') return tasks;
+    // 'delegated' har redan hämtat exakt de rader som ska visas — ett klientfilter här hade
+    // filtrerat bort dem allihop, eftersom de per definition inte är den inloggades egna.
+    if (filter === 'all' || filter === 'delegated') return tasks;
     if (filter === 'done') return tasks.filter((task) => task.status === 'done');
     if (filter === 'overdue') return tasks.filter((task) => isOverdue(task));
     return tasks.filter((task) => task.status === 'open');
   }, [filter, tasks]);
 
-  const filterCounts = useMemo(() => ({
+  // Räknarna beskriver den hämtade listan. I den delegerade vyn är det en annan lista, så de
+  // nollas hellre än visar siffror som gäller något annat.
+  const filterCounts = useMemo(() => (filter === 'delegated' ? { all: 0, open: 0, overdue: 0, done: 0 } : {
     all: tasks.length,
     open: tasks.filter((task) => task.status === 'open').length,
     overdue: tasks.filter((task) => isOverdue(task)).length,
     done: tasks.filter((task) => task.status === 'done').length,
-  }), [tasks]);
+  }), [tasks, filter]);
 
   // Active filter count — shown as a badge on the mobile filter toggle.
   const activeFilterCount = filter !== 'all' ? 1 : 0;
@@ -281,6 +323,9 @@ export default function TasksClient() {
       remind_at: toDateTimeLocalValue(task.remind_at),
       source: task.source || '',
       status: task.status,
+      // Ägaren är låst efter skapandet — väljaren visas inte i redigeringsläget, och fältet
+      // skickas inte med i PATCH:en. Bärs ändå med så draften speglar raden.
+      user_id: task.user_id,
     });
     setModalOpen(true);
   }
@@ -300,6 +345,10 @@ export default function TasksClient() {
         body: JSON.stringify({
           ...draft,
           remind_at: toIsoDateTime(draft.remind_at),
+          // Mottagaren sätts BARA när uppgiften skapas. En befintlig uppgift flyttas inte
+          // mellan personer, och att skicka fältet vid PATCH hade gett rutten ett värde den
+          // ändå ignorerar — bättre att inte påstå något.
+          user_id: !isEditing && canDelegate && draft.user_id ? draft.user_id : undefined,
         }),
       });
       const json = await res.json().catch(() => ({}));
@@ -310,17 +359,26 @@ export default function TasksClient() {
       }
 
       const item = json?.data?.item as TaskItem | undefined;
+      // Den nya raden läggs bara till om den hör hemma i den lista som visas. En uppgift man
+      // lagt på någon annan tillhör MOTTAGAREN — hade den prependats i den egna listan skulle
+      // den räknats bland ens egna öppna uppgifter och märkts "Från: <sig själv>" tills nästa
+      // omladdning. Samma sak omvänt: en egen uppgift hör inte hemma i "Jag har lagt ut".
+      const belongsInView = item ? (filter === 'delegated' ? item.delegated : !item.delegated) : false;
       if (item) {
         setTasks((current) => {
           if (isEditing) return current.map((entry) => (entry.id === item.id ? item : entry));
-          return [item, ...current];
+          return belongsInView ? [item, ...current] : current;
         });
       }
 
       setModalOpen(false);
       setEditingTaskId(null);
       setDraft(initialDraft);
-      toast.success(isEditing ? 'Uppgift uppdaterad' : 'Uppgift skapad');
+      toast.success(
+        isEditing ? 'Uppgift uppdaterad'
+          : item?.delegated ? 'Uppgift skapad och notis skickad — finns under "Jag har lagt ut"'
+          : 'Uppgift skapad',
+      );
     } catch {
       toast.error('Fel vid sparande av uppgift');
     } finally {
@@ -436,6 +494,8 @@ export default function TasksClient() {
               ['open', 'Öppna'],
               ['overdue', 'Förfallna'],
               ['done', 'Klara'],
+              // Bara för den som kan delegera — för alla andra är listan alltid tom.
+              ...(canDelegate ? [['delegated', 'Jag har lagt ut'] as [TaskFilter, string]] : []),
             ] as Array<[TaskFilter, string]>).map(([value, label]) => {
               const isActive = filter === value;
               return (
@@ -452,12 +512,16 @@ export default function TasksClient() {
                   style={isActive ? { backgroundColor: 'var(--crm-primary)' } : undefined}
                 >
                   {label}
-                  <span className={cn(
-                    'rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums',
-                    isActive ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500',
-                  )}>
-                    {filterCounts[value]}
-                  </span>
+                  {/* Den delegerade vyn är en egen hämtning — en siffra ur den vanliga listan
+                      hade beskrivit fel uppsättning rader. Hellre ingen siffra än en som ljuger. */}
+                  {value === 'delegated' ? null : (
+                    <span className={cn(
+                      'rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums',
+                      isActive ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500',
+                    )}>
+                      {filterCounts[value as keyof typeof filterCounts]}
+                    </span>
+                  )}
                 </button>
               );
             })}
@@ -522,6 +586,20 @@ export default function TasksClient() {
                             Klar
                           </span>
                         )}
+                        {/* En delegerad uppgift måste säga varifrån den kommer. Samma rad dyker
+                            dessutom upp bland mottagarens egna dashboard-anteckningar (samma
+                            tabell, samma kind), och utan avsändare läses den som något hen själv
+                            skrivit och inte minns.
+
+                            Vilket namn som är intressant beror på vilken sida man står på: i den
+                            delegerade vyn är det MOTTAGAREN, i sin egen lista AVSÄNDAREN. */}
+                        {task.delegated ? (
+                          <span className={cn(crm.badge, 'border-sky-200 bg-sky-50 text-sky-700')}>
+                            {filter === 'delegated'
+                              ? `Åt: ${sellerNameById.get(task.user_id) ?? (sellersLoaded ? 'okänd' : '…')}`
+                              : `Från: ${(task.created_by && sellerNameById.get(task.created_by)) ?? (sellersLoaded ? 'en kollega' : '…')}`}
+                          </span>
+                        ) : null}
                       </div>
 
                       <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-slate-500">
@@ -536,8 +614,19 @@ export default function TasksClient() {
                       )}
                     </div>
 
-                    {/* Actions */}
+                    {/* Actions.
+                        Den delegerade vyn är LÄSVY. Raderna tillhör mottagaren, och både PATCH
+                        och DELETE kör på sessionsklienten mot en tabell vars RLS är egen-bara —
+                        varje knapptryck här hade matchat noll rader och gett ett 500-fel. Att
+                        visa knappar som inte kan fungera är sämre än att inte visa dem: uppgiften
+                        är säljarens att göra klar, chefens att följa. */}
                     <div className="flex flex-wrap items-center gap-2 md:w-36 md:flex-col md:items-stretch">
+                      {filter === 'delegated' ? (
+                        <p className="text-[11px] leading-snug text-slate-400 md:text-right">
+                          {task.status === 'done' ? 'Avklarad av säljaren' : 'Väntar på säljaren'}
+                        </p>
+                      ) : (
+                      <>
                       <button
                         type="button"
                         onClick={() => toggleTaskStatus(task)}
@@ -559,6 +648,8 @@ export default function TasksClient() {
                       >
                         Redigera
                       </button>
+                      </>
+                      )}
                     </div>
                   </div>
                 );
@@ -652,6 +743,34 @@ export default function TasksClient() {
                   <option value="done">Klar</option>
                 </Select>
               </div>
+
+              {/* Mottagare — bara vid skapandet, och bara för den som får delegera. En befintlig
+                  uppgift flyttas inte mellan personer, så väljaren döljs i redigeringsläget i
+                  stället för att stå där utan verkan.
+
+                  Riktig <label> och inte crm.sectionTitle som fälten ovan: den är ett <p> och
+                  binder alltså inte till kontrollen, vilket bryter mot WCAG. De befintliga fälten
+                  har samma brist men rättas inte här — det är en egen städning. */}
+              {canDelegate && !editingTaskId ? (
+                <div className="rounded-xl border border-[#e3e9df] bg-[#f6f9f3] p-4">
+                  <label htmlFor="task-owner" className={cn('mb-1.5 block', crm.sectionTitle)}>Ansvarig</label>
+                  <Select
+                    id="task-owner"
+                    value={draft.user_id}
+                    onChange={(e) => setDraft((c) => ({ ...c, user_id: e.target.value }))}
+                  >
+                    <option value="">Jag själv</option>
+                    {sellers.map((seller) => (
+                      <option key={seller.id} value={seller.id}>{seller.full_name || seller.id}</option>
+                    ))}
+                  </Select>
+                  <p className="mt-1.5 text-xs text-slate-500">
+                    {draft.user_id
+                      ? 'Uppgiften hamnar hos säljaren, som får en notis. Du hittar den under "Jag har lagt ut".'
+                      : 'Lägg uppgiften på en säljare i stället för dig själv.'}
+                  </p>
+                </div>
+              ) : null}
 
               <div className="grid gap-4 rounded-xl border border-[#e3e9df] bg-[#f6f9f3] p-4 sm:grid-cols-3">
                 <div>
