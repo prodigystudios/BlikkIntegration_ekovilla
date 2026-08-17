@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { crmQuoteSelect } from './quotes';
 import { resolveCrmContact, type CrmContactSource } from './contacts';
 import { computePricing, type PricingLineItem } from './pricing';
@@ -377,7 +378,18 @@ export async function createCrmWorkOrderFromQuote(supabase: SupabaseClient, quot
 
   const workOrder = createResult.data;
 
-  const quoteUpdateResult = await supabase
+  // Återlänkningen körs med elevated klient, INTE sessionsklienten. Sedan
+  // 20260817_crm_work_orders_insert_from_won_quote.sql får vilken säljare som helst skapa
+  // ordern på en vunnen offert (så att ett jobb inte står still när säljaren är borta), men
+  // offertens UPDATE-policy är fortfarande ägarscopad — och den ska den vara, annars blir
+  // allas offerter redigerbara för alla. Utan elevationen skulle raden ovan skapas och den här
+  // skrivningen falla: föräldralös order, offert som ser okonverterad ut, och nästa försök
+  // smäller på unikhetsindexet på quote_id.
+  //
+  // Avgränsningen är medveten: fyra kolumner som är systemets bokföring över att
+  // konverteringen skett, inget av användarens innehåll. Behörighetsbeslutet är redan fattat
+  // (crm.workorder.write + vunnen offert) och ordern är redan skapad när vi kommer hit.
+  const quoteUpdateResult = await getSupabaseAdmin()
     .from('crm_quotes')
     .update({
       work_order_id: workOrder.id,

@@ -1,9 +1,10 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { getCrmQuote, markCrmQuoteWon, updateCrmQuote, type UpdateCrmQuoteInput } from '@/lib/domains/crm/quotes';
+import { getCrmQuote, getCrmQuoteStatus, markCrmQuoteWon, updateCrmQuote, type UpdateCrmQuoteInput } from '@/lib/domains/crm/quotes';
 import { pushQuoteToFortnox } from '@/lib/domains/fortnox/offers';
 import { FortnoxNotConnectedError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
 import {
+  authorizeQuoteAssignee,
   isNoRowsError,
   ok,
   pickProvidedQuoteFields,
@@ -66,13 +67,34 @@ export async function PATCH(req: Request, context: RouteContext) {
       updateInput.currency_code = updateInput.currency_code || 'SEK';
     }
 
+    // Byte av ansvarig säljare kräver crm.admin. Nuvarande värde läses bara när fältet
+    // faktiskt skickas — en oförändrad ansvarig ska inte kosta en extra rundtur, och inte
+    // heller ge 403 för en klient som råkar eka tillbaka det den läste.
+    if (updateInput.assigned_to !== undefined) {
+      const { data: current } = await getCrmQuoteStatus(supabase, context.params.id);
+      if (!current) {
+        // Går offerten inte att läsa finns ingen nuvarande ansvarig att jämföra mot, och inget
+        // att skriva. Släpp fältet och låt den vanliga uppdateringen svara — annars hade en
+        // PATCH mot ett id som inte finns fått "bara en administratör kan ändra ansvarig"
+        // i stället för 404.
+        delete updateInput.assigned_to;
+      } else {
+        const assignee = await authorizeQuoteAssignee(updateInput.assigned_to, current.assigned_to ?? null);
+        if (assignee.response) return assignee.response;
+        if (assignee.assignedTo === undefined) {
+          delete updateInput.assigned_to;
+        } else {
+          updateInput.assigned_to = assignee.assignedTo;
+        }
+      }
+    }
+
     // markCrmQuoteWon / updateCrmQuote return loosely-typed mapped rows; treat as any.
     let data: any;
     if (parsedBody.data.status === 'won') {
       const result = await markCrmQuoteWon(
         supabase,
         context.params.id,
-        crmUser.currentUser.id,
         crmUser.currentUser.id,
         updateInput
       );
@@ -97,8 +119,14 @@ export async function PATCH(req: Request, context: RouteContext) {
     // Only on real content edits (line_items sent) — not quick status flips — and only
     // while the offer is unlocked (no work order has converted it to an order yet).
     // Best-effort: the save always succeeds; a failed sync is surfaced as fortnox_error.
+    //
+    // assigned_to räknas som en innehållsändring: offertens "Vår referens" i Fortnox härleds
+    // ur ansvarig säljare (resolveOurReference i fortnox/offers.ts). Utan den här grenen skulle
+    // ett ansvarigbyte — som inte skickar några rader — lämna kvar den gamla säljarens namn på
+    // det dokument kunden faktiskt får.
     let fortnoxError: string | null = null;
-    const isContentEdit = !!rawBody && typeof rawBody === 'object' && 'line_items' in rawBody;
+    const isContentEdit =
+      !!rawBody && typeof rawBody === 'object' && ('line_items' in rawBody || 'assigned_to' in rawBody);
     if (data && isContentEdit && !data.work_order_id) {
       try {
         await pushQuoteToFortnox(context.params.id);

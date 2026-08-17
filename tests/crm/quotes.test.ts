@@ -11,9 +11,15 @@ vi.mock('@/lib/domains/crm/quotes', () => ({
   listCrmQuotesWithFilters: vi.fn(),
   createCrmQuote: vi.fn(),
   getCrmQuote: vi.fn(),
+  getCrmQuoteStatus: vi.fn(),
   updateCrmQuote: vi.fn(),
   markCrmQuoteWon: vi.fn(),
 }));
+
+// authorizeQuoteAssignee validerar mottagaren mot säljarkatalogen med elevated klient
+// (profiles-RLS är self-only). Mockas här så testet slipper env-beroenden.
+vi.mock('@/lib/domains/crm/customers', () => ({ listCrmSellers: vi.fn() }));
+vi.mock('@/lib/supabase/server', () => ({ getSupabaseAdmin: vi.fn(() => ({})) }));
 
 vi.mock('@supabase/auth-helpers-nextjs', () => ({
   createRouteHandlerClient: vi.fn(() => ({})),
@@ -36,9 +42,11 @@ import {
   listCrmQuotesWithFilters,
   createCrmQuote,
   getCrmQuote,
+  getCrmQuoteStatus,
   updateCrmQuote,
   markCrmQuoteWon,
 } from '@/lib/domains/crm/quotes';
+import { listCrmSellers } from '@/lib/domains/crm/customers';
 import { createCrmQuoteSchema, listCrmQuotesQuerySchema } from '@/app/api/crm/quotes/_lib';
 
 const { GET: collectionGET, POST } = await import('@/app/api/crm/quotes/route');
@@ -50,6 +58,8 @@ const mockCreate = vi.mocked(createCrmQuote);
 const mockGet = vi.mocked(getCrmQuote);
 const mockUpdate = vi.mocked(updateCrmQuote);
 const mockMarkWon = vi.mocked(markCrmQuoteWon);
+const mockQuoteStatus = vi.mocked(getCrmQuoteStatus);
+const mockSellers = vi.mocked(listCrmSellers);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -553,6 +563,161 @@ describe('PATCH /api/crm/quotes/[id] — status won', () => {
 
     expect(res.status).toBe(500);
     expect((await res.json()).errorDetails.code).toBe('crm_quote_won_failed');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Ansvarig säljare (assigned_to)
+//
+// Chefen gör offerten åt en säljare, men säljaren ska stå som ansvarig: det styr vem som får
+// redigera offerten (RLS), vem som blir kundansvarig när den vinns, vem topplistan räknar och
+// vems namn som hamnar som "Vår referens" på Fortnox-offerten.
+// ---------------------------------------------------------------------------
+
+const ANNAN_SALJARE = '22222222-2222-2222-2222-222222222222';
+// Delade fixturen salesUser har ett läsbart id ('user-sales-1'), inte ett uuid. Schemat kräver
+// uuid — profiles.id ÄR uuid — så de fall som ekar tillbaka det egna id:t behöver en användare
+// med ett riktigt formaterat id för att testa behörigheten och inte valideringen.
+const saljareUuid = { id: '33333333-3333-3333-3333-333333333333', role: 'sales' as const };
+
+describe('assigned_to i offertschemat', () => {
+  // Ett fält utanför schemat strippas TYST av Zod vid varje sparning. Samma felklass som
+  // is_rot_work, written_off och article_note gick i — utan den här vakten hade ansvarig
+  // säljare tappats vid nästa sparning utan ett enda felmeddelande.
+  it('överlever valideringen', () => {
+    const parsed = createCrmQuoteSchema.safeParse({ ...validQuoteBase, assigned_to: ANNAN_SALJARE });
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.assigned_to).toBe(ANNAN_SALJARE);
+  });
+
+  // Optional UTAN default: `undefined` måste betyda "rör inte kolumnen". Ett default hade
+  // skrivit ett värde vid varje PATCH, även när fältet aldrig skickades.
+  it('lämnas undefined när det inte skickas', () => {
+    const parsed = createCrmQuoteSchema.safeParse(validQuoteBase);
+    expect(parsed.success && parsed.data.assigned_to).toBeUndefined();
+  });
+
+  it('avvisar ett värde som inte är ett uuid', () => {
+    expect(createCrmQuoteSchema.safeParse({ ...validQuoteBase, assigned_to: 'anna' }).success).toBe(false);
+  });
+});
+
+describe('POST /api/crm/quotes — ansvarig säljare', () => {
+  it('låter en administratör skapa offerten direkt i säljarens namn', async () => {
+    mockGetUser.mockResolvedValue(adminUser);
+    mockSellers.mockResolvedValue([{ id: ANNAN_SALJARE, full_name: 'Anna', role: 'sales' }]);
+    mockCreate.mockResolvedValue({ data: {}, error: null } as any);
+
+    await POST(req('/api/crm/quotes', {
+      method: 'POST',
+      body: JSON.stringify({ ...validQuoteBase, assigned_to: ANNAN_SALJARE }),
+    }));
+
+    expect(mockCreate).toHaveBeenCalledWith(
+      expect.anything(),
+      // created_by står kvar på den som faktiskt skrev offerten — vem som gjorde jobbet är
+      // ett historiskt faktum, bara ansvaret flyttas.
+      expect.objectContaining({ assigned_to: ANNAN_SALJARE, created_by: adminUser.id })
+    );
+  });
+
+  it('nekar en vanlig säljare att lägga offerten på någon annan', async () => {
+    mockGetUser.mockResolvedValue(salesUser);
+    mockCreate.mockResolvedValue({ data: {}, error: null } as any);
+
+    const res = await POST(req('/api/crm/quotes', {
+      method: 'POST',
+      body: JSON.stringify({ ...validQuoteBase, assigned_to: ANNAN_SALJARE }),
+    }));
+
+    expect(res.status).toBe(403);
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  // Ett eko av det egna id:t är ingen behörighetsfråga — det är exakt vad servern hade satt ändå.
+  it('släpper igenom en säljare som anger sig själv', async () => {
+    mockGetUser.mockResolvedValue(saljareUuid);
+    mockCreate.mockResolvedValue({ data: {}, error: null } as any);
+
+    const res = await POST(req('/api/crm/quotes', {
+      method: 'POST',
+      body: JSON.stringify({ ...validQuoteBase, assigned_to: saljareUuid.id }),
+    }));
+
+    expect(res.status).toBe(201);
+    expect(mockCreate).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ assigned_to: saljareUuid.id })
+    );
+    // Säljarkatalogen ska inte ens slås upp för ett oförändrat värde.
+    expect(mockSellers).not.toHaveBeenCalled();
+  });
+
+  // Utan den här kontrollen går det att parkera offerten på en installatör, som varken kan
+  // öppna eller redigera den — offerten blir låst för alla utom administratörer.
+  it('avvisar en mottagare som inte är säljare', async () => {
+    mockGetUser.mockResolvedValue(adminUser);
+    mockSellers.mockResolvedValue([]);
+    mockCreate.mockResolvedValue({ data: {}, error: null } as any);
+
+    const res = await POST(req('/api/crm/quotes', {
+      method: 'POST',
+      body: JSON.stringify({ ...validQuoteBase, assigned_to: ANNAN_SALJARE }),
+    }));
+
+    expect(res.status).toBe(422);
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+});
+
+describe('PATCH /api/crm/quotes/[id] — ansvarig säljare', () => {
+  const ctx = { params: { id: 'q1' } };
+
+  it('låter en administratör flytta ansvaret till säljaren', async () => {
+    mockGetUser.mockResolvedValue(adminUser);
+    mockQuoteStatus.mockResolvedValue({ data: { assigned_to: adminUser.id }, error: null } as any);
+    mockSellers.mockResolvedValue([{ id: ANNAN_SALJARE, full_name: 'Anna', role: 'sales' }]);
+    mockUpdate.mockResolvedValue({ data: { id: 'q1' }, error: null } as any);
+
+    await PATCH(req('/api/crm/quotes/q1', {
+      method: 'PATCH',
+      body: JSON.stringify({ ...validQuoteBase, assigned_to: ANNAN_SALJARE }),
+    }), ctx);
+
+    expect(mockUpdate).toHaveBeenCalledWith(
+      expect.anything(),
+      'q1',
+      expect.objectContaining({ assigned_to: ANNAN_SALJARE })
+    );
+  });
+
+  it('nekar en vanlig säljare att lämna över sin offert', async () => {
+    mockGetUser.mockResolvedValue(salesUser);
+    mockQuoteStatus.mockResolvedValue({ data: { assigned_to: salesUser.id }, error: null } as any);
+
+    const res = await PATCH(req('/api/crm/quotes/q1', {
+      method: 'PATCH',
+      body: JSON.stringify({ ...validQuoteBase, assigned_to: ANNAN_SALJARE }),
+    }), ctx);
+
+    expect(res.status).toBe(403);
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
+  // En klient som ekar tillbaka offertens nuvarande ansvariga ska inte få 403 — och kolumnen
+  // ska inte skrivas i onödan.
+  it('skriver inte kolumnen när ansvarig är oförändrad', async () => {
+    mockGetUser.mockResolvedValue(saljareUuid);
+    mockQuoteStatus.mockResolvedValue({ data: { assigned_to: saljareUuid.id }, error: null } as any);
+    mockUpdate.mockResolvedValue({ data: { id: 'q1' }, error: null } as any);
+
+    const res = await PATCH(req('/api/crm/quotes/q1', {
+      method: 'PATCH',
+      body: JSON.stringify({ ...validQuoteBase, assigned_to: saljareUuid.id }),
+    }), ctx);
+
+    expect(res.status).toBe(200);
+    expect(mockUpdate.mock.calls[0][2]).not.toHaveProperty('assigned_to');
   });
 });
 

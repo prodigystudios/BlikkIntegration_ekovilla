@@ -1,12 +1,15 @@
 import { Suspense } from 'react';
 import QuoteFormClient from '../QuoteFormClient';
+import { canReassignQuote } from '../quotePermissions';
 
 export const dynamic = 'force-dynamic';
 
-export default function NyOffertPage() {
+export default async function NyOffertPage() {
+  const canReassign = await canReassignQuote();
+
   return (
     <Suspense>
-      <QuoteFormClient />
+      <QuoteFormClient canReassign={canReassign} />
     </Suspense>
   );
 }

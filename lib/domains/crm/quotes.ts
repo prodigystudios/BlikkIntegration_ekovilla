@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { convertProspectToCustomer } from './customers';
+import { convertProspectToCustomer, setAccountManagerIfUnset } from './customers';
 
 export const crmQuoteSelect = `
   id,
@@ -134,7 +134,11 @@ type CreateCrmQuoteInput = {
   assigned_to: string;
 };
 
-export type UpdateCrmQuoteInput = Omit<CreateCrmQuoteInput, 'created_by' | 'assigned_to'>;
+// created_by är oföränderligt (vem som skrev offerten är ett historiskt faktum), men
+// assigned_to går att ändra: ansvarig säljare kan lämnas över, t.ex. när en chef gör
+// offerten åt en säljare. Vem som FÅR göra det avgörs i rutten (crm.admin) — kolumnen
+// öppnas här bara typmässigt.
+export type UpdateCrmQuoteInput = Omit<CreateCrmQuoteInput, 'created_by'>;
 
 type ListCrmQuotesOptions = {
   search?: string;
@@ -185,7 +189,7 @@ export async function getCrmQuote(supabase: SupabaseClient, id: string) {
 export async function getCrmQuoteStatus(supabase: SupabaseClient, id: string) {
   return supabase
     .from('crm_quotes')
-    .select('id, status, prospect_id')
+    .select('id, status, prospect_id, customer_id, assigned_to')
     .eq('id', id)
     .single();
 }
@@ -201,6 +205,31 @@ export async function updateCrmQuote(supabase: SupabaseClient, id: string, input
 type WonResult = { data: unknown; error: { code: string; message: string } | null };
 
 /**
+ * Låter offertens ansvariga säljare bli kundansvarig när offerten vinns.
+ *
+ * Best-effort med flit: att offerten blir vunnen är den viktiga händelsen, och den ska inte
+ * falla på att kundansvarig inte gick att sätta. Fyller bara ett TOMT fält — se
+ * setAccountManagerIfUnset för varför övertagande inte sker tyst.
+ *
+ * Kundraden: prospekt och kund är samma rad i crm_customers (convertProspectToCustomer flippar
+ * bara customer_stage), så prospect_id duger som kund-id när customer_id ännu inte hunnit sättas.
+ */
+async function applyQuoteAssigneeAsAccountManager(
+  supabase: SupabaseClient,
+  quoteId: string,
+  customerId: string | null,
+  sellerId: string | null
+) {
+  if (!customerId || !sellerId) return;
+  const { error } = await setAccountManagerIfUnset(supabase, customerId, sellerId);
+  if (error) {
+    console.error(
+      `[markCrmQuoteWon] Offert ${quoteId} vanns men kundansvarig kunde inte sättas på kund ${customerId}: ${error}`
+    );
+  }
+}
+
+/**
  * Handles the 'won' status transition for a quote.
  *
  * Separates the orchestration from the HTTP layer: if the quote has a prospect_id
@@ -208,12 +237,13 @@ type WonResult = { data: unknown; error: { code: string; message: string } | nul
  * updated. The two operations are sequential without a true DB transaction — if the
  * quote update fails after conversion, the error message identifies the partial state
  * so it can be reconciled manually.
+ *
+ * Efter en lyckad uppdatering får kunden offertens ansvariga som kundansvarig (om den saknas).
  */
 export async function markCrmQuoteWon(
   supabase: SupabaseClient,
   quoteId: string,
-  assignedTo: string,
-  createdBy: string,
+  actorUserId: string,
   updateInput: Partial<UpdateCrmQuoteInput>
 ): Promise<WonResult> {
   const { data: current, error: fetchError } = await getCrmQuoteStatus(supabase, quoteId);
@@ -221,12 +251,28 @@ export async function markCrmQuoteWon(
     return { data: null, error: { code: 'crm_quote_not_found', message: fetchError?.message ?? 'Offert hittades inte' } };
   }
 
+  // Ansvarig kan bytas i SAMMA sparning som offerten vinns — chefen sätter säljaren och
+  // markerar vunnen på en gång. Den inkommande ändringen måste därför vinna över den sparade
+  // raden, annars ärver kunden den ansvariga som just byttes bort.
+  const effectiveAssignee = updateInput.assigned_to ?? current.assigned_to ?? null;
+
   // Already won, or no prospect to convert — just update
   if (current.status === 'won' || !current.prospect_id) {
     const { data, error } = await updateCrmQuote(supabase, quoteId, updateInput);
     // Preserve PGRST116 (0 rows) so the route can answer 403/404 for a non-owner instead of a
     // raw 500 (RLS scopes the UPDATE to the owner while SELECT is open) — mirrors the plain path.
     if (error) return { data: null, error: { code: error.code === 'PGRST116' ? 'PGRST116' : 'crm_quote_update_failed', message: error.message } };
+    // Bara vid ÖVERGÅNGEN till vunnen, inte vid varje sparning av en redan vunnen offert.
+    // Att medvetet sätta kundansvarig till "— Ingen —" på kundkortet är ett uttryckt val, och
+    // en refill vid nästa beröring av offerten hade tagit tillbaka det utan att någon bad om det.
+    if (current.status !== 'won') {
+      await applyQuoteAssigneeAsAccountManager(
+        supabase,
+        quoteId,
+        current.customer_id ?? current.prospect_id ?? null,
+        effectiveAssignee
+      );
+    }
     return { data, error: null };
   }
 
@@ -234,8 +280,8 @@ export async function markCrmQuoteWon(
   const { customerId, error: conversionError } = await convertProspectToCustomer(
     supabase,
     current.prospect_id,
-    assignedTo,
-    createdBy
+    actorUserId,
+    actorUserId
   );
 
   if (conversionError || !customerId) {
@@ -258,6 +304,8 @@ export async function markCrmQuoteWon(
       },
     };
   }
+
+  await applyQuoteAssigneeAsAccountManager(supabase, quoteId, customerId, effectiveAssignee);
 
   return { data, error: null };
 }

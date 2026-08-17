@@ -1,5 +1,9 @@
 import { z } from 'zod';
 import { ROT_HOUSE_WORK_TYPES } from '@/lib/domains/fortnox/types';
+import { can, getEffectivePermissions } from '@/lib/auth/permissions';
+import { listCrmSellers } from '@/lib/domains/crm/customers';
+import { getSupabaseAdmin } from '@/lib/supabase/server';
+import { routeError } from '../_shared';
 export { ok, routeError, validationError, invalidUuidParam, isNoRowsError, requireCrmUser, requireCrmWriter, requirePermission } from '../_shared';
 
 function normalizeOptionalText(value: unknown) {
@@ -147,6 +151,12 @@ export const createCrmQuoteSchema = z.object({
   quote_date: dateSchema,
   follow_up_date: z.preprocess((value) => normalizeOptionalText(value), dateSchema.nullable()).optional().default(null),
   notes: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
+  // Ansvarig säljare. Optional UTAN default och INTE nullable: kolumnen är not null, och
+  // `undefined` måste betyda "rör inte" — ett default hade skrivit ett värde vid varje PATCH.
+  // Vem som får sätta fältet avgörs i rutterna (crm.admin); schemat bara släpper igenom det.
+  // MÅSTE stå här: ett fält utanför schemat strippas tyst av Zod vid varje sparning, samma
+  // fälla som is_rot_work, written_off och article_note gick i.
+  assigned_to: z.string().uuid('Ogiltig ansvarig säljare').optional(),
 }).superRefine((value, ctx) => {
   if (!value.prospect_id && !value.customer_id && !value.customer_name) {
     ctx.addIssue({
@@ -226,6 +236,57 @@ export const createCrmQuoteSchema = z.object({
 });
 
 export const updateCrmQuoteSchema = createCrmQuoteSchema;
+
+/**
+ * Avgör om en inkommande `assigned_to` får skrivas.
+ *
+ * Att byta ansvarig säljare kräver crm.admin — chefen som gör offerten åt en säljare. Det
+ * är också vad RLS förutsätter: offertens UPDATE-policy har `auth.uid() = assigned_to` i
+ * BÅDE using och with check, så en säljare som lämnade över sin egen offert hade skrivit sig
+ * själv ur policyn i samma operation och fått 0 rader tillbaka. Admin passerar båda grenarna.
+ *
+ * Oförändrat värde släpps igenom utan behörighetskrav: en klient som ekar tillbaka offertens
+ * nuvarande ansvariga i sin payload ska inte få 403 för att den råkade skicka med fältet.
+ * `undefined` tillbaka betyder "skriv inte kolumnen".
+ *
+ * Mottagaren valideras mot säljarlistan (sales/admin). Utan den kontrollen går det att parkera
+ * en offert på en installatör, som varken kan öppna eller redigera den — offerten blir låst
+ * för alla utom administratörer.
+ */
+export async function authorizeQuoteAssignee(
+  requested: string | undefined,
+  currentAssignee: string | null
+): Promise<{ assignedTo: string | undefined; response: null } | { assignedTo: null; response: Response }> {
+  if (requested === undefined || requested === currentAssignee) {
+    return { assignedTo: undefined, response: null };
+  }
+
+  const permissions = await getEffectivePermissions();
+  if (!can(permissions, 'crm.admin')) {
+    return {
+      assignedTo: null,
+      response: routeError(
+        403,
+        'crm_quote_assignee_forbidden',
+        'Bara en administratör kan ändra ansvarig säljare på en offert.'
+      ),
+    };
+  }
+
+  const sellers = await listCrmSellers(getSupabaseAdmin());
+  if (!sellers.some((seller) => seller.id === requested)) {
+    return {
+      assignedTo: null,
+      response: routeError(
+        422,
+        'crm_quote_assignee_invalid',
+        'Ansvarig säljare måste vara en säljare eller administratör.'
+      ),
+    };
+  }
+
+  return { assignedTo: requested, response: null };
+}
 
 // Persist only fields the client actually sent (shared helper, also used by work orders).
 // Prevents a partial PATCH — status change, "clear articles" save — from wiping untouched
