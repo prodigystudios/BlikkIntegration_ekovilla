@@ -8,6 +8,7 @@ import { crm, syncStatusLabel, syncStatusClass, workOrderStatusLabel, workOrderS
 import { formatDate, formatCurrency, isWorkOrderOverdue, documentRef } from '@/app/crm/lib/format';
 import AssigneeFilter, { MINE, type AssigneeFilterValue, type AssigneeOption } from '@/app/crm/components/AssigneeFilter';
 import DocumentNumberBadge from '@/app/crm/components/DocumentNumberBadge';
+import { RowAssignee, RowAssigneeChip } from '@/app/crm/components/RowAssignee';
 import CrmModal from '@/app/crm/components/CrmModal';
 import EntityCombobox, { type EntityResult } from '@/app/crm/components/EntityCombobox';
 import { formatPersonalNumber, isValidPersonalNumber, PERSONAL_NUMBER_ERROR } from '@/lib/domains/crm/personalNumber';
@@ -49,13 +50,6 @@ const FILTERS: Array<[WorkOrderFilter, string]> = [
 const PAGE_SIZE = 100;
 const EMPTY_COUNTS: Record<WorkOrderFilter, number> = { all: 0, draft: 0, scheduled: 0, active: 0, completed: 0, invoiced: 0 };
 
-function initialsOf(name: string | null | undefined) {
-  if (!name) return '–';
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return '–';
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
 
 
 export default function WorkOrdersClient({ currentUserId }: { currentUserId: string | null }) {
@@ -352,7 +346,10 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
                     {/* Status accent rail */}
                     <span className={cn('w-1.5 shrink-0', workOrderStatusAccent[item.status])} aria-hidden="true" />
 
-                    <div className="grid flex-1 grid-cols-[minmax(0,1fr)_auto] items-start gap-2 px-2.5 py-1.5 sm:grid-cols-[minmax(0,1fr)_48px_140px_128px] sm:items-center sm:gap-3">
+                    {/* Ansvarig-kolumnen är 116px och inte 48px: den rymmer namnet, inte bara en
+                        initialbricka man måste hovra på. Utrymmet tas ur identitetskolumnen, som är
+                        den flexibla — de två högerkolumnerna har fast innehåll. */}
+                    <div className="grid flex-1 grid-cols-[minmax(0,1fr)_auto] items-start gap-2 px-2.5 py-1.5 sm:grid-cols-[minmax(0,1fr)_116px_140px_128px] lg:grid-cols-[minmax(0,1fr)_150px_140px_128px] sm:items-center sm:gap-3">
                       {/* Number badge + identity + chips */}
                       <div className="flex min-w-0 items-center gap-2">
                         <DocumentNumberBadge label="Order" value={documentRef(item.fortnox_order_number, item.order_number)} />
@@ -377,22 +374,14 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
                             <span className={cn('inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-semibold', syncStatusClass[item.fortnox_order_sync_status])}>
                               Fortnox: {syncStatusLabel[item.fortnox_order_sync_status]}
                             </span>
+                            {/* Ansvarig på mobil, där kolumnen till höger inte får plats */}
+                            <RowAssigneeChip name={sellerName} />
                           </div>
                         </div>
                       </div>
 
-                      {/* Responsible installer/seller — avatar pill only, in a fixed slot so it never drifts */}
-                      <div className="hidden items-center justify-center sm:flex">
-                        <span
-                          title={sellerName ?? 'Ej tilldelad'}
-                          className={cn(
-                            'flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold',
-                            sellerName ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-400',
-                          )}
-                        >
-                          {initialsOf(sellerName)}
-                        </span>
-                      </div>
+                      {/* Ansvarig, i en fast slot så den aldrig driver i sidled */}
+                      <RowAssignee name={sellerName} />
 
                       {/* Date */}
                       <div className="hidden flex-col gap-0.5 sm:flex">
