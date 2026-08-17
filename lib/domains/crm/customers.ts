@@ -450,6 +450,57 @@ export async function convertProspectToCustomer(
   return { customerId: updated.id, error: null };
 }
 
+/**
+ * Sätter kundansvarig på en kund — men BARA om fältet är tomt.
+ *
+ * Anropas när en offert markeras vunnen, så att offertens ansvariga säljare också blir
+ * ansvarig för kunden. Fyll-om-tomt och inte skriv-över: en säljare som vinner en enskild
+ * offert hos någon annans etablerade kund ska inte tyst ta över hela kundrelationen (den
+ * styr både kundregistret och vem topplistan räknar). Ett medvetet byte görs i kundformuläret.
+ *
+ * Returnerar `changed` så anroparen kan logga skillnaden mellan "satte den" och "fanns redan".
+ * RLS: crm_customers UPDATE släpper igenom alla med crm.customer.write
+ * (20260629_crm_customers_shared_register.sql), så ingen elevated klient behövs.
+ */
+export async function setAccountManagerIfUnset(
+  supabase: SupabaseClient,
+  customerId: string,
+  sellerId: string
+): Promise<{ changed: boolean; error: string | null }> {
+  const { data: existing, error: readError } = await supabase
+    .from('crm_customers')
+    .select('id, account_manager_id')
+    .eq('id', customerId)
+    .maybeSingle();
+
+  if (readError) return { changed: false, error: readError.message };
+  if (!existing) return { changed: false, error: 'Kunden hittades inte' };
+  if (existing.account_manager_id) return { changed: false, error: null };
+
+  // is null-villkoret är med i UPDATE:en och inte bara i läsningen ovan: två samtidiga
+  // vunna offerter på samma kund skulle annars låta den sista skriva över den första.
+  //
+  // .select('id') är inte kosmetik. En UPDATE som träffar noll rader svarar `error: null` —
+  // en RLS-nekad skrivning ser exakt ut som en lyckad. Utan radräkningen hade anroparens
+  // felloggning aldrig gått igång och kundansvarig tyst uteblivit. Samma felklass som
+  // planeringen tappade segment på.
+  const { data: updated, error: updateError } = await supabase
+    .from('crm_customers')
+    .update({ account_manager_id: sellerId })
+    .eq('id', customerId)
+    .is('account_manager_id', null)
+    .select('id');
+
+  if (updateError) return { changed: false, error: updateError.message };
+  if (!updated || updated.length === 0) {
+    return {
+      changed: false,
+      error: 'Skrivningen träffade noll rader — antingen nekad av RLS eller så hann en annan sparning före.',
+    };
+  }
+  return { changed: true, error: null };
+}
+
 // Säljare som kan vara kundansvarig: profiles med role sales/admin. konsult är
 // READONLY och utesluts. Läs-modell över hela teamet → kör med en elevated klient
 // (profiles-RLS är self-only), samma mönster som reports.ts/ringlists.ts.

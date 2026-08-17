@@ -152,6 +152,7 @@ type QuoteItem = {
   quote_date: string;
   follow_up_date: string | null;
   notes: string | null;
+  assigned_to: string | null;
 };
 
 type QuoteDraft = {
@@ -203,6 +204,9 @@ type QuoteDraft = {
   follow_up_date: string;
   notes: string;
   create_follow_up_task: boolean;
+  // Ansvarig säljare. Tom sträng = "den som skapar offerten" (servern fyller i vid POST).
+  // Bara en administratör kan ändra fältet; för alla andra visas det som text.
+  assigned_to: string;
 };
 
 type EffectiveRow = QuoteLineItem & {
@@ -469,6 +473,7 @@ const initialDraft: QuoteDraft = {
   follow_up_date: '',
   notes: '',
   create_follow_up_task: true,
+  assigned_to: '',
 };
 
 // ─── ArticlePicker ────────────────────────────────────────────────────────────
@@ -1107,7 +1112,7 @@ const DRAFT_RECOVERY_TTL_MS = 24 * 60 * 60 * 1000;
 // Debounce before an edited draft is written to localStorage (a keystroke shouldn't hit storage).
 const DRAFT_AUTOSAVE_DEBOUNCE_MS = 800;
 
-export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
+export default function QuoteFormClient({ quoteId, canReassign = false }: { quoteId?: string; canReassign?: boolean }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   // Offertformuläret nås både från offertlistan och från säljtavlan. Utan det här landade
@@ -1159,6 +1164,14 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   const [customWorkAddress, setCustomWorkAddress] = useState(false);
   // Separate on-site contact (slutkund) outside the customer card, mirrors the work-address toggle.
   const [customEndContact, setCustomEndContact] = useState(false);
+  // Säljarkatalogen bakom ansvarig-väljaren. Hämtas även utan bytesrätt: läsvyn visar namnet,
+  // och utan listan hade en vanlig säljare bara sett ett uuid.
+  //
+  // sellersLoaded skiljer "listan är hämtad och tom" från "svaret är på väg". Utan den läser en
+  // tom lista som att offertens ansvariga inte finns i katalogen — och då blinkar "inte längre
+  // säljare" förbi vid varje öppning, och blir permanent om hämtningen fallerar.
+  const [sellers, setSellers] = useState<{ id: string; full_name: string | null }[]>([]);
+  const [sellersLoaded, setSellersLoaded] = useState(false);
 
   // Drag-and-drop reordering of the article rows. Pointer for mouse (small distance so a click
   // still selects), Touch with a short press-delay so scrolling the form on mobile isn't hijacked.
@@ -1194,6 +1207,19 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
   // JSON snapshot of the current draft — the single comparison key for dirty detection + autosave.
   const draftJson = useMemo(() => JSON.stringify(draft), [draft]);
   useEffect(() => { draftRef.current = draft; }, [draft]);
+
+  useEffect(() => {
+    let active = true;
+    fetch('/api/crm/sellers', { cache: 'no-store' })
+      .then((r) => r.json().catch(() => ({})))
+      .then((json) => {
+        if (!active) return;
+        setSellers(json?.ok ? json.data?.sellers || [] : []);
+        setSellersLoaded(Boolean(json?.ok));
+      })
+      .catch(() => { if (active) setSellers([]); });
+    return () => { active = false; };
+  }, []);
   // Unsaved work: the draft differs from the captured clean baseline (null until it's captured).
   const isDirty = baselineRef.current !== null && draftJson !== baselineRef.current;
 
@@ -1239,7 +1265,15 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
     // Backfill any fields absent from an older-shaped stash (e.g. saved before `labor_cost` existed)
     // from the initial draft / an empty line item, so every field/Input stays controlled.
     const items = (restored.items ?? []).map((line) => ({ ...createEmptyLineItem(), ...line }));
-    setDraft({ ...initialDraft, ...restored, items: items.length ? items : [createEmptyLineItem()] });
+    setDraft({
+      ...initialDraft,
+      ...restored,
+      items: items.length ? items : [createEmptyLineItem()],
+      // En stash sparad före ansvarig-fältet saknar det, och initialDraft bidrar med tom
+      // sträng — i redigeringsläget finns inget tomt alternativ, så rullgardinen hade fallit
+      // till det första namnet i listan och visat fel ansvarig på en offert man inte rört.
+      assigned_to: restored.assigned_to || loadedQuote?.assigned_to || '',
+    });
     // Måttblocket i den återställda texten är redan insatt — annars lägger automatiken en dubblett.
     adoptExistingMeasurementBlock(items, restored.handoff_notes ?? '');
     setCustomWorkAddress(Boolean(restored.delivery_address));
@@ -1439,6 +1473,10 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
           follow_up_date: item.follow_up_date || '',
           notes: item.notes || '',
           create_follow_up_task: false,
+          // Ligger med i loadedDraft och därmed i baslinjen nedan. Sätts den i stället av en
+          // effekt efteråt blir en nyss öppnad offert omedelbart "ändrad", och det river
+          // sönder utkastskyddet — samma fälla som måttblocket gick i (se kommentaren nedan).
+          assigned_to: item.assigned_to || '',
         };
         // Måttblocket sätts in HÄR, före baslinjen — inte av automatik-effekten efteråt.
         //
@@ -1912,6 +1950,10 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
       quote_date: draft.quote_date,
       follow_up_date: draft.follow_up_date || null,
       notes: draft.notes,
+      // Skickas BARA av den som får ändra fältet. En vanlig säljare som ekade tillbaka värdet
+      // hade fått rutten att läsa upp offertens nuvarande ansvariga för att jämföra — en extra
+      // rundtur i varje sparning för ett fält som ändå inte fick ändras.
+      ...(canReassign && draft.assigned_to ? { assigned_to: draft.assigned_to } : {}),
     };
   }
 
@@ -3009,6 +3051,48 @@ export default function QuoteFormClient({ quoteId }: { quoteId?: string }) {
               <Field label="Följ upp senast" plain>
                 <DatePicker value={draft.follow_up_date} onChange={(v) => setDraft((d) => ({ ...d, follow_up_date: v }))} placeholder="Inget datum" aria-label="Följ upp senast" />
               </Field>
+
+              {/* Ansvarig säljare. Läsvy för alla, väljare bara för administratörer — se
+                  authorizeQuoteAssignee för varför spärren också måste sitta i rutten.
+                  Fältet visas ÄVEN utan bytesrätt: vem som äger offerten avgör vem som får
+                  redigera den, och den som just fått "du kan bara redigera offerter du är
+                  ansvarig för" ska kunna se vem hen ska fråga. */}
+              {canReassign ? (
+                <Field label="Ansvarig säljare">
+                  <Select
+                    value={draft.assigned_to}
+                    onChange={(e) => setDraft((d) => ({ ...d, assigned_to: e.target.value }))}
+                  >
+                    {!isEditing ? <option value="">Jag själv</option> : null}
+                    {/* Offertens nuvarande ansvariga kan saknas i katalogen — hen har slutat
+                        eller bytt roll (listan är sales/admin). Utan den här raden har
+                        rullgardinen inget alternativ som matchar värdet, och webbläsaren
+                        visar då det FÖRSTA i listan: fel namn, utan att något ändrats. */}
+                    {draft.assigned_to && sellersLoaded && !sellers.some((seller) => seller.id === draft.assigned_to) ? (
+                      <option value={draft.assigned_to}>Nuvarande ansvarig (inte längre säljare)</option>
+                    ) : null}
+                    {/* Medan katalogen är på väg finns inga alternativ alls. Ett värdebärande
+                        alternativ håller rullgardinen på rätt rad i stället för att låta
+                        webbläsaren falla till det första namnet som dyker upp. */}
+                    {draft.assigned_to && !sellersLoaded ? (
+                      <option value={draft.assigned_to}>Laddar…</option>
+                    ) : null}
+                    {sellers.map((seller) => (
+                      <option key={seller.id} value={seller.id}>{seller.full_name || seller.id}</option>
+                    ))}
+                  </Select>
+                  <p className="mt-1.5 text-xs text-slate-500">
+                    Säljaren offerten tillhör. Blir kundansvarig när offerten vinns, och står som
+                    Vår referens på offerten i Fortnox.
+                  </p>
+                </Field>
+              ) : draft.assigned_to && sellersLoaded ? (
+                <Field label="Ansvarig säljare" plain>
+                  <p className="text-sm text-slate-700">
+                    {sellers.find((seller) => seller.id === draft.assigned_to)?.full_name || 'Okänd säljare'}
+                  </p>
+                </Field>
+              ) : null}
             </div>
 
             {/* Divider */}

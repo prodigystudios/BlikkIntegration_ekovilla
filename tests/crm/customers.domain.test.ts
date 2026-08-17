@@ -6,6 +6,7 @@ import {
   getCrmCustomer,
   updateCrmCustomer,
   convertProspectToCustomer,
+  setAccountManagerIfUnset,
   getCrmCustomerDisplayName,
   privateCustomerContactName,
   createCrmCustomerContact,
@@ -383,5 +384,103 @@ describe('convertProspectToCustomer', () => {
     const result = await convertProspectToCustomer(sb as any, 'c1', 'u1', 'u1');
 
     expect(result.error).toBe('db error');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// setAccountManagerIfUnset
+//
+// Anropas när en offert vinns, så att offertens ansvariga säljare också blir kundansvarig.
+// makeSupabaseMock duger inte här: kedjan använder .is() för is-null-villkoret, och den
+// metoden finns inte i hjälparen.
+// ---------------------------------------------------------------------------
+
+function makeAccountManagerMock(
+  customer: Record<string, unknown> | null,
+  updateError: { message: string } | null = null,
+  updatedRows: { id: string }[] = [{ id: 'c1' }],
+) {
+  const captured: { update: Record<string, unknown> | null; isFilter: [string, unknown] | null } = {
+    update: null,
+    isFilter: null,
+  };
+
+  const supabase: any = {
+    from: vi.fn(() => {
+      const builder: any = {
+        select: vi.fn(() => builder),
+        eq: vi.fn(() => builder),
+        maybeSingle: vi.fn(() => Promise.resolve({ data: customer, error: null })),
+        update: vi.fn((payload: Record<string, unknown>) => { captured.update = payload; return builder; }),
+        is: vi.fn((column: string, value: unknown) => {
+          captured.isFilter = [column, value];
+          // .select('id') efter is-filtret: skrivningen räknar rader, eftersom en UPDATE som
+          // träffar noll rader svarar error: null och annars ser lyckad ut.
+          return { select: vi.fn(() => Promise.resolve({ data: updatedRows, error: updateError })) };
+        }),
+      };
+      return builder;
+    }),
+  };
+
+  return { supabase, captured };
+}
+
+describe('setAccountManagerIfUnset', () => {
+  it('sätter kundansvarig när fältet är tomt', async () => {
+    const { supabase, captured } = makeAccountManagerMock({ id: 'c1', account_manager_id: null });
+
+    const result = await setAccountManagerIfUnset(supabase, 'c1', 'saljare-1');
+
+    expect(result).toEqual({ changed: true, error: null });
+    expect(captured.update).toEqual({ account_manager_id: 'saljare-1' });
+  });
+
+  // Kärnregeln: en säljare som vinner EN offert hos någon annans etablerade kund ska inte
+  // tyst ta över kundrelationen. Ett medvetet byte görs i kundformuläret.
+  it('rör inte en kund som redan har en kundansvarig', async () => {
+    const { supabase, captured } = makeAccountManagerMock({ id: 'c1', account_manager_id: 'nagon-annan' });
+
+    const result = await setAccountManagerIfUnset(supabase, 'c1', 'saljare-1');
+
+    expect(result).toEqual({ changed: false, error: null });
+    expect(captured.update).toBeNull();
+  });
+
+  // is-null-villkoret måste ligga i SKRIVNINGEN och inte bara i läsningen ovan: två offerter
+  // som vinns samtidigt på samma kund skulle annars låta den sista skriva över den första.
+  it('bär is-null-villkoret i själva uppdateringen', async () => {
+    const { supabase, captured } = makeAccountManagerMock({ id: 'c1', account_manager_id: null });
+
+    await setAccountManagerIfUnset(supabase, 'c1', 'saljare-1');
+
+    expect(captured.isFilter).toEqual(['account_manager_id', null]);
+  });
+
+  it('rapporterar fel från skrivningen', async () => {
+    const { supabase } = makeAccountManagerMock({ id: 'c1', account_manager_id: null }, { message: 'RLS' });
+
+    expect(await setAccountManagerIfUnset(supabase, 'c1', 'saljare-1')).toEqual({ changed: false, error: 'RLS' });
+  });
+
+  // En UPDATE som träffar noll rader svarar `error: null` — en RLS-nekad skrivning ser exakt
+  // ut som en lyckad. Utan radräkningen rapporteras "satt" fast ingenting skrevs, och
+  // anroparens felloggning går aldrig igång. Samma felklass som planeringen tappade segment på.
+  it('rapporterar noll skrivna rader som ett fel, inte som en lyckad skrivning', async () => {
+    const { supabase } = makeAccountManagerMock({ id: 'c1', account_manager_id: null }, null, []);
+
+    const result = await setAccountManagerIfUnset(supabase, 'c1', 'saljare-1');
+
+    expect(result.changed).toBe(false);
+    expect(result.error).toMatch(/noll rader/);
+  });
+
+  it('rapporterar när kunden inte finns', async () => {
+    const { supabase } = makeAccountManagerMock(null);
+
+    expect(await setAccountManagerIfUnset(supabase, 'saknas', 'saljare-1')).toEqual({
+      changed: false,
+      error: 'Kunden hittades inte',
+    });
   });
 });

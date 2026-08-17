@@ -1,42 +1,93 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createCrmWorkOrderFromQuote } from '@/lib/domains/crm/work-orders';
 
+// Återlänkningen (steg 3 nedan) körs med elevated klient, inte sessionsklienten — se
+// kommentaren i work-orders.ts. vi.hoisted: mock-fabriken körs före modulens toppnivå, så
+// hållaren måste finnas innan dess.
+const elevated = vi.hoisted(() => ({ client: null as any }));
+vi.mock('@/lib/supabase/server', () => ({ getSupabaseAdmin: () => elevated.client }));
+
 // ---------------------------------------------------------------------------
 // Supabase-mock
 //
 // createCrmWorkOrderFromQuote gör tre anrop i tur och ordning:
-//   1. crm_quotes   .select().eq().single()           → hämtar offerten
-//   2. crm_work_orders .insert(payload).select().single() → skapar ordern
-//   3. crm_quotes   .update().eq().select().single()   → länkar tillbaka
+//   1. crm_quotes   .select().eq().single()           → hämtar offerten      (session)
+//   2. crm_work_orders .insert(payload).select().single() → skapar ordern    (session)
+//   3. crm_quotes   .update().eq().select().single()   → länkar tillbaka     (elevated)
 // Mocken är en chainable builder per .from(table); .single() löser olika
 // beroende på tabell + operation. insert-payloaden fångas så vi kan asserta
 // fält-mappningen.
+//
+// De två klienterna är SKILDA fakes och `quoteUpdateVia` noterar vilken som fick
+// återlänkningen. Går den på sessionsklienten stoppas den av offertens ägarscopade
+// UPDATE-policy så fort en annan säljare än offertens skapar ordern — då finns ordern men
+// offerten är olänkad, och nästa försök smäller på unikhetsindexet på quote_id.
 // ---------------------------------------------------------------------------
 
 function makeSupabase(quote: Record<string, unknown>) {
-  const captured: { insert: Record<string, any> | null } = { insert: null };
+  const captured: {
+    insert: Record<string, any> | null;
+    quoteUpdateVia: 'session' | 'elevated' | null;
+  } = { insert: null, quoteUpdateVia: null };
 
-  const supabase = {
-    from(table: string) {
-      const state: { op: 'select' | 'insert' | 'update' } = { op: 'select' };
-      const builder: any = {
-        select: vi.fn(() => builder),
-        eq: vi.fn(() => builder),
-        update: vi.fn(() => { state.op = 'update'; return builder; }),
-        insert: vi.fn((payload: Record<string, any>) => { state.op = 'insert'; captured.insert = payload; return builder; }),
-        single: vi.fn(() => {
-          if (table === 'crm_quotes' && state.op === 'select') return Promise.resolve({ data: quote, error: null });
-          if (table === 'crm_work_orders' && state.op === 'insert') return Promise.resolve({ data: { id: 'wo1', order_number: 'AO-TEST' }, error: null });
-          if (table === 'crm_quotes' && state.op === 'update') return Promise.resolve({ data: { id: quote.id }, error: null });
-          return Promise.resolve({ data: null, error: { message: `oväntat anrop: ${table}/${state.op}` } });
-        }),
-      };
-      return builder;
-    },
-  };
+  function makeClient(via: 'session' | 'elevated') {
+    return {
+      from(table: string) {
+        const state: { op: 'select' | 'insert' | 'update' } = { op: 'select' };
+        const builder: any = {
+          select: vi.fn(() => builder),
+          eq: vi.fn(() => builder),
+          update: vi.fn(() => {
+            state.op = 'update';
+            if (table === 'crm_quotes') captured.quoteUpdateVia = via;
+            return builder;
+          }),
+          insert: vi.fn((payload: Record<string, any>) => { state.op = 'insert'; captured.insert = payload; return builder; }),
+          single: vi.fn(() => {
+            if (table === 'crm_quotes' && state.op === 'select') return Promise.resolve({ data: quote, error: null });
+            if (table === 'crm_work_orders' && state.op === 'insert') return Promise.resolve({ data: { id: 'wo1', order_number: 'AO-TEST' }, error: null });
+            if (table === 'crm_quotes' && state.op === 'update') return Promise.resolve({ data: { id: quote.id }, error: null });
+            return Promise.resolve({ data: null, error: { message: `oväntat anrop: ${table}/${state.op}` } });
+          }),
+        };
+        return builder;
+      },
+    };
+  }
+
+  const supabase = makeClient('session');
+  elevated.client = makeClient('elevated');
 
   return { supabase, captured };
 }
+
+describe('createCrmWorkOrderFromQuote — återlänkningen till offerten', () => {
+  // Regressionsvakt för en tyst partiell skrivning. Ordern ärver offertens säljare
+  // (assigned_to), och sedan RLS öppnades för att vilken säljare som helst ska kunna skapa
+  // ordern på en vunnen offert är sessionsklienten inte längre garanterad skrivrätt på just
+  // den offerten. Flyttas den här skrivningen tillbaka till sessionsklienten skapas ordern
+  // men länkas aldrig — offerten ser okonverterad ut och nästa försök smäller på
+  // unikhetsindexet på quote_id.
+  it('skriver work_order_id med elevated klient, inte sessionsklienten', async () => {
+    const { supabase, captured } = makeSupabase(wonQuote({ assigned_to: 'annan-saljare' }));
+
+    const result = await createCrmWorkOrderFromQuote(supabase as any, 'q1', 'user-1');
+
+    expect(result.error).toBeNull();
+    expect(captured.quoteUpdateVia).toBe('elevated');
+  });
+
+  // Kedjan offert → order → Fortnox "Vår referens" → topplistan ska peka på samma person.
+  // Ordern får INTE hamna på den som råkade trycka på knappen.
+  it('lägger ordern på offertens säljare, inte på den som skapar den', async () => {
+    const { supabase, captured } = makeSupabase(wonQuote({ assigned_to: 'annan-saljare' }));
+
+    await createCrmWorkOrderFromQuote(supabase as any, 'q1', 'user-1');
+
+    expect(captured.insert!.assigned_to).toBe('annan-saljare');
+    expect(captured.insert!.created_by).toBe('user-1');
+  });
+});
 
 const MEASUREMENT_BLOCK = 'EKOVILLA\nVägg – 100 m² × 195 mm @ 52 kg/m³ – 73 säck\n\nTotalt: 73 säck';
 

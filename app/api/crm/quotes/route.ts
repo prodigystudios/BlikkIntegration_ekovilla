@@ -4,6 +4,7 @@ import { createCrmQuote, getCrmQuote, listCrmQuotesWithFilters } from '@/lib/dom
 import { pushQuoteToFortnox } from '@/lib/domains/fortnox/offers';
 import { FortnoxNotConnectedError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
 import {
+  authorizeQuoteAssignee,
   createCrmQuoteSchema,
   listCrmQuotesQuerySchema,
   ok,
@@ -57,11 +58,17 @@ export async function POST(req: Request) {
     const parsedBody = createCrmQuoteSchema.safeParse(await req.json().catch(() => null));
     if (!parsedBody.success) return validationError(parsedBody.error);
 
+    // Ansvarig säljare är normalt den som skapar offerten. En administratör får ange någon
+    // annan direkt vid skapandet — chefen som gör offerten åt en säljare slipper då skapa
+    // den i sitt eget namn och flytta den efteråt.
+    const assignee = await authorizeQuoteAssignee(parsedBody.data.assigned_to, crmUser.currentUser.id);
+    if (assignee.response) return assignee.response;
+
     const supabase = createRouteHandlerClient({ cookies });
     const payload = {
       ...parsedBody.data,
       created_by: crmUser.currentUser.id,
-      assigned_to: crmUser.currentUser.id,
+      assigned_to: assignee.assignedTo ?? crmUser.currentUser.id,
       currency_code: parsedBody.data.currency_code || 'SEK',
     };
 
