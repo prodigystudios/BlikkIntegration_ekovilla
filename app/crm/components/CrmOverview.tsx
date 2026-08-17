@@ -189,6 +189,19 @@ function isPipelineProspect(prospect: ProspectItem) {
   return prospect.status === 'new' || prospect.status === 'contacted' || prospect.status === 'qualified' || prospect.status === 'quoted';
 }
 
+// Where an order sits in the flow, split the same way the order board splits it (see
+// BOARD_FILTER_STATUSES in lib/domains/crm/work-orders.ts): 'draft' is not planned yet and
+// 'in_progress' is out on the job — both are open work — while 'completed' and
+// 'partially_invoiced' are the invoicing stage the board's chip calls "Fakturera".
+// 'invoiced' and 'cancelled' are deliberately in neither: they have left the flow.
+const OPEN_WORK_ORDER_STATUSES = ['draft', 'scheduled', 'ready', 'in_progress'];
+const TO_INVOICE_WORK_ORDER_STATUSES = ['completed', 'partially_invoiced'];
+
+function toAmount(value: number | string) {
+  const numeric = typeof value === 'number' ? value : Number(String(value));
+  return Number.isFinite(numeric) ? numeric : 0;
+}
+
 function formatDateTime(value: string | null | undefined) {
   if (!value) return '–';
   const date = new Date(value);
@@ -372,19 +385,38 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
     const quoteFollowUps = state.quotes.filter((quote) => quote.status === 'follow_up');
     const wonQuotes = state.quotes.filter((quote) => quote.status === 'won');
     const recentQuotes = state.quotes.filter((quote) => isWithinLastDays(quote.quote_date, 7));
-    const quoteValueLast7Days = recentQuotes.reduce((total, quote) => {
-      const numeric = typeof quote.amount === 'number' ? quote.amount : Number(String(quote.amount));
-      return total + (Number.isFinite(numeric) ? numeric : 0);
-    }, 0);
+    const quoteValueLast7Days = recentQuotes.reduce((total, quote) => total + toAmount(quote.amount), 0);
+    const activeQuoteValue = activeQuotes.reduce((total, quote) => total + toAmount(quote.amount), 0);
+    // The order side of the flow. The two stocks are current state; the two windowed figures use
+    // the same rolling 7 days as the quote and call rows above so the card keeps one clock.
+    // "Fakturerat" is bucketed on the invoice date, never on creation: the lag from order to
+    // invoice runs about a month, so created_at would drop most of what was actually invoiced
+    // in the window — the error PR #70 fixed in reporting. Unlike reports.ts's invoicedAt()
+    // there is deliberately no created_at fallback for rows predating the column: this row has
+    // to sum to the leaderboard's "Fakturerat ordervärde" sitting right below it, and that one
+    // requires the stamp. Two invoiced figures that disagree on one screen is worse than
+    // dropping legacy rows that are far outside a 7-day window anyway.
+    const openWorkOrders = state.workOrders.filter((order) => OPEN_WORK_ORDER_STATUSES.includes(order.status));
+    const workOrdersToInvoice = state.workOrders.filter((order) => TO_INVOICE_WORK_ORDER_STATUSES.includes(order.status));
+    const openOrderValue = openWorkOrders.reduce((total, order) => total + toAmount(order.amount), 0);
+    // Full order value, not what remains: a partially invoiced order carries no remaining-amount
+    // field on this payload, so the row is the value sitting in the invoicing stage.
+    const toInvoiceOrderValue = workOrdersToInvoice.reduce((total, order) => total + toAmount(order.amount), 0);
+    const orderValueLast7Days = state.workOrders
+      .filter((order) => isWithinLastDays(order.created_at, 7))
+      .reduce((total, order) => total + toAmount(order.amount), 0);
+    const invoicedValueLast7Days = state.workOrders
+      .filter((order) => order.status === 'invoiced' && order.fortnox_invoiced_at != null && isWithinLastDays(order.fortnox_invoiced_at, 7))
+      .reduce((total, order) => total + toAmount(order.amount), 0);
     const pipelineProspects = state.prospects.filter(isPipelineProspect);
     const newProspects = state.prospects.filter((prospect) => prospect.status === 'new');
     const quotedProspects = state.prospects.filter((prospect) => prospect.status === 'quoted');
     const qualifiedProspects = state.prospects.filter((prospect) => prospect.status === 'qualified' || prospect.status === 'quoted');
-    const wonProspects = state.prospects.filter((prospect) => prospect.status === 'won');
     // Monthly budgets → weekly targets (÷4) so the team summary compares against ~one week.
     const callsTarget = Math.round(weeklyFromMonthly(state.goals.reduce((total, goal) => total + goal.calls_target, 0)));
     const quotesTarget = Math.round(weeklyFromMonthly(state.goals.reduce((total, goal) => total + goal.quotes_target, 0)));
     const quoteValueTarget = weeklyFromMonthly(state.goals.reduce((total, goal) => total + Number(goal.quote_value_target || 0), 0));
+    const orderValueTarget = weeklyFromMonthly(state.goals.reduce((total, goal) => total + Number(goal.order_value_target || 0), 0));
 
     return {
       prospectsTotal: state.prospects.length,
@@ -392,23 +424,33 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
       newProspects: newProspects.length,
       quotedProspects: quotedProspects.length,
       qualifiedProspects: qualifiedProspects.length,
-      wonProspects: wonProspects.length,
       callsLast7Days: recentCalls.length,
       followUpCalls: followUpCalls.length,
       standaloneCalls: standaloneCalls.length,
       activeQuotes: activeQuotes.length,
+      activeQuoteValue,
       quoteFollowUps: quoteFollowUps.length,
       wonQuotes: wonQuotes.length,
       quotesLast7Days: recentQuotes.length,
       quoteValueLast7Days,
+      openWorkOrders: openWorkOrders.length,
+      workOrdersToInvoice: workOrdersToInvoice.length,
+      openOrderValue,
+      toInvoiceOrderValue,
+      // Shared denominator for the three flow bars: the largest stock, so nothing can exceed
+      // the track and the bars stay proportional to each other.
+      flowScale: Math.max(activeQuoteValue, openOrderValue, toInvoiceOrderValue),
+      orderValueLast7Days,
+      invoicedValueLast7Days,
       openTasks: openTasks.length,
       overdueTasks: overdueTasks.length,
       todayTasks: todayTasks.length,
       callsTarget,
       quotesTarget,
       quoteValueTarget,
+      orderValueTarget,
     };
-  }, [state.calls, state.goals, state.prospects, state.quotes, state.tasks]);
+  }, [state.calls, state.goals, state.prospects, state.quotes, state.tasks, state.workOrders]);
 
   const recentProspects = useMemo(() => [...state.prospects].sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, 3), [state.prospects]);
   const recentCalls = useMemo(() => [...state.calls].sort((a, b) => b.call_at.localeCompare(a.call_at)).slice(0, 3), [state.calls]);
@@ -700,12 +742,18 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
             <h2 className="m-0 mb-4 text-lg font-bold tracking-tight text-slate-900">Fördelning och mål</h2>
             {loading ? <OverviewLoadingRows /> : (
               <div className="grid gap-3">
-                <StatusStrip label="Öppna prospekt" value={summary.pipelineProspects} tone="teal" />
-                <StatusStrip label="Nya prospekt" value={summary.newProspects} tone="slate" />
-                <StatusStrip label="Prospekt i offertläge" value={summary.quotedProspects} tone="amber" />
-                <StatusStrip label="Vunna prospekt" value={summary.wonProspects} tone="emerald" />
-                <StatusStrip label="Samtal mot mål" value={summary.callsLast7Days} goal={summary.callsTarget} tone="sky" />
+                {/* The three stocks in the flow share one scale, so the bars read as an actual
+                    distribution — where the money is sitting right now — instead of three
+                    unrelated bars. Fakturerat is a 7-day flow with no target to measure against,
+                    so it stays a plain figure (same convention as the leaderboard's value rows). */}
+                <StatusStrip label="Aktiva offerter" value={summary.activeQuoteValue} scale={summary.flowScale} tone="emerald" currency helper={`${summary.activeQuotes} st`} />
+                <StatusStrip label="Öppna ordrar" value={summary.openOrderValue} scale={summary.flowScale} tone="teal" currency helper={`${summary.openWorkOrders} st`} />
+                <StatusStrip label="Att fakturera" value={summary.toInvoiceOrderValue} scale={summary.flowScale} tone="amber" currency helper={`${summary.workOrdersToInvoice} st`} />
+                <StatusStrip label="Fakturerat, 7 dagar" value={summary.invoicedValueLast7Days} tone="violet" currency />
+                <div className="my-1 h-px bg-slate-100" />
                 <StatusStrip label="Offerter mot mål" value={summary.quotesLast7Days} goal={summary.quotesTarget} tone="emerald" />
+                <StatusStrip label="Ordervärde mot mål" value={summary.orderValueLast7Days} goal={summary.orderValueTarget} tone="teal" currency />
+                <StatusStrip label="Samtal mot mål" value={summary.callsLast7Days} goal={summary.callsTarget} tone="sky" />
                 <StatusStrip label="Sena uppgifter" value={summary.overdueTasks} tone="rose" />
               </div>
             )}
@@ -762,7 +810,7 @@ function OverviewLoadingRows() {
   );
 }
 
-function StatusStrip({ label, value, tone, goal, currency = false }: { label: string; value: number; tone: 'slate' | 'sky' | 'amber' | 'rose' | 'emerald' | 'teal'; goal?: number; currency?: boolean }) {
+function StatusStrip({ label, value, tone, goal, scale, helper, currency = false }: { label: string; value: number; tone: 'slate' | 'sky' | 'amber' | 'rose' | 'emerald' | 'teal' | 'violet'; goal?: number; scale?: number; helper?: string; currency?: boolean }) {
   const toneClass = {
     slate: 'bg-slate-900',
     sky: 'bg-sky-500',
@@ -770,24 +818,37 @@ function StatusStrip({ label, value, tone, goal, currency = false }: { label: st
     rose: 'bg-rose-500',
     emerald: 'bg-emerald-500',
     teal: 'bg-teal-500',
+    violet: 'bg-violet-500',
   }[tone];
 
-  const width = goal && goal > 0
-    ? value <= 0 ? 0 : Math.min(100, (value / goal) * 100)
-    : value <= 0 ? 0 : Math.min(100, value * 16);
+  // The bar needs something to measure against: a goal, or an explicit scale shared with the
+  // sibling rows. Without either, a count keeps the old rough 16-%-per-unit fill and a money row
+  // shows a damped full bar — the same convention the leaderboard uses for a figure with no
+  // target, since a krona amount has no natural scale of its own.
+  const hasGoal = goal != null && goal > 0;
+  const hasScale = !hasGoal && scale != null && scale > 0;
+  const denominator = hasGoal ? goal! : hasScale ? scale! : null;
+  const width = denominator != null
+    ? value <= 0 ? 0 : Math.min(100, (value / denominator) * 100)
+    : currency
+      ? value > 0 ? 100 : 0
+      : value <= 0 ? 0 : Math.min(100, value * 16);
   const displayValue = currency ? formatCurrency(value, 'SEK') : value;
-  const displayGoal = goal != null && goal > 0
-    ? currency ? formatCurrency(goal, 'SEK') : String(goal)
+  const displayGoal = hasGoal
+    ? currency ? formatCurrency(goal!, 'SEK') : String(goal)
     : null;
 
   return (
     <div className="grid gap-1">
       <div className="flex items-center justify-between gap-3 text-xs text-slate-600">
-        <span>{label}</span>
-        <strong className="text-slate-800">{displayGoal ? `${displayValue} / ${displayGoal}` : displayValue}</strong>
+        <span className="min-w-0 truncate">
+          {label}
+          {helper ? <span className="text-slate-400"> · {helper}</span> : null}
+        </span>
+        <strong className="shrink-0 text-slate-800">{displayGoal ? `${displayValue} / ${displayGoal}` : displayValue}</strong>
       </div>
       <div className="h-1.5 rounded-full bg-slate-100">
-        <div className={`h-1.5 rounded-full transition-all ${toneClass}`} style={{ width: `${width}%` }} />
+        <div className={cn('h-1.5 rounded-full transition-all', toneClass, denominator == null && currency && 'opacity-40')} style={{ width: `${width}%` }} />
       </div>
     </div>
   );
