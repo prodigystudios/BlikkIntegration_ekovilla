@@ -126,6 +126,9 @@ export const listCrmQuotesQuerySchema = z.object({
   // group ALL of a seller's quotes client-side pass a higher value so won/lost
   // quotes aren't truncated. Bounded to keep the query safe.
   limit: z.coerce.number().int().min(1).max(2000).optional(),
+  // Row order. Default (status_asc) is the offer list's working order; 'updated_desc' is for
+  // callers that want the most recently touched quotes rather than the open ones.
+  sort: z.enum(['status_asc', 'updated_desc']).optional(),
 });
 
 export const createCrmQuoteSchema = z.object({

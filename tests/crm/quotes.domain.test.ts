@@ -132,3 +132,34 @@ describe('markCrmQuoteWon — offertens ansvariga blir kundansvarig', () => {
     expect(mockSetAccountManager).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// listCrmQuotesWithFilters — radordningen
+//
+// Standardordningen är offertlistans arbetsordning: status stigande, alltså draft → follow_up →
+// lost → sent → won. Den ordningen kapar bort vunna och skickade offerter FÖRST vid radtaket,
+// vilket är precis de som pengarsiffrorna på översikten bygger på. Därför finns 'updated_desc'
+// för de anropare som vill ha det senast rörda — och kapningen sker på servern, så ordningen
+// kan inte lagas i webbläsaren.
+// ---------------------------------------------------------------------------
+
+import { listCrmQuotesWithFilters } from '@/lib/domains/crm/quotes';
+import { makeSupabaseMock } from './helpers/supabase';
+
+describe('listCrmQuotesWithFilters — radordningen', () => {
+  it('sorterar som offertlistan som standard: status, närmaste uppföljning, senaste offertdatum', async () => {
+    const supabase = makeSupabaseMock({ data: [], error: null });
+    await listCrmQuotesWithFilters(supabase as any, {});
+    expect((supabase._query.order as any).mock.calls).toEqual([
+      ['status', { ascending: true }],
+      ['follow_up_date', { ascending: true, nullsFirst: false }],
+      ['quote_date', { ascending: false }],
+    ]);
+  });
+
+  it('sort=updated_desc sorterar på senast rörd och rör inte statusordningen', async () => {
+    const supabase = makeSupabaseMock({ data: [], error: null });
+    await listCrmQuotesWithFilters(supabase as any, { sort: 'updated_desc' });
+    expect((supabase._query.order as any).mock.calls).toEqual([['updated_at', { ascending: false }]]);
+  });
+});

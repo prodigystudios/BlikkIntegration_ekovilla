@@ -324,9 +324,15 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
           fetch('/api/crm/prospects', { cache: 'no-store' }),
           fetch('/api/crm/calls', { cache: 'no-store' }),
           fetch('/api/crm/tasks', { cache: 'no-store' }),
-          fetch('/api/crm/quotes', { cache: 'no-store' }),
+          // Newest first, both of them. Every list here is capped at 100 rows server-side, and
+          // the two default sorts put exactly what this page needs last: the offer list leads
+          // with drafts and lost quotes, the order board with the earliest installation date —
+          // so a new order is the final row in the table. Sorting in the browser cannot repair
+          // that; the cut happens first. With recency leading, the "senaste"-cards are right at
+          // any table size and the windowed figures (7 days) can never fall outside the page.
+          fetch('/api/crm/quotes?sort=updated_desc', { cache: 'no-store' }),
           fetch('/api/crm/goals?period_type=month', { cache: 'no-store' }),
-          fetch('/api/crm/work-orders', { cache: 'no-store' }),
+          fetch('/api/crm/work-orders?sort=created_desc', { cache: 'no-store' }),
         ]);
 
         const [prospectsJson, callsJson, tasksJson, quotesJson, goalsJson, workOrdersJson] = await Promise.all([

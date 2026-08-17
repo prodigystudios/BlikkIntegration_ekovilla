@@ -140,22 +140,31 @@ type CreateCrmQuoteInput = {
 // öppnas här bara typmässigt.
 export type UpdateCrmQuoteInput = Omit<CreateCrmQuoteInput, 'created_by'>;
 
+// Sort orders, named after the leading key. Default is the offer list's working order: open
+// statuses first (status sorts draft → follow_up → lost → sent → won), then the nearest
+// follow-up. 'updated_desc' is for callers that want the most recently touched quotes — the
+// default sort would hand them drafts and lost quotes first and truncate won/sent ones at the
+// row cap, since the cap cuts server-side before the browser can reorder anything.
+export type CrmQuoteSort = 'status_asc' | 'updated_desc';
+
 type ListCrmQuotesOptions = {
   search?: string;
   status?: CrmQuoteStatus;
   prospectId?: string;
   customerId?: string;
   limit?: number;
+  sort?: CrmQuoteSort;
 };
 
 export async function listCrmQuotesWithFilters(supabase: SupabaseClient, options: ListCrmQuotesOptions) {
-  let query = supabase
-    .from('crm_quotes')
-    .select(crmQuoteSelect)
-    .order('status', { ascending: true })
-    .order('follow_up_date', { ascending: true, nullsFirst: false })
-    .order('quote_date', { ascending: false })
-    .limit(options.limit ?? 100);
+  const selected = supabase.from('crm_quotes').select(crmQuoteSelect);
+  let query = (options.sort === 'updated_desc'
+    ? selected.order('updated_at', { ascending: false })
+    : selected
+      .order('status', { ascending: true })
+      .order('follow_up_date', { ascending: true, nullsFirst: false })
+      .order('quote_date', { ascending: false })
+  ).limit(options.limit ?? 100);
 
   if (options.search) {
     query = query.or(

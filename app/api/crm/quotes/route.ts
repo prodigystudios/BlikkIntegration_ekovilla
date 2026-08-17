@@ -26,6 +26,7 @@ export async function GET(req: Request) {
       prospect_id: url.searchParams.get('prospect_id') || undefined,
       customer_id: url.searchParams.get('customer_id') || undefined,
       limit: url.searchParams.get('limit') || undefined,
+      sort: url.searchParams.get('sort') || undefined,
     });
 
     if (!parsedQuery.success) return validationError(parsedQuery.error);
@@ -37,6 +38,7 @@ export async function GET(req: Request) {
       prospectId: parsedQuery.data.prospect_id,
       customerId: parsedQuery.data.customer_id,
       limit: parsedQuery.data.limit,
+      sort: parsedQuery.data.sort,
     });
     const { data, error } = await query;
 
