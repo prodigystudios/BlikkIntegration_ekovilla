@@ -186,6 +186,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [statusSaving, setStatusSaving] = useState<WorkOrderStatus | null>(null);
   const [savingArticles, setSavingArticles] = useState(false);
   const [pushingFortnox, setPushingFortnox] = useState(false);
   const [creatingInvoice, setCreatingInvoice] = useState(false);
@@ -378,6 +379,26 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
     finally { setSaving(false); }
   }
 
+  // Sätt statusen direkt från förloppsstegen — genvägen förbi Redigera → väljaren → Spara.
+  //
+  // Bara `status` skickas: routen speglar Er referens/arbetsadress/ansvarig till Fortnox-headern
+  // och gatear på just de fälten, så en statusändring härifrån blir aldrig en Fortnox-skrivning.
+  async function setStatusFromFlow(next: WorkOrderStatus) {
+    if (!workOrder || statusSaving) return;
+    setStatusSaving(next);
+    try {
+      const res = await fetch(`/api/crm/work-orders/${workOrder.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: next }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte ändra status'); return; }
+      if (json.data?.item) applyWorkOrder(json.data.item as WorkOrderItem);
+      toast.success(`Status: ${workOrderStatusLabel[next]}`);
+    } catch { toast.error('Kunde inte ändra status'); }
+    finally { setStatusSaving(null); }
+  }
+
   // Bygg om måttblocket ur orderns artikelrader och lägg det överst i överlämningsnoteringen.
   //
   // Till skillnad från offertformuläret finns här ingen automatik som äger texten, och därmed
@@ -514,6 +535,9 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   }
 
   const overdue = isWorkOrderOverdue(workOrder.desired_installation_date, workOrder.status);
+  // Förloppsstegen sätter status direkt. Låst på en färdigfakturerad order (routen nekar ändå) och
+  // medan översikten redigeras (då äger formulärets väljare statusen).
+  const statusFlowEditable = workOrder.status !== 'invoiced' && !editingOverview;
   const snapshot = workOrder.customer_snapshot || {};
   // The order's own responsible contact (snapshot) is the source of truth here — it's what the
   // picker below edits, so an edit reflects immediately. Fall back to the resolved customer
@@ -608,22 +632,46 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
         </div>
       </div>
 
-      {/* Status stepper */}
+      {/* Status stepper — stegen är klickbara genvägar till statusväljaren. Bara arbetsstatusarna
+          (WORK_ORDER_STATUS_OPTIONS) går att sätta för hand: fakturastatus sätts av faktureringen
+          och nekas av routen med 409, och en färdigfakturerad order är låst. Medan översikten
+          redigeras äger formulärets väljare statusen — annars hade ett klick sparat direkt mitt i
+          ett osparat utkast och tystat de övriga ändringarna. */}
       <Card className="grid gap-3">
-        <p className={crm.sectionTitle}>Förlopp</p>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className={crm.sectionTitle}>Förlopp</p>
+          {statusFlowEditable ? (
+            <span className="text-xs text-slate-400">Klicka på ett steg för att ändra status</span>
+          ) : null}
+        </div>
         <div className="flex flex-wrap items-center gap-1.5">
           {WORK_ORDER_STATUS_FLOW.map((step, i) => {
             const currentIndex = WORK_ORDER_STATUS_FLOW.indexOf(workOrder.status);
             const done = currentIndex >= 0 && i <= currentIndex;
             const isCurrent = workOrder.status === step;
+            const clickable = statusFlowEditable && !isCurrent && WORK_ORDER_STATUS_OPTIONS.includes(step);
+            const stepClass = cn(
+              'rounded-full border px-3 py-1 text-xs font-semibold transition',
+              isCurrent ? 'text-white' : done ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-[#e0e8dc] bg-[#f1f5ee] text-slate-400',
+            );
+            const stepStyle = isCurrent ? { backgroundColor: 'var(--crm-primary)', borderColor: 'var(--crm-primary)' } : undefined;
             return (
               <div key={step} className="flex items-center gap-1.5">
-                <span className={cn(
-                  'rounded-full border px-3 py-1 text-xs font-semibold transition',
-                  isCurrent ? 'text-white' : done ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-[#e0e8dc] bg-[#f1f5ee] text-slate-400',
-                )} style={isCurrent ? { backgroundColor: 'var(--crm-primary)', borderColor: 'var(--crm-primary)' } : undefined}>
-                  {workOrderStatusLabel[step]}
-                </span>
+                {clickable ? (
+                  <button
+                    type="button"
+                    onClick={() => setStatusFromFlow(step)}
+                    disabled={statusSaving !== null}
+                    title={`Sätt status till ${workOrderStatusLabel[step]}`}
+                    className={cn(stepClass, 'hover:border-emerald-300 hover:bg-emerald-100 hover:text-emerald-800')}
+                  >
+                    {statusSaving === step ? 'Sparar…' : workOrderStatusLabel[step]}
+                  </button>
+                ) : (
+                  <span className={stepClass} style={stepStyle} aria-current={isCurrent ? 'step' : undefined}>
+                    {workOrderStatusLabel[step]}
+                  </span>
+                )}
                 {i < WORK_ORDER_STATUS_FLOW.length - 1 ? <span className={cn('h-px w-4', done ? 'bg-emerald-300' : 'bg-[#d4ddcd]')} /> : null}
               </div>
             );

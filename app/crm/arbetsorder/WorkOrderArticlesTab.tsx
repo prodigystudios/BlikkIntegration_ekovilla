@@ -122,7 +122,12 @@ export default function WorkOrderArticlesTab({ items, currencyCode, vatPercent, 
   const [rows, setRows] = useState<ArticleLineItem[]>(items);
 
   // Resync from source when the work order reloads (e.g. after a successful save).
-  useEffect(() => { setRows(items); }, [items]);
+  //
+  // ⚠️ Inte medan raderna redigeras. Vilken omladdning av arbetsordern som helst ger `items` ny
+  // identitet, och den här effekten skrev då över utkastet — statusklicket i förloppet ligger
+  // ovanför flikremsan och nådde alltså in hit och nollade osparade artikelrader. Efter en
+  // lyckad sparning sätts `editing` till false, vilket kör effekten igen med färska rader.
+  useEffect(() => { if (!editing) setRows(items); }, [items, editing]);
 
   const dirty = useMemo(() => JSON.stringify(rows) !== JSON.stringify(items), [rows, items]);
   const rotEnabled = quoteType === 'private' && Boolean(rotDetails?.enabled);
