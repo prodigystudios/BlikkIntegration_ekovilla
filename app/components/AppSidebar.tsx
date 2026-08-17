@@ -406,7 +406,9 @@ export default function AppSidebar({
         onMouseEnter={(e) => { if (!active) (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--crm-sidebar-hover)'; }}
         onMouseLeave={(e) => { if (!active) (e.currentTarget as HTMLElement).style.backgroundColor = ''; }}
       >
-        {!isChild && <span className={cn('shrink-0', active ? 'text-emerald-300' : '')}>{icon}</span>}
+        {/* h-5 is the label's line box: the icon, not the hidden text, sets the row height
+            on the rail, so a row measures the same open as closed. */}
+        {!isChild && <span className={cn('flex h-5 shrink-0 items-center', active ? 'text-emerald-300' : '')}>{icon}</span>}
         <span className={cn('truncate crm-fade-in', rail && 'lg:hidden')}>{node.label}</span>
       </Link>
     );
@@ -481,8 +483,11 @@ export default function AppSidebar({
         )}
         style={{ backgroundColor: 'var(--crm-sidebar-bg)' }}
       >
-        {/* Logo + collapse toggle */}
-        <div className={cn('flex items-center justify-between px-4 pb-3 [padding-top:calc(1.25rem+env(safe-area-inset-top))] lg:pt-5', rail && 'lg:flex-col lg:items-center lg:gap-2 lg:px-3')}>
+        {/* Logo + collapse toggle. The band holds one height across rail and peek — 20px
+            top padding + 24px logo + 8px gap + 32px control + 12px bottom padding = 96px,
+            the rail's stack measured exactly — so everything below it keeps its line and
+            nothing walks upward under the cursor when the panel opens. */}
+        <div className={cn('flex items-center justify-between px-4 pb-3 [padding-top:calc(1.25rem+env(safe-area-inset-top))] lg:min-h-24 lg:pt-5', rail && 'lg:flex-col lg:items-center lg:gap-2 lg:px-3')}>
           <Link
             href="/"
             title="Till start"
@@ -503,25 +508,34 @@ export default function AppSidebar({
             <img src="/brand/Ekovilla_logga_vit.png" alt="Ekovilla" className="h-6 w-6 object-contain" />
           </Link>
           {/* Desktop: notification bell + pin toggle, grouped top-right (mobile has the bell in the top bar). */}
-          <div className={cn('ml-auto hidden items-center gap-1 lg:flex', rail ? 'lg:ml-0 lg:flex-col' : 'lg:self-start')}>
+          {/* Centred rather than top-aligned: the band is now taller than the brand block,
+              and self-start would float the controls above the logo instead of beside it. */}
+          <div className={cn('ml-auto hidden items-center gap-1 lg:flex', rail && 'lg:ml-0 lg:flex-col')}>
             {/* The sheet is anchored to the sidebar's layout column, so the peek has to be
                 gone before it opens. It can't be left to the mouse: the overlay is inserted
                 under a stationary cursor, and no mouseleave fires until the pointer moves. */}
             <span onClickCapture={endPeek} className="contents">
               <NotificationBell collapsed={!pinned} className="h-8 w-8 rounded-lg border border-white/20 bg-transparent p-0 text-white/80 hover:border-white/30 hover:bg-white/10 hover:text-white" />
             </span>
-            <button
-              type="button"
-              onClick={togglePinned}
-              aria-pressed={pinned}
-              aria-label={pinned ? 'Lossa menyn' : 'Fäst menyn öppen'}
-              title={pinned ? 'Lossa menyn — den visas då vid hover' : 'Fäst menyn öppen'}
-              className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-white/80 transition-colors hover:bg-white/10 hover:text-white"
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={cn('transition-transform', !pinned && 'rotate-180')}>
-                <polyline points="15 18 9 12 15 6" />
-              </svg>
-            </button>
+            {/* 68px of rail fits the logo and one control, and the bell is the one carrying
+                information (the unread badge). A pointer that can click this button has
+                already opened the panel by reaching it, so the rail loses nothing by leaving
+                it out. Devices without hover never peek — there the rail keeps the button,
+                since it is their only way back to a pinned sidebar. */}
+            {(!rail || hoverCapable === false) && (
+              <button
+                type="button"
+                onClick={togglePinned}
+                aria-pressed={pinned}
+                aria-label={pinned ? 'Lossa menyn' : 'Fäst menyn öppen'}
+                title={pinned ? 'Lossa menyn — den visas då vid hover' : 'Fäst menyn öppen'}
+                className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-white/80 transition-colors hover:bg-white/10 hover:text-white"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={cn('transition-transform', !pinned && 'rotate-180')}>
+                  <polyline points="15 18 9 12 15 6" />
+                </svg>
+              </button>
+            )}
           </div>
           <button
             type="button"
@@ -549,7 +563,7 @@ export default function AppSidebar({
               onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--crm-sidebar-hover)'; }}
               onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = ''; }}
             >
-              <span className="shrink-0">
+              <span className="flex h-5 shrink-0 items-center">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <path d="M15 18l-6-6 6-6" />
                 </svg>
@@ -585,7 +599,7 @@ export default function AppSidebar({
                       onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--crm-sidebar-hover)'; }}
                       onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = ''; }}
                     >
-                      <span className={cn('shrink-0', groupActive ? 'text-emerald-300' : '')}>{navIcons[item.href] ?? fallbackIcon}</span>
+                      <span className={cn('flex h-5 shrink-0 items-center', groupActive ? 'text-emerald-300' : '')}>{navIcons[item.href] ?? fallbackIcon}</span>
                       <span className={cn('flex-1 truncate text-left crm-fade-in', rail && 'lg:hidden')}>{item.label}</span>
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={cn('shrink-0 transition-transform', open && 'rotate-180', rail && 'lg:hidden')}>
                         <polyline points="6 9 12 15 18 9" />
@@ -608,7 +622,9 @@ export default function AppSidebar({
 
         {/* User + account menu */}
         <div className="mx-3 mt-2 mb-3 h-px" style={{ backgroundColor: 'var(--crm-sidebar-border)' }} />
-        <div className={cn('flex items-center gap-2.5 px-4 pb-5', rail && 'lg:justify-center lg:px-2')}>
+        {/* min-h-10 is the profile button's height (22px icon + padding + border): without it
+            the footer row shrinks to the avatar on the rail and the avatar hops on hover. */}
+        <div className={cn('flex items-center gap-2.5 px-4 pb-5 lg:min-h-10', rail && 'lg:justify-center lg:px-2')}>
           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-700 text-xs font-bold text-white">
             {userInitial}
           </div>
