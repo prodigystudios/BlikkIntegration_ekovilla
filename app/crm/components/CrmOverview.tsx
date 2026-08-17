@@ -8,7 +8,7 @@ import ChangelogCard from './ChangelogCard';
 import type { UserRole } from '@/lib/roles';
 import { getVisibleCrmNavItems } from '../_lib/nav';
 import { cn } from '@/lib/shared/cn';
-import { crm } from '@/app/crm/lib/crmTokens';
+import { crm, workOrderStatusClass, workOrderStatusLabel, type WorkOrderStatus } from '@/app/crm/lib/crmTokens';
 import { weeklyFromMonthly } from '@/lib/domains/crm/goals';
 
 type ProspectItem = {
@@ -85,9 +85,12 @@ type QuoteItem = {
 
 type WorkOrderItem = {
   id: string;
+  order_number: string;
+  project_name: string;
+  client_name: string;
   amount: number | string;
   currency_code: string;
-  status: string;
+  status: WorkOrderStatus;
   assigned_to: string;
   created_at: string;
   fortnox_invoiced_at: string | null;
@@ -148,15 +151,6 @@ const quoteStatusLabel: Record<QuoteItem['status'], string> = {
   lost: 'Förlorad',
 };
 
-const prospectStatusLabel: Record<ProspectItem['status'], string> = {
-  new: 'Ny',
-  contacted: 'Kontaktad',
-  qualified: 'Kvalificerad',
-  quoted: 'Offert',
-  won: 'Vunnen',
-  lost: 'Förlorad',
-};
-
 function getProspectFromCall(item: CallItem) {
   if (Array.isArray(item.prospect)) return item.prospect[0] || null;
   return item.prospect || null;
@@ -194,8 +188,12 @@ function isPipelineProspect(prospect: ProspectItem) {
 // 'in_progress' is out on the job — both are open work — while 'completed' and
 // 'partially_invoiced' are the invoicing stage the board's chip calls "Fakturera".
 // 'invoiced' and 'cancelled' are deliberately in neither: they have left the flow.
-const OPEN_WORK_ORDER_STATUSES = ['draft', 'scheduled', 'ready', 'in_progress'];
-const TO_INVOICE_WORK_ORDER_STATUSES = ['completed', 'partially_invoiced'];
+const OPEN_WORK_ORDER_STATUSES: WorkOrderStatus[] = ['draft', 'scheduled', 'ready', 'in_progress'];
+const TO_INVOICE_WORK_ORDER_STATUSES: WorkOrderStatus[] = ['completed', 'partially_invoiced'];
+
+// Rows per "senaste …" card. Five fills the column next to the status panel and the leaderboard
+// without turning the overview into a list page — the cards' own "Visa alla" leads there.
+const RECENT_ITEM_LIMIT = 5;
 
 function toAmount(value: number | string) {
   const numeric = typeof value === 'number' ? value : Number(String(value));
@@ -452,10 +450,12 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
     };
   }, [state.calls, state.goals, state.prospects, state.quotes, state.tasks, state.workOrders]);
 
-  const recentProspects = useMemo(() => [...state.prospects].sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, 3), [state.prospects]);
-  const recentCalls = useMemo(() => [...state.calls].sort((a, b) => b.call_at.localeCompare(a.call_at)).slice(0, 3), [state.calls]);
-  const recentQuotes = useMemo(() => [...state.quotes].sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, 3), [state.quotes]);
-  const nextTasks = useMemo(() => [...state.tasks].filter((task) => task.status === 'open').sort(sortTasks).slice(0, 3), [state.tasks]);
+  const recentCalls = useMemo(() => [...state.calls].sort((a, b) => b.call_at.localeCompare(a.call_at)).slice(0, RECENT_ITEM_LIMIT), [state.calls]);
+  const recentQuotes = useMemo(() => [...state.quotes].sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, RECENT_ITEM_LIMIT), [state.quotes]);
+  // Newest orders first, on creation date — "senaste" means the ones that just came in, not the
+  // ones somebody last touched.
+  const recentWorkOrders = useMemo(() => [...state.workOrders].sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, RECENT_ITEM_LIMIT), [state.workOrders]);
+  const nextTasks = useMemo(() => [...state.tasks].filter((task) => task.status === 'open').sort(sortTasks).slice(0, RECENT_ITEM_LIMIT), [state.tasks]);
   const nextActions = buildOverviewActions({ overdueTasks: summary.overdueTasks, followUpCalls: summary.followUpCalls, newProspects: summary.newProspects, standaloneCalls: summary.standaloneCalls, quoteFollowUps: summary.quoteFollowUps });
   const teamLeaderboard = useMemo(() => {
     // Goals are MONTHLY budgets; the leaderboard shows the weekly target (budget ÷ 4) against
@@ -666,34 +666,36 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
             ) : null}
           </div>
 
-          {/* Recent items grid */}
+          {/* Recent items grid. Order follows the flow the sellers work in: offert → order on the
+              first row, then the two activity lists. Prospects had their own card here until
+              2026-08-17 and were dropped — that stage isn't in use right now. */}
           <div className="grid gap-4 xl:grid-cols-2">
-            <RecentCard title="Senaste prospekt" href="/crm/prospekt" loading={loading}>
-              {recentProspects.length === 0 ? <EmptyState description="Inga prospekt ännu." /> : (
+            <RecentCard title="Senaste offertlägen" href="/crm/offerter" loading={loading}>
+              {recentQuotes.length === 0 ? <EmptyState description="Inga offertsteg registrerade ännu." /> : (
                 <div className="grid gap-2">
-                  {recentProspects.map((prospect) => (
-                    <Link key={prospect.id} href="/crm/prospekt" className="flex items-start justify-between gap-3 rounded-xl border border-slate-100 p-3 no-underline transition hover:border-slate-200 hover:bg-slate-50">
+                  {recentQuotes.map((quote) => (
+                    <Link key={quote.id} href="/crm/offerter" className="flex items-start justify-between gap-3 rounded-xl border border-slate-100 p-3 no-underline transition hover:border-slate-200 hover:bg-slate-50">
                       <div className="min-w-0">
-                        <strong className="block truncate text-sm font-semibold text-slate-900">{prospect.company_name}</strong>
-                        <p className="m-0 truncate text-xs text-slate-500">{[prospect.contact_name, prospect.city, prospect.source].filter(Boolean).join(' · ') || 'Ingen extra info'}</p>
+                        <strong className="block truncate text-sm font-semibold text-slate-900">{quote.project_name}</strong>
+                        <p className="m-0 truncate text-xs text-slate-500">{getQuoteCustomerName(quote)} · {formatCurrency(quote.amount, quote.currency_code)}</p>
                       </div>
-                      <span className="shrink-0 rounded-full border border-slate-200 bg-slate-100 px-2.5 py-0.5 text-[11px] font-semibold text-slate-600">{prospectStatusLabel[prospect.status]}</span>
+                      <span className="shrink-0 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[11px] font-semibold text-amber-700">{quoteStatusLabel[quote.status]}</span>
                     </Link>
                   ))}
                 </div>
               )}
             </RecentCard>
 
-            <RecentCard title="Senaste samtal" href="/crm/samtal" loading={loading}>
-              {recentCalls.length === 0 ? <EmptyState description="Inga samtal loggade ännu." /> : (
+            <RecentCard title="Senaste ordrar" href="/crm/arbetsorder" loading={loading}>
+              {recentWorkOrders.length === 0 ? <EmptyState description="Inga arbetsordrar ännu." /> : (
                 <div className="grid gap-2">
-                  {recentCalls.map((call) => (
-                    <Link key={call.id} href="/crm/samtal" className="flex items-start justify-between gap-3 rounded-xl border border-slate-100 p-3 no-underline transition hover:border-slate-200 hover:bg-slate-50">
+                  {recentWorkOrders.map((order) => (
+                    <Link key={order.id} href={`/crm/arbetsorder/${order.id}`} className="flex items-start justify-between gap-3 rounded-xl border border-slate-100 p-3 no-underline transition hover:border-slate-200 hover:bg-slate-50">
                       <div className="min-w-0">
-                        <strong className="block truncate text-sm font-semibold text-slate-900">{getCallCompanyName(call)}</strong>
-                        <p className="m-0 truncate text-xs text-slate-500">{formatDateTime(call.call_at)}</p>
+                        <strong className="block truncate text-sm font-semibold text-slate-900">{order.project_name}</strong>
+                        <p className="m-0 truncate text-xs text-slate-500">{order.client_name} · {formatCurrency(order.amount, order.currency_code)}</p>
                       </div>
-                      <span className="shrink-0 rounded-full border border-slate-200 bg-slate-100 px-2.5 py-0.5 text-[11px] font-semibold text-slate-600">{outcomeLabel[call.outcome]}</span>
+                      <span className={cn('shrink-0 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold', workOrderStatusClass[order.status])}>{workOrderStatusLabel[order.status]}</span>
                     </Link>
                   ))}
                 </div>
@@ -716,16 +718,16 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
               )}
             </RecentCard>
 
-            <RecentCard title="Senaste offertlägen" href="/crm/offerter" loading={loading}>
-              {recentQuotes.length === 0 ? <EmptyState description="Inga offertsteg registrerade ännu." /> : (
+            <RecentCard title="Senaste samtal" href="/crm/samtal" loading={loading}>
+              {recentCalls.length === 0 ? <EmptyState description="Inga samtal loggade ännu." /> : (
                 <div className="grid gap-2">
-                  {recentQuotes.map((quote) => (
-                    <Link key={quote.id} href="/crm/offerter" className="flex items-start justify-between gap-3 rounded-xl border border-slate-100 p-3 no-underline transition hover:border-slate-200 hover:bg-slate-50">
+                  {recentCalls.map((call) => (
+                    <Link key={call.id} href="/crm/samtal" className="flex items-start justify-between gap-3 rounded-xl border border-slate-100 p-3 no-underline transition hover:border-slate-200 hover:bg-slate-50">
                       <div className="min-w-0">
-                        <strong className="block truncate text-sm font-semibold text-slate-900">{quote.project_name}</strong>
-                        <p className="m-0 truncate text-xs text-slate-500">{getQuoteCustomerName(quote)} · {formatCurrency(quote.amount, quote.currency_code)}</p>
+                        <strong className="block truncate text-sm font-semibold text-slate-900">{getCallCompanyName(call)}</strong>
+                        <p className="m-0 truncate text-xs text-slate-500">{formatDateTime(call.call_at)}</p>
                       </div>
-                      <span className="shrink-0 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[11px] font-semibold text-amber-700">{quoteStatusLabel[quote.status]}</span>
+                      <span className="shrink-0 rounded-full border border-slate-200 bg-slate-100 px-2.5 py-0.5 text-[11px] font-semibold text-slate-600">{outcomeLabel[call.outcome]}</span>
                     </Link>
                   ))}
                 </div>
@@ -795,15 +797,17 @@ function RecentCard({ title, href, loading, children }: { title: string; href: s
         <strong className="text-sm font-bold text-slate-900">{title}</strong>
         <Link href={href} className="text-xs font-semibold text-emerald-700 no-underline hover:text-emerald-800">Visa alla</Link>
       </div>
-      {loading ? <OverviewLoadingRows /> : children}
+      {loading ? <OverviewLoadingRows rows={RECENT_ITEM_LIMIT} /> : children}
     </div>
   );
 }
 
-function OverviewLoadingRows() {
+// Skeleton row count is per caller: the recent lists settle on five rows, so a three-row skeleton
+// would make the whole column jump when the data lands.
+function OverviewLoadingRows({ rows = 3 }: { rows?: number }) {
   return (
     <div className="grid gap-2">
-      {Array.from({ length: 3 }).map((_, i) => (
+      {Array.from({ length: rows }).map((_, i) => (
         <div key={i} className="h-14 animate-pulse rounded-xl border border-[#e0e8dc] bg-[#dfe6da]" />
       ))}
     </div>
