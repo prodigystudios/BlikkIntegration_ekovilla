@@ -331,7 +331,7 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
               {workOrders.map((item) => {
                 const overdue = isWorkOrderOverdue(item.desired_installation_date, item.status);
                 const sellerName = item.assigned_to
-                  ? (assigneeNameById.get(item.assigned_to) || item.assignee?.full_name || 'Okänd')
+                  ? (assigneeNameById.get(item.assigned_to) ?? item.assignee?.full_name ?? null)
                   : null;
                 return (
                   <button
@@ -349,7 +349,7 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
                     {/* Ansvarig-kolumnen är 116px och inte 48px: den rymmer namnet, inte bara en
                         initialbricka man måste hovra på. Utrymmet tas ur identitetskolumnen, som är
                         den flexibla — de två högerkolumnerna har fast innehåll. */}
-                    <div className="grid flex-1 grid-cols-[minmax(0,1fr)_auto] items-start gap-2 px-2.5 py-1.5 sm:grid-cols-[minmax(0,1fr)_116px_140px_128px] lg:grid-cols-[minmax(0,1fr)_150px_140px_128px] sm:items-center sm:gap-3">
+                    <div className="grid flex-1 grid-cols-[minmax(0,1fr)_auto] items-start gap-2 px-2.5 py-1.5 sm:grid-cols-[minmax(0,1fr)_48px_140px_128px] md:grid-cols-[minmax(0,1fr)_116px_140px_128px] lg:grid-cols-[minmax(0,1fr)_150px_140px_128px] sm:items-center sm:gap-3">
                       {/* Number badge + identity + chips */}
                       <div className="flex min-w-0 items-center gap-2">
                         <DocumentNumberBadge label="Order" value={documentRef(item.fortnox_order_number, item.order_number)} />
@@ -381,7 +381,7 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
                       </div>
 
                       {/* Ansvarig, i en fast slot så den aldrig driver i sidled */}
-                      <RowAssignee name={sellerName} />
+                      <RowAssignee name={sellerName} assigned={Boolean(item.assigned_to)} />
 
                       {/* Date */}
                       <div className="hidden flex-col gap-0.5 sm:flex">
