@@ -9,6 +9,10 @@ vi.mock('@/lib/auth/route', () => ({ getCurrentUser: vi.fn() }));
 
 vi.mock('@/lib/domains/crm/quotes', () => ({
   listCrmQuotesWithFilters: vi.fn(),
+  // Flikräknarna körs bara när routen får counts=1, men exporten måste finnas i mocken: routen
+  // importerar den, och en saknad namngiven export kastar vid import och blir ett 500 i stället.
+  getCrmQuoteFilterCounts: vi.fn(async () => ({ all: 0, active: 0, follow_up: 0, won: 0, lost: 0 })),
+  CRM_QUOTES_PAGE_SIZE: 100,
   createCrmQuote: vi.fn(),
   getCrmQuote: vi.fn(),
   getCrmQuoteStatus: vi.fn(),

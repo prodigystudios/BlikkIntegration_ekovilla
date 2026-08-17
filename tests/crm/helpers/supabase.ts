@@ -13,6 +13,9 @@ export function makeQueryChain(result: { data: unknown; error: unknown }) {
   const methods = [
     'select', 'insert', 'update', 'delete', 'upsert',
     'eq', 'neq', 'or', 'ilike', 'like', 'filter', 'match',
+    // Filter verbs the CRM list queries use: status groups and assignee scopes go through .in(),
+    // "no prospect" through .is(), and the windowed reads through .gte()/.lte().
+    'in', 'is', 'gte', 'lte',
     'order', 'limit', 'range',
   ] as const;
 

@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Input from '../../../components/ui/Input';
 import { cn } from '@/lib/shared/cn';
-import AssigneeFilter, { matchesAssignee, type AssigneeFilterValue, type AssigneeOption } from '@/app/crm/components/AssigneeFilter';
+import AssigneeFilter, { MINE, type AssigneeFilterValue, type AssigneeOption } from '@/app/crm/components/AssigneeFilter';
 import { RowAssignee, RowAssigneeChip } from '@/app/crm/components/RowAssignee';
 import { documentRef } from '@/app/crm/lib/format';
 import DocumentNumberBadge from '@/app/crm/components/DocumentNumberBadge';
@@ -52,6 +52,7 @@ type QuoteItem = {
 };
 
 type QuoteFilter = 'all' | 'active' | 'follow_up' | 'won' | 'lost';
+type QuoteSort = 'created_desc' | 'follow_up_asc';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -62,6 +63,17 @@ const quoteFilterMeta: Record<QuoteFilter, { label: string }> = {
   won: { label: 'Vunna' },
   lost: { label: 'Förlorade' },
 };
+
+const quoteSortMeta: Record<QuoteSort, { label: string }> = {
+  created_desc: { label: 'Senast skapad' },
+  follow_up_asc: { label: 'Följ upp först' },
+};
+
+// The list pages the same way the order board does: one page per filter, accumulated with
+// "Visa fler". Filtering, counting and ordering all happen server-side — the row cap cuts before
+// the browser sees anything, so a client-side tab would have been counting a truncated set.
+const PAGE_SIZE = 100;
+const EMPTY_COUNTS: Record<QuoteFilter, number> = { all: 0, active: 0, follow_up: 0, won: 0, lost: 0 };
 
 function formatCurrency(value: number | string, currencyCode: string) {
   const numeric = typeof value === 'number' ? value : Number(String(value));
@@ -76,17 +88,6 @@ function formatDate(value: string | null | undefined) {
   return new Intl.DateTimeFormat('sv-SE', { dateStyle: 'medium' }).format(date);
 }
 
-function compareQuotes(a: QuoteItem, b: QuoteItem) {
-  const aOverdue = isQuoteOverdue(a);
-  const bOverdue = isQuoteOverdue(b);
-  if (aOverdue !== bOverdue) return aOverdue ? -1 : 1;
-  if (a.follow_up_date && b.follow_up_date && a.follow_up_date !== b.follow_up_date) {
-    return a.follow_up_date.localeCompare(b.follow_up_date);
-  }
-  if (a.quote_date !== b.quote_date) return b.quote_date.localeCompare(a.quote_date);
-  return b.updated_at.localeCompare(a.updated_at);
-}
-
 // ─── QuotesClient ─────────────────────────────────────────────────────────────
 
 export default function QuotesClient({ currentUserId }: { currentUserId: string | null }) {
@@ -94,13 +95,55 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
   const searchParams = useSearchParams();
 
   const [quotes, setQuotes] = useState<QuoteItem[]>([]);
+  const [total, setTotal] = useState(0);
+  const [counts, setCounts] = useState<Record<QuoteFilter, number>>(EMPTY_COUNTS);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<QuoteFilter>('all');
+  const [sort, setSort] = useState<QuoteSort>('created_desc');
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [assigneeFilter, setAssigneeFilter] = useState<AssigneeFilterValue>([]);
   const [assignees, setAssignees] = useState<AssigneeOption[]>([]);
+
+  // 'mine' resolves to the current user before it goes to the server, the same way the order board
+  // does it — the filter is server-side now, so the browser can't be the one deciding who's who.
+  const assigneeParam = useMemo(
+    () => assigneeFilter.map((v) => (v === MINE ? (currentUserId ?? '') : v)).filter(Boolean).join(','),
+    [assigneeFilter, currentUserId],
+  );
+
+  function buildListQuery(nextOffset: number) {
+    const query = new URLSearchParams();
+    if (search.trim()) query.set('q', search.trim());
+    if (presetProspectId) query.set('prospect_id', presetProspectId);
+    query.set('filter', filter);
+    query.set('sort', sort);
+    if (assigneeParam) query.set('assignee', assigneeParam);
+    query.set('offset', String(nextOffset));
+    query.set('limit', String(PAGE_SIZE));
+    // Tab counts only need recomputing on a fresh first page, not on "Visa fler".
+    if (nextOffset === 0) query.set('counts', '1');
+    return query.toString();
+  }
+
+  async function loadMore() {
+    if (loadingMore || quotes.length >= total) return;
+    setLoadingMore(true);
+    try {
+      const res = await fetch(`/api/crm/quotes?${buildListQuery(quotes.length)}`, { cache: 'no-store' });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.ok) { setError(json?.error || 'Kunde inte ladda fler offerter.'); return; }
+      const items = Array.isArray(json?.data?.items) ? json.data.items : [];
+      setQuotes((prev) => [...prev, ...items]);
+      setTotal(json?.data?.total ?? total);
+    } catch {
+      setError('Kunde inte ladda fler offerter.');
+    } finally {
+      setLoadingMore(false);
+    }
+  }
 
   useEffect(() => {
     let active = true;
@@ -121,6 +164,8 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
   const documentEmail = useDocumentEmail();
   const [detailPanelOpen, setDetailPanelOpen] = useState(false);
   const [detailQuoteId, setDetailQuoteId] = useState<string | null>(null);
+  // A quote reached by ?quote_id= that isn't on the loaded page. Feeds the panel only.
+  const [linkedQuote, setLinkedQuote] = useState<QuoteItem | null>(null);
   const [hasHandledPreset, setHasHandledPreset] = useState(false);
 
   const presetProspectId = searchParams.get('prospect_id') || '';
@@ -141,60 +186,59 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
     setHasHandledPreset(false);
   }, [presetProspectId, shouldOpenCreate]);
 
-  // Load quotes
+  // Load the first page. Search, tab, sort and assignee are all server-side, so every one of them
+  // starts a fresh page rather than re-filtering what happens to be in the browser.
   useEffect(() => {
     let active = true;
-    setLoading(true);
-    setError(null);
-
-    const query = new URLSearchParams();
-    if (search.trim()) query.set('q', search.trim());
-    if (presetProspectId) query.set('prospect_id', presetProspectId);
-
-    fetch(`/api/crm/quotes${query.size > 0 ? `?${query}` : ''}`, { cache: 'no-store' })
-      .then((r) => r.json().catch(() => ({})))
-      .then((json) => {
+    async function load() {
+      setLoading(true); setError(null);
+      try {
+        const res = await fetch(`/api/crm/quotes?${buildListQuery(0)}`, { cache: 'no-store' });
+        const json = await res.json().catch(() => ({}));
         if (!active) return;
-        if (!json.ok) { setError(json?.error || 'Kunne inte ladda offerter.'); setQuotes([]); return; }
+        if (!res.ok || !json.ok) { setError(json?.error || 'Kunde inte ladda offerter.'); setQuotes([]); setTotal(0); return; }
         setQuotes(Array.isArray(json?.data?.items) ? json.data.items : []);
-      })
-      .catch(() => { if (active) { setError('Kunde inte ladda offerter.'); setQuotes([]); } })
-      .finally(() => { if (active) setLoading(false); });
-
+        setTotal(json?.data?.total ?? 0);
+        if (json?.data?.counts) setCounts(json.data.counts);
+      } catch { if (active) { setError('Kunde inte ladda offerter.'); setQuotes([]); setTotal(0); } }
+      finally { if (active) setLoading(false); }
+    }
+    void load();
     return () => { active = false; };
-  }, [presetProspectId, search]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [presetProspectId, search, filter, sort, assigneeParam]);
 
-  // Deep-link: open a specific quote's detail panel when arriving with
-  // ?quote_id= (e.g. from a customer's related list). Handled once the matching
-  // quote is loaded so a manual close isn't re-triggered.
+  // Deep-link: open a specific quote's detail panel when arriving with ?quote_id= (e.g. from a
+  // customer's related list). Handled once the matching quote is loaded so a manual close isn't
+  // re-triggered.
   useEffect(() => { setHasHandledQuotePreset(false); }, [presetQuoteId]);
+
+  // The linked quote need not be on the loaded page any more: it may be won while the tab shows
+  // "Aktiva", or simply sit past the first page. Fetch that one row so the link opens the panel it
+  // promised — but keep it OUT of the list, which stays exactly the page the server returned. A
+  // prepended row would sit at the top in defiance of the chosen sort once the panel closes.
+  useEffect(() => {
+    if (!presetQuoteId || hasHandledQuotePreset || loading) return;
+    if (quotes.some((q) => q.id === presetQuoteId) || linkedQuote?.id === presetQuoteId) return;
+    let active = true;
+    fetch(`/api/crm/quotes/${presetQuoteId}`, { cache: 'no-store' })
+      .then((r) => r.json().catch(() => ({})))
+      .then((json) => { if (active && json?.ok && json?.data?.item) setLinkedQuote(json.data.item); })
+      .catch(() => { /* the panel simply won't open — the list is still usable */ });
+    return () => { active = false; };
+  }, [presetQuoteId, hasHandledQuotePreset, loading, quotes, linkedQuote]);
 
   useEffect(() => {
     if (!presetQuoteId || hasHandledQuotePreset || loading) return;
-    if (!quotes.some((q) => q.id === presetQuoteId)) return;
+    if (!quotes.some((q) => q.id === presetQuoteId) && linkedQuote?.id !== presetQuoteId) return;
     setDetailQuoteId(presetQuoteId);
     setDetailPanelOpen(true);
     setHasHandledQuotePreset(true);
-  }, [presetQuoteId, hasHandledQuotePreset, loading, quotes]);
+  }, [presetQuoteId, hasHandledQuotePreset, loading, quotes, linkedQuote]);
 
   // Count of active filters (status + assignee) — shown as a badge on the mobile toggle.
   const activeFilterCount = (filter !== 'all' ? 1 : 0) + (assigneeFilter.length > 0 ? 1 : 0);
-
-  // Scope the whole page (list, stats, chip counts) to the chosen "Ansvarig" filter.
-  const assigneeScopedQuotes = useMemo(
-    () => quotes.filter((q) => matchesAssignee(q.assigned_to, assigneeFilter, currentUserId)),
-    [quotes, assigneeFilter, currentUserId],
-  );
-
-  const visibleQuotes = useMemo(() => {
-    if (filter === 'all') return assigneeScopedQuotes;
-    if (filter === 'active') return assigneeScopedQuotes.filter((q) => q.status === 'draft' || q.status === 'sent' || q.status === 'follow_up');
-    if (filter === 'follow_up') return assigneeScopedQuotes.filter((q) => q.status === 'follow_up');
-    if (filter === 'won') return assigneeScopedQuotes.filter((q) => q.status === 'won');
-    return assigneeScopedQuotes.filter((q) => q.status === 'lost');
-  }, [filter, assigneeScopedQuotes]);
-
-  const sortedVisibleQuotes = useMemo(() => [...visibleQuotes].sort(compareQuotes), [visibleQuotes]);
+  const hasMore = quotes.length < total;
 
   const assigneeNameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -202,18 +246,11 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
     return map;
   }, [assignees]);
 
-  const filterCounts = useMemo<Record<QuoteFilter, number>>(() => ({
-    all: assigneeScopedQuotes.length,
-    active: assigneeScopedQuotes.filter((q) => q.status === 'draft' || q.status === 'sent' || q.status === 'follow_up').length,
-    follow_up: assigneeScopedQuotes.filter((q) => q.status === 'follow_up').length,
-    won: assigneeScopedQuotes.filter((q) => q.status === 'won').length,
-    lost: assigneeScopedQuotes.filter((q) => q.status === 'lost').length,
-  }), [assigneeScopedQuotes]);
-
-  const detailQuote = useMemo(
-    () => (detailQuoteId ? quotes.find((q) => q.id === detailQuoteId) || null : null),
-    [detailQuoteId, quotes],
-  );
+  const detailQuote = useMemo(() => {
+    if (!detailQuoteId) return null;
+    return quotes.find((q) => q.id === detailQuoteId)
+      ?? (linkedQuote?.id === detailQuoteId ? linkedQuote : null);
+  }, [detailQuoteId, quotes, linkedQuote]);
 
   // The offer is locked in Fortnox only once it's been converted to an order (a work
   // order exists) AND its sync didn't fail. If the sync failed we must NOT show "Låst"
@@ -308,26 +345,40 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
                 >
                   {quoteFilterMeta[value].label}
                   <span className={cn('rounded-full px-1.5 py-0.5 text-[10px] font-bold', active ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600')}>
-                    {filterCounts[value]}
+                    {counts[value]}
                   </span>
                 </button>
               );
             })}
           </div>
+          {/* Sort: newest first by default, nearest follow-up as the other view. Server-side, since
+              the list is paginated — ordering the loaded page would only sort the first hundred. */}
+          <label className="flex items-center gap-1.5 text-[13px] text-slate-500">
+            <span className="shrink-0">Sortera</span>
+            <select
+              value={sort}
+              onChange={(e) => setSort(e.target.value as QuoteSort)}
+              className="rounded-lg border border-[#dce4d8] bg-white px-2 py-1 text-[13px] font-semibold text-slate-700"
+            >
+              {(Object.keys(quoteSortMeta) as QuoteSort[]).map((value) => (
+                <option key={value} value={value}>{quoteSortMeta[value].label}</option>
+              ))}
+            </select>
+          </label>
           <AssigneeFilter value={assigneeFilter} onChange={setAssigneeFilter} users={assignees} className="w-full sm:ml-auto sm:w-[200px]" />
         </div>
 
         {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
         {loading ? <div className="text-sm text-slate-400">Laddar offerter…</div> : null}
-        {!loading && visibleQuotes.length === 0 ? (
+        {!loading && quotes.length === 0 ? (
           <div className="rounded-xl border border-dashed border-slate-200 px-4 py-10 text-center text-sm text-slate-400">
             Inga offerter matchar just nu.
           </div>
         ) : null}
 
-        {!loading && visibleQuotes.length > 0 ? (
+        {!loading && quotes.length > 0 ? (
           <div className="grid gap-1">
-            {sortedVisibleQuotes.map((item) => {
+            {quotes.map((item) => {
               const overdue = isQuoteOverdue(item);
               const statusMeta = quoteStatusMeta[item.status];
               // Inget 'Okänd'-fallback: katalogen hämtas i en egen request, så ett tomt uppslag
@@ -411,6 +462,22 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
             })}
           </div>
         ) : null}
+
+        {/* Visa fler — server-side pagination so the list never silently truncates. Without it the
+            row cap cut from the tail of the sort, which meant won and sent quotes vanished first. */}
+        {!loading && hasMore ? (
+          <div className="flex flex-col items-center gap-1 pt-1">
+            <button
+              type="button"
+              onClick={() => void loadMore()}
+              disabled={loadingMore}
+              className="rounded-full border border-[#dce4d8] bg-white px-4 py-1.5 text-[13px] font-semibold text-slate-600 transition hover:border-[#c8d4c3] disabled:opacity-60"
+            >
+              {loadingMore ? 'Laddar…' : 'Visa fler'}
+            </button>
+            <span className="text-[11px] text-slate-400">Visar {quotes.length} av {total}</span>
+          </div>
+        ) : null}
       </div>
 
       {/* ── Detail panel ── */}
@@ -421,7 +488,12 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
           returnTo={`/crm/offerter?quote_id=${detailQuote.id}`}
           documentEmail={documentEmail}
           onClose={() => setDetailPanelOpen(false)}
-          onQuoteChanged={(patch) => setQuotes((current) => current.map((q) => (q.id === patch.id ? { ...q, ...patch } : q)))}
+          onQuoteChanged={(patch) => {
+            setQuotes((current) => current.map((q) => (q.id === patch.id ? { ...q, ...patch } : q)));
+            // The deep-linked quote lives outside the list, so it needs the same patch — otherwise
+            // an edit made in the panel wouldn't show in the panel it was made in.
+            setLinkedQuote((current) => (current && current.id === patch.id ? { ...current, ...patch } : current));
+          }}
         />
       ) : null}
 
