@@ -426,7 +426,7 @@ export const CRM_WORK_ORDERS_PAGE_SIZE = 100;
 // query and the per-filter counts can never diverge.
 export type CrmWorkOrderBoardFilter = 'all' | 'draft' | 'scheduled' | 'active' | 'completed' | 'invoiced';
 export const CRM_WORK_ORDER_BOARD_FILTERS: CrmWorkOrderBoardFilter[] = ['all', 'draft', 'scheduled', 'active', 'completed', 'invoiced'];
-const BOARD_FILTER_STATUSES: Record<CrmWorkOrderBoardFilter, CrmWorkOrderStatus[] | null> = {
+export const BOARD_FILTER_STATUSES: Record<CrmWorkOrderBoardFilter, CrmWorkOrderStatus[] | null> = {
   all: null,
   draft: ['draft'],
   scheduled: ['scheduled', 'ready'],

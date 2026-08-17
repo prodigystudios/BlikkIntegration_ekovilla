@@ -9,17 +9,10 @@ import type { UserRole } from '@/lib/roles';
 import { getVisibleCrmNavItems } from '../_lib/nav';
 import { cn } from '@/lib/shared/cn';
 import { crm, workOrderStatusClass, workOrderStatusLabel, type WorkOrderStatus } from '@/app/crm/lib/crmTokens';
-import { weeklyFromMonthly } from '@/lib/domains/crm/goals';
+import { formatLocalDateOnly, getCurrentWeekStartDate, weeklyFromMonthly } from '@/lib/domains/crm/goals';
+import type { CrmOverviewSummary, CrmOverviewWindow } from '@/lib/domains/crm/overviewSummary';
 
-type ProspectItem = {
-  id: string;
-  company_name: string;
-  contact_name: string | null;
-  city: string | null;
-  status: 'new' | 'contacted' | 'qualified' | 'quoted' | 'won' | 'lost';
-  source: string | null;
-  updated_at: string;
-};
+type ProspectStatus = 'new' | 'contacted' | 'qualified' | 'quoted' | 'won' | 'lost';
 
 type CallProspect = {
   id: string;
@@ -27,7 +20,7 @@ type CallProspect = {
   contact_name: string | null;
   city: string | null;
   source: string | null;
-  status: ProspectItem['status'];
+  status: ProspectStatus;
 };
 
 type CallItem = {
@@ -65,7 +58,7 @@ type QuoteProspect = {
   company_name: string;
   contact_name: string | null;
   city: string | null;
-  status: ProspectItem['status'];
+  status: ProspectStatus;
 };
 
 type QuoteItem = {
@@ -96,8 +89,11 @@ type WorkOrderItem = {
   fortnox_invoiced_at: string | null;
 };
 
+// The page's numbers come pre-counted from /api/crm/overview; the lists are only what the four
+// "senaste …"-cards render, five rows each. Counting list rows in the browser is what this
+// replaced — see lib/domains/crm/overviewSummary.ts for why that could not hold.
 type LoadState = {
-  prospects: ProspectItem[];
+  summary: CrmOverviewSummary | null;
   calls: CallItem[];
   tasks: TaskItem[];
   quotes: QuoteItem[];
@@ -179,26 +175,22 @@ function hasActiveGoalTarget(goal: GoalItem) {
     || goal.order_count_target > 0 || Number(goal.order_value_target) > 0;
 }
 
-function isPipelineProspect(prospect: ProspectItem) {
-  return prospect.status === 'new' || prospect.status === 'contacted' || prospect.status === 'qualified' || prospect.status === 'quoted';
-}
-
-// Where an order sits in the flow, split the same way the order board splits it (see
-// BOARD_FILTER_STATUSES in lib/domains/crm/work-orders.ts): 'draft' is not planned yet and
-// 'in_progress' is out on the job — both are open work — while 'completed' and
-// 'partially_invoiced' are the invoicing stage the board's chip calls "Fakturera".
-// 'invoiced' and 'cancelled' are deliberately in neither: they have left the flow.
-const OPEN_WORK_ORDER_STATUSES: WorkOrderStatus[] = ['draft', 'scheduled', 'ready', 'in_progress'];
-const TO_INVOICE_WORK_ORDER_STATUSES: WorkOrderStatus[] = ['completed', 'partially_invoiced'];
-
 // Rows per "senaste …" card. Five fills the column next to the status panel and the leaderboard
 // without turning the overview into a list page — the cards' own "Visa alla" leads there.
 const RECENT_ITEM_LIMIT = 5;
 
-function toAmount(value: number | string) {
-  const numeric = typeof value === 'number' ? value : Number(String(value));
-  return Number.isFinite(numeric) ? numeric : 0;
-}
+// Zeros while the summary is in flight or after a failed load, so the panels render their shape
+// rather than blanking. Matches what the empty lists produced before the server did the counting.
+const EMPTY_SUMMARY: CrmOverviewSummary = {
+  pipelineProspects: 0, newProspects: 0, quotedProspects: 0, qualifiedProspects: 0,
+  activeQuotes: 0, activeQuoteValue: 0, quoteFollowUps: 0, quotesLast7Days: 0, quoteValueLast7Days: 0,
+  openWorkOrders: 0, openOrderValue: 0, workOrdersToInvoice: 0, toInvoiceOrderValue: 0,
+  orderValueLast7Days: 0, invoicedValueLast7Days: 0,
+  callsLast7Days: 0, followUpCalls: 0, standaloneCalls: 0,
+  openTasks: 0, overdueTasks: 0, todayTasks: 0,
+  weekByUser: {},
+  truncated: [],
+};
 
 function formatDateTime(value: string | null | undefined) {
   if (!value) return '–';
@@ -231,50 +223,21 @@ function addDays(date: Date, days: number) {
   return next;
 }
 
-function isWithinLastDays(value: string, days: number) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return false;
-  const from = addDays(startOfToday(), -days);
-  return date >= from;
-}
-
-// Current ISO week range [Monday 00:00, next Monday 00:00) in local time. The leaderboard
-// scopes its actuals to this so weekly targets compare against the current week's activity.
-function currentWeekRange() {
-  const start = startOfToday();
-  const mondayOffset = (start.getDay() + 6) % 7;
-  start.setDate(start.getDate() - mondayOffset);
-  return { start, end: addDays(start, 7) };
-}
-
-// Parse a call_at/created_at timestamp OR a quote_date (date-only) consistently in local time.
-function parseActivityDate(value: string | null | undefined): Date | null {
-  if (!value) return null;
-  const iso = value.length === 10 ? `${value}T12:00:00` : value;
-  const date = new Date(iso);
-  return Number.isNaN(date.getTime()) ? null : date;
-}
-
-function isWithin(value: string | null | undefined, range: { start: Date; end: Date }) {
-  const date = parseActivityDate(value);
-  return date != null && date >= range.start && date < range.end;
-}
-
-function isOverdue(task: TaskItem) {
-  if (task.status === 'done' || !task.due_date) return false;
+// The window the server counts inside, built from the READER's clock — the route runs on UTC, so
+// deciding "this week" there would move the boundary for anyone whose calendar day differs from the
+// server's. The Monday comes from goals.ts, the same definition the weekly targets are keyed on, so
+// the actuals and the budget can't disagree about which week it is.
+function currentOverviewWindow(): CrmOverviewWindow {
   const today = startOfToday();
-  const dueDate = new Date(`${task.due_date}T00:00:00`);
-  if (Number.isNaN(dueDate.getTime())) return false;
-  return dueDate < today;
-}
-
-function isDueToday(task: TaskItem) {
-  if (task.status === 'done' || !task.due_date) return false;
-  const today = startOfToday();
-  const dueDate = new Date(`${task.due_date}T00:00:00`);
-  return dueDate.getFullYear() === today.getFullYear()
-    && dueDate.getMonth() === today.getMonth()
-    && dueDate.getDate() === today.getDate();
+  const weekStart = getCurrentWeekStartDate();
+  // Noon anchor: adding days to a midnight Date can land on 23:00 the same day across a DST shift.
+  const weekEndDate = addDays(new Date(`${weekStart}T12:00:00`), 7);
+  return {
+    today: formatLocalDateOnly(today),
+    since: formatLocalDateOnly(addDays(today, -7)),
+    weekStart,
+    weekEnd: formatLocalDateOnly(weekEndDate),
+  };
 }
 
 function sortTasks(taskA: TaskItem, taskB: TaskItem) {
@@ -308,7 +271,7 @@ function buildOverviewActions(args: { overdueTasks: number; followUpCalls: numbe
 
 export default function CrmOverview({ role }: { role: UserRole | null }) {
   const items = getVisibleCrmNavItems(role).filter((item) => item.href !== '/crm');
-  const [state, setState] = useState<LoadState>({ prospects: [], calls: [], tasks: [], quotes: [], goals: [], workOrders: [] });
+  const [state, setState] = useState<LoadState>({ summary: null, calls: [], tasks: [], quotes: [], goals: [], workOrders: [] });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -320,23 +283,27 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
       setError(null);
 
       try {
-        const [prospectsRes, callsRes, tasksRes, quotesRes, goalsRes, workOrdersRes] = await Promise.all([
-          fetch('/api/crm/prospects', { cache: 'no-store' }),
+        const overviewWindow = currentOverviewWindow();
+        const summaryQuery = new URLSearchParams({
+          today: overviewWindow.today,
+          since: overviewWindow.since,
+          week_start: overviewWindow.weekStart,
+          week_end: overviewWindow.weekEnd,
+        });
+        const [summaryRes, callsRes, tasksRes, quotesRes, goalsRes, workOrdersRes] = await Promise.all([
+          fetch(`/api/crm/overview?${summaryQuery}`, { cache: 'no-store' }),
           fetch('/api/crm/calls', { cache: 'no-store' }),
           fetch('/api/crm/tasks', { cache: 'no-store' }),
-          // Newest first, both of them. Every list here is capped at 100 rows server-side, and
-          // the two default sorts put exactly what this page needs last: the offer list leads
-          // with drafts and lost quotes, the order board with the earliest installation date —
-          // so a new order is the final row in the table. Sorting in the browser cannot repair
-          // that; the cut happens first. With recency leading, the "senaste"-cards are right at
-          // any table size and the windowed figures (7 days) can never fall outside the page.
-          fetch('/api/crm/quotes?sort=updated_desc', { cache: 'no-store' }),
+          // These two lists are now only the cards' five rows. Both sorts have to be asked for:
+          // the offer list's default order leads with drafts and lost quotes, the order board's
+          // with the earliest installation date — so a brand new order is the table's last row.
+          fetch(`/api/crm/quotes?sort=updated_desc&limit=${RECENT_ITEM_LIMIT}`, { cache: 'no-store' }),
           fetch('/api/crm/goals?period_type=month', { cache: 'no-store' }),
-          fetch('/api/crm/work-orders?sort=created_desc', { cache: 'no-store' }),
+          fetch(`/api/crm/work-orders?sort=created_desc&limit=${RECENT_ITEM_LIMIT}`, { cache: 'no-store' }),
         ]);
 
-        const [prospectsJson, callsJson, tasksJson, quotesJson, goalsJson, workOrdersJson] = await Promise.all([
-          prospectsRes.json().catch(() => ({})),
+        const [summaryJson, callsJson, tasksJson, quotesJson, goalsJson, workOrdersJson] = await Promise.all([
+          summaryRes.json().catch(() => ({})),
           callsRes.json().catch(() => ({})),
           tasksRes.json().catch(() => ({})),
           quotesRes.json().catch(() => ({})),
@@ -344,18 +311,18 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
           workOrdersRes.json().catch(() => ({})),
         ]);
 
-        if (!prospectsRes.ok) throw new Error(prospectsJson?.error || 'Kunde inte läsa prospekt.');
+        if (!summaryRes.ok) throw new Error(summaryJson?.error || 'Kunde inte räkna översiktens siffror.');
         if (!callsRes.ok) throw new Error(callsJson?.error || 'Kunde inte läsa samtal.');
         if (!tasksRes.ok) throw new Error(tasksJson?.error || 'Kunde inte läsa uppgifter.');
         if (!quotesRes.ok) throw new Error(quotesJson?.error || 'Kunde inte läsa offerter.');
         if (!goalsRes.ok) throw new Error(goalsJson?.error || 'Kunde inte läsa mål.');
-        // Work orders feed the leaderboard's order-value rows; a failure there shouldn't
-        // blank the whole overview, so we tolerate it and fall back to an empty list.
+        // Work orders only feed the "senaste ordrar"-card now — the numbers come from the summary
+        // — so a failure there shouldn't blank the whole overview. Same tolerance as before.
 
         if (!active) return;
 
         setState({
-          prospects: Array.isArray(prospectsJson?.data?.items) ? prospectsJson.data.items : [],
+          summary: (summaryJson?.data?.summary as CrmOverviewSummary | undefined) ?? null,
           calls: Array.isArray(callsJson?.data?.items) ? callsJson.data.items : [],
           tasks: Array.isArray(tasksJson?.data?.items) ? tasksJson.data.items : [],
           quotes: Array.isArray(quotesJson?.data?.items) ? quotesJson.data.items : [],
@@ -365,7 +332,7 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
       } catch (loadError: any) {
         if (!active) return;
         setError(loadError?.message || 'Kunde inte ladda CRM-översikten.');
-        setState({ prospects: [], calls: [], tasks: [], quotes: [], goals: [], workOrders: [] });
+        setState({ summary: null, calls: [], tasks: [], quotes: [], goals: [], workOrders: [] });
       } finally {
         if (active) setLoading(false);
       }
@@ -378,83 +345,25 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
     };
   }, []);
 
+  // The figures are counted by /api/crm/overview; what's left here is the team's targets, which
+  // come from the goals list, and the flow bars' shared scale.
   const summary = useMemo(() => {
-    const openTasks = state.tasks.filter((task) => task.status === 'open');
-    const overdueTasks = openTasks.filter(isOverdue);
-    const todayTasks = openTasks.filter(isDueToday);
-    const recentCalls = state.calls.filter((call) => isWithinLastDays(call.call_at, 7));
-    const followUpCalls = state.calls.filter((call) => call.outcome === 'follow_up');
-    const standaloneCalls = state.calls.filter((call) => !getProspectFromCall(call));
-    const activeQuotes = state.quotes.filter((quote) => quote.status === 'draft' || quote.status === 'sent' || quote.status === 'follow_up');
-    const quoteFollowUps = state.quotes.filter((quote) => quote.status === 'follow_up');
-    const wonQuotes = state.quotes.filter((quote) => quote.status === 'won');
-    const recentQuotes = state.quotes.filter((quote) => isWithinLastDays(quote.quote_date, 7));
-    const quoteValueLast7Days = recentQuotes.reduce((total, quote) => total + toAmount(quote.amount), 0);
-    const activeQuoteValue = activeQuotes.reduce((total, quote) => total + toAmount(quote.amount), 0);
-    // The order side of the flow. The two stocks are current state; the two windowed figures use
-    // the same rolling 7 days as the quote and call rows above so the card keeps one clock.
-    // "Fakturerat" is bucketed on the invoice date, never on creation: the lag from order to
-    // invoice runs about a month, so created_at would drop most of what was actually invoiced
-    // in the window — the error PR #70 fixed in reporting. Unlike reports.ts's invoicedAt()
-    // there is deliberately no created_at fallback for rows predating the column: this row has
-    // to sum to the leaderboard's "Fakturerat ordervärde" sitting right below it, and that one
-    // requires the stamp. Two invoiced figures that disagree on one screen is worse than
-    // dropping legacy rows that are far outside a 7-day window anyway.
-    const openWorkOrders = state.workOrders.filter((order) => OPEN_WORK_ORDER_STATUSES.includes(order.status));
-    const workOrdersToInvoice = state.workOrders.filter((order) => TO_INVOICE_WORK_ORDER_STATUSES.includes(order.status));
-    const openOrderValue = openWorkOrders.reduce((total, order) => total + toAmount(order.amount), 0);
-    // Full order value, not what remains: a partially invoiced order carries no remaining-amount
-    // field on this payload, so the row is the value sitting in the invoicing stage.
-    const toInvoiceOrderValue = workOrdersToInvoice.reduce((total, order) => total + toAmount(order.amount), 0);
-    const orderValueLast7Days = state.workOrders
-      .filter((order) => isWithinLastDays(order.created_at, 7))
-      .reduce((total, order) => total + toAmount(order.amount), 0);
-    const invoicedValueLast7Days = state.workOrders
-      .filter((order) => order.status === 'invoiced' && order.fortnox_invoiced_at != null && isWithinLastDays(order.fortnox_invoiced_at, 7))
-      .reduce((total, order) => total + toAmount(order.amount), 0);
-    const pipelineProspects = state.prospects.filter(isPipelineProspect);
-    const newProspects = state.prospects.filter((prospect) => prospect.status === 'new');
-    const quotedProspects = state.prospects.filter((prospect) => prospect.status === 'quoted');
-    const qualifiedProspects = state.prospects.filter((prospect) => prospect.status === 'qualified' || prospect.status === 'quoted');
+    const counted = state.summary ?? EMPTY_SUMMARY;
     // Monthly budgets → weekly targets (÷4) so the team summary compares against ~one week.
     const callsTarget = Math.round(weeklyFromMonthly(state.goals.reduce((total, goal) => total + goal.calls_target, 0)));
     const quotesTarget = Math.round(weeklyFromMonthly(state.goals.reduce((total, goal) => total + goal.quotes_target, 0)));
-    const quoteValueTarget = weeklyFromMonthly(state.goals.reduce((total, goal) => total + Number(goal.quote_value_target || 0), 0));
     const orderValueTarget = weeklyFromMonthly(state.goals.reduce((total, goal) => total + Number(goal.order_value_target || 0), 0));
 
     return {
-      prospectsTotal: state.prospects.length,
-      pipelineProspects: pipelineProspects.length,
-      newProspects: newProspects.length,
-      quotedProspects: quotedProspects.length,
-      qualifiedProspects: qualifiedProspects.length,
-      callsLast7Days: recentCalls.length,
-      followUpCalls: followUpCalls.length,
-      standaloneCalls: standaloneCalls.length,
-      activeQuotes: activeQuotes.length,
-      activeQuoteValue,
-      quoteFollowUps: quoteFollowUps.length,
-      wonQuotes: wonQuotes.length,
-      quotesLast7Days: recentQuotes.length,
-      quoteValueLast7Days,
-      openWorkOrders: openWorkOrders.length,
-      workOrdersToInvoice: workOrdersToInvoice.length,
-      openOrderValue,
-      toInvoiceOrderValue,
+      ...counted,
       // Shared denominator for the three flow bars: the largest stock, so nothing can exceed
       // the track and the bars stay proportional to each other.
-      flowScale: Math.max(activeQuoteValue, openOrderValue, toInvoiceOrderValue),
-      orderValueLast7Days,
-      invoicedValueLast7Days,
-      openTasks: openTasks.length,
-      overdueTasks: overdueTasks.length,
-      todayTasks: todayTasks.length,
+      flowScale: Math.max(counted.activeQuoteValue, counted.openOrderValue, counted.toInvoiceOrderValue),
       callsTarget,
       quotesTarget,
-      quoteValueTarget,
       orderValueTarget,
     };
-  }, [state.calls, state.goals, state.prospects, state.quotes, state.tasks, state.workOrders]);
+  }, [state.summary, state.goals]);
 
   const recentCalls = useMemo(() => [...state.calls].sort((a, b) => b.call_at.localeCompare(a.call_at)).slice(0, RECENT_ITEM_LIMIT), [state.calls]);
   const recentQuotes = useMemo(() => [...state.quotes].sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, RECENT_ITEM_LIMIT), [state.quotes]);
@@ -464,43 +373,10 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
   const nextTasks = useMemo(() => [...state.tasks].filter((task) => task.status === 'open').sort(sortTasks).slice(0, RECENT_ITEM_LIMIT), [state.tasks]);
   const nextActions = buildOverviewActions({ overdueTasks: summary.overdueTasks, followUpCalls: summary.followUpCalls, newProspects: summary.newProspects, standaloneCalls: summary.standaloneCalls, quoteFollowUps: summary.quoteFollowUps });
   const teamLeaderboard = useMemo(() => {
-    // Goals are MONTHLY budgets; the leaderboard shows the weekly target (budget ÷ 4) against
-    // THIS WEEK's actuals — so every actual is scoped to the current ISO week.
-    const week = currentWeekRange();
-    const callsByUser = new Map<string, number>();
-    const quotesByUser = new Map<string, number>();
-    const quoteValueByUser = new Map<string, number>();
-    const orderCountByUser = new Map<string, number>();
-    const orderValueByUser = new Map<string, number>();
-    const invoicedValueByUser = new Map<string, number>();
-    const add = (map: Map<string, number>, key: string, value: number) => map.set(key, (map.get(key) || 0) + value);
-    const numeric = (value: number | string) => {
-      const n = typeof value === 'number' ? value : Number(String(value));
-      return Number.isFinite(n) ? n : 0;
-    };
-
-    for (const call of state.calls) {
-      if (isWithin(call.call_at, week)) add(callsByUser, call.user_id, 1);
-    }
-
-    for (const quote of state.quotes) {
-      if (!isWithin(quote.quote_date, week)) continue;
-      add(quotesByUser, quote.assigned_to, 1);
-      add(quoteValueByUser, quote.assigned_to, numeric(quote.amount));
-    }
-
-    for (const workOrder of state.workOrders) {
-      const amount = numeric(workOrder.amount);
-      // Order count + value: orders created this week.
-      if (isWithin(workOrder.created_at, week)) {
-        add(orderCountByUser, workOrder.assigned_to, 1);
-        add(orderValueByUser, workOrder.assigned_to, amount);
-      }
-      // "Fakturerat": value of orders invoiced this week (by the Fortnox invoice date).
-      if (workOrder.status === 'invoiced' && isWithin(workOrder.fortnox_invoiced_at, week)) {
-        add(invoicedValueByUser, workOrder.assigned_to, amount);
-      }
-    }
+    // Goals are MONTHLY budgets; the leaderboard shows the weekly target (budget ÷ 4) against THIS
+    // WEEK's actuals. The actuals are counted per user by /api/crm/overview — summing them here
+    // meant reading them out of a capped list, which is exactly what stopped being trustworthy.
+    const week = state.summary?.weekByUser ?? {};
 
     return state.goals
       .filter(hasActiveGoalTarget)
@@ -514,12 +390,13 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
         const orderCountTarget = Math.round(weeklyFromMonthly(goal.order_count_target));
         const orderValueTarget = weeklyFromMonthly(goal.order_value_target);
 
-        const callsDone = callsByUser.get(goal.user_id) || 0;
-        const quotesDone = quotesByUser.get(goal.user_id) || 0;
-        const quoteValueDone = quoteValueByUser.get(goal.user_id) || 0;
-        const orderCountDone = orderCountByUser.get(goal.user_id) || 0;
-        const orderValueDone = orderValueByUser.get(goal.user_id) || 0;
-        const invoicedValueDone = invoicedValueByUser.get(goal.user_id) || 0;
+        const actuals = week[goal.user_id];
+        const callsDone = actuals?.calls ?? 0;
+        const quotesDone = actuals?.quotes ?? 0;
+        const quoteValueDone = actuals?.quoteValue ?? 0;
+        const orderCountDone = actuals?.orderCount ?? 0;
+        const orderValueDone = actuals?.orderValue ?? 0;
+        const invoicedValueDone = actuals?.invoicedValue ?? 0;
         const progressValues = [
           callsTarget > 0 ? callsDone / callsTarget : null,
           quotesTarget > 0 ? quotesDone / quotesTarget : null,
@@ -555,7 +432,7 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
         if (right.callsDone !== left.callsDone) return right.callsDone - left.callsDone;
         return left.userName.localeCompare(right.userName, 'sv');
       });
-  }, [state.calls, state.goals, state.quotes, state.workOrders]);
+  }, [state.goals, state.summary]);
 
   return (
     <div className="grid grid-cols-1 gap-6">
@@ -763,6 +640,13 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
                 <StatusStrip label="Ordervärde mot mål" value={summary.orderValueLast7Days} goal={summary.orderValueTarget} tone="teal" currency />
                 <StatusStrip label="Samtal mot mål" value={summary.callsLast7Days} goal={summary.callsTarget} tone="sky" />
                 <StatusStrip label="Sena uppgifter" value={summary.overdueTasks} tone="rose" />
+                {/* Only ever shows if a query hit its row cap. The point of counting server-side
+                    was that a truncated read stops being silent — so it says so. */}
+                {summary.truncated.length > 0 ? (
+                  <p className="m-0 text-[11px] leading-4 text-amber-700">
+                    Räknat på ett kapat urval ({summary.truncated.join(', ')}) — siffrorna kan vara för låga.
+                  </p>
+                ) : null}
               </div>
             )}
           </div>
