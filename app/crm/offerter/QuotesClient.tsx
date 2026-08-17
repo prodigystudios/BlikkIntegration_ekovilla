@@ -4,6 +4,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Input from '../../../components/ui/Input';
 import { cn } from '@/lib/shared/cn';
 import AssigneeFilter, { matchesAssignee, type AssigneeFilterValue, type AssigneeOption } from '@/app/crm/components/AssigneeFilter';
+import { RowAssignee, RowAssigneeChip } from '@/app/crm/components/RowAssignee';
 import { documentRef } from '@/app/crm/lib/format';
 import DocumentNumberBadge from '@/app/crm/components/DocumentNumberBadge';
 import { resolveQuoteVatBreakdown, quoteAmountDisplay } from '@/lib/domains/crm/pricing';
@@ -74,15 +75,6 @@ function formatDate(value: string | null | undefined) {
   if (Number.isNaN(date.getTime())) return '–';
   return new Intl.DateTimeFormat('sv-SE', { dateStyle: 'medium' }).format(date);
 }
-
-function initialsOf(name: string | null | undefined) {
-  if (!name) return '–';
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return '–';
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
-
 
 function compareQuotes(a: QuoteItem, b: QuoteItem) {
   const aOverdue = isQuoteOverdue(a);
@@ -338,7 +330,10 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
             {sortedVisibleQuotes.map((item) => {
               const overdue = isQuoteOverdue(item);
               const statusMeta = quoteStatusMeta[item.status];
-              const sellerName = item.assigned_to ? (assigneeNameById.get(item.assigned_to) || 'Okänd') : null;
+              // Inget 'Okänd'-fallback: katalogen hämtas i en egen request, så ett tomt uppslag
+              // betyder oftast "inte hämtad ännu" och inte "okänd person". RowAssignee skiljer
+              // de två tillstånden åt.
+              const sellerName = item.assigned_to ? (assigneeNameById.get(item.assigned_to) ?? null) : null;
               // Private → show price incl moms; business → show ex moms (with the basis tagged).
               const amountDisplay = quoteAmountDisplay(item.quote_type, resolveQuoteVatBreakdown(item));
 
@@ -355,7 +350,10 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
                   {/* Status accent rail */}
                   <span className={cn('w-1.5 shrink-0', statusMeta.accent)} aria-hidden="true" />
 
-                  <div className="grid flex-1 grid-cols-[minmax(0,1fr)_auto] items-start gap-2 px-2.5 py-1.5 sm:grid-cols-[minmax(0,1fr)_48px_140px_128px] sm:items-center sm:gap-3">
+                  {/* Ansvarig-kolumnen är 116px och inte 48px: den rymmer namnet, inte bara en
+                      initialbricka man måste hovra på. Utrymmet tas ur identitetskolumnen, som är
+                      den flexibla — de två högerkolumnerna har fast innehåll. */}
+                  <div className="grid flex-1 grid-cols-[minmax(0,1fr)_auto] items-start gap-2 px-2.5 py-1.5 sm:grid-cols-[minmax(0,1fr)_48px_140px_128px] md:grid-cols-[minmax(0,1fr)_116px_140px_128px] lg:grid-cols-[minmax(0,1fr)_150px_140px_128px] sm:items-center sm:gap-3">
                     {/* Number badge + identity + chips */}
                     <div className="flex min-w-0 items-center gap-2">
                       <DocumentNumberBadge label="Offert" value={documentRef(item.fortnox_offer_number, item.quote_number)} />
@@ -374,22 +372,14 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
                               Order {documentRef(workOrderFortnoxById.get(item.work_order_id) ?? null, item.work_order_number)}
                             </span>
                           ) : null}
+                          {/* Ansvarig på mobil, där kolumnen till höger inte får plats */}
+                          <RowAssigneeChip name={sellerName} />
                         </div>
                       </div>
                     </div>
 
-                    {/* Responsible seller — avatar pill only, in a fixed slot so it never drifts */}
-                    <div className="hidden items-center justify-center sm:flex">
-                      <span
-                        title={sellerName ?? 'Ej tilldelad'}
-                        className={cn(
-                          'flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold',
-                          sellerName ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-400',
-                        )}
-                      >
-                        {initialsOf(sellerName)}
-                      </span>
-                    </div>
+                    {/* Ansvarig säljare, i en fast slot så den aldrig driver i sidled */}
+                    <RowAssignee name={sellerName} assigned={Boolean(item.assigned_to)} />
 
                     {/* Dates */}
                     <div className="hidden flex-col gap-0.5 sm:flex">
