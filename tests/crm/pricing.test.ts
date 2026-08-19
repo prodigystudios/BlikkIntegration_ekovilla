@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   lineItemRowTotal, computePricing, resolveQuoteVatBreakdown, quoteAmountDisplay,
-  rowMarginPercent, marginTier, quoteMargin, MARGIN_THRESHOLDS,
+  rowMarginPercent, marginTier, quoteMargin, splitRowLabor, MARGIN_THRESHOLDS,
 } from '@/lib/domains/crm/pricing';
 
 describe('lineItemRowTotal', () => {
@@ -288,6 +288,46 @@ describe('quoteMargin', () => {
 // tidigare lyftes varje rad utan inköpspris ut ur BÅDA summorna. Eftersom arbete är nästan ren
 // marginal drog det ner den sammanvägda siffran hårt. Reglerna nedan är beslutade av William
 // 2026-08-19; se MarginRow.isLabor.
+describe('splitRowLabor', () => {
+  it('bryter UT arbetet ur radpriset — det läggs aldrig till', () => {
+    // ⚠️ Regressionsvakt mot den dyraste feltolkningen: "Varav" har lästs som "plus". En rad på
+    // 18 000 kr med 12 000 kr arbete är fortfarande 18 000 kr, inte 30 000.
+    const split = splitRowLabor(18000, '12000');
+    expect(split.labor).toBe(12000);
+    expect(split.material).toBe(6000);
+    expect(split.labor + split.material).toBe(18000);
+    expect(split.clamped).toBe(false);
+  });
+
+  it('kapar ett belopp som överstiger radtotalen', () => {
+    // Samma kapning som rowRotLaborCarveout gör vid pushen — materialet får aldrig gå negativt.
+    const split = splitRowLabor(18000, '25000');
+    expect(split.labor).toBe(18000);
+    expect(split.material).toBe(0);
+    expect(split.clamped).toBe(true);
+  });
+
+  it('läser svenska kommadecimaler', () => {
+    expect(splitRowLabor(1000, '199,50').labor).toBeCloseTo(199.5, 6);
+  });
+
+  it('ger noll arbete för tomt, nollat eller negativt belopp', () => {
+    for (const input of ['', null, undefined, '0', '-500']) {
+      const split = splitRowLabor(18000, input);
+      expect(split.labor, String(input)).toBe(0);
+      expect(split.material, String(input)).toBe(18000);
+      expect(split.clamped, String(input)).toBe(false);
+    }
+  });
+
+  it('klarar en rad utan pris utan att gå negativt', () => {
+    const split = splitRowLabor(0, '200');
+    expect(split.labor).toBe(0);
+    expect(split.material).toBe(0);
+    expect(split.clamped).toBe(true);
+  });
+});
+
 describe('TG på ROT-offerter', () => {
   it('den utbrutna arbetskostnaden ändrar inte TG:n — den ingår redan', () => {
     // ⚠️ REGRESSIONSVAKT MOT EN FELDIAGNOS. Fältet "Varav arbetskostnad (ROT, kr)" BRYTER UT arbetet

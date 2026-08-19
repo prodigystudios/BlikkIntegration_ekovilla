@@ -10,7 +10,7 @@ import { cn } from '@/lib/shared/cn';
 import { parseDecimal } from '@/lib/shared/number';
 import { lineItemQuantity, isBlankLineItem } from '@/lib/domains/crm/lineItems';
 import {
-  rowMarginPercent, marginTier, quoteMargin, MARGIN_THRESHOLDS,
+  rowMarginPercent, marginTier, quoteMargin, splitRowLabor, MARGIN_THRESHOLDS,
   type MarginRow, type MarginTier,
 } from '@/lib/domains/crm/pricing';
 import { crm } from '@/app/crm/lib/crmTokens';
@@ -927,6 +927,36 @@ function MarginBadge({ marginPercent, className }: { marginPercent: number | nul
   );
 }
 
+// Hur "Varav arbetskostnad" delar radens pris, i klartext under fältet.
+//
+// Beloppet är en UTBRYTNING, inte ett tillägg — se splitRowLabor. Den som läser det som ett tillägg
+// prissätter offerten för lågt utan att något varnar, så raden här säger alltid vad som faktiskt
+// händer med kronorna.
+function LaborCarveoutHint({ rowTotal, laborCost }: { rowTotal: number; laborCost: string }) {
+  const { labor, material, clamped } = splitRowLabor(rowTotal, laborCost);
+
+  if (clamped) {
+    return (
+      <p className="m-0 mt-1 text-[11px] leading-snug text-amber-700">
+        Beloppet är större än radens {formatCurrency(rowTotal, 'SEK')} och räknas som hela raden.
+      </p>
+    );
+  }
+  if (labor > 0) {
+    return (
+      <p className="m-0 mt-1 text-[11px] leading-snug text-slate-500">
+        Av radens {formatCurrency(rowTotal, 'SEK')} är {formatCurrency(labor, 'SEK')} arbete
+        och {formatCurrency(material, 'SEK')} material.
+      </p>
+    );
+  }
+  return (
+    <p className="m-0 mt-1 text-[11px] leading-snug text-slate-400">
+      Bryts ut ur radpriset — höjer det inte.
+    </p>
+  );
+}
+
 function LineItemRow({
   row,
   index,
@@ -1063,10 +1093,17 @@ function LineItemRow({
           />
         </Field>
         {/* Carve out the labour portion of a material row for ROT: the amount here is moved onto the
-            separate "Arbetskostnad ROT" row and deducted from this row (total unchanged). */}
+            separate "Arbetskostnad ROT" row and deducted from this row (total unchanged).
+
+            ⚠️ Hjälptexten under fältet är inte pynt. "Varav" har lästs som "plus": säljaren sänkte
+            A-priset från 500 till 300 kr/m³ och skrev 200 här i tron att raden landade på 500 igen.
+            Den gör den inte — raden blir 300 kr/m³, offerten blir billigare än den skulle, och ROT
+            begärs på 200 kr i stället för 200 kr × volymen. Texten visar delningen i kronor så fort
+            ett belopp finns, så felet syns i samma ögonblick det görs. */}
         {showLaborField ? (
           <Field label="Varav arbetskostnad (ROT, kr)">
             <Input value={row.labor_cost} onChange={(e) => onChange({ labor_cost: e.target.value })} inputMode="decimal" placeholder="0" />
+            <LaborCarveoutHint rowTotal={metrics?.rowTotal ?? 0} laborCost={row.labor_cost} />
           </Field>
         ) : null}
         <Field label="Rabatt %"><Input value={row.discount_percent} onChange={(e) => onChange({ discount_percent: e.target.value })} inputMode="decimal" placeholder="0" /></Field>

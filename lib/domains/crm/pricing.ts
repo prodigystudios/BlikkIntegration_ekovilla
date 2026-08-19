@@ -62,6 +62,37 @@ export function lineItemRowTotal(item: PricingLineItem): number {
   return Math.max(0, lineItemQuantity(item) * lineItemEffectiveUnitPrice(item));
 }
 
+export type RowLaborSplit = {
+  /** Utbruten arbetskostnad i kronor, kapad till radtotalen. */
+  labor: number;
+  /** Det som blir kvar av radpriset när arbetet brutits ut. */
+  material: number;
+  /** Det inskrivna beloppet översteg radtotalen och kapades ner till den. */
+  clamped: boolean;
+};
+
+/**
+ * Hur en rads pris delas av "Varav arbetskostnad (ROT, kr)".
+ *
+ * ⚠️ FÄLTET ÄR EN UTBRYTNING, INTE ETT TILLÄGG. Beloppet höjer aldrig radpriset — det säger hur
+ * stor DEL av det befintliga priset som är arbete. Sätter säljaren A-priset till 300 kr/m³ och
+ * skriver 200 i fältet blir raden 300 kr/m³, inte 500.
+ *
+ * Finns för att kunna visa delningen i klartext under fältet. Speglar `rowRotLaborCarveout` i
+ * lib/domains/fortnox/helpers.ts, som gör samma kapning vid pushen — den modulen importerar
+ * getSupabaseAdmin och kan därför aldrig nå en klientkomponent, så beräkningen bor här och båda
+ * hållen kapar likadant.
+ */
+export function splitRowLabor(
+  rowTotal: number,
+  laborCostInput: string | number | null | undefined,
+): RowLaborSplit {
+  const total = Math.max(0, rowTotal);
+  const entered = Math.max(0, parseDecimal(laborCostInput));
+  const labor = Math.min(entered, total);
+  return { labor, material: total - labor, clamped: entered > total };
+}
+
 export function computePricing(
   items: PricingLineItem[],
   vatPercentInput: number | string | null,
