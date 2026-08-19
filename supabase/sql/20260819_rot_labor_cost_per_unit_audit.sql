@@ -14,6 +14,18 @@
 -- skrivas om till för att betyda samma sak som förut. Rabatten är inräknad: den gamla tolkningen
 -- rabatterade inte arbetet, den nya gör det, så en rabatterad rad behöver ett högre à-pris för att
 -- landa på samma kronor.
+--
+-- ⚠️ TILLÄMPA INTE `foreslaget_a_pris` BLINT. Den återställer den GAMLA innebörden, och på en rad
+-- där säljaren redan skrev beloppet per m³ var den gamla innebörden själva buggen. Kör den mot
+-- 2026-08-19 års enda träff: A-pris 500 kr/m³ över 25 m³ med 250 inskrivet. Gammalt = 250 kr arbete
+-- (93 kr i avdrag), nytt = 6 250 kr (2 343 kr). Säljaren menade 250 kr/m³ — det NYA värdet är det
+-- rätta, och `foreslaget_a_pris` hade skrivit ner raden till 10 kr/m³.
+--
+-- Läs alltså kolumnen som "så här gör du om du vill ha kvar det gamla beloppet", inte som en
+-- åtgärd. Avgör rad för rad vad säljaren faktiskt menade.
+--
+-- ✅ KÖRD 2026-08-19: en (1) träff i hela databasen, William testoffert OFF-E6BCBACF. Ingen skarp
+-- offert eller arbetsorder byggde på den gamla tolkningen.
 
 with rader as (
   select
