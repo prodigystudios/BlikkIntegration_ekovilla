@@ -12,6 +12,7 @@ import { crm, quoteStatusMeta, type QuoteStatus } from '@/app/crm/lib/crmTokens'
 import { withReturnTo } from '@/app/crm/lib/returnTo';
 import { quoteCustomerName, isQuoteOverdue } from '@/app/crm/lib/quoteDisplay';
 import QuoteDetailPanel from '@/app/crm/components/QuoteDetailPanel';
+import CrmConfirmDialog from '@/app/crm/components/CrmConfirmDialog';
 import useDocumentEmail from '@/app/crm/components/useDocumentEmail';
 import {
   quoteBoardColumn,
@@ -88,6 +89,10 @@ export default function SaljtavlaClient({ currentUserId }: { currentUserId: stri
   // unknown — [MINE] with a null id would filter every quote out and blank the board.
   const [assigneeFilter, setAssigneeFilter] = useState<AssigneeFilterValue>(currentUserId ? [MINE] : []);
   const [movingId, setMovingId] = useState<string | null>(null);
+  // Draget är redan släppt när dialogen visas. Flytten läggs undan här och körs först på
+  // bekräftelse — avbryts den händer ingenting, för den optimistiska flytten ligger efter
+  // frågan och kortet har alltså aldrig lämnat sin kolumn.
+  const [pendingWonMove, setPendingWonMove] = useState<{ quoteId: string; hasProspect: boolean } | null>(null);
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [dragOverColumn, setDragOverColumn] = useState<SaljtavlaColumn | null>(null);
   // Quote rows carry only the internal AO number; the work order's Fortnox order
@@ -193,19 +198,23 @@ export default function SaljtavlaClient({ currentUserId }: { currentUserId: stri
     return byColumn;
   }, [scopedQuotes, primaryById]);
 
+  // Won is a meaningful transition — confirm it. A linked prospect is converted to
+  // a customer on the server, so only mention that when the quote actually has one.
+  function requestMoveToStatus(quoteId: string, nextStatus: QuoteStatus) {
+    const currentItem = quotes.find((q) => q.id === quoteId);
+    if (!currentItem || currentItem.status === nextStatus) return;
+    if (nextStatus === 'won') {
+      setPendingWonMove({ quoteId, hasProspect: Boolean(currentItem.prospect_id) });
+      return;
+    }
+    void moveToStatus(quoteId, nextStatus);
+  }
+
   async function moveToStatus(quoteId: string, nextStatus: QuoteStatus) {
     const currentItem = quotes.find((q) => q.id === quoteId);
     if (!currentItem || currentItem.status === nextStatus) return;
 
-    // Won is a meaningful transition — confirm it. A linked prospect is converted to
-    // a customer on the server, so only mention that when the quote actually has one.
-    if (nextStatus === 'won') {
-      const message = currentItem.prospect_id
-        ? 'Markera offerten som vunnen? En kopplad prospekt konverteras då till kund.'
-        : 'Markera offerten som vunnen?';
-      if (!window.confirm(message)) return;
-    }
-
+    setPendingWonMove(null);
     setMovingId(quoteId);
     const optimistic = { ...currentItem, status: nextStatus, updated_at: new Date().toISOString() };
     setQuotes((current) => current.map((q) => (q.id === quoteId ? optimistic : q)));
@@ -251,7 +260,7 @@ export default function SaljtavlaClient({ currentUserId }: { currentUserId: stri
     setDraggedId(null);
     setDragOverColumn(null);
     if (!id) return;
-    void moveToStatus(id, column);
+    requestMoveToStatus(id, column);
   }
 
   const totalVisible = scopedQuotes.length;
@@ -341,6 +350,21 @@ export default function SaljtavlaClient({ currentUserId }: { currentUserId: stri
           documentEmail={documentEmail}
           onClose={() => setDetailQuoteId(null)}
           onQuoteChanged={(patch) => setQuotes((current) => current.map((q) => (q.id === patch.id ? { ...q, ...patch } : q)))}
+        />
+      ) : null}
+
+      {pendingWonMove ? (
+        <CrmConfirmDialog
+          title="Markera offerten som vunnen?"
+          message={
+            pendingWonMove.hasProspect
+              ? 'Ett kopplat prospekt konverteras då till kund. Det går inte att ångra härifrån.'
+              : undefined
+          }
+          confirmLabel="Markera som vunnen"
+          busy={movingId === pendingWonMove.quoteId}
+          onConfirm={() => void moveToStatus(pendingWonMove.quoteId, 'won')}
+          onCancel={() => setPendingWonMove(null)}
         />
       ) : null}
 
