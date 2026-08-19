@@ -90,15 +90,29 @@ describe('computePricing', () => {
     expect(p.subtotal).toBe(10000);
   });
 
-  it('ROT base clamps labor_cost to the row total', () => {
-    // labor_cost 99999 on a 1000 row → base is the 1000 row, not 99999.
-    // 1000 incl 25% = 1250; 30% = 375.
+  it('ger NOLL ROT-underlag när arbetet äter hela A-priset', () => {
+    // ⚠️ Faller åt det säkra hållet. Ett arbetsbelopp som lämnar noll material är ett datafel — en
+    // rad sparad under den gamla klumpbeloppstolkningen, eller ett A-pris satt till bara
+    // materialdelen. Att räkna hela raden som arbete hade begärt ROT på material, vilket inte är
+    // tillåtet. Offertformuläret spärrar sparningen; här bryts helt enkelt inget ut.
     const p = computePricing(
       [{ pricing_mode: 'item', quantity: '1', unit_price: '1000', labor_cost: '99999' }],
       25,
       { isPrivate: true, rot: { enabled: true, rot_percent: 30, max_deduction: 50000 } },
     );
-    expect(p.rotDeduction).toBe(375);
+    expect(p.rotDeduction).toBe(0);
+    // Radpriset rörs INTE — bara utbrytningen uteblir. Offerten är fortfarande på 1 000 kr.
+    expect(p.subtotal).toBe(1000);
+  });
+
+  it('räknar ROT-underlaget på en giltig utbrytning', () => {
+    // 300 kr/enhet arbete av A-priset 1 000 → 300 kr, inkl 25 % moms 375, 30 % = 112.
+    const p = computePricing(
+      [{ pricing_mode: 'item', quantity: '1', unit_price: '1000', labor_cost: '300' }],
+      25,
+      { isPrivate: true, rot: { enabled: true, rot_percent: 30, max_deduction: 50000 } },
+    );
+    expect(p.rotDeduction).toBe(112);
   });
 });
 
@@ -317,13 +331,17 @@ describe('splitRowLabor', () => {
     expect(split.material).toBeCloseTo(16200, 6);
   });
 
-  it('kapar mot A-PRISET, inte mot radtotalen', () => {
-    // En gräns per enhet är den enda som håller oavsett antal — material får aldrig gå negativt.
-    const split = splitRowLabor({ laborCostPerUnit: '900', unitPrice: 500, discountPercent: 0, quantity: 60 });
-    expect(split.perUnit).toBe(500);
-    expect(split.labor).toBe(30000);
-    expect(split.material).toBe(0);
-    expect(split.clamped).toBe(true);
+  it('bryter ut NOLL när arbetet äter hela A-priset', () => {
+    // ⚠️ Faller åt det säkra hållet. Att kapa till A-priset hade gjort hela materialraden till
+    // arbete och skickat ett dokument som begär ROT på material — inte tillåtet. Två verkliga vägar
+    // hit: en rad sparad under den gamla klumpbeloppstolkningen, och ett A-pris satt till bara
+    // materialdelen med arbetet skrivet som påslag.
+    for (const belopp of ['900', '500']) {
+      const split = splitRowLabor({ laborCostPerUnit: belopp, unitPrice: 500, discountPercent: 0, quantity: 60 });
+      expect(split.leavesNoMaterial, belopp).toBe(true);
+      expect(split.labor, belopp).toBe(0);
+      expect(split.material, belopp).toBe(30000);
+    }
   });
 
   it('läser svenska kommadecimaler', () => {
@@ -336,7 +354,7 @@ describe('splitRowLabor', () => {
       const split = splitRowLabor({ laborCostPerUnit: input, unitPrice: 500, discountPercent: 0, quantity: 60 });
       expect(split.labor, String(input)).toBe(0);
       expect(split.material, String(input)).toBe(30000);
-      expect(split.clamped, String(input)).toBe(false);
+      expect(split.leavesNoMaterial, String(input)).toBe(false);
     }
   });
 

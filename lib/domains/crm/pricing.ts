@@ -72,8 +72,11 @@ export type RowLaborSplit = {
   material: number;
   /** Hela radens pris efter rabatt — arbete + material. */
   rowTotal: number;
-  /** Det inskrivna beloppet per enhet översteg A-priset och kapades ner till det. */
-  clamped: boolean;
+  /**
+   * Arbetskostnaden lämnar inget material kvar (den är minst lika stor som A-priset). Då bryts
+   * INGEN arbetskostnad ut — se kommentaren på splitRowLabor om varför det är den säkra riktningen.
+   */
+  leavesNoMaterial: boolean;
 };
 
 /**
@@ -91,8 +94,17 @@ export type RowLaborSplit = {
  * Rabatten träffar båda delarna lika. Rabatteras jobbet 10 % sjunker den fakturerade
  * arbetskostnaden lika mycket, och ROT får bara begäras på det som faktiskt debiteras.
  *
- * Kapningen sitter mot A-PRISET, inte mot radtotalen: material får aldrig gå negativt, och en
- * gräns per enhet är den enda som håller oavsett antal.
+ * ⚠️ EN ARBETSKOSTNAD SOM ÄTER HELA A-PRISET BRYTER UT NOLL, inte allt. På en MATERIALrad är det
+ * alltid ett fel att arbetet är hela priset — då skickas ett Fortnox-dokument som begär ROT på
+ * material, vilket inte är tillåtet. Två verkliga vägar dit, båda tysta före den här spärren:
+ *
+ *   • en rad sparad under den gamla klumpbeloppstolkningen (8000 mot ett A-pris på 200), och
+ *   • att A-priset satts till bara materialdelen och arbetet skrivits som ett PÅSLAG (250 + 250),
+ *     vilket är en annan modell än den här funktionen räknar efter.
+ *
+ * Båda är datafel, inte instruktioner att bryta ut allt. Det säkra svaret är att inte bryta ut
+ * något och låta felet synas: offertformuläret spärrar sparningen och pekar ut raden. Vill man
+ * verkligen att hela raden ska vara arbete finns kryssrutan "ROT-arbete", som säger det uttryckligen.
  */
 export function splitRowLabor(input: {
   laborCostPerUnit: string | number | null | undefined;
@@ -103,12 +115,13 @@ export function splitRowLabor(input: {
 }): RowLaborSplit {
   const unitPrice = Math.max(0, input.unitPrice);
   const entered = Math.max(0, parseDecimal(input.laborCostPerUnit));
-  const perUnit = Math.min(entered, unitPrice);
+  const leavesNoMaterial = entered > 0 && entered >= unitPrice;
+  const perUnit = leavesNoMaterial ? 0 : entered;
   const quantity = Math.max(0, input.quantity);
   const keep = 1 - Math.min(100, Math.max(0, input.discountPercent)) / 100;
   const labor = perUnit * keep * quantity;
   const rowTotal = unitPrice * keep * quantity;
-  return { perUnit, labor, material: Math.max(0, rowTotal - labor), rowTotal, clamped: entered > unitPrice };
+  return { perUnit, labor, material: Math.max(0, rowTotal - labor), rowTotal, leavesNoMaterial };
 }
 
 /**

@@ -320,9 +320,9 @@ export default function WorkOrderArticlesTab({ items, currencyCode, vatPercent, 
                         Varav arbetskostnad (ROT, kr/{laborUnitLabel})
                       </span>
                       <Input value={row.labor_cost || ''} onChange={(e) => updateRow(row.id, { labor_cost: e.target.value })} inputMode="decimal" placeholder="0" />
-                      {laborSplit.clamped ? (
-                        <span className="text-[11px] leading-snug text-amber-700">
-                          Kan inte vara högre än à-priset ({formatCurrency(parseDecimal(row.unit_price), currencyCode)}/{laborUnitLabel}) och räknas som hela priset.
+                      {laborSplit.leavesNoMaterial ? (
+                        <span className="text-[11px] leading-snug text-rose-700">
+                          Arbetet är hela à-priset ({formatCurrency(parseDecimal(row.unit_price), currencyCode)}/{laborUnitLabel}) — inget material blir kvar. Ingen arbetskostnad bryts ut förrän det rättas.
                         </span>
                       ) : laborSplit.labor > 0 ? (
                         <span className="text-[11px] leading-snug text-slate-500">

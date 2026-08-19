@@ -207,15 +207,20 @@ describe('buildOfferRows – ROT labour carve-out', () => {
     expect(labor.Price).toBe(10000);
   });
 
-  it('clamps a labor_cost larger than the UNIT PRICE to it (material floors at 0)', () => {
-    const rows = buildOfferRows(
-      [{ pricing_mode: 'item', unit_price: '100', quantity: '10', labor_cost: '99999' }],
-      25, true,
-    );
-    // 99999 kr/enhet kapas till A-priset 100 → labour 10 × 100 = 1000, material 0. Kapningen sitter
-    // per ENHET; en gräns mot radtotalen hade inte hållit när antalet ändras.
-    expect(rows[0].Price).toBe(0);
-    expect(rows[rows.length - 1].Price).toBe(1000);
+  it('bryter ut NOLL när arbetet äter hela A-priset — ingen ROT på material', () => {
+    // ⚠️ REGRESSIONSVAKT MOT ETT RIKTIGT FEL I DRIFT: dokumentet gick till Fortnox med HELA beloppet
+    // på arbetskostnadsraden och noll på materialet, medan vår egen vy såg rätt ut (radtotalen rörs
+    // ju inte av utbrytningen). ROT får inte begäras på material, så ett arbetsbelopp som lämnar
+    // noll material bryter inte ut något alls. Offertformuläret spärrar dessutom sparningen.
+    for (const belopp of ['99999', '100']) {
+      const rows = buildOfferRows(
+        [{ pricing_mode: 'item', unit_price: '100', quantity: '10', labor_cost: belopp }],
+        25, true,
+      );
+      expect(rows, belopp).toHaveLength(1);        // ingen 10058-rad
+      expect(rows[0].Price, belopp).toBe(100);     // materialraden orörd
+      expect(rows[0].HouseWork, belopp).toBeUndefined();
+    }
   });
 
   it('ignores labor_cost when the row is flagged as full ROT work (whole row is the labour)', () => {

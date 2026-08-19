@@ -223,6 +223,9 @@ type EffectiveRow = QuoteLineItem & {
   // Räknas här av samma skäl som rowTotal: formuläret prissätter auto-rader med sin egen stub, och
   // pricing.ts lineItemRotLabor hade gett dem 0. Se splitRowLabor.
   rotLabor: number;
+  // Arbetskostnaden är högre än A-priset → ingen utbrytning sker. Spärrar sparningen; se
+  // getValidationIssues och splitRowLabor.
+  rotLaborLeavesNoMaterial: boolean;
   isConfigured: boolean;
 };
 
@@ -432,6 +435,22 @@ function getValidationIssues(draft: QuoteDraft, effectiveRows: EffectiveRow[]) {
   if (hasAnyLineItemInput) {
     const hasInvalidRow = effectiveRows.some((item) => item.isConfigured && (!(item.amount > 0) || !(item.effectiveUnit >= 0)));
     if (hasInvalidRow) issues.push('Ofullständiga rader — mängd och pris krävs');
+  }
+  // Spärr, inte en varning. En arbetskostnad över A-priset bryter inte ut något (se splitRowLabor),
+  // så offerten skulle gå till Fortnox utan det ROT-underlag säljaren tror att den har. Det gäller
+  // varenda rad som sparats under den gamla tolkningen, där beloppet var ett klumpbelopp för hela
+  // raden — de dyker upp här i samma stund någon öppnar offerten, i stället för att märkas när
+  // kunden undrar var avdraget tog vägen.
+  if (draft.quote_type === 'private' && draft.rot_enabled) {
+    const over = effectiveRows.filter((r) => r.isConfigured && !r.is_rot_work && r.rotLaborLeavesNoMaterial);
+    if (over.length) {
+      const rader = over.map((r) => effectiveRows.indexOf(r) + 1).join(', ');
+      issues.push(
+        over.length === 1
+          ? `Rad ${rader}: arbetskostnaden äter hela A-priset — inget material blir kvar`
+          : `Rad ${rader}: arbetskostnaden äter hela A-priset — inget material blir kvar`,
+      );
+    }
   }
   return issues;
 }
@@ -945,15 +964,16 @@ function LaborCarveoutHint({
   quantity: number;
   unitLabel: string;
 }) {
-  const { labor, material, rowTotal, clamped } = splitRowLabor({
+  const { labor, material, rowTotal, leavesNoMaterial } = splitRowLabor({
     laborCostPerUnit: laborCost, unitPrice, discountPercent, quantity,
   });
 
-  if (clamped) {
+  if (leavesNoMaterial) {
     return (
-      <p className="m-0 mt-1 text-[11px] leading-snug text-amber-700">
-        Arbetskostnaden kan inte vara högre än A-priset ({formatCurrency(unitPrice, 'SEK')}/{unitLabel}) och
-        räknas som hela priset.
+      <p className="m-0 mt-1 text-[11px] leading-snug text-rose-700">
+        Arbetet är hela A-priset ({formatCurrency(unitPrice, 'SEK')}/{unitLabel}) — inget material blir
+        kvar. Ingen arbetskostnad bryts ut förrän det rättas. A-priset ska vara HELA priset, och det
+        här beloppet den del av det som är arbete.
       </p>
     );
   }
@@ -1795,6 +1815,7 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
         label: `${baseLabel}${unitSuffix}`,
         mode, rowTotal: amount * effectiveUnit,
         rotLabor: laborSplit.labor,
+        rotLaborLeavesNoMaterial: laborSplit.leavesNoMaterial,
         isConfigured: Boolean(item.article_name || item.m2 || item.quantity || item.unit_price),
       };
     });
