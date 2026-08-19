@@ -91,8 +91,13 @@ type QuoteLineItem = {
   line_note: string;
   is_rot_work: boolean;
   house_work_type: string;
-  // Labour carved out of a material row for ROT (kr, ex VAT). Summed onto a single "Arbetskostnad
-  // ROT" row on the Fortnox document; the material row is reduced by it so the total is unchanged.
+  // Labour carved out of a material row for ROT, as kr PER UNIT ex VAT — ett à-pris precis som
+  // `unit_price`, som räknas mot antalet. Summeras till en enda "Arbetskostnad ROT"-rad på
+  // Fortnox-dokumentet; materialraden sänks med lika mycket, så totalen är oförändrad.
+  //
+  // ⚠️ Det är en UTBRYTNING ur A-priset, inte ett tillägg: A-priset är HELA priset och det här
+  // beloppet den del av det som är arbete. Äter beloppet hela A-priset bryts ingenting ut och
+  // sparningen spärras — se splitRowLabor i lib/domains/crm/pricing.ts, som äger tolkningen.
   labor_cost: string;
   density: string;
 };
@@ -446,9 +451,7 @@ function getValidationIssues(draft: QuoteDraft, effectiveRows: EffectiveRow[]) {
     if (over.length) {
       const rader = over.map((r) => effectiveRows.indexOf(r) + 1).join(', ');
       issues.push(
-        over.length === 1
-          ? `Rad ${rader}: arbetskostnaden äter hela A-priset — inget material blir kvar`
-          : `Rad ${rader}: arbetskostnaden äter hela A-priset — inget material blir kvar`,
+        `${over.length === 1 ? 'Rad' : 'Rader'} ${rader}: arbetskostnaden äter hela A-priset — inget material blir kvar`,
       );
     }
   }

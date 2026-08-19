@@ -6,12 +6,14 @@
 -- antalet, precis som A-priset.
 --
 -- ⚠️ DÄRFÖR BYTER BEFINTLIG DATA INNEBÖRD. En sparad rad med labor_cost = 8000 och A-pris 200
--- lästes förr som 8 000 kr arbete på hela raden. Efter ändringen kapas 8000 mot A-priset 200 och
--- HELA raden blir arbete — vilket betyder att ROT skulle begäras på materialet också. Det är inte
--- tillåtet, så raderna nedan måste rättas för hand innan de pushas om.
+-- lästes förr som 8 000 kr arbete på hela raden. Läst som à-pris är 8000 större än A-priset 200 —
+-- arbetet skulle äta hela raden och begära ROT på materialet, vilket inte är tillåtet. Koden bryter
+-- därför ut NOLL på en sådan rad: materialet går ut orört och ROT-avdraget försvinner tyst.
 --
--- Kolumnen `arbete_efter_andringen` visar exakt vad varje rad blir med den nya tolkningen, och
--- `foreslaget_a_pris` vad beloppet borde skrivas om till för att betyda samma sak som förut.
+-- Kolumnerna visar vad varje rad är värd före och efter, och `foreslaget_a_pris` vad beloppet ska
+-- skrivas om till för att betyda samma sak som förut. Rabatten är inräknad: den gamla tolkningen
+-- rabatterade inte arbetet, den nya gör det, så en rabatterad rad behöver ett högre à-pris för att
+-- landa på samma kronor.
 
 with rader as (
   select
@@ -48,7 +50,8 @@ tal as (
     nullif(regexp_replace(coalesce(r.item ->> 'unit_price', ''), '[^0-9,.-]', '', 'g'), '') as pris_raw,
     nullif(regexp_replace(coalesce(r.item ->> 'm2', ''), '[^0-9,.-]', '', 'g'), '')         as m2_raw,
     nullif(regexp_replace(coalesce(r.item ->> 'thickness_mm', ''), '[^0-9,.-]', '', 'g'), '') as tjocklek_raw,
-    nullif(regexp_replace(coalesce(r.item ->> 'quantity', ''), '[^0-9,.-]', '', 'g'), '')   as antal_raw
+    nullif(regexp_replace(coalesce(r.item ->> 'quantity', ''), '[^0-9,.-]', '', 'g'), '')   as antal_raw,
+    nullif(regexp_replace(coalesce(r.item ->> 'discount_percent', ''), '[^0-9,.-]', '', 'g'), '') as rabatt_raw
   from rader r
 ),
 parsat as (
@@ -63,7 +66,10 @@ parsat as (
         then coalesce(replace(t.antal_raw, ',', '.')::numeric, 0)
       else coalesce(replace(t.m2_raw, ',', '.')::numeric, 0)
            * coalesce(replace(t.tjocklek_raw, ',', '.')::numeric, 0) / 1000
-    end                                                          as antal
+    end                                                          as antal,
+    -- Andelen av priset som blir kvar efter rabatt, 0–1.
+    1 - least(100, greatest(0, coalesce(replace(t.rabatt_raw, ',', '.')::numeric, 0))) / 100
+                                                                 as kvar_efter_rabatt
   from tal t
 )
 select
@@ -76,18 +82,25 @@ select
   a_pris,
   round(antal, 3)                as antal,
   arbete_inskrivet,
-  -- Förr: beloppet rakt av, kapat mot radtotalen.
-  round(least(arbete_inskrivet, a_pris * antal), 2)        as arbete_fore_andringen,
-  -- Nu: beloppet som à-pris, kapat mot A-priset, gånger antalet.
-  round(least(arbete_inskrivet, a_pris) * antal, 2)        as arbete_efter_andringen,
-  -- Skriv om fältet till det här talet så raden betyder samma sak som förut.
-  case when antal > 0 then round(least(arbete_inskrivet, a_pris * antal) / antal, 2) end
-                                                           as foreslaget_a_pris,
+  -- FÖRR: beloppet rakt av som klumpsumma, kapat mot radens RABATTERADE total.
+  round(least(arbete_inskrivet, a_pris * antal * kvar_efter_rabatt), 2) as arbete_fore_andringen,
+  -- NU: beloppet som à-pris. Äter det hela A-priset bryts ingenting ut (se splitRowLabor).
   case
-    when antal > 0 and least(arbete_inskrivet, a_pris) * antal
-         >= a_pris * antal - 0.005 then 'HELA RADEN BLIR ARBETE — ROT skulle begäras på material'
+    when arbete_inskrivet >= a_pris then 0
+    else round(arbete_inskrivet * kvar_efter_rabatt * antal, 2)
+  end                                                                  as arbete_efter_andringen,
+  -- Skriv om fältet till det här à-priset så raden är värd samma kronor som förut. Divisionen med
+  -- kvar_efter_rabatt är avsiktlig: den nya tolkningen rabatterar arbetet, den gamla gjorde inte det.
+  case
+    when antal > 0 and kvar_efter_rabatt > 0
+      then round(least(arbete_inskrivet, a_pris * antal * kvar_efter_rabatt)
+                 / (antal * kvar_efter_rabatt), 2)
+  end                                                                  as foreslaget_a_pris,
+  case
+    when arbete_inskrivet >= a_pris
+      then 'ROT-AVDRAGET FÖRSVINNER — arbetet äter hela A-priset, inget bryts ut'
     else 'ändrar belopp'
-  end                                                      as folj
+  end                                                                  as folj
 from parsat
 where arbete_inskrivet > 0
   and not hela_raden_ar_arbete          -- ikryssade ROT-rader rör inte fältet

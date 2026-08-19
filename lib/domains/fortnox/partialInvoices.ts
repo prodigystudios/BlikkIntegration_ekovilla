@@ -1,7 +1,7 @@
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { parseDecimal } from '@/lib/shared/number';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
-import { lineItemUnitPrice, lineItemDiscountPercent, lineItemEffectiveUnitPrice } from '@/lib/domains/crm/pricing';
+import { lineItemUnitPrice, lineItemDiscountPercent, lineItemEffectiveUnitPrice, lineItemRotLabor } from '@/lib/domains/crm/pricing';
 import { fortnoxGet, fortnoxPost, fortnoxPut, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
 import { appendFortnoxTextNote, buildRotPropertyNote, claimFortnoxPush, resolveReverseVat } from './helpers';
 import { pushWorkOrderToFortnox } from './orders';
@@ -69,7 +69,11 @@ export type PartialRequestLine = { line_id?: string | null; index?: number | nul
 // message instead (Phase 2). Rows flagged fully as ROT work (is_rot_work) are unaffected — they
 // invoice per row exactly as before.
 export function hasCarvedRotLabor(lineItems: PartialInvoiceLineItem[] | null): boolean {
-  return (lineItems ?? []).some((i) => !i.is_rot_work && parseDecimal(i.labor_cost) > 0);
+  // Frågar om något FAKTISKT bryts ut, inte om fältet är ifyllt. Skillnaden är verklig sedan
+  // labor_cost blev ett à-pris: ett belopp som äter hela à-priset bryter ut noll (se splitRowLabor),
+  // och en sådan order har ingenting att proportionera — att ändå spärra delfaktureringen hade
+  // låst den på ett värde som inte längre betyder något.
+  return (lineItems ?? []).some((i) => !i.is_rot_work && lineItemRotLabor(i) > 0);
 }
 export type InvoiceRound = { line_quantities: PartialRequestLine[] | null };
 export type LineInvoiceState = { lineId: string | null; index: number; total: number; invoiced: number; remaining: number };

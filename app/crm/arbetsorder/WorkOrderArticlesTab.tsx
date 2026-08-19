@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import Input from '../../../components/ui/Input';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
-import { computePricing, lineItemRowTotal, splitRowLabor, type PricingLineItem } from '@/lib/domains/crm/pricing';
+import { computePricing, lineItemRowTotal, lineItemUnitPrice, splitRowLabor, type PricingLineItem } from '@/lib/domains/crm/pricing';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
 import { inferMaterialFromArticle, sacksFor } from '@/lib/domains/crm/materials';
 import { parseDecimal } from '@/lib/shared/number';
@@ -26,7 +26,8 @@ export type ArticleLineItem = {
   discount_percent?: string;
   is_rot_work?: boolean;
   house_work_type?: string;
-  // Labour carved out of a material row for ROT — summed onto the "Arbetskostnad ROT" Fortnox row.
+  // Labour carved out of a material row for ROT, as kr PER UNIT — ett à-pris som räknas mot
+  // antalet, utbrutet UR à-priset och inte lagt till det. Se splitRowLabor i pricing.ts.
   labor_cost?: string;
   // Avskriven rad: såld men aldrig utförd. Ligger kvar (indexen bär fakturarundornas antal) men
   // räknas bort ur summan och skickas inte till Fortnox.
@@ -233,7 +234,11 @@ export default function WorkOrderArticlesTab({ items, currencyCode, vatPercent, 
               const laborUnitLabel = mode === 'm3' ? 'm³' : (row.article_unit_name?.trim() || 'st');
               const laborSplit = splitRowLabor({
                 laborCostPerUnit: row.labor_cost,
-                unitPrice: parseDecimal(row.unit_price),
+                // Samma priskälla som rowTotal ovan, computePricing i den här fliken och pushen:
+                // explicit unit_price när det finns, annars artikelns pris. Läste vi bara
+                // unit_price här skulle en rad som prissätts av artikeln visa "inget material blir
+                // kvar" bredvid en radtotal som säger något helt annat.
+                unitPrice: lineItemUnitPrice(row as PricingLineItem),
                 discountPercent: parseDecimal(row.discount_percent),
                 quantity: lineItemQuantity(row as PricingLineItem),
               });
@@ -322,7 +327,7 @@ export default function WorkOrderArticlesTab({ items, currencyCode, vatPercent, 
                       <Input value={row.labor_cost || ''} onChange={(e) => updateRow(row.id, { labor_cost: e.target.value })} inputMode="decimal" placeholder="0" />
                       {laborSplit.leavesNoMaterial ? (
                         <span className="text-[11px] leading-snug text-rose-700">
-                          Arbetet är hela à-priset ({formatCurrency(parseDecimal(row.unit_price), currencyCode)}/{laborUnitLabel}) — inget material blir kvar. Ingen arbetskostnad bryts ut förrän det rättas.
+                          Arbetet är hela à-priset ({formatCurrency(lineItemUnitPrice(row as PricingLineItem), currencyCode)}/{laborUnitLabel}) — inget material blir kvar. Ingen arbetskostnad bryts ut förrän det rättas.
                         </span>
                       ) : laborSplit.labor > 0 ? (
                         <span className="text-[11px] leading-snug text-slate-500">

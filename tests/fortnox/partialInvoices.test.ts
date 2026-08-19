@@ -139,7 +139,17 @@ describe('roundSubtotal', () => {
 
 describe('hasCarvedRotLabor (partial-invoice Phase-2 guard)', () => {
   it('detects a material row with carved-out labour', () => {
-    expect(hasCarvedRotLabor([itemLine({ labor_cost: '500' })])).toBe(true);
+    // 40 kr/enhet av à-priset 100 → 2 000 kr bryts ut över 50 enheter.
+    expect(hasCarvedRotLabor([itemLine({ labor_cost: '40' })])).toBe(true);
+  });
+
+  it('säger nej när beloppet äter hela à-priset — då bryts ingenting ut', () => {
+    // Guarden frågar om något FAKTISKT bryts ut, inte om fältet är ifyllt. Ett belopp som lämnar
+    // noll material bryter ut noll (se splitRowLabor), och en sådan order har ingenting att
+    // proportionera — att ändå spärra delfaktureringen hade låst den på ett värde som inte längre
+    // betyder något. Gäller varje rad sparad under den gamla klumpbeloppstolkningen.
+    expect(hasCarvedRotLabor([itemLine({ labor_cost: '500' })])).toBe(false);
+    expect(hasCarvedRotLabor([itemLine({ labor_cost: '100' })])).toBe(false);
   });
 
   it('ignores labour on a row flagged fully as ROT work (whole row is the labour, invoiced per row)', () => {
