@@ -43,7 +43,7 @@ import {
   hasMeasurementBlock,
   replaceMeasurementBlock,
 } from '@/lib/domains/crm/measurementBlock';
-import { ROT_HOUSE_WORK_TYPES } from '@/lib/domains/fortnox/types';
+import { ROT_HOUSE_WORK_TYPES, ROT_LABOR_ARTICLE_NUMBER, ROT_LABOR_DESCRIPTION } from '@/lib/domains/fortnox/types';
 
 // Swedish labels for the Fortnox ROT HouseWorkType codes shown in the ROT section.
 const ROT_HOUSE_WORK_LABELS: Record<(typeof ROT_HOUSE_WORK_TYPES)[number], string> = {
@@ -2214,16 +2214,17 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
   // vi om här skulle en auto-rad bidra med 0 kr till TG:n men synas i Delsumman, och inte ens
   // flaggas som obedömd. Se MarginRow i pricing.ts.
   //
-  // `isLabor` sätts BARA när ROT faktiskt är aktivt på offerten. `is_rot_work` betyder "den här
-  // raden är ROT-arbete" och kryssrutan visas inte annars — en kvarglömd flagga på en offert där
-  // ROT stängts av ska inte tyst ge raden full TG. Samma villkor som ROT-underlaget i `totals`,
-  // så de två inte kan säga emot varandra.
-  const rotActiveForMargin = draft.quote_type === 'private' && draft.rot_enabled;
+  // Samma villkor som ROT-underlaget i `totals` OCH som pushen (`rot_details.enabled && !reverseVat`
+  // — omvänd skattskyldighet är en företagsgrej och ROT är privat, så de kan aldrig kollidera).
+  // Styr två saker: att `isLabor` bara sätts när ROT faktiskt är aktivt — en kvarglömd kryssruta på
+  // en offert där ROT stängts av ska inte tyst ge raden full TG — och att den genererade
+  // arbetskostnadsraden visas exakt när pushen faktiskt skickar den.
+  const rotActive = draft.quote_type === 'private' && draft.rot_enabled;
   const marginRows: MarginRow[] = effectiveRows.map((r) => ({
     revenue: r.rowTotal,
     quantity: r.amount,
     purchasePrice: r.article_number ? purchasePrices[r.article_number] ?? null : null,
-    isLabor: rotActiveForMargin && Boolean(r.is_rot_work),
+    isLabor: rotActive && Boolean(r.is_rot_work),
   }));
   const quoteMarginResult = quoteMargin(marginRows);
   const quoteMarginTier = marginTier(quoteMarginResult.marginPercent);
@@ -2832,6 +2833,37 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
           </div>
           </SortableContext>
           </DndContext>
+
+          {/* ── Den genererade arbetskostnadsraden ────────────────────────────────────────────
+              Ligger ALLTID sist, som på Fortnox-offerten: pushen lägger den efter artikelraderna.
+              Den är läsvy och finns inte i `draft.items` — den syntetiseras först vid pushen
+              (buildOfferRows → rotLaborRow) och får aldrig lagras som en riktig rad. Gjorde vi det
+              skulle pushen bryta ut arbetet EN GÅNG TILL ovanpå den och dubbelräkna det.
+
+              ⚠️ Beloppet är INTE ett tillägg. Det är redan utbrutet ur raderna ovan, som visas till
+              sitt fulla pris här medan Fortnox-dokumentet visar dem sänkta med samma belopp — summan
+              är densamma på båda hållen. Därför "Varav" och ingen egen summering: en säljare som
+              adderar radbeloppen i huvudet ska inte landa på en annan siffra än Delsumman.
+
+              Visas bara när något faktiskt bryts ut. Rader med "ROT-arbete" ikryssad går INTE hit —
+              de blir egna husarbete-rader med sin egen artikel, precis som i pushen. */}
+          {rotActive && totals.carvedLabor > 0 ? (
+            <div className="mt-2 flex items-center gap-2 rounded-xl border border-dashed border-emerald-200 bg-emerald-50/40 px-3.5 py-2.5">
+              <span className="shrink-0 text-xs font-semibold tabular-nums text-emerald-600/60">{draft.items.length + 1}</span>
+              <div className="min-w-0 flex-1">
+                <p className="m-0 truncate text-sm font-medium text-emerald-900">
+                  {ROT_LABOR_DESCRIPTION} <span className="font-normal text-emerald-700/70">({ROT_LABOR_ARTICLE_NUMBER})</span>
+                </p>
+                <p className="m-0 text-[11px] leading-snug text-emerald-700/70">
+                  Skapas automatiskt på Fortnox-offerten. Beloppet är redan utbrutet ur raderna ovan.
+                </p>
+              </div>
+              <span className="shrink-0 text-right text-sm font-semibold tabular-nums text-emerald-900">
+                <span className="mr-1 text-[11px] font-normal text-emerald-700/70">Varav</span>
+                {formatCurrency(totals.carvedLabor, 'SEK')}
+              </span>
+            </div>
+          ) : null}
 
           <button
             type="button"

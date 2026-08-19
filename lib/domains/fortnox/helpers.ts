@@ -1,14 +1,9 @@
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { parseDecimal } from '@/lib/shared/number';
-import { DEFAULT_ROT_HOUSE_WORK_TYPE } from './types';
+import { DEFAULT_ROT_HOUSE_WORK_TYPE, ROT_LABOR_ARTICLE_NUMBER, ROT_LABOR_DESCRIPTION } from './types';
 
-// The standing Fortnox article that aggregated per-row ROT labour is booked to. A ROT deduction
-// may only be claimed on the LABOUR portion, not material — so labour carved out of material rows
-// (each row's `labor_cost`) is summed onto this single husarbete row instead of flagging the
-// material rows themselves. Rows a seller marks fully as ROT work (is_rot_work) keep their own
-// article/price/type and are NOT folded in here.
-export const ROT_LABOR_ARTICLE_NUMBER = '10058';
-export const ROT_LABOR_DESCRIPTION = 'Arbetskostnad ROT';
+// Vidareexporteras här sedan de flyttade till types.ts (klientsäkert — se kommentaren där).
+export { ROT_LABOR_ARTICLE_NUMBER, ROT_LABOR_DESCRIPTION };
 
 // The ROT labour carved out of a single row (kr, ex VAT), clamped to the row's own net so the
 // remaining material can never go negative. Returns 0 when it's not a ROT document, when the row is
