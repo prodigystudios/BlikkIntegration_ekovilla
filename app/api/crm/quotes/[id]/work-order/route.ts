@@ -1,6 +1,7 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { createCrmWorkOrderFromQuote } from '@/lib/domains/crm/work-orders';
+import { createCrmWorkOrderFromQuote, getWorkOrderReadinessForQuote } from '@/lib/domains/crm/work-orders';
+import { workOrderReadinessErrorCode } from '@/lib/domains/crm/workOrderReadiness';
 import { pushWorkOrderToFortnox } from '@/lib/domains/fortnox/orders';
 import { FortnoxNotConnectedError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
 import { ok, requirePermission, routeError } from '../../_lib';
@@ -10,6 +11,34 @@ type RouteContext = {
     id: string;
   };
 };
+
+/**
+ * Vad som saknas innan offerten kan bli en arbetsorder.
+ *
+ * Läses av offertformuläret och den delade offertpanelen så att listan syns INNAN säljaren
+ * trycker. Samma funktion som skapandet använder — checklistan och spärren kan därför inte säga
+ * emot varandra.
+ */
+export async function GET(_req: Request, context: RouteContext) {
+  try {
+    const crmUser = await requirePermission('crm.workorder.write');
+    if (crmUser.response || !crmUser.currentUser) return crmUser.response;
+
+    const supabase = createRouteHandlerClient({ cookies });
+    const result = await getWorkOrderReadinessForQuote(supabase, context.params.id);
+
+    if (result.error || !result.data) {
+      if (result.reason === 'not_found') {
+        return routeError(404, 'crm_quote_not_found', 'Offerten hittades inte');
+      }
+      return routeError(500, 'crm_work_order_readiness_failed', result.error?.message || 'Kunde inte läsa offerten');
+    }
+
+    return ok(result.data);
+  } catch (e: any) {
+    return routeError(500, 'crm_work_order_unexpected', e?.message || 'Failed to read work-order readiness');
+  }
+}
 
 export async function POST(_req: Request, context: RouteContext) {
   try {
@@ -24,19 +53,22 @@ export async function POST(_req: Request, context: RouteContext) {
         return routeError(404, 'crm_quote_not_found', result.error?.message || 'Offerten hittades inte');
       }
 
-      // Emit the same code the standalone route uses so the client's personnummer prompt
-      // (which keys off crm_work_order_missing_personal_number) fires on both order paths.
-      // `invalid_personal_number` (tio siffror i stället för tolv) delar kod: åtgärden är densamma
-      // — fyll i ett fullständigt nummer — och meddelandet förklarar skillnaden.
-      if (result.reason === 'missing_personal_number' || result.reason === 'invalid_personal_number') {
-        return routeError(409, 'crm_work_order_missing_personal_number', result.error?.message || 'Personnummer krävs för privatkund innan order kan skapas');
-      }
-
-      // ROT without fastighetsbeteckning/BRF org.nr. Its own code so the quote form can open the
-      // prompt that collects it; the quote list (no prompt there) just shows the message, which
-      // says where to fill it in.
-      if (result.reason === 'missing_rot_property') {
-        return routeError(409, 'crm_work_order_missing_rot_property', result.error?.message || 'Fastighetsbeteckning krävs för ROT innan order kan skapas');
+      // Ofullständig offert. Hela listan hämtas om och skickas med, så klienten kan visa allt som
+      // saknas i stället för ett fynd i taget.
+      //
+      // Koden är fortfarande den specifika (`…missing_personal_number` / `…missing_rot_property`)
+      // när fyndet är ENSAMT — offertformuläret öppnar en prompt på dem och rättar dem på plats.
+      // Är det fler blir det `crm_work_order_incomplete` och listan visas i stället, eftersom en
+      // prompt då bara hade lagat en av sakerna innan nästa fel dök upp.
+      if (result.reason === 'incomplete') {
+        const readiness = await getWorkOrderReadinessForQuote(supabase, context.params.id);
+        const blockers = readiness.data?.blockers ?? [];
+        return routeError(
+          409,
+          blockers.length > 0 ? workOrderReadinessErrorCode(blockers) : 'crm_work_order_incomplete',
+          result.error?.message || 'Uppgifter saknas innan arbetsorder kan skapas',
+          { blockers, warnings: readiness.data?.warnings ?? [] },
+        );
       }
 
       if (result.reason === 'quote_not_won' || result.reason === 'already_created') {

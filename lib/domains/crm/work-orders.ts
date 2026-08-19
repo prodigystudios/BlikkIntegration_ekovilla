@@ -5,6 +5,11 @@ import { resolveCrmContact, type CrmContactSource } from './contacts';
 import { computePricing, type PricingLineItem } from './pricing';
 import { activeLineItems, computeInvoiceState, validateLineItemEdit, type InvoiceRound } from '@/lib/domains/fortnox/partialInvoices';
 import { isValidPersonalNumber, PERSONAL_NUMBER_ERROR } from './personalNumber';
+import {
+  evaluateWorkOrderReadiness,
+  type ReadinessCustomerSource,
+  type WorkOrderReadiness,
+} from './workOrderReadiness';
 import type { CreateWorkOrderFileInput } from './workOrderFiles/types';
 
 export const crmWorkOrderSelect = `
@@ -240,23 +245,47 @@ function getClientName(source: QuoteSource) {
     || source.project_name;
 }
 
-function getWorkAddress(source: QuoteSource) {
-  const s = source.customer_snapshot;
-  // A separate work address (job site) is stored on the snapshot only when a street is set
-  // and it differs from the customer address (buildCustomerSnapshot enforces this). The
-  // street is the anchor: when present it IS the primary address installers navigate to
-  // (postal/city taken as entered, blank if the seller left them); otherwise the whole
-  // address falls back to the customer address (old quotes + the private case unchanged).
-  const hasWorkAddress = Boolean(s?.delivery_address);
-  return {
-    street_address: (hasWorkAddress ? s?.delivery_address : (s?.visit_address || s?.street_address)) || null,
-    postal_code: (hasWorkAddress ? s?.delivery_postal_code : s?.postal_code) || null,
-    city: (hasWorkAddress ? s?.delivery_city : s?.city) || null,
-    // Primary already holds the job site when one exists, so don't duplicate it as a
-    // separate "Leverans:" line. Kept null here; the work-order detail page can still set one.
-    delivery_address: null,
-    invoice_address: s?.invoice_address || null,
-  };
+
+// Kundkortets halva av fullständighetskontrollen. Fälten är exakt de `resolveCrmContact` och
+// `evaluateWorkOrderReadiness` läser — inget mer, eftersom raden bara används för att fylla luckor.
+const readinessCustomerSelect =
+  'organization_number, personal_number, email, phone, mobile, visit_address, contacts:crm_customer_contacts(name, phone, email, is_primary)';
+
+async function fetchReadinessCustomer(
+  supabase: SupabaseClient,
+  customerId: string | null,
+): Promise<ReadinessCustomerSource> {
+  if (!customerId) return null;
+  const { data } = await supabase
+    .from('crm_customers')
+    .select(readinessCustomerSelect)
+    .eq('id', customerId)
+    .maybeSingle();
+  return (data as ReadinessCustomerSource) ?? null;
+}
+
+/**
+ * Vad som saknas innan offerten kan bli en arbetsorder — samma bedömning som skapandet gör.
+ *
+ * Finns för att kunna svara på frågan UTAN att försöka skapa ordern: offertformuläret och den
+ * delade offertpanelen visar listan innan säljaren trycker, i stället för att ett fel dyker upp
+ * efteråt. Att den delar funktion med `createCrmWorkOrderFromQuote` är hela poängen — en egen
+ * kopia i klienten hade glidit isär från det servern faktiskt kräver.
+ */
+export async function getWorkOrderReadinessForQuote(supabase: SupabaseClient, quoteId: string) {
+  const { data: quote, error } = await supabase
+    .from('crm_quotes')
+    .select('id, customer_id, quote_type, customer_snapshot, rot_details, line_items, internal_handoff, status, work_order_id')
+    .eq('id', quoteId)
+    .maybeSingle();
+
+  if (error) return { data: null, error, reason: 'quote_fetch_failed' as const };
+  if (!quote) return { data: null, error: { message: 'Offerten hittades inte' }, reason: 'not_found' as const };
+
+  const customer = await fetchReadinessCustomer(supabase, (quote as { customer_id: string | null }).customer_id);
+  const readiness: WorkOrderReadiness = evaluateWorkOrderReadiness(quote, customer);
+
+  return { data: readiness, error: null, reason: null };
 }
 
 export async function createCrmWorkOrderFromQuote(supabase: SupabaseClient, quoteId: string, actorUserId: string) {
@@ -284,56 +313,35 @@ export async function createCrmWorkOrderFromQuote(supabase: SupabaseClient, quot
     return { data: null, error: { message: 'Arbetsorder finns redan för offerten' }, reason: 'already_created' as const };
   }
 
-  // Fortnox needs a private customer's personnummer to invoice the order. The quote snapshot may
-  // predate it (the quote was saved before the number was known), so fall back to the customer's
-  // current value and bake it into the order snapshot. If neither has it, block — the caller
-  // collects it and saves it on the customer before retrying.
+  // Fullständighetskontrollen. Allt som saknas fångas HÄR, före insert:en, eftersom routen
+  // auto-pushar den färdiga ordern till Fortnox — efter den punkten är en glömd uppgift ett
+  // bokföringsärende i stället för ett formulärfel. Kundkortet läses om eftersom adress, telefon
+  // och org.nr inte går att redigera i offertformuläret; se workOrderReadiness.ts.
+  const customerRow = await fetchReadinessCustomer(supabase, quote.customer_id);
+  const readiness = evaluateWorkOrderReadiness(quote, customerRow);
+
+  if (!readiness.ready) {
+    // Meddelandet är första fyndets, så äldre ytor som bara visar `error` fortfarande säger något
+    // begripligt. Hela listan hämtar routen via getWorkOrderReadinessForQuote.
+    return { data: null, error: { message: readiness.blockers[0].message }, reason: 'incomplete' as const };
+  }
+
   // "Er referens" blir ett EGET fält på arbetsordern. På offerten är den samma sak som
   // contact_name (fältet heter "Er referens (kontaktperson)" och är obligatoriskt där), men från
   // och med ordern skiljer sig de två: contact_name blir kundkontakten — vem vi ringer — och får
   // ändras fritt, medan your_reference är det som går till Fortnox YourReference. Utan den här
   // frysningen vid orderskapandet skulle en rättad kontaktperson skriva om kundens fakturareferens.
-  let orderSnapshot = (quote.customer_snapshot || {}) as Record<string, unknown>;
-  if (orderSnapshot.your_reference == null) {
-    orderSnapshot = { ...orderSnapshot, your_reference: orderSnapshot.contact_name ?? null };
-  }
-  if (quote.quote_type === 'private' && !orderSnapshot.personal_number) {
-    let personalNumber: string | null = null;
-    if (quote.customer_id) {
-      const { data: cust } = await supabase
-        .from('crm_customers').select('personal_number').eq('id', quote.customer_id).maybeSingle();
-      personalNumber = (cust as { personal_number?: string | null } | null)?.personal_number ?? null;
-    }
-    if (!personalNumber) {
-      return { data: null, error: { message: 'Personnummer krävs för privatkund innan order kan skapas' }, reason: 'missing_personal_number' as const };
-    }
-    orderSnapshot = { ...orderSnapshot, personal_number: personalNumber };
-  }
-
-  // Samma krav som på standalone-ordern, och det gäller BÅDE numret som redan låg i offertens
-  // snapshot och det som just hämtades från kundkortet: tio siffror ger trasiga ROT-uppgifter i
-  // Fortnox.
-  if (quote.quote_type === 'private' && !isValidPersonalNumber(String(orderSnapshot.personal_number ?? ''))) {
-    return { data: null, error: { message: PERSONAL_NUMBER_ERROR }, reason: 'invalid_personal_number' as const };
-  }
-
-  // ROT can only be filed with the property identified: fastighetsbeteckning for a småhus, or the
-  // BRF's org.nr for a bostadsrätt (Skatteverket takes either — never both). It is deliberately
-  // OPTIONAL on the quote: nothing is approved yet and the seller often doesn't have it while
-  // quoting. The order is where it becomes mandatory, because the order is the point of no return —
-  // the route auto-pushes to Fortnox the moment the order exists, and Fortnox has NO API field for
-  // the designation (whoever finalizes the invoice types it into the husarbete dialog, reading it
-  // off the text row / YourOrderNumber we send). An order created without it therefore reaches the
-  // invoice with nothing to type in, and the deduction can't be filed. This is the last point where
-  // a human is still in the loop.
-  const rot = (quote.rot_details || {}) as { enabled?: boolean | null; property_designation?: string | null; brf_org_number?: string | null };
-  if (rot.enabled === true && !rot.property_designation?.trim() && !rot.brf_org_number?.trim()) {
-    return {
-      data: null,
-      error: { message: 'Fastighetsbeteckning (eller BRF org.nr för bostadsrätt) krävs för ROT innan order kan skapas. Öppna offerten och fyll i den.' },
-      reason: 'missing_rot_property' as const,
-    };
-  }
+  //
+  // De upplösta värdena bakas in i snapshoten: kontrollen ovan godkände dem, och skrev vi något
+  // annat till ordern hade spärren prövat en uppgift ordern sedan inte bar. Snapshotens egna
+  // värden vinner alltid — `resolved` faller bara tillbaka på kundkortet när fältet är tomt.
+  const orderSnapshot: Record<string, unknown> = {
+    ...(quote.customer_snapshot || {}),
+    your_reference: quote.customer_snapshot?.your_reference ?? quote.customer_snapshot?.contact_name ?? null,
+    personal_number: quote.quote_type === 'private' ? readiness.resolved.personalNumber : (quote.customer_snapshot?.personal_number ?? null),
+    organization_number: quote.quote_type === 'business' ? readiness.resolved.organizationNumber : (quote.customer_snapshot?.organization_number ?? null),
+    phone: readiness.resolved.phone,
+  };
 
   const orderNumber = buildWorkOrderNumber(quote.id);
 
@@ -348,7 +356,7 @@ export async function createCrmWorkOrderFromQuote(supabase: SupabaseClient, quot
       client_name: getClientName(quote),
       quote_type: quote.quote_type,
       customer_snapshot: orderSnapshot,
-      work_address: getWorkAddress(quote),
+      work_address: readiness.resolved.workAddress,
       pricing_summary: quote.pricing_summary || {},
       line_items: quote.line_items || [],
       rot_details: quote.rot_details || {},

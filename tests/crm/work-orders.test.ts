@@ -24,7 +24,7 @@ vi.mock('@/lib/supabase/server', () => ({ getSupabaseAdmin: () => elevated.clien
 // offerten är olänkad, och nästa försök smäller på unikhetsindexet på quote_id.
 // ---------------------------------------------------------------------------
 
-function makeSupabase(quote: Record<string, unknown>) {
+function makeSupabase(quote: Record<string, unknown>, customer: Record<string, unknown> | null = COMPLETE_CUSTOMER) {
   const captured: {
     insert: Record<string, any> | null;
     quoteUpdateVia: 'session' | 'elevated' | null;
@@ -43,6 +43,12 @@ function makeSupabase(quote: Record<string, unknown>) {
             return builder;
           }),
           insert: vi.fn((payload: Record<string, any>) => { state.op = 'insert'; captured.insert = payload; return builder; }),
+          // Fullständighetskontrollen läser om kundkortet (adress, telefon, org.nr och
+          // personnummer går inte att redigera i offertformuläret) — se workOrderReadiness.ts.
+          maybeSingle: vi.fn(() => {
+            if (table === 'crm_customers') return Promise.resolve({ data: customer, error: null });
+            return Promise.resolve({ data: null, error: null });
+          }),
           single: vi.fn(() => {
             if (table === 'crm_quotes' && state.op === 'select') return Promise.resolve({ data: quote, error: null });
             if (table === 'crm_work_orders' && state.op === 'insert') return Promise.resolve({ data: { id: 'wo1', order_number: 'AO-TEST' }, error: null });
@@ -89,16 +95,36 @@ describe('createCrmWorkOrderFromQuote — återlänkningen till offerten', () =>
   });
 });
 
+// Kundkortet som fullständighetskontrollen faller tillbaka på. Håll det komplett — testerna nedan
+// tar bort EN uppgift i taget, så det som spärrar i ett test är det testet handlar om.
+const COMPLETE_CUSTOMER = {
+  organization_number: '556677-8899',
+  personal_number: null,
+  email: 'info@testab.se',
+  phone: '08-111 22 33',
+  mobile: null,
+  visit_address: { street: 'Storgatan 1', postal_code: '12345', city: 'Stockholm' },
+  contacts: [],
+};
+
 const MEASUREMENT_BLOCK = 'EKOVILLA\nVägg – 100 m² × 195 mm @ 52 kg/m³ – 73 säck\n\nTotalt: 73 säck';
 
 function wonQuote(overrides: Record<string, unknown> = {}) {
   return {
     id: '11111111-1111-1111-1111-111111111111',
     prospect_id: null,
-    customer_id: null,
+    customer_id: '22222222-2222-2222-2222-222222222222',
     customer_name: 'Test AB',
     quote_type: 'business',
-    customer_snapshot: { company_name: 'Test AB' },
+    customer_snapshot: {
+      company_name: 'Test AB',
+      organization_number: '556677-8899',
+      contact_name: 'Kalle Kund',
+      phone: '08-111 22 33',
+      street_address: 'Storgatan 1',
+      postal_code: '12345',
+      city: 'Stockholm',
+    },
     pricing_summary: {},
     line_items: [],
     rot_details: {},
@@ -137,15 +163,35 @@ describe('createCrmWorkOrderFromQuote — fält-mappning', () => {
   });
 
   it('blockerar privatorder utan personnummer (varken snapshot eller kund)', async () => {
-    const { supabase } = makeSupabase(wonQuote({ quote_type: 'private', customer_id: null, customer_snapshot: { customer_name: 'Anna' } }));
+    const { supabase, captured } = makeSupabase(
+      wonQuote({ quote_type: 'private', customer_snapshot: {
+        customer_name: 'Anna',
+        contact_name: 'Anna Andersson',
+        phone: '070-123 45 67',
+        street_address: 'Storgatan 1',
+        postal_code: '12345',
+        city: 'Stockholm',
+      } }),
+      { ...COMPLETE_CUSTOMER, personal_number: null },
+    );
     const result = await createCrmWorkOrderFromQuote(supabase as any, 'q1', 'user-1');
-    expect(result.reason).toBe('missing_personal_number');
+    expect(result.reason).toBe('incomplete');
+    expect(result.error?.message).toContain('Personnummer');
     expect(result.data).toBeNull();
+    // Ordern får inte ha hunnit skapas — routen auto-pushar den till Fortnox.
+    expect(captured.insert).toBeNull();
   });
 
   it('tillåter privatorder när snapshot har personnummer, och bevarar det på ordern', async () => {
     const { supabase, captured } = makeSupabase(
-      wonQuote({ quote_type: 'private', customer_id: null, customer_snapshot: { customer_name: 'Anna', personal_number: '19850101-1236' } }),
+      wonQuote({ quote_type: 'private', customer_snapshot: { ...{
+        customer_name: 'Anna',
+        contact_name: 'Anna Andersson',
+        phone: '070-123 45 67',
+        street_address: 'Storgatan 1',
+        postal_code: '12345',
+        city: 'Stockholm',
+      }, personal_number: '19850101-1236' } }),
     );
     const result = await createCrmWorkOrderFromQuote(supabase as any, 'q1', 'user-1');
     expect(result.error).toBeNull();
@@ -160,15 +206,22 @@ describe('createCrmWorkOrderFromQuote — fält-mappning', () => {
   const rotQuote = (rot: Record<string, unknown>) =>
     wonQuote({
       quote_type: 'private',
-      customer_id: null,
-      customer_snapshot: { customer_name: 'Anna', personal_number: '19850101-1236' },
+      customer_snapshot: { ...{
+        customer_name: 'Anna',
+        contact_name: 'Anna Andersson',
+        phone: '070-123 45 67',
+        street_address: 'Storgatan 1',
+        postal_code: '12345',
+        city: 'Stockholm',
+      }, personal_number: '19850101-1236' },
       rot_details: { enabled: true, personal_number: '19850101-1236', ...rot },
     });
 
   it('blockerar ROT-order utan fastighetsbeteckning och BRF org.nr', async () => {
     const { supabase, captured } = makeSupabase(rotQuote({ property_designation: null, brf_org_number: null }));
     const result = await createCrmWorkOrderFromQuote(supabase as any, 'q1', 'user-1');
-    expect(result.reason).toBe('missing_rot_property');
+    expect(result.reason).toBe('incomplete');
+    expect(result.error?.message).toContain('Fastighetsbeteckning');
     expect(result.data).toBeNull();
     // Ordern får inte ha hunnit skapas — annars auto-pushas den till Fortnox.
     expect(captured.insert).toBeNull();
@@ -177,7 +230,8 @@ describe('createCrmWorkOrderFromQuote — fält-mappning', () => {
   it('blockerar när beteckningen bara är blanksteg', async () => {
     const { supabase } = makeSupabase(rotQuote({ property_designation: '   ' }));
     const result = await createCrmWorkOrderFromQuote(supabase as any, 'q1', 'user-1');
-    expect(result.reason).toBe('missing_rot_property');
+    expect(result.reason).toBe('incomplete');
+    expect(result.error?.message).toContain('Fastighetsbeteckning');
   });
 
   it('släpper igenom ROT-order med fastighetsbeteckning', async () => {
@@ -335,5 +389,96 @@ describe('listCrmWorkOrdersWithFilters — radordningen', () => {
     const supabase = makeSupabaseMock({ data: [], error: null });
     await listCrmWorkOrdersWithFilters(supabase as any, { sort: 'created_desc' });
     expect((supabase._query.order as any).mock.calls).toEqual([['created_at', { ascending: false }]]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fullständighetskontrollen, sedd genom skapandet. Fält för fält prövas den i
+// workOrderReadiness.test.ts — här gäller det kopplingen: att inget skrivs när något saknas, och
+// att de värden kontrollen godkände är exakt de ordern sedan bär. Skiljer de sig åt har spärren
+// prövat en uppgift ordern inte har.
+// ---------------------------------------------------------------------------
+describe('createCrmWorkOrderFromQuote — fullständighetskontrollen', () => {
+  it('blockerar okopplad offert — utan kund kan ordern aldrig nå Fortnox', async () => {
+    const { supabase, captured } = makeSupabase(wonQuote({ customer_id: null }), null);
+    const result = await createCrmWorkOrderFromQuote(supabase as any, 'q1', 'user-1');
+    expect(result.reason).toBe('incomplete');
+    expect(result.error?.message).toContain('kundregistret');
+    expect(captured.insert).toBeNull();
+  });
+
+  it('blockerar när arbetsadressen saknas både på offerten och på kundkortet', async () => {
+    const { supabase, captured } = makeSupabase(
+      wonQuote({ customer_snapshot: { company_name: 'Test AB', organization_number: '556677-8899', contact_name: 'Kalle', phone: '08-111 22 33' } }),
+      { ...COMPLETE_CUSTOMER, visit_address: null },
+    );
+    const result = await createCrmWorkOrderFromQuote(supabase as any, 'q1', 'user-1');
+    expect(result.reason).toBe('incomplete');
+    expect(result.error?.message).toContain('Arbetsadressen');
+    expect(captured.insert).toBeNull();
+  });
+
+  it('blockerar företagsorder utan org.nr på både offert och kundkort', async () => {
+    const { supabase } = makeSupabase(
+      wonQuote({ customer_snapshot: { company_name: 'Test AB', contact_name: 'Kalle', phone: '08-111 22 33', street_address: 'Storgatan 1', postal_code: '12345', city: 'Stockholm' } }),
+      { ...COMPLETE_CUSTOMER, organization_number: null },
+    );
+    const result = await createCrmWorkOrderFromQuote(supabase as any, 'q1', 'user-1');
+    expect(result.reason).toBe('incomplete');
+    expect(result.error?.message).toContain('Organisationsnummer');
+  });
+
+  // Kärnan i varför kundkortet läses om: adress, telefon och org.nr går inte att redigera i
+  // offertformuläret. Säljaren fyller i dem på kundkortet — och då måste ordern bära dem, annars
+  // hade spärren godkänt uppgifter som aldrig nådde installatörerna eller Fortnox.
+  it('bakar in kundkortets telefon, org.nr och adress i ordern när offertens snapshot är tom', async () => {
+    const { supabase, captured } = makeSupabase(
+      wonQuote({ customer_snapshot: { company_name: 'Test AB', contact_name: 'Kalle Kund' } }),
+      COMPLETE_CUSTOMER,
+    );
+    const result = await createCrmWorkOrderFromQuote(supabase as any, 'q1', 'user-1');
+
+    expect(result.error).toBeNull();
+    expect(captured.insert!.customer_snapshot.phone).toBe('08-111 22 33');
+    expect(captured.insert!.customer_snapshot.organization_number).toBe('556677-8899');
+    expect(captured.insert!.work_address).toMatchObject({
+      street_address: 'Storgatan 1',
+      postal_code: '12345',
+      city: 'Stockholm',
+    });
+  });
+
+  // Regression: offertens egna värden är ett medvetet val för just den affären och får aldrig
+  // skrivas över av kundkortet — bara fylla luckor.
+  it('offertens snapshot vinner över kundkortet', async () => {
+    const { supabase, captured } = makeSupabase(
+      wonQuote({
+        customer_snapshot: {
+          company_name: 'Test AB',
+          organization_number: '556677-8899',
+          contact_name: 'Kalle Kund',
+          phone: '070-000 11 22',
+          street_address: 'Byggvägen 9',
+          postal_code: '43210',
+          city: 'Göteborg',
+        },
+      }),
+      COMPLETE_CUSTOMER,
+    );
+    await createCrmWorkOrderFromQuote(supabase as any, 'q1', 'user-1');
+
+    expect(captured.insert!.customer_snapshot.phone).toBe('070-000 11 22');
+    expect(captured.insert!.work_address.city).toBe('Göteborg');
+  });
+
+  // Varningarna är Williams val 2026-08-19: en offert utan rader, datum eller arbetsbeskrivning
+  // ska gå att göra order av — de syns i checklistan, de stoppar inte.
+  it('släpper igenom en offert utan rader, installationsdatum och arbetsbeskrivning', async () => {
+    const { supabase, captured } = makeSupabase(
+      wonQuote({ line_items: [], internal_handoff: { handoff_notes: null, work_scope: null, desired_installation_date: null } }),
+    );
+    const result = await createCrmWorkOrderFromQuote(supabase as any, 'q1', 'user-1');
+    expect(result.error).toBeNull();
+    expect(captured.insert).not.toBeNull();
   });
 });

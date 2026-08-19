@@ -1,5 +1,5 @@
 "use client";
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/shared/cn';
@@ -11,6 +11,8 @@ import { withReturnTo } from '@/app/crm/lib/returnTo';
 import { resolveQuoteVatBreakdown, quoteAmountDisplay } from '@/lib/domains/crm/pricing';
 import { quoteCustomerName, isQuoteOverdue } from '@/app/crm/lib/quoteDisplay';
 import type { EmailableDocument } from '@/app/crm/components/useDocumentEmail';
+import type { WorkOrderReadinessIssue } from '@/lib/domains/crm/workOrderReadiness';
+import WorkOrderReadinessNotice from '@/app/crm/components/WorkOrderReadinessNotice';
 
 // The quote detail modal, shared by the offer list and the Säljtavla board.
 //
@@ -131,6 +133,26 @@ export default function QuoteDetailPanel({
   const [pushingFortnox, setPushingFortnox] = useState(false);
   const [loadingOfferPdf, setLoadingOfferPdf] = useState(false);
   const [loadingOrderPdf, setLoadingOrderPdf] = useState(false);
+  // Vad som saknas innan offerten kan bli en arbetsorder. Servern räknar ut det (samma funktion
+  // som skapandet använder) — panelens rad bär bara en beskuren snapshot och kan inte avgöra det.
+  const [readiness, setReadiness] = useState<{ blockers: WorkOrderReadinessIssue[]; warnings: WorkOrderReadinessIssue[] } | null>(null);
+
+  // Hämtas bara i det läge knappen är tänkt att gå att trycka på, alltså vunnen offert utan order.
+  const readinessQuoteId = quote.status === 'won' && !quote.work_order_id ? quote.id : null;
+
+  useEffect(() => {
+    if (!readinessQuoteId) { setReadiness(null); return; }
+    let cancelled = false;
+    fetch(`/api/crm/quotes/${readinessQuoteId}/work-order`, { cache: 'no-store' })
+      .then((r) => r.json().catch(() => ({})))
+      .then((json) => {
+        if (cancelled || !json?.ok) return;
+        setReadiness({ blockers: json.data?.blockers ?? [], warnings: json.data?.warnings ?? [] });
+      })
+      .catch(() => { /* tyst — servern nekar ändå om något saknas */ });
+    return () => { cancelled = true; };
+  }, [readinessQuoteId]);
+
 
   // A work order locks the offer in Fortnox — unless the last sync failed, in which case the
   // re-sync button stays available so the user can recover.
@@ -193,7 +215,16 @@ export default function QuoteDetailPanel({
     try {
       const res = await fetch(`/api/crm/quotes/${quote.id}/work-order`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
       const json = await res.json().catch(() => ({}));
-      if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte skapa arbetsorder'); return; }
+      if (!res.ok || !json.ok) {
+        // Saknade uppgifter kommer tillbaka som en lista. Panelen har ingen prompt att rätta dem i
+        // (offertformuläret har det), så den visar listan och pekar vidare dit den rättas.
+        const details = json?.errorDetails?.details as { blockers?: WorkOrderReadinessIssue[]; warnings?: WorkOrderReadinessIssue[] } | undefined;
+        if (details?.blockers?.length) {
+          setReadiness({ blockers: details.blockers, warnings: details.warnings ?? [] });
+        }
+        toast.error(json?.error || 'Kunde inte skapa arbetsorder');
+        return;
+      }
       const updated = json?.data?.item as QuoteDetailItem | undefined;
       onQuoteChanged(patchFromItem(quote.id, updated, {}));
       const workOrder = json?.data?.workOrder as { id?: string; order_number?: string } | undefined;
@@ -420,6 +451,16 @@ export default function QuoteDetailPanel({
                     )}
                   </div>
                 </div>
+
+                {!quote.work_order_id && quote.status === 'won' && readiness ? (
+                  <WorkOrderReadinessNotice
+                    className="mt-3"
+                    blockers={readiness.blockers}
+                    warnings={readiness.warnings}
+                    customerHref={quote.customer_id ? `/crm/kunder/${quote.customer_id}?returnTo=${encodeURIComponent(returnTo)}` : null}
+                    quoteHref={`/crm/offerter/${quote.id}/redigera?returnTo=${encodeURIComponent(returnTo)}`}
+                  />
+                ) : null}
 
                 {/* Order confirmation — once a work order (Fortnox order) exists */}
                 {quote.work_order_id ? (

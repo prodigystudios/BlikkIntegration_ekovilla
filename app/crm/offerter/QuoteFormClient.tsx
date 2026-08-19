@@ -34,6 +34,8 @@ import {
   type CustomerDerivedValues,
 } from './quoteSerializers';
 import { safeReturnTo, withReturnTo } from '@/app/crm/lib/returnTo';
+import type { WorkOrderReadinessIssue } from '@/lib/domains/crm/workOrderReadiness';
+import WorkOrderReadinessNotice from '@/app/crm/components/WorkOrderReadinessNotice';
 import { resolveCrmContact } from '@/lib/domains/crm/contacts';
 import {
   buildMeasurementLines,
@@ -1137,6 +1139,10 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
   // beforeunload text can't be customised, so we show our own dialog where we can). Holds the
   // intended destination so the same dialog serves the back button AND intercepted link clicks.
   const [pendingLeaveHref, setPendingLeaveHref] = useState<string | null>(null);
+  // Vad som saknas innan offerten kan bli en arbetsorder. Hämtas från servern i stället för att
+  // räknas ut här: adress, telefon och org.nr bor på kundkortet och finns inte i formulärets draft,
+  // och en andra uppsättning regler i klienten hade förr eller senare sagt emot spärren.
+  const [readiness, setReadiness] = useState<{ blockers: WorkOrderReadinessIssue[]; warnings: WorkOrderReadinessIssue[] } | null>(null);
   const [pnValue, setPnValue] = useState('');
   const [draft, setDraft] = useState<QuoteDraft>(initialDraft);
   // Accordion: id of the single open article row. Starts on the empty starter row; adding
@@ -2033,6 +2039,15 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
           setRotPropertyPromptOpen(true);
           return;
         }
+        // Fler än ett fynd: visa hela listan i stället för en prompt som bara lagar en sak. Listan
+        // kommer med i svaret, så den som redan stod på sidan ser den uppdaterad direkt.
+        if (json?.errorDetails?.code === 'crm_work_order_incomplete') {
+          const details = json?.errorDetails?.details as { blockers?: WorkOrderReadinessIssue[]; warnings?: WorkOrderReadinessIssue[] } | undefined;
+          const blockers = details?.blockers ?? [];
+          setReadiness({ blockers, warnings: details?.warnings ?? [] });
+          toast.error(blockers.length > 1 ? `${blockers.length} uppgifter saknas innan arbetsordern kan skapas` : (json?.error || 'Uppgifter saknas'));
+          return;
+        }
         toast.error(json?.error || 'Kunde inte skapa arbetsorder');
         return;
       }
@@ -2144,6 +2159,30 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
       .catch(() => { /* tyst — TG är hjälpinformation, inte något offerten hänger på */ });
     return () => { cancelled = true; };
   }, [articleNumbersOnRows]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Checklistan hämtas när offerten är vunnen och ännu inte blivit en order — alltså precis när
+  // knappen är tänkt att gå att trycka på. Tyst vid fel: listan är hjälp på vägen, spärren sitter
+  // ändå på servern.
+  //
+  // ⚠️ Hooken måste ligga ovanför `if (loading)`-returnen nedan. En hook under en tidig return
+  // kraschar sidan med "Rendered more hooks than during the previous render" — se .eslintrc.json.
+  const readinessQuoteId =
+    isEditing && quoteId && loadedQuote?.status === 'won' && !loadedQuote?.work_order_id && !loadedQuote?.work_order_number
+      ? quoteId
+      : null;
+
+  useEffect(() => {
+    if (!readinessQuoteId) { setReadiness(null); return; }
+    let cancelled = false;
+    fetch(`/api/crm/quotes/${readinessQuoteId}/work-order`, { cache: 'no-store' })
+      .then((r) => r.json().catch(() => ({})))
+      .then((json) => {
+        if (cancelled || !json?.ok) return;
+        setReadiness({ blockers: json.data?.blockers ?? [], warnings: json.data?.warnings ?? [] });
+      })
+      .catch(() => { /* tyst — servern nekar ändå om något saknas */ });
+    return () => { cancelled = true; };
+  }, [readinessQuoteId]);
 
   // TG räknas på SAMMA belopp som visas på skärmen (effectiveRows.rowTotal), inte ur raden på nytt.
   // Formuläret prissätter auto-prissatta rader med sin egen stub medan pricing.ts ger dem 0 — räknade
@@ -2882,6 +2921,16 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
                   </button>
                 </div>
               </div>
+              {!hasWorkOrder && draft.status === 'won' && readiness ? (
+                <WorkOrderReadinessNotice
+                  className="mt-3"
+                  blockers={readiness.blockers}
+                  warnings={readiness.warnings}
+                  onOpenCustomerCard={
+                    loadedQuote.customer_id ? () => goToCustomerPage(`/crm/kunder/${loadedQuote.customer_id}`) : null
+                  }
+                />
+              ) : null}
             </div>
           ) : null}
 
