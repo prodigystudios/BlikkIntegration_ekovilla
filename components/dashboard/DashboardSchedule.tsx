@@ -8,8 +8,21 @@ import Textarea from '../ui/Textarea';
 import Badge from '../ui/Badge';
 import DashboardCardHeader from './DashboardCardHeader';
 import { crmJobToScheduleItem, type CrmJobRow } from '@/lib/domains/planning/myJobs';
-import { defaultScheduleDayIndex, scheduleWeekRange } from '@/lib/domains/planning/scheduleWeek';
+import { defaultScheduleDayIndex, scheduleWeekOffsetFor, scheduleWeekRange } from '@/lib/domains/planning/scheduleWeek';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
+
+// Vald vecka och vald dag bärs i adressfältet, inte bara i komponentens state.
+//
+// Ett CRM-jobb öppnas med en hård navigering till /arbetsorder/<id>, och fältvyns "← Tillbaka" är
+// ett vanligt history.back(). Startsidan monteras alltså om på vägen tillbaka, och utan de här
+// parametrarna landade installatören på dagens dag varje gång — den som ville gå igenom nästa
+// veckas jobb fick bläddra fram en vecka på nytt för varje arbetsorder.
+//
+// Veckan bärs som måndagens datum, se scheduleWeekOffsetFor. Dagen bärs som knappens index eftersom
+// den bara är meningsfull inom den vecka som står bredvid.
+const WEEK_PARAM = 'vecka';
+const DAY_PARAM = 'dag';
+const DAY_ALL = 'alla';
 
 const MONTHS_SHORT = ['jan', 'feb', 'mar', 'apr', 'maj', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'dec'];
 
@@ -64,6 +77,22 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
   const [currentUserName, setCurrentUserName] = useState<string | null>(null);
   // 0=mån .. 4=fre, null=alla. Svensk veckodag, inte serverns — se scheduleWeek.ts.
   const [dayIdx, setDayIdx] = useState<number | null>(() => defaultScheduleDayIndex());
+  // URL:en läses först i en effekt, aldrig i en state-initierare: sidan är force-dynamic och
+  // server-renderas, och servern har inget `window`. Ett `typeof window`-undantag i initieraren
+  // hade gett servern förvalet och klienten den sparade vyn — alltså en hydreringskrock på precis
+  // de knappar det handlar om. Flaggan håller också tillbaka jobbhämtningen tills vyn är känd, så
+  // vi inte hämtar fel vecka först och rätt vecka direkt efteråt.
+  const [viewRestored, setViewRestored] = useState(false);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const week = params.get(WEEK_PARAM);
+    if (week) setWeekOffset(scheduleWeekOffsetFor(week));
+    const day = params.get(DAY_PARAM);
+    if (day === DAY_ALL) setDayIdx(null);
+    else if (day && /^[0-4]$/.test(day)) setDayIdx(Number(day));
+    setViewRestored(true);
+  }, []);
 
   // Detail modal state
   const [detailOpen, setDetailOpen] = useState(false);
@@ -197,6 +226,23 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
   // lib/domains/planning/scheduleWeek.ts med tester (tests/planning/scheduleWeek.test.ts).
   const range = useMemo(() => scheduleWeekRange(weekOffset), [weekOffset]);
 
+  // replaceState, inte router.replace: startsidan är force-dynamic, så en router-navigering hade
+  // kostat en server-rundtur per tryck på en dagknapp. Och replace, inte push, så att "← Tillbaka"
+  // i arbetsordern tar dig till schemat och inte bakåt genom varje vecka du bläddrat förbi.
+  useEffect(() => {
+    if (!viewRestored) return;
+    const url = new URL(window.location.href);
+    // Står vyn på sitt förval städas parametrarna bort igen, så en vanlig startsida har en ren URL.
+    if (weekOffset === 0 && dayIdx === defaultScheduleDayIndex()) {
+      url.searchParams.delete(WEEK_PARAM);
+      url.searchParams.delete(DAY_PARAM);
+    } else {
+      url.searchParams.set(WEEK_PARAM, range.startISO);
+      url.searchParams.set(DAY_PARAM, dayIdx == null ? DAY_ALL : String(dayIdx));
+    }
+    window.history.replaceState({}, '', url.toString());
+  }, [viewRestored, weekOffset, dayIdx, range.startISO]);
+
   useEffect(() => {
     // Load current user and name
     (async () => {
@@ -220,6 +266,7 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
   }, [supabase]);
 
   useEffect(() => {
+    if (!viewRestored) return;
     let cancelled = false;
     (async () => {
       setLoading(true);
@@ -246,7 +293,7 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
       }
     })();
     return () => { cancelled = true; };
-  }, [supabase, range.startISO, range.endISO]);
+  }, [supabase, viewRestored, range.startISO, range.endISO]);
 
   // Enrich items with per-segment sort_index (used for ordering, same as Planning page)
   useEffect(() => {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { defaultScheduleDayIndex, scheduleWeekRange } from '@/lib/domains/planning/scheduleWeek';
+import { defaultScheduleDayIndex, scheduleWeekOffsetFor, scheduleWeekRange } from '@/lib/domains/planning/scheduleWeek';
 
 // Startsidans arbetsschema läste tidigare `new Date()` med lokala getters. Sidan är force-dynamic,
 // alltså server-renderad före hydrering, och servern går på UTC — så mellan 00:00 och 02:00 svensk
@@ -69,5 +69,52 @@ describe('defaultScheduleDayIndex', () => {
   it('⚠️ måndag 01:30 svensk tid väljer måndag, inte helgens "Alla"', () => {
     // Samma instant som veckotestet ovan: UTC säger söndag, Sverige säger måndag.
     expect(defaultScheduleDayIndex(new Date('2026-08-16T23:30:00Z'))).toBe(0);
+  });
+});
+
+// Vyn (vecka + dag) bärs i startsidans URL så att den överlever resan ut till en arbetsorder och
+// tillbaka. Veckan bärs som måndagens datum just för att en offset betyder olika veckor beroende
+// på när den läses tillbaka — testerna nedan är regressionsskyddet för det.
+describe('scheduleWeekOffsetFor', () => {
+  it('ger 0 för en dag i innevarande vecka', () => {
+    // Onsdag 2026-08-12 → veckan som börjar måndag 2026-08-10.
+    expect(scheduleWeekOffsetFor('2026-08-10', new Date('2026-08-12T10:00:00Z'))).toBe(0);
+  });
+
+  it('räknar steg bakåt och framåt', () => {
+    const now = new Date('2026-08-12T10:00:00Z');
+    expect(scheduleWeekOffsetFor('2026-08-17', now)).toBe(1);
+    expect(scheduleWeekOffsetFor('2026-08-31', now)).toBe(3);
+    expect(scheduleWeekOffsetFor('2026-08-03', now)).toBe(-1);
+  });
+
+  it('är motsatsen till scheduleWeekRange för varje steg', () => {
+    const now = new Date('2026-08-12T10:00:00Z');
+    for (const offset of [-8, -1, 0, 1, 5, 20]) {
+      expect(scheduleWeekOffsetFor(scheduleWeekRange(offset, now).startISO, now)).toBe(offset);
+    }
+  });
+
+  it('⚠️ håller steget över en sommartidsväxling (veckan är 23 respektive 25 timmar)', () => {
+    // Sista söndagen i mars och i oktober 2026: 29/3 (UTC+1 → +2) och 25/10 (UTC+2 → +1).
+    const beforeSpring = new Date('2026-03-25T10:00:00Z');
+    expect(scheduleWeekOffsetFor(scheduleWeekRange(1, beforeSpring).startISO, beforeSpring)).toBe(1);
+    const beforeAutumn = new Date('2026-10-21T10:00:00Z');
+    expect(scheduleWeekOffsetFor(scheduleWeekRange(1, beforeAutumn).startISO, beforeAutumn)).toBe(1);
+    // Och över hela växlingen, inte bara ett steg.
+    expect(scheduleWeekOffsetFor('2026-10-26', beforeSpring)).toBe(31);
+  });
+
+  it('normaliserar en dag mitt i veckan till samma steg som dess måndag', () => {
+    // URL:en skrivs alltid med måndagen, men en handredigerad adress ska inte hamna snett.
+    const now = new Date('2026-08-12T10:00:00Z');
+    expect(scheduleWeekOffsetFor('2026-08-23', now)).toBe(1); // söndagen i vecka 34
+  });
+
+  it('⚠️ faller tillbaka på denna vecka vid skräpindata i stället för att bygga ett NaN-intervall', () => {
+    const now = new Date('2026-08-12T10:00:00Z');
+    for (const raw of ['', 'imorgon', '2026-8-10', '2026-13-01', '2026-02-30', '10-08-2026']) {
+      expect(scheduleWeekOffsetFor(raw, now)).toBe(0);
+    }
   });
 });
