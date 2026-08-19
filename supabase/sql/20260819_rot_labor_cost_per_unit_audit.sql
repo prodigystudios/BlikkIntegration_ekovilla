@@ -31,7 +31,7 @@ with rader as (
   select
     'arbetsorder',
     w.id,
-    w.work_order_number,
+    w.order_number,
     w.status,
     w.created_at,
     li.ord,
