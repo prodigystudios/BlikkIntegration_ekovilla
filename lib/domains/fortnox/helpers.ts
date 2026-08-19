@@ -46,6 +46,43 @@ export function splitRotMaterialRow(
   return { materialUnitPrice, labour };
 }
 
+// Husarbete-fälten för EN rad på ett dokument: skickas BARA på rader vi själva menar är arbete,
+// och bara på ROT-dokument. Allt annat utelämnas helt.
+//
+// Regeln ser försiktig ut och är det med flit. Tre mätningar mot Fortnox 2026-08-19 ligger bakom
+// den, och två av dem motbevisade var sin rimlig idé. Läs dem innan du breddar något här.
+//
+// 1. ⚠️ INGENTING PÅ ETT ICKE-ROT-DOKUMENT. Ett icke-ROT-dokument (`TaxReductionType: 'none'`)
+//    nekar VILKEN husarbetestyp som helst — även den tomma — med 2004021. Se
+//    FORTNOX_INTEGRATION.md sekt. 4 punkt 2.
+//
+// 2. 🧨 `HouseWork: false` SKICKAS ALDRIG. Mätt: artikel 1058 (Arbetskostnad per man,
+//    husarbete-flaggad i Fortnox) lades som en vanlig rad utan kryss, och vårt uttryckliga `false`
+//    TOG BORT artikelns flagga. Dokumentationens påstående att artikelflaggan ärvs "oavsett vad vi
+//    skickar" gäller alltså bara när vi är TYSTA — den står inte emot ett uttryckligt `false`.
+//    Följden hade varit tyst: varje monterings- och framkörningsrad (1012, 1024–1026, 1058, 1068)
+//    utan kryss hade tappat sitt ROT-avdrag, och det syns inte hos oss — bara på dokumentet.
+//
+// 3. 🧨 EN TYP UTAN FLAGGA BLIR ÄNDÅ HUSARBETE. Mätt, och den stängde en hel designidé:
+//    redovisningen ville ha `HouseWorkType` på materialrader (utan flagga) för att ROT-underlaget
+//    skulle bli rätt. Det såg ut att fungera — materialraden kom in som Bygg utan flagga — men vid
+//    NÄSTA radändring omvaliderar Fortnox dokumentet och befordrar varje rad som bär en typ till
+//    husarbete. Andra pushen hade flaggat materialet, alltså ROT på material, vilket inte är
+//    tillåtet. Att det inte syns förrän en omvalidering sker är samma fördröjda felklass som
+//    beskrivs i FORTNOX_INTEGRATION.md sekt. 4 punkt 3.
+//
+//    ⇒ En typ kan alltså inte sättas på en rad som inte ska vara husarbete. Vill man ha en typ på
+//      materialrader måste den sitta på ARTIKELN i Fortnox — med den kända följden att artikeln
+//      sedan nekar varje icke-ROT-dokument den hamnar på. Det är en verksamhetsavvägning, inte en
+//      kodfråga.
+export function rotRowHouseWork(
+  item: { is_rot_work?: boolean | null; house_work_type?: string | null },
+  rotEnabled: boolean,
+): { HouseWork: true; HouseWorkType: string } | null {
+  if (!rotEnabled || !item.is_rot_work) return null;
+  return { HouseWork: true, HouseWorkType: item.house_work_type || DEFAULT_ROT_HOUSE_WORK_TYPE };
+}
+
 // The aggregated "Arbetskostnad ROT" husarbete row appended to a ROT document once material rows
 // have carved out labour. Returns null when nothing was carved (so no empty row is emitted). The
 // shape is quantity-agnostic: each builder spreads the quantity key it needs (offers → Quantity,

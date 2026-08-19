@@ -9,9 +9,8 @@ import { OFFER_PDF_MODE, mayRenderLocally, shouldRenderLocally } from './offerPd
 import type {
   FortnoxCompanySettingsResponse, FortnoxOfferResponse, FortnoxTaxReductionResponse,
 } from './offerPdf';
-import { appendFortnoxTextNote, buildRotPropertyNote, claimFortnoxPush, resolveOurReference, resolveReverseVat, rotLaborRow, rowRotLaborCarveout, splitRotMaterialRow } from './helpers';
+import { appendFortnoxTextNote, buildRotPropertyNote, claimFortnoxPush, resolveOurReference, resolveReverseVat, rotLaborRow, rotRowHouseWork, rowRotLaborCarveout, splitRotMaterialRow } from './helpers';
 import { buildFortnoxCustomerPayload, createFortnoxCustomer, splitSwedishName, buildFortnoxAddress, type FortnoxCustomerSource } from './customers';
-import { DEFAULT_ROT_HOUSE_WORK_TYPE } from './types';
 
 type QuoteLineItem = {
   article_number?: string | null;
@@ -174,17 +173,15 @@ export function buildOfferRows(
         row.Discount = discount;
         row.DiscountType = 'PERCENT';
       }
-      // Mark a row as husarbete ONLY on a ROT document. Do NOT send `HouseWork: false` on non-ROT
-      // rows: Fortnox then stamps the row with an empty husarbete type ('EMPTYHOUSEWORK') and a
-      // non-ROT document (TaxReductionType 'none') rejects ANY husarbete type — even the empty one
-      // (error 2004021). Omitting it is the behaviour that syncs cleanly.
-      // NOTE: if an article is configured as a husarbete article in Fortnox, Fortnox inherits that
-      // on the row regardless — the only fix for that is to turn husarbete OFF on the article in
-      // Fortnox; it can't be overridden from the row here.
-      if (rotEnabled && item.is_rot_work) {
-        row.HouseWork = true;
-        row.HouseWorkType = item.house_work_type || DEFAULT_ROT_HOUSE_WORK_TYPE;
-      }
+    }
+    // Husarbete bara på rader vi själva menar är arbete, och bara på ROT-dokument. Regeln bor i
+    // rotRowHouseWork — läs de tre mätningarna där innan du breddar något här; två rimliga idéer
+    // har redan prövats mot skarp Fortnox och fallit. Den utbrutna materialraden ovan får varken
+    // flagga eller typ.
+    const houseWork = rotRowHouseWork(item, rotEnabled);
+    if (houseWork) {
+      row.HouseWork = houseWork.HouseWork;
+      row.HouseWorkType = houseWork.HouseWorkType;
     }
 
     // Measurement (m² + thickness) and the per-row free text (Radtext) go into a SINGLE text row

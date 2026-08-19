@@ -3,8 +3,7 @@ import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
 import { lineItemUnitPrice, lineItemDiscountPercent, lineItemRowTotal } from '@/lib/domains/crm/pricing';
 import { fortnoxGet, fortnoxGetBinary, fortnoxPost, fortnoxPut, FortnoxApiError, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
 import { activeLineItems } from './partialInvoices';
-import { appendFortnoxTextNote, claimFortnoxPush, resolveOurReference, resolveReverseVat, resolveRotReference, rotLaborRow, rowRotLaborCarveout, splitRotMaterialRow } from './helpers';
-import { DEFAULT_ROT_HOUSE_WORK_TYPE } from './types';
+import { appendFortnoxTextNote, claimFortnoxPush, resolveOurReference, resolveReverseVat, resolveRotReference, rotLaborRow, rotRowHouseWork, rowRotLaborCarveout, splitRotMaterialRow } from './helpers';
 
 // The point-in-time customer data carried on both the quote and the work order. Named once
 // because the header builder below has to read the same shape off either of them.
@@ -154,13 +153,10 @@ export function buildOrderRows(allLineItems: WorkOrderRow['line_items'], vatPerc
       // book discount_percent as a kronor discount and diverge from the CRM total. Dropped on a
       // carved material row (baked into the price above).
       ...(carve === 0 && discount > 0 ? { Discount: discount, DiscountType: 'PERCENT' as const } : {}),
-      // Husarbete only on a ROT document, and only for rows flagged fully as ROT work (a carved
-      // material row is NOT husarbete). Do NOT send HouseWork:false on non-ROT rows — Fortnox
-      // stamps an empty husarbete type ('EMPTYHOUSEWORK') that a non-ROT document rejects
-      // (2004021). See offers.ts. A husarbete-configured article is fixed in Fortnox, not here.
-      ...(carve === 0 && rotEnabled && item.is_rot_work
-        ? { HouseWork: true, HouseWorkType: item.house_work_type || DEFAULT_ROT_HOUSE_WORK_TYPE }
-        : {}),
+      // Husarbete bara på rader vi själva menar är arbete, och bara på ROT-dokument. Regeln bor i
+      // rotRowHouseWork — läs de tre mätningarna där innan du breddar något här; två rimliga idéer
+      // har redan prövats mot skarp Fortnox och fallit.
+      ...(rotRowHouseWork(item, rotEnabled) ?? {}),
     };
     // The per-row free text (Radtext) gets its own text row — only when an article name is
     // present, since otherwise it is already the row Description (the fallback above).

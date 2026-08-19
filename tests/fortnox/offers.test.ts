@@ -136,19 +136,44 @@ describe('buildOfferRows', () => {
     expect(noDiscount.DiscountType).toBeUndefined();
   });
 
-  it('sets HouseWork only for ROT rows, and OMITS it otherwise (never sends false)', () => {
+  it('sätter husarbete BARA på rader vi själva menar är arbete', () => {
     const [rotRow] = buildOfferRows([{ unit_price: '100', quantity: '1', is_rot_work: true }], 25, true);
     expect(rotRow.HouseWork).toBe(true);
     expect(rotRow.HouseWorkType).toBe('CONSTRUCTION');
 
-    // A non-ROT row must NOT carry HouseWork at all — sending false makes Fortnox stamp an empty
-    // husarbete type ('EMPTYHOUSEWORK') that a non-ROT document rejects (2004021).
-    const [notRot] = buildOfferRows([{ unit_price: '100', quantity: '1', is_rot_work: false }], 25, true);
-    expect(notRot.HouseWork).toBeUndefined();
-    expect(notRot.HouseWorkType).toBeUndefined();
+    // 🧨 En rad som INTE är arbete får varken flagga eller typ. Att lägga en typ där (utan flagga)
+    // prövades 2026-08-19 på redovisningens begäran och FUNGERADE INTE: raden kom visserligen in som
+    // Bygg utan flagga, men vid nästa radändring omvaliderar Fortnox dokumentet och befordrar varje
+    // rad som bär en typ till husarbete. Andra pushen hade alltså begärt ROT på materialet.
+    // (Vakten för en UTBRUTEN materialrad ligger i carve-out-testerna längre ner.)
+    const [material] = buildOfferRows([{ unit_price: '100', quantity: '1', is_rot_work: false }], 25, true);
+    expect(material.HouseWork).toBeUndefined();
+    expect(material.HouseWorkType).toBeUndefined();
+  });
 
-    const [rotDisabled] = buildOfferRows([{ unit_price: '100', quantity: '1', is_rot_work: true }], 25, false);
-    expect(rotDisabled.HouseWork).toBeUndefined();
+  it('skickar ALDRIG HouseWork: false — artikelns egen flagga måste få råda', () => {
+    // 🧨 Mätt 2026-08-19: artikel 1058 är husarbete-flaggad i Fortnox, och ett uttryckligt `false`
+    // från oss TOG BORT den flaggan. Varje monterings- och framkörningsrad utan kryss hade tyst
+    // tappat sitt ROT-avdrag — och det syns inte hos oss, bara på dokumentet.
+    const rows = buildOfferRows([
+      { unit_price: '100', quantity: '1', is_rot_work: false },
+      { unit_price: '100', quantity: '1' },
+      { unit_price: '100', quantity: '10', labor_cost: '40' },
+    ], 25, true);
+    for (const row of rows) expect(row.HouseWork).not.toBe(false);
+  });
+
+  it('OMITTERAR husarbete-fälten helt på ett icke-ROT-dokument', () => {
+    // ⚠️ Ett icke-ROT-dokument nekar VILKEN husarbetestyp som helst — även den tomma (2004021).
+    for (const item of [
+      { unit_price: '100', quantity: '1', is_rot_work: true },
+      { unit_price: '100', quantity: '1', is_rot_work: false },
+      { unit_price: '100', quantity: '1', is_rot_work: true, house_work_type: 'ELECTRICITY' },
+    ]) {
+      const [row] = buildOfferRows([item], 25, false);
+      expect(row.HouseWork, JSON.stringify(item)).toBeUndefined();
+      expect(row.HouseWorkType, JSON.stringify(item)).toBeUndefined();
+    }
   });
 
   it('uses each row\'s own HouseWorkType, defaulting to CONSTRUCTION', () => {
@@ -182,7 +207,8 @@ describe('buildOfferRows – ROT labour carve-out', () => {
     // Material reduced by the carved labour: 20000 net − 8000 = 12000 over 100 units = 120/unit.
     expect(material.Price).toBeCloseTo(120, 6);
     expect(material.Quantity).toBe(100);
-    expect(material.HouseWork).toBeUndefined(); // material is never husarbete
+    expect(material.HouseWork).toBeUndefined();      // material är aldrig husarbete
+    expect(material.HouseWorkType).toBeUndefined();
     // Aggregated labour row: the carved sum on article 10058, flagged husarbete Bygg.
     expect(labor.ArticleNumber).toBe(ROT_LABOR_ARTICLE_NUMBER);
     expect(labor.Description).toBe('Arbetskostnad ROT');
