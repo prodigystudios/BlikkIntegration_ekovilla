@@ -1,3 +1,15 @@
+// The standing Fortnox article that aggregated per-row ROT labour is booked to. A ROT deduction
+// may only be claimed on the LABOUR portion, not material — so labour carved out of material rows
+// (each row's `labor_cost`) is summed onto this single husarbete row instead of flagging the
+// material rows themselves. Rows a seller marks fully as ROT work (is_rot_work) keep their own
+// article/price/type and are NOT folded in here.
+//
+// ⚠️ Bor HÄR och inte i helpers.ts för att offertformuläret ska kunna visa raden med samma
+// artikelnummer och benämning som pushen skickar. helpers.ts importerar getSupabaseAdmin och kan
+// därför aldrig nå en klientkomponent; types.ts är bieffektsfri och importeras redan därifrån.
+export const ROT_LABOR_ARTICLE_NUMBER = '10058';
+export const ROT_LABOR_DESCRIPTION = 'Arbetskostnad ROT';
+
 // Fortnox OAuth token response from /oauth-v1/token
 export type FortnoxTokenResponse = {
   access_token: string;

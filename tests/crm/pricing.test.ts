@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   lineItemRowTotal, computePricing, resolveQuoteVatBreakdown, quoteAmountDisplay,
-  rowMarginPercent, marginTier, quoteMargin, MARGIN_THRESHOLDS,
+  rowMarginPercent, marginTier, quoteMargin, splitRowLabor, lineItemRotLabor, MARGIN_THRESHOLDS,
 } from '@/lib/domains/crm/pricing';
 
 describe('lineItemRowTotal', () => {
@@ -90,15 +90,29 @@ describe('computePricing', () => {
     expect(p.subtotal).toBe(10000);
   });
 
-  it('ROT base clamps labor_cost to the row total', () => {
-    // labor_cost 99999 on a 1000 row → base is the 1000 row, not 99999.
-    // 1000 incl 25% = 1250; 30% = 375.
+  it('ger NOLL ROT-underlag när arbetet äter hela A-priset', () => {
+    // ⚠️ Faller åt det säkra hållet. Ett arbetsbelopp som lämnar noll material är ett datafel — en
+    // rad sparad under den gamla klumpbeloppstolkningen, eller ett A-pris satt till bara
+    // materialdelen. Att räkna hela raden som arbete hade begärt ROT på material, vilket inte är
+    // tillåtet. Offertformuläret spärrar sparningen; här bryts helt enkelt inget ut.
     const p = computePricing(
       [{ pricing_mode: 'item', quantity: '1', unit_price: '1000', labor_cost: '99999' }],
       25,
       { isPrivate: true, rot: { enabled: true, rot_percent: 30, max_deduction: 50000 } },
     );
-    expect(p.rotDeduction).toBe(375);
+    expect(p.rotDeduction).toBe(0);
+    // Radpriset rörs INTE — bara utbrytningen uteblir. Offerten är fortfarande på 1 000 kr.
+    expect(p.subtotal).toBe(1000);
+  });
+
+  it('räknar ROT-underlaget på en giltig utbrytning', () => {
+    // 300 kr/enhet arbete av A-priset 1 000 → 300 kr, inkl 25 % moms 375, 30 % = 112.
+    const p = computePricing(
+      [{ pricing_mode: 'item', quantity: '1', unit_price: '1000', labor_cost: '300' }],
+      25,
+      { isPrivate: true, rot: { enabled: true, rot_percent: 30, max_deduction: 50000 } },
+    );
+    expect(p.rotDeduction).toBe(112);
   });
 });
 
@@ -279,5 +293,156 @@ describe('quoteMargin', () => {
     const result = quoteMargin([{ revenue: 0, quantity: 0, purchasePrice: null }]);
     expect(result.unpricedRows).toBe(0);
     expect(result.marginPercent).toBeNull();
+  });
+});
+
+// ─── ROT: arbete i TG:n ────────────────────────────────────────────────────────
+//
+// En ROT-offert bryter ut arbetet ur priset. Arbete köps inte in, så det saknar inköpspris — och
+// tidigare lyftes varje rad utan inköpspris ut ur BÅDA summorna. Eftersom arbete är nästan ren
+// marginal drog det ner den sammanvägda siffran hårt. Reglerna nedan är beslutade av William
+// 2026-08-19; se MarginRow.isLabor.
+describe('splitRowLabor', () => {
+  it('räknar arbetskostnaden mot antalet — den är ett à-pris', () => {
+    // ⚠️ REGRESSIONSVAKT MOT EN RIKTIG BUGG (rättad 2026-08-19). Fältet lästes som ett klumpbelopp
+    // för hela raden: 500 kr arbete gav 500 kr vare sig raden var 10 m³ eller 30 m³, så ROT-avdraget
+    // frös vid samma krontal hur stort jobbet än blev.
+    const tio = splitRowLabor({ laborCostPerUnit: '500', unitPrice: 1500, discountPercent: 0, quantity: 10 });
+    const trettio = splitRowLabor({ laborCostPerUnit: '500', unitPrice: 1500, discountPercent: 0, quantity: 30 });
+    expect(tio.labor).toBe(5000);
+    expect(trettio.labor).toBe(15000);
+    expect(trettio.labor).toBe(tio.labor * 3);
+  });
+
+  it('bryter UT arbetet ur A-priset — det läggs aldrig till', () => {
+    // A-pris 500 kr/m³ varav 200 arbete är en rad på 500 kr/m³, inte 700.
+    const split = splitRowLabor({ laborCostPerUnit: '200', unitPrice: 500, discountPercent: 0, quantity: 60 });
+    expect(split.rowTotal).toBe(30000);
+    expect(split.labor).toBe(12000);
+    expect(split.material).toBe(18000);
+    expect(split.labor + split.material).toBe(split.rowTotal);
+  });
+
+  it('låter rabatten träffa arbete och material lika', () => {
+    // ROT får bara begäras på det som faktiskt debiteras, så en rabatterad rad har rabatterat arbete.
+    const split = splitRowLabor({ laborCostPerUnit: '200', unitPrice: 500, discountPercent: 10, quantity: 60 });
+    expect(split.rowTotal).toBeCloseTo(27000, 6);
+    expect(split.labor).toBeCloseTo(10800, 6);
+    expect(split.material).toBeCloseTo(16200, 6);
+  });
+
+  it('bryter ut NOLL när arbetet äter hela A-priset', () => {
+    // ⚠️ Faller åt det säkra hållet. Att kapa till A-priset hade gjort hela materialraden till
+    // arbete och skickat ett dokument som begär ROT på material — inte tillåtet. Två verkliga vägar
+    // hit: en rad sparad under den gamla klumpbeloppstolkningen, och ett A-pris satt till bara
+    // materialdelen med arbetet skrivet som påslag.
+    for (const belopp of ['900', '500']) {
+      const split = splitRowLabor({ laborCostPerUnit: belopp, unitPrice: 500, discountPercent: 0, quantity: 60 });
+      expect(split.leavesNoMaterial, belopp).toBe(true);
+      expect(split.labor, belopp).toBe(0);
+      expect(split.material, belopp).toBe(30000);
+    }
+  });
+
+  it('läser svenska kommadecimaler', () => {
+    expect(splitRowLabor({ laborCostPerUnit: '199,50', unitPrice: 500, discountPercent: 0, quantity: 2 }).labor)
+      .toBeCloseTo(399, 6);
+  });
+
+  it('ger noll arbete för tomt, nollat eller negativt belopp', () => {
+    for (const input of ['', null, undefined, '0', '-500']) {
+      const split = splitRowLabor({ laborCostPerUnit: input, unitPrice: 500, discountPercent: 0, quantity: 60 });
+      expect(split.labor, String(input)).toBe(0);
+      expect(split.material, String(input)).toBe(30000);
+      expect(split.leavesNoMaterial, String(input)).toBe(false);
+    }
+  });
+
+  it('klarar en rad utan pris eller antal utan att gå negativt', () => {
+    expect(splitRowLabor({ laborCostPerUnit: '200', unitPrice: 0, discountPercent: 0, quantity: 60 }).labor).toBe(0);
+    expect(splitRowLabor({ laborCostPerUnit: '200', unitPrice: 500, discountPercent: 0, quantity: 0 }).labor).toBe(0);
+  });
+});
+
+describe('lineItemRotLabor', () => {
+  it('härleder antalet ur m² × tjocklek för en m³-rad', () => {
+    // 100 m² × 200 mm = 20 m³ × 150 kr/m³ arbete = 3 000 kr.
+    expect(lineItemRotLabor({
+      pricing_mode: 'm3', m2: '100', thickness_mm: '200', unit_price: '1500', labor_cost: '150',
+    })).toBeCloseTo(3000, 6);
+  });
+
+  it('följer med när måtten växer', () => {
+    const litet = lineItemRotLabor({ pricing_mode: 'm3', m2: '50', thickness_mm: '200', unit_price: '1500', labor_cost: '150' });
+    const stort = lineItemRotLabor({ pricing_mode: 'm3', m2: '150', thickness_mm: '200', unit_price: '1500', labor_cost: '150' });
+    expect(stort).toBeCloseTo(litet * 3, 6);
+  });
+});
+
+describe('TG på ROT-offerter', () => {
+  it('den utbrutna arbetskostnaden ändrar inte TG:n — den ingår redan', () => {
+    // ⚠️ REGRESSIONSVAKT MOT EN FELDIAGNOS. Fältet "Varav arbetskostnad (ROT, kr)" BRYTER UT arbetet
+    // ur radpriset utan att ändra radtotalen: 150 000 kr förblir 150 000 kr, och först vid
+    // Fortnox-pushen delas raden i material + "Arbetskostnad ROT" (art. 10058). Intäkten som skickas
+    // hit innehåller alltså redan arbetet, medan kostnaden bara är materialets — arbetsdelen får
+    // full TG av sig själv.
+    //
+    // Att läsa `labor_cost` här och dra av det vore alltså inte en fix utan en NY bugg: TG:n skulle
+    // falla från 46,7 % till 20 % på precis de offerter felet påstods gälla.
+    const heltRadprisetInklArbete = quoteMargin([
+      { revenue: 150000, quantity: 100, purchasePrice: 800 },
+    ]);
+    expect(heltRadprisetInklArbete.marginPercent).toBeCloseTo(46.667, 3);
+    expect(heltRadprisetInklArbete.unpricedRows).toBe(0);
+  });
+
+  it('räknar en arbetsrad utan inköpspris som full TG i stället för att utesluta den', () => {
+    // Material 100 000 mot 80 000 inköp (20 %) + 50 000 arbete utan inköpskostnad.
+    // Före regeln uteslöts arbetsraden och säljaren såg 20 % — en röd offert som krävde
+    // säljchefsgodkännande fast den sanna blandade TG:n är 46,7 %.
+    const result = quoteMargin([
+      { revenue: 100000, quantity: 100, purchasePrice: 800 },
+      { revenue: 50000, quantity: 1, purchasePrice: null, isLabor: true },
+    ]);
+    expect(result.marginPercent).toBeCloseTo(46.667, 3);
+    expect(result.revenue).toBe(150000);
+    expect(result.cost).toBe(80000);
+    // Arbetsraden är BEDÖMD, inte obedömbar — annars hade upplysningen "1 rad saknar inköpspris"
+    // stått kvar under en siffra som faktiskt räknar med raden.
+    expect(result.unpricedRows).toBe(0);
+    expect(result.unpricedRevenue).toBe(0);
+  });
+
+  it('låter en arbetsrad SOM HAR inköpspris räkna sin kostnad som vanligt', () => {
+    // Kryssrutan går att sätta på vilken rad som helst. Hade isLabor nollat kostnaden rakt av
+    // skulle en materialrad som råkat kryssas tappa hela sitt inköp och lysa 100 %.
+    const result = quoteMargin([
+      { revenue: 1000, quantity: 1, purchasePrice: 600, isLabor: true },
+    ]);
+    expect(result.marginPercent).toBeCloseTo(40, 6);
+    expect(result.cost).toBe(600);
+  });
+
+  it('håller MATERIAL utan inköpspris utanför även när offerten är ROT', () => {
+    // Regeln gäller arbete, inte "allt utan inköpspris". 61 av 289 artiklar saknar inköpspris, och
+    // att räkna dem som kostnadsfria är just den farligt optimistiska siffran quoteMargin undviker.
+    const result = quoteMargin([
+      { revenue: 1000, quantity: 1, purchasePrice: 600 },
+      { revenue: 9000, quantity: 3, purchasePrice: null },
+    ]);
+    expect(result.marginPercent).toBeCloseTo(40, 6);
+    expect(result.unpricedRows).toBe(1);
+    expect(result.unpricedRevenue).toBe(9000);
+  });
+
+  it('ger radmärket 100 % på en arbetsrad utan inköpspris', () => {
+    expect(rowMarginPercent({ revenue: 50000, quantity: 1, purchasePrice: null, isLabor: true })).toBe(100);
+    // Utan antal också — arbete prissätts ibland som klumpsumma, och kostnaden är noll oavsett.
+    expect(rowMarginPercent({ revenue: 50000, quantity: 0, purchasePrice: null, isLabor: true })).toBe(100);
+  });
+
+  it('ger fortfarande null för en tom arbetsrad', () => {
+    // En nyss tillagd rad med kryssrutan i ska inte lysa grönt innan säljaren skrivit ett pris.
+    expect(rowMarginPercent({ revenue: 0, quantity: 0, purchasePrice: null, isLabor: true })).toBeNull();
   });
 });

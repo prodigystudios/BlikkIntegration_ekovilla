@@ -8,14 +8,15 @@ import DatePicker from '../../../components/ui/DatePicker';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
 import { parseDecimal } from '@/lib/shared/number';
-import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
+import { lineItemQuantity, isBlankLineItem } from '@/lib/domains/crm/lineItems';
 import {
-  rowMarginPercent, marginTier, quoteMargin, MARGIN_THRESHOLDS,
+  rowMarginPercent, marginTier, quoteMargin, splitRowLabor, MARGIN_THRESHOLDS,
   type MarginRow, type MarginTier,
 } from '@/lib/domains/crm/pricing';
 import { crm } from '@/app/crm/lib/crmTokens';
 import AddressAutocompleteInput from '@/app/crm/components/AddressAutocompleteInput';
 import CrmModal from '@/app/crm/components/CrmModal';
+import CrmConfirmDialog from '@/app/crm/components/CrmConfirmDialog';
 import { formatPersonalNumber, isValidPersonalNumber, PERSONAL_NUMBER_ERROR } from '@/lib/domains/crm/personalNumber';
 import { DndContext, closestCenter, PointerSensor, TouchSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy, arrayMove, useSortable } from '@dnd-kit/sortable';
@@ -42,7 +43,7 @@ import {
   hasMeasurementBlock,
   replaceMeasurementBlock,
 } from '@/lib/domains/crm/measurementBlock';
-import { ROT_HOUSE_WORK_TYPES } from '@/lib/domains/fortnox/types';
+import { ROT_HOUSE_WORK_TYPES, ROT_LABOR_ARTICLE_NUMBER, ROT_LABOR_DESCRIPTION } from '@/lib/domains/fortnox/types';
 
 // Swedish labels for the Fortnox ROT HouseWorkType codes shown in the ROT section.
 const ROT_HOUSE_WORK_LABELS: Record<(typeof ROT_HOUSE_WORK_TYPES)[number], string> = {
@@ -90,8 +91,13 @@ type QuoteLineItem = {
   line_note: string;
   is_rot_work: boolean;
   house_work_type: string;
-  // Labour carved out of a material row for ROT (kr, ex VAT). Summed onto a single "Arbetskostnad
-  // ROT" row on the Fortnox document; the material row is reduced by it so the total is unchanged.
+  // Labour carved out of a material row for ROT, as kr PER UNIT ex VAT — ett à-pris precis som
+  // `unit_price`, som räknas mot antalet. Summeras till en enda "Arbetskostnad ROT"-rad på
+  // Fortnox-dokumentet; materialraden sänks med lika mycket, så totalen är oförändrad.
+  //
+  // ⚠️ Det är en UTBRYTNING ur A-priset, inte ett tillägg: A-priset är HELA priset och det här
+  // beloppet den del av det som är arbete. Äter beloppet hela A-priset bryts ingenting ut och
+  // sparningen spärras — se splitRowLabor i lib/domains/crm/pricing.ts, som äger tolkningen.
   labor_cost: string;
   density: string;
 };
@@ -218,6 +224,13 @@ type EffectiveRow = QuoteLineItem & {
   label: string;
   mode: 'm3' | 'item';
   rowTotal: number;
+  // Radens utbrutna ROT-arbetskostnad i kronor (labor_cost per enhet × antal, rabatt inräknad).
+  // Räknas här av samma skäl som rowTotal: formuläret prissätter auto-rader med sin egen stub, och
+  // pricing.ts lineItemRotLabor hade gett dem 0. Se splitRowLabor.
+  rotLabor: number;
+  // Arbetskostnaden är högre än A-priset → ingen utbrytning sker. Spärrar sparningen; se
+  // getValidationIssues och splitRowLabor.
+  rotLaborLeavesNoMaterial: boolean;
   isConfigured: boolean;
 };
 
@@ -427,6 +440,20 @@ function getValidationIssues(draft: QuoteDraft, effectiveRows: EffectiveRow[]) {
   if (hasAnyLineItemInput) {
     const hasInvalidRow = effectiveRows.some((item) => item.isConfigured && (!(item.amount > 0) || !(item.effectiveUnit >= 0)));
     if (hasInvalidRow) issues.push('Ofullständiga rader — mängd och pris krävs');
+  }
+  // Spärr, inte en varning. En arbetskostnad över A-priset bryter inte ut något (se splitRowLabor),
+  // så offerten skulle gå till Fortnox utan det ROT-underlag säljaren tror att den har. Det gäller
+  // varenda rad som sparats under den gamla tolkningen, där beloppet var ett klumpbelopp för hela
+  // raden — de dyker upp här i samma stund någon öppnar offerten, i stället för att märkas när
+  // kunden undrar var avdraget tog vägen.
+  if (draft.quote_type === 'private' && draft.rot_enabled) {
+    const over = effectiveRows.filter((r) => r.isConfigured && !r.is_rot_work && r.rotLaborLeavesNoMaterial);
+    if (over.length) {
+      const rader = over.map((r) => effectiveRows.indexOf(r) + 1).join(', ');
+      issues.push(
+        `${over.length === 1 ? 'Rad' : 'Rader'} ${rader}: arbetskostnaden äter hela A-priset — inget material blir kvar`,
+      );
+    }
   }
   return issues;
 }
@@ -926,6 +953,48 @@ function MarginBadge({ marginPercent, className }: { marginPercent: number | nul
   );
 }
 
+// Hur "Varav arbetskostnad" delar radens pris, i klartext under fältet.
+//
+// Två saker har lästs fel i verkligheten, och raden här finns för att båda ska synas direkt:
+// beloppet är ett À-PRIS som räknas mot kubiken (500 kr arbete på 10 m³ blir 5 000 kr, på 30 m³
+// blir det 15 000), och det är en UTBRYTNING ur A-priset, inte ett tillägg ovanpå det.
+function LaborCarveoutHint({
+  laborCost, unitPrice, discountPercent, quantity, unitLabel,
+}: {
+  laborCost: string;
+  unitPrice: number;
+  discountPercent: number;
+  quantity: number;
+  unitLabel: string;
+}) {
+  const { labor, material, rowTotal, leavesNoMaterial } = splitRowLabor({
+    laborCostPerUnit: laborCost, unitPrice, discountPercent, quantity,
+  });
+
+  if (leavesNoMaterial) {
+    return (
+      <p className="m-0 mt-1 text-[11px] leading-snug text-rose-700">
+        Arbetet är hela A-priset ({formatCurrency(unitPrice, 'SEK')}/{unitLabel}) — inget material blir
+        kvar. Ingen arbetskostnad bryts ut förrän det rättas. A-priset ska vara HELA priset, och det
+        här beloppet den del av det som är arbete.
+      </p>
+    );
+  }
+  if (labor > 0) {
+    return (
+      <p className="m-0 mt-1 text-[11px] leading-snug text-slate-500">
+        {formatCurrency(labor, 'SEK')} arbete av radens {formatCurrency(rowTotal, 'SEK')} — resten,
+        {' '}{formatCurrency(material, 'SEK')}, är material.
+      </p>
+    );
+  }
+  return (
+    <p className="m-0 mt-1 text-[11px] leading-snug text-slate-400">
+      Per {unitLabel}, som A-priset. Bryts ut ur det — höjer det inte.
+    </p>
+  );
+}
+
 function LineItemRow({
   row,
   index,
@@ -962,6 +1031,8 @@ function LineItemRow({
   // The ROT labour carve-out field sits on the economy row next to A-pris/Rabatt, but only when ROT
   // is on and the row isn't already flagged as full ROT work (its whole price is then the labour).
   const showLaborField = rotEnabled && !row.is_rot_work;
+  // Samma enhet som raden prissätts i, så "kr/m³" respektive "kr/st" står bredvid rätt tal.
+  const laborUnitLabel = isM3 ? 'm³' : (row.article_unit_name?.trim() || 'st');
 
   // ── Collapsed: single overview line ──────────────────────────────────────────
   if (!expanded) {
@@ -1062,10 +1133,23 @@ function LineItemRow({
           />
         </Field>
         {/* Carve out the labour portion of a material row for ROT: the amount here is moved onto the
-            separate "Arbetskostnad ROT" row and deducted from this row (total unchanged). */}
+            separate "Arbetskostnad ROT" row and deducted from this row (total unchanged).
+
+            ⚠️ Hjälptexten under fältet är inte pynt. "Varav" har lästs som "plus": säljaren sänkte
+            A-priset från 500 till 300 kr/m³ och skrev 200 här i tron att raden landade på 500 igen.
+            Den gör den inte — raden blir 300 kr/m³, offerten blir billigare än den skulle, och ROT
+            begärs på 200 kr i stället för 200 kr × volymen. Texten visar delningen i kronor så fort
+            ett belopp finns, så felet syns i samma ögonblick det görs. */}
         {showLaborField ? (
-          <Field label="Varav arbetskostnad (ROT, kr)">
+          <Field label={`Varav arbetskostnad (ROT, kr/${laborUnitLabel})`}>
             <Input value={row.labor_cost} onChange={(e) => onChange({ labor_cost: e.target.value })} inputMode="decimal" placeholder="0" />
+            <LaborCarveoutHint
+              laborCost={row.labor_cost}
+              unitPrice={metrics?.unit ?? 0}
+              discountPercent={parseDecimal(row.discount_percent)}
+              quantity={metrics?.amount ?? 0}
+              unitLabel={laborUnitLabel}
+            />
           </Field>
         ) : null}
         <Field label="Rabatt %"><Input value={row.discount_percent} onChange={(e) => onChange({ discount_percent: e.target.value })} inputMode="decimal" placeholder="0" /></Field>
@@ -1156,6 +1240,22 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
   const [expandedRowId, setExpandedRowId] = useState<string | null>(
     () => (initialDraft.items[0] && !initialDraft.items[0].article_name ? initialDraft.items[0].id : null),
   );
+  // Vilken artikelrad som väntar på bekräftelse innan den tas bort. Krysset på en hopfälld rad
+  // sitter tätt intill raden man klickar på för att fälla ut den, och borttagningen går inte att
+  // ångra — artikeln, priset, rabatten och radnoteringen är borta ur draften direkt. Tomma rader
+  // hoppar över frågan (se isBlankLineItem); där finns inget att förlora.
+  const [pendingRemoveRowId, setPendingRemoveRowId] = useState<string | null>(null);
+
+  // Sista raden tas aldrig bort helt — den ersätts med en tom, så formuläret alltid har en rad att
+  // fylla i. Samma regel gällde före bekräftelsedialogen och ligger här så att båda vägarna in
+  // (direkt för tomma rader, bekräftad för ifyllda) delar den.
+  function removeLineItem(id: string) {
+    setDraft((d) => ({
+      ...d,
+      items: d.items.length > 1 ? d.items.filter((item) => item.id !== id) : [createEmptyLineItem()],
+    }));
+    setPendingRemoveRowId(null);
+  }
   const [loadedQuote, setLoadedQuote] = useState<QuoteItem | null>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<CrmCustomerLite | null>(null);
   // What the customer card gave when the customer was picked. The reference the refresh-on-return
@@ -1710,10 +1810,15 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
       const constructionLabel = item.construction === 'vagg' ? 'Vägg' : item.construction === 'snedtak' ? 'Snedtak' : item.construction === 'vind' ? 'Vind' : '';
       const baseLabel = item.article_name ? `${item.article_name}${item.article_number ? ` (${item.article_number})` : ''}` : `${constructionLabel || 'Okänd'}${item.thickness_mm ? ` ${item.thickness_mm} mm` : ''}`;
       const unitSuffix = mode === 'm3' ? ' (m³)' : item.article_unit_name ? ` (${item.article_unit_name})` : '';
+      const laborSplit = splitRowLabor({
+        laborCostPerUnit: item.labor_cost, unitPrice: baseUnit, discountPercent: discount, quantity: amount,
+      });
       return {
         ...item, amount, unit: baseUnit, effectiveUnit,
         label: `${baseLabel}${unitSuffix}`,
         mode, rowTotal: amount * effectiveUnit,
+        rotLabor: laborSplit.labor,
+        rotLaborLeavesNoMaterial: laborSplit.leavesNoMaterial,
         isConfigured: Boolean(item.article_name || item.m2 || item.quantity || item.unit_price),
       };
     });
@@ -1730,12 +1835,12 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
     // Skatteverket (ROT reductions drop the öre), e.g. 393,75 → 393. Flooring is also
     // the safe direction for the business: the deduction is never overstated.
     // The ROT base is labour: a row flagged fully as ROT work contributes its whole total, an
-    // unflagged material row only its carved-out `labor_cost` (clamped to the row total). Mirrors
+    // unflagged material row only its carved-out labour (labor_cost per enhet × antal). Mirrors
     // lib/domains/crm/pricing.ts and the Fortnox push (flagged rows + the "Arbetskostnad ROT" row).
     const rotActive = draft.quote_type === 'private' && draft.rot_enabled;
     const rotLaborBase = rotActive
       ? effectiveRows.reduce((sum, r) => {
-          const base = r.is_rot_work ? r.rowTotal : Math.min(Math.max(0, parseDecimal(r.labor_cost)), r.rowTotal);
+          const base = r.is_rot_work ? r.rowTotal : Math.min(r.rotLabor, r.rowTotal);
           return sum + base;
         }, 0)
       : 0;
@@ -1749,7 +1854,7 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
     // Carved-out labour only (excludes fully-flagged ROT rows) — surfaced in the ROT section so the
     // seller sees what becomes the separate "Arbetskostnad ROT" row.
     const carvedLabor = rotActive
-      ? effectiveRows.reduce((sum, r) => (r.is_rot_work ? sum : sum + Math.min(Math.max(0, parseDecimal(r.labor_cost)), r.rowTotal)), 0)
+      ? effectiveRows.reduce((sum, r) => (r.is_rot_work ? sum : sum + Math.min(r.rotLabor, r.rowTotal)), 0)
       : 0;
 
     return { subtotal, vat, total, rotDeduction, toPay: total - rotDeduction, carvedLabor };
@@ -2196,10 +2301,18 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
   // Formuläret prissätter auto-prissatta rader med sin egen stub medan pricing.ts ger dem 0 — räknade
   // vi om här skulle en auto-rad bidra med 0 kr till TG:n men synas i Delsumman, och inte ens
   // flaggas som obedömd. Se MarginRow i pricing.ts.
+  //
+  // Samma villkor som ROT-underlaget i `totals` OCH som pushen (`rot_details.enabled && !reverseVat`
+  // — omvänd skattskyldighet är en företagsgrej och ROT är privat, så de kan aldrig kollidera).
+  // Styr två saker: att `isLabor` bara sätts när ROT faktiskt är aktivt — en kvarglömd kryssruta på
+  // en offert där ROT stängts av ska inte tyst ge raden full TG — och att den genererade
+  // arbetskostnadsraden visas exakt när pushen faktiskt skickar den.
+  const rotActive = draft.quote_type === 'private' && draft.rot_enabled;
   const marginRows: MarginRow[] = effectiveRows.map((r) => ({
     revenue: r.rowTotal,
     quantity: r.amount,
     purchasePrice: r.article_number ? purchasePrices[r.article_number] ?? null : null,
+    isLabor: rotActive && Boolean(r.is_rot_work),
   }));
   const quoteMarginResult = quoteMargin(marginRows);
   const quoteMarginTier = marginTier(quoteMarginResult.marginPercent);
@@ -2267,6 +2380,13 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
   const requiredSections = sections.filter((s) => s.done !== undefined);
   const doneSteps = requiredSections.filter((s) => s.done).length;
   const stepOf = (id: string) => sections.findIndex((s) => s.id === id) + 1;
+
+  // Slås upp mot draften i stället för att lägga undan hela raden i state: raden kan redigeras
+  // medan dialogen står öppen (den täcker inte formuläret på desktop), och en kopia hade då kunnat
+  // visa ett artikelnamn som inte längre stämmer.
+  const pendingRemoveRow = pendingRemoveRowId
+    ? draft.items.find((item) => item.id === pendingRemoveRowId) ?? null
+    : null;
 
   return (
     <div className="grid gap-6 pb-20 lg:pb-0">
@@ -2793,7 +2913,7 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
                     ...item, article_id: null, article_name: null, article_number: null, article_price: null, article_unit_name: null, article_note: null,
                   } : item),
                 }))}
-                onRemove={() => setDraft((d) => ({ ...d, items: d.items.length > 1 ? d.items.filter((item) => item.id !== row.id) : [createEmptyLineItem()] }))}
+                onRemove={() => { if (isBlankLineItem(row)) removeLineItem(row.id); else setPendingRemoveRowId(row.id); }}
               />
                 )}
               </SortableLineItem>
@@ -2801,6 +2921,37 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
           </div>
           </SortableContext>
           </DndContext>
+
+          {/* ── Den genererade arbetskostnadsraden ────────────────────────────────────────────
+              Ligger ALLTID sist, som på Fortnox-offerten: pushen lägger den efter artikelraderna.
+              Den är läsvy och finns inte i `draft.items` — den syntetiseras först vid pushen
+              (buildOfferRows → rotLaborRow) och får aldrig lagras som en riktig rad. Gjorde vi det
+              skulle pushen bryta ut arbetet EN GÅNG TILL ovanpå den och dubbelräkna det.
+
+              ⚠️ Beloppet är INTE ett tillägg. Det är redan utbrutet ur raderna ovan, som visas till
+              sitt fulla pris här medan Fortnox-dokumentet visar dem sänkta med samma belopp — summan
+              är densamma på båda hållen. Därför "Varav" och ingen egen summering: en säljare som
+              adderar radbeloppen i huvudet ska inte landa på en annan siffra än Delsumman.
+
+              Visas bara när något faktiskt bryts ut. Rader med "ROT-arbete" ikryssad går INTE hit —
+              de blir egna husarbete-rader med sin egen artikel, precis som i pushen. */}
+          {rotActive && totals.carvedLabor > 0 ? (
+            <div className="mt-2 flex items-center gap-2 rounded-xl border border-dashed border-emerald-200 bg-emerald-50/40 px-3.5 py-2.5">
+              <span className="shrink-0 text-xs font-semibold tabular-nums text-emerald-600/60">{draft.items.length + 1}</span>
+              <div className="min-w-0 flex-1">
+                <p className="m-0 truncate text-sm font-medium text-emerald-900">
+                  {ROT_LABOR_DESCRIPTION} <span className="font-normal text-emerald-700/70">({ROT_LABOR_ARTICLE_NUMBER})</span>
+                </p>
+                <p className="m-0 text-[11px] leading-snug text-emerald-700/70">
+                  Skapas automatiskt på Fortnox-offerten. Beloppet är redan utbrutet ur raderna ovan.
+                </p>
+              </div>
+              <span className="shrink-0 text-right text-sm font-semibold tabular-nums text-emerald-900">
+                <span className="mr-1 text-[11px] font-normal text-emerald-700/70">Varav</span>
+                {formatCurrency(totals.carvedLabor, 'SEK')}
+              </span>
+            </div>
+          ) : null}
 
           <button
             type="button"
@@ -3371,6 +3522,21 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
             </Field>
           </div>
         </CrmModal>
+      ) : null}
+
+      {pendingRemoveRow ? (
+        <CrmConfirmDialog
+          title="Ta bort raden?"
+          message={
+            pendingRemoveRow.article_name
+              ? `${pendingRemoveRow.article_name} tas bort från offerten. Det går inte att ångra.`
+              : 'Raden tas bort från offerten. Det går inte att ångra.'
+          }
+          confirmLabel="Ta bort rad"
+          tone="danger"
+          onConfirm={() => removeLineItem(pendingRemoveRow.id)}
+          onCancel={() => setPendingRemoveRowId(null)}
+        />
       ) : null}
     </div>
   );

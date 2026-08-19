@@ -173,7 +173,8 @@ describe('buildOfferRows', () => {
 describe('buildOfferRows – ROT labour carve-out', () => {
   it('carves labor_cost out of a material row into one aggregated Arbetskostnad ROT row (total unchanged)', () => {
     const rows = buildOfferRows(
-      [{ pricing_mode: 'item', article_name: 'Lösull', article_number: '1001', unit_price: '200', quantity: '100', labor_cost: '8000' }],
+      // 80 kr/enhet arbete av A-priset 200 → 8 000 kr över 100 enheter.
+      [{ pricing_mode: 'item', article_name: 'Lösull', article_number: '1001', unit_price: '200', quantity: '100', labor_cost: '80' }],
       25, true,
     );
     expect(rows).toHaveLength(2);
@@ -196,8 +197,8 @@ describe('buildOfferRows – ROT labour carve-out', () => {
   it('sums carved labour across rows into a single aggregated row', () => {
     const rows = buildOfferRows(
       [
-        { pricing_mode: 'item', unit_price: '200', quantity: '100', labor_cost: '8000' },
-        { pricing_mode: 'item', unit_price: '100', quantity: '50', labor_cost: '2000' },
+        { pricing_mode: 'item', unit_price: '200', quantity: '100', labor_cost: '80' }, // 8 000
+        { pricing_mode: 'item', unit_price: '100', quantity: '50', labor_cost: '40' },  // 2 000
       ],
       25, true,
     );
@@ -206,14 +207,20 @@ describe('buildOfferRows – ROT labour carve-out', () => {
     expect(labor.Price).toBe(10000);
   });
 
-  it('clamps a labor_cost larger than the row total to the row (material floors at 0)', () => {
-    const rows = buildOfferRows(
-      [{ pricing_mode: 'item', unit_price: '100', quantity: '10', labor_cost: '99999' }],
-      25, true,
-    );
-    // rowNet = 1000 → labour clamped to 1000, material 0.
-    expect(rows[0].Price).toBe(0);
-    expect(rows[rows.length - 1].Price).toBe(1000);
+  it('bryter ut NOLL när arbetet äter hela A-priset — ingen ROT på material', () => {
+    // ⚠️ REGRESSIONSVAKT MOT ETT RIKTIGT FEL I DRIFT: dokumentet gick till Fortnox med HELA beloppet
+    // på arbetskostnadsraden och noll på materialet, medan vår egen vy såg rätt ut (radtotalen rörs
+    // ju inte av utbrytningen). ROT får inte begäras på material, så ett arbetsbelopp som lämnar
+    // noll material bryter inte ut något alls. Offertformuläret spärrar dessutom sparningen.
+    for (const belopp of ['99999', '100']) {
+      const rows = buildOfferRows(
+        [{ pricing_mode: 'item', unit_price: '100', quantity: '10', labor_cost: belopp }],
+        25, true,
+      );
+      expect(rows, belopp).toHaveLength(1);        // ingen 10058-rad
+      expect(rows[0].Price, belopp).toBe(100);     // materialraden orörd
+      expect(rows[0].HouseWork, belopp).toBeUndefined();
+    }
   });
 
   it('ignores labor_cost when the row is flagged as full ROT work (whole row is the labour)', () => {
@@ -238,21 +245,24 @@ describe('buildOfferRows – ROT labour carve-out', () => {
 
   it('bakes discount into a carved material row and drops the Discount line', () => {
     const rows = buildOfferRows(
-      [{ pricing_mode: 'item', unit_price: '100', quantity: '10', discount_percent: '10', labor_cost: '200' }],
+      [{ pricing_mode: 'item', unit_price: '100', quantity: '10', discount_percent: '10', labor_cost: '20' }],
       25, true,
     );
-    // rowNet = 10 × 100 × 0.9 = 900; material = 900 − 200 = 700 over 10 = 70/unit; Discount dropped.
-    expect(rows[0].Price).toBeCloseTo(70, 6);
+    // Rabatten träffar BÅDA delarna: arbete 20 × 0,9 × 10 = 180, rowNet 900, material 720 över 10
+    // = 72/enhet. ROT får bara begäras på det som faktiskt debiteras, så rabatterat arbete ger ett
+    // rabatterat underlag. Discount-raden faller bort eftersom rabatten är inbakad i priset.
+    expect(rows[0].Price).toBeCloseTo(72, 6);
     expect(rows[0].Discount).toBeUndefined();
-    expect(rows[rows.length - 1].Price).toBe(200);
+    expect(rows[rows.length - 1].Price).toBeCloseTo(180, 6);
   });
 
   it('keeps material + aggregated labour summing EXACTLY to the row total on a non-divisible quantity', () => {
-    // rowNet = 300, carve 10 → material 290 / 3 = 96.6667 → Fortnox would round the unit price and
-    // drift. The split rounds material to 96.67 and lets the labour absorb the 0.01 residual so the
-    // two rows' rounded totals still tie back to 300.00 (regression for the rounding-drift finding).
+    // rowNet = 300, arbete 3,3333 × 3 = 9,9999 → material 290,0001 / 3 = 96,6667 → Fortnox would
+    // round the unit price and drift. The split rounds material to 96.67 and lets the labour absorb
+    // the residual so the two rows' rounded totals still tie back to 300.00 (regression for the
+    // rounding-drift finding).
     const rows = buildOfferRows(
-      [{ pricing_mode: 'item', unit_price: '100', quantity: '3', labor_cost: '10' }],
+      [{ pricing_mode: 'item', unit_price: '100', quantity: '3', labor_cost: '3.3333' }],
       25, true,
     );
     const material = rows[0];

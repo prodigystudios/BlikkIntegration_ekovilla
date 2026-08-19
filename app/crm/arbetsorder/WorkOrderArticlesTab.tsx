@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import Input from '../../../components/ui/Input';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
-import { computePricing, lineItemRowTotal, type PricingLineItem } from '@/lib/domains/crm/pricing';
+import { computePricing, lineItemRowTotal, lineItemUnitPrice, splitRowLabor, type PricingLineItem } from '@/lib/domains/crm/pricing';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
 import { inferMaterialFromArticle, sacksFor } from '@/lib/domains/crm/materials';
 import { parseDecimal } from '@/lib/shared/number';
@@ -26,7 +26,8 @@ export type ArticleLineItem = {
   discount_percent?: string;
   is_rot_work?: boolean;
   house_work_type?: string;
-  // Labour carved out of a material row for ROT — summed onto the "Arbetskostnad ROT" Fortnox row.
+  // Labour carved out of a material row for ROT, as kr PER UNIT — ett à-pris som räknas mot
+  // antalet, utbrutet UR à-priset och inte lagt till det. Se splitRowLabor i pricing.ts.
   labor_cost?: string;
   // Avskriven rad: såld men aldrig utförd. Ligger kvar (indexen bär fakturarundornas antal) men
   // räknas bort ur summan och skickas inte till Fortnox.
@@ -230,6 +231,17 @@ export default function WorkOrderArticlesTab({ items, currencyCode, vatPercent, 
             {rows.map((row) => {
               const mode = row.pricing_mode === 'item' ? 'item' : 'm3';
               const rowTotal = lineItemRowTotal(row as PricingLineItem);
+              const laborUnitLabel = mode === 'm3' ? 'm³' : (row.article_unit_name?.trim() || 'st');
+              const laborSplit = splitRowLabor({
+                laborCostPerUnit: row.labor_cost,
+                // Samma priskälla som rowTotal ovan, computePricing i den här fliken och pushen:
+                // explicit unit_price när det finns, annars artikelns pris. Läste vi bara
+                // unit_price här skulle en rad som prissätts av artikeln visa "inget material blir
+                // kvar" bredvid en radtotal som säger något helt annat.
+                unitPrice: lineItemUnitPrice(row as PricingLineItem),
+                discountPercent: parseDecimal(row.discount_percent),
+                quantity: lineItemQuantity(row as PricingLineItem),
+              });
               return (
                 <div key={row.id} className="grid gap-2 rounded-xl border border-[#e0e8dc] bg-[#f1f5ee] px-3 py-3">
                   <div className="flex items-start justify-between gap-2">
@@ -302,11 +314,30 @@ export default function WorkOrderArticlesTab({ items, currencyCode, vatPercent, 
 
                   {/* Carve out the labour portion of a material row → the aggregated "Arbetskostnad
                       ROT" Fortnox row (row reduced by it, total unchanged). Hidden when the whole row
-                      is flagged as ROT-arbete. */}
+                      is flagged as ROT-arbete.
+
+                      ⚠️ Beloppet är ett À-PRIS som räknas mot antalet, precis som À-priset ovanför,
+                      och det bryts UT ur det — det läggs inte till. Samma fält och samma räkning som
+                      i offertformuläret; texten under står här av samma skäl som där. */}
                   {rotEnabled && !row.is_rot_work ? (
                     <label className="grid gap-1">
-                      <span className="text-[10px] font-bold uppercase tracking-[0.1em] text-slate-400">Varav arbetskostnad (ROT, kr)</span>
+                      <span className="text-[10px] font-bold uppercase tracking-[0.1em] text-slate-400">
+                        Varav arbetskostnad (ROT, kr/{laborUnitLabel})
+                      </span>
                       <Input value={row.labor_cost || ''} onChange={(e) => updateRow(row.id, { labor_cost: e.target.value })} inputMode="decimal" placeholder="0" />
+                      {laborSplit.leavesNoMaterial ? (
+                        <span className="text-[11px] leading-snug text-rose-700">
+                          Arbetet är hela à-priset ({formatCurrency(lineItemUnitPrice(row as PricingLineItem), currencyCode)}/{laborUnitLabel}) — inget material blir kvar. Ingen arbetskostnad bryts ut förrän det rättas.
+                        </span>
+                      ) : laborSplit.labor > 0 ? (
+                        <span className="text-[11px] leading-snug text-slate-500">
+                          {formatCurrency(laborSplit.labor, currencyCode)} arbete av radens {formatCurrency(rowTotal, currencyCode)}.
+                        </span>
+                      ) : (
+                        <span className="text-[11px] leading-snug text-slate-400">
+                          Per {laborUnitLabel}, som à-priset. Bryts ut ur det.
+                        </span>
+                      )}
                     </label>
                   ) : null}
                 </div>

@@ -93,7 +93,8 @@ describe('buildOrderRows', () => {
 describe('buildOrderRows – ROT labour carve-out', () => {
   it('carves labor_cost out of a material row into one aggregated Arbetskostnad ROT row', () => {
     const rows = buildOrderRows(
-      [{ pricing_mode: 'item', article_name: 'Lösull', unit_price: '200', quantity: '100', labor_cost: '8000' }],
+      // 80 kr/enhet arbete av A-priset 200 → 8 000 kr över 100 enheter.
+      [{ pricing_mode: 'item', article_name: 'Lösull', unit_price: '200', quantity: '100', labor_cost: '80' }],
       25, true,
     );
     expect(rows).toHaveLength(2);
@@ -255,7 +256,7 @@ describe('buildOrderRows — avskrivna rader', () => {
   // Avskrivningen får inte råka slå av ROT-arbetskostnaden för de rader som ÄR kvar.
   it('räknar fortfarande ut ROT-arbetskostnaden på kvarvarande rader', () => {
     const rows = buildOrderRows([
-      { pricing_mode: 'item', article_name: 'Lösull', unit_price: '200', quantity: '100', labor_cost: '8000' },
+      { pricing_mode: 'item', article_name: 'Lösull', unit_price: '200', quantity: '100', labor_cost: '80' },
       { pricing_mode: 'item', article_name: 'Struken', unit_price: '500', quantity: '1', written_off: true },
     ], 25, true);
     expect(rows).toHaveLength(2);

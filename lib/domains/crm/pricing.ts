@@ -17,8 +17,9 @@ export type PricingLineItem = {
   article_price?: number | null;
   discount_percent?: string | null;
   is_rot_work?: boolean | null;
-  // Labour carved out of a material row for ROT (kr, ex VAT). Summed onto a single
-  // "Arbetskostnad ROT" row at Fortnox-push time; here it only feeds the ROT deduction base.
+  // Labour carved out of a material row for ROT, as kr PER UNIT ex VAT — an à-pris like
+  // `unit_price`, multiplied by the quantity. Summed onto a single "Arbetskostnad ROT" row at
+  // Fortnox-push time; here it only feeds the ROT deduction base. See splitRowLabor.
   labor_cost?: string | null;
 };
 
@@ -62,6 +63,84 @@ export function lineItemRowTotal(item: PricingLineItem): number {
   return Math.max(0, lineItemQuantity(item) * lineItemEffectiveUnitPrice(item));
 }
 
+export type RowLaborSplit = {
+  /** Arbetskostnad per enhet efter kapning mot A-priset. */
+  perUnit: number;
+  /** Radens arbetskostnad i kronor: per enhet × antal, med radens rabatt. */
+  labor: number;
+  /** Det som blir kvar av radens pris som material. */
+  material: number;
+  /** Hela radens pris efter rabatt — arbete + material. */
+  rowTotal: number;
+  /**
+   * Arbetskostnaden lämnar inget material kvar (den är minst lika stor som A-priset). Då bryts
+   * INGEN arbetskostnad ut — se kommentaren på splitRowLabor om varför det är den säkra riktningen.
+   */
+  leavesNoMaterial: boolean;
+};
+
+/**
+ * Hur "Varav arbetskostnad (ROT)" delar en rads pris.
+ *
+ * ⚠️ BELOPPET ÄR ETT À-PRIS, precis som A-priset: kr per m³ (eller per styck), och det räknas mot
+ * antalet. Rättat 2026-08-19 efter en riktig bugg — fältet lästes förut som ett klumpbelopp för
+ * hela raden, så 500 kr arbete gav 500 kr oavsett om raden var 10 m³ eller 30 m³. ROT-avdraget
+ * frös alltså vid samma krontal hur stort jobbet än blev.
+ *
+ * ⚠️ Fältet är fortfarande en UTBRYTNING, inte ett tillägg. Det höjer aldrig radpriset — det säger
+ * hur stor del av A-priset som är arbete. A-pris 500 kr/m³ med 200 kr/m³ arbete är en rad på
+ * 500 kr/m³, varav 200 är arbete och 300 material.
+ *
+ * Rabatten träffar båda delarna lika. Rabatteras jobbet 10 % sjunker den fakturerade
+ * arbetskostnaden lika mycket, och ROT får bara begäras på det som faktiskt debiteras.
+ *
+ * ⚠️ EN ARBETSKOSTNAD SOM ÄTER HELA A-PRISET BRYTER UT NOLL, inte allt. På en MATERIALrad är det
+ * alltid ett fel att arbetet är hela priset — då skickas ett Fortnox-dokument som begär ROT på
+ * material, vilket inte är tillåtet. Två verkliga vägar dit, båda tysta före den här spärren:
+ *
+ *   • en rad sparad under den gamla klumpbeloppstolkningen (8000 mot ett A-pris på 200), och
+ *   • att A-priset satts till bara materialdelen och arbetet skrivits som ett PÅSLAG (250 + 250),
+ *     vilket är en annan modell än den här funktionen räknar efter.
+ *
+ * Båda är datafel, inte instruktioner att bryta ut allt. Det säkra svaret är att inte bryta ut
+ * något och låta felet synas: offertformuläret spärrar sparningen och pekar ut raden. Vill man
+ * verkligen att hela raden ska vara arbete finns kryssrutan "ROT-arbete", som säger det uttryckligen.
+ */
+export function splitRowLabor(input: {
+  laborCostPerUnit: string | number | null | undefined;
+  /** A-pris per enhet FÖRE rabatt — samma tal som säljaren ser i A-prisfältet. */
+  unitPrice: number;
+  discountPercent: number;
+  quantity: number;
+}): RowLaborSplit {
+  const unitPrice = Math.max(0, input.unitPrice);
+  const entered = Math.max(0, parseDecimal(input.laborCostPerUnit));
+  const leavesNoMaterial = entered > 0 && entered >= unitPrice;
+  const perUnit = leavesNoMaterial ? 0 : entered;
+  const quantity = Math.max(0, input.quantity);
+  const keep = 1 - Math.min(100, Math.max(0, input.discountPercent)) / 100;
+  const labor = perUnit * keep * quantity;
+  const rowTotal = unitPrice * keep * quantity;
+  return { perUnit, labor, material: Math.max(0, rowTotal - labor), rowTotal, leavesNoMaterial };
+}
+
+/**
+ * Radens utbrutna ROT-arbetskostnad i kronor, härledd ur raden själv.
+ *
+ * ⚠️ Använd INTE den här i offertformuläret. Formuläret prissätter auto-prissatta rader med sin egen
+ * stub (`computeUnitPrice`) medan `lineItemUnitPrice` ger dem 0 — en auto-rad hade alltså fått noll
+ * arbetskostnad här men visat ett pris på skärmen. Formuläret anropar `splitRowLabor` direkt med de
+ * tal det redan räknat fram. Samma fälla som MarginRow.revenue dokumenterar.
+ */
+export function lineItemRotLabor(item: PricingLineItem): number {
+  return splitRowLabor({
+    laborCostPerUnit: item.labor_cost,
+    unitPrice: lineItemUnitPrice(item),
+    discountPercent: lineItemDiscountPercent(item),
+    quantity: lineItemQuantity(item),
+  }).labor;
+}
+
 export function computePricing(
   items: PricingLineItem[],
   vatPercentInput: number | string | null,
@@ -75,16 +154,14 @@ export function computePricing(
   // ROT (private only): tax-reduction % of the husarbete rows' amount INCL VAT, capped at
   // the max deduction, floored to whole krona (matches Fortnox/Skatteverket — see quotes).
   // The ROT base is labour: a row flagged fully as ROT work contributes its whole total, while an
-  // unflagged material row contributes only its carved-out `labor_cost` (clamped to the row total).
+  // unflagged material row contributes only its carved-out labour (labor_cost per unit × quantity).
   // Mirrors the Fortnox push, where the same split becomes the single "Arbetskostnad ROT" row plus
   // the fully-flagged rows' husarbete flags.
   const rotActive = Boolean(opts?.isPrivate && opts?.rot?.enabled);
   const rotBaseInclVat = rotActive
     ? items.reduce((sum, i) => {
         const rowTotal = lineItemRowTotal(i);
-        const labourBase = i.is_rot_work
-          ? rowTotal
-          : Math.min(Math.max(0, parseDecimal(i.labor_cost)), rowTotal);
+        const labourBase = i.is_rot_work ? rowTotal : Math.min(lineItemRotLabor(i), rowTotal);
         return sum + labourBase * (1 + vatPercent / 100);
       }, 0)
     : 0;
@@ -141,10 +218,38 @@ export type MarginRow = {
   quantity: number;
   /** Inköpspris per enhet ur artikelregistret, eller null när det saknas. */
   purchasePrice: number | null | undefined;
+  /**
+   * Raden ÄR arbete (offertens "ROT-arbete"-kryss), inte material.
+   *
+   * ⚠️ AFFÄRSREGEL, beslutad av William 2026-08-19: arbete har ingen INKÖPSKOSTNAD. TG mäts här mot
+   * inköpspris ur artikelregistret, och arbete köps inte in — dess kostnad är lön, som registret
+   * inte bär. En arbetsrad utan inköpspris räknas därför som full TG i stället för att lyftas ut
+   * som obedömd.
+   *
+   * Skälet till att det behövdes: en ROT-offert bryter ut arbetet, och en utesluten arbetsrad drog
+   * ner den sammanvägda siffran hårt — 100 000 kr material mot 80 000 kr inköp plus 50 000 kr
+   * arbete visades som 20 % när den sanna blandade TG:n är 46,7 %.
+   *
+   * ⚠️ Gäller BARA när inköpspriset saknas. Har artikeln ett inköpspris räknas det som vanligt —
+   * annars hade en materialartikel som råkat kryssas som ROT-arbete tappat hela sin kostnad.
+   * Materialrader utan inköpspris lyfts fortfarande ut; att räkna DEM som kostnadsfria är just den
+   * farligt optimistiska siffran som quoteMargin finns för att undvika.
+   *
+   * ⚠️ Den utbrutna arbetskostnaden ("Varav arbetskostnad (ROT, kr)") behöver INGENTING här. Den
+   * bryts ut ur radpriset utan att ändra radtotalen — intäkten innehåller den alltså redan, medan
+   * kostnaden bara är materialets. Den delen får med andra ord full TG av sig själv. Se testet
+   * "den utbrutna arbetskostnaden ändrar inte TG:n".
+   */
+  isLabor?: boolean;
 };
 
 function hasPurchasePrice(purchasePrice: number | null | undefined): purchasePrice is number {
   return purchasePrice != null && Number.isFinite(purchasePrice) && purchasePrice > 0;
+}
+
+// En arbetsrad utan inköpspris: intäkt utan kostnad. Se MarginRow.isLabor.
+function isCostlessLabor(row: MarginRow): boolean {
+  return Boolean(row.isLabor) && !hasPurchasePrice(row.purchasePrice);
 }
 
 /**
@@ -155,8 +260,12 @@ function hasPurchasePrice(purchasePrice: number | null | undefined): purchasePri
  * rad hade fått nya rader att lysa rött innan säljaren ens skrivit något.
  */
 export function rowMarginPercent(row: MarginRow): number | null {
+  if (!(row.revenue > 0)) return null;
+  // Arbete utan inköpspris är hela intäkten i behåll. Inget antal krävs: kostnaden är noll oavsett
+  // hur raden råkar vara prissatt (timme, styck eller klumpsumma).
+  if (isCostlessLabor(row)) return 100;
   if (!hasPurchasePrice(row.purchasePrice)) return null;
-  if (!(row.revenue > 0) || !(row.quantity > 0)) return null;
+  if (!(row.quantity > 0)) return null;
   const cost = row.purchasePrice * row.quantity;
   return ((row.revenue - cost) / row.revenue) * 100;
 }
@@ -206,6 +315,11 @@ export function quoteMargin(rows: MarginRow[]): {
   let unpricedRevenue = 0;
 
   for (const row of rows) {
+    // Arbetsrader utan inköpspris räknas in med noll kostnad — de är bedömda, inte obedömbara.
+    if (isCostlessLabor(row)) {
+      if (row.revenue > 0) revenue += row.revenue;
+      continue;
+    }
     if (!hasPurchasePrice(row.purchasePrice) || !(row.quantity > 0)) {
       if (row.revenue > 0) { unpricedRows++; unpricedRevenue += row.revenue; }
       continue;
