@@ -3,9 +3,8 @@ import { parseDecimal } from '@/lib/shared/number';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
 import { lineItemUnitPrice, lineItemDiscountPercent, lineItemEffectiveUnitPrice, lineItemRotLabor } from '@/lib/domains/crm/pricing';
 import { fortnoxGet, fortnoxPost, fortnoxPut, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
-import { appendFortnoxTextNote, buildRotPropertyNote, claimFortnoxPush, resolveReverseVat } from './helpers';
+import { appendFortnoxTextNote, buildRotPropertyNote, claimFortnoxPush, resolveReverseVat, rotRowHouseWork } from './helpers';
 import { pushWorkOrderToFortnox } from './orders';
-import { DEFAULT_ROT_HOUSE_WORK_TYPE } from './types';
 
 // Delfakturering (partial invoicing). Appen ÄGER det per-artikel fakturerade läget — en
 // Fortnox-order exponerar bara en enda InvoiceReference och inget fakturerat antal per rad, så
@@ -248,12 +247,10 @@ export function buildInvoiceRows(
       VAT: reverseVat ? 0 : vatPercent,
       ...(item.article_unit_name ? { Unit: item.article_unit_name } : {}),
       ...(discount > 0 ? { Discount: discount, DiscountType: 'PERCENT' as const } : {}),
-      // Husarbete only on a ROT document. Do NOT send HouseWork:false on non-ROT rows — Fortnox
-      // stamps an empty husarbete type ('EMPTYHOUSEWORK') that a non-ROT document rejects
-      // (2004021). See offers.ts. A husarbete-configured article is fixed in Fortnox, not here.
-      ...(rotEnabled && item.is_rot_work
-        ? { HouseWork: true, HouseWorkType: item.house_work_type || DEFAULT_ROT_HOUSE_WORK_TYPE }
-        : {}),
+      // Husarbete bara på rader vi själva menar är arbete, och bara på ROT-dokument. Regeln bor i
+      // rotRowHouseWork — läs de tre mätningarna där innan du breddar något här; två rimliga idéer
+      // har redan prövats mot skarp Fortnox och fallit.
+      ...(rotRowHouseWork(item, rotEnabled) ?? {}),
     });
   });
   // ROT property note (Fastighetsbeteckning / BRF org.nr) as a trailing text row — Fortnox has no
