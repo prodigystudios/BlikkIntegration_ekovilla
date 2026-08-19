@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { formatQuantity } from '@/app/crm/lib/format';
 import { quoteCustomerName, isQuoteOverdue } from '@/app/crm/lib/quoteDisplay';
 
 // These helpers used to exist as identical copies in QuotesClient and SaljtavlaClient. Now that the
@@ -65,5 +66,26 @@ describe('isQuoteOverdue', () => {
     // A naive `${month}` would build "2026-8-14" and compare wrong against "2026-08-13".
     expect(isQuoteOverdue({ follow_up_date: '2026-08-13', status: 'draft' }, new Date(2026, 7, 9))).toBe(false);
     expect(isQuoteOverdue({ follow_up_date: '2026-01-05', status: 'draft' }, new Date(2026, 0, 9))).toBe(true);
+  });
+});
+
+describe('formatQuantity', () => {
+  // ⚠️ Regressionsvakt för en riktig avvikelse: offerten och arbetsordern formaterade radantalet
+  // var för sig — offerten på 2 decimaler, ordern på 3 — så samma volym stod som "4,88" på den ena
+  // och "4,875" på den andra. Skillnaden syns BARA när ytan har en decimal (19,5 m²), vilket är
+  // varför den levde obemärkt tills någon skrev just det.
+  it('ger samma sträng oavsett vilken yta som anropar', () => {
+    // 19,5 m² × 250 mm = 4,875 m³ — precis fallet som avslöjade skillnaden.
+    expect(formatQuantity(4.875)).toBe('4,88');
+    expect(formatQuantity(24.3875)).toBe('24,39');
+  });
+
+  it('visar hela tal utan decimaler', () => {
+    expect(formatQuantity(20)).toBe('20');
+    expect(formatQuantity(0)).toBe('0');
+  });
+
+  it('använder svenskt decimaltecken', () => {
+    expect(formatQuantity(1.5)).toBe('1,5');
   });
 });
