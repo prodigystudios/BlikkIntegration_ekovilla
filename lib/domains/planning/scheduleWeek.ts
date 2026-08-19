@@ -80,3 +80,25 @@ export function defaultScheduleDayIndex(now: Date = new Date()): number | null {
   const dow = stockholmToday(now).getDay(); // Sun=0 .. Sat=6
   return dow >= 1 && dow <= 5 ? dow - 1 : null;
 }
+
+/**
+ * Motsatsen till `scheduleWeekRange`: hur många veckosteg bort veckan som innehåller `dateISO`
+ * ligger från veckan Sverige befinner sig i just nu. Ogiltig indata ger 0, alltså denna vecka.
+ *
+ * ⚠️ Vyn bärs i URL:en som ett ABSOLUT datum, inte som offseten, och det är hela poängen med den
+ * här funktionen. En offset betyder olika veckor beroende på NÄR den läses: lämnar man `1` i
+ * adressfältet en söndag kväll och öppnar länken efter midnatt pekar den på veckan efter den man
+ * lämnade. Ett datum betyder samma vecka för alltid.
+ */
+export function scheduleWeekOffsetFor(dateISO: string, now: Date = new Date()): number {
+  const parts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateISO || '');
+  if (!parts) return 0;
+  const target = new Date(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3]));
+  // `new Date(2026, 12, 40)` rullar vidare till ett giltigt datum i stället för att bli NaN, så
+  // siffergrindarna ovan räcker inte — bara ett datum som läses tillbaka oförändrat godtas.
+  if (Number.isNaN(target.getTime()) || toISODateLocal(target) !== dateISO) return 0;
+  // Avrundat, inte heltalsdivision: veckor som spänner över en sommartidsväxling är 23 respektive
+  // 25 timmar för korta/långa, och skulle annars trilla ett steg fel.
+  const diffMs = startOfISOWeek(target).getTime() - startOfISOWeek(stockholmToday(now)).getTime();
+  return Math.round(diffMs / (7 * 86400000));
+}
