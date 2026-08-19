@@ -714,29 +714,30 @@ export async function syncWorkOrderHeaderToFortnox(workOrderId: string): Promise
 
 // Resolve a work order's synced Fortnox order number, or throw a 409 telling the
 // caller to sync the work order to Fortnox first.
-async function requireOrderNumber(workOrderId: string): Promise<string> {
+async function requireOrderNumber(workOrderId: string): Promise<{ orderNumber: string; projectName: string | null }> {
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase
     .from('crm_work_orders')
-    .select('fortnox_order_number')
+    .select('fortnox_order_number, project_name')
     .eq('id', workOrderId)
     .maybeSingle();
 
   if (error) throw new FortnoxApiError(500, `Kunde inte läsa arbetsordern: ${error.message}`, undefined, 'Kunde inte läsa arbetsordern. Försök igen.');
   const orderNumber = data?.fortnox_order_number;
   if (!orderNumber) throw new FortnoxApiError(409, 'Synka arbetsordern till Fortnox först.', undefined, 'Synka arbetsordern till Fortnox först.');
-  return String(orderNumber);
+  // Projektnamnet följer med enbart för PDF:ens filnamn (ordernummer + projektnamn).
+  return { orderNumber: String(orderNumber), projectName: (data as { project_name?: string | null }).project_name ?? null };
 }
 
 // Fetch the order confirmation as a PDF (GET /orders/{n}/preview). Same as offers:
 // use `/preview` (matches Fortnox's own förhandsgranskning, incl. ROT) and keep
 // `Accept: application/json` (Fortnox rejects application/pdf, code 1000030).
-export async function getFortnoxOrderPdf(workOrderId: string): Promise<{ bytes: Uint8Array; contentType: string; orderNumber: string }> {
-  const orderNumber = await requireOrderNumber(workOrderId);
+export async function getFortnoxOrderPdf(workOrderId: string): Promise<{ bytes: Uint8Array; contentType: string; orderNumber: string; projectName: string | null }> {
+  const { orderNumber, projectName } = await requireOrderNumber(workOrderId);
   const { bytes, contentType } = await fortnoxGetBinary(`/orders/${orderNumber}/preview`, 'application/json');
   if (contentType.includes('application/json')) {
     const text = new TextDecoder().decode(bytes).slice(0, 500);
     throw new FortnoxApiError(502, `Fortnox returnerade inte en PDF för order ${orderNumber}: ${text}`, undefined, 'Fortnox kunde inte skapa en orderbekräftelse. Försök igen om en stund.');
   }
-  return { bytes, contentType, orderNumber };
+  return { bytes, contentType, orderNumber, projectName };
 }
