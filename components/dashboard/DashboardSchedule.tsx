@@ -232,14 +232,17 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
   useEffect(() => {
     if (!viewRestored) return;
     const url = new URL(window.location.href);
-    // Står vyn på sitt förval städas parametrarna bort igen, så en vanlig startsida har en ren URL.
-    if (weekOffset === 0 && dayIdx === defaultScheduleDayIndex()) {
-      url.searchParams.delete(WEEK_PARAM);
-      url.searchParams.delete(DAY_PARAM);
-    } else {
-      url.searchParams.set(WEEK_PARAM, range.startISO);
-      url.searchParams.set(DAY_PARAM, dayIdx == null ? DAY_ALL : String(dayIdx));
-    }
+    // ⚠️ Varje parameter står och faller för sig, aldrig som ett par. Den som står på sitt förval
+    // ska SAKNAS i URL:en, för då räknas förvalet om vid nästa montering i stället för att frysas.
+    // `range` memoiseras på weekOffset och läser klockan när den räknas, så en flik som stått öppen
+    // över ett dygnsskifte håller ett gammalt måndagsdatum. Skrevs det ut vid offset 0 skulle
+    // installatören som passerat en söndagsnatt låsas fast en vecka bakåt — förut läkte just den
+    // omstarten felet. Nu skrivs ingenting vid offset 0, och en bortbläddrad vecka som hunnit bli
+    // den aktuella läser tillbaka som 0. URL:en berättar alltid vad som stod på skärmen.
+    if (weekOffset === 0) url.searchParams.delete(WEEK_PARAM);
+    else url.searchParams.set(WEEK_PARAM, range.startISO);
+    if (dayIdx === defaultScheduleDayIndex()) url.searchParams.delete(DAY_PARAM);
+    else url.searchParams.set(DAY_PARAM, dayIdx == null ? DAY_ALL : String(dayIdx));
     window.history.replaceState({}, '', url.toString());
   }, [viewRestored, weekOffset, dayIdx, range.startISO]);
 

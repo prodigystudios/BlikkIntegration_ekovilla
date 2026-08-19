@@ -96,6 +96,9 @@ describe('scheduleWeekOffsetFor', () => {
   });
 
   it('⚠️ håller steget över en sommartidsväxling (veckan är 23 respektive 25 timmar)', () => {
+    // ⚠️ Det här testet biter bara i en runner vars EGEN zon har sommartid. All aritmetik här
+    // läser lokala fält (se filhuvudet), så under TZ=UTC är veckan alltid 168 timmar och
+    // avrundningen aldrig prövad. Verifierat under Europe/Stockholm och America/New_York.
     // Sista söndagen i mars och i oktober 2026: 29/3 (UTC+1 → +2) och 25/10 (UTC+2 → +1).
     const beforeSpring = new Date('2026-03-25T10:00:00Z');
     expect(scheduleWeekOffsetFor(scheduleWeekRange(1, beforeSpring).startISO, beforeSpring)).toBe(1);
