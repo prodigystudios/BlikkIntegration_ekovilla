@@ -132,8 +132,6 @@ export default function QuoteDetailPanel({
   const [moving, setMoving] = useState(false);
   const [creatingWorkOrder, setCreatingWorkOrder] = useState(false);
   const [pushingFortnox, setPushingFortnox] = useState(false);
-  const [loadingOfferPdf, setLoadingOfferPdf] = useState(false);
-  const [loadingOrderPdf, setLoadingOrderPdf] = useState(false);
   // Vad som saknas innan offerten kan bli en arbetsorder. Servern räknar ut det (samma funktion
   // som skapandet använder) — panelens rad bär bara en beskuren snapshot och kan inte avgöra det.
   const [readiness, setReadiness] = useState<{ blockers: WorkOrderReadinessIssue[]; warnings: WorkOrderReadinessIssue[] } | null>(null);
@@ -279,20 +277,6 @@ export default function QuoteDetailPanel({
     } finally {
       setPushingFortnox(false);
     }
-  }
-
-  // Offer PDF + email, and order-confirmation PDF + email (for the work order created
-  // from this quote). Shared fetch/popup/email logic lives in lib/fortnoxDoc.
-  async function openOfferPdf() {
-    setLoadingOfferPdf(true);
-    await openFortnoxPdf(`/api/fortnox/offers/${quote.id}/pdf`, toast.error);
-    setLoadingOfferPdf(false);
-  }
-
-  async function openOrderPdf(workOrderId: string) {
-    setLoadingOrderPdf(true);
-    await openFortnoxPdf(`/api/crm/work-orders/${workOrderId}/fortnox/pdf`, toast.error);
-    setLoadingOrderPdf(false);
   }
 
   return (
@@ -483,11 +467,10 @@ export default function QuoteDetailPanel({
                     <span className="mr-auto text-xs font-medium text-slate-500">Orderbekräftelse</span>
                     <button
                       type="button"
-                      onClick={() => void openOrderPdf(quote.work_order_id!)}
-                      disabled={loadingOrderPdf}
-                      className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
+                      onClick={() => openFortnoxPdf(`/api/crm/work-orders/${quote.work_order_id}/fortnox/pdf`)}
+                      className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:border-slate-300"
                     >
-                      {loadingOrderPdf ? 'Hämtar…' : 'Hämta PDF'}
+                      Hämta PDF
                     </button>
                     <button
                       type="button"
@@ -546,11 +529,10 @@ export default function QuoteDetailPanel({
                       <>
                         <button
                           type="button"
-                          onClick={() => void openOfferPdf()}
-                          disabled={loadingOfferPdf}
-                          className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
+                          onClick={() => openFortnoxPdf(`/api/fortnox/offers/${quote.id}/pdf`)}
+                          className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:border-slate-300"
                         >
-                          {loadingOfferPdf ? 'Hämtar…' : 'Hämta PDF'}
+                          Hämta PDF
                         </button>
                         {/* Ett enda mejlsätt: eget mejlprogram. Fortnox egen offertutskick är
                             borttaget — mottagaren gick inte att styra därifrån och används inte. */}

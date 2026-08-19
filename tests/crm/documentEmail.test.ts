@@ -1,21 +1,20 @@
 import { describe, it, expect } from 'vitest';
-import { buildDocumentEmailDraft, buildMailtoUrl } from '@/lib/domains/crm/documentEmail';
+import { buildDocumentEmailDraft, buildDocumentFilename, buildMailtoUrl } from '@/lib/domains/crm/documentEmail';
 
 describe('buildDocumentEmailDraft', () => {
   it('offert: ämne, brödtext och filnamn', () => {
     const draft = buildDocumentEmailDraft({ kind: 'offer', ref: '12345', projectName: 'Takisolering villa' });
     expect(draft.subject).toBe('Offert 12345 – Takisolering villa');
     expect(draft.body).toContain('Här kommer offert 12345 gällande Takisolering villa. Offerten bifogas som PDF.');
-    expect(draft.filename).toBe('offert-12345.pdf');
+    expect(draft.filename).toBe('Offert 12345 - Takisolering villa.pdf');
   });
 
   it('orderbekräftelse: egen ordlydelse och eget filnamn', () => {
     const draft = buildDocumentEmailDraft({ kind: 'order', ref: '778', projectName: 'Vindsisolering' });
     expect(draft.subject).toBe('Orderbekräftelse 778 – Vindsisolering');
     expect(draft.body).toContain('Här kommer orderbekräftelse 778 gällande Vindsisolering. Orderbekräftelsen bifogas som PDF.');
-    // Filnamnet måste vara ASCII — å/ä/ö i en Content-Disposition-fri blob-nedladdning
-    // ger olika resultat per webbläsare.
-    expect(draft.filename).toBe('orderbekraftelse-778.pdf');
+    // Filnamnet måste vara ASCII — å/ä/ö i ett filnamn ger olika resultat per webbläsare.
+    expect(draft.filename).toBe('Orderbekraftelse 778 - Vindsisolering.pdf');
   });
 
   it('utan projektnamn utelämnas både suffix och "gällande"', () => {
@@ -51,5 +50,36 @@ describe('buildMailtoUrl', () => {
 
   it('tom mottagare ger ändå ett giltigt utkast', () => {
     expect(buildMailtoUrl('', { subject: 'S', body: 'B' })).toBe('mailto:?subject=S&body=B');
+  });
+});
+
+describe('buildDocumentFilename', () => {
+  it('offertnummer + offertnamn', () => {
+    expect(buildDocumentFilename({ kind: 'offer', ref: '12345', projectName: 'Takisolering villa' }))
+      .toBe('Offert 12345 - Takisolering villa.pdf');
+  });
+
+  // documentRef() ger numret som "#12345", och # är inget att ha i ett filnamn.
+  it('rensar # och andra tecken som inte hör hemma i ett filnamn', () => {
+    expect(buildDocumentFilename({ kind: 'offer', ref: '#12345', projectName: 'Tak / vind: etapp 2' }))
+      .toBe('Offert 12345 - Tak vind etapp 2.pdf');
+  });
+
+  // å/ä/ö i ett filnamn renderas olika per webbläsare och filsystem.
+  it('transkriberar å/ä/ö till ASCII', () => {
+    expect(buildDocumentFilename({ kind: 'order', ref: '778', projectName: 'Vindsbjälklag Åkersberga' }))
+      .toBe('Orderbekraftelse 778 - Vindsbjalklag Akersberga.pdf');
+  });
+
+  it('utan projektnamn blir det bara typ och nummer', () => {
+    expect(buildDocumentFilename({ kind: 'offer', ref: '12345', projectName: '   ' })).toBe('Offert 12345.pdf');
+    expect(buildDocumentFilename({ kind: 'offer', ref: '12345' })).toBe('Offert 12345.pdf');
+  });
+
+  // Ett långt projektnamn får inte spränga filnamnslängden på mottagarens filsystem.
+  it('kapar ett långt projektnamn', () => {
+    const name = buildDocumentFilename({ kind: 'offer', ref: '1', projectName: 'A'.repeat(200) });
+    expect(name.length).toBeLessThanOrEqual(80);
+    expect(name.endsWith('.pdf')).toBe(true);
   });
 });

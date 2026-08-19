@@ -51,3 +51,37 @@ export function invalidUuidParam(id: string | undefined) {
 export function isNoRowsError(error: { code?: string } | null | undefined): boolean {
   return error?.code === 'PGRST116';
 }
+
+// PDF-rutterna öppnas som en vanlig fliknavigering, inte via fetch — det är enda sättet att
+// låta webbläsaren se `Content-Disposition` och därmed spara filen med rätt namn (en
+// blob-URL bär inget namn alls och blir "Unknown"). Priset är att ett felsvar hamnar i
+// fliken i stället för i en toast, så ett fel på en dokumentnavigering svaras ut som en
+// liten HTML-sida i stället för som JSON.
+export function isDocumentNavigation(req: Request): boolean {
+  const dest = req.headers.get('sec-fetch-dest');
+  // Sec-Fetch-Dest finns i alla nuvarande webbläsare; Accept är fallbacken för äldre.
+  if (dest) return dest === 'document';
+  return (req.headers.get('accept') || '').includes('text/html');
+}
+
+function escapeHtml(value: string) {
+  return value.replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string
+  ));
+}
+
+export function documentErrorPage(status: number, message: string) {
+  const body = `<!doctype html><html lang="sv"><head><meta charset="utf-8">`
+    + `<meta name="viewport" content="width=device-width, initial-scale=1">`
+    + `<title>Kunde inte hämta dokumentet</title>`
+    + `<style>body{margin:0;display:grid;place-items:center;min-height:100vh;`
+    + `font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:#f8faf6;color:#1e293b}`
+    + `main{max-width:32rem;padding:2rem;text-align:center}h1{font-size:1.125rem;margin:0 0 .5rem}`
+    + `p{margin:0;color:#475569;line-height:1.6}</style></head><body><main>`
+    + `<h1>Kunde inte hämta dokumentet</h1><p>${escapeHtml(message)}</p>`
+    + `<p>Stäng fliken och försök igen.</p></main></body></html>`;
+  return new Response(body, {
+    status,
+    headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' },
+  });
+}

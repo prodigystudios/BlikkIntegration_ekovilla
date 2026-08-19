@@ -203,7 +203,6 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
       return next;
     });
   }
-  const [orderPdfLoading, setOrderPdfLoading] = useState(false);
   // Order-confirmation e-mail (own mail client, with recipient resolution).
   const documentEmail = useDocumentEmail();
   const [editingOverview, setEditingOverview] = useState(false); // overview fields locked until unlocked
@@ -498,15 +497,6 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
     } catch { toast.error('Fel vid skapande av delfaktura'); }
     finally { setSubmittingPartial(false); }
   }
-
-  // Order confirmation PDF + email. Shared fetch/popup/email logic in lib/fortnoxDoc.
-  async function openOrderPdf() {
-    if (!workOrder) return;
-    setOrderPdfLoading(true);
-    await openFortnoxPdf(`/api/crm/work-orders/${workOrder.id}/fortnox/pdf`, toast.error);
-    setOrderPdfLoading(false);
-  }
-
 
   // ─── Loading / error ──────────────────────────────────────────────────────
 
@@ -944,11 +934,10 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                   <div className="grid grid-cols-2 gap-2 border-t border-[#e0e8dc] pt-3">
                     <button
                       type="button"
-                      onClick={openOrderPdf}
-                      disabled={orderPdfLoading}
-                      className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
+                      onClick={() => openFortnoxPdf(`/api/crm/work-orders/${workOrder.id}/fortnox/pdf`)}
+                      className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300"
                     >
-                      {orderPdfLoading ? 'Hämtar…' : 'Hämta PDF'}
+                      Hämta PDF
                     </button>
                     <button
                       type="button"

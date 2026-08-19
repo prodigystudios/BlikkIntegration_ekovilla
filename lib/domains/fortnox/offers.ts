@@ -545,11 +545,11 @@ export async function pushQuoteToFortnox(quoteId: string): Promise<PushOfferResu
 // Resolve a quote's synced Fortnox offer number, or throw a 409 telling the caller
 // to push the offer to Fortnox first. Also reports whether the seller turned ROT on,
 // which gates the locally rendered PDF (see getFortnoxOfferPdf).
-async function requireOfferNumber(quoteId: string): Promise<{ offerNumber: string; rotSelected: boolean }> {
+async function requireOfferNumber(quoteId: string): Promise<{ offerNumber: string; rotSelected: boolean; projectName: string | null }> {
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase
     .from('crm_quotes')
-    .select('fortnox_offer_number, rot_details')
+    .select('fortnox_offer_number, rot_details, project_name')
     .eq('id', quoteId)
     .maybeSingle();
 
@@ -557,7 +557,9 @@ async function requireOfferNumber(quoteId: string): Promise<{ offerNumber: strin
   const offerNumber = data?.fortnox_offer_number;
   if (!offerNumber) throw new FortnoxApiError(409, 'Skicka offerten till Fortnox först.', undefined, 'Skicka offerten till Fortnox först.');
   const rotSelected = (data as { rot_details?: { enabled?: boolean | null } | null } | null)?.rot_details?.enabled === true;
-  return { offerNumber: String(offerNumber), rotSelected };
+  // Projektnamnet följer med enbart för PDF:ens filnamn (offertnummer + offertnamn).
+  const projectName = (data as { project_name?: string | null } | null)?.project_name ?? null;
+  return { offerNumber: String(offerNumber), rotSelected, projectName };
 }
 
 // Fetch the offer as a PDF (GET /offers/{n}/preview). We use `/preview`, not `/print`:
@@ -567,8 +569,8 @@ async function requireOfferNumber(quoteId: string): Promise<{ offerNumber: strin
 // and rejects `application/pdf` with error 1000030 "Invalid response type" — you must
 // keep `Accept: application/json` and Fortnox still returns the PDF binary. See
 // FORTNOX_INTEGRATION.md.
-export async function getFortnoxOfferPdf(quoteId: string): Promise<{ bytes: Uint8Array; contentType: string; offerNumber: string }> {
-  const { offerNumber, rotSelected } = await requireOfferNumber(quoteId);
+export async function getFortnoxOfferPdf(quoteId: string): Promise<{ bytes: Uint8Array; contentType: string; offerNumber: string; projectName: string | null }> {
+  const { offerNumber, rotSelected, projectName } = await requireOfferNumber(quoteId);
 
   // Offerten kan renderas LOKALT i stället för av Fortnox utskriftsmall — idag bara ROT, där
   // Fortnox mall utelämnar skattereduktionen, på sikt alla när den egna formgivningen är klar.
@@ -603,7 +605,7 @@ export async function getFortnoxOfferPdf(quoteId: string): Promise<{ bytes: Uint
       const bytes = await renderOfferPdf({
         offer: Offer, taxReductions, company: companyResponse.CompanySettings ?? {}, logo,
       });
-      return { bytes, contentType: 'application/pdf', offerNumber };
+      return { bytes, contentType: 'application/pdf', offerNumber, projectName };
     }
 
     // CRM säger ROT men Fortnox-dokumentet gör det inte. Då är Fortnox mall rätt för den data som
@@ -624,5 +626,5 @@ export async function getFortnoxOfferPdf(quoteId: string): Promise<{ bytes: Uint
     const text = new TextDecoder().decode(bytes).slice(0, 500);
     throw new FortnoxApiError(502, `Fortnox returnerade inte en PDF för offert ${offerNumber}: ${text}`, undefined, 'Fortnox kunde inte skapa en PDF av offerten. Försök igen om en stund.');
   }
-  return { bytes, contentType, offerNumber };
+  return { bytes, contentType, offerNumber, projectName };
 }
