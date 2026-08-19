@@ -13,6 +13,7 @@ import { quoteCustomerName, isQuoteOverdue } from '@/app/crm/lib/quoteDisplay';
 import type { EmailableDocument } from '@/app/crm/components/useDocumentEmail';
 import type { WorkOrderReadinessIssue } from '@/lib/domains/crm/workOrderReadiness';
 import WorkOrderReadinessNotice from '@/app/crm/components/WorkOrderReadinessNotice';
+import CrmConfirmDialog from '@/app/crm/components/CrmConfirmDialog';
 
 // The quote detail modal, shared by the offer list and the Säljtavla board.
 //
@@ -137,6 +138,12 @@ export default function QuoteDetailPanel({
   // som skapandet använder) — panelens rad bär bara en beskuren snapshot och kan inte avgöra det.
   const [readiness, setReadiness] = useState<{ blockers: WorkOrderReadinessIssue[]; warnings: WorkOrderReadinessIssue[] } | null>(null);
 
+  // Bekräftelsen före "Vunnen" väntar här i stället för i ett window.confirm. Statusen läggs undan
+  // och plockas upp när dialogen svarar — annars hade anropet behövt blockera tråden.
+  const [pendingWonStatus, setPendingWonStatus] = useState<QuoteDetailItem['status'] | null>(null);
+  const [readinessNonce, setReadinessNonce] = useState(0);
+  const [rechecking, setRechecking] = useState(false);
+
   // Hämtas bara i det läge knappen är tänkt att gå att trycka på, alltså vunnen offert utan order.
   const readinessQuoteId = quote.status === 'won' && !quote.work_order_id ? quote.id : null;
 
@@ -149,9 +156,14 @@ export default function QuoteDetailPanel({
         if (cancelled || !json?.ok) return;
         setReadiness({ blockers: json.data?.blockers ?? [], warnings: json.data?.warnings ?? [] });
       })
-      .catch(() => { /* tyst — servern nekar ändå om något saknas */ });
+      .catch(() => { /* tyst — servern nekar ändå om något saknas */ })
+      .finally(() => { if (!cancelled) setRechecking(false); });
     return () => { cancelled = true; };
-  }, [readinessQuoteId]);
+  }, [readinessQuoteId, readinessNonce]);
+
+  // Avstängd bara när vi VET att något saknas. Misslyckades hämtningen lämnas knappen aktiv —
+  // servern spärrar ändå, och en död knapp utan förklaring är värre än ett fel efter klicket.
+  const workOrderBlocked = (readiness?.blockers.length ?? 0) > 0;
 
 
   // A work order locks the offer in Fortnox — unless the last sync failed, in which case the
@@ -160,18 +172,19 @@ export default function QuoteDetailPanel({
   const display = quoteAmountDisplay(quote.quote_type, resolveQuoteVatBreakdown(quote));
   const customerName = quoteCustomerName(quote);
 
+  // Won is a meaningful transition — confirm it, exactly as the board's drag-and-drop does. A
+  // linked prospect is converted to a customer server-side and that cannot be undone from here,
+  // so the same board offering two different safety levels for one transition would be worse than
+  // offering none.
+  function requestMoveToStatus(nextStatus: QuoteDetailItem['status']) {
+    if (quote.status === nextStatus) return;
+    if (nextStatus === 'won') { setPendingWonStatus(nextStatus); return; }
+    void moveQuoteToStatus(nextStatus);
+  }
+
   async function moveQuoteToStatus(nextStatus: QuoteDetailItem['status']) {
     if (quote.status === nextStatus) return;
-    // Won is a meaningful transition — confirm it, exactly as the board's drag-and-drop does. A
-    // linked prospect is converted to a customer server-side and that cannot be undone from here,
-    // so the same board offering two different safety levels for one transition would be worse than
-    // offering none.
-    if (nextStatus === 'won') {
-      const message = quote.prospect_id
-        ? 'Markera offerten som vunnen? En kopplad prospekt konverteras då till kund.'
-        : 'Markera offerten som vunnen?';
-      if (!window.confirm(message)) return;
-    }
+    setPendingWonStatus(null);
     setMoving(true);
     try {
       const res = await fetch(`/api/crm/quotes/${quote.id}`, {
@@ -384,7 +397,7 @@ export default function QuoteDetailPanel({
                       key={s}
                       type="button"
                       disabled={moving || isCurrent}
-                      onClick={() => void moveQuoteToStatus(s)}
+                      onClick={() => requestMoveToStatus(s)}
                       className={cn(
                         'inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition',
                         isCurrent
@@ -443,7 +456,7 @@ export default function QuoteDetailPanel({
                       <button
                         type="button"
                         onClick={() => void createWorkOrder()}
-                        disabled={quote.status !== 'won' || creatingWorkOrder}
+                        disabled={quote.status !== 'won' || creatingWorkOrder || workOrderBlocked}
                         className="rounded-lg border border-emerald-700 bg-emerald-700 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-white disabled:text-slate-400"
                       >
                         {creatingWorkOrder ? 'Skapar…' : 'Skapa arbetsorder'}
@@ -459,6 +472,8 @@ export default function QuoteDetailPanel({
                     warnings={readiness.warnings}
                     customerHref={quote.customer_id ? `/crm/kunder/${quote.customer_id}?returnTo=${encodeURIComponent(returnTo)}` : null}
                     quoteHref={`/crm/offerter/${quote.id}/redigera?returnTo=${encodeURIComponent(returnTo)}`}
+                    onRecheck={readiness.blockers.length > 0 ? () => { setRechecking(true); setReadinessNonce((n) => n + 1); } : null}
+                    rechecking={rechecking}
                   />
                 ) : null}
 
@@ -619,6 +634,21 @@ export default function QuoteDetailPanel({
             ) : null}
           </div>
         </div>
+
+      {pendingWonStatus ? (
+        <CrmConfirmDialog
+          title="Markera offerten som vunnen?"
+          message={
+            quote.prospect_id
+              ? 'Ett kopplat prospekt konverteras då till kund. Det går inte att ångra härifrån.'
+              : undefined
+          }
+          confirmLabel="Markera som vunnen"
+          busy={moving}
+          onConfirm={() => void moveQuoteToStatus(pendingWonStatus)}
+          onCancel={() => setPendingWonStatus(null)}
+        />
+      ) : null}
     </div>
   );
 }

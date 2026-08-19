@@ -25,6 +25,14 @@ type Props = {
   onOpenCustomerCard?: (() => void) | null;
   /** Offertens redigeringsvy. Utelämnas när man redan står i den. */
   quoteHref?: string | null;
+  /**
+   * Hämtar kontrollen på nytt. Knappen till arbetsordern är avstängd så länge något saknas, och
+   * uppgifterna rättas på en ANNAN sida — utan en väg att kontrollera om blir en rättning som
+   * gjorts i en annan flik osynlig här, och knappen sitter kvar avstängd utan förklaring.
+   */
+  onRecheck?: (() => void) | null;
+  /** Sant medan omkontrollen pågår. */
+  rechecking?: boolean;
   className?: string;
 };
 
@@ -46,7 +54,7 @@ function IssueList({ issues, tone }: { issues: WorkOrderReadinessIssue[]; tone: 
   );
 }
 
-export default function WorkOrderReadinessNotice({ blockers, warnings, customerHref, onOpenCustomerCard, quoteHref, className }: Props) {
+export default function WorkOrderReadinessNotice({ blockers, warnings, customerHref, onOpenCustomerCard, quoteHref, onRecheck, rechecking = false, className }: Props) {
   if (blockers.length === 0 && warnings.length === 0) return null;
 
   // Bara de länkar som någon av fynden faktiskt pekar på — en "Öppna kundkortet" bredvid ett fynd
@@ -62,7 +70,7 @@ export default function WorkOrderReadinessNotice({ blockers, warnings, customerH
             {blockers.length === 1 ? 'En uppgift saknas' : `${blockers.length} uppgifter saknas`} innan arbetsordern kan skapas
           </p>
           <IssueList issues={blockers} tone="blocker" />
-          {(needsCustomerCard && (onOpenCustomerCard || customerHref)) || (needsQuote && quoteHref) ? (
+          {(needsCustomerCard && (onOpenCustomerCard || customerHref)) || (needsQuote && quoteHref) || onRecheck ? (
             <div className="mt-2 flex flex-wrap gap-2">
               {needsCustomerCard && onOpenCustomerCard ? (
                 <button type="button" onClick={onOpenCustomerCard} className={actionClass}>
@@ -77,6 +85,11 @@ export default function WorkOrderReadinessNotice({ blockers, warnings, customerH
                 <Link href={quoteHref} className={actionClass}>
                   Öppna offerten
                 </Link>
+              ) : null}
+              {onRecheck ? (
+                <button type="button" onClick={onRecheck} disabled={rechecking} className={cn(actionClass, 'disabled:opacity-60')}>
+                  {rechecking ? 'Kontrollerar…' : 'Kontrollera igen'}
+                </button>
               ) : null}
             </div>
           ) : null}

@@ -1143,6 +1143,11 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
   // räknas ut här: adress, telefon och org.nr bor på kundkortet och finns inte i formulärets draft,
   // och en andra uppsättning regler i klienten hade förr eller senare sagt emot spärren.
   const [readiness, setReadiness] = useState<{ blockers: WorkOrderReadinessIssue[]; warnings: WorkOrderReadinessIssue[] } | null>(null);
+  // Bumpas av "Kontrollera igen" och hämtar om kontrollen. En räknare i stället för en utbruten
+  // funktion: effekten nedan äger hämtningen, och två vägar in i samma fetch hade kunnat lämna
+  // kvar ett svar från den ena efter att den andra sagt något nytt.
+  const [readinessNonce, setReadinessNonce] = useState(0);
+  const [rechecking, setRechecking] = useState(false);
   const [pnValue, setPnValue] = useState('');
   const [draft, setDraft] = useState<QuoteDraft>(initialDraft);
   // Accordion: id of the single open article row. Starts on the empty starter row; adding
@@ -2182,9 +2187,10 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
         if (cancelled || !json?.ok) return;
         setReadiness({ blockers: json.data?.blockers ?? [], warnings: json.data?.warnings ?? [] });
       })
-      .catch(() => { /* tyst — servern nekar ändå om något saknas */ });
+      .catch(() => { /* tyst — servern nekar ändå om något saknas */ })
+      .finally(() => { if (!cancelled) setRechecking(false); });
     return () => { cancelled = true; };
-  }, [readinessQuoteId]);
+  }, [readinessQuoteId, readinessNonce]);
 
   // TG räknas på SAMMA belopp som visas på skärmen (effectiveRows.rowTotal), inte ur raden på nytt.
   // Formuläret prissätter auto-prissatta rader med sin egen stub medan pricing.ts ger dem 0 — räknade
@@ -2207,6 +2213,10 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
   }
 
   const hasWorkOrder = Boolean(loadedQuote?.work_order_id || loadedQuote?.work_order_number);
+  // Avstängd bara när vi VET att något saknas. Gick kontrollen inte att hämta lämnas knappen
+  // aktiv — servern spärrar ändå, och en knapp som är död för att ett bakgrundsanrop failade är
+  // värre än ett tydligt fel efter klicket.
+  const workOrderBlocked = (readiness?.blockers.length ?? 0) > 0;
   const configuredRows = effectiveRows.filter((r) => r.isConfigured);
   const hasAnyLineItemInput = draft.items.some((item) => item.article_name || item.m2 || item.quantity || item.unit_price);
 
@@ -2916,7 +2926,7 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
                   <button
                     type="button"
                     onClick={createWorkOrderFromQuote}
-                    disabled={draft.status !== 'won' || hasWorkOrder || creatingWorkOrder}
+                    disabled={draft.status !== 'won' || hasWorkOrder || creatingWorkOrder || workOrderBlocked}
                     className="rounded-lg border border-slate-900 bg-slate-900 px-3.5 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-white disabled:text-slate-400"
                   >
                     {creatingWorkOrder ? 'Skapar…' : hasWorkOrder ? 'Skapad' : 'Skapa arbetsorder'}
@@ -2931,6 +2941,8 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
                   onOpenCustomerCard={
                     loadedQuote.customer_id ? () => goToCustomerPage(`/crm/kunder/${loadedQuote.customer_id}`) : null
                   }
+                  onRecheck={readiness.blockers.length > 0 ? () => { setRechecking(true); setReadinessNonce((n) => n + 1); } : null}
+                  rechecking={rechecking}
                 />
               ) : null}
             </div>
