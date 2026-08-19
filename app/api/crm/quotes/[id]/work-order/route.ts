@@ -4,7 +4,7 @@ import { createCrmWorkOrderFromQuote, getWorkOrderReadinessForQuote } from '@/li
 import { workOrderReadinessErrorCode } from '@/lib/domains/crm/workOrderReadiness';
 import { pushWorkOrderToFortnox } from '@/lib/domains/fortnox/orders';
 import { FortnoxNotConnectedError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
-import { ok, requirePermission, routeError } from '../../_lib';
+import { invalidUuidParam, ok, requirePermission, routeError } from '../../_lib';
 
 type RouteContext = {
   params: {
@@ -23,6 +23,9 @@ export async function GET(_req: Request, context: RouteContext) {
   try {
     const crmUser = await requirePermission('crm.workorder.write');
     if (crmUser.response || !crmUser.currentUser) return crmUser.response;
+
+    const badId = invalidUuidParam(context.params.id);
+    if (badId) return badId;
 
     const supabase = createRouteHandlerClient({ cookies });
     const result = await getWorkOrderReadinessForQuote(supabase, context.params.id);
@@ -45,6 +48,9 @@ export async function POST(_req: Request, context: RouteContext) {
     const crmUser = await requirePermission('crm.workorder.write');
     if (crmUser.response || !crmUser.currentUser) return crmUser.response;
 
+    const badId = invalidUuidParam(context.params.id);
+    if (badId) return badId;
+
     const supabase = createRouteHandlerClient({ cookies });
     const result = await createCrmWorkOrderFromQuote(supabase, context.params.id, crmUser.currentUser.id);
 
@@ -61,13 +67,13 @@ export async function POST(_req: Request, context: RouteContext) {
       // Är det fler blir det `crm_work_order_incomplete` och listan visas i stället, eftersom en
       // prompt då bara hade lagat en av sakerna innan nästa fel dök upp.
       if (result.reason === 'incomplete') {
-        const readiness = await getWorkOrderReadinessForQuote(supabase, context.params.id);
-        const blockers = readiness.data?.blockers ?? [];
+        const readiness = 'readiness' in result ? result.readiness : null;
+        const blockers = readiness?.blockers ?? [];
         return routeError(
           409,
           blockers.length > 0 ? workOrderReadinessErrorCode(blockers) : 'crm_work_order_incomplete',
           result.error?.message || 'Uppgifter saknas innan arbetsorder kan skapas',
-          { blockers, warnings: readiness.data?.warnings ?? [] },
+          { blockers, warnings: readiness?.warnings ?? [] },
         );
       }
 

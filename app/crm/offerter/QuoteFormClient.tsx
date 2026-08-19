@@ -2044,7 +2044,9 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
         if (json?.errorDetails?.code === 'crm_work_order_incomplete') {
           const details = json?.errorDetails?.details as { blockers?: WorkOrderReadinessIssue[]; warnings?: WorkOrderReadinessIssue[] } | undefined;
           const blockers = details?.blockers ?? [];
-          setReadiness({ blockers, warnings: details?.warnings ?? [] });
+          // Bara när listan faktiskt bär något. Ett nekat anrop med tom lista betyder inte att
+          // allt är ifyllt — att skriva över checklistan med den hade sagt motsatsen till felet.
+          if (blockers.length > 0) setReadiness({ blockers, warnings: details?.warnings ?? [] });
           toast.error(blockers.length > 1 ? `${blockers.length} uppgifter saknas innan arbetsordern kan skapas` : (json?.error || 'Uppgifter saknas'));
           return;
         }

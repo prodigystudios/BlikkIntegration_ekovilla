@@ -145,6 +145,44 @@ function hasPopulatedLineItem(lineItems: Array<Record<string, unknown>>): boolea
   return lineItems.some((item) => text(item.article_name) || text(item.m2) || text(item.quantity) || text(item.unit_price));
 }
 
+// ── Varningar: syns i checklistan, spärrar inte. Williams val 2026-08-19. ──
+//
+// Rör bara offerten själv, aldrig kundkortet — därför kan de räknas ut även när kundkopplingen
+// saknas och resten av kontrollen kortsluter.
+function collectWarnings(quote: ReadinessQuoteSource): WorkOrderReadinessIssue[] {
+  const warnings: WorkOrderReadinessIssue[] = [];
+  const lineItems = quote.line_items || [];
+  if (lineItems.length === 0 || !hasPopulatedLineItem(lineItems)) {
+    warnings.push({
+      field: 'line_items',
+      label: 'Artikelrader',
+      message: 'Offerten har inga ifyllda artikelrader — arbetsordern skapas tom.',
+      fixAt: 'quote',
+    });
+  }
+
+  const handoff = quote.internal_handoff || {};
+  if (!text(handoff.desired_installation_date)) {
+    warnings.push({
+      field: 'installation_date',
+      label: 'Önskat installationsdatum',
+      message: 'Önskat installationsdatum saknas — planeringen har inget att utgå från.',
+      fixAt: 'quote',
+    });
+  }
+
+  if (!text(handoff.handoff_notes)) {
+    warnings.push({
+      field: 'handoff_notes',
+      label: 'Arbetsbeskrivning',
+      message: 'Arbetsbeskrivning saknas — installatörerna får ingen instruktion med sig.',
+      fixAt: 'quote',
+    });
+  }
+
+  return warnings;
+}
+
 export function evaluateWorkOrderReadiness(
   quote: ReadinessQuoteSource,
   customer: ReadinessCustomerSource,
@@ -157,18 +195,42 @@ export function evaluateWorkOrderReadiness(
   const personalNumber = text(snapshot.personal_number) || text(customer?.personal_number);
   const organizationNumber = text(snapshot.organization_number) || text(customer?.organization_number);
   const contact = customer ? resolveCrmContact(customer) : { name: '', email: '', phone: '' };
-  const phone = text(snapshot.phone) || text(snapshot.end_contact_phone) || text(contact.phone);
+  // KUNDENS nummer — det som skrivs till ordern. Slutkundens nummer (end_contact_phone) är en
+  // ANNAN person, en kontakt på plats vid sidan av kundkortet, och får aldrig hamna här: ordervyn
+  // visar fältet som kundens telefon bredvid kundens kontaktnamn, seedar redigeringsfältet ur det
+  // och skickar det vidare till installatörerna. En felmärkning som nästa sparning gör permanent.
+  const phone = text(snapshot.phone) || text(contact.phone);
+  // Kravet är att NÅGON går att nå på plats, och där duger slutkundens nummer — det är ofta det
+  // enda som finns när beställaren är en förvaltare. Prövas alltså bredare än det som lagras.
+  const reachablePhone = phone || text(snapshot.end_contact_phone);
   const workAddress = resolveWorkAddress(snapshot, customer);
 
   // 1. Kundkopplingen först: den är förutsättningen för att de andra ens går att slå upp, och
   //    utan den kan ordern aldrig nå Fortnox (pushen resolvar kundnumret via customer_id).
   if (!text(quote.customer_id)) {
-    blockers.push({
-      field: 'customer_link',
-      label: 'Kund i kundregistret',
-      message: 'Offerten är inte kopplad till en kund i kundregistret. Utan kopplingen får arbetsordern ingen kund och kan inte synkas till Fortnox.',
-      fixAt: 'quote',
-    });
+    // KORTSLUTER med flit. Adress, telefon, org.nr och personnummer hämtas från kundkortet, och
+    // utan koppling finns inget kort att hämta dem ur — listar vi dem också får säljaren fyra
+    // fynd hen inte kan göra något åt, varav tre pekar på en sida som inte existerar. Ett fynd
+    // med en åtgärd är hela skillnaden mellan en spärr som vägleder och en som bara stoppar.
+    //
+    // Åtgärden är att välja kunden i offertens Kund-sektion; offerten sparas i dag utan koppling
+    // när kunden bara skrevs som fritext, och gamla offerter bär bara sin Fortnox-referens.
+    return {
+      ready: false,
+      blockers: [{
+        field: 'customer_link',
+        label: 'Kund i kundregistret',
+        message: 'Offerten är inte kopplad till en kund i kundregistret. Välj kunden i offertens Kund-sektion — annars får arbetsordern ingen kund, syns inte på kundkortet och räknas inte i rapporteringen.',
+        fixAt: 'quote',
+      }],
+      warnings: collectWarnings(quote),
+      resolved: {
+        personalNumber,
+        organizationNumber,
+        phone,
+        workAddress: { ...workAddress, delivery_address: null, invoice_address: text(snapshot.invoice_address) },
+      },
+    };
   }
 
   // 2. Personnummer på privatkund — Fortnox OrganisationNumber. Tio siffror dödar ROT- och
@@ -214,7 +276,7 @@ export function evaluateWorkOrderReadiness(
 
   // 5. Ett nummer någon svarar i. "Er referens" kräver bara ett NAMN, så en order kunde nå fältet
   //    utan att besättningen hade något sätt att höra av sig när de står på plats.
-  if (!phone) {
+  if (!reachablePhone) {
     blockers.push({
       field: 'contact_phone',
       label: 'Telefonnummer',
@@ -235,35 +297,7 @@ export function evaluateWorkOrderReadiness(
     });
   }
 
-  // ── Varningar: syns i checklistan, spärrar inte. Williams val 2026-08-19. ──
-  const lineItems = quote.line_items || [];
-  if (lineItems.length === 0 || !hasPopulatedLineItem(lineItems)) {
-    warnings.push({
-      field: 'line_items',
-      label: 'Artikelrader',
-      message: 'Offerten har inga ifyllda artikelrader — arbetsordern skapas tom.',
-      fixAt: 'quote',
-    });
-  }
-
-  const handoff = quote.internal_handoff || {};
-  if (!text(handoff.desired_installation_date)) {
-    warnings.push({
-      field: 'installation_date',
-      label: 'Önskat installationsdatum',
-      message: 'Önskat installationsdatum saknas — planeringen har inget att utgå från.',
-      fixAt: 'quote',
-    });
-  }
-
-  if (!text(handoff.handoff_notes)) {
-    warnings.push({
-      field: 'handoff_notes',
-      label: 'Arbetsbeskrivning',
-      message: 'Arbetsbeskrivning saknas — installatörerna får ingen instruktion med sig.',
-      fixAt: 'quote',
-    });
-  }
+  warnings.push(...collectWarnings(quote));
 
   return {
     ready: blockers.length === 0,

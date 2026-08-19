@@ -24,7 +24,12 @@ vi.mock('@/lib/supabase/server', () => ({ getSupabaseAdmin: () => elevated.clien
 // offerten är olänkad, och nästa försök smäller på unikhetsindexet på quote_id.
 // ---------------------------------------------------------------------------
 
-function makeSupabase(quote: Record<string, unknown>, customer: Record<string, unknown> | null = COMPLETE_CUSTOMER) {
+function makeSupabase(
+  quote: Record<string, unknown>,
+  customer: Record<string, unknown> | null = COMPLETE_CUSTOMER,
+  customerError: { message: string } | null = null,
+) {
+  const customerRead = { data: customerError ? null : customer, error: customerError };
   const captured: {
     insert: Record<string, any> | null;
     quoteUpdateVia: 'session' | 'elevated' | null;
@@ -46,7 +51,7 @@ function makeSupabase(quote: Record<string, unknown>, customer: Record<string, u
           // Fullständighetskontrollen läser om kundkortet (adress, telefon, org.nr och
           // personnummer går inte att redigera i offertformuläret) — se workOrderReadiness.ts.
           maybeSingle: vi.fn(() => {
-            if (table === 'crm_customers') return Promise.resolve({ data: customer, error: null });
+            if (table === 'crm_customers') return Promise.resolve(customerRead);
             return Promise.resolve({ data: null, error: null });
           }),
           single: vi.fn(() => {
@@ -415,6 +420,17 @@ describe('createCrmWorkOrderFromQuote — fullständighetskontrollen', () => {
     const result = await createCrmWorkOrderFromQuote(supabase as any, 'q1', 'user-1');
     expect(result.reason).toBe('incomplete');
     expect(result.error?.message).toContain('Arbetsadressen');
+    expect(captured.insert).toBeNull();
+  });
+
+  // Regression: läsfelet på kundkortet svaldes en gång, och då gick det inte att skilja från
+  // "kunden har inga uppgifter" — kontrollen hittade på spärrar för adress, telefon och org.nr och
+  // bad säljaren fylla i fält som redan var ifyllda.
+  it('avbryter i stället för att hitta på spärrar när kundkortet inte gick att läsa', async () => {
+    const { supabase, captured } = makeSupabase(wonQuote(), null, { message: 'timeout' });
+    const result = await createCrmWorkOrderFromQuote(supabase as any, 'q1', 'user-1');
+    expect(result.reason).toBe('customer_fetch_failed');
+    expect(result.error?.message).toBe('timeout');
     expect(captured.insert).toBeNull();
   });
 

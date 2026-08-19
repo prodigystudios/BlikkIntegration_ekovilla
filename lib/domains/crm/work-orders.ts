@@ -251,17 +251,21 @@ function getClientName(source: QuoteSource) {
 const readinessCustomerSelect =
   'organization_number, personal_number, email, phone, mobile, visit_address, contacts:crm_customer_contacts(name, phone, email, is_primary)';
 
+// ⚠️ Felet får INTE svaljas. En tillfälligt misslyckad läsning skulle annars vara omöjlig att
+// skilja från "kunden har inga uppgifter": kontrollen hade hittat på spärrar för adress, telefon
+// och org.nr och bett säljaren fylla i fält som redan är ifyllda. Anroparen avbryter i stället.
 async function fetchReadinessCustomer(
   supabase: SupabaseClient,
   customerId: string | null,
-): Promise<ReadinessCustomerSource> {
-  if (!customerId) return null;
-  const { data } = await supabase
+): Promise<{ customer: ReadinessCustomerSource; error: { message: string } | null }> {
+  if (!customerId) return { customer: null, error: null };
+  const { data, error } = await supabase
     .from('crm_customers')
     .select(readinessCustomerSelect)
     .eq('id', customerId)
     .maybeSingle();
-  return (data as ReadinessCustomerSource) ?? null;
+  if (error) return { customer: null, error };
+  return { customer: (data as ReadinessCustomerSource) ?? null, error: null };
 }
 
 /**
@@ -282,7 +286,12 @@ export async function getWorkOrderReadinessForQuote(supabase: SupabaseClient, qu
   if (error) return { data: null, error, reason: 'quote_fetch_failed' as const };
   if (!quote) return { data: null, error: { message: 'Offerten hittades inte' }, reason: 'not_found' as const };
 
-  const customer = await fetchReadinessCustomer(supabase, (quote as { customer_id: string | null }).customer_id);
+  const { customer, error: customerError } = await fetchReadinessCustomer(
+    supabase,
+    (quote as { customer_id: string | null }).customer_id,
+  );
+  if (customerError) return { data: null, error: customerError, reason: 'customer_fetch_failed' as const };
+
   const readiness: WorkOrderReadiness = evaluateWorkOrderReadiness(quote, customer);
 
   return { data: readiness, error: null, reason: null };
@@ -317,13 +326,20 @@ export async function createCrmWorkOrderFromQuote(supabase: SupabaseClient, quot
   // auto-pushar den färdiga ordern till Fortnox — efter den punkten är en glömd uppgift ett
   // bokföringsärende i stället för ett formulärfel. Kundkortet läses om eftersom adress, telefon
   // och org.nr inte går att redigera i offertformuläret; se workOrderReadiness.ts.
-  const customerRow = await fetchReadinessCustomer(supabase, quote.customer_id);
+  const { customer: customerRow, error: customerError } = await fetchReadinessCustomer(supabase, quote.customer_id);
+  if (customerError) {
+    return { data: null, error: customerError, reason: 'customer_fetch_failed' as const };
+  }
+
   const readiness = evaluateWorkOrderReadiness(quote, customerRow);
 
   if (!readiness.ready) {
-    // Meddelandet är första fyndets, så äldre ytor som bara visar `error` fortfarande säger något
-    // begripligt. Hela listan hämtar routen via getWorkOrderReadinessForQuote.
-    return { data: null, error: { message: readiness.blockers[0].message }, reason: 'incomplete' as const };
+    // Kontrollen skickas MED, den görs inte om i routen. En andra körning kan svara annorlunda —
+    // eller misslyckas — och då hade svaret burit ett felmeddelande om saknade uppgifter men en
+    // tom lista, vilket i klienten läses som "inget saknas" och torkar checklistan från skärmen.
+    // Meddelandet är första fyndets, så ytor som bara visar `error` säger fortfarande något
+    // begripligt.
+    return { data: null, error: { message: readiness.blockers[0].message }, reason: 'incomplete' as const, readiness };
   }
 
   // "Er referens" blir ett EGET fält på arbetsordern. På offerten är den samma sak som

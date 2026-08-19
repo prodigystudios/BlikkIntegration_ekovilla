@@ -49,10 +49,24 @@ describe('fullständighetskontroll offert → arbetsorder', () => {
     expect(result.warnings).toEqual([]);
   });
 
-  it('okopplad offert spärras — utan customer_id får ordern ingen kund i Fortnox', () => {
-    const result = evaluateWorkOrderReadiness(quote({ customer_id: null }), null);
-    expect(fields(result.blockers)).toContain('customer_link');
+  it('okopplad offert spärras — och kortsluter, för resten går inte att åtgärda ändå', () => {
+    // Adress, telefon och org.nr bor på kundkortet. Utan koppling finns inget kort att rätta dem
+    // i, så en full lista hade gett fyra fynd med tre knappar som pekar på en sida som inte finns.
+    const result = evaluateWorkOrderReadiness(
+      quote({ customer_id: null, customer_snapshot: { customer_name: 'Anna' } }),
+      null,
+    );
+    expect(fields(result.blockers)).toEqual(['customer_link']);
+    expect(result.blockers[0].fixAt).toBe('quote');
     expect(result.ready).toBe(false);
+  });
+
+  it('kortslutningen tar inte varningarna med sig — de rör bara offerten', () => {
+    const result = evaluateWorkOrderReadiness(
+      quote({ customer_id: null, line_items: [], internal_handoff: {} }),
+      null,
+    );
+    expect(fields(result.warnings)).toEqual(['line_items', 'installation_date', 'handoff_notes']);
   });
 
   it('personnummer hämtas från kundkortet när offertens snapshot saknar det', () => {
@@ -144,11 +158,15 @@ describe('fullständighetskontroll offert → arbetsorder', () => {
     const blocked = evaluateWorkOrderReadiness(quote({ customer_snapshot: noPhone }), emptyCustomer);
     expect(fields(blocked.blockers)).toContain('contact_phone');
 
+    // Slutkundens nummer räcker för att NÅGON går att nå på plats — men det är en annan person
+    // än kunden, och får därför aldrig skrivas in som kundens telefon på ordern. Ordervyn visar
+    // det fältet bredvid kundens kontaktnamn och seedar redigeringsfältet ur det.
     const endContact = evaluateWorkOrderReadiness(
       quote({ customer_snapshot: { ...noPhone, end_contact_phone: '070-999 88 77' } }),
       emptyCustomer,
     );
-    expect(endContact.resolved.phone).toBe('070-999 88 77');
+    expect(fields(endContact.blockers)).not.toContain('contact_phone');
+    expect(endContact.resolved.phone).toBeNull();
 
     // Kontaktraden vinner över kortets nummer — samma regel som resolveCrmContact, så
     // arbetsordern och Fortnox-dokumenten pekar på samma person.
