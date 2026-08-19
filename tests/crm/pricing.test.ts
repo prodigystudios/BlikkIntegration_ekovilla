@@ -281,3 +281,77 @@ describe('quoteMargin', () => {
     expect(result.marginPercent).toBeNull();
   });
 });
+
+// ─── ROT: arbete i TG:n ────────────────────────────────────────────────────────
+//
+// En ROT-offert bryter ut arbetet ur priset. Arbete köps inte in, så det saknar inköpspris — och
+// tidigare lyftes varje rad utan inköpspris ut ur BÅDA summorna. Eftersom arbete är nästan ren
+// marginal drog det ner den sammanvägda siffran hårt. Reglerna nedan är beslutade av William
+// 2026-08-19; se MarginRow.isLabor.
+describe('TG på ROT-offerter', () => {
+  it('den utbrutna arbetskostnaden ändrar inte TG:n — den ingår redan', () => {
+    // ⚠️ REGRESSIONSVAKT MOT EN FELDIAGNOS. Fältet "Varav arbetskostnad (ROT, kr)" BRYTER UT arbetet
+    // ur radpriset utan att ändra radtotalen: 150 000 kr förblir 150 000 kr, och först vid
+    // Fortnox-pushen delas raden i material + "Arbetskostnad ROT" (art. 10058). Intäkten som skickas
+    // hit innehåller alltså redan arbetet, medan kostnaden bara är materialets — arbetsdelen får
+    // full TG av sig själv.
+    //
+    // Att läsa `labor_cost` här och dra av det vore alltså inte en fix utan en NY bugg: TG:n skulle
+    // falla från 46,7 % till 20 % på precis de offerter felet påstods gälla.
+    const heltRadprisetInklArbete = quoteMargin([
+      { revenue: 150000, quantity: 100, purchasePrice: 800 },
+    ]);
+    expect(heltRadprisetInklArbete.marginPercent).toBeCloseTo(46.667, 3);
+    expect(heltRadprisetInklArbete.unpricedRows).toBe(0);
+  });
+
+  it('räknar en arbetsrad utan inköpspris som full TG i stället för att utesluta den', () => {
+    // Material 100 000 mot 80 000 inköp (20 %) + 50 000 arbete utan inköpskostnad.
+    // Före regeln uteslöts arbetsraden och säljaren såg 20 % — en röd offert som krävde
+    // säljchefsgodkännande fast den sanna blandade TG:n är 46,7 %.
+    const result = quoteMargin([
+      { revenue: 100000, quantity: 100, purchasePrice: 800 },
+      { revenue: 50000, quantity: 1, purchasePrice: null, isLabor: true },
+    ]);
+    expect(result.marginPercent).toBeCloseTo(46.667, 3);
+    expect(result.revenue).toBe(150000);
+    expect(result.cost).toBe(80000);
+    // Arbetsraden är BEDÖMD, inte obedömbar — annars hade upplysningen "1 rad saknar inköpspris"
+    // stått kvar under en siffra som faktiskt räknar med raden.
+    expect(result.unpricedRows).toBe(0);
+    expect(result.unpricedRevenue).toBe(0);
+  });
+
+  it('låter en arbetsrad SOM HAR inköpspris räkna sin kostnad som vanligt', () => {
+    // Kryssrutan går att sätta på vilken rad som helst. Hade isLabor nollat kostnaden rakt av
+    // skulle en materialrad som råkat kryssas tappa hela sitt inköp och lysa 100 %.
+    const result = quoteMargin([
+      { revenue: 1000, quantity: 1, purchasePrice: 600, isLabor: true },
+    ]);
+    expect(result.marginPercent).toBeCloseTo(40, 6);
+    expect(result.cost).toBe(600);
+  });
+
+  it('håller MATERIAL utan inköpspris utanför även när offerten är ROT', () => {
+    // Regeln gäller arbete, inte "allt utan inköpspris". 61 av 289 artiklar saknar inköpspris, och
+    // att räkna dem som kostnadsfria är just den farligt optimistiska siffran quoteMargin undviker.
+    const result = quoteMargin([
+      { revenue: 1000, quantity: 1, purchasePrice: 600 },
+      { revenue: 9000, quantity: 3, purchasePrice: null },
+    ]);
+    expect(result.marginPercent).toBeCloseTo(40, 6);
+    expect(result.unpricedRows).toBe(1);
+    expect(result.unpricedRevenue).toBe(9000);
+  });
+
+  it('ger radmärket 100 % på en arbetsrad utan inköpspris', () => {
+    expect(rowMarginPercent({ revenue: 50000, quantity: 1, purchasePrice: null, isLabor: true })).toBe(100);
+    // Utan antal också — arbete prissätts ibland som klumpsumma, och kostnaden är noll oavsett.
+    expect(rowMarginPercent({ revenue: 50000, quantity: 0, purchasePrice: null, isLabor: true })).toBe(100);
+  });
+
+  it('ger fortfarande null för en tom arbetsrad', () => {
+    // En nyss tillagd rad med kryssrutan i ska inte lysa grönt innan säljaren skrivit ett pris.
+    expect(rowMarginPercent({ revenue: 0, quantity: 0, purchasePrice: null, isLabor: true })).toBeNull();
+  });
+});

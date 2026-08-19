@@ -2213,10 +2213,17 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
   // Formuläret prissätter auto-prissatta rader med sin egen stub medan pricing.ts ger dem 0 — räknade
   // vi om här skulle en auto-rad bidra med 0 kr till TG:n men synas i Delsumman, och inte ens
   // flaggas som obedömd. Se MarginRow i pricing.ts.
+  //
+  // `isLabor` sätts BARA när ROT faktiskt är aktivt på offerten. `is_rot_work` betyder "den här
+  // raden är ROT-arbete" och kryssrutan visas inte annars — en kvarglömd flagga på en offert där
+  // ROT stängts av ska inte tyst ge raden full TG. Samma villkor som ROT-underlaget i `totals`,
+  // så de två inte kan säga emot varandra.
+  const rotActiveForMargin = draft.quote_type === 'private' && draft.rot_enabled;
   const marginRows: MarginRow[] = effectiveRows.map((r) => ({
     revenue: r.rowTotal,
     quantity: r.amount,
     purchasePrice: r.article_number ? purchasePrices[r.article_number] ?? null : null,
+    isLabor: rotActiveForMargin && Boolean(r.is_rot_work),
   }));
   const quoteMarginResult = quoteMargin(marginRows);
   const quoteMarginTier = marginTier(quoteMarginResult.marginPercent);

@@ -141,10 +141,38 @@ export type MarginRow = {
   quantity: number;
   /** Inköpspris per enhet ur artikelregistret, eller null när det saknas. */
   purchasePrice: number | null | undefined;
+  /**
+   * Raden ÄR arbete (offertens "ROT-arbete"-kryss), inte material.
+   *
+   * ⚠️ AFFÄRSREGEL, beslutad av William 2026-08-19: arbete har ingen INKÖPSKOSTNAD. TG mäts här mot
+   * inköpspris ur artikelregistret, och arbete köps inte in — dess kostnad är lön, som registret
+   * inte bär. En arbetsrad utan inköpspris räknas därför som full TG i stället för att lyftas ut
+   * som obedömd.
+   *
+   * Skälet till att det behövdes: en ROT-offert bryter ut arbetet, och en utesluten arbetsrad drog
+   * ner den sammanvägda siffran hårt — 100 000 kr material mot 80 000 kr inköp plus 50 000 kr
+   * arbete visades som 20 % när den sanna blandade TG:n är 46,7 %.
+   *
+   * ⚠️ Gäller BARA när inköpspriset saknas. Har artikeln ett inköpspris räknas det som vanligt —
+   * annars hade en materialartikel som råkat kryssas som ROT-arbete tappat hela sin kostnad.
+   * Materialrader utan inköpspris lyfts fortfarande ut; att räkna DEM som kostnadsfria är just den
+   * farligt optimistiska siffran som quoteMargin finns för att undvika.
+   *
+   * ⚠️ Den utbrutna arbetskostnaden ("Varav arbetskostnad (ROT, kr)") behöver INGENTING här. Den
+   * bryts ut ur radpriset utan att ändra radtotalen — intäkten innehåller den alltså redan, medan
+   * kostnaden bara är materialets. Den delen får med andra ord full TG av sig själv. Se testet
+   * "den utbrutna arbetskostnaden ändrar inte TG:n".
+   */
+  isLabor?: boolean;
 };
 
 function hasPurchasePrice(purchasePrice: number | null | undefined): purchasePrice is number {
   return purchasePrice != null && Number.isFinite(purchasePrice) && purchasePrice > 0;
+}
+
+// En arbetsrad utan inköpspris: intäkt utan kostnad. Se MarginRow.isLabor.
+function isCostlessLabor(row: MarginRow): boolean {
+  return Boolean(row.isLabor) && !hasPurchasePrice(row.purchasePrice);
 }
 
 /**
@@ -155,8 +183,12 @@ function hasPurchasePrice(purchasePrice: number | null | undefined): purchasePri
  * rad hade fått nya rader att lysa rött innan säljaren ens skrivit något.
  */
 export function rowMarginPercent(row: MarginRow): number | null {
+  if (!(row.revenue > 0)) return null;
+  // Arbete utan inköpspris är hela intäkten i behåll. Inget antal krävs: kostnaden är noll oavsett
+  // hur raden råkar vara prissatt (timme, styck eller klumpsumma).
+  if (isCostlessLabor(row)) return 100;
   if (!hasPurchasePrice(row.purchasePrice)) return null;
-  if (!(row.revenue > 0) || !(row.quantity > 0)) return null;
+  if (!(row.quantity > 0)) return null;
   const cost = row.purchasePrice * row.quantity;
   return ((row.revenue - cost) / row.revenue) * 100;
 }
@@ -206,6 +238,11 @@ export function quoteMargin(rows: MarginRow[]): {
   let unpricedRevenue = 0;
 
   for (const row of rows) {
+    // Arbetsrader utan inköpspris räknas in med noll kostnad — de är bedömda, inte obedömbara.
+    if (isCostlessLabor(row)) {
+      if (row.revenue > 0) revenue += row.revenue;
+      continue;
+    }
     if (!hasPurchasePrice(row.purchasePrice) || !(row.quantity > 0)) {
       if (row.revenue > 0) { unpricedRows++; unpricedRevenue += row.revenue; }
       continue;
