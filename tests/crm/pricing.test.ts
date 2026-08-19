@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   lineItemRowTotal, computePricing, resolveQuoteVatBreakdown, quoteAmountDisplay,
-  rowMarginPercent, marginTier, quoteMargin, splitRowLabor, MARGIN_THRESHOLDS,
+  rowMarginPercent, marginTier, quoteMargin, splitRowLabor, lineItemRotLabor, MARGIN_THRESHOLDS,
 } from '@/lib/domains/crm/pricing';
 
 describe('lineItemRowTotal', () => {
@@ -289,42 +289,75 @@ describe('quoteMargin', () => {
 // marginal drog det ner den sammanvägda siffran hårt. Reglerna nedan är beslutade av William
 // 2026-08-19; se MarginRow.isLabor.
 describe('splitRowLabor', () => {
-  it('bryter UT arbetet ur radpriset — det läggs aldrig till', () => {
-    // ⚠️ Regressionsvakt mot den dyraste feltolkningen: "Varav" har lästs som "plus". En rad på
-    // 18 000 kr med 12 000 kr arbete är fortfarande 18 000 kr, inte 30 000.
-    const split = splitRowLabor(18000, '12000');
-    expect(split.labor).toBe(12000);
-    expect(split.material).toBe(6000);
-    expect(split.labor + split.material).toBe(18000);
-    expect(split.clamped).toBe(false);
+  it('räknar arbetskostnaden mot antalet — den är ett à-pris', () => {
+    // ⚠️ REGRESSIONSVAKT MOT EN RIKTIG BUGG (rättad 2026-08-19). Fältet lästes som ett klumpbelopp
+    // för hela raden: 500 kr arbete gav 500 kr vare sig raden var 10 m³ eller 30 m³, så ROT-avdraget
+    // frös vid samma krontal hur stort jobbet än blev.
+    const tio = splitRowLabor({ laborCostPerUnit: '500', unitPrice: 1500, discountPercent: 0, quantity: 10 });
+    const trettio = splitRowLabor({ laborCostPerUnit: '500', unitPrice: 1500, discountPercent: 0, quantity: 30 });
+    expect(tio.labor).toBe(5000);
+    expect(trettio.labor).toBe(15000);
+    expect(trettio.labor).toBe(tio.labor * 3);
   });
 
-  it('kapar ett belopp som överstiger radtotalen', () => {
-    // Samma kapning som rowRotLaborCarveout gör vid pushen — materialet får aldrig gå negativt.
-    const split = splitRowLabor(18000, '25000');
-    expect(split.labor).toBe(18000);
+  it('bryter UT arbetet ur A-priset — det läggs aldrig till', () => {
+    // A-pris 500 kr/m³ varav 200 arbete är en rad på 500 kr/m³, inte 700.
+    const split = splitRowLabor({ laborCostPerUnit: '200', unitPrice: 500, discountPercent: 0, quantity: 60 });
+    expect(split.rowTotal).toBe(30000);
+    expect(split.labor).toBe(12000);
+    expect(split.material).toBe(18000);
+    expect(split.labor + split.material).toBe(split.rowTotal);
+  });
+
+  it('låter rabatten träffa arbete och material lika', () => {
+    // ROT får bara begäras på det som faktiskt debiteras, så en rabatterad rad har rabatterat arbete.
+    const split = splitRowLabor({ laborCostPerUnit: '200', unitPrice: 500, discountPercent: 10, quantity: 60 });
+    expect(split.rowTotal).toBeCloseTo(27000, 6);
+    expect(split.labor).toBeCloseTo(10800, 6);
+    expect(split.material).toBeCloseTo(16200, 6);
+  });
+
+  it('kapar mot A-PRISET, inte mot radtotalen', () => {
+    // En gräns per enhet är den enda som håller oavsett antal — material får aldrig gå negativt.
+    const split = splitRowLabor({ laborCostPerUnit: '900', unitPrice: 500, discountPercent: 0, quantity: 60 });
+    expect(split.perUnit).toBe(500);
+    expect(split.labor).toBe(30000);
     expect(split.material).toBe(0);
     expect(split.clamped).toBe(true);
   });
 
   it('läser svenska kommadecimaler', () => {
-    expect(splitRowLabor(1000, '199,50').labor).toBeCloseTo(199.5, 6);
+    expect(splitRowLabor({ laborCostPerUnit: '199,50', unitPrice: 500, discountPercent: 0, quantity: 2 }).labor)
+      .toBeCloseTo(399, 6);
   });
 
   it('ger noll arbete för tomt, nollat eller negativt belopp', () => {
     for (const input of ['', null, undefined, '0', '-500']) {
-      const split = splitRowLabor(18000, input);
+      const split = splitRowLabor({ laborCostPerUnit: input, unitPrice: 500, discountPercent: 0, quantity: 60 });
       expect(split.labor, String(input)).toBe(0);
-      expect(split.material, String(input)).toBe(18000);
+      expect(split.material, String(input)).toBe(30000);
       expect(split.clamped, String(input)).toBe(false);
     }
   });
 
-  it('klarar en rad utan pris utan att gå negativt', () => {
-    const split = splitRowLabor(0, '200');
-    expect(split.labor).toBe(0);
-    expect(split.material).toBe(0);
-    expect(split.clamped).toBe(true);
+  it('klarar en rad utan pris eller antal utan att gå negativt', () => {
+    expect(splitRowLabor({ laborCostPerUnit: '200', unitPrice: 0, discountPercent: 0, quantity: 60 }).labor).toBe(0);
+    expect(splitRowLabor({ laborCostPerUnit: '200', unitPrice: 500, discountPercent: 0, quantity: 0 }).labor).toBe(0);
+  });
+});
+
+describe('lineItemRotLabor', () => {
+  it('härleder antalet ur m² × tjocklek för en m³-rad', () => {
+    // 100 m² × 200 mm = 20 m³ × 150 kr/m³ arbete = 3 000 kr.
+    expect(lineItemRotLabor({
+      pricing_mode: 'm3', m2: '100', thickness_mm: '200', unit_price: '1500', labor_cost: '150',
+    })).toBeCloseTo(3000, 6);
+  });
+
+  it('följer med när måtten växer', () => {
+    const litet = lineItemRotLabor({ pricing_mode: 'm3', m2: '50', thickness_mm: '200', unit_price: '1500', labor_cost: '150' });
+    const stort = lineItemRotLabor({ pricing_mode: 'm3', m2: '150', thickness_mm: '200', unit_price: '1500', labor_cost: '150' });
+    expect(stort).toBeCloseTo(litet * 3, 6);
   });
 });
 

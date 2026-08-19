@@ -219,6 +219,10 @@ type EffectiveRow = QuoteLineItem & {
   label: string;
   mode: 'm3' | 'item';
   rowTotal: number;
+  // Radens utbrutna ROT-arbetskostnad i kronor (labor_cost per enhet × antal, rabatt inräknad).
+  // Räknas här av samma skäl som rowTotal: formuläret prissätter auto-rader med sin egen stub, och
+  // pricing.ts lineItemRotLabor hade gett dem 0. Se splitRowLabor.
+  rotLabor: number;
   isConfigured: boolean;
 };
 
@@ -929,30 +933,41 @@ function MarginBadge({ marginPercent, className }: { marginPercent: number | nul
 
 // Hur "Varav arbetskostnad" delar radens pris, i klartext under fältet.
 //
-// Beloppet är en UTBRYTNING, inte ett tillägg — se splitRowLabor. Den som läser det som ett tillägg
-// prissätter offerten för lågt utan att något varnar, så raden här säger alltid vad som faktiskt
-// händer med kronorna.
-function LaborCarveoutHint({ rowTotal, laborCost }: { rowTotal: number; laborCost: string }) {
-  const { labor, material, clamped } = splitRowLabor(rowTotal, laborCost);
+// Två saker har lästs fel i verkligheten, och raden här finns för att båda ska synas direkt:
+// beloppet är ett À-PRIS som räknas mot kubiken (500 kr arbete på 10 m³ blir 5 000 kr, på 30 m³
+// blir det 15 000), och det är en UTBRYTNING ur A-priset, inte ett tillägg ovanpå det.
+function LaborCarveoutHint({
+  laborCost, unitPrice, discountPercent, quantity, unitLabel,
+}: {
+  laborCost: string;
+  unitPrice: number;
+  discountPercent: number;
+  quantity: number;
+  unitLabel: string;
+}) {
+  const { labor, material, rowTotal, clamped } = splitRowLabor({
+    laborCostPerUnit: laborCost, unitPrice, discountPercent, quantity,
+  });
 
   if (clamped) {
     return (
       <p className="m-0 mt-1 text-[11px] leading-snug text-amber-700">
-        Beloppet är större än radens {formatCurrency(rowTotal, 'SEK')} och räknas som hela raden.
+        Arbetskostnaden kan inte vara högre än A-priset ({formatCurrency(unitPrice, 'SEK')}/{unitLabel}) och
+        räknas som hela priset.
       </p>
     );
   }
   if (labor > 0) {
     return (
       <p className="m-0 mt-1 text-[11px] leading-snug text-slate-500">
-        Av radens {formatCurrency(rowTotal, 'SEK')} är {formatCurrency(labor, 'SEK')} arbete
-        och {formatCurrency(material, 'SEK')} material.
+        {formatCurrency(labor, 'SEK')} arbete av radens {formatCurrency(rowTotal, 'SEK')} — resten,
+        {' '}{formatCurrency(material, 'SEK')}, är material.
       </p>
     );
   }
   return (
     <p className="m-0 mt-1 text-[11px] leading-snug text-slate-400">
-      Bryts ut ur radpriset — höjer det inte.
+      Per {unitLabel}, som A-priset. Bryts ut ur det — höjer det inte.
     </p>
   );
 }
@@ -993,6 +1008,8 @@ function LineItemRow({
   // The ROT labour carve-out field sits on the economy row next to A-pris/Rabatt, but only when ROT
   // is on and the row isn't already flagged as full ROT work (its whole price is then the labour).
   const showLaborField = rotEnabled && !row.is_rot_work;
+  // Samma enhet som raden prissätts i, så "kr/m³" respektive "kr/st" står bredvid rätt tal.
+  const laborUnitLabel = isM3 ? 'm³' : (row.article_unit_name?.trim() || 'st');
 
   // ── Collapsed: single overview line ──────────────────────────────────────────
   if (!expanded) {
@@ -1101,9 +1118,15 @@ function LineItemRow({
             begärs på 200 kr i stället för 200 kr × volymen. Texten visar delningen i kronor så fort
             ett belopp finns, så felet syns i samma ögonblick det görs. */}
         {showLaborField ? (
-          <Field label="Varav arbetskostnad (ROT, kr)">
+          <Field label={`Varav arbetskostnad (ROT, kr/${laborUnitLabel})`}>
             <Input value={row.labor_cost} onChange={(e) => onChange({ labor_cost: e.target.value })} inputMode="decimal" placeholder="0" />
-            <LaborCarveoutHint rowTotal={metrics?.rowTotal ?? 0} laborCost={row.labor_cost} />
+            <LaborCarveoutHint
+              laborCost={row.labor_cost}
+              unitPrice={metrics?.unit ?? 0}
+              discountPercent={parseDecimal(row.discount_percent)}
+              quantity={metrics?.amount ?? 0}
+              unitLabel={laborUnitLabel}
+            />
           </Field>
         ) : null}
         <Field label="Rabatt %"><Input value={row.discount_percent} onChange={(e) => onChange({ discount_percent: e.target.value })} inputMode="decimal" placeholder="0" /></Field>
@@ -1764,10 +1787,14 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
       const constructionLabel = item.construction === 'vagg' ? 'Vägg' : item.construction === 'snedtak' ? 'Snedtak' : item.construction === 'vind' ? 'Vind' : '';
       const baseLabel = item.article_name ? `${item.article_name}${item.article_number ? ` (${item.article_number})` : ''}` : `${constructionLabel || 'Okänd'}${item.thickness_mm ? ` ${item.thickness_mm} mm` : ''}`;
       const unitSuffix = mode === 'm3' ? ' (m³)' : item.article_unit_name ? ` (${item.article_unit_name})` : '';
+      const laborSplit = splitRowLabor({
+        laborCostPerUnit: item.labor_cost, unitPrice: baseUnit, discountPercent: discount, quantity: amount,
+      });
       return {
         ...item, amount, unit: baseUnit, effectiveUnit,
         label: `${baseLabel}${unitSuffix}`,
         mode, rowTotal: amount * effectiveUnit,
+        rotLabor: laborSplit.labor,
         isConfigured: Boolean(item.article_name || item.m2 || item.quantity || item.unit_price),
       };
     });
@@ -1784,12 +1811,12 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
     // Skatteverket (ROT reductions drop the öre), e.g. 393,75 → 393. Flooring is also
     // the safe direction for the business: the deduction is never overstated.
     // The ROT base is labour: a row flagged fully as ROT work contributes its whole total, an
-    // unflagged material row only its carved-out `labor_cost` (clamped to the row total). Mirrors
+    // unflagged material row only its carved-out labour (labor_cost per enhet × antal). Mirrors
     // lib/domains/crm/pricing.ts and the Fortnox push (flagged rows + the "Arbetskostnad ROT" row).
     const rotActive = draft.quote_type === 'private' && draft.rot_enabled;
     const rotLaborBase = rotActive
       ? effectiveRows.reduce((sum, r) => {
-          const base = r.is_rot_work ? r.rowTotal : Math.min(Math.max(0, parseDecimal(r.labor_cost)), r.rowTotal);
+          const base = r.is_rot_work ? r.rowTotal : Math.min(r.rotLabor, r.rowTotal);
           return sum + base;
         }, 0)
       : 0;
@@ -1803,7 +1830,7 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
     // Carved-out labour only (excludes fully-flagged ROT rows) — surfaced in the ROT section so the
     // seller sees what becomes the separate "Arbetskostnad ROT" row.
     const carvedLabor = rotActive
-      ? effectiveRows.reduce((sum, r) => (r.is_rot_work ? sum : sum + Math.min(Math.max(0, parseDecimal(r.labor_cost)), r.rowTotal)), 0)
+      ? effectiveRows.reduce((sum, r) => (r.is_rot_work ? sum : sum + Math.min(r.rotLabor, r.rowTotal)), 0)
       : 0;
 
     return { subtotal, vat, total, rotDeduction, toPay: total - rotDeduction, carvedLabor };

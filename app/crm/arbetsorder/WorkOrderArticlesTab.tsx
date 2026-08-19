@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import Input from '../../../components/ui/Input';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
-import { computePricing, lineItemRowTotal, type PricingLineItem } from '@/lib/domains/crm/pricing';
+import { computePricing, lineItemRowTotal, splitRowLabor, type PricingLineItem } from '@/lib/domains/crm/pricing';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
 import { inferMaterialFromArticle, sacksFor } from '@/lib/domains/crm/materials';
 import { parseDecimal } from '@/lib/shared/number';
@@ -230,6 +230,13 @@ export default function WorkOrderArticlesTab({ items, currencyCode, vatPercent, 
             {rows.map((row) => {
               const mode = row.pricing_mode === 'item' ? 'item' : 'm3';
               const rowTotal = lineItemRowTotal(row as PricingLineItem);
+              const laborUnitLabel = mode === 'm3' ? 'm³' : (row.article_unit_name?.trim() || 'st');
+              const laborSplit = splitRowLabor({
+                laborCostPerUnit: row.labor_cost,
+                unitPrice: parseDecimal(row.unit_price),
+                discountPercent: parseDecimal(row.discount_percent),
+                quantity: lineItemQuantity(row as PricingLineItem),
+              });
               return (
                 <div key={row.id} className="grid gap-2 rounded-xl border border-[#e0e8dc] bg-[#f1f5ee] px-3 py-3">
                   <div className="flex items-start justify-between gap-2">
@@ -302,11 +309,30 @@ export default function WorkOrderArticlesTab({ items, currencyCode, vatPercent, 
 
                   {/* Carve out the labour portion of a material row → the aggregated "Arbetskostnad
                       ROT" Fortnox row (row reduced by it, total unchanged). Hidden when the whole row
-                      is flagged as ROT-arbete. */}
+                      is flagged as ROT-arbete.
+
+                      ⚠️ Beloppet är ett À-PRIS som räknas mot antalet, precis som À-priset ovanför,
+                      och det bryts UT ur det — det läggs inte till. Samma fält och samma räkning som
+                      i offertformuläret; texten under står här av samma skäl som där. */}
                   {rotEnabled && !row.is_rot_work ? (
                     <label className="grid gap-1">
-                      <span className="text-[10px] font-bold uppercase tracking-[0.1em] text-slate-400">Varav arbetskostnad (ROT, kr)</span>
+                      <span className="text-[10px] font-bold uppercase tracking-[0.1em] text-slate-400">
+                        Varav arbetskostnad (ROT, kr/{laborUnitLabel})
+                      </span>
                       <Input value={row.labor_cost || ''} onChange={(e) => updateRow(row.id, { labor_cost: e.target.value })} inputMode="decimal" placeholder="0" />
+                      {laborSplit.clamped ? (
+                        <span className="text-[11px] leading-snug text-amber-700">
+                          Kan inte vara högre än à-priset ({formatCurrency(parseDecimal(row.unit_price), currencyCode)}/{laborUnitLabel}) och räknas som hela priset.
+                        </span>
+                      ) : laborSplit.labor > 0 ? (
+                        <span className="text-[11px] leading-snug text-slate-500">
+                          {formatCurrency(laborSplit.labor, currencyCode)} arbete av radens {formatCurrency(rowTotal, currencyCode)}.
+                        </span>
+                      ) : (
+                        <span className="text-[11px] leading-snug text-slate-400">
+                          Per {laborUnitLabel}, som à-priset. Bryts ut ur det.
+                        </span>
+                      )}
                     </label>
                   ) : null}
                 </div>

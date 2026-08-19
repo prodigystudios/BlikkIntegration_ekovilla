@@ -1,21 +1,25 @@
 import { getSupabaseAdmin } from '@/lib/supabase/server';
-import { parseDecimal } from '@/lib/shared/number';
+import { lineItemRotLabor, type PricingLineItem } from '@/lib/domains/crm/pricing';
 import { DEFAULT_ROT_HOUSE_WORK_TYPE, ROT_LABOR_ARTICLE_NUMBER, ROT_LABOR_DESCRIPTION } from './types';
 
 // Vidareexporteras här sedan de flyttade till types.ts (klientsäkert — se kommentaren där).
 export { ROT_LABOR_ARTICLE_NUMBER, ROT_LABOR_DESCRIPTION };
 
-// The ROT labour carved out of a single row (kr, ex VAT), clamped to the row's own net so the
-// remaining material can never go negative. Returns 0 when it's not a ROT document, when the row is
-// already fully flagged as ROT work (is_rot_work — its whole amount is labour, handled separately),
-// or when no labour was entered. `rowNet` is the row's discounted total (lineItemRowTotal).
+// The ROT labour carved out of a single row (kr, ex VAT). Returns 0 when it's not a ROT document,
+// when the row is already fully flagged as ROT work (is_rot_work — its whole amount is labour,
+// handled separately), or when no labour was entered. `rowNet` is the row's discounted total
+// (lineItemRowTotal), kept as a final clamp so the remaining material can never go negative.
+//
+// ⚠️ `labor_cost` är ett À-PRIS (kr per m³/styck) och räknas mot antalet — se splitRowLabor i
+// lib/domains/crm/pricing.ts, som äger tolkningen. Räkningen görs INTE om här: gjorde vi det skulle
+// dokumentet till Fortnox kunna säga något annat än offerten på skärmen.
 export function rowRotLaborCarveout(
-  item: { labor_cost?: string | null; is_rot_work?: boolean | null },
+  item: PricingLineItem,
   rowNet: number,
   rotEnabled: boolean,
 ): number {
   if (!rotEnabled || item.is_rot_work) return 0;
-  const labor = item.labor_cost ? parseDecimal(item.labor_cost) : 0;
+  const labor = lineItemRotLabor(item);
   if (!(labor > 0)) return 0;
   return Math.min(labor, Math.max(0, rowNet));
 }
