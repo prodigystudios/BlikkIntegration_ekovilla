@@ -8,7 +8,7 @@ import DatePicker from '../../../components/ui/DatePicker';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
 import { parseDecimal } from '@/lib/shared/number';
-import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
+import { lineItemQuantity, isBlankLineItem } from '@/lib/domains/crm/lineItems';
 import {
   rowMarginPercent, marginTier, quoteMargin, MARGIN_THRESHOLDS,
   type MarginRow, type MarginTier,
@@ -16,6 +16,7 @@ import {
 import { crm } from '@/app/crm/lib/crmTokens';
 import AddressAutocompleteInput from '@/app/crm/components/AddressAutocompleteInput';
 import CrmModal from '@/app/crm/components/CrmModal';
+import CrmConfirmDialog from '@/app/crm/components/CrmConfirmDialog';
 import { formatPersonalNumber, isValidPersonalNumber, PERSONAL_NUMBER_ERROR } from '@/lib/domains/crm/personalNumber';
 import { DndContext, closestCenter, PointerSensor, TouchSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy, arrayMove, useSortable } from '@dnd-kit/sortable';
@@ -1156,6 +1157,22 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
   const [expandedRowId, setExpandedRowId] = useState<string | null>(
     () => (initialDraft.items[0] && !initialDraft.items[0].article_name ? initialDraft.items[0].id : null),
   );
+  // Vilken artikelrad som väntar på bekräftelse innan den tas bort. Krysset på en hopfälld rad
+  // sitter tätt intill raden man klickar på för att fälla ut den, och borttagningen går inte att
+  // ångra — artikeln, priset, rabatten och radnoteringen är borta ur draften direkt. Tomma rader
+  // hoppar över frågan (se isBlankLineItem); där finns inget att förlora.
+  const [pendingRemoveRowId, setPendingRemoveRowId] = useState<string | null>(null);
+
+  // Sista raden tas aldrig bort helt — den ersätts med en tom, så formuläret alltid har en rad att
+  // fylla i. Samma regel gällde före bekräftelsedialogen och ligger här så att båda vägarna in
+  // (direkt för tomma rader, bekräftad för ifyllda) delar den.
+  function removeLineItem(id: string) {
+    setDraft((d) => ({
+      ...d,
+      items: d.items.length > 1 ? d.items.filter((item) => item.id !== id) : [createEmptyLineItem()],
+    }));
+    setPendingRemoveRowId(null);
+  }
   const [loadedQuote, setLoadedQuote] = useState<QuoteItem | null>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<CrmCustomerLite | null>(null);
   // What the customer card gave when the customer was picked. The reference the refresh-on-return
@@ -2268,6 +2285,13 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
   const doneSteps = requiredSections.filter((s) => s.done).length;
   const stepOf = (id: string) => sections.findIndex((s) => s.id === id) + 1;
 
+  // Slås upp mot draften i stället för att lägga undan hela raden i state: raden kan redigeras
+  // medan dialogen står öppen (den täcker inte formuläret på desktop), och en kopia hade då kunnat
+  // visa ett artikelnamn som inte längre stämmer.
+  const pendingRemoveRow = pendingRemoveRowId
+    ? draft.items.find((item) => item.id === pendingRemoveRowId) ?? null
+    : null;
+
   return (
     <div className="grid gap-6 pb-20 lg:pb-0">
 
@@ -2793,7 +2817,7 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
                     ...item, article_id: null, article_name: null, article_number: null, article_price: null, article_unit_name: null, article_note: null,
                   } : item),
                 }))}
-                onRemove={() => setDraft((d) => ({ ...d, items: d.items.length > 1 ? d.items.filter((item) => item.id !== row.id) : [createEmptyLineItem()] }))}
+                onRemove={() => { if (isBlankLineItem(row)) removeLineItem(row.id); else setPendingRemoveRowId(row.id); }}
               />
                 )}
               </SortableLineItem>
@@ -3371,6 +3395,21 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
             </Field>
           </div>
         </CrmModal>
+      ) : null}
+
+      {pendingRemoveRow ? (
+        <CrmConfirmDialog
+          title="Ta bort raden?"
+          message={
+            pendingRemoveRow.article_name
+              ? `${pendingRemoveRow.article_name} tas bort från offerten. Det går inte att ångra.`
+              : 'Raden tas bort från offerten. Det går inte att ångra.'
+          }
+          confirmLabel="Ta bort rad"
+          tone="danger"
+          onConfirm={() => removeLineItem(pendingRemoveRow.id)}
+          onCancel={() => setPendingRemoveRowId(null)}
+        />
       ) : null}
     </div>
   );

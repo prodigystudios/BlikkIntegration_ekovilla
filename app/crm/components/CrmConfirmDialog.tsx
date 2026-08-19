@@ -1,5 +1,6 @@
 "use client";
 import CrmModal from '@/app/crm/components/CrmModal';
+import { cn } from '@/lib/shared/cn';
 
 // Bekräftelsedialog i CRM:s egen yta, i stället för webbläsarens window.confirm.
 //
@@ -16,6 +17,7 @@ export default function CrmConfirmDialog({
   confirmLabel = 'Bekräfta',
   cancelLabel = 'Avbryt',
   busy = false,
+  tone = 'primary',
   onConfirm,
   onCancel,
 }: {
@@ -26,9 +28,17 @@ export default function CrmConfirmDialog({
   cancelLabel?: string;
   /** Håller knapparna låsta medan åtgärden pågår, så den inte kan startas två gånger. */
   busy?: boolean;
+  /**
+   * 'danger' för åtgärder som tar bort något. Två skillnader mot 'primary', båda avsiktliga:
+   * bekräftelseknappen bär rött i stället för CRM:ets primärgröna (grönt läser som "fortsätt,
+   * det här är bra"), och autofokus flyttas till Avbryt — en dialog som finns för att fånga
+   * felklick ska inte utföra åtgärden på ett reflexmässigt Enter.
+   */
+  tone?: 'primary' | 'danger';
   onConfirm: () => void;
   onCancel: () => void;
 }) {
+  const dangerous = tone === 'danger';
   return (
     <CrmModal
       onClose={onCancel}
@@ -46,6 +56,7 @@ export default function CrmConfirmDialog({
             type="button"
             onClick={onCancel}
             disabled={busy}
+            autoFocus={dangerous}
             className="flex-1 rounded-xl border border-slate-200 bg-white py-2.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-60 sm:flex-none sm:px-5"
           >
             {cancelLabel}
@@ -54,9 +65,12 @@ export default function CrmConfirmDialog({
             type="button"
             onClick={onConfirm}
             disabled={busy}
-            autoFocus
-            className="flex-1 rounded-xl py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60 sm:ml-auto sm:flex-none sm:px-5"
-            style={{ backgroundColor: 'var(--crm-primary)' }}
+            autoFocus={!dangerous}
+            className={cn(
+              'flex-1 rounded-xl py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60 sm:ml-auto sm:flex-none sm:px-5',
+              dangerous && 'bg-rose-600',
+            )}
+            style={dangerous ? undefined : { backgroundColor: 'var(--crm-primary)' }}
           >
             {confirmLabel}
           </button>
