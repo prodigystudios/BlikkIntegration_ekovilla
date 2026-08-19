@@ -14,6 +14,7 @@ import {
   type MarginRow, type MarginTier,
 } from '@/lib/domains/crm/pricing';
 import { crm } from '@/app/crm/lib/crmTokens';
+import { formatQuantity } from '@/app/crm/lib/format';
 import AddressAutocompleteInput from '@/app/crm/components/AddressAutocompleteInput';
 import CrmModal from '@/app/crm/components/CrmModal';
 import CrmConfirmDialog from '@/app/crm/components/CrmConfirmDialog';
@@ -1046,7 +1047,7 @@ function LineItemRow({
           </span>
           {metrics?.isConfigured ? (
             <span className="hidden shrink-0 text-xs tabular-nums text-slate-400 sm:inline">
-              {metrics.amount.toLocaleString('sv-SE', { maximumFractionDigits: 2 })} × {formatCurrency(metrics.effectiveUnit, 'SEK')}
+              {formatQuantity(metrics.amount)} × {formatCurrency(metrics.effectiveUnit, 'SEK')}
             </span>
           ) : null}
           {row.is_rot_work ? (

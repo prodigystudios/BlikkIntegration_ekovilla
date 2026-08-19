@@ -8,7 +8,7 @@ import { computePricing, lineItemRowTotal, lineItemUnitPrice, splitRowLabor, typ
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
 import { inferMaterialFromArticle, sacksFor } from '@/lib/domains/crm/materials';
 import { parseDecimal } from '@/lib/shared/number';
-import { formatCurrency } from '@/app/crm/lib/format';
+import { formatCurrency, formatQuantity } from '@/app/crm/lib/format';
 
 export type ArticleLineItem = {
   id: string;
@@ -50,10 +50,6 @@ function sackInfo(item: ArticleLineItem) {
 }
 // Swedish-formatted volume (m³) — m³ rows are priced per cubic metre, so the calculation shows
 // the computed volume (m² × thickness), not the area.
-function formatVolume(n: number) {
-  return n.toLocaleString('sv-SE', { maximumFractionDigits: 3 });
-}
-
 // ─── Article search (compact Fortnox picker) ───────────────────────────────────
 function ArticleSearch({ onSelect }: { onSelect: (a: FortnoxArticle) => void }) {
   const [query, setQuery] = useState('');
@@ -213,7 +209,7 @@ export default function WorkOrderArticlesTab({ items, currencyCode, vatPercent, 
                       {writtenOff ? <span className="rounded-full border border-slate-300 bg-white px-2 py-0.5 font-semibold text-slate-500">Avskriven</span> : null}
                       {sacks > 0 && !writtenOff ? <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700">{sacks} säck</span> : null}
                       {/* m³ rows are priced per m³, so show the computed volume × à-pris (not the area). */}
-                      <span>{mode === 'm3' ? `${formatVolume(lineItemQuantity(item as any))} m³` : `Antal ${item.quantity || '0'}`} · à {formatCurrency(parseDecimal(item.unit_price), currencyCode)}</span>
+                      <span>{mode === 'm3' ? `${formatQuantity(lineItemQuantity(item as any))} m³` : `Antal ${item.quantity || '0'}`} · à {formatCurrency(parseDecimal(item.unit_price), currencyCode)}</span>
                       <span className={cn('font-semibold text-slate-900', writtenOff && 'line-through decoration-slate-400')}>{formatCurrency(lineItemRowTotal(item as PricingLineItem), currencyCode)}</span>
                     </div>
                   </div>

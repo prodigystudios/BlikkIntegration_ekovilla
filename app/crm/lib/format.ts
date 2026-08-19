@@ -19,6 +19,18 @@ export function formatCurrency(value: number | string | null | undefined, curren
   return new Intl.NumberFormat('sv-SE', { style: 'currency', currency: currencyCode || 'SEK', maximumFractionDigits: 0 }).format(numeric);
 }
 
+// Ett radantal: m³-volym eller styckantal, för visning bredvid à-priset.
+//
+// ⚠️ SAMMA REGEL PÅ ALLA YTOR, med flit. Offerten och arbetsordern formaterade förr var för sig —
+// offerten på 2 decimaler, ordern på 3 — så en volym på 4,875 m³ stod som "4,88" på offerten och
+// "4,875" på ordern. Skillnaden syns bara när ytan har en decimal (19,5 m²), vilket är varför den
+// levde obemärkt tills någon skrev just det. Samma siffra på två skärmar ska se likadan ut.
+//
+// Två decimaler, alltså tio liter. Beloppen räknas på det exakta talet — det här är visning.
+export function formatQuantity(value: number): string {
+  return value.toLocaleString('sv-SE', { maximumFractionDigits: 2 });
+}
+
 export function joinAddress(parts: Array<string | null | undefined>): string {
   return parts.filter((p) => p && p.trim()).join(', ');
 }
