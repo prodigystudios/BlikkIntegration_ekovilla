@@ -111,10 +111,17 @@ type Props = {
   saving: boolean;
   fortnoxConnected: boolean;
   canEdit?: boolean;
+  // Inbäddat läge: fliken ligger inne i ett annat kort (arbetsorderns Ekonomi-kort) och ritar
+  // därför varken egen kortyta eller egen sidokolumn — rubrik, rader och summering staplas i en
+  // spalt och knapparna flyttar upp i rubrikraden. Fristående anrop (fältvyn) är oförändrade.
+  embedded?: boolean;
+  // Omvänd skattskyldighet (byggmoms): momsraden läses då som ett eget faktum, inte som
+  // "Moms 0 kr". Utelämnas den härleds den ur den beräknade momssatsen — se isReverseCharge.
+  reverseCharge?: boolean;
   onSave: (items: ArticleLineItem[]) => Promise<boolean>;
 };
 
-export default function WorkOrderArticlesTab({ items, currencyCode, vatPercent, quoteType, rotDetails, saving, fortnoxConnected, canEdit = true, onSave }: Props) {
+export default function WorkOrderArticlesTab({ items, currencyCode, vatPercent, quoteType, rotDetails, saving, fortnoxConnected, canEdit = true, embedded = false, reverseCharge, onSave }: Props) {
   const [editing, setEditing] = useState(false);
   const [rows, setRows] = useState<ArticleLineItem[]>(items);
 
@@ -122,8 +129,11 @@ export default function WorkOrderArticlesTab({ items, currencyCode, vatPercent, 
   //
   // ⚠️ Inte medan raderna redigeras. Vilken omladdning av arbetsordern som helst ger `items` ny
   // identitet, och den här effekten skrev då över utkastet — statusklicket i förloppet ligger
-  // ovanför flikremsan och nådde alltså in hit och nollade osparade artikelrader. Efter en
-  // lyckad sparning sätts `editing` till false, vilket kör effekten igen med färska rader.
+  // ovanför flikremsan och nådde alltså in hit och nollade osparade artikelrader. Sedan
+  // artiklarna flyttat in i översiktens Ekonomi-kort når även översiktens egen Spara hit, så
+  // vakten bär mer än förut. Efter en lyckad sparning sätts `editing` till false, vilket kör
+  // effekten igen med färska rader. (Motsvarande vakt åt andra hållet — att artikelsparningen
+  // inte får skriva över översiktens utkast — är `keepDraft` i WorkOrderDetailClient.)
   useEffect(() => { if (!editing) setRows(items); }, [items, editing]);
 
   const dirty = useMemo(() => JSON.stringify(rows) !== JSON.stringify(items), [rows, items]);
@@ -170,14 +180,68 @@ export default function WorkOrderArticlesTab({ items, currencyCode, vatPercent, 
     setEditing(false);
   }
 
+  // ── Delar som ser olika ut fristående och inbäddat ────────────────────────
+
+  // Omvänd skattskyldighet (byggmoms) = företagsorder utan moms. Samma regel som pricing.ts
+  // (`!isPrivate && vatPercent === 0`), räknad på samma siffror som summeringen visar, så
+  // etiketten aldrig kan motsäga beloppet. Anroparen kan skicka in svaret i stället:
+  // arbetsorderns detaljsida härleder det ur den SPARADE prissättningen och är därmed robust
+  // mot en vat_percent-kolumn som drivit iväg till 25 på en byggmomsorder.
+  const isReverseCharge = reverseCharge ?? (quoteType === 'business' && totals.vatPercent === 0 && totals.subtotal > 0);
+  // "25.00" → "25". Momssatsen står i etiketten så summeringen bär det Ekonomi-flikens egen
+  // ruta bar innan den slogs ihop hit.
+  const vatPercentLabel = Number.isFinite(Number(vatPercent)) ? String(Number(vatPercent)) : String(vatPercent ?? '');
+
+  const headerBadge = editing
+    ? (dirty ? <span className={cn(crm.badge, 'border-amber-200 bg-amber-50 text-amber-700')}>Osparade ändringar</span> : null)
+    : (totalSacks > 0 ? <span className={cn(crm.badge, 'border-emerald-200 bg-emerald-50 text-emerald-700')}>{totalSacks} säckar totalt</span> : null);
+
+  const saveHint = fortnoxConnected
+    ? 'Sparar räknar om summorna och uppdaterar Fortnox-ordern.'
+    : 'Sparar räknar om summorna (Fortnox ej anslutet).';
+
+  const lockedHint = <p className="text-xs text-slate-400">Arbetsordern är fakturerad och kan inte ändras.</p>;
+
+  const summaryRows = (
+    <div className="grid gap-2 text-sm">
+      <div className="flex items-center justify-between gap-3"><span className="text-slate-500">Delsumma</span><span className="font-semibold text-slate-900">{formatCurrency(totals.subtotal, currencyCode)}</span></div>
+      {isReverseCharge ? (
+        <div className="flex items-center justify-between gap-3"><span className="text-slate-500">Moms</span><span className="font-semibold text-amber-700">Omvänd skattskyldighet</span></div>
+      ) : (
+        <div className="flex items-center justify-between gap-3"><span className="text-slate-500">Moms ({vatPercentLabel} %)</span><span className="font-semibold text-slate-900">{formatCurrency(totals.vat, currencyCode)}</span></div>
+      )}
+      {totals.rotDeduction > 0 ? (
+        <div className="flex items-center justify-between gap-3"><span className="text-slate-500">Avgår ROT</span><span className="font-semibold text-emerald-700">−{formatCurrency(totals.rotDeduction, currencyCode)}</span></div>
+      ) : null}
+      <div className="flex items-center justify-between gap-3 border-t border-[#e0e8dc] pt-2">
+        <span className="font-semibold text-slate-700">{totals.rotDeduction > 0 ? 'Att betala' : 'Total'}</span>
+        <span className="text-base font-bold text-slate-900">{formatCurrency(totals.rotDeduction > 0 ? totals.toPay : totals.total, currencyCode)}</span>
+      </div>
+    </div>
+  );
+
   return (
-    <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_300px] lg:items-start">
-      <div className={cn(crm.cardInner, 'grid gap-3')}>
+    <div className={embedded ? 'grid gap-3' : 'grid gap-5 lg:grid-cols-[minmax(0,1fr)_300px] lg:items-start'}>
+      <div className={cn(!embedded && crm.cardInner, 'grid gap-3')}>
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <p className={crm.sectionTitle}>Artiklar</p>
-          {editing
-            ? (dirty ? <span className={cn(crm.badge, 'border-amber-200 bg-amber-50 text-amber-700')}>Osparade ändringar</span> : null)
-            : (totalSacks > 0 ? <span className={cn(crm.badge, 'border-emerald-200 bg-emerald-50 text-emerald-700')}>{totalSacks} säckar totalt</span> : null)}
+          <div className="flex flex-wrap items-center gap-2">
+            <p className={crm.sectionTitle}>Artiklar</p>
+            {headerBadge}
+          </div>
+          {/* Inbäddat finns ingen sidokolumn att lägga knapparna i — de hör till artiklarna och
+              sitter därför i deras rubrikrad, skilda från översiktens egen Spara högst upp. */}
+          {embedded ? (
+            editing ? (
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={cancel} disabled={saving} className={crm.ghostButton}>Avbryt</button>
+                <button type="button" onClick={save} disabled={saving || !dirty} className={cn(crm.saveButton, 'h-8 w-auto px-4')}>
+                  {saving ? 'Sparar…' : 'Spara artiklar'}
+                </button>
+              </div>
+            ) : canEdit ? (
+              <button type="button" onClick={() => setEditing(true)} className={crm.ghostButton}>Redigera artiklar</button>
+            ) : null
+          ) : null}
         </div>
 
         {/* ── Read mode ── */}
@@ -347,37 +411,27 @@ export default function WorkOrderArticlesTab({ items, currencyCode, vatPercent, 
         )}
       </div>
 
-      {/* Summary + actions */}
-      <div className={cn(crm.cardInner, 'grid gap-3 lg:content-start')}>
-        <p className={crm.sectionTitle}>Summering</p>
-        <div className="grid gap-2 text-sm">
-          <div className="flex items-center justify-between gap-3"><span className="text-slate-500">Delsumma</span><span className="font-semibold text-slate-900">{formatCurrency(totals.subtotal, currencyCode)}</span></div>
-          <div className="flex items-center justify-between gap-3"><span className="text-slate-500">Moms</span><span className="font-semibold text-slate-900">{formatCurrency(totals.vat, currencyCode)}</span></div>
-          {totals.rotDeduction > 0 ? (
-            <div className="flex items-center justify-between gap-3"><span className="text-slate-500">Avgår ROT</span><span className="font-semibold text-emerald-700">−{formatCurrency(totals.rotDeduction, currencyCode)}</span></div>
-          ) : null}
-          <div className="flex items-center justify-between gap-3 border-t border-[#e0e8dc] pt-2">
-            <span className="font-semibold text-slate-700">{totals.rotDeduction > 0 ? 'Att betala' : 'Total'}</span>
-            <span className="text-base font-bold text-slate-900">{formatCurrency(totals.rotDeduction > 0 ? totals.toPay : totals.total, currencyCode)}</span>
-          </div>
-        </div>
+      {/* Summering — egen kortkolumn fristående, ett avsnitt under raderna inbäddat. */}
+      <div className={embedded ? 'grid gap-2 border-t border-[#e0e8dc] pt-3' : cn(crm.cardInner, 'grid gap-3 lg:content-start')}>
+        {embedded ? null : <p className={crm.sectionTitle}>Summering</p>}
+        {summaryRows}
 
-        {editing ? (
+        {embedded ? (
+          editing ? <p className="text-xs text-slate-400">{saveHint}</p> : canEdit ? null : lockedHint
+        ) : editing ? (
           <div className="grid gap-2">
             <button type="button" onClick={save} disabled={saving || !dirty} className={crm.saveButton}>
               {saving ? 'Sparar…' : 'Spara artiklar'}
             </button>
             <button type="button" onClick={cancel} disabled={saving} className={crm.ghostButton}>Avbryt</button>
-            <p className="text-xs text-slate-400">
-              {fortnoxConnected ? 'Sparar räknar om summorna och uppdaterar Fortnox-ordern.' : 'Sparar räknar om summorna (Fortnox ej anslutet).'}
-            </p>
+            <p className="text-xs text-slate-400">{saveHint}</p>
           </div>
         ) : canEdit ? (
           <button type="button" onClick={() => setEditing(true)} className={cn(crm.ghostButton, 'w-full justify-center')}>
             Redigera artiklar
           </button>
         ) : (
-          <p className="text-xs text-slate-400">Arbetsordern är fakturerad och kan inte ändras.</p>
+          lockedHint
         )}
       </div>
     </div>
