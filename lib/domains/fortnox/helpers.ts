@@ -165,6 +165,9 @@ export function rotLaborRow(total: number, vat: number): {
   ArticleNumber: string;
   Description: string;
   Price: number;
+  Unit: string;
+  Discount: number;
+  DiscountType: 'PERCENT';
   VAT: number;
   HouseWork: true;
   HouseWorkType: string;
@@ -175,6 +178,11 @@ export function rotLaborRow(total: number, vat: number): {
     ArticleNumber: ROT_LABOR_ARTICLE_NUMBER,
     Description: ROT_LABOR_DESCRIPTION,
     Price: price,
+    // Unit/Discount uttryckligen satta av samma skäl som allt annat här: raden kan hamna där en
+    // annan rad låg, och då ärvs varje fält vi inte skickar. Se FORTNOX_TEXT_ROW.
+    Unit: '',
+    Discount: 0,
+    DiscountType: 'PERCENT',
     VAT: vat,
     HouseWork: true,
     HouseWorkType: DEFAULT_ROT_HOUSE_WORK_TYPE,
@@ -295,20 +303,88 @@ export function resolveRotReference(
   };
 }
 
+/**
+ * 🧨 FORTNOX PUT UPPDATERAR RADERNA PER POSITION — ETT UTELÄMNAT FÄLT ÄRVS FRÅN DEN GAMLA RADEN.
+ *
+ * En rad-PUT ersätter INTE radlistan. Fortnox matchar de skickade raderna mot dokumentets
+ * befintliga rader på plats i listan och uppdaterar fält för fält, precis som med header-fälten.
+ * Ett fält vi inte skickar behåller alltså värdet från raden som låg på den positionen förut.
+ *
+ * Det gör varje "skicka bara när vi har ett värde"-mönster till en bugg, för radernas positioner
+ * glider hela tiden: en mätrad tillkommer när säljaren fyller i m², en rad dras om i formuläret,
+ * en avskriven rad faller bort ur pushen. Mätt i drift 2026-08-20 på offert 10047 — en mätrad
+ * hamnade där en artikelrad legat och kom ut hos kunden med artikelnummer 13202, 3 000 kr och
+ * husarbete-flagga. Dokumentet blev 3 000 kr dyrare än offerten i CRM:et.
+ *
+ * ⇒ VARJE RAD MÅSTE BÄRA VARJE FÄLT, även när värdet är "inget". Mätt mot skarp Fortnox samma dag:
+ *
+ *   | Skickat                | Utfall                                        |
+ *   | ---------------------- | --------------------------------------------- |
+ *   | `ArticleNumber: null`  | rensar artikelnumret                          |
+ *   | `ArticleNumber: ''`    | 200 — men rensar INTE, gamla numret ligger kvar |
+ *   | `Price` / `Quantity: 0`| skriver över                                  |
+ *   | `Unit: ''`             | accepteras men rensar INTE en ärvd enhet      |
+ *   | `Unit: null`           | 400, kod 2000699 "Värdet kan inte vara null. (unit)" |
+ *   | `HouseWork: false`     | rensar flaggan                                |
+ *   | `HouseWorkType: null`  | rensar typen (`''` rensar INTE)               |
+ *   | `OfferRows: []`        | 400 — radlistan går inte att tömma och lägga om |
+ *
+ * Regeln är alltså `null` för att rensa och `''` för att inte rensa — utom `Unit`, som avvisar
+ * null helt. Och eftersom radlistan inte går att tömma finns ingen "skriv om allt"-utväg: det är
+ * fälten på varje rad som måste vara fullständiga.
+ */
+export const FORTNOX_TEXT_ROW = Symbol('fortnoxTextRow');
+
+/**
+ * Fälten en textrad (mätrad, Radtext, ROT-not) måste bära för att inte ärva något.
+ *
+ * Symbolnyckeln märker raden som textrad åt `appendFortnoxTextNote`. Den serialiseras aldrig —
+ * `JSON.stringify` och `Object.keys` hoppar över symbolnycklar — så payloaden till Fortnox ser
+ * likadan ut som utan den.
+ *
+ * ⚠️ `Unit: ''` STOPPAR INTE ARVET. Tom sträng är det enda tomvärde fältet tar (null ger 2000699),
+ * men den skriver inte över — mätt 2026-08-20. En textrad som glider dit en artikelrad låg behåller
+ * alltså artikelns enhet, och det syns i drift: offert 10047 har textrader som bär "M3" och "RLE".
+ * Följden är kosmetisk (raden har pris 0 och antal 0), men enheten går inte att få bort så länge
+ * raden uppdateras på plats. Fältet skickas ändå, för en rad som ALDRIG haft en enhet ska inte
+ * kunna få en.
+ *
+ * ⚠️ HUSARBETE SÄTTS INTE HÄR — medvetet. Ett uttryckligt `HouseWork: false` stämplar
+ * EMPTYHOUSEWORK, och ett dokument som inte är ROT i Fortnox avvisar varje husarbetesfält med
+ * 2004021 (se rotRowHouseWork punkt 1). Vår `rotEnabled` är inte samma sak som dokumentets läge:
+ * en orders `TaxReductionType` sätts BARA vid create, så en order som skapades innan ROT kryssades
+ * i är inte ett ROT-dokument — och då hade varje Radtext-rad sänkt hela omsynken med 2004021.
+ * Att låta vår kryssruta äga flaggan i stället för artikelregistret är ett eget beslut; tills det
+ * är fattat rör vi inte husarbete här.
+ */
+export function fortnoxTextRowFields() {
+  return {
+    [FORTNOX_TEXT_ROW]: true as const,
+    ArticleNumber: null,
+    Price: 0,
+    Unit: '',
+    Discount: 0,
+    DiscountType: 'PERCENT' as const,
+  };
+}
+
 // Appends a document-level text note to a Fortnox row list WITHOUT creating two consecutive
 // text rows — Fortnox treats a second consecutive text row (Description only, no amounts) as a
 // new priced product row. If the last row is already a text row we merge the note into it
 // (double-space separated); otherwise we push a new text row. Mutates and returns `rows`.
+//
+// ⚠️ Textraden känns igen på symbolen från fortnoxTextRowFields, inte på hur många nycklar den
+// har. Den gamla kontrollen (`Object.keys(last).length === 1`) slutade gälla när textraderna
+// började bära uttryckliga tomvärden — se FORTNOX_TEXT_ROW ovan.
 export function appendFortnoxTextNote<T extends { Description: string }>(
-  rows: T[], note: string | null | undefined,
+  rows: T[], note: string | null | undefined, textRowFields: Omit<T, 'Description'> | null = null,
 ): T[] {
   if (!note) return rows;
-  const last = rows[rows.length - 1];
-  const lastIsTextRow = !!last && Object.keys(last).length === 1 && 'Description' in last;
-  if (lastIsTextRow) {
+  const last = rows[rows.length - 1] as (T & { [FORTNOX_TEXT_ROW]?: true }) | undefined;
+  if (last?.[FORTNOX_TEXT_ROW]) {
     last.Description = `${last.Description}  ${note}`;
   } else {
-    rows.push({ Description: note } as T);
+    rows.push({ ...(textRowFields ?? {}), Description: note } as T);
   }
   return rows;
 }

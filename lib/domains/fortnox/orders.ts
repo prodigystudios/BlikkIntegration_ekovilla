@@ -3,7 +3,7 @@ import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
 import { lineItemUnitPrice, lineItemDiscountPercent, lineItemRowTotal } from '@/lib/domains/crm/pricing';
 import { fortnoxGet, fortnoxGetBinary, fortnoxPost, fortnoxPut, FortnoxApiError, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
 import { activeLineItems } from './partialInvoices';
-import { appendFortnoxTextNote, assertLineItemsArePriced, assertOrderRowsSynced, claimFortnoxPush, resolveOurReference, resolveReverseVat, resolveRotReference, rotLaborRow, rotRowHouseWork, rowRotLaborCarveout, splitRotMaterialRow } from './helpers';
+import { FORTNOX_TEXT_ROW, appendFortnoxTextNote, fortnoxTextRowFields, assertLineItemsArePriced, assertOrderRowsSynced, claimFortnoxPush, resolveOurReference, resolveReverseVat, resolveRotReference, rotLaborRow, rotRowHouseWork, rowRotLaborCarveout, splitRotMaterialRow } from './helpers';
 
 // The point-in-time customer data carried on both the quote and the work order. Named once
 // because the header builder below has to read the same shape off either of them.
@@ -80,26 +80,33 @@ export type CreateInvoiceResult = {
   fortnox_invoice_number: string;
 };
 
+// ⚠️ VARJE RAD SKICKAR VARJE FÄLT — omsynken PUT:ar hela radlistan och Fortnox uppdaterar per
+// position, så ett utelämnat fält ärvs från raden som låg där förut. Se FORTNOX_TEXT_ROW i
+// helpers.ts. Ordern glider dessutom garanterat: en avskriven rad faller bort ur pushen
+// (activeLineItems) och förskjuter varje rad under sig.
 type FortnoxOrderRow = {
-  ArticleNumber?: string;
+  ArticleNumber?: string | null;
   Description: string;
   OrderedQuantity?: number;
   DeliveredQuantity?: number;
   Price?: number;
   VAT?: number;
+  // Unit avvisar null (2000699) — tom sträng är det enda tomvärdet den tar.
   Unit?: string;
   Discount?: number;
   DiscountType?: 'PERCENT' | 'AMOUNT';
   HouseWork?: boolean;
-  HouseWorkType?: string;
+  HouseWorkType?: string | null;
+  [FORTNOX_TEXT_ROW]?: true;
 };
 
 // A text-only order row: Description with no article/quantities, so Fortnox renders it as a
 // comment line under the article (carries the per-row free text / Radtext).
 // NOTE: if a Fortnox test company rejects a text-only /orders row, the fallback is to append
 // the Radtext to the article row's Description instead — the offer side is unaffected.
-function orderTextRow(description: string): FortnoxOrderRow {
-  return { Description: description };
+function orderTextRow(description: string, vat = 0): FortnoxOrderRow {
+  // Uttryckliga tomvärden i stället för utelämnade fält — se FORTNOX_TEXT_ROW i helpers.ts.
+  return { ...fortnoxTextRowFields(), Description: description, OrderedQuantity: 0, DeliveredQuantity: 0, VAT: vat };
 }
 
 // Exported for tests. NOTE: Fortnox order rows use `OrderedQuantity` (offer rows use
@@ -134,7 +141,8 @@ export function buildOrderRows(allLineItems: WorkOrderRow['line_items'], vatPerc
     if (split) carvedLaborTotal += split.labour;
 
     const row: FortnoxOrderRow = {
-      ...(item.article_number ? { ArticleNumber: item.article_number } : {}),
+      // ⚠️ Sätts ALLTID, även tomt: ett utelämnat fält ärver raden som låg på positionen förut.
+      ArticleNumber: item.article_number || null,
       Description: item.article_name || item.line_note || 'Artikel',
       // Fortnox invoices the DELIVERED quantity. A work order is the basis for invoicing
       // the full completed job, so delivered = ordered (otherwise the row sum stays 0 /
@@ -148,11 +156,15 @@ export function buildOrderRows(allLineItems: WorkOrderRow['line_items'], vatPerc
       // Reverse charge (omvänd skattskyldighet / byggmoms) → 0 % output VAT on rows; the document's
       // VAT regime comes from the customer card (synced from reverse_vat), so matching rows here.
       VAT: reverseVat ? 0 : vatPercent,
-      ...(item.article_unit_name ? { Unit: item.article_unit_name } : {}),
+      Unit: item.article_unit_name || '',
       // DiscountType:'PERCENT' is required — Fortnox defaults to AMOUNT (kronor), which would
-      // book discount_percent as a kronor discount and diverge from the CRM total. Dropped on a
-      // carved material row (baked into the price above).
-      ...(carve === 0 && discount > 0 ? { Discount: discount, DiscountType: 'PERCENT' as const } : {}),
+      // book discount_percent as a kronor discount and diverge from the CRM total. Baked into the
+      // price on a carved material row, alltså 0 där.
+      //
+      // ⚠️ Nollan skickas ALLTID. Utan den gick en borttagen rabatt aldrig fram till Fortnox —
+      // dokumentet låg kvar på den gamla procenten.
+      Discount: carve === 0 ? discount : 0,
+      DiscountType: 'PERCENT',
       // Husarbete bara på rader vi själva menar är arbete, och bara på ROT-dokument. Regeln bor i
       // rotRowHouseWork — läs de tre mätningarna där innan du breddar något här; två rimliga idéer
       // har redan prövats mot skarp Fortnox och fallit.
@@ -161,7 +173,7 @@ export function buildOrderRows(allLineItems: WorkOrderRow['line_items'], vatPerc
     // The per-row free text (Radtext) gets its own text row — only when an article name is
     // present, since otherwise it is already the row Description (the fallback above).
     const lineNote = item.line_note?.trim();
-    if (lineNote && item.article_name?.trim()) return [row, orderTextRow(lineNote)];
+    if (lineNote && item.article_name?.trim()) return [row, orderTextRow(lineNote, reverseVat ? 0 : vatPercent)];
     return [row];
   });
 
@@ -173,7 +185,7 @@ export function buildOrderRows(allLineItems: WorkOrderRow['line_items'], vatPerc
   // ROT property note (Fastighetsbeteckning / BRF org.nr) as a trailing text row — Fortnox has no
   // API field for it. Only relevant for a standalone order with ROT (the offer→order path inherits
   // the offer's rows, which already carry it); the caller passes null otherwise.
-  return appendFortnoxTextNote(rows, rotPropertyNote);
+  return appendFortnoxTextNote(rows, rotPropertyNote, { ...fortnoxTextRowFields(), OrderedQuantity: 0, DeliveredQuantity: 0, VAT: reverseVat ? 0 : vatPercent });
 }
 
 // The header fields we own on a Fortnox order. Everything else on the document (customer, dates,
@@ -719,16 +731,24 @@ async function putOrderHeaderAndRows(
   // order at 25 % VAT and un-does the 0 %-rate push. ROT is excluded then.
   const reverseVat = await resolveReverseVat(supabase, workOrder.customer_snapshot?.reverse_vat, workOrder.customer_id);
   const rotEnabled = linkedQuote?.rot_details?.enabled === true && !reverseVat;
-  // This PUT replaces ALL OrderRows, so a ROT property note that rides as a text ROW (bostadsrätt)
-  // would be WIPED unless we regenerate it here. Villa/företag put it in YourOrderNumber, which
-  // the header below carries. Same builder as the create path, so the two can't diverge.
+  // Radlistans LÄNGD är auktoritativ: skickar vi färre rader än dokumentet har raderas de
+  // överskjutande (mätt 2026-08-20 — offert 10047 gick 11 → 8 rader på en push). En ROT-not som
+  // rider som en text-RAD (bostadsrätt) skulle alltså WIPAS om vi inte regenererade den här.
+  // Villa/företag lägger den i YourOrderNumber, som headern nedan bär. Samma byggare som
+  // skapandevägen, så de två kan inte glida isär.
+  //
+  // ⚠️ Men raderna som blir kvar ERSÄTTS INTE — de uppdateras per position, och ett fält vi inte
+  // skickar ärvs från raden som låg där förut. Se FORTNOX_TEXT_ROW i helpers.ts. Det biter extra
+  // hårt här: efter `createorder` bär Fortnox-ordern OFFERTENS rader, inklusive mätrader som
+  // buildOrderRows aldrig skapar, så positionerna är förskjutna redan vid första omsynken.
   const { header, rotPropertyNote } = await buildOrderHeader(workOrder, linkedQuote, rotEnabled, supabase);
   const orderRows = buildOrderRows(workOrder.line_items, vatPercent, rotEnabled, reverseVat, rotPropertyNote);
 
   await fortnoxPut(`/orders/${orderNumber}`, { Order: { ...header, OrderRows: orderRows } });
 }
 
-// Re-sync an already-synced Fortnox order: header AND article rows (PUT replaces all rows).
+// Re-sync an already-synced Fortnox order: header AND article rows (PUT:en styr radlistans längd,
+// men uppdaterar kvarvarande rader per position — se FORTNOX_TEXT_ROW i helpers.ts).
 // If the order was never synced, falls back to the create path. Used after the work order's
 // line_items are edited, and by the manual "Synka om" button — which is why the header goes
 // too: it used to send rows only, so "Synka om" could not repair a contact person or work
@@ -756,7 +776,7 @@ export async function updateWorkOrderInFortnox(workOrderId: string): Promise<Pus
     .eq('id', workOrderId);
 
   try {
-    // Samma spärr som på skapandevägen: den här PUT:en ersätter ALLA orderrader, så en oprissatt
+    // Samma spärr som på skapandevägen: den här PUT:en skriver om ALLA orderrader, så en oprissatt
     // rad skulle skriva om en korrekt order till 0 kr.
     //
     // ⚠️ MÅSTE ligga inne i try:t. Utanför skulle raderna sparas lokalt, PUT:en utebli och ordern

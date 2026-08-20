@@ -53,10 +53,42 @@ describe('buildOfferRows', () => {
     expect(rows).toHaveLength(2);
     expect(rows[0].Description).toBe('Lösull');
     expect(rows[1].Description).toBe('Yta: 100 m², Tjocklek: 200 mm');
-    // Text-only row carries no amounts.
-    expect(rows[1].Quantity).toBeUndefined();
-    expect(rows[1].Price).toBeUndefined();
-    expect(rows[1].ArticleNumber).toBeUndefined();
+    // Textraden bär UTTRYCKLIGA tomvärden, inte utelämnade fält: Fortnox rad-PUT uppdaterar per
+    // position, så ett utelämnat fält ärvs från raden som låg där förut (offert 10047, 2026-08-20).
+    expect(rows[1].Quantity).toBe(0);
+    expect(rows[1].Price).toBe(0);
+    expect(rows[1].ArticleNumber).toBeNull();
+    expect(rows[1].Unit).toBe('');
+    expect(rows[1].Discount).toBe(0);
+  });
+
+  // 🧨 REGRESSIONSVAKT FÖR DEN POSITIONELLA RAD-PUT:EN (offert 10047, 2026-08-20).
+  //
+  // Fortnox ersätter inte radlistan vid en PUT — den uppdaterar rad för rad på POSITION och
+  // lämnar fält vi inte skickar orörda. Positionerna glider av sig själva: en mätrad tillkommer
+  // när säljaren fyller i m², en rad dras om i formuläret. Då hamnar en textrad där en artikelrad
+  // låg och ärver allt vi utelämnat. I drift kom en mätrad ut hos kunden med artikelnummer 13202,
+  // 3 000 kr och husarbete-flagga — dokumentet blev 3 000 kr dyrare än offerten i CRM:et.
+  //
+  // Därför: varje rad MÅSTE bära varje fält. Lägger någon till ett nytt villkorat fält i
+  // buildOfferRows faller det här testet, och det är hela poängen med det.
+  it('varje rad bär varje fält, även tomma — annars ärver den raden som låg på positionen förut', () => {
+    const rows = buildOfferRows([
+      { pricing_mode: 'm3', article_name: 'Lösull', article_number: '2410509', article_unit_name: 'm3', m2: '100', thickness_mm: '200', unit_price: '700', discount_percent: '10' },
+      { pricing_mode: 'item', unit_price: '100', quantity: '1', line_note: 'Ren fritextrad' },
+      { pricing_mode: 'item', article_name: 'Frakt', unit_price: '0', quantity: '1' },
+    ], 25, false);
+
+    expect(rows.length).toBeGreaterThan(3);
+    for (const row of rows) {
+      // ⚠️ Kontrollen görs på den SERIALISERADE raden, inte på objektet. `toHaveProperty` går
+      // igenom för ett fält satt till `undefined` — men `JSON.stringify` slänger det, så payloaden
+      // till Fortnox hade saknat fältet med testet grönt. Det är payloaden som är kontraktet.
+      const payload = JSON.parse(JSON.stringify(row));
+      for (const field of ['ArticleNumber', 'Description', 'Quantity', 'Price', 'Unit', 'Discount', 'DiscountType', 'VAT'] as const) {
+        expect(payload).toHaveProperty(field);
+      }
+    }
   });
 
   it('omits the measurement row when there are no measurements', () => {
@@ -69,8 +101,9 @@ describe('buildOfferRows', () => {
     expect(rows).toHaveLength(2);
     expect(rows[0].Description).toBe('Lösull');
     expect(rows[1].Description).toBe('Extra tätning vid genomföringar');
-    expect(rows[1].Price).toBeUndefined();
-    expect(rows[1].Quantity).toBeUndefined();
+    expect(rows[1].Price).toBe(0);
+    expect(rows[1].Quantity).toBe(0);
+    expect(rows[1].ArticleNumber).toBeNull();
   });
 
   it('does not duplicate the Radtext as a text row when it is already the row Description (no article name)', () => {
@@ -90,8 +123,8 @@ describe('buildOfferRows', () => {
     expect(rows).toHaveLength(2);
     expect(rows[0].Description).toBe('Lösull');
     expect(rows[1].Description).toBe('Yta: 100 m², Tjocklek: 200 mm  Vindsbjälklag');
-    expect(rows[1].Quantity).toBeUndefined();
-    expect(rows[1].Price).toBeUndefined();
+    expect(rows[1].Quantity).toBe(0);
+    expect(rows[1].Price).toBe(0);
   });
 
   it('appends the ROT property note as a trailing text row (after a priced article row)', () => {
@@ -100,7 +133,10 @@ describe('buildOfferRows', () => {
       25, false, false, 'Fastighetsbeteckning: Haggården 6:3',
     );
     expect(rows).toHaveLength(2);
-    expect(rows[1]).toEqual({ Description: 'Fastighetsbeteckning: Haggården 6:3' });
+    expect(rows[1]).toMatchObject({
+      Description: 'Fastighetsbeteckning: Haggården 6:3',
+      ArticleNumber: null, Price: 0, Quantity: 0, Unit: '', Discount: 0, DiscountType: 'PERCENT',
+    });
   });
 
   it('MERGES the ROT note into the measurement/Radtext row so there are never two consecutive text rows', () => {
@@ -112,7 +148,7 @@ describe('buildOfferRows', () => {
     );
     expect(rows).toHaveLength(2);
     expect(rows[1].Description).toBe('Yta: 100 m², Tjocklek: 200 mm  Vindsbjälklag  Fastighetsbeteckning: Haggården 6:3');
-    expect(rows[1].Price).toBeUndefined();
+    expect(rows[1].Price).toBe(0);
   });
 
   it('falls back to article_price when unit_price is empty', () => {
@@ -133,22 +169,25 @@ describe('buildOfferRows', () => {
     expect(row.VAT).toBe(25);
   });
 
-  it('only sets Discount when greater than zero, parsing comma decimals', () => {
+  // ⚠️ NOLLAN SKICKAS. Tidigare utelämnades Discount på en rabattfri rad — och eftersom Fortnox
+  // rad-PUT lämnar utelämnade fält orörda gick en BORTTAGEN rabatt aldrig fram: kundens dokument
+  // låg kvar på den gamla procenten (sett i drift på offert 10014, 20 % som inte fanns i CRM:et).
+  it('skickar Discount även som noll, och parsar kommadecimaler', () => {
     const [withDiscount] = buildOfferRows([{ unit_price: '100', quantity: '1', discount_percent: '12,5' }], 25, false);
     expect(withDiscount.Discount).toBe(12.5);
     const [noDiscount] = buildOfferRows([{ unit_price: '100', quantity: '1', discount_percent: '0' }], 25, false);
-    expect(noDiscount.Discount).toBeUndefined();
+    expect(noDiscount.Discount).toBe(0);
   });
 
   // Regression: discount_percent is a PERCENT. Fortnox defaults DiscountType to AMOUNT (kr),
   // so without DiscountType:'PERCENT' a 25% discount is booked as 25 kr off and the offer
   // total diverges from the quote. A row with no discount must not carry DiscountType.
-  it('sends DiscountType PERCENT alongside a discount, and none when there is no discount', () => {
+  it('sends DiscountType PERCENT on every row, discounted or not', () => {
     const [withDiscount] = buildOfferRows([{ unit_price: '100', quantity: '1', discount_percent: '25' }], 25, false);
     expect(withDiscount.Discount).toBe(25);
     expect(withDiscount.DiscountType).toBe('PERCENT');
     const [noDiscount] = buildOfferRows([{ unit_price: '100', quantity: '1', discount_percent: '0' }], 25, false);
-    expect(noDiscount.DiscountType).toBeUndefined();
+    expect(noDiscount.DiscountType).toBe('PERCENT');
   });
 
   it('sätter husarbete BARA på rader vi själva menar är arbete', () => {
@@ -293,7 +332,7 @@ describe('buildOfferRows – ROT labour carve-out', () => {
     // = 72/enhet. ROT får bara begäras på det som faktiskt debiteras, så rabatterat arbete ger ett
     // rabatterat underlag. Discount-raden faller bort eftersom rabatten är inbakad i priset.
     expect(rows[0].Price).toBeCloseTo(72, 6);
-    expect(rows[0].Discount).toBeUndefined();
+    expect(rows[0].Discount).toBe(0);
     expect(rows[rows.length - 1].Price).toBeCloseTo(180, 6);
   });
 

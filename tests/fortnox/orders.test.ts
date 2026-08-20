@@ -44,7 +44,10 @@ describe('buildOrderRows', () => {
     expect((withDiscount as any).Discount).toBe(25);
     expect((withDiscount as any).DiscountType).toBe('PERCENT');
     const [noDiscount] = buildOrderRows([{ pricing_mode: 'item', unit_price: '100', quantity: '1' }], 25, false);
-    expect((noDiscount as any).DiscountType).toBeUndefined();
+    // ⚠️ Nollan skickas. Ett utelämnat Discount lämnar Fortnox gamla procent orörd på en rad-PUT,
+    // så en borttagen rabatt hade aldrig gått fram. Se FORTNOX_TEXT_ROW i helpers.ts.
+    expect((noDiscount as any).DiscountType).toBe('PERCENT');
+    expect((noDiscount as any).Discount).toBe(0);
   });
 
   it('marks HouseWork only when ROT is enabled and the row is rot work', () => {
@@ -62,14 +65,39 @@ describe('buildOrderRows', () => {
     expect(rows).toHaveLength(2);
     expect(rows[0].Description).toBe('Lösull');
     expect(rows[1].Description).toBe('Extra tätning');
-    expect((rows[1] as any).OrderedQuantity).toBeUndefined();
-    expect((rows[1] as any).Price).toBeUndefined();
+    // Uttryckliga tomvärden, inte utelämnade fält — annars ärver textraden artikel/pris från raden
+    // som låg på positionen förut. Ordern glider garanterat när en rad skrivs av.
+    expect((rows[1] as any).OrderedQuantity).toBe(0);
+    expect((rows[1] as any).DeliveredQuantity).toBe(0);
+    expect((rows[1] as any).Price).toBe(0);
+    expect((rows[1] as any).ArticleNumber).toBeNull();
   });
 
   it('does not duplicate the Radtext when it is already the row Description (no article name)', () => {
     const rows = buildOrderRows([{ unit_price: '100', quantity: '1', line_note: 'Bara fritext' }], 25, false);
     expect(rows).toHaveLength(1);
     expect(rows[0].Description).toBe('Bara fritext');
+  });
+
+  // 🧨 Samma vakt som på offertsidan: Fortnox rad-PUT uppdaterar per position och ärver det vi
+  // utelämnar. Ordern glider garanterat — en avskriven rad faller bort ur pushen
+  // (activeLineItems) och förskjuter varje rad under sig vid nästa omsynk.
+  it('varje rad bär varje fält, även tomma — annars ärver den raden som låg på positionen förut', () => {
+    const rows = buildOrderRows([
+      { pricing_mode: 'm3', article_name: 'Lösull', article_number: '2410509', article_unit_name: 'm3', m2: '100', thickness_mm: '200', unit_price: '700', discount_percent: '10', line_note: 'Vindsbjälklag' },
+      { pricing_mode: 'item', unit_price: '100', quantity: '1' },
+    ], 25, false);
+
+    expect(rows.length).toBeGreaterThan(2);
+    for (const row of rows) {
+      // ⚠️ Kontrollen görs på den SERIALISERADE raden, inte på objektet. `toHaveProperty` går
+      // igenom för ett fält satt till `undefined` — men `JSON.stringify` slänger det, så payloaden
+      // till Fortnox hade saknat fältet med testet grönt. Det är payloaden som är kontraktet.
+      const payload = JSON.parse(JSON.stringify(row));
+      for (const field of ['ArticleNumber', 'Description', 'OrderedQuantity', 'DeliveredQuantity', 'Price', 'Unit', 'Discount', 'DiscountType', 'VAT'] as const) {
+        expect(payload).toHaveProperty(field);
+      }
+    }
   });
 
   it('forces 0 % VAT on rows for reverse charge (byggmoms), else the passed vatPercent', () => {
@@ -86,7 +114,8 @@ describe('buildOrderRows', () => {
     );
     expect(rows).toHaveLength(2);
     expect(rows[1].Description).toBe('Fastighetsbeteckning: Haggården 6:3  BRF org.nr: 769600-1234');
-    expect((rows[1] as any).OrderedQuantity).toBeUndefined();
+    expect((rows[1] as any).OrderedQuantity).toBe(0);
+    expect((rows[1] as any).ArticleNumber).toBeNull();
   });
 });
 
