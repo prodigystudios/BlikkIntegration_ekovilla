@@ -1,3 +1,4 @@
+import { constructionLabel } from '@/lib/domains/crm/constructions';
 import { lineItemSacks, type SackLineItem } from '@/lib/domains/crm/materials';
 import type { EtappOpenRow, EtappClosedRow } from './calculations';
 
@@ -126,19 +127,16 @@ export function mapBlikkProjectToEgenkontrollProject(raw: Record<string, any> | 
 
 // ── Etapp rows from CRM line items ──────────────────────────────────────────
 
-// The quote form stores the construction type as a slug. The egenkontroll is printed and handed to
-// the customer, so 'vagg' must not appear where "Vägg" belongs. Mirrors the labels the quote form
-// shows the seller (app/crm/offerter/QuoteFormClient.tsx).
-const CONSTRUCTION_LABELS: Record<string, string> = {
-  vagg: 'Vägg',
-  snedtak: 'Snedtak',
-  vind: 'Vind',
-};
-
-function constructionLabel(value: unknown): string {
-  const slug = str(value).toLowerCase();
-  return CONSTRUCTION_LABELS[slug] ?? str(value);
-}
+// Etiketterna kommer ur den kanoniska vokabulären (lib/domains/crm/constructions.ts) — den här
+// filen hade en egen kopia vars kommentar själv erkände att den speglade offertformulärets.
+//
+// ⚠️ BETEENDEÄNDRING 2026-08-20: den gamla kartan föll tillbaka på RÅVÄRDET för en okänd slug
+// (`CONSTRUCTION_LABELS[slug] ?? str(value)`). Egenkontrollen skrivs ut och lämnas till kunden,
+// och exakt det som fallbacken gjorde — trycka 'golv' i stället för 'Golv' — är felet den
+// kanoniska listan finns för att omöjliggöra. Nu ger en okänd slug '' och `||`-kedjan på
+// etappraden går vidare till artikelnamnet, vilket alltid är läsbart för en kund. Oåtkomligt i
+// praktiken (Zod-enumet på offertrutten släpper bara igenom vokabulären), men reserven ska peka
+// åt rätt håll den dagen den ändå används.
 
 // A CRM order already knows each row's area, thickness and density as fields, so the etapp rows
 // are mapped straight across. (The Blikk path has to regex them back out of a free-text project

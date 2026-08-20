@@ -9,6 +9,7 @@ import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
 import { parseDecimal } from '@/lib/shared/number';
 import { lineItemQuantity, isBlankLineItem, isUnpricedLineItem, isConfiguredLineItem } from '@/lib/domains/crm/lineItems';
+import { constructionLabel, inferConstructionFromArticle, type ConstructionSlug } from '@/lib/domains/crm/constructions';
 import {
   rowMarginPercent, marginTier, quoteMargin, splitRowLabor, lineItemUnitPrice, MARGIN_THRESHOLDS,
   type MarginRow, type MarginTier,
@@ -72,7 +73,7 @@ type QuoteCustomerSource = {
 
 type QuoteLineItem = {
   id: string;
-  construction: 'vagg' | 'snedtak' | 'vind' | '';
+  construction: ConstructionSlug | '';
   m2: string;
   thickness_mm: string;
   /**
@@ -314,14 +315,6 @@ function createEmptyLineItem(): QuoteLineItem {
     labor_cost: '',
     density: '',
   };
-}
-
-function inferConstructionFromArticle(name?: string | null) {
-  const value = (name || '').toLowerCase();
-  if (/sned\s*tak|snedtak|taklut|lutande/.test(value)) return 'snedtak' as const;
-  if (/\bvind\b|vinds?bjälklag|vinden/.test(value)) return 'vind' as const;
-  if (/vägg|vagg|regel|stomme|väggreg/.test(value)) return 'vagg' as const;
-  return '' as const;
 }
 
 function getArticleUnitName(unit: ArticleLite['unit']) {
@@ -1851,8 +1844,7 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
       const amount = lineItemQuantity(item);
       const discount = Math.min(100, Math.max(0, parseDecimal(item.discount_percent)));
       const effectiveUnit = Math.max(0, baseUnit * (1 - discount / 100));
-      const constructionLabel = item.construction === 'vagg' ? 'Vägg' : item.construction === 'snedtak' ? 'Snedtak' : item.construction === 'vind' ? 'Vind' : '';
-      const baseLabel = item.article_name ? `${item.article_name}${item.article_number ? ` (${item.article_number})` : ''}` : `${constructionLabel || 'Okänd'}${item.thickness_mm ? ` ${item.thickness_mm} mm` : ''}`;
+      const baseLabel = item.article_name ? `${item.article_name}${item.article_number ? ` (${item.article_number})` : ''}` : `${constructionLabel(item.construction) || 'Okänd'}${item.thickness_mm ? ` ${item.thickness_mm} mm` : ''}`;
       const unitSuffix = mode === 'm3' ? ' (m³)' : item.article_unit_name ? ` (${item.article_unit_name})` : '';
       const laborSplit = splitRowLabor({
         laborCostPerUnit: item.labor_cost, unitPrice: baseUnit, discountPercent: discount, quantity: amount,

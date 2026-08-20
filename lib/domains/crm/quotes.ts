@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import type { ConstructionSlug } from './constructions';
 import { convertProspectToCustomer, setAccountManagerIfUnset } from './customers';
 
 export const crmQuoteSelect = `
@@ -79,7 +80,7 @@ type PricingSummary = {
 
 type QuoteLineItem = {
   id: string;
-  construction?: 'vagg' | 'snedtak' | 'vind' | '';
+  construction?: ConstructionSlug | '';
   m2?: string;
   thickness_mm?: string;
   auto_price?: boolean;

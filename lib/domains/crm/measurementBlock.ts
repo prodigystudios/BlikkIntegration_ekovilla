@@ -5,9 +5,8 @@
 // arbetsordern (där artiklar rättas i efterhand och beskrivningen måste kunna hämtas om).
 // Rent och sidoeffektfritt, så det kan unit-testas och importeras från klientkomponenter.
 
+import { constructionLabel } from './constructions';
 import { inferMaterialFromArticle, lineItemSacks, MATERIAL_SHORTS } from './materials';
-
-const CONSTRUCTION_LABELS: Record<string, string> = { vagg: 'Vägg', snedtak: 'Snedtak', vind: 'Vind' };
 
 export type MeasurementLineItem = {
   construction?: string | null;
@@ -35,7 +34,7 @@ export function buildMeasurementLines(items: MeasurementLineItem[]): string[] {
   let totalSacks = 0;
 
   for (const it of qualifying) {
-    const label = CONSTRUCTION_LABELS[it.construction ?? ''] || it.article_name || '';
+    const label = constructionLabel(it.construction) || it.article_name || '';
     const dims = `${(it.m2 ?? '').trim()} m² × ${(it.thickness_mm ?? '').trim()} mm`;
     let row = label ? `${label} – ${dims}` : dims;
 
