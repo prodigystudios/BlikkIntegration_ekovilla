@@ -4,6 +4,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Input from '../../../components/ui/Input';
 import { cn } from '@/lib/shared/cn';
 import AssigneeFilter, { MINE, type AssigneeFilterValue, type AssigneeOption } from '@/app/crm/components/AssigneeFilter';
+import SortFilter from '@/app/crm/components/SortFilter';
 import { RowAssignee, RowAssigneeChip } from '@/app/crm/components/RowAssignee';
 import { documentRef } from '@/app/crm/lib/format';
 import DocumentNumberBadge from '@/app/crm/components/DocumentNumberBadge';
@@ -127,6 +128,16 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
   // Bumped when something happens that can move a row between tabs, to force a reload.
   const [reloadKey, setReloadKey] = useState(0);
 
+  // What the visible list is a page of. Held in a ref as well as read from the render closure:
+  // a function can only see the values captured when it was created, so comparing two closure
+  // reads across an await compares a string with itself. The ref is written by the first-page
+  // effect, which runs on every change to the scope — so it, and only it, tells `loadMore`
+  // whether the list moved out from under its request. reloadKey ingår: en offert som markeras
+  // Vunnen laddar om förstasidan utan att någon annan del av nyckeln rör sig, och en 'Visa fler'
+  // i luften skulle då lägga sin sida ovanpå den nya.
+  const listScope = `${countScope}|${filter}|${sort}|${reloadKey}`;
+  const listScopeRef = useRef(listScope);
+
   function buildListQuery(nextOffset: number, withCounts: boolean) {
     const query = new URLSearchParams();
     if (search.trim()) query.set('q', search.trim());
@@ -146,11 +157,11 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
     // The page being appended belongs to the query it was asked for. Change the sort mid-flight and
     // the first-page effect replaces the list under it; appending then mixes two orderings and
     // duplicates rows, so a response whose request no longer describes the visible list is dropped.
-    const requestedFor = `${countScope}|${filter}|${sort}`;
+    const requestedFor = listScope;
     try {
       const res = await fetch(`/api/crm/quotes?${buildListQuery(quotes.length, false)}`, { cache: 'no-store' });
       const json = await res.json().catch(() => ({}));
-      if (requestedFor !== `${countScope}|${filter}|${sort}`) return;
+      if (listScopeRef.current !== requestedFor) return;
       if (!res.ok || !json.ok) { setError(json?.error || 'Kunde inte ladda fler offerter.'); return; }
       const items = Array.isArray(json?.data?.items) ? json.data.items : [];
       setQuotes((prev) => [...prev, ...items]);
@@ -204,6 +215,7 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
   // starts a fresh page rather than re-filtering what happens to be in the browser.
   useEffect(() => {
     let active = true;
+    listScopeRef.current = listScope;
     const wantCounts = countedScope.current !== countScope;
     async function load() {
       setLoading(true); setError(null);
@@ -366,21 +378,20 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
               );
             })}
           </div>
-          {/* Sort: newest first by default, nearest follow-up as the other view. Server-side, since
-              the list is paginated — ordering the loaded page would only sort the first hundred. */}
-          <label className="flex items-center gap-1.5 text-[13px] text-slate-500">
-            <span className="shrink-0">Sortera</span>
-            <select
+          {/* Sortering och ansvarig ligger i samma grupp till höger — annars hamnar de två
+              urvalskontrollerna på var sitt ställe i raden så fort pillren radbryter.
+              Sorteringen är server-side: listan är paginerad, så att ordna den laddade
+              sidan skulle bara sortera de första hundra. */}
+          <div className="flex flex-col gap-3 sm:ml-auto sm:flex-row sm:items-center sm:gap-2">
+            <SortFilter
               value={sort}
-              onChange={(e) => setSort(e.target.value as QuoteSort)}
-              className="rounded-lg border border-[#dce4d8] bg-white px-2 py-1 text-[13px] font-semibold text-slate-700"
-            >
-              {(Object.keys(quoteSortMeta) as QuoteSort[]).map((value) => (
-                <option key={value} value={value}>{quoteSortMeta[value].label}</option>
-              ))}
-            </select>
-          </label>
-          <AssigneeFilter value={assigneeFilter} onChange={setAssigneeFilter} users={assignees} className="w-full sm:ml-auto sm:w-[200px]" />
+              onChange={setSort}
+              options={(Object.keys(quoteSortMeta) as QuoteSort[]).map((value) => ({ value, label: quoteSortMeta[value].label }))}
+              label="Sortera offerter"
+              className="w-full sm:w-[180px]"
+            />
+            <AssigneeFilter value={assigneeFilter} onChange={setAssigneeFilter} users={assignees} className="w-full sm:w-[200px]" />
+          </div>
         </div>
 
         {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}

@@ -4,6 +4,7 @@ import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 import type { OpsSegment, OpsTruck } from '@/lib/domains/planning/types';
 import { type WeekDay, addDaysISO, daysBetweenInclusive } from './planningDates';
+import { packRows } from './laneRows';
 import type { JobType } from '@/lib/domains/planning/jobTypes';
 import { crewInitials, crewColor, type AssignablePerson } from '@/lib/domains/planning/crew';
 import { crewForTruckInRange, type TruckCrewMember } from '@/lib/domains/planning/truckCrew';
@@ -210,6 +211,15 @@ export default function WeekBoard({
             const laneSegs = segments
               .filter((s) => s.truck_id === truck.id && s.end_day >= weekStart && s.start_day <= weekEnd)
               .sort((a, b) => a.start_day.localeCompare(b.start_day) || compareBoardOrder(a, b));
+            // Dagsspann per kort (med pågående storleksdrag inräknat) och den packade raden räknas
+            // ut tillsammans, så radplaceringen ser exakt det spann kortet renderas med.
+            const laneSpans = laneSegs.map((seg) => {
+              const col = segColumns(seg);
+              if (!col) return null;
+              const previewEnd = resize?.segId === seg.id ? days.findIndex((d) => d.iso === resize.endIso) : -1;
+              return { s: col.s, e: previewEnd >= col.s ? previewEnd : col.e };
+            });
+            const laneRows = packRows(laneSpans, n);
             const laneWeekly = crewForTruckInRange(truckCrew, truck.id, weekStart, weekEnd);
             const overridden = laneWeekly.length > 0;
             const defaultTeam = defaultCrew.filter((m) => m.truck_id === truck.id);
@@ -366,11 +376,9 @@ export default function WeekBoard({
 
                   {/* segments */}
                   <div className={cn('relative grid h-full content-start gap-1.5 px-1.5 py-1.5', placing && 'cursor-copy')} style={{ gridTemplateColumns: dayCols, minHeight: 72 }}>
-                    {laneSegs.map((seg) => {
-                      const col = segColumns(seg);
-                      if (!col) return null;
-                      const previewEnd = resize?.segId === seg.id ? days.findIndex((d) => d.iso === resize.endIso) : -1;
-                      const endIdx = previewEnd >= col.s ? previewEnd : col.e;
+                    {laneSegs.map((seg, si) => {
+                      const span = laneSpans[si];
+                      if (!span) return null;
                       return (
                         <div
                           key={seg.id}
@@ -384,7 +392,7 @@ export default function WeekBoard({
                           }}
                           // Tint the card by its truck's colour (same as the month view) so jobs read
                           // by truck at a glance everywhere — consistent across week + month.
-                          style={{ gridColumn: `${col.s + 1} / ${endIdx + 2}`, backgroundColor: `${laneColor}1f`, borderColor: `${laneColor}66` }}
+                          style={{ gridColumn: `${span.s + 1} / ${span.e + 2}`, gridRow: laneRows[si], backgroundColor: `${laneColor}1f`, borderColor: `${laneColor}66` }}
                           className={cn(
                             'group relative overflow-hidden rounded-xl border border-solid p-2.5 pl-3.5 shadow-[0_1px_2px_rgba(20,44,27,0.06)] transition hover:shadow-[0_3px_10px_rgba(20,44,27,0.12)]',
                             seg.job && 'hover:ring-2 hover:ring-emerald-400/40',
