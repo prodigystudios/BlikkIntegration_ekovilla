@@ -15,7 +15,7 @@ import {
 
 // ── Types (mirror lib/domains/crm/reports.ts) ──
 type SalesOverTimePoint = { period: string; quoteValue: number; orderValue: number; invoicedValue: number };
-type SellerReportRow = { userId: string; userName: string; calls: number; quotes: number; quoteValue: number; wonValue: number; orderValue: number; invoicedValue: number };
+type SellerReportRow = { userId: string; userName: string; calls: number; quotes: number; quoteValue: number; wonValue: number; orders: number; orderValue: number; invoicedValue: number };
 type FunnelStage = { count: number; value: number };
 type SalesFunnel = { quotes: FunnelStage; won: FunnelStage; orders: FunnelStage; invoiced: FunnelStage };
 type CustomerReportRow = { customer: string; orderValue: number; invoicedValue: number; orderCount: number };
@@ -290,8 +290,8 @@ export default function ReportsClient() {
             subtitle="Aktivitet och värde per säljare — ordervärde för det som skapades i perioden, fakturerat för det som fakturerades under den"
             action={<ExportButton onClick={() => downloadCsv(
               `per-saljare_${report.range.from}_${report.range.to}.csv`,
-              ['Säljare', 'Samtal', 'Offerter', 'Offertvärde', 'Vunnet värde', 'Ordervärde', 'Fakturerat'],
-              report.perSeller.map((s) => [s.userName, s.calls, s.quotes, s.quoteValue, s.wonValue, s.orderValue, s.invoicedValue]),
+              ['Säljare', 'Samtal', 'Offerter', 'Offertvärde', 'Vunnet värde', 'Antal order', 'Ordervärde', 'Fakturerat'],
+              report.perSeller.map((s) => [s.userName, s.calls, s.quotes, s.quoteValue, s.wonValue, s.orders, s.orderValue, s.invoicedValue]),
             )} />}
           >
             {report.perSeller.length === 0 ? <EmptyChart /> : (
@@ -310,13 +310,14 @@ export default function ReportsClient() {
                   </ResponsiveContainer>
                 </div>
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[640px] border-collapse text-sm">
+                  <table className="w-full min-w-[700px] border-collapse text-sm">
                     <thead>
                       <tr className="border-b border-slate-200 text-left text-[11px] font-bold uppercase tracking-[0.1em] text-slate-400">
                         <th className="py-2 pr-3">Säljare</th>
                         <th className="py-2 px-3 text-right">Samtal</th>
                         <th className="py-2 px-3 text-right">Offerter</th>
                         <th className="py-2 px-3 text-right">Offertvärde</th>
+                        <th className="py-2 px-3 text-right">Order</th>
                         <th className="py-2 px-3 text-right">Ordervärde</th>
                         <th className="py-2 pl-3 text-right">Fakturerat</th>
                       </tr>
@@ -328,6 +329,7 @@ export default function ReportsClient() {
                           <td className="py-2 px-3 text-right text-slate-600">{s.calls}</td>
                           <td className="py-2 px-3 text-right text-slate-600">{s.quotes}</td>
                           <td className="py-2 px-3 text-right text-slate-600">{formatCurrency(s.quoteValue)}</td>
+                          <td className="py-2 px-3 text-right text-slate-600">{s.orders}</td>
                           <td className="py-2 px-3 text-right text-slate-600">{formatCurrency(s.orderValue)}</td>
                           <td className="py-2 pl-3 text-right font-semibold text-slate-800">{formatCurrency(s.invoicedValue)}</td>
                         </tr>
