@@ -4,9 +4,15 @@ import { lineItemQuantity } from './lineItems';
 // Shared CRM line-item pricing. Single source of truth so the quote form, the work
 // order article editor, the server recompute, and the Fortnox row builder never
 // diverge. Price source matches buildOrderRows/buildOfferRows: explicit `unit_price`
-// when set, otherwise the chosen article's `article_price`. (The quote form keeps its
-// own `computeUnitPrice` stub for auto-priced rows without a chosen article — those are
-// a quote-stage concern; work order rows always carry a concrete price.)
+// when set, otherwise the chosen article's `article_price`.
+//
+// ⚠️ INGEN YTA FÅR RÄKNA FRAM ETT EGET PRIS. Offertformuläret gjorde det till 2026-08-20 med en
+// stub (`computeUnitPrice`) som gav artikellösa rader 900 kr/m³ oavsett konstruktion och tjocklek,
+// medan den här modulen gav samma rad 0. Följden: säljaren såg ett pris som aldrig nådde
+// Fortnox-dokumentet, säljtavlan och rapporterna räknade 900 medan arbetsordern och planeringen
+// räknade 0, och en ROT-offert tappade hela sitt avdragsunderlag (Price 0 → carve 0 → ingen
+// "Arbetskostnad ROT"-rad). En rad utan prisförankring ska SYNAS, inte gissas —
+// `isUnpricedLineItem` i lineItems.ts spärrar den vid sparning och vid push.
 
 export type PricingLineItem = {
   pricing_mode?: string | null;
@@ -127,10 +133,11 @@ export function splitRowLabor(input: {
 /**
  * Radens utbrutna ROT-arbetskostnad i kronor, härledd ur raden själv.
  *
- * ⚠️ Använd INTE den här i offertformuläret. Formuläret prissätter auto-prissatta rader med sin egen
- * stub (`computeUnitPrice`) medan `lineItemUnitPrice` ger dem 0 — en auto-rad hade alltså fått noll
- * arbetskostnad här men visat ett pris på skärmen. Formuläret anropar `splitRowLabor` direkt med de
- * tal det redan räknat fram. Samma fälla som MarginRow.revenue dokumenterar.
+ * Offertformuläret anropar `splitRowLabor` direkt med de tal det redan räknat fram i stället för
+ * att gå via den här. Det är inte längre nödvändigt — sedan 900-stubben togs bort prissätter
+ * formuläret via `lineItemUnitPrice` precis som alla andra ytor, så båda vägarna ger samma svar.
+ * Skulle någon slå ihop dem: kontrollera att `unitPrice` fortfarande är à-priset FÖRE rabatt, som
+ * `splitRowLabor` kräver.
  */
 export function lineItemRotLabor(item: PricingLineItem): number {
   return splitRowLabor({
@@ -203,13 +210,13 @@ export const MARGIN_THRESHOLDS = {
 /**
  * En rad att räkna täckningsgrad på.
  *
- * ⚠️ `revenue` SKICKAS IN, den härleds inte här. Skälet är en bugg som annars uppstår tyst:
- * offertformuläret prissätter auto-prissatta rader med sin egen stub (`computeUnitPrice`), medan
- * `lineItemUnitPrice` ger dem 0. Räknade vi själva ur raden skulle en auto-prissatt rad bidra med
- * 0 kr till TG:n men synas i Delsumman — och eftersom den då har noll intäkt skulle den inte ens
- * flaggas som obedömd. Säljaren hade sett en grön TG som ignorerade nästan hela offerten.
+ * ⚠️ `revenue` SKICKAS IN, den härleds inte här: anroparen skickar SAMMA belopp som visas för
+ * raden på skärmen, så TG:n och Delsumman inte kan glida isär. Regeln kom ur en tyst bugg — när
+ * offertformuläret prissatte med sin egen 900-stub bidrog en artikellös rad med 0 kr till TG:n men
+ * syntes i Delsumman, och eftersom den då hade noll intäkt flaggades den inte ens som obedömd.
+ * Säljaren såg en grön TG som ignorerade nästan hela offerten.
  *
- * Genom att anroparen skickar SAMMA belopp som visas på skärmen kan siffrorna inte glida isär.
+ * Stubben är borta, men kravet står kvar: intäkten som bedöms måste vara den som visas.
  */
 export type MarginRow = {
   /** Radens intäkt i kronor, rabatt inräknad — exakt det belopp som visas för raden. */
@@ -299,8 +306,9 @@ export function marginTier(
  *
  * Rader utan inköpspris hålls UTANFÖR båda summorna. Att räkna dem som kostnadsfria hade blåst upp
  * TG:n och gjort siffran farligt optimistisk; `unpricedRevenue` säger i stället hur stor del av
- * offerten som inte kunde bedömas. Det gäller ÄVEN auto-prissatta rader utan vald artikel — de har
- * en intäkt på skärmen men inget inköpspris, och utan den här raden hade de försvunnit spårlöst.
+ * offerten som inte kunde bedömas. Det gäller ÄVEN en rad med ett handskrivet A-pris och ingen vald
+ * artikel — den har en intäkt på skärmen men inget inköpspris, och utan den här raden hade den
+ * försvunnit spårlöst.
  */
 export function quoteMargin(rows: MarginRow[]): {
   marginPercent: number | null;

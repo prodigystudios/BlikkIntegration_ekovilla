@@ -1,6 +1,6 @@
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { parseDecimal } from '@/lib/shared/number';
-import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
+import { lineItemQuantity, isConfiguredLineItem, isUnpricedLineItem } from '@/lib/domains/crm/lineItems';
 import { lineItemUnitPrice, lineItemDiscountPercent, lineItemEffectiveUnitPrice, lineItemRotLabor } from '@/lib/domains/crm/pricing';
 import { fortnoxGet, fortnoxPost, fortnoxPut, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
 import { appendFortnoxTextNote, buildRotPropertyNote, claimFortnoxPush, resolveReverseVat, rotRowHouseWork } from './helpers';
@@ -357,6 +357,30 @@ export async function createPartialInvoice(
 
   const state = computeInvoiceState(basis, priorRounds);
   const { requestByKey, isFinalRound } = validatePartialRequest(state, request);
+
+  // Rader utan prisförankring får inte faktureras. Det här är en RIKTIG faktura till kunden, så en
+  // oprissatt rad debiteras 0 kr — och bidrar dessutom med noll till ROT-underlaget. Ordern kan ha
+  // skapats i Fortnox innan spärren fanns, så orderpushens kontroll räcker inte här.
+  //
+  // ⚠️ Spärra bara raderna som FAKTURERAS DEN HÄR RUNDAN. Hela `basis` hade stoppat en helt korrekt
+  // omgång för en rad som inte ens ingår i den. (`filter` ger callbacken originalindexet, så
+  // lineKey pekar rätt.)
+  //
+  // Före claimen och som PartialInvoiceError, precis som de två kontrollerna ovan: ingenting har
+  // rört Fortnox än, så det här är ett underlagsfel (409) — inte en misslyckad push som ska stämpla
+  // `fortnox_invoice_sync_status: 'failed'` på en order som aldrig blev anropad.
+  //
+  // ⚠️ Har raden REDAN delfakturerats en gång (möjligt på gammal data, då den fakturerades för 0 kr)
+  // går den inte att rätta rakt av: validateLineItemEdit tillåter varken ett ändrat `unit_price`
+  // eller en avskrivning på en fakturerad rad. Meddelandet nämner därför vägen ut, annars står
+  // ordern still utan att någon förstår varför.
+  const billedThisRound = (basis ?? []).filter((item, index) => (requestByKey.get(lineKey(item, index)) ?? 0) > 0);
+  if (billedThisRound.some((item) => isConfiguredLineItem(item) && isUnpricedLineItem(item))) {
+    throw new PartialInvoiceError(
+      'Fakturaunderlaget har rader utan pris. Ange A-pris eller välj artikel på arbetsordern först. '
+      + 'Är raden redan delfakturerad går den inte att prissätta om — fakturera då resten av ordern utan den raden, och ta den i Fortnox.',
+    );
+  }
 
   const claimed = await claimFortnoxPush(
     supabase, 'crm_work_orders', workOrderId, 'fortnox_invoice_sync_status', 'fortnox_invoice_claimed_at',

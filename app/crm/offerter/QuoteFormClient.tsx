@@ -8,9 +8,9 @@ import DatePicker from '../../../components/ui/DatePicker';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
 import { parseDecimal } from '@/lib/shared/number';
-import { lineItemQuantity, isBlankLineItem } from '@/lib/domains/crm/lineItems';
+import { lineItemQuantity, isBlankLineItem, isUnpricedLineItem, isConfiguredLineItem } from '@/lib/domains/crm/lineItems';
 import {
-  rowMarginPercent, marginTier, quoteMargin, splitRowLabor, MARGIN_THRESHOLDS,
+  rowMarginPercent, marginTier, quoteMargin, splitRowLabor, lineItemUnitPrice, MARGIN_THRESHOLDS,
   type MarginRow, type MarginTier,
 } from '@/lib/domains/crm/pricing';
 import { crm } from '@/app/crm/lib/crmTokens';
@@ -75,6 +75,16 @@ type QuoteLineItem = {
   construction: 'vagg' | 'snedtak' | 'vind' | '';
   m2: string;
   thickness_mm: string;
+  /**
+   * ⚠️ LÄSES INTE LÄNGRE FÖR PRISSÄTTNING. Flaggan styrde förr om raden fick sitt pris ur
+   * `computeUnitPrice()` — en stub som svarade 900 kr/m³ oavsett konstruktion och tjocklek, medan
+   * alla andra ytor räknade samma rad som 0 kr. Stubben är borta; priset kommer nu alltid ur
+   * `lineItemUnitPrice`.
+   *
+   * Fältet står kvar i typen, Zod-schemat och databasen så att befintliga rader parsar oförändrat
+   * (samma fälla som `is_rot_work` och `written_off` gick i när de föll ur schemat och strippades
+   * tyst vid varje sparning). Ta inte bort det utan en migrering.
+   */
   auto_price: boolean;
   unit_price: string;
   pricing_mode: 'm3' | 'item';
@@ -314,10 +324,6 @@ function inferConstructionFromArticle(name?: string | null) {
   return '' as const;
 }
 
-function computeUnitPrice(_construction: QuoteLineItem['construction'], _thicknessMm: number) {
-  return 900;
-}
-
 function getArticleUnitName(unit: ArticleLite['unit']) {
   if (!unit) return '';
   if (typeof unit === 'string') return unit;
@@ -417,7 +423,10 @@ function buildCustomerSource(customer: CrmCustomerLite | null): QuoteDraft['cust
 function getValidationIssues(draft: QuoteDraft, effectiveRows: EffectiveRow[]) {
   const issues: string[] = [];
   const effectiveCustomerName = getEffectiveCustomerName(draft);
-  const hasAnyLineItemInput = draft.items.some((item) => item.article_name || item.m2 || item.quantity || item.unit_price);
+  // SAMMA definition som radkontrollerna (isConfigured). Stod den här på egen hand kunde en rad
+  // räknas som "en rad finns" men falla ur varje per-rad-kontroll — en rad med bara blanksteg
+  // passerade då hela valideringen utan att någon kontroll tittade på den.
+  const hasAnyLineItemInput = draft.items.some((item) => isConfiguredLineItem(item));
 
   if (!draft.project_name.trim()) issues.push('Offertnamn saknas');
   if (!draft.prospect_id && !draft.customer_id && !effectiveCustomerName) issues.push('Kund måste anges');
@@ -441,6 +450,20 @@ function getValidationIssues(draft: QuoteDraft, effectiveRows: EffectiveRow[]) {
   if (hasAnyLineItemInput) {
     const hasInvalidRow = effectiveRows.some((item) => item.isConfigured && (!(item.amount > 0) || !(item.effectiveUnit >= 0)));
     if (hasInvalidRow) issues.push('Ofullständiga rader — mängd och pris krävs');
+    // Spärr, inte en varning. En rad utan prisförankring räknas som 0 kr överallt utanför det här
+    // formuläret — Fortnox-dokumentet, arbetsordern, planeringens ordervärde. Förr dolde
+    // 900-stubben det genom att visa ett pris här som ingen annan yta kände till. Nu syns
+    // avsaknaden i stället för att offerten går iväg billigare än säljaren tror.
+    // Namnge raderna, som ROT-spärren nedan. En hopfälld rad visar bara "0 kr", och 0 ser likadant
+    // ut oavsett om priset saknas eller är satt till noll — utan radnummer blir spärren omöjlig att
+    // åtgärda på en offert med många rader.
+    const unpriced = effectiveRows.filter((item) => item.isConfigured && isUnpricedLineItem(item));
+    if (unpriced.length) {
+      const rader = unpriced.map((r) => effectiveRows.indexOf(r) + 1).join(', ');
+      issues.push(
+        `${unpriced.length === 1 ? 'Rad' : 'Rader'} ${rader}: pris saknas — välj artikel eller ange A-pris`,
+      );
+    }
   }
   // Spärr, inte en varning. En arbetskostnad över A-priset bryter inte ut något (se splitRowLabor),
   // så offerten skulle gå till Fortnox utan det ROT-underlag säljaren tror att den har. Det gäller
@@ -1124,13 +1147,21 @@ function LineItemRow({
 
       {/* Ekonomi: A-pris, (ROT-arbetskostnad), rabatt on one straight row. */}
       <div className={cn('grid gap-3', showLaborField ? 'sm:grid-cols-3' : 'sm:grid-cols-2')}>
+        {/* A-priset är ETT fält, alltid skrivbart. Att välja en artikel kopierar in dess pris i
+            `unit_price` (se onSelectArticle), så en artikelrad ser ut precis som förut — men
+            fältet är inte längre låst mot ett påhittat värde. Kryssrutan "Manuellt pris" som stod
+            här växlade bara mellan 900-stubben och ett skrivet pris och har därför tagits bort.
+
+            ⚠️ Fältet speglar `unit_price` RAKT AV och får aldrig falla tillbaka på `article_price` i
+            renderingen. En sådan reserv gör fältet omöjligt att tömma: tomt värde → artikelpriset
+            fylls i igen → nästa tecken läggs till på slutet (900 blir 900750). En sparad rad som
+            bär artikelpris utan A-pris normaliseras i stället EN gång vid inläsningen. */}
         <Field label="A-pris">
           <Input
-            value={row.auto_price ? String(metrics?.unit ?? row.article_price ?? '') : row.unit_price}
-            onChange={(e) => onChange({ unit_price: e.target.value })}
+            value={row.unit_price}
+            onChange={(e) => onChange({ unit_price: e.target.value, auto_price: false })}
             inputMode="decimal"
             placeholder="0"
-            disabled={row.auto_price}
           />
         </Field>
         {/* Carve out the labour portion of a material row for ROT: the amount here is moved onto the
@@ -1157,10 +1188,6 @@ function LineItemRow({
       </div>
 
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
-        <label className="inline-flex items-center gap-2 text-xs text-slate-500">
-          <input type="checkbox" checked={!row.auto_price} onChange={(e) => onChange({ auto_price: !e.target.checked })} className="h-3.5 w-3.5 rounded border-slate-300" />
-          Manuellt pris
-        </label>
         {rotEnabled ? (
           <label className="inline-flex items-center gap-2 text-xs text-slate-500">
             <input type="checkbox" checked={row.is_rot_work} onChange={(e) => onChange({ is_rot_work: e.target.checked })} className="h-3.5 w-3.5 rounded border-slate-300" />
@@ -1566,7 +1593,11 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
           end_contact_email: item.customer_snapshot?.end_contact_email || '',
           label: item.customer_snapshot?.label || '',
           items: item.line_items?.length
-            ? item.line_items.map((line) => ({ ...line, line_note: line.line_note || '', is_rot_work: line.is_rot_work ?? false, house_work_type: line.house_work_type || 'CONSTRUCTION', labor_cost: line.labor_cost || '', density: line.density || '', article_note: line.article_note ?? null }))
+            // A-priset normaliseras EN gång här: en sparad rad kan bära `article_price` utan
+            // `unit_price`, och då prissätter `lineItemUnitPrice` den korrekt medan A-prisrutan hade
+            // stått tom. Normaliseringen måste ske vid inläsningen, inte i renderingen — ett fält
+            // som fyller i sig självt så fort det töms går inte att skriva om.
+            ? item.line_items.map((line) => ({ ...line, line_note: line.line_note || '', is_rot_work: line.is_rot_work ?? false, house_work_type: line.house_work_type || 'CONSTRUCTION', labor_cost: line.labor_cost || '', density: line.density || '', article_note: line.article_note ?? null, unit_price: line.unit_price || (line.article_price != null ? String(line.article_price) : '') }))
             : [createEmptyLineItem()],
           project_name: item.project_name,
           description: item.description || '',
@@ -1801,9 +1832,12 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
 
   const effectiveRows = useMemo<EffectiveRow[]>(() => {
     return draft.items.map((item) => {
-      const baseUnit = item.auto_price
-        ? computeUnitPrice(item.construction, parseDecimal(item.thickness_mm))
-        : parseDecimal(item.unit_price);
+      // ⚠️ SAMMA priskälla som varje annan yta: skrivet A-pris, annars artikelpriset, annars 0.
+      // Formuläret hade tidigare en egen `computeUnitPrice()` som gav artikellösa rader 900 kr/m³
+      // medan Fortnox, arbetsordern och planeringen räknade dem som 0 — priset säljaren såg nådde
+      // aldrig kundens dokument. Räkna ALDRIG fram ett pris här igen; en rad utan prisförankring
+      // spärras i stället vid sparning (isUnpricedLineItem).
+      const baseUnit = lineItemUnitPrice(item);
       const mode = item.pricing_mode === 'item' ? 'item' : 'm3';
       const amount = lineItemQuantity(item);
       const discount = Math.min(100, Math.max(0, parseDecimal(item.discount_percent)));
@@ -1820,7 +1854,10 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
         mode, rowTotal: amount * effectiveUnit,
         rotLabor: laborSplit.labor,
         rotLaborLeavesNoMaterial: laborSplit.leavesNoMaterial,
-        isConfigured: Boolean(item.article_name || item.m2 || item.quantity || item.unit_price),
+        // Delad definition med Fortnox-pushens spärr (assertLineItemsArePriced). Skulle de två
+        // säga olika om vad som är en debiterbar rad kan formuläret godkänna en offert som pushen
+        // sedan avvisar med 409 — utan att peka ut vilken rad det gäller.
+        isConfigured: isConfiguredLineItem(item),
       };
     });
   }, [draft.items]);
@@ -1974,6 +2011,9 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
     'Er referens krävs': 'field-contact-name',
     'Offertnamn saknas': 'field-project-name',
     'Lägg till minst en rad': 'section-rader',
+    'Ofullständiga rader — mängd och pris krävs': 'section-rader',
+    // Prisspärren och ROT-spärren namnger raden i meddelandet och kan därför inte nycklas här —
+    // texten är olika varje gång. De scrollar inte, precis som ROT-spärren aldrig har gjort.
   };
 
   function scrollToField(fieldId: string) {
@@ -2332,7 +2372,10 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
   // värre än ett tydligt fel efter klicket.
   const workOrderBlocked = (readiness?.blockers.length ?? 0) > 0;
   const configuredRows = effectiveRows.filter((r) => r.isConfigured);
-  const hasAnyLineItemInput = draft.items.some((item) => item.article_name || item.m2 || item.quantity || item.unit_price);
+  // SAMMA definition som radkontrollerna (isConfigured). Stod den här på egen hand kunde en rad
+  // räknas som "en rad finns" men falla ur varje per-rad-kontroll — en rad med bara blanksteg
+  // passerade då hela valideringen utan att någon kontroll tittade på den.
+  const hasAnyLineItemInput = draft.items.some((item) => isConfiguredLineItem(item));
 
   const sidebarDisplayName = draft.quote_type === 'business'
     ? (draft.company_name || draft.customer_name)

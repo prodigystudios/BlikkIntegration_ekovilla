@@ -3,7 +3,7 @@ import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
 import { lineItemUnitPrice, lineItemDiscountPercent, lineItemRowTotal } from '@/lib/domains/crm/pricing';
 import { fortnoxGet, fortnoxGetBinary, fortnoxPost, fortnoxPut, FortnoxApiError, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
 import { activeLineItems } from './partialInvoices';
-import { appendFortnoxTextNote, claimFortnoxPush, resolveOurReference, resolveReverseVat, resolveRotReference, rotLaborRow, rotRowHouseWork, rowRotLaborCarveout, splitRotMaterialRow } from './helpers';
+import { appendFortnoxTextNote, assertLineItemsArePriced, claimFortnoxPush, resolveOurReference, resolveReverseVat, resolveRotReference, rotLaborRow, rotRowHouseWork, rowRotLaborCarveout, splitRotMaterialRow } from './helpers';
 
 // The point-in-time customer data carried on both the quote and the work order. Named once
 // because the header builder below has to read the same shape off either of them.
@@ -385,6 +385,11 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
   if (!claimed) throw new FortnoxPushInProgressError();
 
   try {
+    // Rader utan prisförankring blir Price 0 på ordern (och carve 0 → ingen ROT-arbetsrad). Ordern
+    // ärver offertens rader rakt av, så en offert från 900-stubbens tid bär felet vidare hit.
+    // Avskrivna rader räknas bort — de pushas inte alls. Inne i try:t så catch:en stämplar 'failed'.
+    assertLineItemsArePriced(activeLineItems(workOrder.line_items), 'Arbetsordern');
+
     let fortnoxOrderNumber: string;
 
     // Fetch linked quote data in one query – used for offer number, customer resolution,
@@ -511,9 +516,10 @@ export async function createInvoiceFromWorkOrder(workOrderId: string): Promise<C
 
   const { data: workOrder, error } = await supabase
     .from('crm_work_orders')
-    .select('id, fortnox_order_number, fortnox_invoice_number')
+    // line_items hämtas bara för prisspärren nedan — fakturan byggs av Fortnox ur ORDERNS rader.
+    .select('id, fortnox_order_number, fortnox_invoice_number, line_items')
     .eq('id', workOrderId)
-    .single<{ id: string; fortnox_order_number: string | null; fortnox_invoice_number: string | null }>();
+    .single<{ id: string; fortnox_order_number: string | null; fortnox_invoice_number: string | null; line_items: WorkOrderRow['line_items'] }>();
 
   if (error || !workOrder) throw new Error(`Arbetsorder ${workOrderId} hittades inte`);
 
@@ -534,6 +540,11 @@ export async function createInvoiceFromWorkOrder(workOrderId: string): Promise<C
   if (!claimed) throw new FortnoxPushInProgressError();
 
   try {
+    // Rader utan prisförankring får inte faktureras. Fakturan byggs av Fortnox ur ORDERNS rader, så
+    // en order som skapades innan spärren fanns bär sina Price 0-rader rakt in på kundens faktura —
+    // orderpushens kontroll räcker alltså inte, den ordern finns ju redan.
+    assertLineItemsArePriced(activeLineItems(workOrder.line_items), 'Arbetsordern');
+
     // The invoice is created FROM the Fortnox order, so the order must exist there first.
     // Ensure it's synced (creates it if missing; idempotent if already synced).
     let orderNumber = workOrder.fortnox_order_number;
@@ -614,6 +625,14 @@ export async function updateWorkOrderInFortnox(workOrderId: string): Promise<Pus
     .eq('id', workOrderId);
 
   try {
+    // Samma spärr som på skapandevägen: den här PUT:en ersätter ALLA orderrader, så en oprissatt
+    // rad skulle skriva om en korrekt order till 0 kr.
+    //
+    // ⚠️ MÅSTE ligga inne i try:t. Utanför skulle raderna sparas lokalt, PUT:en utebli och ordern
+    // stå kvar som 'synced' med gamla rader i Fortnox — samma tysta drift som granskningen redan
+    // hittat på andra ställen. Här stämplar catch:en 'failed' i stället, så det syns.
+    assertLineItemsArePriced(activeLineItems(workOrder.line_items), 'Arbetsordern');
+
     const linkedQuote = await fetchLinkedQuoteForHeader(supabase, workOrder.quote_id);
 
     const vatPercent = typeof workOrder.vat_percent === 'number' ? workOrder.vat_percent : 25;

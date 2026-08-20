@@ -1,9 +1,42 @@
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { lineItemRotLabor, type PricingLineItem } from '@/lib/domains/crm/pricing';
+import { isConfiguredLineItem, isUnpricedLineItem } from '@/lib/domains/crm/lineItems';
+import { FortnoxApiError } from './client';
 import { DEFAULT_ROT_HOUSE_WORK_TYPE, ROT_LABOR_ARTICLE_NUMBER, ROT_LABOR_DESCRIPTION } from './types';
 
 // Vidareexporteras här sedan de flyttade till types.ts (klientsäkert — se kommentaren där).
 export { ROT_LABOR_ARTICLE_NUMBER, ROT_LABOR_DESCRIPTION };
+
+/**
+ * Kastar om någon DEBITERBAR rad saknar prisförankring — varken skrivet A-pris eller vald artikel.
+ *
+ * En sådan rad blir `Price: 0` på Fortnox-dokumentet. På en ROT-offert blir den dessutom carve 0,
+ * så "Arbetskostnad ROT"-raden uteblir helt och kunden får inget avdragsunderlag. Ingetdera syns
+ * hos oss — bara i dokumentet kunden får.
+ *
+ * ⚠️ Spärren behövs ÄVEN nu när offertformuläret blockerar sparningen. Offerter och arbetsordrar
+ * som redan ligger i databasen från 900-stubbens tid bär raderna med sig, och de kan pushas när som
+ * helst.
+ *
+ * ⚠️ ANROPA EFTER claimFortnoxPush, inne i try-blocket. Kastar den innan, så registreras felet
+ * aldrig i `fortnox_*_sync_status` — och på omsynkvägen (PUT som ersätter ALLA rader) blir följden
+ * att raderna sparas lokalt, PUT:en uteblir och dokumentet står kvar som 'synced' med gamla rader
+ * i Fortnox. Precis den tysta drift granskningen redan hittat på andra ställen.
+ *
+ * ⚠️ `isConfiguredLineItem` avgör vilka rader som omfattas, INTE `isBlankLineItem`. Rena textrader
+ * (bara `line_note`) är en tillåten form som byggs till en textrad utan pris — spärrade vi dem
+ * skulle befintliga offerter bli permanent opushbara.
+ */
+export function assertLineItemsArePriced(lineItems: unknown, subject: string): void {
+  const items = Array.isArray(lineItems) ? (lineItems as Record<string, unknown>[]) : [];
+  const unpriced = items.filter(
+    (item) => isConfiguredLineItem(item as Parameters<typeof isConfiguredLineItem>[0])
+      && isUnpricedLineItem(item as Parameters<typeof isUnpricedLineItem>[0]),
+  );
+  if (!unpriced.length) return;
+  const message = `${subject} har ${unpriced.length === 1 ? 'en rad' : `${unpriced.length} rader`} utan pris. Välj artikel eller ange A-pris först.`;
+  throw new FortnoxApiError(409, message, undefined, message);
+}
 
 // The ROT labour carved out of a single row (kr, ex VAT). Returns 0 when it's not a ROT document,
 // when the row is already fully flagged as ROT work (is_rot_work — its whole amount is labour,

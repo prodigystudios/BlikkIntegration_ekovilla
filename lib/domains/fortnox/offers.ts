@@ -9,7 +9,7 @@ import { OFFER_PDF_MODE, mayRenderLocally, shouldRenderLocally } from './offerPd
 import type {
   FortnoxCompanySettingsResponse, FortnoxOfferResponse, FortnoxTaxReductionResponse,
 } from './offerPdf';
-import { appendFortnoxTextNote, buildRotPropertyNote, claimFortnoxPush, resolveOurReference, resolveReverseVat, rotLaborRow, rotRowHouseWork, rowRotLaborCarveout, splitRotMaterialRow } from './helpers';
+import { appendFortnoxTextNote, assertLineItemsArePriced, buildRotPropertyNote, claimFortnoxPush, resolveOurReference, resolveReverseVat, rotLaborRow, rotRowHouseWork, rowRotLaborCarveout, splitRotMaterialRow } from './helpers';
 import { buildFortnoxCustomerPayload, createFortnoxCustomer, splitSwedishName, buildFortnoxAddress, type FortnoxCustomerSource } from './customers';
 
 type QuoteLineItem = {
@@ -434,6 +434,13 @@ export async function pushQuoteToFortnox(quoteId: string): Promise<PushOfferResu
   if (!claimed) throw new FortnoxPushInProgressError();
 
   try {
+    // Rader utan prisförankring får ALDRIG gå till Fortnox: de blir Price 0 på dokumentet, och på
+    // en ROT-offert dessutom carve 0 — alltså ingen "Arbetskostnad ROT"-rad och inget
+    // avdragsunderlag. Offertformuläret spärrar sparningen, men offerter som redan ligger i
+    // databasen från 900-stubbens tid gör det inte. Inne i try:t så catch:en stämplar 'failed' och
+    // släpper claimen; kastade den före, skulle felet aldrig synas i synkstatusen.
+    assertLineItemsArePriced(quote.line_items, 'Offerten');
+
     const fortnoxCustomerNumber =
       (await resolveFortnoxCustomerNumber(quote)) ?? (await createCustomerInFortnox(quote));
 

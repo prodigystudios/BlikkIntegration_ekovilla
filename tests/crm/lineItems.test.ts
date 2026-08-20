@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { lineItemQuantity, isBlankLineItem } from '@/lib/domains/crm/lineItems';
+import { lineItemQuantity, isBlankLineItem, isUnpricedLineItem, isConfiguredLineItem } from '@/lib/domains/crm/lineItems';
 
 describe('lineItemQuantity', () => {
   it('computes m³ volume from m² × thickness/1000', () => {
@@ -76,5 +76,74 @@ describe('isBlankLineItem', () => {
 
   it('räknar blanksteg som tomt', () => {
     expect(isBlankLineItem({ ...emptyRow, m2: '   ', line_note: '  ' })).toBe(true);
+  });
+});
+
+describe('isUnpricedLineItem', () => {
+  // Spärren som stängde 900-stubben: en rad utan prisförankring blir 0 kr i varje Fortnox-dokument,
+  // och på en ROT-offert dessutom carve 0 → ingen "Arbetskostnad ROT"-rad alls. Förut dolde
+  // formulärets egen 900-stub det genom att visa ett pris som ingen annan yta kände till.
+
+  it('saknar prisförankring när varken A-pris eller artikel finns', () => {
+    expect(isUnpricedLineItem({ unit_price: '', article_price: null })).toBe(true);
+    expect(isUnpricedLineItem({})).toBe(true);
+    expect(isUnpricedLineItem({ unit_price: null, article_price: undefined })).toBe(true);
+  });
+
+  it('räknar blanksteg som avsaknad av pris', () => {
+    expect(isUnpricedLineItem({ unit_price: '   ', article_price: null })).toBe(true);
+  });
+
+  it('är prissatt så fort någon av källorna finns', () => {
+    expect(isUnpricedLineItem({ unit_price: '750', article_price: null })).toBe(false);
+    expect(isUnpricedLineItem({ unit_price: '', article_price: 900 })).toBe(false);
+    expect(isUnpricedLineItem({ unit_price: '750', article_price: 900 })).toBe(false);
+  });
+
+  it('⚠️ ett skrivet 0 ÄR ett pris', () => {
+    // Skillnaden hela predikatet finns för. `lineItemUnitPrice` svarar 0 i båda fallen, så summan
+    // kan inte skilja dem åt — men "raden ingår i priset" är ett medvetet val säljaren gjort,
+    // medan en rad utan källa är ett fel som ska synas. Spärra aldrig på priset === 0.
+    expect(isUnpricedLineItem({ unit_price: '0', article_price: null })).toBe(false);
+    expect(isUnpricedLineItem({ unit_price: '', article_price: 0 })).toBe(false);
+  });
+});
+
+describe('isConfiguredLineItem', () => {
+  // Avgör vilka rader som MÅSTE ha ett pris. Måste vara smalare än "inte tom": en rad kan bära
+  // innehåll utan att vara debiterbar, och de raderna ska gå igenom både sparning och push.
+
+  it('ser artikel, mängd och pris som debiterbart innehåll', () => {
+    expect(isConfiguredLineItem({ article_name: 'Ekovilla lösull' })).toBe(true);
+    expect(isConfiguredLineItem({ m2: '120' })).toBe(true);
+    expect(isConfiguredLineItem({ quantity: '3' })).toBe(true);
+    expect(isConfiguredLineItem({ unit_price: '750' })).toBe(true);
+  });
+
+  it('⚠️ en ren textrad är INTE debiterbar', () => {
+    // buildOfferRows/buildOrderRows bygger `Description: article_name || line_note || 'Artikel'`,
+    // så en rad med bara radtext är en tillåten form. Räknade spärren den som debiterbar skulle
+    // befintliga offerter bli permanent opushbara — 409 utan att peka ut vilken rad.
+    expect(isConfiguredLineItem({ article_name: null, m2: '', quantity: '', unit_price: '' })).toBe(false);
+  });
+
+  it('räknar blanksteg som tomt', () => {
+    expect(isConfiguredLineItem({ m2: '   ', quantity: '  ', unit_price: ' ' })).toBe(false);
+  });
+
+  it('håller med formulärets spärr om vad som kräver pris', () => {
+    // Raden 900-stubben dolde: mått ifyllda, ingen artikel, inget pris.
+    const stubRow = { article_name: null, m2: '100', quantity: '', unit_price: '', article_price: null };
+    expect(isConfiguredLineItem(stubRow)).toBe(true);
+    expect(isUnpricedLineItem(stubRow)).toBe(true);
+  });
+});
+
+describe('isConfiguredLineItem – råa databasvärden', () => {
+  // Predikatet körs på RÅ JSONB i Fortnox-pushens spärr, inte bara på formulärets strängar.
+  it('klarar tal i stället för strängar utan att kasta', () => {
+    expect(() => isConfiguredLineItem({ m2: 120 as unknown as string })).not.toThrow();
+    expect(isConfiguredLineItem({ m2: 120 as unknown as string })).toBe(true);
+    expect(isConfiguredLineItem({ quantity: 0 as unknown as string })).toBe(true);
   });
 });
