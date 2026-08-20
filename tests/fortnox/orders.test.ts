@@ -90,8 +90,12 @@ describe('buildOrderRows', () => {
 
     expect(rows.length).toBeGreaterThan(2);
     for (const row of rows) {
+      // ⚠️ Kontrollen görs på den SERIALISERADE raden, inte på objektet. `toHaveProperty` går
+      // igenom för ett fält satt till `undefined` — men `JSON.stringify` slänger det, så payloaden
+      // till Fortnox hade saknat fältet med testet grönt. Det är payloaden som är kontraktet.
+      const payload = JSON.parse(JSON.stringify(row));
       for (const field of ['ArticleNumber', 'Description', 'OrderedQuantity', 'DeliveredQuantity', 'Price', 'Unit', 'Discount', 'DiscountType', 'VAT'] as const) {
-        expect(row).toHaveProperty(field);
+        expect(payload).toHaveProperty(field);
       }
     }
   });

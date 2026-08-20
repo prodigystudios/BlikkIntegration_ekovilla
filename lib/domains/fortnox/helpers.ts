@@ -323,7 +323,7 @@ export function resolveRotReference(
  *   | `ArticleNumber: null`  | rensar artikelnumret                          |
  *   | `ArticleNumber: ''`    | 200 — men rensar INTE, gamla numret ligger kvar |
  *   | `Price` / `Quantity: 0`| skriver över                                  |
- *   | `Unit: ''`             | accepteras                                    |
+ *   | `Unit: ''`             | accepteras men rensar INTE en ärvd enhet      |
  *   | `Unit: null`           | 400, kod 2000699 "Värdet kan inte vara null. (unit)" |
  *   | `HouseWork: false`     | rensar flaggan                                |
  *   | `HouseWorkType: null`  | rensar typen (`''` rensar INTE)               |
@@ -342,10 +342,22 @@ export const FORTNOX_TEXT_ROW = Symbol('fortnoxTextRow');
  * `JSON.stringify` och `Object.keys` hoppar över symbolnycklar — så payloaden till Fortnox ser
  * likadan ut som utan den.
  *
- * ⚠️ Husarbetesfälten sätts BARA på ROT-dokument. Ett icke-ROT-dokument avvisar varje
- * husarbetesfält med 2004021, även det tomma (se rotRowHouseWork punkt 1).
+ * ⚠️ `Unit: ''` STOPPAR INTE ARVET. Tom sträng är det enda tomvärde fältet tar (null ger 2000699),
+ * men den skriver inte över — mätt 2026-08-20. En textrad som glider dit en artikelrad låg behåller
+ * alltså artikelns enhet, och det syns i drift: offert 10047 har textrader som bär "M3" och "RLE".
+ * Följden är kosmetisk (raden har pris 0 och antal 0), men enheten går inte att få bort så länge
+ * raden uppdateras på plats. Fältet skickas ändå, för en rad som ALDRIG haft en enhet ska inte
+ * kunna få en.
+ *
+ * ⚠️ HUSARBETE SÄTTS INTE HÄR — medvetet. Ett uttryckligt `HouseWork: false` stämplar
+ * EMPTYHOUSEWORK, och ett dokument som inte är ROT i Fortnox avvisar varje husarbetesfält med
+ * 2004021 (se rotRowHouseWork punkt 1). Vår `rotEnabled` är inte samma sak som dokumentets läge:
+ * en orders `TaxReductionType` sätts BARA vid create, så en order som skapades innan ROT kryssades
+ * i är inte ett ROT-dokument — och då hade varje Radtext-rad sänkt hela omsynken med 2004021.
+ * Att låta vår kryssruta äga flaggan i stället för artikelregistret är ett eget beslut; tills det
+ * är fattat rör vi inte husarbete här.
  */
-export function fortnoxTextRowFields(rotEnabled: boolean) {
+export function fortnoxTextRowFields() {
   return {
     [FORTNOX_TEXT_ROW]: true as const,
     ArticleNumber: null,
@@ -353,7 +365,6 @@ export function fortnoxTextRowFields(rotEnabled: boolean) {
     Unit: '',
     Discount: 0,
     DiscountType: 'PERCENT' as const,
-    ...(rotEnabled ? { HouseWork: false, HouseWorkType: null } : {}),
   };
 }
 

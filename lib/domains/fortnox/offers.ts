@@ -106,8 +106,8 @@ type FortnoxOfferRow = {
 // the per-row free text / Radtext). Belopps- och artikelfälten skickas som uttryckliga tomvärden
 // i stället för att utelämnas — se FORTNOX_TEXT_ROW i helpers.ts. Utan dem ärvde raden artikel,
 // pris och husarbete-flagga från raden som låg på samma position före ändringen.
-export function offerTextRow(description: string, rotEnabled = false, vat = 0): FortnoxOfferRow {
-  return { ...fortnoxTextRowFields(rotEnabled), Description: description, Quantity: 0, VAT: vat };
+export function offerTextRow(description: string, vat = 0): FortnoxOfferRow {
+  return { ...fortnoxTextRowFields(), Description: description, Quantity: 0, VAT: vat };
 }
 
 // Free-text description of a line item's measurements (m² + thickness), shown as its
@@ -211,7 +211,7 @@ export function buildOfferRows(
     const detail = [measurement, lineNote && item.article_name?.trim() ? lineNote : null]
       .filter(Boolean)
       .join('  ');
-    return detail ? [row, offerTextRow(detail, rotEnabled, reverseVat ? 0 : vatPercent)] : [row];
+    return detail ? [row, offerTextRow(detail, reverseVat ? 0 : vatPercent)] : [row];
   });
 
   // One aggregated "Arbetskostnad ROT" husarbete row for all the labour carved out of the material
@@ -223,7 +223,7 @@ export function buildOfferRows(
   // ROT property note (Fastighetsbeteckning / BRF org.nr) as a trailing text row — Fortnox has no
   // API field for it, so it rides along as a comment for whoever fills the husarbete dialog. Only
   // set on ROT documents (the caller passes null otherwise). Propagates offer → order → invoice.
-  return appendFortnoxTextNote(rows, rotPropertyNote, { ...fortnoxTextRowFields(rotEnabled), Quantity: 0, VAT: reverseVat ? 0 : vatPercent });
+  return appendFortnoxTextNote(rows, rotPropertyNote, { ...fortnoxTextRowFields(), Quantity: 0, VAT: reverseVat ? 0 : vatPercent });
 }
 
 // Resolves the Fortnox customer number for a quote.

@@ -108,7 +108,7 @@ describe('appendFortnoxTextNote', () => {
     // började bära uttryckliga tomvärden mot Fortnox positionella rad-PUT.
     const rows = [
       { Description: 'Lösull', Price: 100 },
-      { ...fortnoxTextRowFields(false), Description: 'Vindsbjälklag' },
+      { ...fortnoxTextRowFields(), Description: 'Vindsbjälklag' },
     ];
     const out = appendFortnoxTextNote(rows, 'Fastighetsbeteckning: Haggården 6:3');
     expect(out).toHaveLength(2);
@@ -116,16 +116,20 @@ describe('appendFortnoxTextNote', () => {
   });
 
   it('märker textraden med en symbol som aldrig hamnar i payloaden till Fortnox', () => {
-    const row = { ...fortnoxTextRowFields(false), Description: 'Vindsbjälklag' };
+    const row = { ...fortnoxTextRowFields(), Description: 'Vindsbjälklag' };
     expect(Object.keys(row)).not.toContain('Symbol(fortnoxTextRow)');
     expect(JSON.parse(JSON.stringify(row))).toEqual({
       Description: 'Vindsbjälklag', ArticleNumber: null, Price: 0, Unit: '', Discount: 0, DiscountType: 'PERCENT',
     });
   });
 
-  it('nämner husarbete bara på ROT-dokument (ett icke-ROT-dokument avvisar fältet med 2004021)', () => {
-    expect(fortnoxTextRowFields(false)).not.toHaveProperty('HouseWork');
-    expect(fortnoxTextRowFields(true)).toMatchObject({ HouseWork: false, HouseWorkType: null });
+  // ⚠️ Textraden nämner ALDRIG husarbete. Ett uttryckligt false stämplar EMPTYHOUSEWORK och ett
+  // dokument som inte är ROT i Fortnox avvisar fältet med 2004021 — och en orders TaxReductionType
+  // sätts bara vid create, så vår rotEnabled kan säga ROT om ett dokument som inte är det. Då hade
+  // varje Radtext-rad sänkt hela omsynken.
+  it('nämner aldrig husarbete på en textrad', () => {
+    expect(fortnoxTextRowFields()).not.toHaveProperty('HouseWork');
+    expect(fortnoxTextRowFields()).not.toHaveProperty('HouseWorkType');
   });
 
   it('is a no-op when the note is null/empty', () => {
