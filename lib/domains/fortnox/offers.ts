@@ -9,7 +9,7 @@ import { OFFER_PDF_MODE, mayRenderLocally, shouldRenderLocally } from './offerPd
 import type {
   FortnoxCompanySettingsResponse, FortnoxOfferResponse, FortnoxTaxReductionResponse,
 } from './offerPdf';
-import { appendFortnoxTextNote, assertLineItemsArePriced, buildRotPropertyNote, claimFortnoxPush, resolveOurReference, resolveReverseVat, rotLaborRow, rotRowHouseWork, rowRotLaborCarveout, splitRotMaterialRow } from './helpers';
+import { FORTNOX_TEXT_ROW, appendFortnoxTextNote, assertLineItemsArePriced, buildRotPropertyNote, claimFortnoxPush, fortnoxTextRowFields, resolveOurReference, resolveReverseVat, rotLaborRow, rotRowHouseWork, rowRotLaborCarveout, splitRotMaterialRow } from './helpers';
 import { buildFortnoxCustomerPayload, createFortnoxCustomer, splitSwedishName, buildFortnoxAddress, type FortnoxCustomerSource } from './customers';
 
 type QuoteLineItem = {
@@ -78,13 +78,18 @@ type QuoteRow = {
   fortnox_offer_number: string | null;
 };
 
+// ⚠️ VARJE RAD SKICKAR VARJE FÄLT. Fortnox rad-PUT uppdaterar per position och lämnar det vi
+// utelämnar orört, så ett valfritt fält blir ett arv från raden som låg där förut. Läs
+// FORTNOX_TEXT_ROW i helpers.ts — mätningarna som ger `null` vs `''` står där.
 type FortnoxOfferRow = {
-  ArticleNumber?: string;
+  // null rensar numret på en textrad; tom sträng gör det INTE (mätt).
+  ArticleNumber?: string | null;
   Description: string;
-  // Quantity/Price are omitted for text-only rows (e.g. the measurement line) so
-  // Fortnox renders them as a comment row without amounts.
+  // 0 på textrader (mätraden, Radtexten) — Fortnox renderar dem ändå utan belopp, exakt som när
+  // fälten utelämnades, men nu kan de inte ärva ett pris från en artikelrad.
   Quantity?: number;
   Price?: number;
+  // Unit avvisar null (2000699) — tom sträng är det enda tomvärdet den tar.
   Unit?: string;
   Discount?: number;
   // Fortnox defaults DiscountType to AMOUNT (kronor). The CRM stores discount_percent as a
@@ -93,13 +98,16 @@ type FortnoxOfferRow = {
   DiscountType?: 'PERCENT' | 'AMOUNT';
   VAT?: number;
   HouseWork?: boolean;
-  HouseWorkType?: string;
+  HouseWorkType?: string | null;
+  [FORTNOX_TEXT_ROW]?: true;
 };
 
-// A text-only Fortnox row: carries a Description and no amounts, so Fortnox renders it as a
-// comment line under the article (used for measurements and the per-row free text / Radtext).
-export function offerTextRow(description: string): FortnoxOfferRow {
-  return { Description: description };
+// A text-only Fortnox row: renders as a comment line under the article (used for measurements and
+// the per-row free text / Radtext). Belopps- och artikelfälten skickas som uttryckliga tomvärden
+// i stället för att utelämnas — se FORTNOX_TEXT_ROW i helpers.ts. Utan dem ärvde raden artikel,
+// pris och husarbete-flagga från raden som låg på samma position före ändringen.
+export function offerTextRow(description: string, rotEnabled = false, vat = 0): FortnoxOfferRow {
+  return { ...fortnoxTextRowFields(rotEnabled), Description: description, Quantity: 0, VAT: vat };
 }
 
 // Free-text description of a line item's measurements (m² + thickness), shown as its
@@ -147,17 +155,23 @@ export function buildOfferRows(
     const carve = rowRotLaborCarveout(item, rowNet, rotEnabled);
 
     const row: FortnoxOfferRow = {
+      // ⚠️ Artikel/enhet/rabatt sätts ALLTID, även när raden saknar dem. Se FORTNOX_TEXT_ROW:
+      // ett utelämnat fält ärver värdet från raden som låg på positionen förut. `null` rensar
+      // artikelnumret, `Unit` måste vara tom sträng (null ger 2000699).
+      ArticleNumber: item.article_number || null,
       Description: item.article_name || item.line_note || 'Artikel',
       Quantity: quantity,
       Price: price,
+      Unit: item.article_unit_name || '',
+      // Rabatten skickas alltid, också som 0. Utan nollan gick en BORTTAGEN rabatt aldrig fram:
+      // Fortnox behöll den gamla procenten och kundens dokument låg kvar på rabatterat pris.
+      Discount: 0,
+      DiscountType: 'PERCENT',
       // Reverse charge (omvänd skattskyldighet / byggmoms): the seller charges 0 % output VAT;
       // the buyer accounts for it. The document's VAT regime comes from the customer card
       // (synced from reverse_vat); matching the row VAT here keeps the document consistent.
       VAT: reverseVat ? 0 : vatPercent,
     };
-
-    if (item.article_number) row.ArticleNumber = item.article_number;
-    if (item.article_unit_name) row.Unit = item.article_unit_name;
 
     if (carve > 0) {
       // Labour was moved to the aggregated ROT row → this row now carries material only. Rewrite the
@@ -168,11 +182,8 @@ export function buildOfferRows(
       const { materialUnitPrice, labour } = splitRotMaterialRow(rowNet, quantity, carve);
       row.Price = materialUnitPrice;
       carvedLaborTotal += labour;
-    } else {
-      if (discount > 0) {
-        row.Discount = discount;
-        row.DiscountType = 'PERCENT';
-      }
+    } else if (discount > 0) {
+      row.Discount = discount;
     }
     // Husarbete bara på rader vi själva menar är arbete, och bara på ROT-dokument. Regeln bor i
     // rotRowHouseWork — läs de tre mätningarna där innan du breddar något här; två rimliga idéer
@@ -200,7 +211,7 @@ export function buildOfferRows(
     const detail = [measurement, lineNote && item.article_name?.trim() ? lineNote : null]
       .filter(Boolean)
       .join('  ');
-    return detail ? [row, offerTextRow(detail)] : [row];
+    return detail ? [row, offerTextRow(detail, rotEnabled, reverseVat ? 0 : vatPercent)] : [row];
   });
 
   // One aggregated "Arbetskostnad ROT" husarbete row for all the labour carved out of the material
@@ -212,7 +223,7 @@ export function buildOfferRows(
   // ROT property note (Fastighetsbeteckning / BRF org.nr) as a trailing text row — Fortnox has no
   // API field for it, so it rides along as a comment for whoever fills the husarbete dialog. Only
   // set on ROT documents (the caller passes null otherwise). Propagates offer → order → invoice.
-  return appendFortnoxTextNote(rows, rotPropertyNote);
+  return appendFortnoxTextNote(rows, rotPropertyNote, { ...fortnoxTextRowFields(rotEnabled), Quantity: 0, VAT: reverseVat ? 0 : vatPercent });
 }
 
 // Resolves the Fortnox customer number for a quote.
