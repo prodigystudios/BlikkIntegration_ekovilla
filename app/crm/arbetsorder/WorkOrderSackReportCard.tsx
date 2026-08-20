@@ -3,13 +3,13 @@
 import { useEffect, useState } from 'react';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
-import { formatDate } from '@/app/crm/lib/format';
+import { formatDate, formatSacks } from '@/app/crm/lib/format';
 import { parseDecimal } from '@/lib/shared/number';
 import { CONSTRUCTIONS, type ConstructionSlug } from '@/lib/domains/crm/constructions';
 import { groupSackReportsByConstruction, totalReportedSacks } from '@/lib/domains/planning/sackLedger';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 import type { SackReportView } from '@/lib/domains/planning/reports';
-import { formatSacks, type NewSackReportEntry } from './useSackReports';
+import type { NewSackReportEntry } from './useSackReports';
 
 // Säckrapport-kortet — dörr 2 i säckrapporteringen.
 //

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useToast } from '@/lib/Toast';
+import { formatSacks } from '@/app/crm/lib/format';
 import type { SackReportView } from '@/lib/domains/planning/reports';
 
 // Säckrapporter på en arbetsorder — hämtning och delrapportering.
@@ -80,7 +81,3 @@ export function useSackReports(workOrderId: string) {
   return { reports, hasFinal, loading, saving, create, refresh };
 }
 
-// Heltal utan decimalsvans, decimaler med svenskt komma. Säckar räknas oftast i hela.
-export function formatSacks(value: number): string {
-  return Number.isInteger(value) ? String(value) : String(Math.round(value * 100) / 100).replace('.', ',');
-}

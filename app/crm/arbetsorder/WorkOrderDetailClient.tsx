@@ -25,10 +25,12 @@ import WorkOrderTimeTab from './WorkOrderTimeTab';
 import WorkOrderCommentsTab from './WorkOrderCommentsTab';
 import WorkOrderArticlesTab, { type ArticleLineItem } from './WorkOrderArticlesTab';
 import WorkOrderFilesTab from './WorkOrderFilesTab';
+import WorkOrderSackTrailCard from './WorkOrderSackTrailCard';
 import WorkOrderPartialInvoiceModal, { type PartialInvoiceLine } from './WorkOrderPartialInvoiceModal';
 import CrmConfirmDialog from '@/app/crm/components/CrmConfirmDialog';
 import { useWorkOrderActivity } from './useWorkOrderActivity';
 import { useWorkOrderFiles } from './useWorkOrderFiles';
+import { useSackReports } from './useSackReports';
 import { useCustomerContact } from './useCustomerContact';
 import { formatDate, formatDateTime, formatCurrency, joinAddress, isWorkOrderOverdue, documentRef } from '@/app/crm/lib/format';
 import { openFortnoxPdf } from '@/app/crm/lib/fortnoxDoc';
@@ -201,6 +203,8 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   // `reportedSacks === null` betyder "ingen rapport", inte "noll säckar" — se
   // getWorkOrderReportedSacks. Skillnaden bärs hela vägen ut i rutan.
   const [reportedSacks, setReportedSacks] = useState<number | null>(null);
+  // Spåret bakom snabböversiktens tal. Läsvy — kortet skriver inget, dörr 1 och 2 gör det.
+  const sackReports = useSackReports(workOrderId);
   const [sourceQuote, setSourceQuote] = useState<{ quote_number: string | null; fortnox_offer_number: string | null } | null>(null);
   const [showPartialModal, setShowPartialModal] = useState(false);
   const [confirmInvoiceOpen, setConfirmInvoiceOpen] = useState(false);
@@ -883,6 +887,10 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
               )}
             </Card>
 
+            {/* Spåret bakom snabböversiktens "Säckar (rapporterat)". Ligger efter handoffen
+                (som säger vad teamet SKULLE göra) och före Ekonomi. */}
+            <WorkOrderSackTrailCard reports={sackReports.reports} loading={sackReports.loading} />
+
             {/* ─── Ekonomi ────────────────────────────────────────────────────
                 Artiklar, summering och fakturering i ETT kort (var två egna flikar).
                 Summeringen är artiklarnas enda — den räknar live medan raderna
@@ -1152,8 +1160,9 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                     planeringstavlan. Saknad rapport skrivs ut som "Ej rapporterat" och ALDRIG som
                     en nolla: noll rapporterade säckar påstår att inget material gick åt, medan
                     avsaknad av rapport bara säger att ingen rapporterat. Det senare gäller varje
-                    order i dag — ops_segment_reports finns och läses, men ingen route skriver dit,
-                    så rutan tänds av sig själv den dag rapporteringen byggs. */}
+                    order där ingen rapporterat. Talet går genom supersede-regeln: finns en
+                    egenkontroll är den jobbets sanning, annars summan av delrapporterna — aldrig
+                    bådadera. Spåret bakom talet står i Säckrapporter-kortet nedan. */}
                 {totalSacks > 0 || reportedSacks != null ? (
                   <StatField
                     label="Säckar (rapporterat)"

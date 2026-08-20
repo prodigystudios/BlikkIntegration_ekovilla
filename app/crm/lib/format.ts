@@ -53,3 +53,9 @@ export function isWorkOrderOverdue(date: string | null | undefined, status: stri
   const d = new Date(`${date}T23:59:59`);
   return !Number.isNaN(d.getTime()) && d.getTime() < Date.now();
 }
+
+// Säckantal: heltal utan decimalsvans, decimaler med svenskt komma. Kolumnen är numeric(10,2), så
+// ett halvt säckantal är möjligt även om det är ovanligt.
+export function formatSacks(value: number): string {
+  return Number.isInteger(value) ? String(value) : String(Math.round(value * 100) / 100).replace('.', ',');
+}
