@@ -4,7 +4,7 @@ import { describe, it, expect, vi } from 'vitest';
 // '@/lib/supabase/server' (i typposition). Mocka den så testet inte drar in env-beroenden.
 vi.mock('@/lib/supabase/server', () => ({ getSupabaseAdmin: vi.fn() }));
 
-import { claimFortnoxPush, buildRotPropertyNote, appendFortnoxTextNote, resolveRotReference, assertLineItemsArePriced } from '@/lib/domains/fortnox/helpers';
+import { claimFortnoxPush, buildRotPropertyNote, appendFortnoxTextNote, resolveRotReference, assertLineItemsArePriced, assertOrderRowsSynced } from '@/lib/domains/fortnox/helpers';
 import { FortnoxApiError } from '@/lib/domains/fortnox/client';
 
 // Mock av supabase-kedjan. claimFortnoxPush gör upp till TVÅ försök, vart och ett:
@@ -212,5 +212,36 @@ describe('assertLineItemsArePriced', () => {
   it('⚠️ ett skrivet 0 kr passerar', () => {
     // En rad som medvetet ingår i priset är inte samma sak som en rad utan priskälla.
     expect(() => assertLineItemsArePriced([{ ...unpriced, unit_price: '0' }], 'Offerten')).not.toThrow();
+  });
+});
+
+describe('assertOrderRowsSynced', () => {
+  // Fakturan byggs av Fortnox ur ORDERNS rader. Ligger inte våra rader där fakturerar vi gammalt
+  // underlag till kunden utan att det syns hos oss.
+
+  it('släpper igenom en synkad order', () => {
+    expect(() => assertOrderRowsSynced('synced')).not.toThrow();
+  });
+
+  it('stoppar varje läge som inte är synkat', () => {
+    for (const status of ['not_synced', 'failed', 'pending']) {
+      expect(() => assertOrderRowsSynced(status), status).toThrow(FortnoxApiError);
+    }
+  });
+
+  it('skiljer på "pågår" och "ligger inte i Fortnox"', () => {
+    expect(() => assertOrderRowsSynced('pending')).toThrow(/synk mot Fortnox pågår/);
+    expect(() => assertOrderRowsSynced('failed')).toThrow(/inte bekräftat synkade/);
+    expect(() => assertOrderRowsSynced('not_synced')).toThrow(/inte bekräftat synkade/);
+  });
+
+  it('svarar 409 — underlaget är fel, inte Fortnox', () => {
+    try {
+      assertOrderRowsSynced('failed');
+      throw new Error('skulle ha kastat');
+    } catch (e) {
+      expect(e).toBeInstanceOf(FortnoxApiError);
+      expect((e as FortnoxApiError).status).toBe(409);
+    }
   });
 });

@@ -18,10 +18,18 @@ export { ROT_LABOR_ARTICLE_NUMBER, ROT_LABOR_DESCRIPTION };
  * som redan ligger i databasen från 900-stubbens tid bär raderna med sig, och de kan pushas när som
  * helst.
  *
- * ⚠️ ANROPA EFTER claimFortnoxPush, inne i try-blocket. Kastar den innan, så registreras felet
- * aldrig i `fortnox_*_sync_status` — och på omsynkvägen (PUT som ersätter ALLA rader) blir följden
- * att raderna sparas lokalt, PUT:en uteblir och dokumentet står kvar som 'synced' med gamla rader
- * i Fortnox. Precis den tysta drift granskningen redan hittat på andra ställen.
+ * ⚠️ VAR I ANROPAREN SPÄRREN LIGGER STYRS AV VAD STATUSEN SKULLE KOMMA ATT PÅSTÅ:
+ *
+ *   • Är anroparens uppgift att SKRIVA dokumentet (offertpush, orderpush, omsynk) hör spärren hemma
+ *     inne i try:t, efter claimen. Kastar den innan registreras felet aldrig i
+ *     `fortnox_*_sync_status` — och på omsynkvägen (PUT som ersätter ALLA rader) blir följden att
+ *     raderna sparas lokalt, PUT:en uteblir och dokumentet står kvar som 'synced' med gamla rader
+ *     i Fortnox. Precis den tysta drift granskningen redan hittat på andra ställen.
+ *   • Är anroparen en annan operation som bara LÄSER underlaget (faktureringen bygger fakturan ur
+ *     Fortnox egna orderrader) hör spärren hemma FÖRE claimen. Där har ingenting rört Fortnox, och
+ *     en stämpel skulle utpeka fel sak — en trasig fakturasynk fast problemet är orderns rader.
+ *
+ * Samma avvägning som delfaktureringen dokumenterar.
  *
  * ⚠️ `isConfiguredLineItem` avgör vilka rader som omfattas, INTE `isBlankLineItem`. Rena textrader
  * (bara `line_note`) är en tillåten form som byggs till en textrad utan pris — spärrade vi dem
@@ -37,6 +45,36 @@ export function assertLineItemsArePriced(lineItems: unknown, subject: string): v
   // Nämn nollan. En rad som ingår i priset (frakt, ställning) är en medveten nolla och passerar —
   // utan den meningen läser mottagaren spärren som att gratisrader inte längre är möjliga.
   const message = `${subject} har ${unpriced.length === 1 ? 'en rad' : `${unpriced.length} rader`} utan pris. Välj artikel, ange A-pris, eller skriv 0 om raden ingår.`;
+  throw new FortnoxApiError(409, message, undefined, message);
+}
+
+/**
+ * Kastar om arbetsorderns rader inte bevisligen ligger i Fortnox.
+ *
+ * ⚠️ FAKTURAN BYGGS AV FORTNOX UR ORDERNS RADER. `PUT /orders/{n}/createinvoice` tittar aldrig på
+ * vad vi har — den fakturerar det Fortnox råkar hålla. Är radernas PUT misslyckad ('failed') eller
+ * aldrig genomförd ('not_synced') fakturerar vi alltså gamla rader till kunden, utan att något syns
+ * hos oss. 'pending' betyder att en synk är i luften just nu och svaret ännu inte är känt.
+ *
+ * Fail-closed går att göra utan risk för gammal data: kolumnen är `not null default 'not_synced'`
+ * med en CHECK på de fyra värdena (20260604_fortnox_work_orders.sql), så det finns inga NULL som
+ * skulle blockeras av misstag.
+ *
+ * Beskedet pekar på knappen som redan finns: arbetsordern visar "Försök igen" / "Skicka till
+ * Fortnox" i precis de här lägena.
+ */
+export function assertOrderRowsSynced(syncStatus: string | null | undefined): void {
+  if (syncStatus === 'synced') return;
+  // ⚠️ 'pending' har ingen tidsgräns. `updateWorkOrderInFortnox` skriver statusen UTAN att sätta
+  // någon claim-tidsstämpel, så en synk som dör mitt i lämnar ordern pending för alltid — till
+  // skillnad från claimFortnoxPush, som återtar en gammal claim. Beskedet måste därför nämna
+  // omsynken, annars står säljaren och väntar på något som aldrig blir klart.
+  // ⚠️ PÅSTÅ INTE att raderna saknas i Fortnox — det vet vi inte. Statusen kan ha satts av en
+  // headersynk som föll på ett utgånget token, på en order vars rader faktiskt ligger där. Säg det
+  // som är sant: läget är inte bekräftat, och en omsynk bekräftar det.
+  const message = syncStatus === 'pending'
+    ? 'En synk mot Fortnox pågår. Vänta tills den är klar — har läget fastnat, synka om arbetsordern.'
+    : 'Arbetsorderns artiklar är inte bekräftat synkade till Fortnox. Synka om arbetsordern och försök igen.';
   throw new FortnoxApiError(409, message, undefined, message);
 }
 

@@ -3,7 +3,7 @@ import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
 import { lineItemUnitPrice, lineItemDiscountPercent, lineItemRowTotal } from '@/lib/domains/crm/pricing';
 import { fortnoxGet, fortnoxGetBinary, fortnoxPost, fortnoxPut, FortnoxApiError, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
 import { activeLineItems } from './partialInvoices';
-import { appendFortnoxTextNote, assertLineItemsArePriced, claimFortnoxPush, resolveOurReference, resolveReverseVat, resolveRotReference, rotLaborRow, rotRowHouseWork, rowRotLaborCarveout, splitRotMaterialRow } from './helpers';
+import { appendFortnoxTextNote, assertLineItemsArePriced, assertOrderRowsSynced, claimFortnoxPush, resolveOurReference, resolveReverseVat, resolveRotReference, rotLaborRow, rotRowHouseWork, rowRotLaborCarveout, splitRotMaterialRow } from './helpers';
 
 // The point-in-time customer data carried on both the quote and the work order. Named once
 // because the header builder below has to read the same shape off either of them.
@@ -367,12 +367,15 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
 
   // Idempotency: if this work order is already linked to a Fortnox order, don't try
   // to create another one — Fortnox rejects a second createorder on the same offer
-  // (error 2000499). Just confirm the synced state and return the existing number.
+  // (error 2000499). Just return the existing number.
+  //
+  // ⚠️ INGEN 'synced'-stämpel här. Grenen skickar ingenting till Fortnox, så den vet ingenting om
+  // radernas läge — samma regel som header-synken. Att den tidigare stämplade byggde på antagandet
+  // att ett sparat ordernummer betydde att raderna gått igenom, och det gäller inte längre: numret
+  // sparas nu FÖRE rad-PUT:en (se createorder-grenen nedan), just för att en order som finns i
+  // Fortnox aldrig ska tappas bort. En kvarstående 'failed' hade alltså kunnat tvättas till
+  // 'synced' av ett anrop som inte skickade en enda rad — precis det läge fakturaspärren finns för.
   if (workOrder.fortnox_order_number) {
-    await supabase
-      .from('crm_work_orders')
-      .update({ fortnox_order_sync_status: 'synced', fortnox_order_synced_at: new Date().toISOString() })
-      .eq('id', workOrderId);
     return { fortnox_order_number: workOrder.fortnox_order_number };
   }
 
@@ -442,6 +445,32 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
         resolved = String(existing);
       }
       fortnoxOrderNumber = resolved;
+
+      // Spara numret INNAN raderna skickas. Kastar PUT:en nedan finns ordern i Fortnox medan vi
+      // saknar dess nummer — då 409:ar PDF-rutten, delfaktureringen hittar den inte, och varje nytt
+      // försök går om createorder-vägen och 2000499-återhämtningen. Med numret sparat blir ett
+      // misslyckande i stället en vanlig 'failed' som "Försök igen" reparerar.
+      await supabase
+        .from('crm_work_orders')
+        .update({ fortnox_order_number: fortnoxOrderNumber })
+        .eq('id', workOrderId);
+
+      // ⚠️ KONVERTERINGEN BYGGER ORDERN UR OFFERTENS RADER — arbetsorderns skickas aldrig. Utan
+      // den här PUT:en håller Fortnox alltså andra rader än vi, med stämpeln 'synced' på.
+      //
+      // Att det inte är teoretiskt: `updateWorkOrderInFortnox` faller tillbaka hit när ordern
+      // saknar Fortnox-nummer. Misslyckas första pushen (Fortnox frånkopplat) och säljaren sedan
+      // ändrar ett antal i artikelfliken, går vägen line-items-rutten → omsynk → hit → och
+      // ändringen som just sparades försvinner tyst.
+      //
+      // ⚠️ SKICKAS ALLTID, aldrig villkorat på att raderna skiljer sig från offertens. Ett första
+      // utkast jämförde `workOrder.line_items` mot `crm_quotes.line_items` och hoppade över PUT:en
+      // när de var lika — men offertens push är BEST-EFFORT (se app/api/crm/quotes/[id]/route.ts):
+      // en misslyckad offertsynk lämnar Fortnox-offerten bakom offertraden. Arbetsordern kopierar
+      // då de nya raderna, jämförelsen ser dem som identiska, ingen PUT sker — och ordern stämplas
+      // 'synced' ovanpå Fortnox gamla rader. Våra egna rader är helt enkelt inget bevis för vad
+      // Fortnox håller. En extra PUT per orderskapande är priset för att slippa den slutsatsen.
+      await putOrderHeaderAndRows(supabase, workOrder, fortnoxOrderNumber, linkedQuote);
     } else {
       // No Fortnox offer exists – create a standalone order with full reference data.
       // Resolve the customer from the linked quote, or — for a truly standalone order
@@ -483,6 +512,15 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
       });
       fortnoxOrderNumber = response.Order?.DocumentNumber;
       if (!fortnoxOrderNumber) throw new Error('Fortnox returnerade inget ordernummer');
+
+      // Spara numret direkt, av samma skäl som i createorder-grenen — men här väger det tyngre:
+      // POST /orders har ingen dubblettspärr på Fortnox sida (createorder skyddas åtminstone av
+      // 2000499). Faller något mellan POST:en och den gemensamma uppdateringen nedan finns ordern i
+      // Fortnox utan att vi vet om det, och nästa försök skapar EN ORDER TILL åt samma kund.
+      await supabase
+        .from('crm_work_orders')
+        .update({ fortnox_order_number: fortnoxOrderNumber })
+        .eq('id', workOrderId);
     }
 
     await supabase
@@ -505,6 +543,24 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
   }
 }
 
+// Fakturanumret en Fortnox-order redan pekar på, eller null. Läsfel svaras som null med flit: den
+// enda frågan här är "finns det redan en faktura", och kan vi inte svara ja ska anroparen gå vidare
+// på sin vanliga väg i stället för att falla på ett GET.
+//
+// ⚠️ UNDANTAGET är att Fortnox inte är anslutet. Det är inget svar på frågan utan ett annat problem,
+// och rutterna översätter just den klassen till ett eget besked ("koppla Fortnox"). Svaldes den här
+// skulle en säljare med utgången token få rådet att synka om — vilket faller på exakt samma sak.
+async function fetchInvoiceReference(orderNumber: string): Promise<string | null> {
+  const order = await fortnoxGet<{ Order?: { InvoiceReference?: number | string | null } }>(
+    `/orders/${orderNumber}`,
+  ).catch((e) => {
+    if (e instanceof FortnoxNotConnectedError) throw e;
+    return null;
+  });
+  const existing = order?.Order?.InvoiceReference;
+  return existing ? String(existing) : null;
+}
+
 // Create a DRAFT invoice in Fortnox from the work order's Fortnox order
 // (PUT /orders/{n}/createinvoice). Fortnox carries the customer, rows, delivered
 // quantities, ROT and references from the order automatically — we only create the
@@ -516,10 +572,11 @@ export async function createInvoiceFromWorkOrder(workOrderId: string): Promise<C
 
   const { data: workOrder, error } = await supabase
     .from('crm_work_orders')
-    // line_items hämtas bara för prisspärren nedan — fakturan byggs av Fortnox ur ORDERNS rader.
-    .select('id, fortnox_order_number, fortnox_invoice_number, line_items')
+    // line_items och sync_status hämtas bara för de två spärrarna nedan — fakturan byggs av Fortnox
+    // ur ORDERNS rader, inte ur våra.
+    .select('id, fortnox_order_number, fortnox_invoice_number, fortnox_order_sync_status, line_items')
     .eq('id', workOrderId)
-    .single<{ id: string; fortnox_order_number: string | null; fortnox_invoice_number: string | null; line_items: WorkOrderRow['line_items'] }>();
+    .single<{ id: string; fortnox_order_number: string | null; fortnox_invoice_number: string | null; fortnox_order_sync_status: string | null; line_items: WorkOrderRow['line_items'] }>();
 
   if (error || !workOrder) throw new Error(`Arbetsorder ${workOrderId} hittades inte`);
 
@@ -532,6 +589,49 @@ export async function createInvoiceFromWorkOrder(workOrderId: string): Promise<C
     return { fortnox_invoice_number: workOrder.fortnox_invoice_number };
   }
 
+  // ── Lokala kontroller, FÖRE claimen ────────────────────────────────────────────────────────
+  //
+  // Ingenting har rört Fortnox än, så ett avslag här är ett underlagsfel — inte en misslyckad
+  // push. Låg de efter claimen skulle de stämpla `fortnox_invoice_sync_status: 'failed'` på en
+  // order som aldrig anropades, och säljaren fick se en trasig FAKTURA-synk fast problemet är
+  // orderns rader. Samma konvention som delfaktureringen dokumenterar.
+
+  // Rader utan prisförankring får inte faktureras. Fakturan byggs av Fortnox ur ORDERNS rader, så
+  // en order som skapades innan spärren fanns bär sina Price 0-rader rakt in på kundens faktura —
+  // orderpushens kontroll räcker alltså inte, den ordern finns ju redan.
+  assertLineItemsArePriced(activeLineItems(workOrder.line_items), 'Arbetsordern');
+
+  // Ordern fanns redan — då säger ingenting här att Fortnox har VÅRA rader. Misslyckad eller aldrig
+  // genomförd radsynk betyder att createinvoice fakturerar gamla rader till kunden, och det syns
+  // inte hos oss efteråt. Kontrollen gäller bara den här grenen: skapas ordern nedan är raderna
+  // färska per konstruktion.
+  if (workOrder.fortnox_order_number && workOrder.fortnox_order_sync_status !== 'synced') {
+    // ⚠️ FRÅGA FORTNOX INNAN VI VÄGRAR. Lyckades ett tidigare createinvoice men vår stämpling av
+    // fakturanumret föll bort, är fakturan skapad medan vi inte vet om det. Vägrade vi rakt av
+    // skulle numret bli omöjligt att få tag i från appen: omsynken lagar inte läget heller, för
+    // Fortnox avvisar ändringar på en fakturerad order. Före den här grenen läkte ett nytt försök
+    // sig självt via återhämtningen längre ner — den vägen måste stå kvar öppen.
+    const alreadyInvoiced = await fetchInvoiceReference(workOrder.fortnox_order_number);
+    if (alreadyInvoiced) {
+      // ⚠️ SAMMA fält som den vanliga lyckade vägen nedan, inte bara fakturanumret. Utan
+      // `status: 'invoiced'` fastnar arbetsordern i 'completed' för alltid: nästa försök returnerar
+      // direkt på idempotensgrenen, statusen är systemstyrd och går inte att rätta för hand
+      // (SYSTEM_MANAGED_WO_STATUSES svarar 409), och rapporterna filtrerar på 'invoiced' — intäkten
+      // hade alltså försvunnit ur fakturerat-siffrorna.
+      await supabase
+        .from('crm_work_orders')
+        .update({
+          fortnox_invoice_number: alreadyInvoiced,
+          fortnox_invoice_sync_status: 'synced',
+          fortnox_invoiced_at: new Date().toISOString(),
+          status: 'invoiced',
+        })
+        .eq('id', workOrderId);
+      return { fortnox_invoice_number: alreadyInvoiced };
+    }
+    assertOrderRowsSynced(workOrder.fortnox_order_sync_status);
+  }
+
   // Atomically claim the invoice push so a double-click / retry can't create TWO draft
   // invoices (Fortnox's createinvoice can succeed before the order shows as invoiced).
   const claimed = await claimFortnoxPush(
@@ -540,11 +640,6 @@ export async function createInvoiceFromWorkOrder(workOrderId: string): Promise<C
   if (!claimed) throw new FortnoxPushInProgressError();
 
   try {
-    // Rader utan prisförankring får inte faktureras. Fakturan byggs av Fortnox ur ORDERNS rader, så
-    // en order som skapades innan spärren fanns bär sina Price 0-rader rakt in på kundens faktura —
-    // orderpushens kontroll räcker alltså inte, den ordern finns ju redan.
-    assertLineItemsArePriced(activeLineItems(workOrder.line_items), 'Arbetsordern');
-
     // The invoice is created FROM the Fortnox order, so the order must exist there first.
     // Ensure it's synced (creates it if missing; idempotent if already synced).
     let orderNumber = workOrder.fortnox_order_number;
@@ -562,10 +657,9 @@ export async function createInvoiceFromWorkOrder(workOrderId: string): Promise<C
     } catch (createErr) {
       // createinvoice fails if the order was already (fully) invoiced. Recover the existing
       // invoice via the order's InvoiceReference; if there's none, the failure is real.
-      const order = await fortnoxGet<{ Order?: { InvoiceReference?: number | string | null } }>(`/orders/${orderNumber}`).catch(() => null);
-      const existing = order?.Order?.InvoiceReference;
+      const existing = await fetchInvoiceReference(orderNumber);
       if (!existing) throw createErr;
-      invoiceNumber = String(existing);
+      invoiceNumber = existing;
     }
 
     // Response without a number but no error — resolve from the order's InvoiceReference.
@@ -595,6 +689,43 @@ export async function createInvoiceFromWorkOrder(workOrderId: string): Promise<C
       .eq('id', workOrderId);
     throw e;
   }
+}
+
+/**
+ * PUT header + ALLA artikelrader på en Fortnox-order som redan finns.
+ *
+ * Den enda platsen som skriver arbetsorderns rader till Fortnox. Delas av omsynken
+ * (`updateWorkOrderInFortnox`) och av createorder-grenen i `pushWorkOrderToFortnox`, som måste
+ * skicka om raderna när arbetsordern hunnit redigeras — Fortnox konvertering bygger ordern ur
+ * OFFERTENS rader. Låg de som två kopior skulle de glida isär, och radbygget är för fullt av
+ * Fortnox-särfall för att bära det (byggmoms, ROT-textraden, avskrivna rader).
+ *
+ * Anropas inne i anroparens try-block: kastar den, ska anroparens catch stämpla synkstatusen.
+ */
+async function putOrderHeaderAndRows(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  workOrder: WorkOrderRow,
+  orderNumber: string,
+  // Redan inläst offert, när anroparen har en. Läses den om här kan de två läsningarna se olika
+  // versioner av samma offert — headern och raderna skulle då kunna byggas ur var sin.
+  preloadedQuote?: OrderHeaderQuote,
+): Promise<void> {
+  const linkedQuote = preloadedQuote !== undefined
+    ? preloadedQuote
+    : await fetchLinkedQuoteForHeader(supabase, workOrder.quote_id);
+
+  const vatPercent = typeof workOrder.vat_percent === 'number' ? workOrder.vat_percent : 25;
+  // Reverse charge (byggmoms) must be honoured here too, else re-sending rows silently re-PUTs the
+  // order at 25 % VAT and un-does the 0 %-rate push. ROT is excluded then.
+  const reverseVat = await resolveReverseVat(supabase, workOrder.customer_snapshot?.reverse_vat, workOrder.customer_id);
+  const rotEnabled = linkedQuote?.rot_details?.enabled === true && !reverseVat;
+  // This PUT replaces ALL OrderRows, so a ROT property note that rides as a text ROW (bostadsrätt)
+  // would be WIPED unless we regenerate it here. Villa/företag put it in YourOrderNumber, which
+  // the header below carries. Same builder as the create path, so the two can't diverge.
+  const { header, rotPropertyNote } = await buildOrderHeader(workOrder, linkedQuote, rotEnabled, supabase);
+  const orderRows = buildOrderRows(workOrder.line_items, vatPercent, rotEnabled, reverseVat, rotPropertyNote);
+
+  await fortnoxPut(`/orders/${orderNumber}`, { Order: { ...header, OrderRows: orderRows } });
 }
 
 // Re-sync an already-synced Fortnox order: header AND article rows (PUT replaces all rows).
@@ -633,20 +764,7 @@ export async function updateWorkOrderInFortnox(workOrderId: string): Promise<Pus
     // hittat på andra ställen. Här stämplar catch:en 'failed' i stället, så det syns.
     assertLineItemsArePriced(activeLineItems(workOrder.line_items), 'Arbetsordern');
 
-    const linkedQuote = await fetchLinkedQuoteForHeader(supabase, workOrder.quote_id);
-
-    const vatPercent = typeof workOrder.vat_percent === 'number' ? workOrder.vat_percent : 25;
-    // Reverse charge (byggmoms) must be honoured on the edit-resync too, else editing an article
-    // re-PUTs the order at 25 % VAT and silently un-does the 0 %-rate push. ROT is excluded then.
-    const reverseVat = await resolveReverseVat(supabase, workOrder.customer_snapshot?.reverse_vat, workOrder.customer_id);
-    const rotEnabled = linkedQuote?.rot_details?.enabled === true && !reverseVat;
-    // This PUT replaces ALL OrderRows, so a ROT property note that rides as a text ROW (bostadsrätt)
-    // would be WIPED unless we regenerate it here. Villa/företag put it in YourOrderNumber, which
-    // the header below carries. Same builder as the create path, so the two can't diverge.
-    const { header, rotPropertyNote } = await buildOrderHeader(workOrder, linkedQuote, rotEnabled, supabase);
-    const orderRows = buildOrderRows(workOrder.line_items, vatPercent, rotEnabled, reverseVat, rotPropertyNote);
-
-    await fortnoxPut(`/orders/${workOrder.fortnox_order_number}`, { Order: { ...header, OrderRows: orderRows } });
+    await putOrderHeaderAndRows(supabase, workOrder, workOrder.fortnox_order_number);
 
     await supabase
       .from('crm_work_orders')
@@ -713,18 +831,27 @@ export async function syncWorkOrderHeaderToFortnox(workOrderId: string): Promise
 
     await fortnoxPut(`/orders/${workOrder.fortnox_order_number}`, { Order: header });
 
-    // `neq('failed')`: this path sends NO rows, so it cannot vouch for them. Stamping 'synced'
-    // unconditionally would clear a failed article sync, hide the "Försök igen"-knapp, and leave
-    // the order looking complete while Fortnox still holds the pre-edit rows. A failed row sync
-    // stays failed until the row path itself succeeds.
-    await supabase
-      .from('crm_work_orders')
-      .update({ fortnox_order_sync_status: 'synced', fortnox_order_synced_at: new Date().toISOString() })
-      .eq('id', workOrderId)
-      .neq('fortnox_order_sync_status', 'failed');
-
+    // ⚠️ INGEN 'synced'-stämpel här. Statusen betyder "Fortnox-ordern motsvarar HELA vårt underlag",
+    // och den här vägen skickar medvetet inga rader — den kan inte gå i god för dem. Stämplade den
+    // 'synced' doldes "Försök igen"-knappen och ordern såg komplett ut medan Fortnox fortfarande
+    // höll raderna från före redigeringen. (Det gamla `.neq('failed')` täckte bara hälften:
+    // `'not_synced'` betyder exakt samma sak för radernas del.)
+    //
+    // Följden är med flit att `fortnox_order_synced_at` inte heller rörs — tidsstämpeln hör ihop
+    // med att HELA dokumentet verifierats, och en kontaktändring verifierar inte raderna.
+    //
+    // Uppgradering sker bara via en full push (pushWorkOrderToFortnox / updateWorkOrderInFortnox,
+    // dvs. "Synka om"), som faktiskt skickar både header och rader.
     return { fortnox_order_number: workOrder.fortnox_order_number };
   } catch (e) {
+    // ⚠️ MISSLYCKANDET stämplas däremot. Asymmetrin är avsiktlig: går PUT:en inte fram ligger
+    // Fortnox-dokumentet bevisligen efter vårt underlag, och det är sant om hela dokumentet — inte
+    // bara om headern. Att tiga här vore värst av allt för FortnoxNotConnectedError, som rutten
+    // medvetet sväljer: kontaktändringen hade då aldrig nått Fortnox, svaret sagt att allt gick
+    // bra, och ordern fortsatt visa "Synkad".
+    //
+    // Läget läks av en full push ("Synka om"), aldrig av att headern lyckas nästa gång — bara den
+    // fulla pushen kan gå i god för raderna.
     const syncStatus = e instanceof FortnoxNotConnectedError ? 'not_synced' : 'failed';
     await supabase.from('crm_work_orders').update({ fortnox_order_sync_status: syncStatus }).eq('id', workOrderId);
     throw e;
@@ -733,6 +860,16 @@ export async function syncWorkOrderHeaderToFortnox(workOrderId: string): Promise
 
 // Resolve a work order's synced Fortnox order number, or throw a 409 telling the
 // caller to sync the work order to Fortnox first.
+//
+// ⚠️ KRÄVER MEDVETET INTE `fortnox_order_sync_status === 'synced'`, till skillnad från
+// faktureringen. Ett försök att lägga till kravet här visade varför: orderbekräftelsen är ett
+// historiskt dokument som måste gå att hämta även på en FAKTURERAD order — och en fakturerad order
+// kan inte synkas om (Fortnox avvisar ändringar på den), så en status som en gång hamnat i 'failed'
+// hade låst ute PDF:en för alltid.
+//
+// Kvarstående risk, medvetet accepterad: står ordern i 'failed' renderar Fortnox bekräftelsen ur de
+// rader den råkar hålla, som kan vara äldre än våra. Det är ett eget problem — spärra i så fall
+// MEJL-vägen, inte visningen.
 async function requireOrderNumber(workOrderId: string): Promise<{ orderNumber: string; projectName: string | null }> {
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase
