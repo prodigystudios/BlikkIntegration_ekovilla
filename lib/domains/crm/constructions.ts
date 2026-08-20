@@ -57,6 +57,28 @@ export function constructionLabel(value: string | null | undefined): string {
   return (CONSTRUCTION_LABELS as Record<string, string>)[slug] ?? '';
 }
 
+// Är värdet en av de fem? Enda vägen från en osäker sträng (databas, formulärstate, localStorage)
+// till ConstructionSlug — så en slug som fallit ur listan blir null hos anroparen i stället för att
+// smugglas ned i databasen och avvisas av CHECK:en mitt i installatörens sparning.
+export function isConstructionSlug(value: string | null | undefined): value is ConstructionSlug {
+  return (CONSTRUCTION_SLUGS as readonly string[]).includes((value ?? '').trim().toLowerCase());
+}
+
+/**
+ * Etikett → slug. EXAKT match (skiftlägesokänsligt), aldrig fuzzy.
+ *
+ * Finns för egenkontrollen, där etappradens etikett är FRI TEXT som installatören kan skriva om.
+ * Har raden ingen slug med sig men installatören skrev "Golv" är det ett svar värt att ta emot;
+ * skrev hen "Golv i garaget" är det inte det, och rätt utfall är null → "Ospecificerad". En
+ * delsträngsmatchning här hade gjort "Vindsfarstun" till vind, och en felplacerad säck syns aldrig
+ * hos oss — bara som fel hink långt senare.
+ */
+export function constructionFromLabel(label: string | null | undefined): ConstructionSlug | null {
+  const needle = (label ?? '').trim().toLowerCase();
+  if (!needle) return null;
+  return CONSTRUCTION_SLUGS.find((slug) => CONSTRUCTION_LABELS[slug].toLowerCase() === needle) ?? null;
+}
+
 /**
  * Gissa konstruktionen ur ett Fortnox-artikelnamn.
  *

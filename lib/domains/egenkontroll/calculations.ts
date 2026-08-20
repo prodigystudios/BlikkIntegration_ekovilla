@@ -9,6 +9,17 @@ import { parseDecimal } from '@/lib/shared/number';
 
 export type EtappOpenRow = {
   etapp?: string;
+  /**
+   * Konstruktionens slug, buren tyst genom formuläret.
+   *
+   * `etapp` DUGER INTE som placering: den är en fri etikett som föredrar radens `line_note`
+   * ("Yttervägg") och som installatören dessutom kan skriva om. Slug:en följer med från
+   * offertraden så säckrapporteringens huvudbok kan bära samma vokabulär som resten av appen.
+   *
+   * Ingen input visar den och ingen validering kräver den — en rad installatören lagt till själv
+   * har ingen, och blir "Ospecificerad" i huvudboken. Det är ett giltigt svar.
+   */
+  construction?: string;
   ytaM2?: string;
   bestalldTjocklek?: string; // ex sättningspåslag
   sattningsprocent?: string; // %
@@ -20,6 +31,8 @@ export type EtappOpenRow = {
 
 export type EtappClosedRow = {
   etapp?: string;
+  /** Se EtappOpenRow.construction. */
+  construction?: string;
   ytaM2?: string;
   bestalldTjocklek?: string;
   uppmatTjocklek?: string;

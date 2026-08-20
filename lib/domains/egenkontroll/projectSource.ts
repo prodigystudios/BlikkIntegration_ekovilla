@@ -172,6 +172,7 @@ export function etappRowsFromLineItems(
     if (construction === 'vind') {
       open.push({
         etapp: label,
+        construction: construction || undefined,
         ytaM2: area,
         bestalldTjocklek: thickness,
         sattningsprocent: '',
@@ -183,6 +184,7 @@ export function etappRowsFromLineItems(
     } else {
       closed.push({
         etapp: label,
+        construction: construction || undefined,
         ytaM2: area,
         bestalldTjocklek: thickness,
         uppmatTjocklek: '',

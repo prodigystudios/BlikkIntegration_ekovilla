@@ -112,6 +112,28 @@ export async function createSackReports(supabase: SupabaseClient, rows: NewSackR
   return supabase.from('ops_segment_reports').insert(rows).select(SACK_REPORT_SELECT);
 }
 
+/**
+ * Tar bort de final-rader som en ny egenkontroll ersätter.
+ *
+ * ⚠️ KRÄVER ADMIN-KLIENTEN. Boken är append-only FRÅN FÄLTET — besättningen har varken UPDATE- eller
+ * DELETE-policy (20260820_ops_segment_reports_sack_reporting.sql), med flit. Det här är inte en
+ * användaråtgärd utan ett serverstyrt ersättningssteg.
+ *
+ * ⚠️ ANROPAS EFTER att den nya uppsättningen skrivits genom SESSIONSKLIENTEN. Då har RLS redan
+ * avgjort att användaren får skriva finaler på ordern, och elevationen ärver det beslutet i stället
+ * för att kringgå det. Körs den före är den ett odokumenterat hål: vem som helst som når routen
+ * kunde radera vilket jobbs egenkontroll som helst.
+ *
+ * ⚠️ PÅ ID, INTE PÅ `work_order_id AND kind = 'final'`. Id:na fångas FÖRE insert:en, så satsen kan
+ * omöjligt råka radera de rader som just skrevs — och inte heller en tredje uppsättning som en
+ * parallell sparning hann lägga emellan.
+ */
+export async function deleteSackReportsByIds(admin: SupabaseClient, ids: string[]) {
+  if (ids.length === 0) return { error: null };
+  const { error } = await admin.from('ops_segment_reports').delete().in('id', ids);
+  return { error };
+}
+
 // Blåsta säckar per arbetsorder. Betjänar BÅDE planeringstavlan och arbetsorderns
 // snabböversikt.
 //

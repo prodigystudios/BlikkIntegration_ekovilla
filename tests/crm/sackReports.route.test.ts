@@ -20,6 +20,7 @@ vi.mock('@/lib/domains/planning/reports', async (importOriginal) => {
     listSackReports: vi.fn(),
     createSackReports: vi.fn(),
     listWorkOrderSegments: vi.fn(),
+    deleteSackReportsByIds: vi.fn(),
   };
 });
 
@@ -28,14 +29,21 @@ vi.mock('@supabase/auth-helpers-nextjs', () => ({ createRouteHandlerClient: vi.f
 vi.mock('next/headers', () => ({ cookies: vi.fn() }));
 
 import { getCurrentUser } from '@/lib/auth/route';
-import { createSackReports, listSackReports, listWorkOrderSegments } from '@/lib/domains/planning/reports';
+import {
+  createSackReports,
+  deleteSackReportsByIds,
+  listSackReports,
+  listWorkOrderSegments,
+} from '@/lib/domains/planning/reports';
 
 const { GET, POST } = await import('@/app/api/crm/work-orders/[id]/sack-reports/route');
+const { POST: POST_FINAL } = await import('@/app/api/crm/work-orders/[id]/sack-reports/final/route');
 
 const mockUser = vi.mocked(getCurrentUser);
 const mockList = vi.mocked(listSackReports);
 const mockCreate = vi.mocked(createSackReports);
 const mockSegments = vi.mocked(listWorkOrderSegments);
+const mockDelete = vi.mocked(deleteSackReportsByIds);
 
 const WORK_ORDER_ID = '55555555-5555-4555-8555-555555555555';
 const SEGMENT_ID = '11111111-1111-4111-8111-111111111111';
@@ -79,6 +87,7 @@ beforeEach(() => {
   mockList.mockResolvedValue({ data: [], error: null } as never);
   mockSegments.mockResolvedValue([{ id: SEGMENT_ID, start_day: '2026-08-17', end_day: '2026-08-19' }]);
   mockCreate.mockResolvedValue({ data: [row()], error: null } as never);
+  mockDelete.mockResolvedValue({ error: null } as never);
 });
 
 describe('GET /sack-reports', () => {
@@ -302,6 +311,134 @@ describe('POST /sack-reports — validering', () => {
     const res = await POST(postReq(BODY), { params: { id: 'inte-ett-uuid' } });
     expect(res.status).toBe(400);
     expect(mockList).not.toHaveBeenCalled();
+  });
+});
+
+
+// ── Dörr 1: egenkontrollen ──────────────────────────────────────────────────
+// Egenkontrollen är jobbets FULLA sanning, inte ett tillägg. En ny egenkontroll ERSÄTTER orderns
+// tidigare finaler mängdvis, så en omarkering rättar boken i stället för att stapla på den.
+
+const FINAL_BODY = {
+  report_day: '2026-08-18',
+  entries: [
+    { construction: 'vind', sacks_blown: 60, material: 'EKOVILLA' },
+    { construction: null, sacks_blown: 31 },
+  ],
+};
+
+describe('POST /sack-reports/final — dörr 1', () => {
+  it('skriver finaler, inte delrapporter, och godtar Ospecificerad', async () => {
+    const res = await POST_FINAL(postReq(FINAL_BODY), ctx);
+    expect(res.status).toBe(201);
+
+    const written = mockCreate.mock.calls[0][1];
+    expect(written.every((r) => r.kind === 'final')).toBe(true);
+    expect(written.map((r) => r.construction)).toEqual(['vind', null]);
+    expect(written.map((r) => r.material)).toEqual(['EKOVILLA', null]);
+    expect(written.every((r) => r.work_order_id === WORK_ORDER_ID && r.segment_id === SEGMENT_ID)).toBe(true);
+  });
+
+  // 🧨 Databasens CHECK avvisar tomma strängen, och den insert:en sitter mitt i installatörens
+  // egenkontrollsparning.
+  it('placeringen är null och aldrig tomma strängen', async () => {
+    await POST_FINAL(postReq({ report_day: '2026-08-18', entries: [{ sacks_blown: 5 }] }), ctx);
+    expect(mockCreate.mock.calls[0][1][0].construction).toBeNull();
+  });
+
+  it('ersätter orderns tidigare finaler — och rör INTE delrapporterna', async () => {
+    mockList.mockResolvedValue({
+      data: [row({ id: 'gammal-final-1', kind: 'final' }), row({ id: 'gammal-final-2', kind: 'final' }), row({ id: 'delrapport', kind: 'partial' })],
+      error: null,
+    } as never);
+
+    const body = await (await POST_FINAL(postReq(FINAL_BODY), ctx)).json();
+
+    expect(mockDelete).toHaveBeenCalledTimes(1);
+    expect(mockDelete.mock.calls[0][1]).toEqual(['gammal-final-1', 'gammal-final-2']);
+    expect(body.data.replaced).toBe(2);
+  });
+
+  // ⚠️ ORDNINGEN. Delete först och en misslyckad insert hade tagit bort egenkontrollens siffra ur
+  // boken, tyst. Insert först och en misslyckad delete ger en för hög total — synlig i spåret och
+  // lagningsbar.
+  it('skriver de nya raderna FÖRE den gamla uppsättningen tas bort', async () => {
+    mockList.mockResolvedValue({ data: [row({ id: 'gammal', kind: 'final' })], error: null } as never);
+    await POST_FINAL(postReq(FINAL_BODY), ctx);
+    expect(mockCreate.mock.invocationCallOrder[0]).toBeLessThan(mockDelete.mock.invocationCallOrder[0]);
+  });
+
+  it('en misslyckad insert lämnar den gamla uppsättningen orörd', async () => {
+    mockList.mockResolvedValue({ data: [row({ id: 'gammal', kind: 'final' })], error: null } as never);
+    mockCreate.mockResolvedValue({ data: null, error: { code: '42501', message: 'rls' } } as never);
+
+    const res = await POST_FINAL(postReq(FINAL_BODY), ctx);
+
+    expect(res.status).toBe(403);
+    expect(mockDelete).not.toHaveBeenCalled();
+  });
+
+  it('en misslyckad radering flaggas i svaret och loggas i stället för att tigas ihjäl', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mockList.mockResolvedValue({ data: [row({ id: 'gammal', kind: 'final' })], error: null } as never);
+    mockDelete.mockResolvedValue({ error: { message: 'nätverket dog' } } as never);
+
+    const body = await (await POST_FINAL(postReq(FINAL_BODY), ctx)).json();
+
+    expect(body.data.recorded).toBe(true);
+    expect(body.data.replace_failed).toBe(true);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('inget att ersätta → ingen raderingssats alls', async () => {
+    const body = await (await POST_FINAL(postReq(FINAL_BODY), ctx)).json();
+    expect(body.data.replaced).toBe(0);
+    expect(mockDelete).toHaveBeenCalledWith(expect.anything(), []);
+  });
+
+  // ⛔ Egenkontrollen kan öppnas på en OPLANERAD order — uppslaget sker på ordernummer och är
+  // avsiktligt ospärrat. Installatören ska aldrig se ett fel för det.
+  it('en oplanerad order är 200 med ett skäl, inte ett fel', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mockSegments.mockResolvedValue([]);
+
+    const res = await POST_FINAL(postReq(FINAL_BODY), ctx);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.data).toMatchObject({ recorded: false, reason: 'not_scheduled', replaced: 0 });
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect(mockDelete).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  // Till skillnad från dörr 2: två etapprader kan mycket väl vara samma konstruktion.
+  it('tillåter samma placering två gånger', async () => {
+    const res = await POST_FINAL(
+      postReq({ report_day: '2026-08-18', entries: [{ construction: 'vind', sacks_blown: 30 }, { construction: 'vind', sacks_blown: 25 }] }),
+      ctx,
+    );
+    expect(res.status).toBe(201);
+    expect(mockCreate.mock.calls[0][1]).toHaveLength(2);
+  });
+
+  it('avvisar okänd placering, okänt material och tom lista', async () => {
+    for (const payload of [
+      { report_day: '2026-08-18', entries: [{ construction: 'takstol', sacks_blown: 5 }] },
+      { report_day: '2026-08-18', entries: [{ construction: 'vind', sacks_blown: 5, material: 'GLASULL' }] },
+      { report_day: '2026-08-18', entries: [] },
+    ]) {
+      expect((await POST_FINAL(postReq(payload), ctx)).status).toBe(400);
+    }
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it('kräver inloggning', async () => {
+    mockUser.mockResolvedValue(null);
+    expect((await POST_FINAL(postReq(FINAL_BODY), ctx)).status).toBe(401);
   });
 });
 

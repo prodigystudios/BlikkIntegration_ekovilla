@@ -140,6 +140,32 @@ export const createSackReportSchema = z.object({
     ),
 });
 
+// Egenkontrollens säckar — dörr 1. Skiljer sig från delrapportens schema på två punkter, båda med
+// flit:
+//
+//   * `construction` är NULLBAR. Egenkontrollen har ingen placeringsväljare; slug:en bärs tyst med
+//     från offertraden och saknas för rader installatören lagt till själv. Rätt svar är då
+//     "Ospecificerad", inte ett avvisat dokument — säckarna blåstes ju.
+//   * INGEN dubblettspärr på placering. Två etapprader kan mycket väl vara samma konstruktion
+//     (två vindsutrymmen), och finalerna summeras ändå.
+export const createFinalSackReportSchema = z.object({
+  report_day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Ogiltigt datum'),
+  entries: z
+    .array(
+      z.object({
+        construction: z.enum(CONSTRUCTION_SLUGS).nullable().optional().default(null),
+        sacks_blown: z.coerce.number().finite().min(0).max(99999999.99),
+        material: z
+          .preprocess(normalizeOptionalText, z.string().nullable())
+          .optional()
+          .default(null)
+          .refine((m) => m === null || MATERIAL_SHORTS.includes(m), 'Okänt material'),
+      }),
+    )
+    .min(1, 'Egenkontrollen innehåller inga säckar att rapportera')
+    .max(40),
+});
+
 export const createWorkOrderCommentSchema = z.object({
   body: z.string().trim().min(1, 'Kommentar krävs'),
   // Ids of users @-mentioned in the body (client-supplied; validated server-side before notifying).
