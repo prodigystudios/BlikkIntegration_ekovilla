@@ -148,6 +148,10 @@ export type SellerReportRow = {
   quotes: number;
   quoteValue: number;
   wonValue: number;
+  // Antal arbetsordrar SKAPADE i perioden — samma rader som orderValue summerar, så talet och
+  // värdet bredvid varandra svarar på samma fråga. En order som fakturerades i perioden men
+  // skapades tidigare räknas alltså inte här; den syns i invoicedValue, precis som avsett.
+  orders: number;
   orderValue: number;
   invoicedValue: number;
 };
@@ -164,7 +168,7 @@ export function buildPerSeller(
   const ensure = (id: string): SellerReportRow => {
     let row = acc.get(id);
     if (!row) {
-      row = { userId: id, userName: nameMap.get(id) || 'Okänd användare', calls: 0, quotes: 0, quoteValue: 0, wonValue: 0, orderValue: 0, invoicedValue: 0 };
+      row = { userId: id, userName: nameMap.get(id) || 'Okänd användare', calls: 0, quotes: 0, quoteValue: 0, wonValue: 0, orders: 0, orderValue: 0, invoicedValue: 0 };
       acc.set(id, row);
     }
     return row;
@@ -184,7 +188,9 @@ export function buildPerSeller(
   // that is the point of the split, not a bug.
   for (const o of ordersCreated) {
     if (!o.assigned_to) continue;
-    ensure(o.assigned_to).orderValue += num(o.amount);
+    const row = ensure(o.assigned_to);
+    row.orders += 1;
+    row.orderValue += num(o.amount);
   }
   for (const o of ordersInvoiced) {
     if (!o.assigned_to) continue;

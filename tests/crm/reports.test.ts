@@ -81,8 +81,8 @@ describe('buildPerSeller', () => {
     const rows = buildPerSeller(quotes, split.created, split.invoiced, calls, sellers);
     const anna = rows.find((r) => r.userId === 'u1')!;
     const bjorn = rows.find((r) => r.userId === 'u2')!;
-    expect(anna).toMatchObject({ userName: 'Anna', calls: 2, quotes: 2, quoteValue: 1500, wonValue: 1000, orderValue: 2500, invoicedValue: 2500 });
-    expect(bjorn).toMatchObject({ userName: 'Björn', calls: 1, quotes: 1, quoteValue: 2000, wonValue: 0, orderValue: 3000, invoicedValue: 0 });
+    expect(anna).toMatchObject({ userName: 'Anna', calls: 2, quotes: 2, quoteValue: 1500, wonValue: 1000, orders: 2, orderValue: 2500, invoicedValue: 2500 });
+    expect(bjorn).toMatchObject({ userName: 'Björn', calls: 1, quotes: 1, quoteValue: 2000, wonValue: 0, orders: 1, orderValue: 3000, invoicedValue: 0 });
   });
   it('sorts by order value descending', () => {
     const rows = buildPerSeller(quotes, split.created, split.invoiced, calls, sellers);
@@ -159,6 +159,14 @@ describe('orders billed in-range but created earlier', () => {
     const rows = buildPerSeller([], febSplit.created, febSplit.invoiced, [], sellers);
     expect(rows.find((r) => r.userId === 'u1')).toMatchObject({ orderValue: 0, invoicedValue: 9000 });
     expect(rows.find((r) => r.userId === 'u2')).toMatchObject({ orderValue: 1000, invoicedValue: 0 });
+  });
+
+  // Antalet order hör ihop med ordervärdet: en order som fakturerades i perioden men skapades
+  // tidigare får inte räknas, annars visar kolumnen ett antal som värdet bredvid inte täcker.
+  it('counts only the orders created in the range, matching the order value', () => {
+    const rows = buildPerSeller([], febSplit.created, febSplit.invoiced, [], sellers);
+    expect(rows.find((r) => r.userId === 'u1')).toMatchObject({ orders: 0, orderValue: 0 });
+    expect(rows.find((r) => r.userId === 'u2')).toMatchObject({ orders: 1, orderValue: 1000 });
   });
 
   it('lists the customer with the money that moved and no order of its own', () => {
