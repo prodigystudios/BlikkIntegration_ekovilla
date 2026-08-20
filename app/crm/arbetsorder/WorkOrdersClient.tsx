@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Input from '../../../components/ui/Input';
 import { cn } from '@/lib/shared/cn';
 import { crm, syncStatusLabel, syncStatusClass, workOrderStatusLabel, workOrderStatusClass, workOrderStatusAccent } from '@/app/crm/lib/crmTokens';
 import { formatDate, formatCurrency, isWorkOrderOverdue, documentRef } from '@/app/crm/lib/format';
 import AssigneeFilter, { MINE, type AssigneeFilterValue, type AssigneeOption } from '@/app/crm/components/AssigneeFilter';
+import SortFilter from '@/app/crm/components/SortFilter';
 import DocumentNumberBadge from '@/app/crm/components/DocumentNumberBadge';
 import { RowAssignee, RowAssigneeChip } from '@/app/crm/components/RowAssignee';
 import CrmModal from '@/app/crm/components/CrmModal';
@@ -41,6 +42,21 @@ type WorkOrderFilter = 'all' | 'draft' | 'scheduled' | 'active' | 'completed' | 
 
 // Status labels/classes are centralised in crmTokens (shared with detail + card).
 
+// Radordning. Samma två val som offertlistan har, med arbetsorderns egna datum: 'created_desc' är
+// senast skapad först — samma default som offertlistan, så den order du nyss lade upp ligger
+// överst — och 'installation_asc' är brädans arbetskö, närmast installation först med de
+// försenade överst. Arbetsordern har inget uppföljningsdatum att sortera på; det fältet finns
+// bara på offerten.
+//
+// Defaulten sätts här och skickas alltid med i frågan. Domänens egen default är fortfarande
+// 'installation_asc' — den gäller andra anropare (arbetskön), och den ska den fortsätta göra.
+type WorkOrderSort = 'created_desc' | 'installation_asc';
+
+const WORK_ORDER_SORTS: ReadonlyArray<{ value: WorkOrderSort; label: string }> = [
+  { value: 'created_desc', label: 'Senast skapad' },
+  { value: 'installation_asc', label: 'Närmast installation' },
+];
+
 const FILTERS: Array<[WorkOrderFilter, string]> = [
   ['all', 'Alla'], ['draft', 'Ej planerade'], ['scheduled', 'Planerade'], ['active', 'Pågående'], ['completed', 'Fakturera'], ['invoiced', 'Avslutade'],
 ];
@@ -64,6 +80,7 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<WorkOrderFilter>('all');
+  const [sort, setSort] = useState<WorkOrderSort>('created_desc');
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [assigneeFilter, setAssigneeFilter] = useState<AssigneeFilterValue>([]);
   const [assignees, setAssignees] = useState<AssigneeOption[]>([]);
@@ -75,10 +92,18 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
     [assigneeFilter, currentUserId],
   );
 
+  // What the visible list is a page of. Held in a ref as well as in the render closure: a function
+  // only sees the values captured when it was created, so comparing two closure reads across an
+  // await would compare a string with itself. The ref is written by the first-page effect, which
+  // runs on every change to the scope.
+  const listScope = `${search.trim()}|${filter}|${sort}|${assigneeParam}`;
+  const listScopeRef = useRef(listScope);
+
   function buildListQuery(nextOffset: number) {
     const query = new URLSearchParams();
     if (search.trim()) query.set('q', search.trim());
     query.set('filter', filter);
+    query.set('sort', sort);
     if (assigneeParam) query.set('assignee', assigneeParam);
     query.set('offset', String(nextOffset));
     query.set('limit', String(PAGE_SIZE));
@@ -90,9 +115,14 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
   async function loadMore() {
     if (loadingMore || workOrders.length >= total) return;
     setLoadingMore(true);
+    // Sidan som läggs till hör till den fråga den beställdes för. Byt sortering mitt i flykten och
+    // förstasidan ersätter listan under den; att då lägga till blandar två ordningar och dubblerar
+    // rader. Ett svar vars fråga inte längre beskriver den synliga listan kastas därför.
+    const requestedFor = listScope;
     try {
       const res = await fetch(`/api/crm/work-orders?${buildListQuery(workOrders.length)}`, { cache: 'no-store' });
       const json = await res.json().catch(() => ({}));
+      if (listScopeRef.current !== requestedFor) return;
       if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte ladda fler arbetsorder.'); return; }
       const items = Array.isArray(json?.data?.items) ? json.data.items : [];
       setWorkOrders((prev) => [...prev, ...items]);
@@ -203,10 +233,11 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
     if (deepLinkId) router.replace(`/crm/arbetsorder/${deepLinkId}`);
   }, [deepLinkId, router]);
 
-  // Reset + first page whenever the search, status filter or assignee scope changes. The
-  // server filters and paginates; the chip counts come back on the first page (offset 0).
+  // Reset + first page whenever the search, status filter, sort or assignee scope changes. The
+  // server filters, orders and paginates; the chip counts come back on the first page (offset 0).
   useEffect(() => {
     let active = true;
+    listScopeRef.current = listScope;
     async function load() {
       setLoading(true); setError(null);
       try {
@@ -223,7 +254,7 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
     void load();
     return () => { active = false; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, filter, assigneeParam]);
+  }, [search, filter, sort, assigneeParam]);
 
   const hasMore = workOrders.length < total;
 
@@ -315,7 +346,18 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
               </button>
             ))}
           </div>
-          <AssigneeFilter value={assigneeFilter} onChange={setAssigneeFilter} users={assignees} className="w-full sm:ml-auto sm:w-[200px]" />
+          {/* Sortering och ansvarig i samma grupp till höger, som i offertlistan — annars hamnar
+              de två urvalskontrollerna på var sitt ställe i raden så fort pillren radbryter. */}
+          <div className="flex flex-col gap-3 sm:ml-auto sm:flex-row sm:items-center sm:gap-2">
+            <SortFilter
+              value={sort}
+              onChange={setSort}
+              options={WORK_ORDER_SORTS}
+              label="Sortera arbetsorder"
+              className="w-full sm:w-[180px]"
+            />
+            <AssigneeFilter value={assigneeFilter} onChange={setAssigneeFilter} users={assignees} className="w-full sm:w-[200px]" />
+          </div>
         </div>
 
         {/* List */}
