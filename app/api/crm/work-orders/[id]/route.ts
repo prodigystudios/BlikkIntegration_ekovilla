@@ -1,6 +1,6 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { getCrmWorkOrder, updateCrmWorkOrder, listWorkOrderInvoiceRounds, redactWorkOrderForField } from '@/lib/domains/crm/work-orders';
+import { getCrmWorkOrder, updateCrmWorkOrder, listWorkOrderInvoiceRounds, redactWorkOrderForField, getWorkOrderReportedSacks, getWorkOrderSourceQuote } from '@/lib/domains/crm/work-orders';
 import { syncWorkOrderHeaderToFortnox } from '@/lib/domains/fortnox/orders';
 import { FortnoxNotConnectedError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
 import { isNoRowsError, ok, pickProvidedFields, requireCrmUser, requirePermission, requireSignedInUser, routeError, updateCrmWorkOrderSchema, validationError } from '../_lib';
@@ -51,11 +51,21 @@ export async function GET(_req: Request, context: RouteContext) {
       return ok({ item: redactWorkOrderForField(data as Record<string, unknown>), rounds: [] });
     }
 
-    // Delfakturering rounds (empty for orders never partially invoiced) so the detail page can
-    // render the invoice history on load.
-    const { data: rounds } = await listWorkOrderInvoiceRounds(supabase, context.params.id);
+    // Kontorets extrafakta, hämtade parallellt med ordern. Alla tre ligger UTANFÖR `item` med
+    // flit: PATCH-svaren returnerar bara arbetsordern, och ett fält som fanns på GET men saknas på
+    // PATCH hade försvunnit ur vyn första gången någon sparade.
+    //
+    //  • rounds          — delfaktureringens historik (tom för ordrar som aldrig delfakturerats)
+    //  • reported_sacks  — utblåsta säckar ur planeringens rapporter; null = ingen rapport alls
+    //  • source_quote    — offertens nummer, så "Källa" kan visa en dokumentreferens
+    const quoteId = (data as { quote_id?: string | null } | null)?.quote_id ?? null;
+    const [{ data: rounds }, reportedSacks, sourceQuote] = await Promise.all([
+      listWorkOrderInvoiceRounds(supabase, context.params.id),
+      getWorkOrderReportedSacks(supabase, context.params.id),
+      quoteId ? getWorkOrderSourceQuote(supabase, quoteId) : Promise.resolve(null),
+    ]);
 
-    return ok({ item: data, rounds: rounds ?? [] });
+    return ok({ item: data, rounds: rounds ?? [], reported_sacks: reportedSacks, source_quote: sourceQuote });
   } catch (e: any) {
     return routeError(500, 'crm_work_order_fetch_unexpected', e?.message || 'Failed to fetch work order');
   }

@@ -192,6 +192,13 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   const [pushingFortnox, setPushingFortnox] = useState(false);
   const [creatingInvoice, setCreatingInvoice] = useState(false);
   const [invoiceRounds, setInvoiceRounds] = useState<InvoiceRound[]>([]);
+  // Fakta som bara GET bär — PATCH-svaren returnerar enbart arbetsordern. De ligger därför i egen
+  // state som applyWorkOrder aldrig rör; låg de i `workOrder` hade de tömts vid första sparning.
+  //
+  // `reportedSacks === null` betyder "ingen rapport", inte "noll säckar" — se
+  // getWorkOrderReportedSacks. Skillnaden bärs hela vägen ut i rutan.
+  const [reportedSacks, setReportedSacks] = useState<number | null>(null);
+  const [sourceQuote, setSourceQuote] = useState<{ quote_number: string | null; fortnox_offer_number: string | null } | null>(null);
   const [showPartialModal, setShowPartialModal] = useState(false);
   const [confirmInvoiceOpen, setConfirmInvoiceOpen] = useState(false);
   const [submittingPartial, setSubmittingPartial] = useState(false);
@@ -269,6 +276,8 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
         if (!res.ok || !json.ok) { setError(json?.error || 'Kunde inte ladda arbetsorder'); return; }
         applyWorkOrder(json.data?.item as WorkOrderItem);
         setInvoiceRounds((json.data?.rounds as InvoiceRound[] | undefined) ?? []);
+        setReportedSacks((json.data?.reported_sacks as number | null | undefined) ?? null);
+        setSourceQuote((json.data?.source_quote as typeof sourceQuote) ?? null);
       } catch { if (active) setError('Kunde inte ladda arbetsorder'); }
       finally { if (active) setLoading(false); }
     }
@@ -1109,9 +1118,31 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                     en andra uppsättning av samma siffror. Kvar står det som inte syns någon
                     annanstans på sidan. */}
                 {totalSacks > 0 ? <StatField label="Säckar (beräknat)" value={`${totalSacks} st`} /> : null}
+                {/* Rapporterat bredvid beräknat, så avvikelsen syns på ordern och inte bara på
+                    planeringstavlan. Saknad rapport skrivs ut som "Ej rapporterat" och ALDRIG som
+                    en nolla: noll rapporterade säckar påstår att inget material gick åt, medan
+                    avsaknad av rapport bara säger att ingen rapporterat. Det senare gäller varje
+                    order i dag — ops_segment_reports finns och läses, men ingen route skriver dit,
+                    så rutan tänds av sig själv den dag rapporteringen byggs. */}
+                {totalSacks > 0 || reportedSacks != null ? (
+                  <StatField
+                    label="Säckar (rapporterat)"
+                    value={reportedSacks == null
+                      ? <span className="font-normal text-slate-400">Ej rapporterat</span>
+                      : `${reportedSacks} st`}
+                  />
+                ) : null}
                 <StatField label="Loggade timmar" value={`${totalLoggedHours.toFixed(1)} h`} />
                 <StatField label="Kommentarer" value={comments.length} />
-                <StatField label="Källa" value={workOrder.quote_id ? `Offert ${workOrder.quote_id.slice(0, 8)}…` : 'Skapad direkt (utan offert)'} />
+                {/* Dokumentreferens enligt husets standard: Fortnox-numret när det finns, vårt
+                    eget dessförinnan. Stod tidigare som ett avhugget uuid ("Offert a1b2c3d4…") —
+                    ett nummer som varken gick att slå upp eller matchade något annat i appen. */}
+                <StatField
+                  label="Källa"
+                  value={workOrder.quote_id
+                    ? `Offert ${documentRef(sourceQuote?.fortnox_offer_number, sourceQuote?.quote_number)}`
+                    : 'Skapad direkt (utan offert)'}
+                />
               </div>
             </Card>
           </div>

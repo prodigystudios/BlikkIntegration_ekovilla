@@ -5,6 +5,7 @@ import { resolveCrmContact, type CrmContactSource } from './contacts';
 import { computePricing, type PricingLineItem } from './pricing';
 import { activeLineItems, computeInvoiceState, validateLineItemEdit, type InvoiceRound } from '@/lib/domains/fortnox/partialInvoices';
 import { isValidPersonalNumber, PERSONAL_NUMBER_ERROR } from './personalNumber';
+import { reportedSacksByWorkOrder } from '@/lib/domains/planning/reports';
 import {
   evaluateWorkOrderReadiness,
   type ReadinessCustomerSource,
@@ -555,6 +556,46 @@ export async function updateCrmWorkOrder(supabase: SupabaseClient, id: string, i
 
 export async function getCrmWorkOrder(supabase: SupabaseClient, id: string) {
   return supabase.from('crm_work_orders').select(crmWorkOrderSelect).eq('id', id).single();
+}
+
+// Utblåsta säckar som rapporterats på jobbet, summerade över planeringens alla segment för ordern.
+//
+// Källan är ops_segment_reports — planeringens egen tabell, samma summering som tavlans kort visar
+// mot det planerade antalet. Ingen ny datamodell alltså; arbetsordern läser det som redan finns.
+//
+// ⚠️ Returnerar `null` när ingen rapport finns, INTE 0. Skillnaden är hela poängen: noll
+// rapporterade säckar är ett påstående om JOBBET ("inget material gick åt"), medan avsaknad av
+// rapport är ett påstående om RAPPORTERINGEN. En nolla bredvid det beräknade talet hade lästs som
+// det förra. Just nu är det alltid det senare — tabellen och läsvägen finns, men ingen route
+// anropar createSegmentReport, så det går inte att skriva en rapport än.
+//
+// En rad som faktiskt rapporterar 0 ger 0 och inte null, vilket är rätt: någon har svarat.
+//
+// SELECT-policyn kräver planning.schedule.read (admin/sales/konsult har den). En roll utan den får
+// inga rader och därmed null — också rätt svar: vi vet inte.
+export async function getWorkOrderReportedSacks(
+  supabase: SupabaseClient,
+  workOrderId: string,
+): Promise<number | null> {
+  const map = await reportedSacksByWorkOrder(supabase, [workOrderId]);
+  return map.get(workOrderId) ?? null;
+}
+
+// Offertens nummer, för arbetsorderns "Källa".
+//
+// Arbetsordern bär bara `quote_id`, och rutan visade ett uuid-fragment — som varken går att slå
+// upp någonstans eller följer husets dokumentreferens. Med de här två fälten kan sidan rendera
+// den med documentRef, alltså Fortnox-numret när det finns och vårt eget dessförinnan.
+//
+// Egen liten fråga i stället för en join i crmWorkOrderSelect: den selecten bär också listan, som
+// hämtar hundra rader åt gången och inte har någon användning för offertens nummer.
+export async function getWorkOrderSourceQuote(supabase: SupabaseClient, quoteId: string) {
+  const { data } = await supabase
+    .from('crm_quotes')
+    .select('id, quote_number, fortnox_offer_number')
+    .eq('id', quoteId)
+    .maybeSingle();
+  return (data ?? null) as { id: string; quote_number: string | null; fortnox_offer_number: string | null } | null;
 }
 
 // Look a work order up by the number written on the job, for the egenkontroll's order search.
