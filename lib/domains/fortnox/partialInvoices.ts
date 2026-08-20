@@ -377,7 +377,7 @@ export async function createPartialInvoice(
   const billedThisRound = (basis ?? []).filter((item, index) => (requestByKey.get(lineKey(item, index)) ?? 0) > 0);
   if (billedThisRound.some((item) => isConfiguredLineItem(item) && isUnpricedLineItem(item))) {
     throw new PartialInvoiceError(
-      'Fakturaunderlaget har rader utan pris. Ange A-pris eller välj artikel på arbetsordern först. '
+      'Fakturaunderlaget har rader utan pris. Ange A-pris, välj artikel, eller skriv 0 om raden ingår. '
       + 'Är raden redan delfakturerad går den inte att prissätta om — fakturera då resten av ordern utan den raden, och ta den i Fortnox.',
     );
   }

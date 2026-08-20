@@ -34,7 +34,9 @@ export function assertLineItemsArePriced(lineItems: unknown, subject: string): v
       && isUnpricedLineItem(item as Parameters<typeof isUnpricedLineItem>[0]),
   );
   if (!unpriced.length) return;
-  const message = `${subject} har ${unpriced.length === 1 ? 'en rad' : `${unpriced.length} rader`} utan pris. Välj artikel eller ange A-pris först.`;
+  // Nämn nollan. En rad som ingår i priset (frakt, ställning) är en medveten nolla och passerar —
+  // utan den meningen läser mottagaren spärren som att gratisrader inte längre är möjliga.
+  const message = `${subject} har ${unpriced.length === 1 ? 'en rad' : `${unpriced.length} rader`} utan pris. Välj artikel, ange A-pris, eller skriv 0 om raden ingår.`;
   throw new FortnoxApiError(409, message, undefined, message);
 }
 

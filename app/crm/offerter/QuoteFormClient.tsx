@@ -460,8 +460,12 @@ function getValidationIssues(draft: QuoteDraft, effectiveRows: EffectiveRow[]) {
     const unpriced = effectiveRows.filter((item) => item.isConfigured && isUnpricedLineItem(item));
     if (unpriced.length) {
       const rader = unpriced.map((r) => effectiveRows.indexOf(r) + 1).join(', ');
+      // "Skriv 0 om raden ingår" står med FÖR ATT det är ett riktigt fall, inte ett kryphål: en
+      // fraktrad som ingår i priset är en medveten nolla. Utan den meningen läser säljaren spärren
+      // som att gratisrader inte går att göra längre, och bygger en omväg (fullpris + 100 % rabatt)
+      // som ingen bett om. En skriven nolla passerar — se isUnpricedLineItem.
       issues.push(
-        `${unpriced.length === 1 ? 'Rad' : 'Rader'} ${rader}: pris saknas — välj artikel eller ange A-pris`,
+        `${unpriced.length === 1 ? 'Rad' : 'Rader'} ${rader}: pris saknas — välj artikel, ange A-pris, eller skriv 0 om raden ingår`,
       );
     }
   }
@@ -1161,7 +1165,12 @@ function LineItemRow({
             value={row.unit_price}
             onChange={(e) => onChange({ unit_price: e.target.value, auto_price: false })}
             inputMode="decimal"
-            placeholder="0"
+            // ⚠️ ALDRIG "0" som platshållare här. Ett tomt fält renderade då en grå nolla, och en
+            // säljare som läste den som ett satt pris rörde aldrig fältet — så sparades raden utan
+            // prisuppgift. Det har hänt skarpt: en fraktrad som skulle vara "ingår" blev en rad helt
+            // utan pris, vilket ser likadant ut i summan men betyder något annat. Vill man verkligen
+            // ha noll ska nollan SKRIVAS, för då är den ett beslut och inte en tom ruta.
+            placeholder="t.ex. 750"
           />
         </Field>
         {/* Carve out the labour portion of a material row for ROT: the amount here is moved onto the

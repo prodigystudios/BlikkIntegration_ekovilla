@@ -33,6 +33,21 @@ describe('buildOfferRows', () => {
     expect(normal.VAT).toBe(25);
   });
 
+  // Verklig offert, 2026-08-20: säljaren lade en fraktrad som ingår i priset. Den sparades UTAN
+  // prisuppgift (A-prisfältets platshållare visade en grå nolla, så fältet rördes aldrig) och
+  // fastnade i prisspärren — trots att avsikten var helt riktig. Vägen ut är att SKRIVA nollan.
+  // Testet låser att den vägen fungerar hela sträckan, inte bara i predikatet.
+  it('en medveten nollrad ("ingår") går igenom som en vanlig rad', () => {
+    const rows = buildOfferRows(
+      [{ pricing_mode: 'item', article_name: 'Frakt', article_number: '10099', unit_price: '0', quantity: '1', line_note: 'Frakten ingår' }],
+      25,
+      false,
+    );
+    expect(rows[0]).toMatchObject({ Description: 'Frakt', ArticleNumber: '10099', Quantity: 1, Price: 0 });
+    // Radtexten följer med som egen textrad under artikeln, så kunden ser VARFÖR den är noll.
+    expect(rows[1].Description).toBe('Frakten ingår');
+  });
+
   it('adds a separate text row for measurements (m² + thickness)', () => {
     const rows = buildOfferRows([{ pricing_mode: 'm3', article_name: 'Lösull', m2: '100', thickness_mm: '200', unit_price: '700' }], 25, false);
     expect(rows).toHaveLength(2);
