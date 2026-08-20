@@ -4,7 +4,8 @@ import { describe, it, expect, vi } from 'vitest';
 // '@/lib/supabase/server' (i typposition). Mocka den så testet inte drar in env-beroenden.
 vi.mock('@/lib/supabase/server', () => ({ getSupabaseAdmin: vi.fn() }));
 
-import { claimFortnoxPush, buildRotPropertyNote, appendFortnoxTextNote, resolveRotReference } from '@/lib/domains/fortnox/helpers';
+import { claimFortnoxPush, buildRotPropertyNote, appendFortnoxTextNote, resolveRotReference, assertLineItemsArePriced } from '@/lib/domains/fortnox/helpers';
+import { FortnoxApiError } from '@/lib/domains/fortnox/client';
 
 // Mock av supabase-kedjan. claimFortnoxPush gör upp till TVÅ försök, vart och ett:
 //   .from().update().eq().neq()/.eq().lt().select() → { data, error }
@@ -154,5 +155,62 @@ describe('resolveRotReference', () => {
       referenceNumber: null,
       propertyNote: null,
     });
+  });
+});
+
+describe('assertLineItemsArePriced', () => {
+  // Sista spärren mot 900-stubbens efterlämningar. Offertformuläret blockerar sparningen, men
+  // offerter och arbetsordrar som REDAN ligger i databasen bär raderna med sig och kan pushas när
+  // som helst. En sådan rad blir Price 0 på dokumentet kunden får — och på en ROT-offert dessutom
+  // carve 0, alltså ingen "Arbetskostnad ROT"-rad och inget avdragsunderlag.
+
+  const priced = { article_name: 'Ekovilla lösull', article_number: '10058', m2: '100', thickness_mm: '200', article_price: 900 };
+  const unpriced = { m2: '100', thickness_mm: '200', unit_price: '', article_price: null };
+
+  it('släpper igenom rader med prisförankring', () => {
+    expect(() => assertLineItemsArePriced([priced], 'Offerten')).not.toThrow();
+    expect(() => assertLineItemsArePriced([{ ...unpriced, unit_price: '750' }], 'Offerten')).not.toThrow();
+  });
+
+  it('släpper igenom tomma rader och tomt underlag', () => {
+    // En orörd rad bär inget innehåll och byggs aldrig till någon Fortnox-rad.
+    expect(() => assertLineItemsArePriced([{ m2: '', unit_price: '', article_price: null }], 'Offerten')).not.toThrow();
+    expect(() => assertLineItemsArePriced([], 'Offerten')).not.toThrow();
+    expect(() => assertLineItemsArePriced(null, 'Offerten')).not.toThrow();
+  });
+
+  it('⚠️ släpper igenom en ren textrad', () => {
+    // Regression: spärren läste först `isBlankLineItem` och hade då krävt pris av varje rad med
+    // NÅGOT innehåll. En rad med bara radtext, bara konstruktion eller bara ett ikryssat ROT-arbete
+    // passerar offertformuläret utan anmärkning — hade pushen avvisat dem med 409 skulle sådana
+    // offerter blivit permanent omöjliga att skicka, utan besked om vilken rad som var problemet.
+    expect(() => assertLineItemsArePriced([{ line_note: 'Ställning ingår' }], 'Offerten')).not.toThrow();
+    expect(() => assertLineItemsArePriced([{ construction: 'vind', thickness_mm: '200' }], 'Offerten')).not.toThrow();
+    expect(() => assertLineItemsArePriced([{ is_rot_work: true }], 'Offerten')).not.toThrow();
+  });
+
+  it('stoppar en ifylld rad utan pris', () => {
+    expect(() => assertLineItemsArePriced([priced, unpriced], 'Offerten')).toThrow(FortnoxApiError);
+    expect(() => assertLineItemsArePriced([priced, unpriced], 'Offerten')).toThrow(/Offerten har en rad utan pris/);
+  });
+
+  it('räknar rader och namnger rätt dokument', () => {
+    expect(() => assertLineItemsArePriced([unpriced, unpriced], 'Arbetsordern'))
+      .toThrow(/Arbetsordern har 2 rader utan pris/);
+  });
+
+  it('svarar 409 — det är ett underlagsfel, inte ett Fortnox-fel', () => {
+    try {
+      assertLineItemsArePriced([unpriced], 'Offerten');
+      throw new Error('skulle ha kastat');
+    } catch (e) {
+      expect(e).toBeInstanceOf(FortnoxApiError);
+      expect((e as FortnoxApiError).status).toBe(409);
+    }
+  });
+
+  it('⚠️ ett skrivet 0 kr passerar', () => {
+    // En rad som medvetet ingår i priset är inte samma sak som en rad utan priskälla.
+    expect(() => assertLineItemsArePriced([{ ...unpriced, unit_price: '0' }], 'Offerten')).not.toThrow();
   });
 });

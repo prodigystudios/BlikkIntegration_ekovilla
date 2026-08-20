@@ -59,3 +59,55 @@ export function isBlankLineItem(item: LineItemContentSource): boolean {
     !item.is_rot_work
   );
 }
+
+export type LineItemPriceSource = {
+  unit_price?: string | null;
+  article_price?: number | null;
+};
+
+/**
+ * Raden saknar prisförankring helt: varken skrivet A-pris eller vald artikel.
+ *
+ * `lineItemUnitPrice` svarar 0 på en sådan rad — och 0 är omöjligt att skilja från ett medvetet
+ * nollpris när man bara ser summan. Det här predikatet skiljer dem åt: ett skrivet "0" ÄR ett
+ * pris (en rad som ingår i priset), avsaknaden av källa är det inte.
+ *
+ * ⚠️ Finns för att stänga 900-stubben. Offertformuläret prissatte tidigare artikellösa rader med
+ * en egen hårdkodad `computeUnitPrice()` som gav 900 kr/m³, medan varje annan yta — Fortnox-offert,
+ * order, delfaktura, arbetsorderns artikelflik, planeringens ordervärde — räknade samma rad som
+ * 0 kr. Säljaren såg alltså ett pris som aldrig nådde kundens dokument. Stubben är borta; det här
+ * är spärren som ser till att hålet inte kan öppnas igen tyst, varken vid sparning eller push.
+ */
+export function isUnpricedLineItem(item: LineItemPriceSource): boolean {
+  const hasExplicitPrice = item.unit_price != null && String(item.unit_price).trim() !== '';
+  return !hasExplicitPrice && item.article_price == null;
+}
+
+export type LineItemConfiguredSource = {
+  article_name?: string | null;
+  m2?: string | null;
+  quantity?: string | null;
+  unit_price?: string | null;
+};
+
+/**
+ * Raden är ifylld som en DEBITERBAR rad: den bär en artikel, en mängd eller ett pris.
+ *
+ * Smalare än motsatsen till `isBlankLineItem`, och det är hela poängen. En rad kan ha innehåll utan
+ * att vara debiterbar — bara en radtext (`line_note`), bara en konstruktion, bara ett ikryssat
+ * ROT-arbete. Sådana rader är tillåtna och pushas som textrader.
+ *
+ * ⚠️ ANVÄND SAMMA PREDIKAT PÅ BÅDA SIDOR om en rad ska ha ett pris. Offertformulärets spärr och
+ * Fortnox-pushens spärr måste hålla med varandra: en form som säger "spara går bra" följd av en
+ * push som svarar 409 gör offerten omöjlig att få iväg, utan att peka ut vilken rad det gäller.
+ * Första utkastet av 900-fixen hade just den asymmetrin (formuläret läste den här definitionen,
+ * pushen läste `isBlankLineItem`) — en ren textrad hade blivit permanent opushbar.
+ */
+export function isConfiguredLineItem(item: LineItemConfiguredSource): boolean {
+  // String() och inte v.trim() rakt av: predikatet körs även på RÅ JSONB ur databasen
+  // (assertLineItemsArePriced), och en gammal rad kan bära m2/quantity som tal. `.trim()` på ett tal
+  // hade kastat TypeError inne i pushens try-block — alltså 500 och 'failed' i stället för det
+  // 409-besked spärren finns för att ge. Samma försiktighet som isUnpricedLineItem.
+  const filled = (v: unknown) => v != null && String(v).trim() !== '';
+  return filled(item.article_name) || filled(item.m2) || filled(item.quantity) || filled(item.unit_price);
+}
