@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { sumSacksByWorkOrder, type SackLedgerRow } from './sackLedger';
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -51,19 +52,23 @@ export async function createSegmentReport(supabase: SupabaseClient, input: Creat
     .single();
 }
 
-// Sum of blown sacks per work order, across all its segments' reports.
+// Blåsta säckar per arbetsorder. Betjänar BÅDE planeringstavlan och arbetsorderns
+// snabböversikt.
+//
+// ⚠️ `kind` MÅSTE med i select:en. Utan den läser sumSacksByWorkOrder varje rad som 'partial'
+// och adderar delrapporterna ovanpå egenkontrollen — 30 + 25 + 91 = 146 där svaret är 91.
+// Felet syns inte som ett fel, bara som ett för högt tal.
+//
+// Ett jobb utan rapportrader SAKNAS i kartan i stället för att stå som 0 — anropsstället måste
+// skilja "ej rapporterat" från "noll säckar".
 export async function reportedSacksByWorkOrder(
   supabase: SupabaseClient,
   workOrderIds: string[],
 ): Promise<Map<string, number>> {
-  const map = new Map<string, number>();
-  if (workOrderIds.length === 0) return map;
+  if (workOrderIds.length === 0) return new Map<string, number>();
   const { data } = await supabase
     .from('ops_segment_reports')
-    .select('work_order_id, sacks_blown')
+    .select('work_order_id, sacks_blown, kind')
     .in('work_order_id', workOrderIds);
-  for (const r of (data ?? []) as Array<{ work_order_id: string; sacks_blown: number | string }>) {
-    map.set(r.work_order_id, (map.get(r.work_order_id) ?? 0) + Number(r.sacks_blown));
-  }
-  return map;
+  return sumSacksByWorkOrder((data ?? []) as SackLedgerRow[]);
 }
