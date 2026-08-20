@@ -1249,7 +1249,16 @@ export default function EgenkontrollPage() {
                           // någon i en egenkontroll per etapp raderar den andra den förstas rader.
                           // Det får inte hända bakom ryggen på den som sparar.
                           const replaced = Number(sackPayload?.data?.replaced) || 0;
-                          if (replaced > 0) {
+                          if (sackPayload?.data?.replace_failed) {
+                            // ⚠️ De nya raderna ligger i boken men de gamla blev kvar, alltså står
+                            // jobbet nu på DUBBEL summa. Att i det läget säga "ersattes" vore att
+                            // intyga något som inte hände — och talet syns både på ordern och i
+                            // depåsaldot. Kontoret måste veta.
+                            setToast({
+                              text: 'Sparat, men de tidigare säckrapporterna kunde inte tas bort. Säg till kontoret — totalen är för hög tills de rensas.',
+                              type: 'error',
+                            });
+                          } else if (replaced > 0) {
                             setToast({
                               text: replaced === 1
                                 ? 'Sparat. En tidigare säckrapport på arbetsordern ersattes.'

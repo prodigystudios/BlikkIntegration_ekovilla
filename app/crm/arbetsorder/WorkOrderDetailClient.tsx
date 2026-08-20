@@ -889,7 +889,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
 
             {/* Spåret bakom snabböversiktens "Säckar (rapporterat)". Ligger efter handoffen
                 (som säger vad teamet SKULLE göra) och före Ekonomi. */}
-            <WorkOrderSackTrailCard reports={sackReports.reports} loading={sackReports.loading} />
+            <WorkOrderSackTrailCard reports={sackReports.reports} loading={sackReports.loading} loadError={sackReports.loadError} />
 
             {/* ─── Ekonomi ────────────────────────────────────────────────────
                 Artiklar, summering och fakturering i ETT kort (var två egna flikar).

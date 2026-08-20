@@ -107,14 +107,34 @@ describe('finalSackEntriesFromEtappRows', () => {
     expect(finalSackEntriesFromEtappRows([{ etapp: 'Vind' }], [], MATERIAL)).toEqual([]);
   });
 
-  // ⚠️ Kommentaren "Antal säckar: N" och huvudbokens rader hamnar på SAMMA dokument. Tolkar de två
-  // ett värde olika säger dokumentet och boken olika saker om samma egenkontroll.
-  it('summan matchar sumOpenBags + sumClosedBags exakt, inklusive deras egen brist på komma-tal', () => {
-    const open = [{ antalSack: '60' }, { antalSack: '12,5' }, { antalSack: '' }];
+  it('heltalen summerar precis som formulärets egen summa', () => {
+    const open = [{ antalSack: '60' }, { antalSack: '' }];
     const closed = [{ antalSackKgPerSack: '31' }];
     const fromLedger = finalSackEntriesFromEtappRows(open, closed, MATERIAL).reduce((s, e) => s + e.sacks_blown, 0);
     expect(fromLedger).toBe(sumOpenBags(open) + sumClosedBags(closed));
     expect(fromLedger).toBe(91);
+  });
+
+  // ⚠️ Komma-decimalen är fältets egen skrivning och ska inte tappas. Egenkontrollens
+  // densitetsberäkning läser samma fält med parseDecimal — det är dokumentets etablerade läsning.
+  it('en komma-decimal behålls, inte tappas', () => {
+    const entries = finalSackEntriesFromEtappRows([{ antalSack: '12,5' }], [], MATERIAL);
+    expect(entries).toEqual([{ construction: null, sacks_blown: 12.5, material: 'EKOVILLA' }]);
+  });
+
+  // ⚠️ KÄND AVVIKELSE, medvetet inte ärvd. Fritextkommentaren "Antal säckar: N" räknar med
+  // Number(...) och ser 0 där boken ser 12,5. Felet är i kommentaren; boken ska bära det
+  // installatören faktiskt skrev. Att rätta kommentaren ändrar egenkontrollens utdata och är ett
+  // eget beslut utanför den här planen. Testet finns för att avvikelsen ska vara SYNLIG.
+  it('boken ser en komma-decimal som formulärets Number()-summa inte gör', () => {
+    const open = [{ antalSack: '12,5' }];
+    const fromLedger = finalSackEntriesFromEtappRows(open, [], MATERIAL).reduce((s, e) => s + e.sacks_blown, 0);
+    expect(fromLedger).toBe(12.5);
+    expect(sumOpenBags(open)).toBe(0);
+  });
+
+  it('bokstäver ger ingen rad alls', () => {
+    expect(finalSackEntriesFromEtappRows([{ antalSack: 'abv' }], [], MATERIAL)).toEqual([]);
   });
 });
 

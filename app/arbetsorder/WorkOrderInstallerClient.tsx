@@ -228,6 +228,7 @@ export default function WorkOrderInstallerClient({
             loading={sackReports.loading}
             hasFinal={sackReports.hasFinal}
             saving={sackReports.saving}
+            loadError={sackReports.loadError}
             materialOptions={materialOptions}
             onCreate={sackReports.create}
           />

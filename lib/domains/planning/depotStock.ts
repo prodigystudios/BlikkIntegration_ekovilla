@@ -112,11 +112,31 @@ async function deriveConsumptionRows(supabase: SupabaseClient): Promise<StockRow
   const { data: trucks } = await supabase.from('ops_trucks').select('id, depot_id');
   const truckDepot = new Map((trucks ?? []).map((t: any) => [t.id as string, (t.depot_id as string | null) ?? null]));
 
-  const { data: reports } = await supabase
-    .from('ops_segment_reports')
-    .select('work_order_id, sacks_blown, kind, material, segment:ops_segments(truck_id), work_order:crm_work_orders(line_items)');
+  // ⚠️ SIDINDELAD, till skillnad från sina systerläsningar i den här filen. PostgREST kapar svaret
+  // vid max-rows (mätt till 1000 i det här projektet) UTAN att fela, och supersede-regeln nycklas
+  // per arbetsorder: hamnar ett jobbs final på sida 2 medan dess delrapporter ligger på sida 1 ser
+  // regeln bara delrapporterna och debiterar depån för BÅDA besöken. En kapning gör alltså inte
+  // svaret ofullständigt, den gör det FEL — och åt fel håll.
+  //
+  // Systerläsningarna (derivePlannedDemandRows) har samma exponering och är fortfarande
+  // opaginerade; filen sa tidigare att alla tre borde lösas i samma omgång. Den här kan inte vänta:
+  // ops_segment_reports var tom före säckrapporteringen och växer nu monotont med varje besök,
+  // medan de andra är bundna till mängden ÖPPNA ordrar.
+  const reports: Array<Record<string, any> & { work_order_id: string }> = [];
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .from('ops_segment_reports')
+      .select('work_order_id, sacks_blown, kind, material, segment:ops_segments(truck_id), work_order:crm_work_orders(line_items)')
+      .order('id', { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (error) break;
+    const page = (data ?? []) as Array<Record<string, any> & { work_order_id: string }>;
+    reports.push(...page);
+    if (page.length < PAGE) break;
+  }
 
-  const counted = effectiveSackReports((reports ?? []) as Array<Record<string, any> & { work_order_id: string }>);
+  const counted = effectiveSackReports(reports);
 
   const rows: StockRow[] = [];
   for (const r of counted) {

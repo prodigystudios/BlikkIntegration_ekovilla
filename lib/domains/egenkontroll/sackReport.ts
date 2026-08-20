@@ -14,6 +14,7 @@
 // fritextkommentaren "Antal säckar: N" — prosa ingen fråga kan läsa.
 
 import { constructionFromLabel, isConstructionSlug, type ConstructionSlug } from '@/lib/domains/crm/constructions';
+import { parseDecimal } from '@/lib/shared/number';
 import { MATERIALS } from '@/lib/domains/crm/materials';
 import type { EtappClosedRow, EtappOpenRow } from './calculations';
 
@@ -57,10 +58,15 @@ export function constructionFromEtappRow(row: { construction?: string; etapp?: s
 /**
  * Etappraderna → rader för huvudboken. En rad per etapp med ett ifyllt säckantal.
  *
- * ⚠️ SAMMA TALTOLKNING SOM `sumOpenBags`/`sumClosedBags` (`Number(...)`, inte `parseDecimal`).
- * De två summorna hamnar på SAMMA dokument — fritextkommentarens "Antal säckar: N" och
- * huvudbokens rader — och skulle en komma-decimal tolkas olika av de två skulle kommentaren och
- * boken säga olika saker om samma egenkontroll. Hellre samma beteende, inklusive samma brist.
+ * ⚠️ `parseDecimal`, INTE `Number`. Fältet skrivs av en människa på en telefon och "1,5" är en
+ * rimlig sak att skriva. Egenkontrollens EGEN densitetsberäkning läser samma fält med parseDecimal,
+ * med en kommentar om att parseFloat annars "silently corrupt density on this quality document" —
+ * så det här är dokumentets etablerade läsning av fältet, och dörr 2 gör likadant.
+ *
+ * ⚠️ Fritextkommentaren "Antal säckar: N" räknar med `Number(...)` och ser alltså 0 där boken ser
+ * 1,5. Den avvikelsen är ETT FEL I KOMMENTAREN och ärvs medvetet inte hit: boken ska bära det
+ * installatören skrev. Att rätta kommentaren ändrar egenkontrollens utdata och ligger utanför den
+ * här planen — det är ett eget beslut.
  *
  * En tom säckruta hoppas över; en ifylld NOLLA behålls. "Vi var här, inget gick åt" är ett svar,
  * till skillnad från en rad som aldrig fylldes i.
@@ -75,7 +81,7 @@ export function finalSackEntriesFromEtappRows(
   const entries: FinalSackEntry[] = [];
   const push = (row: { construction?: string; etapp?: string }, raw: string | undefined) => {
     if (raw === undefined || String(raw).trim() === '') return;
-    const sacks = Number(raw);
+    const sacks = parseDecimal(raw, Number.NaN);
     if (!Number.isFinite(sacks) || sacks < 0) return;
     entries.push({ construction: constructionFromEtappRow(row), sacks_blown: sacks, material });
   };

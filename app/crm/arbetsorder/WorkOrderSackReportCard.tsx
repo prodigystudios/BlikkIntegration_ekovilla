@@ -3,8 +3,7 @@
 import { useEffect, useState } from 'react';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
-import { formatDate, formatSacks } from '@/app/crm/lib/format';
-import { parseDecimal } from '@/lib/shared/number';
+import { formatDate, formatSacks, parseSackInput } from '@/app/crm/lib/format';
 import { CONSTRUCTIONS, type ConstructionSlug } from '@/lib/domains/crm/constructions';
 import { groupSackReportsByConstruction, totalReportedSacks } from '@/lib/domains/planning/sackLedger';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
@@ -40,6 +39,8 @@ type Props = {
   /** Egenkontrollen är inlämnad → jobbet är avräknat och en delrapport vore en nolloperation. */
   hasFinal: boolean;
   saving: boolean;
+  /** Hämtningen misslyckades — boken kan mycket väl ha rader vi inte såg. */
+  loadError: boolean;
   /** Distinkta materialkortnamn på ordern. Väljaren visas bara när de är fler än ett. */
   materialOptions: string[];
   onCreate: (input: { reportDay: string; note: string | null; entries: NewSackReportEntry[] }) => Promise<boolean>;
@@ -56,6 +57,7 @@ export default function WorkOrderSackReportCard({
   loading,
   hasFinal,
   saving,
+  loadError,
   materialOptions,
   onCreate,
 }: Props) {
@@ -76,14 +78,17 @@ export default function WorkOrderSackReportCard({
   const total = totalReportedSacks(reports);
   const needsMaterial = materialOptions.length > 1;
 
-  const entries: NewSackReportEntry[] = CONSTRUCTIONS.flatMap(({ slug }) => {
-    const raw = picked[slug];
-    if (raw === undefined || raw.trim() === '') return [];
-    const sacks = parseDecimal(raw);
-    if (!(sacks >= 0)) return [];
-    return [{ construction: slug, sacks_blown: sacks, material }];
-  });
-  const canSave = entries.length > 0 && day !== '' && (!needsMaterial || material !== null) && !saving;
+  // ⚠️ STRIKT PARSNING. `parseDecimal` faller tillbaka på 0, så "abv" hade blivit en riktig
+  // nollrad i en append-only bok som installatören inte kan rätta. Och ett chip som tappats på men
+  // lämnats tomt får inte tyst falla bort ur submiten — då tror hen att vinden är rapporterad.
+  // Båda blir null här, och null blockerar sparningen i stället för att skriva något påhittat.
+  const pickedSlugs = CONSTRUCTIONS.filter(({ slug }) => slug in picked);
+  const parsed = pickedSlugs.map(({ slug }) => ({ slug, sacks: parseSackInput(picked[slug] ?? '') }));
+  const entries: NewSackReportEntry[] = parsed.flatMap(({ slug, sacks }) =>
+    sacks === null ? [] : [{ construction: slug, sacks_blown: sacks, material }],
+  );
+  const allPickedFilled = parsed.length > 0 && parsed.every((row) => row.sacks !== null);
+  const canSave = allPickedFilled && day !== '' && (!needsMaterial || material !== null) && !saving;
 
   function togglePlacement(slug: ConstructionSlug) {
     setPicked((current) => {
@@ -120,6 +125,9 @@ export default function WorkOrderSackReportCard({
 
       {loading ? (
         <p className="m-0 text-sm text-slate-400">Hämtar…</p>
+      ) : loadError ? (
+        // "Vi vet inte", inte "inget finns". En tom lista här hade sett ut som ett svar om jobbet.
+        <p className="m-0 text-sm text-amber-700">Kunde inte hämta rapporterna. Dra ner för att ladda om innan du rapporterar.</p>
       ) : reports.length === 0 ? (
         <p className="m-0 text-sm text-slate-500">Inget rapporterat än på det här jobbet.</p>
       ) : (
@@ -206,7 +214,7 @@ export default function WorkOrderSackReportCard({
             </div>
           </div>
 
-          {CONSTRUCTIONS.filter(({ slug }) => slug in picked).map(({ slug, label }) => (
+          {pickedSlugs.map(({ slug, label }) => (
             <div key={slug} className="grid grid-cols-[1fr_7rem] items-center gap-2">
               <label className="text-sm font-semibold text-slate-700" htmlFor={`sack-count-${slug}`}>{label}</label>
               <input
@@ -258,6 +266,10 @@ export default function WorkOrderSackReportCard({
               className="w-full rounded-lg border border-[#dce4d8] bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/15"
             />
           </div>
+
+          {pickedSlugs.length > 0 && !allPickedFilled ? (
+            <p className="m-0 text-xs text-amber-700">Fyll i ett antal för varje vald placering, eller tappa bort chipset igen.</p>
+          ) : null}
 
           <div className="grid grid-cols-[auto_1fr] gap-2">
             <button type="button" onClick={closeComposer} className={cn(crm.ghostButton, 'h-11')}>Avbryt</button>

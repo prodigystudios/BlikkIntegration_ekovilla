@@ -26,9 +26,12 @@ import type { SackReportView } from '@/lib/domains/planning/reports';
 export default function WorkOrderSackTrailCard({
   reports,
   loading,
+  loadError,
 }: {
   reports: SackReportView[];
   loading: boolean;
+  /** Hämtningen misslyckades — säg det, i stället för att påstå att boken är tom. */
+  loadError: boolean;
 }) {
   const total = totalReportedSacks(reports);
 
@@ -45,6 +48,8 @@ export default function WorkOrderSackTrailCard({
 
       {loading ? (
         <p className="m-0 text-sm text-slate-400">Hämtar…</p>
+      ) : loadError ? (
+        <p className="m-0 text-sm text-amber-700">Kunde inte hämta säckrapporterna. Ladda om sidan.</p>
       ) : reports.length === 0 ? (
         // "Ingen har rapporterat", inte "noll säckar". Skillnaden är densamma som i
         // snabböversiktens ruta: det ena är ett påstående om jobbet, det andra om rapporteringen.

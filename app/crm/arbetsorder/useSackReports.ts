@@ -27,16 +27,22 @@ export function useSackReports(workOrderId: string) {
   const [hasFinal, setHasFinal] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  // ⚠️ Ett misslyckat anrop får ALDRIG se ut som en tom bok. Utan den här flaggan renderar båda
+  // korten "ingen har rapporterat" — ett påstående om JOBBET — när sanningen är att vi inte vet.
+  // Det är exakt samma förväxling som "Ej rapporterat" kontra "0 st", och i fältvyn bjuder den
+  // dessutom in till en dubblettrapport i en bok man inte kan städa därifrån.
+  const [loadError, setLoadError] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
       const res = await fetch(`/api/crm/work-orders/${workOrderId}/sack-reports`, { cache: 'no-store' });
       const json = await res.json().catch(() => ({}));
-      if (!res.ok || !json.ok) return;
+      if (!res.ok || !json.ok) { setLoadError(true); return; }
       setReports((json.data?.items || []) as SackReportView[]);
       setHasFinal(Boolean(json.data?.has_final));
+      setLoadError(false);
     } catch {
-      /* non-fatal — kortet visar det som redan hämtats */
+      setLoadError(true);
     } finally {
       setLoading(false);
     }
@@ -78,6 +84,6 @@ export function useSackReports(workOrderId: string) {
     [workOrderId, refresh, toast],
   );
 
-  return { reports, hasFinal, loading, saving, create, refresh };
+  return { reports, hasFinal, loading, saving, loadError, create, refresh };
 }
 
