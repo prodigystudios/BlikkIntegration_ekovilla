@@ -125,16 +125,18 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
   const countScope = `${search.trim()}|${assigneeParam}|${presetProspectId}`;
   const countedScope = useRef<string | null>(null);
 
+  // Bumped when something happens that can move a row between tabs, to force a reload.
+  const [reloadKey, setReloadKey] = useState(0);
+
   // What the visible list is a page of. Held in a ref as well as read from the render closure:
   // a function can only see the values captured when it was created, so comparing two closure
   // reads across an await compares a string with itself. The ref is written by the first-page
   // effect, which runs on every change to the scope — so it, and only it, tells `loadMore`
-  // whether the list moved out from under its request.
-  const listScope = `${countScope}|${filter}|${sort}`;
+  // whether the list moved out from under its request. reloadKey ingår: en offert som markeras
+  // Vunnen laddar om förstasidan utan att någon annan del av nyckeln rör sig, och en 'Visa fler'
+  // i luften skulle då lägga sin sida ovanpå den nya.
+  const listScope = `${countScope}|${filter}|${sort}|${reloadKey}`;
   const listScopeRef = useRef(listScope);
-
-  // Bumped when something happens that can move a row between tabs, to force a reload.
-  const [reloadKey, setReloadKey] = useState(0);
 
   function buildListQuery(nextOffset: number, withCounts: boolean) {
     const query = new URLSearchParams();

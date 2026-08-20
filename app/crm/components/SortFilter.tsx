@@ -9,6 +9,11 @@ import { cn } from '@/lib/shared/cn';
 // Native <select> med `appearance-none` och egen chevron — annars ritar Safari sin egen
 // kontrollchrome bredvid en som inte gör det, och paret slutar se ut som ett par.
 //
+// Höjden är låst i px och sätts INTE av padding + radhöjd: globals.css tvingar 16px på <select>
+// under iOS (annars zoomar Safari in vid fokus och zoomar aldrig ut igen), medan AssigneeFilter är
+// en <button> som stannar på 14px. Med en höjd som beror på teckenstorleken skulle de två
+// kontrollerna få olika höjd på iPad — 38px är exakt knappens höjd (py-2 + text-sm + ram).
+//
 // Sorteringen som skickas hit hör hemma på servern i varje paginerad lista: sidkapet skär raderna
 // innan webbläsaren ser dem, så att sortera i klienten ordnar bara det som råkade överleva kapet.
 export default function SortFilter<T extends string>({
@@ -31,7 +36,7 @@ export default function SortFilter<T extends string>({
         value={value}
         onChange={(e) => onChange(e.target.value as T)}
         aria-label={label}
-        className="w-full appearance-none rounded-lg border border-[#dce4d8] bg-white py-2 pl-3 pr-9 text-left text-sm font-medium text-slate-700 transition hover:border-[#c8d4c3] focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+        className="h-[38px] w-full appearance-none rounded-lg border border-[#dce4d8] bg-white pl-3 pr-9 text-left text-sm font-medium text-slate-700 transition hover:border-[#c8d4c3] focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
       >
         {options.map((option) => (
           <option key={option.value} value={option.value}>{option.label}</option>

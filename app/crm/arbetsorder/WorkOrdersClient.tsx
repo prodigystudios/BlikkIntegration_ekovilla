@@ -99,7 +99,14 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
   const listScope = `${search.trim()}|${filter}|${sort}|${assigneeParam}`;
   const listScopeRef = useRef(listScope);
 
-  function buildListQuery(nextOffset: number) {
+  // Vad chip-siffrorna är räknade över. En ordning kan inte flytta en rad mellan chipsen, så ett
+  // sorteringsbyte skulle annars dra sex exakta COUNT-scan för siffror som inte kan röra sig
+  // (samma spärr som offertlistan har, av samma skäl). Filtret ligger kvar i nyckeln: den
+  // omräkningen fanns före den här ändringen och är inte vår att ta bort här.
+  const countScope = `${search.trim()}|${filter}|${assigneeParam}`;
+  const countedScope = useRef<string | null>(null);
+
+  function buildListQuery(nextOffset: number, withCounts: boolean) {
     const query = new URLSearchParams();
     if (search.trim()) query.set('q', search.trim());
     query.set('filter', filter);
@@ -107,8 +114,9 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
     if (assigneeParam) query.set('assignee', assigneeParam);
     query.set('offset', String(nextOffset));
     query.set('limit', String(PAGE_SIZE));
-    // Chip counts only need recomputing on a fresh first page, not on "Visa fler".
-    if (nextOffset === 0) query.set('counts', '1');
+    // Chip counts only need recomputing on a fresh first page, not on "Visa fler" — and not when
+    // only the row order changed.
+    if (withCounts) query.set('counts', '1');
     return query.toString();
   }
 
@@ -120,7 +128,7 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
     // rader. Ett svar vars fråga inte längre beskriver den synliga listan kastas därför.
     const requestedFor = listScope;
     try {
-      const res = await fetch(`/api/crm/work-orders?${buildListQuery(workOrders.length)}`, { cache: 'no-store' });
+      const res = await fetch(`/api/crm/work-orders?${buildListQuery(workOrders.length, false)}`, { cache: 'no-store' });
       const json = await res.json().catch(() => ({}));
       if (listScopeRef.current !== requestedFor) return;
       if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte ladda fler arbetsorder.'); return; }
@@ -238,16 +246,17 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
   useEffect(() => {
     let active = true;
     listScopeRef.current = listScope;
+    const wantCounts = countedScope.current !== countScope;
     async function load() {
       setLoading(true); setError(null);
       try {
-        const res = await fetch(`/api/crm/work-orders?${buildListQuery(0)}`, { cache: 'no-store' });
+        const res = await fetch(`/api/crm/work-orders?${buildListQuery(0, wantCounts)}`, { cache: 'no-store' });
         const json = await res.json().catch(() => ({}));
         if (!active) return;
         if (!res.ok || !json.ok) { setError(json?.error || 'Kunde inte ladda arbetsorder.'); setWorkOrders([]); setTotal(0); return; }
         setWorkOrders(Array.isArray(json?.data?.items) ? json.data.items : []);
         setTotal(json?.data?.total ?? 0);
-        if (json?.data?.counts) setCounts(json.data.counts);
+        if (json?.data?.counts) { setCounts(json.data.counts); countedScope.current = countScope; }
       } catch { if (active) { setError('Kunde inte ladda arbetsorder.'); setWorkOrders([]); setTotal(0); } }
       finally { if (active) setLoading(false); }
     }
