@@ -63,6 +63,9 @@ type LineItem = {
   density?: string;
   unit_price?: string;
   discount_percent?: string;
+  // Såld men aldrig utförd. Raden ligger kvar (fakturarundorna nycklas på dess id) men räknas
+  // varken i pengar eller i säckar.
+  written_off?: boolean;
 };
 
 type WorkOrderItem = {
@@ -305,7 +308,24 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   // kontakten du just fyllt i över av serverns version, tyst och utan att låsa upp något.
   function applyWorkOrder(item: WorkOrderItem, opts?: { keepDraft?: boolean }) {
     setWorkOrder(item);
-    if (opts?.keepDraft) return;
+    if (opts?.keepDraft) {
+      // ⚠️ STATUSEN är undantagen från skyddet. Den ägs av servern under just de här anropen —
+      // faktureringen sätter 'partially_invoiced'/'invoiced' själv — och ett utkast som ligger kvar
+      // på det gamla värdet skickar tillbaka det vid nästa Spara. Två riktiga fel, båda nåbara först
+      // sedan fakturaknapparna flyttade in i den upplåsbara översikten:
+      //
+      //   • Efter en delfaktura PATCH:ar nästa Spara 'completed' över 'partially_invoiced', och
+      //     routen SLÄPPER IGENOM det (en delfakturerad order får medvetet gå tillbaka till
+      //     Pågående). En orörd adressredigering hade alltså tyst rullat tillbaka faktureringsläget.
+      //   • Efter "Fakturera allt" är statusväljaren en läsbricka, så varje Spara svarar 409
+      //     "Ordern är färdigfakturerad" — och det osparade arbetet gick bara att komma ur via
+      //     Avbryt, som kastar det.
+      //
+      // Priset är att ett opsparat statusval i väljaren skrivs över. Det är rätt: servern har just
+      // bestämt statusen, och väljaren står kvar för den som vill välja om.
+      setDraft((d) => (d ? { ...d, status: item.status } : d));
+      return;
+    }
     setDraft({
       status: item.status,
       assigned_to: item.assigned_to || '',
@@ -331,9 +351,14 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   );
 
   // Sacks per inferable line + total — the installer's key figure.
+  //
+  // Avskrivna rader räknas inte: de utförs aldrig, alltså går det ingen lösull åt. Samma filter som
+  // artikelflikens säckbadge redan har — och sedan Ekonomi-kortet flyttade in på översikten står de
+  // två talen i samma vy, en halv skärm isär. Utan filtret visade de olika siffror för samma sak,
+  // och den nya raden "Säckar (rapporterat)" jämfördes mot det ofiltrerade.
   const sackRows = useMemo(() => {
     if (!workOrder?.line_items) return [];
-    return workOrder.line_items.map((item) => {
+    return workOrder.line_items.filter((item) => !item.written_off).map((item) => {
       const material = inferMaterialFromArticle(item.article_name);
       const volume = lineItemQuantity(item);
       const density = parseDecimal(item.density);
@@ -560,7 +585,12 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   // instead of a misleading "Moms 0 kr / Moms % 25".
   const ecoSubtotal = Number(workOrder.pricing_summary?.subtotal ?? 0);
   const ecoVat = Number(workOrder.pricing_summary?.vat ?? 0);
-  const reverseCharge = workOrder.quote_type === 'business' && ecoVat === 0 && ecoSubtotal > 0;
+  // `undefined` när den SPARADE prissättningen inte kan svara på frågan — en nyskapad
+  // standalone-order har `pricing_summary: {}`, och ett hårt `false` där säger fel sak om en
+  // byggmomskund (raden hade lästs "Moms (0 %) 0 kr"). Fliken härleder då ur sina egna live-siffror
+  // efter samma regel som pricing.ts. Har summan ett värde vinner den: den är robust mot en
+  // vat_percent-kolumn som drivit iväg till 25 på en byggmomsorder.
+  const reverseCharge = ecoSubtotal > 0 ? (workOrder.quote_type === 'business' && ecoVat === 0) : undefined;
   // Ekonomi och Artiklar är inte längre egna flikar — de ligger i Ekonomi-kortet på översikten,
   // så artikelraderna, summan och faktureringen står bredvid arbetet de gäller i stället för
   // bakom var sin flik. Kommentarerna ligger av samma skäl längst ner på översikten: en
