@@ -566,8 +566,10 @@ export async function getCrmWorkOrder(supabase: SupabaseClient, id: string) {
 // ⚠️ Returnerar `null` när ingen rapport finns, INTE 0. Skillnaden är hela poängen: noll
 // rapporterade säckar är ett påstående om JOBBET ("inget material gick åt"), medan avsaknad av
 // rapport är ett påstående om RAPPORTERINGEN. En nolla bredvid det beräknade talet hade lästs som
-// det förra. Just nu är det alltid det senare — tabellen och läsvägen finns, men ingen route
-// anropar createSegmentReport, så det går inte att skriva en rapport än.
+// det förra.
+//
+// Talet går genom supersede-regeln (lib/domains/planning/sackLedger.ts): finns en final —
+// egenkontrollen — är den jobbets sanning, annars summan av delrapporterna. Aldrig bådadera.
 //
 // En rad som faktiskt rapporterar 0 ger 0 och inte null, vilket är rätt: någon har svarat.
 //

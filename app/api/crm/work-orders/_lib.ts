@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { quoteLineItemSchema } from '../quotes/_lib';
 import { WORK_ORDER_FILE_CATEGORIES } from '@/lib/domains/crm/workOrderFiles/types';
+import { CONSTRUCTION_SLUGS } from '@/lib/domains/crm/constructions';
+import { MATERIAL_SHORTS } from '@/lib/domains/crm/materials';
 export { ok, routeError, validationError, invalidUuidParam, isNoRowsError, requireCrmUser, requireCrmWriter, requirePermission, requireSignedInUser, pickProvidedFields } from '../_shared';
 
 // Reuses the quote line-item schema so work order article edits validate identically.
@@ -93,6 +95,49 @@ export const createWorkOrderFileSchema = z.object({
     .union([z.boolean(), z.enum(['true', 'false']).transform((value) => value === 'true')])
     .optional()
     .default(false),
+});
+
+// Delrapport av blåsta säckar från fältvyn — dörr 2 i säckrapporteringen.
+//
+// FLERA PLACERINGAR I EN SUBMIT. En dag går sällan åt till en enda yta, och på ett tak med dålig
+// täckning slår en POST tre. Datum och notering hör till DAGEN och stämplas på varje rad; det som
+// skiljer raderna är placering, antal och (vid behov) material.
+//
+// ⚠️ RUTTEN SKRIVER BARA `kind: 'partial'`. Finaler kommer uteslutande från egenkontrollen, som är
+// jobbets fulla sanning. Skulle den här vägen kunna skriva en final vore den ett andra ställe som
+// kan släcka hela jobbets delrapporter.
+export const createSackReportSchema = z.object({
+  report_day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Ogiltigt datum'),
+  note: z.preprocess(normalizeOptionalText, z.string().nullable()).optional().default(null),
+  entries: z
+    .array(
+      z.object({
+        // Obligatorisk, till skillnad från offertraden där fältet är '' tills regexen gissar rätt.
+        // Delrapporten är appens FÖRSTA yta där en människa faktiskt väljer placering — hela
+        // poängen är att den rapporterade sidan blir pålitlig.
+        construction: z.enum(CONSTRUCTION_SLUGS),
+        // Max matchar kolumnens numeric(10,2) — en databasfakta, inte en påhittad affärsregel.
+        // 0 är TILLÅTET och betyder något: "vi var här, inget gick åt" är ett svar, till skillnad
+        // från att inte rapportera alls.
+        sacks_blown: z.coerce.number().finite().min(0).max(99999999.99),
+        // Valfritt. Utan det faller depåavdraget tillbaka på materialet som härleds ur orderns
+        // artikelrader — samma beteende som före säckrapporteringen.
+        material: z
+          .preprocess(normalizeOptionalText, z.string().nullable())
+          .optional()
+          .default(null)
+          .refine((m) => m === null || MATERIAL_SHORTS.includes(m), 'Okänt material'),
+      }),
+    )
+    .min(1, 'Minst en placering måste rapporteras')
+    .max(CONSTRUCTION_SLUGS.length, 'Högst en rad per placering')
+    // En placering per submit. Två rader för samma yta samma dag är nästan alltid ett
+    // dubbeltryck, och boken är append-only — den felskrivningen går inte att ta tillbaka
+    // från fältet.
+    .refine(
+      (entries) => new Set(entries.map((e) => e.construction)).size === entries.length,
+      'Samma placering kan bara rapporteras en gång per dag',
+    ),
 });
 
 export const createWorkOrderCommentSchema = z.object({
