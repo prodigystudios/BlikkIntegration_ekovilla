@@ -37,6 +37,8 @@
 // returnerat ett tal hade depån fått bygga en egen kopia av regeln — och glöms depån drar den
 // partial + final och dubbeldebiterar lagret.
 
+import { CONSTRUCTION_SLUGS, constructionLabel, type ConstructionSlug } from '@/lib/domains/crm/constructions';
+
 // ── Typer ────────────────────────────────────────────────────────────────────
 
 export type SackReportKind = 'partial' | 'final';
@@ -180,4 +182,60 @@ export function resolveSegmentForDay(
     }
   }
   return { segmentId: best.s.id, match: 'nearest', daysOff: bestDistance };
+}
+
+// ── Gruppering per placering ─────────────────────────────────────────────────
+
+export const UNSPECIFIED_CONSTRUCTION_LABEL = 'Ospecificerad';
+
+export type SackReportGroup<T> = {
+  construction: ConstructionSlug | null;
+  label: string;
+  /** Summan som RÄKNAS — ersatta rader är inte med. */
+  total: number;
+  /** Alla rader i gruppen, ersatta inkluderade. De ska synas, dämpade. */
+  items: T[];
+};
+
+/**
+ * Rapportraderna grupperade per placering, i vokabulärens ordning med "Ospecificerad" sist.
+ *
+ * Bara placeringar som faktiskt har rapporterats får en grupp — en tom "Golv"-rad på varje jobb
+ * hade varit brus i en vy man läser stående i ett kryputrymme.
+ *
+ * ⚠️ `total` räknar bara rader som INTE är ersatta, medan `items` bär alla. Efter en egenkontroll
+ * ligger delrapporterna kvar i boken, och en lista som visar dem utan att summan hoppar över dem
+ * får läsaren att räkna 30 + 25 + 91 = 146 och tro att talen inte går ihop.
+ */
+export function groupSackReportsByConstruction<T extends { construction?: string | null; sacks_blown: number; superseded: boolean }>(
+  rows: T[],
+): Array<SackReportGroup<T>> {
+  const byKey = new Map<string, SackReportGroup<T>>();
+
+  for (const row of rows) {
+    const slug = (row.construction ?? '').trim().toLowerCase();
+    const known = (CONSTRUCTION_SLUGS as readonly string[]).includes(slug) ? (slug as ConstructionSlug) : null;
+    const key = known ?? '';
+    let group = byKey.get(key);
+    if (!group) {
+      group = { construction: known, label: known ? constructionLabel(known) : UNSPECIFIED_CONSTRUCTION_LABEL, total: 0, items: [] };
+      byKey.set(key, group);
+    }
+    group.items.push(row);
+    if (!row.superseded) group.total += row.sacks_blown;
+  }
+
+  const ordered: Array<SackReportGroup<T>> = [];
+  for (const slug of CONSTRUCTION_SLUGS) {
+    const group = byKey.get(slug);
+    if (group) ordered.push(group);
+  }
+  const unspecified = byKey.get('');
+  if (unspecified) ordered.push(unspecified);
+  return ordered;
+}
+
+/** Jobbets rapporterade total efter supersede. */
+export function totalReportedSacks(rows: Array<{ sacks_blown: number; superseded: boolean }>): number {
+  return rows.reduce((sum, row) => (row.superseded ? sum : sum + row.sacks_blown), 0);
 }

@@ -9,10 +9,13 @@ import WorkOrderCommentsTab from '@/app/crm/arbetsorder/WorkOrderCommentsTab';
 import WorkOrderArticlesTab, { type ArticleLineItem } from '@/app/crm/arbetsorder/WorkOrderArticlesTab';
 import WorkOrderTimeTab from '@/app/crm/arbetsorder/WorkOrderTimeTab';
 import WorkOrderFilesTab from '@/app/crm/arbetsorder/WorkOrderFilesTab';
+import WorkOrderSackReportCard from '@/app/crm/arbetsorder/WorkOrderSackReportCard';
+import { useSackReports } from '@/app/crm/arbetsorder/useSackReports';
 import { useWorkOrderActivity } from '@/app/crm/arbetsorder/useWorkOrderActivity';
 import { useWorkOrderFiles } from '@/app/crm/arbetsorder/useWorkOrderFiles';
 import { useCustomerContact } from '@/app/crm/arbetsorder/useCustomerContact';
 import { formatDate, joinAddress, documentRef } from '@/app/crm/lib/format';
+import { inferMaterialFromArticle } from '@/lib/domains/crm/materials';
 
 const CRM_PRIMARY = '#1a3f26'; // brand green; --crm-primary is scoped to /crm so hardcode here
 
@@ -55,6 +58,7 @@ export default function WorkOrderInstallerClient({
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<InstallerTab>('info');
   const customerInfo = useCustomerContact(workOrderId);
+  const sackReports = useSackReports(workOrderId);
 
   // Utan Tid-fliken finns ingen konsument för tidraderna — hämta dem inte då.
   const activity = useWorkOrderActivity(workOrderId, { includeTimeEntries: canReportTime });
@@ -72,11 +76,23 @@ export default function WorkOrderInstallerClient({
   // Den här summan används först längst ner, men får inte deklareras där: första rendern går ut
   // genom laddningsgrenen, nästa gör det inte, och en hook som bara körs i den andra ger
   // "Rendered more hooks than during the previous render" — en krasch för ALLA som öppnar sidan,
-  // inte bara för dem som ser fliken. Repot har ingen ESLint som fångar det.
+  // inte bara för dem som ser fliken. `npm run lint` fångar det numera
+  // (react-hooks/rules-of-hooks) och gjorde det senast 2026-08-20; kör den på varje .tsx-ändring.
   const totalLoggedHours = useMemo(
     () => activity.timeEntries.reduce((sum, item) => sum + Number(item.hours || 0), 0),
     [activity.timeEntries],
   );
+
+  // Distinkta material på ordern. Säckrapportens materialfråga ställs BARA när de är fler än ett —
+  // precis det fall rapportens materialkolumn finns för att lösa (depåhärledningen debiterar annars
+  // allt på orderns FÖRSTA igenkända material). Ett material = ingen fråga.
+  //
+  // Ligger här av samma skäl som summan ovan: `workOrder` är null under laddningen, och en hook
+  // efter den tidiga returen körs inte i första rendern.
+  const materialOptions = useMemo(() => {
+    const shorts = (workOrder?.line_items || []).map((item) => inferMaterialFromArticle(item?.article_name)?.short);
+    return [...new Set(shorts.filter((short): short is string => Boolean(short)))];
+  }, [workOrder?.line_items]);
 
   useEffect(() => {
     let active = true;
@@ -204,6 +220,17 @@ export default function WorkOrderInstallerClient({
               <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-700">{handoffNotes}</p>
             ) : (!workScope ? <p className="text-sm text-slate-400">Ingen arbetsbeskrivning angiven.</p> : null)}
           </div>
+
+          {/* Säckrapport — dörr 2. Ligger efter arbetsbeskrivningen (som säger vad som SKA göras)
+              och före tidrapporteringen, alltså där dagen faktiskt tar slut. */}
+          <WorkOrderSackReportCard
+            reports={sackReports.reports}
+            loading={sackReports.loading}
+            hasFinal={sackReports.hasFinal}
+            saving={sackReports.saving}
+            materialOptions={materialOptions}
+            onCreate={sackReports.create}
+          />
 
           {/* Where to report time. A CRM-planned job has no Blikk project, so it cannot be picked
               in /tidrapport the usual way — without this the crew opens the job, finds no time tab

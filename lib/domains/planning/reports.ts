@@ -42,6 +42,21 @@ export type SackReportRow = {
   created_at: string;
 };
 
+// En rad som klienten ser den: tal i stället för PostgREST-strängar, namnet aldrig tomt, och
+// supersede redan avgjort av servern så två ytor inte kan räkna olika.
+export type SackReportView = {
+  id: string;
+  report_day: string;
+  sacks_blown: number;
+  kind: SackReportKind;
+  material: string | null;
+  construction: string | null;
+  note: string | null;
+  created_by_name: string;
+  created_at: string;
+  superseded: boolean;
+};
+
 const SACK_REPORT_SELECT =
   'id, segment_id, work_order_id, report_day, sacks_blown, kind, material, construction, note, created_by, created_by_name, created_at';
 
