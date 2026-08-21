@@ -57,13 +57,13 @@ describe('composeCrmOverviewSummary — lagren', () => {
   it('räknar och summerar aktiva offerter, och håller vunna och förlorade utanför', () => {
     const summary = composeCrmOverviewSummary(rows({
       quoteStocks: [
-        { status: 'draft', amount: 10_000 },
-        { status: 'sent', amount: '25000.50' },
-        { status: 'follow_up', amount: 5_000 },
+        { vat_percent: 0, status: 'draft', amount: 10_000 },
+        { vat_percent: 0, status: 'sent', amount: '25000.50' },
+        { vat_percent: 0, status: 'follow_up', amount: 5_000 },
         // Frågan filtrerar redan på status, men den rena funktionen litar inte på det: den som
         // skickar in en vunnen offert ska inte kunna blåsa upp "aktivt offertvärde".
-        { status: 'won', amount: 999_999 },
-        { status: 'lost', amount: 888_888 },
+        { vat_percent: 0, status: 'won', amount: 999_999 },
+        { vat_percent: 0, status: 'lost', amount: 888_888 },
       ],
     }), WINDOW);
 
@@ -75,14 +75,14 @@ describe('composeCrmOverviewSummary — lagren', () => {
   it('delar ordrarna i öppet arbete och faktureringssteget, och lämnar avslutade och avbrutna utanför', () => {
     const summary = composeCrmOverviewSummary(rows({
       orderStocks: [
-        { status: 'draft', amount: 1_000 },
-        { status: 'scheduled', amount: 2_000 },
-        { status: 'ready', amount: 4_000 },        // pensionerad status, lever kvar i gamla rader
-        { status: 'in_progress', amount: 8_000 },
-        { status: 'completed', amount: 16_000 },
-        { status: 'partially_invoiced', amount: 32_000 },
-        { status: 'invoiced', amount: 64_000 },
-        { status: 'cancelled', amount: 128_000 },
+        { vat_percent: 0, status: 'draft', amount: 1_000 },
+        { vat_percent: 0, status: 'scheduled', amount: 2_000 },
+        { vat_percent: 0, status: 'ready', amount: 4_000 },        // pensionerad status, lever kvar i gamla rader
+        { vat_percent: 0, status: 'in_progress', amount: 8_000 },
+        { vat_percent: 0, status: 'completed', amount: 16_000 },
+        { vat_percent: 0, status: 'partially_invoiced', amount: 32_000 },
+        { vat_percent: 0, status: 'invoiced', amount: 64_000 },
+        { vat_percent: 0, status: 'cancelled', amount: 128_000 },
       ],
     }), WINDOW);
 
@@ -108,7 +108,7 @@ describe('composeCrmOverviewSummary — fakturerat bucketas på fakturadatumet',
   it('räknar en gammal order som fakturerades i veckan', () => {
     const summary = composeCrmOverviewSummary(rows({
       orderWindow: [
-        { status: 'invoiced', amount: 100_000, created_at: '2026-06-01T08:00:00+00:00', fortnox_invoiced_at: '2026-08-19T09:00:00+00:00', assigned_to: ANNA },
+        { vat_percent: 0, status: 'invoiced', amount: 100_000, created_at: '2026-06-01T08:00:00+00:00', fortnox_invoiced_at: '2026-08-19T09:00:00+00:00', assigned_to: ANNA },
       ],
     }), WINDOW);
 
@@ -121,7 +121,7 @@ describe('composeCrmOverviewSummary — fakturerat bucketas på fakturadatumet',
   it('räknar inte en order som skapades i veckan men faktureras senare', () => {
     const summary = composeCrmOverviewSummary(rows({
       orderWindow: [
-        { status: 'in_progress', amount: 70_000, created_at: '2026-08-18T08:00:00+00:00', fortnox_invoiced_at: null, assigned_to: ANNA },
+        { vat_percent: 0, status: 'in_progress', amount: 70_000, created_at: '2026-08-18T08:00:00+00:00', fortnox_invoiced_at: null, assigned_to: ANNA },
       ],
     }), WINDOW);
 
@@ -135,9 +135,9 @@ describe('composeCrmOverviewSummary — fakturerat bucketas på fakturadatumet',
         // Status invoiced men ingen stämpel: en gammal rad från före kolumnen fanns. Ingen
         // created_at-fallback här — raden ska summera till topplistans fakturerat, och den
         // kräver stämpeln.
-        { status: 'invoiced', amount: 50_000, created_at: '2026-08-18T08:00:00+00:00', fortnox_invoiced_at: null, assigned_to: ANNA },
+        { vat_percent: 0, status: 'invoiced', amount: 50_000, created_at: '2026-08-18T08:00:00+00:00', fortnox_invoiced_at: null, assigned_to: ANNA },
         // Stämpel men inte fakturerad status: ska inte kunna hända, och räknas inte.
-        { status: 'completed', amount: 60_000, created_at: '2026-06-01T08:00:00+00:00', fortnox_invoiced_at: '2026-08-19T08:00:00+00:00', assigned_to: ANNA },
+        { vat_percent: 0, status: 'completed', amount: 60_000, created_at: '2026-06-01T08:00:00+00:00', fortnox_invoiced_at: '2026-08-19T08:00:00+00:00', assigned_to: ANNA },
       ],
     }), WINDOW);
 
@@ -147,9 +147,9 @@ describe('composeCrmOverviewSummary — fakturerat bucketas på fakturadatumet',
   it('veckans start är inklusive och dess slut exklusive', () => {
     const summary = composeCrmOverviewSummary(rows({
       orderWindow: [
-        { status: 'draft', amount: 1_000, created_at: '2026-08-17T23:30:00+00:00', fortnox_invoiced_at: null, assigned_to: ANNA }, // måndag — inne
-        { status: 'draft', amount: 2_000, created_at: '2026-08-16T23:30:00+00:00', fortnox_invoiced_at: null, assigned_to: ANNA }, // söndagen före — ute
-        { status: 'draft', amount: 4_000, created_at: '2026-08-24T00:30:00+00:00', fortnox_invoiced_at: null, assigned_to: ANNA }, // nästa måndag — ute
+        { vat_percent: 0, status: 'draft', amount: 1_000, created_at: '2026-08-17T23:30:00+00:00', fortnox_invoiced_at: null, assigned_to: ANNA }, // måndag — inne
+        { vat_percent: 0, status: 'draft', amount: 2_000, created_at: '2026-08-16T23:30:00+00:00', fortnox_invoiced_at: null, assigned_to: ANNA }, // söndagen före — ute
+        { vat_percent: 0, status: 'draft', amount: 4_000, created_at: '2026-08-24T00:30:00+00:00', fortnox_invoiced_at: null, assigned_to: ANNA }, // nästa måndag — ute
       ],
     }), WINDOW);
 
@@ -166,12 +166,12 @@ describe('composeCrmOverviewSummary — laget och säljarna räknas i samma svep
         call(BOSSE, '2026-08-19T09:00:00+00:00'),
       ],
       quoteWindow: [
-        { amount: '12000', quote_date: '2026-08-17', assigned_to: ANNA },
-        { amount: 8_000, quote_date: '2026-08-20', assigned_to: BOSSE },
+        { vat_percent: 0, amount: '12000', quote_date: '2026-08-17', assigned_to: ANNA },
+        { vat_percent: 0, amount: 8_000, quote_date: '2026-08-20', assigned_to: BOSSE },
       ],
       orderWindow: [
-        { status: 'scheduled', amount: 40_000, created_at: '2026-08-18T10:00:00+00:00', fortnox_invoiced_at: null, assigned_to: ANNA },
-        { status: 'invoiced', amount: 30_000, created_at: '2026-07-01T10:00:00+00:00', fortnox_invoiced_at: '2026-08-19T10:00:00+00:00', assigned_to: BOSSE },
+        { vat_percent: 0, status: 'scheduled', amount: 40_000, created_at: '2026-08-18T10:00:00+00:00', fortnox_invoiced_at: null, assigned_to: ANNA },
+        { vat_percent: 0, status: 'invoiced', amount: 30_000, created_at: '2026-07-01T10:00:00+00:00', fortnox_invoiced_at: '2026-08-19T10:00:00+00:00', assigned_to: BOSSE },
       ],
     }), WINDOW);
 
@@ -190,7 +190,7 @@ describe('composeCrmOverviewSummary — laget och säljarna räknas i samma svep
   it('en order utan ansvarig hör till laget men till ingen säljare', () => {
     const summary = composeCrmOverviewSummary(rows({
       orderWindow: [
-        { status: 'scheduled', amount: 5_000, created_at: '2026-08-18T10:00:00+00:00', fortnox_invoiced_at: null, assigned_to: null },
+        { vat_percent: 0, status: 'scheduled', amount: 5_000, created_at: '2026-08-18T10:00:00+00:00', fortnox_invoiced_at: null, assigned_to: null },
       ],
     }), WINDOW);
 
@@ -271,13 +271,80 @@ describe('composeCrmOverviewSummary — uppgifter och genomsläpp', () => {
     // Supabase svarar med numeric som sträng, och en tom kolumn som null.
     const summary = composeCrmOverviewSummary(rows({
       quoteStocks: [
-        { status: 'draft', amount: '1234.56' },
-        { status: 'sent', amount: 'inte ett tal' },
-        { status: 'follow_up', amount: '' },
+        { vat_percent: 0, status: 'draft', amount: '1234.56' },
+        { vat_percent: 0, status: 'sent', amount: 'inte ett tal' },
+        { vat_percent: 0, status: 'follow_up', amount: '' },
       ],
     }), WINDOW);
 
     expect(summary.activeQuotes).toBe(3);
     expect(summary.activeQuoteValue).toBe(1234.56);
+  });
+});
+
+// ── Momsbas och avbrutna order ─────────────────────────────────────────────────
+//
+// Översikten och veckomålen läser samma bas som rapporteringen: netto, och inga avbrutna order.
+// `amount` är bruttot (subtotal + moms), så att summera det blandade en byggmomsorder (0 %) och
+// en privatkundsorder (25 %) som om de vore samma sorts kronor — och veckomålet mättes mot ett
+// brutto, så en säljare med privatkunder nådde sitt mål 25 % för lätt.
+
+describe('composeCrmOverviewSummary — ex moms', () => {
+  it('summerar offertlagret netto', () => {
+    const summary = composeCrmOverviewSummary(rows({
+      quoteStocks: [
+        { status: 'draft', amount: 125_000, vat_percent: 25, pricing_summary: { subtotal: 100_000 } },
+        { status: 'sent', amount: 100_000, vat_percent: 0, pricing_summary: { subtotal: 100_000 } },
+      ],
+    }), WINDOW);
+    expect(summary.activeQuoteValue).toBe(200_000);
+  });
+
+  it('summerar orderlagren netto', () => {
+    const summary = composeCrmOverviewSummary(rows({
+      orderStocks: [
+        { status: 'scheduled', amount: 125_000, vat_percent: 25, pricing_summary: { subtotal: 100_000 } },
+        { status: 'completed', amount: 125_000, vat_percent: 25, pricing_summary: { subtotal: 100_000 } },
+      ],
+    }), WINDOW);
+    expect(summary.openOrderValue).toBe(100_000);
+    expect(summary.toInvoiceOrderValue).toBe(100_000);
+  });
+
+  it('mäter veckomålet mot netto, inte brutto', () => {
+    const summary = composeCrmOverviewSummary(rows({
+      quoteWindow: [
+        { amount: 125_000, vat_percent: 25, pricing_summary: { subtotal: 100_000 }, quote_date: '2026-08-18', assigned_to: ANNA },
+        { amount: 100_000, vat_percent: 0, pricing_summary: { subtotal: 100_000 }, quote_date: '2026-08-18', assigned_to: BOSSE },
+      ],
+      orderWindow: [
+        { status: 'scheduled', amount: 125_000, vat_percent: 25, pricing_summary: { subtotal: 100_000 }, created_at: '2026-08-18T10:00:00+00:00', fortnox_invoiced_at: null, assigned_to: ANNA },
+        { status: 'invoiced', amount: 125_000, vat_percent: 25, pricing_summary: { subtotal: 100_000 }, created_at: '2026-08-18T10:00:00+00:00', fortnox_invoiced_at: '2026-08-19T10:00:00+00:00', assigned_to: BOSSE },
+      ],
+    }), WINDOW);
+    expect(summary.weekTeam.quoteValue).toBe(200_000);
+    expect(summary.weekTeam.orderValue).toBe(200_000);
+    expect(summary.weekTeam.invoicedValue).toBe(100_000);
+    // Kärnan: två säljare som sålt lika mycket ska stå lika, oavsett kundens momsläge.
+    expect(summary.weekByUser[ANNA].quoteValue).toBe(summary.weekByUser[BOSSE].quoteValue);
+  });
+
+  it('räknar en avbruten order varken som värde eller antal i veckan', () => {
+    const summary = composeCrmOverviewSummary(rows({
+      orderWindow: [
+        { status: 'scheduled', vat_percent: 0, amount: 5_000, created_at: '2026-08-18T10:00:00+00:00', fortnox_invoiced_at: null, assigned_to: ANNA },
+        { status: 'cancelled', vat_percent: 0, amount: 2_000, created_at: '2026-08-19T10:00:00+00:00', fortnox_invoiced_at: null, assigned_to: ANNA },
+      ],
+    }), WINDOW);
+    expect(summary.weekTeam.orderValue).toBe(5_000);
+    expect(summary.weekTeam.orderCount).toBe(1);
+    expect(summary.weekByUser[ANNA]).toMatchObject({ orderCount: 1, orderValue: 5_000 });
+  });
+
+  it('härleder nettot ur momssatsen när pricing_summary saknas', () => {
+    const summary = composeCrmOverviewSummary(rows({
+      quoteStocks: [{ status: 'draft', amount: 125_000, vat_percent: 25 }],
+    }), WINDOW);
+    expect(summary.activeQuoteValue).toBe(100_000);
   });
 });

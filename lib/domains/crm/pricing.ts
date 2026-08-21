@@ -179,6 +179,62 @@ export function computePricing(
   return { subtotal, vat, total, vatPercent, rotDeduction, toPay: total - rotDeduction };
 }
 
+// ─── Momsbas: nettot ur ett lagrat bruttobelopp ────────────────────────────────
+//
+// `crm_quotes.amount` och `crm_work_orders.amount` är `computePricing(...).total`, alltså
+// subtotal + moms. Att summera det fältet blandar TVÅ OLIKA SORTERS KRONOR: en byggmomsorder
+// (omvänd skattskyldighet, vat_percent = 0) räknas ex moms medan en privatkundsorder räknas inkl
+// 25 %. Rapporteringen gjorde det till 2026-08-21 och blåste upp offertvärdet med 924 432 kr av
+// 6 130 106 kr (+17,8 %) och ordervärdet med 263 814 kr av 1 723 702 kr (+18,1 %) — och eftersom
+// påslaget bara träffade de momspliktiga raderna fick en säljare som sålde till privatkunder 25 %
+// gratis mot en som sålde till byggföretag. Topplistan rankade på kundmix, inte på prestation.
+//
+// Moms är inte försäljning, den är uppburen åt staten. Varje krontal som redovisas som
+// försäljning ska vara netto. Funktionen bor här hos `computePricing`, som skapade bruttot —
+// den som vänder talet tillbaka hör hemma bredvid den som räknade fram det.
+
+/** Den lagrade prissammanställningen. Bara nettot läses härifrån. */
+export type StoredPricingSummary = { subtotal?: number | string | null } | null;
+
+/** Det en rad behöver bära för att kunna redovisas ex moms. */
+export type NetAmountRow = {
+  amount: number | string | null;
+  vat_percent?: number | string | null;
+  pricing_summary?: StoredPricingSummary;
+};
+
+/** Momssatsen `computePricing` antar när fältet saknas — samma default som räknade fram `amount`. */
+const DEFAULT_VAT_PERCENT = 25;
+
+function toNumber(value: unknown): number {
+  const n = typeof value === 'number' ? value : Number(String(value ?? ''));
+  return Number.isFinite(n) ? n : 0;
+}
+
+/**
+ * Radens belopp EXKLUSIVE moms.
+ *
+ * `pricing_summary.subtotal` är nettot som faktiskt räknades fram när raden sparades och är därför
+ * förstahandskällan — verifierat mot drift 2026-08-21: `subtotal + vat === amount` på var och en
+ * av de 117 offert- och 52 orderraderna. Saknas den (en enda orderrad idag, med amount 0) räknas
+ * nettot fram ur `amount` och `vat_percent`, vilket gav exakt samma svar på samtliga rader vid
+ * samma mätning.
+ *
+ * Härledningen använder samma default som `computePricing` — det var den momssatsen som skapade
+ * `amount` från början, så det är den som vänder talet rätt igen.
+ */
+export function netAmount(row: NetAmountRow): number {
+  const subtotal = row.pricing_summary?.subtotal;
+  if (subtotal != null && String(subtotal).trim() !== '') return toNumber(subtotal);
+
+  const vatPercent = row.vat_percent != null && String(row.vat_percent).trim() !== ''
+    ? toNumber(row.vat_percent)
+    : DEFAULT_VAT_PERCENT;
+  // En negativ eller orimlig momssats får aldrig blåsa upp talet; då är bruttot det ärligaste svaret.
+  if (!(vatPercent > 0)) return toNumber(row.amount);
+  return toNumber(row.amount) / (1 + vatPercent / 100);
+}
+
 // ─── Täckningsgrad (TG) ────────────────────────────────────────────────────────
 //
 // TG = (pris − inköpspris) ÷ PRIS. Det är måttet säljchefen bett om, och det som brukar menas med

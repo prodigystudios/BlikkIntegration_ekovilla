@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { netAmount, type NetAmountRow } from './pricing';
 import { isDeadWorkOrder } from './work-orders';
 
 // Sales reporting domain. The pure aggregation helpers (build*) take plain rows and
@@ -8,16 +9,6 @@ import { isDeadWorkOrder } from './work-orders';
 // session client — same reason the goals route uses the admin client).
 
 export type ReportRange = { from: string; to: string }; // YYYY-MM-DD, inclusive
-
-/** Den lagrade prissammanställningen. Bara nettot läses här — resten av fälten är ointressanta för rapporten. */
-export type ReportPricingSummary = { subtotal?: number | string | null } | null;
-
-/** Det en rad behöver bära för att kunna redovisas ex moms. */
-export type NetAmountRow = {
-  amount: number | string | null;
-  vat_percent?: number | string | null;
-  pricing_summary?: ReportPricingSummary;
-};
 
 export type ReportQuoteRow = NetAmountRow & {
   status: string | null;
@@ -48,45 +39,6 @@ export type ReportData = {
 function num(value: unknown): number {
   const n = typeof value === 'number' ? value : Number(String(value ?? ''));
   return Number.isFinite(n) ? n : 0;
-}
-
-// ── Momsbas: rapporten redovisar ALLTID ex moms ──
-//
-// `amount` på offerten och arbetsordern är `computePricing(...).total`, alltså subtotal + moms.
-// Att summera det fältet blandade två olika sorters kronor i samma stapel: en byggmomsorder
-// (omvänd skattskyldighet, vat_percent = 0) räknades ex moms medan en privatkundsorder räknades
-// inkl 25 %. Mätt 2026-08-21 över de senaste 12 månaderna blåste det upp offertvärdet med
-// 924 432 kr av 6 130 106 kr (+17,8 %) och ordervärdet med 263 814 kr av 1 723 702 kr (+18,1 %) —
-// och eftersom påslaget bara träffade de momspliktiga raderna fick en säljare som sålde till
-// privatkunder 25 % gratis mot en som sålde till byggföretag. Topplistan rankade alltså på
-// kundmix, inte på prestation.
-//
-// Moms är inte försäljning, den är uppburen åt staten. Varje krontal i rapporten ska vara netto.
-
-/** Momssatsen `computePricing` antar när fältet saknas — samma default som räknade fram `amount`. */
-const DEFAULT_VAT_PERCENT = 25;
-
-/**
- * Radens belopp EXKLUSIVE moms.
- *
- * `pricing_summary.subtotal` är nettot som faktiskt räknades fram när raden sparades och är därför
- * förstahandskällan — verifierat 2026-08-21: `subtotal + vat === amount` på var och en av de 117
- * offert- och 52 orderraderna. Saknas den (en enda orderrad idag, med amount 0) räknas nettot fram
- * ur `amount` och `vat_percent`, vilket gav exakt samma svar på samtliga rader vid samma mätning.
- *
- * Härledningen använder samma default som `computePricing` — det var den momssatsen som skapade
- * `amount` från början, så det är den som vänder talet rätt igen.
- */
-export function netAmount(row: NetAmountRow): number {
-  const subtotal = row.pricing_summary?.subtotal;
-  if (subtotal != null && String(subtotal).trim() !== '') return num(subtotal);
-
-  const vatPercent = row.vat_percent != null && String(row.vat_percent).trim() !== ''
-    ? num(row.vat_percent)
-    : DEFAULT_VAT_PERCENT;
-  // En negativ eller orimlig momssats får aldrig blåsa upp talet; då är bruttot det ärligaste svaret.
-  if (!(vatPercent > 0)) return num(row.amount);
-  return num(row.amount) / (1 + vatPercent / 100);
 }
 
 function monthKey(date: string | null | undefined): string | null {
