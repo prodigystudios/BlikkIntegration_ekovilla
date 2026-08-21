@@ -26,8 +26,17 @@ export const NAV_LINKS: RoleAwareLink[] = [
   // { href: '/admin/users', label: 'Användare', roles: ['admin'] },
 ];
 
+// konsult har samma vy-rättigheter som sales i hela appen. Regeln stod i fem kopior —
+// sidenaven, CRM-grinden, CRM-sidan, dashboarden och filterLinks — och en sjätte roll som
+// ska läsas som sälj hade behövt hittas med grep på fem ställen. Den som missas ger en tyst
+// divergens: en användare som släpps igenom CRM-grinden men ser en annan meny än den ytan
+// hon står på.
+export function toEffectiveRole(role: UserRole | null | undefined): UserRole | null {
+  if (!role) return null;
+  return role === 'konsult' ? 'sales' : role;
+}
+
 export function filterLinks(role: UserRole | null) {
-  // konsult should have the same viewing permissions as sales.
-  const effectiveRole: UserRole | null = role === 'konsult' ? 'sales' : role;
+  const effectiveRole = toEffectiveRole(role);
   return NAV_LINKS.filter(l => !l.roles || (effectiveRole && l.roles.includes(effectiveRole)));
 }

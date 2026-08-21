@@ -11,7 +11,7 @@ import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 import { buildTimeReportBody } from '@/lib/domains/time-reports/payload';
-import type { UserRole } from '../../lib/roles';
+import { toEffectiveRole, type UserRole } from '../../lib/roles';
 import NewsModal, { type NewsItem } from './NewsModal';
 
 // Base mapping of NAV_LINKS (contains all). We'll adapt to QuickLink shape.
@@ -143,7 +143,7 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
   const NEWS_SEEN_KEY = 'dashboard.news.lastSeenId';
 
   // konsult should have the same viewing permissions as sales.
-  const effectiveRole: UserRole | null = role === 'konsult' ? 'sales' : role;
+  const effectiveRole: UserRole | null = toEffectiveRole(role);
 
   const [isSmall, setIsSmall] = useState(false);
   useEffect(() => {
