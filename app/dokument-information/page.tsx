@@ -53,11 +53,15 @@ function SectionFile({ file }: { file: InfoImage }) {
   }
 
   if (file.kind === 'pdf') {
+    // 🧨 Visaren får rutten och INTE den signerade urlen. Den här sidan signerar vid
+    // serverrenderingen, men pdf:en hämtas först när dragspelet öppnas — och en signerad url
+    // lever 30 minuter medan en PWA ligger kvar öppen över natten. Rutten signerar om vid
+    // varje anrop; se app/api/info/files/[id]/route.ts.
     return (
       <PdfViewer
-        url={file.url}
+        url={`/api/info/files/${file.id}`}
         label={label}
-        downloadUrl={file.downloadUrl ?? file.url}
+        downloadUrl={`/api/info/files/${file.id}?download=1`}
         fileName={file.fileName}
       />
     );

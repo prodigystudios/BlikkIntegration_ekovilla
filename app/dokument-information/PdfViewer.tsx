@@ -43,14 +43,22 @@ let pdfjsPromise: Promise<PdfjsModule> | null = null;
 
 function loadPdfjs(): Promise<PdfjsModule> {
   if (!pdfjsPromise) {
-    pdfjsPromise = import('pdfjs-dist/legacy/build/pdf.mjs').then((pdfjs) => {
-      // 🧨 Sökvägen pekar på en fil i public/ och INTE på ett bundlat `new URL(...)`. Det
-      // receptet får Next att skicka workern genom SWC, som failar hela bygget — hela
-      // resonemanget står i scripts/copy-pdf-worker.mjs, som lägger filen här vid varje
-      // install och build så att versionen alltid följer paketet.
-      pdfjs.GlobalWorkerOptions.workerSrc = '/pdfjs/pdf.worker.min.js';
-      return pdfjs;
-    });
+    pdfjsPromise = import('pdfjs-dist/legacy/build/pdf.mjs')
+      .then((pdfjs) => {
+        // 🧨 Sökvägen pekar på en fil i public/ och INTE på ett bundlat `new URL(...)`. Det
+        // receptet får Next att skicka workern genom SWC, som failar hela bygget — hela
+        // resonemanget står i scripts/copy-pdfjs-assets.mjs, som lägger filerna här vid varje
+        // install och build så att versionen alltid följer paketet.
+        pdfjs.GlobalWorkerOptions.workerSrc = '/pdfjs/pdf.worker.min.js';
+        return pdfjs;
+      })
+      .catch((error) => {
+        // 🧨 Ett misslyckat chunk-anrop får inte bli permanent. Cachas den avvisade
+        // utfästelsen är VARJE pdf på sidan död tills fliken laddas om — en tunnel på vägen
+        // hade räckt. Nollställ, så nästa öppning gör ett nytt försök.
+        pdfjsPromise = null;
+        throw error;
+      });
   }
   return pdfjsPromise;
 }
@@ -74,7 +82,10 @@ export default function PdfViewer({
   const [pages, setPages] = useState<PdfPageBox[]>([]);
   const [zoom, setZoom] = useState(1);
   const [fitWidth, setFitWidth] = useState(0);
-  const [visiblePages, setVisiblePages] = useState<number[]>([]);
+  // Två listor, inte en. renderPages bär förhämtningsbandet, readingPage det som faktiskt
+  // syns — se observatörerna i steg 5 för varför de inte får vara samma sak.
+  const [renderPages, setRenderPages] = useState<number[]>([]);
+  const [readingPage, setReadingPage] = useState(1);
   // 0-100, eller null när filens storlek inte går att läsa.
   const [progress, setProgress] = useState<number | null>(null);
 
@@ -122,7 +133,19 @@ export default function PdfViewer({
     (async () => {
       try {
         const pdfjs = await loadPdfjs();
-        const task = pdfjs.getDocument({ url });
+        // 🧨 Tillgångarna är INTE valfria. pdf.js kastar — varnar inte — med "Ensure that the
+        // `cMapUrl` API parameter is provided" så fort ett dokument behöver en fördefinierad
+        // CMap, ett standardtypsnitt det inte bäddat in, eller en wasm-avkodare. Det sista
+        // gäller varje INSCANNAD pdf (JBIG2/CCITT), alltså precis den sortens lathund det
+        // här är byggt för. Filerna läggs i public/ av scripts/copy-pdfjs-assets.mjs.
+        const task = pdfjs.getDocument({
+          url,
+          cMapUrl: '/pdfjs/cmaps/',
+          cMapPacked: true,
+          standardFontDataUrl: '/pdfjs/standard_fonts/',
+          wasmUrl: '/pdfjs/wasm/',
+          iccUrl: '/pdfjs/iccs/',
+        });
         // Hunnit avbrytas medan pdf.js laddades? Då har städningen nedan redan kört och sett
         // en tom referens — uppgiften måste rivas här, annars fortsätter den hämta i bakgrunden.
         if (cancelled) {
@@ -254,17 +277,22 @@ export default function PdfViewer({
     const root = scrollRef.current;
     if (status !== 'ready' || !root || pages.length === 0) return;
 
-    const observer = new IntersectionObserver(
+    const apply = (set: Set<number>, entries: IntersectionObserverEntry[]) => {
+      for (const entry of entries) {
+        const number = Number((entry.target as HTMLElement).dataset.page);
+        if (!number) continue;
+        if (entry.isIntersecting) set.add(number);
+        else set.delete(number);
+      }
+    };
+
+    // Vad som ska RITAS: med förhämtningsband, så sidan är klar när den scrollas in.
+    const toRender = new Set<number>();
+    const renderObserver = new IntersectionObserver(
       (entries) => {
-        setVisiblePages((prev) => {
-          const next = new Set(prev);
-          for (const entry of entries) {
-            const number = Number((entry.target as HTMLElement).dataset.page);
-            if (!number) continue;
-            if (entry.isIntersecting) next.add(number);
-            else next.delete(number);
-          }
-          const list = Array.from(next).sort((a, b) => a - b);
+        apply(toRender, entries);
+        setRenderPages((prev) => {
+          const list = Array.from(toRender).sort((a, b) => a - b);
           // Samma innehåll ska ge samma referens, annars triggar varje scrollhack en
           // omrendering av hela listan.
           return list.length === prev.length && list.every((n, i) => n === prev[i]) ? prev : list;
@@ -273,8 +301,26 @@ export default function PdfViewer({
       { root, rootMargin: RENDER_MARGIN },
     );
 
-    for (const el of Array.from(root.querySelectorAll('[data-page]'))) observer.observe(el);
-    return () => observer.disconnect();
+    // 🧨 Vad som faktiskt SYNS: egen observatör, utan marginal. Sidräknaren läste först ur
+    // renderlistan, och den räknar sidor 300 px utanför rutan som synliga — därför stod
+    // "Sida X av Y" en sida fel under hela scrollningen.
+    const inView = new Set<number>();
+    const readObserver = new IntersectionObserver(
+      (entries) => {
+        apply(inView, entries);
+        if (inView.size > 0) setReadingPage(Math.min(...inView));
+      },
+      { root, rootMargin: '0px' },
+    );
+
+    for (const el of Array.from(root.querySelectorAll('[data-page]'))) {
+      renderObserver.observe(el);
+      readObserver.observe(el);
+    }
+    return () => {
+      renderObserver.disconnect();
+      readObserver.disconnect();
+    };
   }, [status, pages.length]);
 
   // ── Steg 6: rita det som syns, i den skala som gäller nu ────────────────────
@@ -282,11 +328,11 @@ export default function PdfViewer({
     if (status !== 'ready' || fitWidth <= 0) return;
     // Första sidan ritas även innan observatören hunnit rapportera något, så rutan aldrig
     // står tom i det ögonblick den fälls ut.
-    const wanted = visiblePages.length > 0 ? visiblePages : [1];
+    const wanted = renderPages.length > 0 ? renderPages : [1];
     for (const number of wanted) void renderPage(number);
-  }, [status, visiblePages, zoom, fitWidth, renderPage]);
+  }, [status, renderPages, zoom, fitWidth, renderPage]);
 
-  const currentPage = visiblePages[0] ?? 1;
+  const currentPage = readingPage;
   const pageWidth = Math.max(fitWidth * zoom, 1);
 
   const changeZoom = (delta: number) => {

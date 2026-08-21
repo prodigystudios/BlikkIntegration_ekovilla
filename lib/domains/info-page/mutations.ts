@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { normalizeBlocks } from './blocks';
-import { isInfoImagePath, resolveFileKind } from './storage';
+import { isInfoImagePath, resolveUploadKind } from './storage';
 
 // Skrivvägen för /dokument-information. Rutthanterarna löser auth, parsar och svarar; allt som
 // rör databasen bor här.
@@ -167,7 +167,7 @@ export async function requireSection(client: SupabaseClient, id: string) {
  * skriptdokument som alla i appen kan öppna.
  */
 export function assertSupportedFile(contentType: string | null | undefined, nameOrPath: string): void {
-  if (resolveFileKind(contentType, nameOrPath) === 'other') {
+  if (resolveUploadKind(contentType, nameOrPath) === 'other') {
     throw new InfoPageError(400, 'unsupported_file_type', 'Bara bilder och PDF-filer kan läggas till här.');
   }
 }
@@ -184,7 +184,8 @@ export async function registerImage(
     throw new InfoPageError(400, 'invalid_path', 'Sökvägen hör inte till den här fliken.');
   }
 
-  // Sökvägen, inte filnamnet: den är det vi själva byggde och kan lita på ändelsen i.
+  // Sökvägen, inte filnamnet: den är det vi själva byggde. Att sanitiseringen bevarar
+  // ändelsen är det som gör att den här kontrollen ser samma sak som steg ett gjorde.
   assertSupportedFile(input.contentType, input.path);
 
   const sortOrder = await nextSortOrder(client, 'info_section_images', { column: 'section_id', value: sectionId });

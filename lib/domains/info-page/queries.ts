@@ -145,3 +145,43 @@ export async function loadInfoPage(client: SupabaseClient): Promise<InfoGroup[]>
     sections: sectionsByGroup.get(group.id) ?? [],
   }));
 }
+
+export type InfoFileSource = {
+  fileName: string;
+  bucket: string | null;
+  path: string | null;
+  publicPath: string | null;
+};
+
+/**
+ * En enskild fils lagringsuppgifter, för rutten som signerar om den vid varje klick.
+ *
+ * `client` ska vara sessionsklienten: RLS avgör om användaren får se raden, och det är den
+ * kontrollen som gör att rutten sedan får signera med service-role.
+ */
+export async function loadInfoFileSource(
+  client: SupabaseClient,
+  id: string,
+): Promise<InfoFileSource | null> {
+  const { data, error } = await client
+    .from('info_section_images')
+    .select('file_name, storage_bucket, storage_path, public_path')
+    .eq('id', id)
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  if (!data) return null;
+
+  const row = data as {
+    file_name: string;
+    storage_bucket: string | null;
+    storage_path: string | null;
+    public_path: string | null;
+  };
+  return {
+    fileName: row.file_name,
+    bucket: row.storage_bucket,
+    path: row.storage_path,
+    publicPath: row.public_path,
+  };
+}

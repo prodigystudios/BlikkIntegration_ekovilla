@@ -3,6 +3,7 @@ import {
   buildInfoImagePath,
   isInfoImagePath,
   resolveFileKind,
+  resolveUploadKind,
   sanitizeInfoImageName,
   toDownloadUrl,
 } from '@/lib/domains/info-page/storage';
@@ -51,6 +52,22 @@ describe('sanitizeInfoImageName', () => {
 
   it('faller tillbaka på ett namn när allt städats bort', () => {
     expect(sanitizeInfoImageName('   ')).toBe('bild');
+  });
+
+  it('kapar långa namn UTAN att äta ändelsen', () => {
+    // 🧨 Kapade den bort ".pdf" passerade filen vakten i steg ett (som ser filnamnet) och
+    // avvisades i steg två (som ser sökvägen) — efter att objektet redan låg i bucketen.
+    const long = `${'a'.repeat(200)}.pdf`;
+    const out = sanitizeInfoImageName(long);
+    expect(out.endsWith('.pdf')).toBe(true);
+    expect(out.length).toBe(120);
+    expect(resolveUploadKind(null, out)).toBe('pdf');
+  });
+
+  it('hittar inte på en ändelse när namnet saknar en', () => {
+    const out = sanitizeInfoImageName('b'.repeat(200));
+    expect(out.length).toBe(120);
+    expect(out.includes('.')).toBe(false);
   });
 });
 
@@ -103,5 +120,41 @@ describe('toDownloadUrl', () => {
 
   it('lämnar tomt orört', () => {
     expect(toDownloadUrl('')).toBe('');
+  });
+});
+
+describe('resolveUploadKind', () => {
+  it('släpper igenom när typ och ändelse pekar åt samma håll', () => {
+    expect(resolveUploadKind('application/pdf', 'Info/x/abc-lathund.pdf')).toBe('pdf');
+    expect(resolveUploadKind('image/png', 'Info/x/abc-bild.png')).toBe('image');
+  });
+
+  it('släpper igenom när webbläsaren inte kunde säga vad filen var', () => {
+    expect(resolveUploadKind(undefined, 'lathund.pdf')).toBe('pdf');
+    expect(resolveUploadKind('', 'bild.JPG')).toBe('image');
+    expect(resolveUploadKind('application/octet-stream', 'lathund.pdf')).toBe('pdf');
+  });
+
+  it('🧨 kastar en påhittad MIME-typ på en fil med farlig ändelse', () => {
+    // Fyndet: vakten frågade resolveFileKind, som svarar på MIME-typen FÖRST och därför
+    // aldrig nådde ändelsen. { fileName: 'x.html', contentType: 'image/png' } passerade båda
+    // stegen, och sökvägen vi reserverade slutade på .html — i en bucket vars SELECT-policy
+    // släpper igenom varje inloggad.
+    expect(resolveUploadKind('image/png', 'x.html')).toBe('other');
+    expect(resolveUploadKind('application/pdf', 'x.html')).toBe('other');
+    expect(resolveUploadKind('image/png', 'x.svg')).toBe('other');
+  });
+
+  it('kastar när typ och ändelse säger emot varandra', () => {
+    expect(resolveUploadKind('text/html', 'lathund.pdf')).toBe('other');
+    expect(resolveUploadKind('application/pdf', 'bild.png')).toBe('other');
+    expect(resolveUploadKind('image/svg+xml', 'bild.png')).toBe('other');
+  });
+
+  it('kräver en ändelse — till skillnad från visningen', () => {
+    expect(resolveUploadKind('application/pdf', 'Lathund')).toBe('other');
+    // Visningen är tillåtande: en rad som redan ligger i databasen ska renderas så bra som
+    // möjligt, och den frågan är inte samma som "får det här laddas upp".
+    expect(resolveFileKind('application/pdf', 'Lathund')).toBe('pdf');
   });
 });

@@ -7,7 +7,7 @@ import { crm } from '@/app/crm/lib/crmTokens';
 import { ADMIN_CARD, ADMIN_EMPTY_BOX, ADMIN_ERROR_BOX, ADMIN_INSET, ADMIN_LABEL, ADMIN_NOTICE_BOX } from '../components/adminUi';
 import AdminPromptDialog from '../components/AdminPromptDialog';
 import { normalizeBlocks, type Block } from '@/lib/domains/info-page/blocks';
-import { resolveFileKind } from '@/lib/domains/info-page/storage';
+import { resolveUploadKind } from '@/lib/domains/info-page/storage';
 import type { InfoGroup, InfoSection } from '@/lib/domains/info-page/queries';
 import BlockContent from '@/app/dokument-information/BlockContent';
 import { blocksToFragment, editorToBlocks } from './richText';
@@ -337,7 +337,7 @@ export default function AdminInfoSections() {
     // Servern gatar samma sak på båda stegen — den här kontrollen finns för svarstiden: en
     // avvisad fil ska säga varför direkt, inte efter en tur till API:et. accept-attributet
     // nedan räcker inte, filväljaren kan ställas om till "alla filer".
-    if (resolveFileKind(file.type, file.name) === 'other') {
+    if (resolveUploadKind(file.type, file.name) === 'other') {
       throw new Error('Bara bilder och PDF-filer kan läggas till här.');
     }
     setUploading(true);

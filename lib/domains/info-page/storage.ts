@@ -15,6 +15,9 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 
 const INFO_IMAGE_PREFIX = 'Info';
 
+// Tak för namndelen i storage-nyckeln. Ändelsen räknas in men kapas aldrig bort.
+const MAX_NAME_LENGTH = 120;
+
 // Samma korta livstid som dokumentbiblioteket, appärendena och arbetsorderfilerna. URL:en
 // passerar genom ett JSON-svar och hamnar i webbläsarhistorik och loggar.
 export const SIGNED_URL_TTL_SECONDS = 60 * 30;
@@ -34,7 +37,17 @@ export function sanitizeInfoImageName(name: string): string {
     .replace(/\.+\./g, '.')
     .replace(/[^\w.-]+/g, '_')
     .trim();
-  return cleaned.slice(0, 120) || 'bild';
+  if (!cleaned) return 'bild';
+  if (cleaned.length <= MAX_NAME_LENGTH) return cleaned;
+
+  // 🧨 Kapningen får ALDRIG äta ändelsen. Den är det enda läsvägen har att gå på när
+  // content_type är null, och uppladdningsvakten kräver att den finns. Ett filnamn på 130
+  // tecken hade annars laddats upp (vakten såg filnamnet, med ändelse) och SEDAN avvisats vid
+  // registreringen (vakten ser sökvägen, utan ändelse) — med ett övergivet objekt i bucketen
+  // och ett felmeddelande som pekar åt fel håll.
+  const dot = cleaned.lastIndexOf('.');
+  const ext = dot > 0 && cleaned.length - dot <= 12 ? cleaned.slice(dot) : '';
+  return cleaned.slice(0, MAX_NAME_LENGTH - ext.length) + ext;
 }
 
 // Sökvägen bär sektionen: Info/<section_id>/<uuid>-<sanerat namn>. Att den är gissningsbar
@@ -77,31 +90,82 @@ function extensionOf(nameOrPath: string | null | undefined): string {
 }
 
 /**
- * Bild, pdf eller något vi inte tänker visa?
+ * Vad MIME-typen säger. `null` betyder "ingen åsikt" — utelämnad eller okänd typ — och är
+ * något helt annat än 'other', som är ett uttryckligt nej.
+ */
+// "Vi vet inte vad det här är." Det är vad en webbläsare svarar för en fil som valts ur ett
+// moln-lager i stället för ur filsystemet — inte ett påstående om innehållet.
+const GENERIC_CONTENT_TYPES = new Set(['application/octet-stream', 'binary/octet-stream']);
+
+function kindFromContentType(contentType: string | null | undefined): InfoFileKind | null {
+  const type = String(contentType || '').trim().toLowerCase().split(';')[0].trim();
+  // Ingen uppgift alls, eller en uttrycklig icke-uppgift: ändelsen får avgöra.
+  if (!type || GENERIC_CONTENT_TYPES.has(type)) return null;
+
+  if (type === 'application/pdf') return 'pdf';
+  // svg är ett skriptdokument, inte en bild.
+  if (type === 'image/svg+xml') return 'other';
+  if (type.startsWith('image/')) return 'image';
+
+  // 🧨 En DEKLARERAD typ som inte är en vi visar är ett nej, inte ett "vet inte". Skillnaden
+  // är hela vakten: behandlades text/html som "vet inte" räckte det att döpa filen till
+  // .pdf för att ta sig förbi.
+  return 'other';
+}
+
+function kindFromExtension(nameOrPath: string | null | undefined): InfoFileKind {
+  const ext = extensionOf(nameOrPath);
+  if (ext === 'pdf') return 'pdf';
+  if (IMAGE_EXTENSIONS.has(ext)) return 'image';
+  return 'other';
+}
+
+/**
+ * Hur ska raden VISAS? Tillåtande med flit.
  *
- * MIME-typen först, filändelsen som skyddsnät. Båda behövs:
- *   - content_type är null på varje rad som skrevs före 2026-08-21 och på de seedade, och en
- *     webbläsare skickar ibland tom typ eller application/octet-stream för en fil som valts
- *     ur ett moln-lager i stället för ur filsystemet.
- *   - ändelsen ensam är en gissning som en döpt fil kan ljuga om.
- *
- * Används på BÅDA sidorna av gränsen: uppladdningen släpper bara igenom det som inte blir
- * 'other', och läsvägen väljer renderare på samma svar. Att det är en och samma funktion är
- * poängen — annars kan en fil bli uppladdningsbar men orenderbar.
+ * Läsvägen tar emot det som redan ligger i databasen och ska välja bästa renderare för det —
+ * inklusive rader som skrevs före content_type-kolumnen fanns, rader vars filnamn saknar
+ * ändelse (de seedade heter "Lathund Isolering") och rader som handredigerats i Supabase-
+ * editorn. Den frågan är INTE samma sak som "får det här laddas upp"; se resolveUploadKind.
  */
 export function resolveFileKind(
   contentType: string | null | undefined,
   nameOrPath: string | null | undefined,
 ): InfoFileKind {
-  const type = String(contentType || '').trim().toLowerCase().split(';')[0].trim();
+  const byType = kindFromContentType(contentType);
+  if (byType && byType !== 'other') return byType;
+  if (byType === 'other') return 'other';
+  return kindFromExtension(nameOrPath);
+}
 
-  if (type === 'application/pdf') return 'pdf';
-  if (type.startsWith('image/') && type !== 'image/svg+xml') return 'image';
+/**
+ * Får filen laddas upp? Strikt med flit.
+ *
+ * 🧨 Vakten fick först fråga resolveFileKind, och det var fel: den svarar på MIME-typen FÖRST
+ * och når aldrig ändelsen. En klient som skickade { fileName: "x.html", contentType:
+ * "image/png" } passerade alltså båda stegen, och sökvägen vi reserverade slutade på .html —
+ * i en bucket vars SELECT-policy släpper igenom varje inloggad.
+ *
+ * Därför krävs här att BÅDA pekar åt samma håll: ändelsen måste vara en vi känner igen, och
+ * en MIME-typ som säger något annat än ändelsen gör att filen avvisas — då ljuger en av dem
+ * och vi vet inte vilken. Resultatet är alltid en delmängd av vad resolveFileKind kan visa,
+ * så det som får laddas upp går alltid att rendera.
+ *
+ * ⚠️ Vad vakten INTE kan: den ser bara det klienten PÅSTÅR. Själva bytesen läggs direkt i
+ * storage med en signerad uppladdning, och vilken content-type objektet faktiskt serveras med
+ * bestäms där. Vakten krymper ytan, den stänger den inte — det förutsätter att bara admin når
+ * hit, vilket rutterna ser till.
+ */
+export function resolveUploadKind(
+  contentType: string | null | undefined,
+  nameOrPath: string | null | undefined,
+): InfoFileKind {
+  const byExtension = kindFromExtension(nameOrPath);
+  if (byExtension === 'other') return 'other';
 
-  const ext = extensionOf(nameOrPath);
-  if (ext === 'pdf') return 'pdf';
-  if (IMAGE_EXTENSIONS.has(ext)) return 'image';
-  return 'other';
+  const byType = kindFromContentType(contentType);
+  if (byType !== null && byType !== byExtension) return 'other';
+  return byExtension;
 }
 
 /**

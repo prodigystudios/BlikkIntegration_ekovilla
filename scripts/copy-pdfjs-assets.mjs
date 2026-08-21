@@ -1,4 +1,15 @@
-// Kopierar pdf.js-workern till public/ så webbläsaren kan hämta den vid körning.
+// Kopierar pdf.js runtime-tillgångar till public/ så webbläsaren kan hämta dem vid körning.
+//
+// Fyra saker, inte bara workern:
+//   pdf.worker.min.js  sjalva renderingsmotorn
+//   cmaps/             teckenuppslag for pdf:er med fordefinierade CMap:ar
+//   standard_fonts/    de 14 standardtypsnitten, for pdf:er som inte bäddat in sina
+//   wasm/              avkodare for JBIG2/CCITT/JPEG2000 - alltsa SCANNADE dokument
+//   iccs/              fargprofiler
+//
+// 🧨 De tre sista är inte valfria. pdf.js KASTAR - varnar inte - med "Ensure that the
+// `cMapUrl` API parameter is provided" så fort ett dokument behöver något av dem, och en
+// inscannad lathund gör det. Utan dem faller hela visningen ned i sin felruta.
 //
 // 🧨 WORKERN FÅR INTE GÅ GENOM BUNDLERN. Det självklara receptet — `new URL(
 // 'pdfjs-dist/legacy/build/pdf.worker.min.mjs', import.meta.url)` — får Next att skicka filen
@@ -16,17 +27,24 @@
 // version vid nästa uppdatering av pdfjs-dist, och pdf.js kastar då mitt i renderingen med
 // "The API version does not match the Worker version".
 
-import { copyFile, mkdir } from 'node:fs/promises';
+import { copyFile, cp, mkdir } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 
 const require = createRequire(import.meta.url);
 
 const packageRoot = path.dirname(require.resolve('pdfjs-dist/package.json'));
-const source = path.join(packageRoot, 'legacy', 'build', 'pdf.worker.min.mjs');
 const targetDir = path.join(process.cwd(), 'public', 'pdfjs');
-const target = path.join(targetDir, 'pdf.worker.min.js');
 
 await mkdir(targetDir, { recursive: true });
-await copyFile(source, target);
-console.log(`[pdfjs] worker kopierad till ${path.relative(process.cwd(), target)}`);
+
+await copyFile(
+  path.join(packageRoot, 'legacy', 'build', 'pdf.worker.min.mjs'),
+  path.join(targetDir, 'pdf.worker.min.js'),
+);
+
+for (const dir of ['cmaps', 'standard_fonts', 'wasm', 'iccs']) {
+  await cp(path.join(packageRoot, dir), path.join(targetDir, dir), { recursive: true });
+}
+
+console.log(`[pdfjs] tillgangar kopierade till ${path.relative(process.cwd(), targetDir)}`);
