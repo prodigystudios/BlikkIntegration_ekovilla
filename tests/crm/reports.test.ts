@@ -8,22 +8,26 @@ import {
   buildFunnel,
   buildPerCustomer,
   composeSalesReport,
+  netAmount,
   type ReportQuoteRow,
   type ReportOrderRow,
   type ReportCallRow,
   type ReportSellerRow,
 } from '@/lib/domains/crm/reports';
 
+// `vat_percent: 0` genomgående: fixturerna nedan prövar perioder, buckets och partitionering,
+// och ett belopp som är sitt eget netto låter de förväntningarna handla om just det. Momsbasen
+// har egna tester längst ned i filen.
 const quotes: ReportQuoteRow[] = [
-  { amount: 1000, status: 'won', quote_date: '2026-01-15', assigned_to: 'u1', customer_name: 'Kund A' },
-  { amount: '2000', status: 'sent', quote_date: '2026-01-20', assigned_to: 'u2', customer_name: 'Kund B' },
-  { amount: 500, status: 'lost', quote_date: '2026-02-03', assigned_to: 'u1', customer_name: 'Kund A' },
+  { vat_percent: 0, amount: 1000, status: 'won', quote_date: '2026-01-15', assigned_to: 'u1', customer_name: 'Kund A' },
+  { vat_percent: 0, amount: '2000', status: 'sent', quote_date: '2026-01-20', assigned_to: 'u2', customer_name: 'Kund B' },
+  { vat_percent: 0, amount: 500, status: 'lost', quote_date: '2026-02-03', assigned_to: 'u1', customer_name: 'Kund A' },
 ];
 
 const orders: ReportOrderRow[] = [
-  { amount: 1000, status: 'invoiced', created_at: '2026-01-18T10:00:00Z', fortnox_invoiced_at: null, assigned_to: 'u1', client_name: 'Kund A' },
-  { amount: 3000, status: 'in_progress', created_at: '2026-02-10T10:00:00Z', fortnox_invoiced_at: null, assigned_to: 'u2', client_name: 'Kund B' },
-  { amount: 1500, status: 'invoiced', created_at: '2026-02-12T10:00:00Z', fortnox_invoiced_at: null, assigned_to: 'u1', client_name: 'Kund A' },
+  { vat_percent: 0, amount: 1000, status: 'invoiced', created_at: '2026-01-18T10:00:00Z', fortnox_invoiced_at: null, assigned_to: 'u1', client_name: 'Kund A' },
+  { vat_percent: 0, amount: 3000, status: 'in_progress', created_at: '2026-02-10T10:00:00Z', fortnox_invoiced_at: null, assigned_to: 'u2', client_name: 'Kund B' },
+  { vat_percent: 0, amount: 1500, status: 'invoiced', created_at: '2026-02-12T10:00:00Z', fortnox_invoiced_at: null, assigned_to: 'u1', client_name: 'Kund A' },
 ];
 
 const calls: ReportCallRow[] = [
@@ -65,7 +69,7 @@ describe('buildSalesOverTime', () => {
   // invoiced value (its order value still belongs to January).
   it('buckets invoiced value by fortnox_invoiced_at, not created_at', () => {
     const crossMonth: ReportOrderRow[] = [
-      { amount: 2000, status: 'invoiced', created_at: '2026-01-30T10:00:00Z', fortnox_invoiced_at: '2026-02-04T08:00:00Z', assigned_to: 'u1', client_name: 'Kund A' },
+      { vat_percent: 0, amount: 2000, status: 'invoiced', created_at: '2026-01-30T10:00:00Z', fortnox_invoiced_at: '2026-02-04T08:00:00Z', assigned_to: 'u1', client_name: 'Kund A' },
     ];
     const crossSplit = partitionOrders(crossMonth, RANGE);
     const result = buildSalesOverTime([], crossSplit.created, crossSplit.invoiced, ['2026-01', '2026-02']);
@@ -110,7 +114,7 @@ describe('buildPerCustomer', () => {
     expect(rows[1]).toEqual({ customer: 'Kund B', orderValue: 3000, invoicedValue: 0, orderCount: 1 });
   });
   it('falls back to a placeholder for missing client names', () => {
-    const rows = buildPerCustomer([{ amount: 100, status: 'draft', created_at: '2026-01-01T00:00:00Z', fortnox_invoiced_at: null, assigned_to: null, client_name: null }], []);
+    const rows = buildPerCustomer([{ vat_percent: 0, amount: 100, status: 'draft', created_at: '2026-01-01T00:00:00Z', fortnox_invoiced_at: null, assigned_to: null, client_name: null }], []);
     expect(rows[0].customer).toBe('Okänd kund');
   });
 });
@@ -136,11 +140,11 @@ describe('orders billed in-range but created earlier', () => {
   const FEB = { from: '2026-02-01', to: '2026-02-28' };
   // Won in January for 9000, billed in February — only the invoice lands in February.
   const earlierOrder: ReportOrderRow = {
-    amount: 9000, status: 'invoiced', created_at: '2026-01-05T10:00:00Z',
+    vat_percent: 0, amount: 9000, status: 'invoiced', created_at: '2026-01-05T10:00:00Z',
     fortnox_invoiced_at: '2026-02-09T08:00:00Z', assigned_to: 'u1', client_name: 'Kund C',
   };
   const febOrder: ReportOrderRow = {
-    amount: 1000, status: 'in_progress', created_at: '2026-02-03T10:00:00Z',
+    vat_percent: 0, amount: 1000, status: 'in_progress', created_at: '2026-02-03T10:00:00Z',
     fortnox_invoiced_at: null, assigned_to: 'u2', client_name: 'Kund D',
   };
   const febSplit = partitionOrders([earlierOrder, febOrder], FEB);
@@ -178,7 +182,7 @@ describe('orders billed in-range but created earlier', () => {
   // leaving the per-customer table and CSV short of what the chart above them shows.
   it('keeps a big invoice-only customer inside the top list instead of truncating it', () => {
     const tenOrderingCustomers: ReportOrderRow[] = Array.from({ length: 10 }, (_, i) => ({
-      amount: 1000, status: 'in_progress', created_at: '2026-02-05T10:00:00Z',
+      vat_percent: 0, amount: 1000, status: 'in_progress', created_at: '2026-02-05T10:00:00Z',
       fortnox_invoiced_at: null, assigned_to: null, client_name: `Kund ${i}`,
     }));
     const rows = buildPerCustomer(tenOrderingCustomers, [earlierOrder]);
@@ -238,8 +242,8 @@ describe('partitionOrders', () => {
 
   it('includes both ends of the range inclusively', () => {
     const edges: ReportOrderRow[] = [
-      { amount: 1, status: 'invoiced', created_at: '2026-01-01T00:00:00Z', fortnox_invoiced_at: null, assigned_to: null, client_name: null },
-      { amount: 2, status: 'invoiced', created_at: '2026-01-31T23:59:00Z', fortnox_invoiced_at: null, assigned_to: null, client_name: null },
+      { vat_percent: 0, amount: 1, status: 'invoiced', created_at: '2026-01-01T00:00:00Z', fortnox_invoiced_at: null, assigned_to: null, client_name: null },
+      { vat_percent: 0, amount: 2, status: 'invoiced', created_at: '2026-01-31T23:59:00Z', fortnox_invoiced_at: null, assigned_to: null, client_name: null },
     ];
     const result = partitionOrders(edges, RANGE_JAN);
     expect(result.created).toHaveLength(2);
@@ -254,5 +258,165 @@ describe('partitionOrders', () => {
     const result = partitionOrders([outside], RANGE_JAN);
     expect(result.created).toEqual([]);
     expect(result.invoiced).toEqual([]);
+  });
+});
+
+
+// ── Momsbas ────────────────────────────────────────────────────────────────────
+//
+// `amount` är bruttot (subtotal + moms). Rapporten redovisar netto, annars adderas en
+// byggmomsorder (0 %) och en privatkundsorder (25 %) som om de vore samma sorts kronor.
+
+describe('netAmount', () => {
+  it('läser nettot ur pricing_summary när det finns', () => {
+    expect(netAmount({ amount: 1250, vat_percent: 25, pricing_summary: { subtotal: 1000 } })).toBe(1000);
+  });
+
+  it('litar på pricing_summary framför en härledning ur momssatsen', () => {
+    // Fälten är oense: subtotal vinner, för det är talet som faktiskt räknades fram vid sparning.
+    expect(netAmount({ amount: 1250, vat_percent: 0, pricing_summary: { subtotal: 1000 } })).toBe(1000);
+  });
+
+  it('accepterar subtotal som sträng', () => {
+    expect(netAmount({ amount: '1250', pricing_summary: { subtotal: '1000' } })).toBe(1000);
+  });
+
+  it('behandlar 0 som ett riktigt netto och inte som saknat', () => {
+    expect(netAmount({ amount: 1250, vat_percent: 25, pricing_summary: { subtotal: 0 } })).toBe(0);
+  });
+
+  it('räknar fram nettot ur amount och vat_percent när pricing_summary saknas', () => {
+    expect(netAmount({ amount: 1250, vat_percent: 25, pricing_summary: null })).toBe(1000);
+    expect(netAmount({ amount: 1250, vat_percent: 25 })).toBe(1000);
+  });
+
+  it('lämnar en byggmomsrad (omvänd skattskyldighet) orörd', () => {
+    expect(netAmount({ amount: 1000, vat_percent: 0, pricing_summary: null })).toBe(1000);
+  });
+
+  it('antar samma momssats som computePricing när vat_percent saknas', () => {
+    expect(netAmount({ amount: 1250, pricing_summary: null })).toBe(1000);
+    expect(netAmount({ amount: 1250, vat_percent: null, pricing_summary: null })).toBe(1000);
+  });
+
+  it('ger bruttot tillbaka i stället för att blåsa upp det på en orimlig momssats', () => {
+    expect(netAmount({ amount: 1000, vat_percent: -10, pricing_summary: null })).toBe(1000);
+  });
+});
+
+describe('rapporten redovisar ex moms', () => {
+  // En privatkundsorder (25 %) och en byggmomsorder (0 %) med SAMMA nettovärde. Före den här
+  // fixen räknades den första som 25 % större bara för att momsen låg i fältet.
+  const privat: ReportOrderRow = {
+    amount: 125000, vat_percent: 25, pricing_summary: { subtotal: 100000 },
+    status: 'invoiced', created_at: '2026-03-04T10:00:00Z', fortnox_invoiced_at: '2026-03-20T10:00:00Z',
+    assigned_to: 'u1', client_name: 'Privatkund',
+  };
+  const byggmoms: ReportOrderRow = {
+    amount: 100000, vat_percent: 0, pricing_summary: { subtotal: 100000 },
+    status: 'invoiced', created_at: '2026-03-05T10:00:00Z', fortnox_invoiced_at: '2026-03-21T10:00:00Z',
+    assigned_to: 'u2', client_name: 'Byggbolaget',
+  };
+  const momsQuotes: ReportQuoteRow[] = [
+    { amount: 125000, vat_percent: 25, pricing_summary: { subtotal: 100000 }, status: 'won', quote_date: '2026-03-01', assigned_to: 'u1', customer_name: 'Privatkund' },
+    { amount: 100000, vat_percent: 0, pricing_summary: { subtotal: 100000 }, status: 'won', quote_date: '2026-03-02', assigned_to: 'u2', customer_name: 'Byggbolaget' },
+  ];
+  const momsRange = { from: '2026-03-01', to: '2026-03-31' };
+  const momsSplit = partitionOrders([privat, byggmoms], momsRange);
+
+  it('summerar månadsvärdena netto', () => {
+    const [march] = buildSalesOverTime(momsQuotes, momsSplit.created, momsSplit.invoiced, ['2026-03']);
+    expect(march.quoteValue).toBe(200000);
+    expect(march.orderValue).toBe(200000);
+    expect(march.invoicedValue).toBe(200000);
+  });
+
+  it('rankar två säljare med samma netto lika, oavsett kundens momsläge', () => {
+    const rows = buildPerSeller(momsQuotes, momsSplit.created, momsSplit.invoiced, [], [
+      { id: 'u1', full_name: 'Anna' }, { id: 'u2', full_name: 'Björn' },
+    ]);
+    const anna = rows.find((r) => r.userId === 'u1')!;
+    const bjorn = rows.find((r) => r.userId === 'u2')!;
+    expect(anna.orderValue).toBe(bjorn.orderValue);
+    expect(anna.quoteValue).toBe(bjorn.quoteValue);
+    expect(anna.wonValue).toBe(bjorn.wonValue);
+    expect(anna.invoicedValue).toBe(bjorn.invoicedValue);
+    expect(anna.orderValue).toBe(100000);
+  });
+
+  it('håller tratten netto i varje steg', () => {
+    const funnel = buildFunnel(momsQuotes, momsSplit.created);
+    expect(funnel.quotes.value).toBe(200000);
+    expect(funnel.won.value).toBe(200000);
+    expect(funnel.orders.value).toBe(200000);
+    expect(funnel.invoiced.value).toBe(200000);
+  });
+
+  it('håller kundtabellen netto', () => {
+    const rows = buildPerCustomer(momsSplit.created, momsSplit.invoiced);
+    const p = rows.find((r) => r.customer === 'Privatkund')!;
+    const b = rows.find((r) => r.customer === 'Byggbolaget')!;
+    expect(p.orderValue).toBe(100000);
+    expect(p.invoicedValue).toBe(100000);
+    expect(b.orderValue).toBe(100000);
+    expect(b.invoicedValue).toBe(100000);
+  });
+});
+
+
+// ── Avbrutna order ─────────────────────────────────────────────────────────────
+//
+// En avbruten order är inte omsättning. Den räknades tidigare med i ordervärdet, i antalet
+// order och i trattens ordersteg — mätt i drift 2026-08-21 var det 18 710 kr ex moms.
+
+describe('avbrutna order räknas inte som omsättning', () => {
+  const RANGE = { from: '2026-04-01', to: '2026-04-30' };
+  const levande: ReportOrderRow = {
+    vat_percent: 0, amount: 5000, status: 'scheduled', created_at: '2026-04-10T10:00:00Z',
+    fortnox_invoiced_at: null, assigned_to: 'u1', client_name: 'Kund A',
+  };
+  const avbruten: ReportOrderRow = {
+    vat_percent: 0, amount: 2000, status: 'cancelled', created_at: '2026-04-11T10:00:00Z',
+    fortnox_invoiced_at: null, assigned_to: 'u1', client_name: 'Kund B',
+  };
+  const split = partitionOrders([levande, avbruten], RANGE);
+
+  it('plockas bort redan i partitioneringen', () => {
+    expect(split.created).toEqual([levande]);
+  });
+
+  it('syns inte i ordervärdet över tid', () => {
+    const [april] = buildSalesOverTime([], split.created, split.invoiced, ['2026-04']);
+    expect(april.orderValue).toBe(5000);
+  });
+
+  it('räknas varken som värde eller antal hos säljaren', () => {
+    const rows = buildPerSeller([], split.created, split.invoiced, [], [{ id: 'u1', full_name: 'Anna' }]);
+    expect(rows[0]).toMatchObject({ orders: 1, orderValue: 5000 });
+  });
+
+  it('är inte ett steg i tratten', () => {
+    expect(buildFunnel([], split.created).orders).toEqual({ count: 1, value: 5000 });
+  });
+
+  it('försvinner ur kundtabellen i stället för att stå där med ett värde', () => {
+    const rows = buildPerCustomer(split.created, split.invoiced);
+    expect(rows.map((r) => r.customer)).toEqual(['Kund A']);
+  });
+
+  it('överlever hela kompositionen', () => {
+    const report = composeSalesReport({ quotes: [], orders: [levande, avbruten], calls: [], sellers: [] }, RANGE);
+    expect(report.salesOverTime[0].orderValue).toBe(5000);
+    expect(report.funnel.orders.count).toBe(1);
+    expect(report.perCustomer).toHaveLength(1);
+  });
+
+  it('rör inte de levande statusarna', () => {
+    const alla: ReportOrderRow[] = (['draft','scheduled','ready','in_progress','completed','partially_invoiced','invoiced'] as const)
+      .map((status, i) => ({
+        vat_percent: 0, amount: 100, status, created_at: `2026-04-0${i + 1}T10:00:00Z`,
+        fortnox_invoiced_at: null, assigned_to: null, client_name: `Kund ${i}`,
+      }));
+    expect(partitionOrders(alla, RANGE).created).toHaveLength(7);
   });
 });

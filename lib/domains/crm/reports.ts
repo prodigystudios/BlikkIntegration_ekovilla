@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { isDeadWorkOrder } from './work-orders';
 
 // Sales reporting domain. The pure aggregation helpers (build*) take plain rows and
 // return report-ready shapes so they can be unit-tested in isolation; fetchReportData
@@ -8,16 +9,24 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 
 export type ReportRange = { from: string; to: string }; // YYYY-MM-DD, inclusive
 
-export type ReportQuoteRow = {
+/** Den lagrade prissammanställningen. Bara nettot läses här — resten av fälten är ointressanta för rapporten. */
+export type ReportPricingSummary = { subtotal?: number | string | null } | null;
+
+/** Det en rad behöver bära för att kunna redovisas ex moms. */
+export type NetAmountRow = {
   amount: number | string | null;
+  vat_percent?: number | string | null;
+  pricing_summary?: ReportPricingSummary;
+};
+
+export type ReportQuoteRow = NetAmountRow & {
   status: string | null;
   quote_date: string | null;
   assigned_to: string | null;
   customer_name: string | null;
 };
 
-export type ReportOrderRow = {
-  amount: number | string | null;
+export type ReportOrderRow = NetAmountRow & {
   status: string | null;
   created_at: string;
   fortnox_invoiced_at: string | null;
@@ -39,6 +48,45 @@ export type ReportData = {
 function num(value: unknown): number {
   const n = typeof value === 'number' ? value : Number(String(value ?? ''));
   return Number.isFinite(n) ? n : 0;
+}
+
+// ── Momsbas: rapporten redovisar ALLTID ex moms ──
+//
+// `amount` på offerten och arbetsordern är `computePricing(...).total`, alltså subtotal + moms.
+// Att summera det fältet blandade två olika sorters kronor i samma stapel: en byggmomsorder
+// (omvänd skattskyldighet, vat_percent = 0) räknades ex moms medan en privatkundsorder räknades
+// inkl 25 %. Mätt 2026-08-21 över de senaste 12 månaderna blåste det upp offertvärdet med
+// 924 432 kr av 6 130 106 kr (+17,8 %) och ordervärdet med 263 814 kr av 1 723 702 kr (+18,1 %) —
+// och eftersom påslaget bara träffade de momspliktiga raderna fick en säljare som sålde till
+// privatkunder 25 % gratis mot en som sålde till byggföretag. Topplistan rankade alltså på
+// kundmix, inte på prestation.
+//
+// Moms är inte försäljning, den är uppburen åt staten. Varje krontal i rapporten ska vara netto.
+
+/** Momssatsen `computePricing` antar när fältet saknas — samma default som räknade fram `amount`. */
+const DEFAULT_VAT_PERCENT = 25;
+
+/**
+ * Radens belopp EXKLUSIVE moms.
+ *
+ * `pricing_summary.subtotal` är nettot som faktiskt räknades fram när raden sparades och är därför
+ * förstahandskällan — verifierat 2026-08-21: `subtotal + vat === amount` på var och en av de 117
+ * offert- och 52 orderraderna. Saknas den (en enda orderrad idag, med amount 0) räknas nettot fram
+ * ur `amount` och `vat_percent`, vilket gav exakt samma svar på samtliga rader vid samma mätning.
+ *
+ * Härledningen använder samma default som `computePricing` — det var den momssatsen som skapade
+ * `amount` från början, så det är den som vänder talet rätt igen.
+ */
+export function netAmount(row: NetAmountRow): number {
+  const subtotal = row.pricing_summary?.subtotal;
+  if (subtotal != null && String(subtotal).trim() !== '') return num(subtotal);
+
+  const vatPercent = row.vat_percent != null && String(row.vat_percent).trim() !== ''
+    ? num(row.vat_percent)
+    : DEFAULT_VAT_PERCENT;
+  // En negativ eller orimlig momssats får aldrig blåsa upp talet; då är bruttot det ärligaste svaret.
+  if (!(vatPercent > 0)) return num(row.amount);
+  return num(row.amount) / (1 + vatPercent / 100);
 }
 
 function monthKey(date: string | null | undefined): string | null {
@@ -86,7 +134,7 @@ function withinRange(timestamp: string | null | undefined, range: ReportRange): 
 }
 
 export type PartitionedOrders = {
-  /** Orders created inside the range — the basis for order value and the conversion funnel. */
+  /** Orders created inside the range, minus the cancelled ones — the basis for order value and the conversion funnel. */
   created: ReportOrderRow[];
   /** Orders billed inside the range, whenever they were created — the basis for invoiced revenue. */
   invoiced: ReportOrderRow[];
@@ -94,7 +142,13 @@ export type PartitionedOrders = {
 
 export function partitionOrders(orders: ReportOrderRow[], range: ReportRange): PartitionedOrders {
   return {
-    created: orders.filter((o) => withinRange(o.created_at, range)),
+    // Avbrutna order faller bort här och inte i varje aggregat: en order som aldrig blev av är
+    // ingen omsättning, och då ska den inte synas som ordervärde, som ett antal order eller som
+    // ett steg i tratten. Ett enda ställe att hålla rätt på i stället för fyra.
+    created: orders.filter((o) => !isDeadWorkOrder(o.status) && withinRange(o.created_at, range)),
+    // Ingen motsvarande vakt behövs här: status kan inte vara både 'invoiced' och 'cancelled'.
+    // En order som fakturerats och SEDAN avbrutits faller alltså ur fakturerat helt — rätt så
+    // länge en avbeställning krediteras, och det finns ingen sådan rad i drift (mätt 2026-08-21).
     invoiced: orders.filter((o) => o.status === 'invoiced' && withinRange(invoicedAt(o), range)),
   };
 }
@@ -115,11 +169,11 @@ export function buildSalesOverTime(
 
   for (const q of quotes) {
     const key = monthKey(q.quote_date);
-    if (key) quoteByMonth.set(key, (quoteByMonth.get(key) || 0) + num(q.amount));
+    if (key) quoteByMonth.set(key, (quoteByMonth.get(key) || 0) + netAmount(q));
   }
   for (const o of ordersCreated) {
     const key = monthKey(o.created_at);
-    if (key) orderByMonth.set(key, (orderByMonth.get(key) || 0) + num(o.amount));
+    if (key) orderByMonth.set(key, (orderByMonth.get(key) || 0) + netAmount(o));
   }
   // Invoiced revenue belongs to the month it was INVOICED, not when the order was created.
   //
@@ -130,7 +184,7 @@ export function buildSalesOverTime(
   // intentionally not wired in yet. `orderValue` is status-agnostic and unaffected.
   for (const o of ordersInvoiced) {
     const key = monthKey(invoicedAt(o));
-    if (key) invoicedByMonth.set(key, (invoicedByMonth.get(key) || 0) + num(o.amount));
+    if (key) invoicedByMonth.set(key, (invoicedByMonth.get(key) || 0) + netAmount(o));
   }
 
   return months.map((period) => ({
@@ -181,8 +235,8 @@ export function buildPerSeller(
     if (!q.assigned_to) continue;
     const row = ensure(q.assigned_to);
     row.quotes += 1;
-    row.quoteValue += num(q.amount);
-    if (q.status === 'won') row.wonValue += num(q.amount);
+    row.quoteValue += netAmount(q);
+    if (q.status === 'won') row.wonValue += netAmount(q);
   }
   // A seller can show invoiced revenue this period from an order won in an earlier one —
   // that is the point of the split, not a bug.
@@ -190,11 +244,11 @@ export function buildPerSeller(
     if (!o.assigned_to) continue;
     const row = ensure(o.assigned_to);
     row.orders += 1;
-    row.orderValue += num(o.amount);
+    row.orderValue += netAmount(o);
   }
   for (const o of ordersInvoiced) {
     if (!o.assigned_to) continue;
-    ensure(o.assigned_to).invoicedValue += num(o.amount);
+    ensure(o.assigned_to).invoicedValue += netAmount(o);
   }
 
   return [...acc.values()].sort((a, b) => b.orderValue - a.orderValue || b.quoteValue - a.quoteValue || a.userName.localeCompare(b.userName, 'sv'));
@@ -214,7 +268,7 @@ export type SalesFunnel = { quotes: FunnelStage; won: FunnelStage; orders: Funne
 export function buildFunnel(quotes: ReportQuoteRow[], ordersCreated: ReportOrderRow[]): SalesFunnel {
   const won = quotes.filter((q) => q.status === 'won');
   const invoiced = ordersCreated.filter((o) => o.status === 'invoiced');
-  const sum = (rows: Array<{ amount: number | string | null }>) => rows.reduce((t, r) => t + num(r.amount), 0);
+  const sum = (rows: NetAmountRow[]) => rows.reduce((t, r) => t + netAmount(r), 0);
   return {
     quotes: { count: quotes.length, value: sum(quotes) },
     won: { count: won.length, value: sum(won) },
@@ -243,13 +297,13 @@ export function buildPerCustomer(
 
   for (const o of ordersCreated) {
     const row = ensure(o);
-    row.orderValue += num(o.amount);
+    row.orderValue += netAmount(o);
     row.orderCount += 1;
   }
   // A customer billed this period whose order was placed in an earlier one lands here with
   // no order value of its own. Truthful: the money moved this period, the order did not.
   for (const o of ordersInvoiced) {
-    ensure(o).invoicedValue += num(o.amount);
+    ensure(o).invoicedValue += netAmount(o);
   }
 
   // Ranked on total activity, not order value alone: a customer billed 330 480 kr this
@@ -283,15 +337,19 @@ export function composeSalesReport(data: ReportData, range: ReportRange): SalesR
 }
 
 // ── Fetch (admin client; team-wide read model) ──
+//
+// `vat_percent` och `pricing_summary` hämtas för att varje belopp ska kunna redovisas ex moms —
+// se netAmount. Utan dem faller nettot tillbaka på en antagen momssats, vilket bara är en
+// nödutgång och inte den väg någon rad ska ta.
 export async function fetchReportData(admin: SupabaseClient, range: ReportRange): Promise<ReportData> {
   const toEnd = `${range.to}T23:59:59.999Z`;
   const [quotesRes, ordersRes, callsRes, sellersRes] = await Promise.all([
-    admin.from('crm_quotes').select('amount, status, quote_date, assigned_to, customer_name').gte('quote_date', range.from).lte('quote_date', range.to),
+    admin.from('crm_quotes').select('amount, vat_percent, pricing_summary, status, quote_date, assigned_to, customer_name').gte('quote_date', range.from).lte('quote_date', range.to),
     // Superset: created in range OR billed in range. Filtering on created_at alone dropped
     // revenue from every order billed later than the period it was won in — see
     // partitionOrders. The rows are split back apart there.
     admin.from('crm_work_orders')
-      .select('amount, status, created_at, fortnox_invoiced_at, assigned_to, client_name')
+      .select('amount, vat_percent, pricing_summary, status, created_at, fortnox_invoiced_at, assigned_to, client_name')
       .or(`and(created_at.gte.${range.from},created_at.lte.${toEnd}),and(fortnox_invoiced_at.gte.${range.from},fortnox_invoiced_at.lte.${toEnd})`),
     admin.from('crm_calls').select('user_id, call_at').gte('call_at', range.from).lte('call_at', toEnd),
     admin.from('profiles').select('id, full_name, role').in('role', ['sales', 'admin', 'konsult']),

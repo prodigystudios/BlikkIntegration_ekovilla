@@ -81,6 +81,24 @@ export const crmWorkOrderCommentSelect = `
 
 export type CrmWorkOrderStatus = 'draft' | 'scheduled' | 'ready' | 'in_progress' | 'completed' | 'partially_invoiced' | 'invoiced' | 'cancelled';
 
+/**
+ * Statusar som betyder att ordern aldrig blev av. En avbruten order är inte omsättning — den ska
+ * inte räknas som ordervärde, som ett antal order eller som ett steg i konverteringen.
+ *
+ * Bor här hos vokabulären i stället för hos rapporten, så att en framtida status i samma anda
+ * (avbeställd, makulerad) har ett självklart ställe att läggas till på och slår igenom överallt.
+ *
+ * Läses AVSIKTLIGT inte som "det som saknas i BOARD_FILTER_STATUSES". `cancelled` ligger utanför
+ * brädans grupper idag, men den dagen någon lägger till en Avbrutna-flik hade en sådan härledning
+ * tyst börjat räkna avbrutna order som omsättning igen.
+ */
+export const DEAD_WORK_ORDER_STATUSES: CrmWorkOrderStatus[] = ['cancelled'];
+
+/** Blev ordern aldrig av? */
+export function isDeadWorkOrder(status: string | null | undefined): boolean {
+  return DEAD_WORK_ORDER_STATUSES.includes(status as CrmWorkOrderStatus);
+}
+
 type WorkOrderAddress = {
   street_address?: string | null;
   postal_code?: string | null;

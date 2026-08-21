@@ -197,7 +197,7 @@ export default function ReportsClient() {
       <div className="grid gap-3">
         <div>
           <h1 className={cn('m-0', crm.pageTitle)}>Rapportering</h1>
-          <p className={cn('m-0 mt-1', crm.pageSubtitle)}>Försäljning, säljarprestation och konvertering för vald period.</p>
+          <p className={cn('m-0 mt-1', crm.pageSubtitle)}>Försäljning, säljarprestation och konvertering för vald period. Alla belopp är exklusive moms, och avbrutna order räknas inte.</p>
         </div>
         {/* Quick periods on the left as the everyday control, the manual dates on the
             right for the odd range that no preset covers. */}
@@ -252,11 +252,11 @@ export default function ReportsClient() {
           <SectionCard
             title="Försäljning över tid"
             subtitle={singlePoint
-              ? 'Offert- och ordervärde skapat i perioden; fakturerat är det som fakturerades under perioden'
-              : 'Offert- och ordervärde per månad de skapades; fakturerat per månad det fakturerades'}
+              ? 'Offert- och ordervärde skapat i perioden; fakturerat är det som fakturerades under perioden. Ex moms.'
+              : 'Offert- och ordervärde per månad de skapades; fakturerat per månad det fakturerades. Ex moms.'}
             action={<ExportButton onClick={() => downloadCsv(
               `forsaljning-over-tid_${report.range.from}_${report.range.to}.csv`,
-              [singlePoint ? 'Period' : 'Månad', 'Offertvärde', 'Ordervärde', 'Fakturerat'],
+              [singlePoint ? 'Period' : 'Månad', 'Offertvärde (ex moms)', 'Ordervärde (ex moms)', 'Fakturerat (ex moms)'],
               report.salesOverTime.map((p) => [
                 singlePoint ? `${report.range.from} – ${report.range.to}` : p.period,
                 p.quoteValue, p.orderValue, p.invoicedValue,
@@ -287,10 +287,10 @@ export default function ReportsClient() {
           {/* 2. Per säljare */}
           <SectionCard
             title="Per säljare"
-            subtitle="Aktivitet och värde per säljare — ordervärde för det som skapades i perioden, fakturerat för det som fakturerades under den"
+            subtitle="Aktivitet och värde per säljare — ordervärde för det som skapades i perioden, fakturerat för det som fakturerades under den. Ex moms."
             action={<ExportButton onClick={() => downloadCsv(
               `per-saljare_${report.range.from}_${report.range.to}.csv`,
-              ['Säljare', 'Samtal', 'Offerter', 'Offertvärde', 'Vunnet värde', 'Antal order', 'Ordervärde', 'Fakturerat'],
+              ['Säljare', 'Samtal', 'Offerter', 'Offertvärde (ex moms)', 'Vunnet värde (ex moms)', 'Antal order', 'Ordervärde (ex moms)', 'Fakturerat (ex moms)'],
               report.perSeller.map((s) => [s.userName, s.calls, s.quotes, s.quoteValue, s.wonValue, s.orders, s.orderValue, s.invoicedValue]),
             )} />}
           >
@@ -344,10 +344,10 @@ export default function ReportsClient() {
           {/* 3. Konvertering (funnel) */}
           <SectionCard
             title="Konvertering"
-            subtitle="Offert → vunnen → arbetsorder → fakturerat, för det som skapades i perioden — faktureringen kan ha skett senare"
+            subtitle="Offert → vunnen → arbetsorder → fakturerat, för det som skapades i perioden — faktureringen kan ha skett senare. Ex moms."
             action={<ExportButton onClick={() => downloadCsv(
               `konvertering_${report.range.from}_${report.range.to}.csv`,
-              ['Steg', 'Antal', 'Värde', 'Konvertering'],
+              ['Steg', 'Antal', 'Värde (ex moms)', 'Konvertering'],
               funnelStages.map((s) => [s.label, s.count, s.value, s.conv ?? '']),
             )} />}
           >
@@ -372,10 +372,10 @@ export default function ReportsClient() {
           {/* 4. Per kund */}
           <SectionCard
             title="Per kund"
-            subtitle="Topplista kunder på ordervärde och fakturerat i perioden"
+            subtitle="Topplista kunder på ordervärde och fakturerat i perioden. Ex moms."
             action={<ExportButton onClick={() => downloadCsv(
               `per-kund_${report.range.from}_${report.range.to}.csv`,
-              ['Kund', 'Antal order', 'Ordervärde', 'Fakturerat'],
+              ['Kund', 'Antal order', 'Ordervärde (ex moms)', 'Fakturerat (ex moms)'],
               report.perCustomer.map((c) => [c.customer, c.orderCount, c.orderValue, c.invoicedValue]),
             )} />}
           >
