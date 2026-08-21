@@ -111,3 +111,12 @@ export const PERSONAL_NUMBER_ERROR =
 
 /** Kortare variant för trånga ytor (inline-hjälp under fältet). */
 export const PERSONAL_NUMBER_HINT = 'Fullt årtal krävs — ÅÅÅÅMMDD-XXXX. Annars fungerar inte ROT i Fortnox.';
+
+/**
+ * Hjälptexten under ett TOMT fält. Numret är valfritt på kunden — säljaren får det ofta först när
+ * jobbet bokas — och kravet sitter i stället på arbetsordern. Här och inte i formulären, eftersom
+ * skapa-vyn och detaljvyn inte delar sparlogik: en spärr som bara rättades i den ena är precis det
+ * som gjorde att befintliga kunder inte gick att spara om.
+ */
+export const PERSONAL_NUMBER_OPTIONAL_HINT =
+  `Kan fyllas i senare, men krävs innan en order kan skapas. ${PERSONAL_NUMBER_HINT}`;
