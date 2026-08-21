@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { BOARD_FILTER_STATUSES, type CrmWorkOrderStatus } from './work-orders';
+import { BOARD_FILTER_STATUSES, isDeadWorkOrder, type CrmWorkOrderStatus } from './work-orders';
+import { netAmount, type NetAmountRow } from './pricing';
 import { QUOTE_FILTER_STATUSES, type CrmQuoteStatus } from './quotes';
 
 // ── The CRM overview's read model ──
@@ -115,12 +116,11 @@ export type CrmOverviewSummary = {
   truncated: string[];
 };
 
-export type QuoteStockRow = { status: string; amount: number | string };
-export type QuoteWindowRow = { amount: number | string; quote_date: string; assigned_to: string | null };
-export type OrderStockRow = { status: string; amount: number | string };
-export type OrderWindowRow = {
+export type QuoteStockRow = NetAmountRow & { status: string };
+export type QuoteWindowRow = NetAmountRow & { quote_date: string; assigned_to: string | null };
+export type OrderStockRow = NetAmountRow & { status: string };
+export type OrderWindowRow = NetAmountRow & {
   status: string;
-  amount: number | string;
   created_at: string;
   fortnox_invoiced_at: string | null;
   assigned_to: string | null;
@@ -150,11 +150,10 @@ export type CrmOverviewRows = {
   truncated: string[];
 };
 
-export function toAmount(value: number | string | null | undefined): number {
-  if (value == null) return 0;
-  const numeric = typeof value === 'number' ? value : Number(String(value));
-  return Number.isFinite(numeric) ? numeric : 0;
-}
+// Varje krontal på översikten är NETTO, samma bas som rapporteringen — se netAmount i pricing.ts.
+// `amount` är bruttot (subtotal + moms), och att summera det blandade en byggmomsorder och en
+// privatkundsorder som om de vore samma sorts kronor. Veckomålen mättes dessutom mot ett brutto,
+// så en säljare med privatkunder nådde sitt mål 25 % för lätt.
 
 // Day-resolution comparison, the same rule reports.ts uses: take the date part and compare as a
 // string. For a `date` column that is exact. For a timestamptz the day is the UTC one, so a row
@@ -191,7 +190,7 @@ export function composeCrmOverviewSummary(rows: CrmOverviewRows, window: CrmOver
   const openOrders = rows.orderStocks.filter((order) => OPEN_WORK_ORDER_STATUSES.includes(order.status as CrmWorkOrderStatus));
   const toInvoiceOrders = rows.orderStocks.filter((order) => TO_INVOICE_WORK_ORDER_STATUSES.includes(order.status as CrmWorkOrderStatus));
 
-  const sum = (list: Array<{ amount: number | string }>) => list.reduce((total, row) => total + toAmount(row.amount), 0);
+  const sum = (list: NetAmountRow[]) => list.reduce((total, row) => total + netAmount(row), 0);
 
   // Every figure measured against a target is scoped to the current week, for the team and per
   // seller in the same pass — so the team row and the leaderboard row for the same metric are the
@@ -214,14 +213,17 @@ export function composeCrmOverviewSummary(rows: CrmOverviewRows, window: CrmOver
   }
   for (const quote of rows.quoteWindow) {
     if (!inWindow(quote.quote_date, window.weekStart, window.weekEnd)) continue;
-    addWeek(quote.assigned_to, { quotes: 1, quoteValue: toAmount(quote.amount) });
+    addWeek(quote.assigned_to, { quotes: 1, quoteValue: netAmount(quote) });
   }
   for (const order of rows.orderWindow) {
-    if (inWindow(order.created_at, window.weekStart, window.weekEnd)) {
-      addWeek(order.assigned_to, { orderCount: 1, orderValue: toAmount(order.amount) });
+    // En avbruten order är ingen omsättning och räknas varken som antal eller värde — samma regel
+    // som rapporteringen. Stocken ovan filtrerar redan på sina statuslistor; veckofönstret hämtas
+    // på datum och behöver därför vakten här.
+    if (!isDeadWorkOrder(order.status) && inWindow(order.created_at, window.weekStart, window.weekEnd)) {
+      addWeek(order.assigned_to, { orderCount: 1, orderValue: netAmount(order) });
     }
     if (order.status === 'invoiced' && inWindow(order.fortnox_invoiced_at, window.weekStart, window.weekEnd)) {
-      addWeek(order.assigned_to, { invoicedValue: toAmount(order.amount) });
+      addWeek(order.assigned_to, { invoicedValue: netAmount(order) });
     }
   }
 
@@ -308,26 +310,26 @@ export async function fetchCrmOverviewSummary(
   ] = await Promise.all([
     readRows<QuoteStockRow>('quote_stocks', supabase
       .from('crm_quotes')
-      .select('status, amount')
+      .select('status, amount, vat_percent, pricing_summary')
       .in('status', ACTIVE_QUOTE_STATUSES)
       .limit(ROW_CAP), truncated),
     // Only the week is read: every quote figure on the page is either a stock (above) or measured
     // against the weekly target. `since` would fetch days nothing reads.
     readRows<QuoteWindowRow>('quote_window', supabase
       .from('crm_quotes')
-      .select('amount, quote_date, assigned_to')
+      .select('amount, vat_percent, pricing_summary, quote_date, assigned_to')
       .gte('quote_date', window.weekStart)
       .limit(ROW_CAP), truncated),
     readRows<OrderStockRow>('order_stocks', supabase
       .from('crm_work_orders')
-      .select('status, amount')
+      .select('status, amount, vat_percent, pricing_summary')
       .in('status', [...OPEN_WORK_ORDER_STATUSES, ...TO_INVOICE_WORK_ORDER_STATUSES])
       .limit(ROW_CAP), truncated),
     // Superset: created in the week OR invoiced in it. An order created in June and invoiced this
     // week belongs to one figure each, and to neither date alone, so it must be fetched on either.
     readRows<OrderWindowRow>('order_window', supabase
       .from('crm_work_orders')
-      .select('status, amount, created_at, fortnox_invoiced_at, assigned_to')
+      .select('status, amount, vat_percent, pricing_summary, created_at, fortnox_invoiced_at, assigned_to')
       .or(`created_at.gte.${window.weekStart},fortnox_invoiced_at.gte.${window.weekStart}`)
       .limit(ROW_CAP), truncated),
     // The widest window on the page: the calls metric card is explicitly the rolling 7 days, and the

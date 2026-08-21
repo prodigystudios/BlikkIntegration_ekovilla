@@ -609,7 +609,8 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
           {/* Status strips */}
           <div className={crm.cardInner}>
             <p className={cn('mb-1', crm.sectionTitle)}>Statusbild</p>
-            <h2 className="m-0 mb-4 text-lg font-bold tracking-tight text-slate-900">Fördelning och mål</h2>
+            <h2 className="m-0 mb-1 text-lg font-bold tracking-tight text-slate-900">Fördelning och mål</h2>
+            <p className="m-0 mb-4 text-xs text-slate-400">Belopp exklusive moms. Avbrutna order räknas inte.</p>
             {loading ? <OverviewLoadingRows /> : (
               <div className="grid gap-3">
                 {/* The three stocks in the flow share one scale, so the bars read as an actual
@@ -766,6 +767,7 @@ function LeaderboardPanel({
         <div>
           <p className={cn('mb-1', crm.sectionTitle)}>Teamöversikt</p>
           <h2 className="m-0 text-lg font-bold tracking-tight text-slate-900">Topplista</h2>
+          <p className="m-0 mt-0.5 text-xs text-slate-400">Belopp exklusive moms</p>
         </div>
         <Link href="/crm/installningar" className="text-xs font-semibold text-emerald-700 no-underline hover:text-emerald-800">Justera mål</Link>
       </div>

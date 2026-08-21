@@ -218,7 +218,7 @@ export default function CrmGoalsPanel({
                       <WeeklyHint value={draft.quotes_target} />
                     </label>
                     <label className="grid gap-1 text-xs font-medium text-slate-500">
-                      <span>Offertvärde (SEK)</span>
+                      <span>Offertvärde (SEK, ex moms)</span>
                       <Input value={draft.quote_value_target} onChange={(e) => setDraftValue(member.id, 'quote_value_target', e.target.value)} inputMode="decimal" placeholder="0" />
                       <WeeklyHint value={draft.quote_value_target} currency />
                     </label>
@@ -228,7 +228,7 @@ export default function CrmGoalsPanel({
                       <WeeklyHint value={draft.order_count_target} />
                     </label>
                     <label className="grid gap-1 text-xs font-medium text-slate-500">
-                      <span>Ordervärde (SEK)</span>
+                      <span>Ordervärde (SEK, ex moms)</span>
                       <Input value={draft.order_value_target} onChange={(e) => setDraftValue(member.id, 'order_value_target', e.target.value)} inputMode="decimal" placeholder="0" />
                       <WeeklyHint value={draft.order_value_target} currency />
                     </label>
