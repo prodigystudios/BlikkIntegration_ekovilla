@@ -265,18 +265,18 @@ describe('rapporten redovisar ex moms', () => {
   // En privatkundsorder (25 %) och en byggmomsorder (0 %) med SAMMA nettovärde. Före den här
   // fixen räknades den första som 25 % större bara för att momsen låg i fältet.
   const privat: ReportOrderRow = {
-    amount: 125000, vat_percent: 25, pricing_summary: { subtotal: 100000 },
+    amount: 125000, vat_percent: 25, pricing_summary: { subtotal: 100000, total: 125000 },
     status: 'invoiced', created_at: '2026-03-04T10:00:00Z', fortnox_invoiced_at: '2026-03-20T10:00:00Z',
     assigned_to: 'u1', client_name: 'Privatkund',
   };
   const byggmoms: ReportOrderRow = {
-    amount: 100000, vat_percent: 0, pricing_summary: { subtotal: 100000 },
+    amount: 100000, vat_percent: 0, pricing_summary: { subtotal: 100000, total: 100000 },
     status: 'invoiced', created_at: '2026-03-05T10:00:00Z', fortnox_invoiced_at: '2026-03-21T10:00:00Z',
     assigned_to: 'u2', client_name: 'Byggbolaget',
   };
   const momsQuotes: ReportQuoteRow[] = [
-    { amount: 125000, vat_percent: 25, pricing_summary: { subtotal: 100000 }, status: 'won', quote_date: '2026-03-01', assigned_to: 'u1', customer_name: 'Privatkund' },
-    { amount: 100000, vat_percent: 0, pricing_summary: { subtotal: 100000 }, status: 'won', quote_date: '2026-03-02', assigned_to: 'u2', customer_name: 'Byggbolaget' },
+    { amount: 125000, vat_percent: 25, pricing_summary: { subtotal: 100000, total: 125000 }, status: 'won', quote_date: '2026-03-01', assigned_to: 'u1', customer_name: 'Privatkund' },
+    { amount: 100000, vat_percent: 0, pricing_summary: { subtotal: 100000, total: 100000 }, status: 'won', quote_date: '2026-03-02', assigned_to: 'u2', customer_name: 'Byggbolaget' },
   ];
   const momsRange = { from: '2026-03-01', to: '2026-03-31' };
   const momsSplit = partitionOrders([privat, byggmoms], momsRange);

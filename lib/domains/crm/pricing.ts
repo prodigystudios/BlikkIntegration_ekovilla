@@ -193,8 +193,11 @@ export function computePricing(
 // försäljning ska vara netto. Funktionen bor här hos `computePricing`, som skapade bruttot —
 // den som vänder talet tillbaka hör hemma bredvid den som räknade fram det.
 
-/** Den lagrade prissammanställningen. Bara nettot läses härifrån. */
-export type StoredPricingSummary = { subtotal?: number | string | null } | null;
+/**
+ * Den lagrade prissammanställningen. `total` läses inte för sitt eget värde utan för att avgöra om
+ * sammanställningen alls hör ihop med radens `amount` — se netAmount.
+ */
+export type StoredPricingSummary = { subtotal?: number | string | null; total?: number | string | null } | null;
 
 /** Det en rad behöver bära för att kunna redovisas ex moms. */
 export type NetAmountRow = {
@@ -206,9 +209,19 @@ export type NetAmountRow = {
 /** Momssatsen `computePricing` antar när fältet saknas — samma default som räknade fram `amount`. */
 const DEFAULT_VAT_PERCENT = 25;
 
+/** Ören: `total` och `amount` skrivs från samma objekt, så allt över detta är verklig oenighet. */
+const AMOUNT_TOLERANCE = 0.5;
+
 function toNumber(value: unknown): number {
   const n = typeof value === 'number' ? value : Number(String(value ?? ''));
   return Number.isFinite(n) ? n : 0;
+}
+
+/** Talet, eller null om fältet saknas eller inte är ett tal — till skillnad från toNumber, som gör 0 av skräp. */
+function toFinite(value: unknown): number | null {
+  if (value == null || String(value).trim() === '') return null;
+  const n = typeof value === 'number' ? value : Number(String(value));
+  return Number.isFinite(n) ? n : null;
 }
 
 /**
@@ -224,15 +237,27 @@ function toNumber(value: unknown): number {
  * `amount` från början, så det är den som vänder talet rätt igen.
  */
 export function netAmount(row: NetAmountRow): number {
-  const subtotal = row.pricing_summary?.subtotal;
-  if (subtotal != null && String(subtotal).trim() !== '') return toNumber(subtotal);
+  const gross = toNumber(row.amount);
+  const ps = row.pricing_summary;
+
+  // Sammanställningen godtas bara när den beskriver SAMMA belopp som `amount`. Ett blankt
+  // `{ subtotal: 0, vat: 0, total: 0 }` bredvid ett riktigt `amount` är en platshållare, inte ett
+  // netto på noll: quotes-schemat defaultar varje fält till 0 (`pricingSummarySchema`), så en
+  // offert sparad utan pricing_summary får en nollsummering och ett belopp som inte är noll. Utan
+  // det här villkoret hade den redovisats som 0 kr överallt — en tyst nolla, den värsta sorten.
+  // Systerfunktionen resolveQuoteVatBreakdown vaktar samma sak genom att kräva subtotal OCH total.
+  if (ps != null) {
+    const subtotal = toFinite(ps.subtotal);
+    const total = toFinite(ps.total);
+    if (subtotal != null && total != null && Math.abs(total - gross) <= AMOUNT_TOLERANCE) return subtotal;
+  }
 
   const vatPercent = row.vat_percent != null && String(row.vat_percent).trim() !== ''
     ? toNumber(row.vat_percent)
     : DEFAULT_VAT_PERCENT;
   // En negativ eller orimlig momssats får aldrig blåsa upp talet; då är bruttot det ärligaste svaret.
-  if (!(vatPercent > 0)) return toNumber(row.amount);
-  return toNumber(row.amount) / (1 + vatPercent / 100);
+  if (!(vatPercent > 0)) return gross;
+  return gross / (1 + vatPercent / 100);
 }
 
 // ─── Täckningsgrad (TG) ────────────────────────────────────────────────────────

@@ -293,8 +293,8 @@ describe('composeCrmOverviewSummary — ex moms', () => {
   it('summerar offertlagret netto', () => {
     const summary = composeCrmOverviewSummary(rows({
       quoteStocks: [
-        { status: 'draft', amount: 125_000, vat_percent: 25, pricing_summary: { subtotal: 100_000 } },
-        { status: 'sent', amount: 100_000, vat_percent: 0, pricing_summary: { subtotal: 100_000 } },
+        { status: 'draft', amount: 125_000, vat_percent: 25, pricing_summary: { subtotal: 100_000, total: 125_000 } },
+        { status: 'sent', amount: 100_000, vat_percent: 0, pricing_summary: { subtotal: 100_000, total: 100_000 } },
       ],
     }), WINDOW);
     expect(summary.activeQuoteValue).toBe(200_000);
@@ -303,8 +303,8 @@ describe('composeCrmOverviewSummary — ex moms', () => {
   it('summerar orderlagren netto', () => {
     const summary = composeCrmOverviewSummary(rows({
       orderStocks: [
-        { status: 'scheduled', amount: 125_000, vat_percent: 25, pricing_summary: { subtotal: 100_000 } },
-        { status: 'completed', amount: 125_000, vat_percent: 25, pricing_summary: { subtotal: 100_000 } },
+        { status: 'scheduled', amount: 125_000, vat_percent: 25, pricing_summary: { subtotal: 100_000, total: 125_000 } },
+        { status: 'completed', amount: 125_000, vat_percent: 25, pricing_summary: { subtotal: 100_000, total: 125_000 } },
       ],
     }), WINDOW);
     expect(summary.openOrderValue).toBe(100_000);
@@ -314,12 +314,12 @@ describe('composeCrmOverviewSummary — ex moms', () => {
   it('mäter veckomålet mot netto, inte brutto', () => {
     const summary = composeCrmOverviewSummary(rows({
       quoteWindow: [
-        { amount: 125_000, vat_percent: 25, pricing_summary: { subtotal: 100_000 }, quote_date: '2026-08-18', assigned_to: ANNA },
-        { amount: 100_000, vat_percent: 0, pricing_summary: { subtotal: 100_000 }, quote_date: '2026-08-18', assigned_to: BOSSE },
+        { amount: 125_000, vat_percent: 25, pricing_summary: { subtotal: 100_000, total: 125_000 }, quote_date: '2026-08-18', assigned_to: ANNA },
+        { amount: 100_000, vat_percent: 0, pricing_summary: { subtotal: 100_000, total: 100_000 }, quote_date: '2026-08-18', assigned_to: BOSSE },
       ],
       orderWindow: [
-        { status: 'scheduled', amount: 125_000, vat_percent: 25, pricing_summary: { subtotal: 100_000 }, created_at: '2026-08-18T10:00:00+00:00', fortnox_invoiced_at: null, assigned_to: ANNA },
-        { status: 'invoiced', amount: 125_000, vat_percent: 25, pricing_summary: { subtotal: 100_000 }, created_at: '2026-08-18T10:00:00+00:00', fortnox_invoiced_at: '2026-08-19T10:00:00+00:00', assigned_to: BOSSE },
+        { status: 'scheduled', amount: 125_000, vat_percent: 25, pricing_summary: { subtotal: 100_000, total: 125_000 }, created_at: '2026-08-18T10:00:00+00:00', fortnox_invoiced_at: null, assigned_to: ANNA },
+        { status: 'invoiced', amount: 125_000, vat_percent: 25, pricing_summary: { subtotal: 100_000, total: 125_000 }, created_at: '2026-08-18T10:00:00+00:00', fortnox_invoiced_at: '2026-08-19T10:00:00+00:00', assigned_to: BOSSE },
       ],
     }), WINDOW);
     expect(summary.weekTeam.quoteValue).toBe(200_000);

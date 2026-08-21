@@ -454,21 +454,38 @@ describe('TG på ROT-offerter', () => {
 // byggmomsorder (0 %) och en privatkundsorder (25 %) som om de vore samma sorts kronor.
 
 describe('netAmount', () => {
-  it('läser nettot ur pricing_summary när det finns', () => {
-    expect(netAmount({ amount: 1250, vat_percent: 25, pricing_summary: { subtotal: 1000 } })).toBe(1000);
+  it('läser nettot ur pricing_summary när den hör ihop med beloppet', () => {
+    expect(netAmount({ amount: 1250, vat_percent: 25, pricing_summary: { subtotal: 1000, total: 1250 } })).toBe(1000);
   });
 
   it('litar på pricing_summary framför en härledning ur momssatsen', () => {
-    // Fälten är oense: subtotal vinner, för det är talet som faktiskt räknades fram vid sparning.
-    expect(netAmount({ amount: 1250, vat_percent: 0, pricing_summary: { subtotal: 1000 } })).toBe(1000);
+    // vat_percent säger 0 men summeringen beskriver beloppet: subtotal vinner, för det är talet
+    // som faktiskt räknades fram vid sparning.
+    expect(netAmount({ amount: 1250, vat_percent: 0, pricing_summary: { subtotal: 1000, total: 1250 } })).toBe(1000);
   });
 
-  it('accepterar subtotal som sträng', () => {
-    expect(netAmount({ amount: '1250', pricing_summary: { subtotal: '1000' } })).toBe(1000);
+  it('accepterar talen som strängar', () => {
+    expect(netAmount({ amount: '1250', pricing_summary: { subtotal: '1000', total: '1250' } })).toBe(1000);
   });
 
-  it('behandlar 0 som ett riktigt netto och inte som saknat', () => {
-    expect(netAmount({ amount: 1250, vat_percent: 25, pricing_summary: { subtotal: 0 } })).toBe(0);
+  // ⚠️ REGRESSIONSVAKT. quotes-schemat defaultar varje fält i pricingSummarySchema till 0, så en
+  // offert sparad UTAN pricing_summary får { subtotal: 0, vat: 0, total: 0 } bredvid ett riktigt
+  // amount. Att lita på den subtotalen hade redovisat offerten som 0 kr överallt - en tyst nolla.
+  it('misstror en nollsummering som står bredvid ett riktigt belopp', () => {
+    expect(netAmount({ amount: 1250, vat_percent: 25, pricing_summary: { subtotal: 0, vat: 0, total: 0 } as any })).toBe(1000);
+  });
+
+  it('men en genuin nolla är fortfarande noll', () => {
+    expect(netAmount({ amount: 0, vat_percent: 25, pricing_summary: { subtotal: 0, total: 0 } })).toBe(0);
+  });
+
+  it('misstror en summering som beskriver ett annat belopp än raden', () => {
+    // Drift mellan fälten: amount är det alla andra ytor summerar, så det vinner.
+    expect(netAmount({ amount: 1250, vat_percent: 25, pricing_summary: { subtotal: 4000, total: 5000 } })).toBe(1000);
+  });
+
+  it('kräver att total finns - en halv summering är ingen summering', () => {
+    expect(netAmount({ amount: 1250, vat_percent: 25, pricing_summary: { subtotal: 9999 } })).toBe(1000);
   });
 
   it('räknar fram nettot ur amount och vat_percent när pricing_summary saknas', () => {

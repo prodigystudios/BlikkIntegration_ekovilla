@@ -36,11 +36,8 @@ export type ReportData = {
 };
 
 // ── Helpers ──
-function num(value: unknown): number {
-  const n = typeof value === 'number' ? value : Number(String(value ?? ''));
-  return Number.isFinite(n) ? n : 0;
-}
-
+// Ingen rå beloppsläsare här med flit: varje krontal i rapporten går genom netAmount, och en
+// lokal num() hade varit en öppen dörr tillbaka till bruttot.
 function monthKey(date: string | null | undefined): string | null {
   if (!date) return null;
   const key = String(date).slice(0, 7);
