@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/shared/cn';
-import type { UserRole } from '@/lib/roles';
+import { toEffectiveRole, type UserRole } from '@/lib/roles';
 import { getVisibleCrmNavItems } from '../crm/_lib/nav';
 import { getVisibleAppNavItems } from '../_lib/appNav';
 import ProfileMenu from './ProfileMenu';
@@ -137,6 +137,9 @@ const navIcons: Record<string, JSX.Element> = {
       <circle cx="17.5" cy="17.5" r="4.5" /><path d="M17.5 15.5v2l1.5 1" />
     </svg>
   ),
+  // Ligger kvar fast raden är ute ur menyn: kalkylatorn ska tillbaka när ytan är
+  // ombyggd (se den utkommenterade raden i app/_lib/appNav.ts). Ta bort båda
+  // samtidigt om beslutet i stället blir att skrota ytan.
   '/offert/kalkylator': (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <rect x="4" y="2" width="16" height="20" rx="2" /><line x1="8" y1="6" x2="16" y2="6" /><line x1="8" y1="10" x2="10" y2="10" /><line x1="14" y1="10" x2="16" y2="10" /><line x1="8" y1="14" x2="10" y2="14" /><line x1="14" y1="14" x2="16" y2="14" />
@@ -202,6 +205,29 @@ const navIcons: Record<string, JSX.Element> = {
       <path d="M12 3l7 4v5c0 5-3.5 8-7 9-3.5-1-7-4-7-9V7l7-4z" /><path d="M10 11l2 2 4-4" />
     </svg>
   ),
+  // Group rows in the app nav (app/_lib/appNav.ts). They are buttons, not links, so
+  // their key is a `group:` identity rather than a URL — it exists to hang the expand
+  // state and this icon on. On the rail the icon is the only thing left of the group,
+  // so it has to read as a container: a folder, and an ellipsis for the catch-all.
+  'group:egenkontroll': (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M9 4H6a2 2 0 00-2 2v13a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-3" />
+      <rect x="9" y="2" width="6" height="4" rx="1" />
+      <path d="M9 13l2 2 4-4" />
+    </svg>
+  ),
+  'group:dokument': (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
+    </svg>
+  ),
+  'group:ovrigt': (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="5" cy="12" r="1.5" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none" />
+      <circle cx="19" cy="12" r="1.5" fill="currentColor" stroke="none" />
+    </svg>
+  ),
 };
 
 // v2 key: the model changed from "collapsed yes/no" to "pinned open vs. hover rail",
@@ -248,18 +274,18 @@ export default function AppSidebar({
 }) {
   const pathname = usePathname();
   const inCrm = pathname === '/crm' || pathname.startsWith('/crm/');
-  // konsult has the same viewing permissions as sales (see lib/roles.ts).
-  const effRole: UserRole | null = role === 'konsult' ? 'sales' : role;
+  const effRole: UserRole | null = toEffectiveRole(role);
 
+  // Båda navkällorna har samma form, så projektionen till NavNode görs på ett ställe —
+  // en andra kopia skulle drifta första gången någon lägger till ett fält i bara den
+  // gren hon råkade felsöka.
   const items: NavNode[] = useMemo(() => {
-    if (inCrm) {
-      return getVisibleCrmNavItems(effRole).map((item) => ({
-        href: item.href,
-        label: item.label,
-        children: item.children?.map((c) => ({ href: c.href, label: c.label })),
-      }));
-    }
-    return getVisibleAppNavItems(effRole).map((item) => ({ href: item.href, label: item.label }));
+    const source = inCrm ? getVisibleCrmNavItems(effRole) : getVisibleAppNavItems(effRole);
+    return source.map((item) => ({
+      href: item.href,
+      label: item.label,
+      children: item.children?.map((c) => ({ href: c.href, label: c.label })),
+    }));
   }, [inCrm, effRole]);
 
   const [pendingHref, setPendingHref] = useState<string | null>(null);
@@ -582,7 +608,6 @@ export default function AppSidebar({
                 const childActive = activeChildHref(children, pathname);
                 const groupActive = childActive !== null;
                 const open = expanded[item.href] ?? groupActive;
-                const icon = navIcons[item.href] ?? fallbackIcon;
                 return (
                   <li key={item.href}>
                     <button
