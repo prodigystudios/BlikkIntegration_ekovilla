@@ -411,12 +411,11 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
 
   async function saveEdits() {
     if (!customer || !editDraft) return;
-    if (customer.customer_type === 'private' && !editDraft.personal_number.trim()) {
-      toast.error('Personnummer krävs för privatkund'); return;
-    }
-    // Tio siffror räcker för att spara men gör att ROT- och husarbetesuppgifterna faller tyst i
-    // Fortnox — och felet upptäcks först i bokföringen. Neka här i stället.
-    if (customer.customer_type === 'private' && !isValidPersonalNumber(editDraft.personal_number)) {
+    // Tomt personnummer är tillåtet — samma regel som när kunden skapas: säljaren får det ofta
+    // först när jobbet bokas, och kravet sitter i stället på ARBETSORDERN. Står det något ska det
+    // däremot hålla: tio siffror räcker för att spara men gör att ROT- och husarbetesuppgifterna
+    // faller tyst i Fortnox, och felet upptäcks först i bokföringen.
+    if (editDraft.personal_number.trim() && !isValidPersonalNumber(editDraft.personal_number)) {
       toast.error(PERSONAL_NUMBER_ERROR); return;
     }
     setSaving(true);
@@ -809,7 +808,7 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
                         </div>
                       </div>
                       <div>
-                        <FieldLabel>Personnummer *</FieldLabel>
+                        <FieldLabel>Personnummer</FieldLabel>
                         <Input
                           value={editDraft.personal_number}
                           onChange={(e) => setField('personal_number', formatPersonalNumber(e.target.value))}
@@ -817,16 +816,13 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
                           inputMode="numeric"
                           aria-invalid={!!editDraft.personal_number.trim() && !isValidPersonalNumber(editDraft.personal_number)}
                         />
-                        <p
-                          className={cn(
-                            'mt-1 text-[11px] leading-snug',
-                            editDraft.personal_number.trim() && !isValidPersonalNumber(editDraft.personal_number)
-                              ? 'text-rose-600'
-                              : 'text-slate-400',
-                          )}
-                        >
-                          {PERSONAL_NUMBER_HINT}
-                        </p>
+                        {editDraft.personal_number.trim() && !isValidPersonalNumber(editDraft.personal_number) ? (
+                          <p className="mt-1 text-[11px] leading-snug text-rose-600">{PERSONAL_NUMBER_ERROR}</p>
+                        ) : (
+                          <p className="mt-1 text-[11px] leading-snug text-slate-400">
+                            Kan fyllas i senare, men krävs innan en order kan skapas. {PERSONAL_NUMBER_HINT}
+                          </p>
+                        )}
                       </div>
                     </>
                   )}
