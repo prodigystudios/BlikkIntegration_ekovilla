@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { materialShortFromLineItems, totalSacks } from '@/lib/domains/crm/materials';
 import { SCHEDULABLE_WORK_ORDER_STATUSES } from './backlog';
+import { effectiveSackReports } from './sackLedger';
 
 // Depot stock (slice 12b): per-material balance per depot = sum(deliveries) − consumption, where
 // consumption is derived from ops_segment_reports (a job's blown sacks → its segment's truck → that
@@ -91,32 +92,58 @@ async function listDeliveryRows(supabase: SupabaseClient): Promise<StockRow[]> {
   }));
 }
 
-// Consumption stock rows derived from sack reports: blown sacks → segment's truck → truck's depot,
-// attributed to the work order's material. Empty until the installer reporting flow populates
-// ops_segment_reports.
+// Förbrukade säckar per depå och material: blåsta säckar → segmentets bil → bilens depå.
 //
-// ⚠️ KNOWN LIMITATIONS — revisit when wiring the installer sack-reporting flow (currently dormant
-// because there are no reports yet):
-//   1. materialShortFromLineItems returns only the FIRST recognised material, so a work order with
-//      two materials debits all its blown sacks from that one material. A faithful split needs the
-//      report (or line items) to carry sacks-per-material, which the reporting model must define.
-//   2. A segment whose truck has depot_id = null is silently skipped (`if (depotId && material)`),
-//      so those blown sacks are never subtracted from any depot. Decide where un-depoted consumption
-//      lands (a default depot? surfaced as a warning?) once trucks-without-depots is a real case.
+// ⚠️ SUPERSEDE MÅSTE KÖRAS HÄR OCKSÅ. Det här är det ANDRA av exakt två ställen som summerar
+// sacks_blown (det första är reportedSacksByWorkOrder). Glöms regeln drar depån både delrapporterna
+// och egenkontrollen och DUBBELDEBITERAR lagret — och till skillnad från snabböversiktens tal, som
+// någon läser varje dag, upptäcks ett fel depåsaldo först när en bil står utan material.
+//
+// `work_order_id` och `kind` måste därför med i select:en; regeln nycklas per arbetsorder.
+//
+// ⚠️ KVARSTÅENDE BRIST: ett segment vars bil saknar depot_id hoppas tyst över (`if (depotId &&
+// material)`), så de säckarna dras aldrig från någon depå. Var odepåad förbrukning ska landa (en
+// standarddepå? en varning?) är ett eget beslut när bil-utan-depå blir ett verkligt fall.
+//
+// (Bristen där materialShortFromLineItems debiterade allt på orderns FÖRSTA igenkända material är
+// löst för nya rader: rapporten bär sitt eget material. Rader utan materialkolumn — legacy, eller
+// en etapprad vars artikelnamn inte gick att tyda — faller tillbaka på den gamla härledningen.)
 async function deriveConsumptionRows(supabase: SupabaseClient): Promise<StockRow[]> {
   const { data: trucks } = await supabase.from('ops_trucks').select('id, depot_id');
   const truckDepot = new Map((trucks ?? []).map((t: any) => [t.id as string, (t.depot_id as string | null) ?? null]));
 
-  const { data: reports } = await supabase
-    .from('ops_segment_reports')
-    .select('sacks_blown, segment:ops_segments(truck_id), work_order:crm_work_orders(line_items)');
+  // ⚠️ SIDINDELAD, till skillnad från sina systerläsningar i den här filen. PostgREST kapar svaret
+  // vid max-rows (mätt till 1000 i det här projektet) UTAN att fela, och supersede-regeln nycklas
+  // per arbetsorder: hamnar ett jobbs final på sida 2 medan dess delrapporter ligger på sida 1 ser
+  // regeln bara delrapporterna och debiterar depån för BÅDA besöken. En kapning gör alltså inte
+  // svaret ofullständigt, den gör det FEL — och åt fel håll.
+  //
+  // Systerläsningarna (derivePlannedDemandRows) har samma exponering och är fortfarande
+  // opaginerade; filen sa tidigare att alla tre borde lösas i samma omgång. Den här kan inte vänta:
+  // ops_segment_reports var tom före säckrapporteringen och växer nu monotont med varje besök,
+  // medan de andra är bundna till mängden ÖPPNA ordrar.
+  const reports: Array<Record<string, any> & { work_order_id: string }> = [];
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .from('ops_segment_reports')
+      .select('work_order_id, sacks_blown, kind, material, segment:ops_segments(truck_id), work_order:crm_work_orders(line_items)')
+      .order('id', { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (error) break;
+    const page = (data ?? []) as Array<Record<string, any> & { work_order_id: string }>;
+    reports.push(...page);
+    if (page.length < PAGE) break;
+  }
+
+  const counted = effectiveSackReports(reports);
 
   const rows: StockRow[] = [];
-  for (const r of (reports ?? []) as Array<Record<string, any>>) {
+  for (const r of counted) {
     const seg = Array.isArray(r.segment) ? r.segment[0] : r.segment;
     const wo = Array.isArray(r.work_order) ? r.work_order[0] : r.work_order;
     const depotId = seg ? truckDepot.get(seg.truck_id) : null;
-    const material = materialShortFromLineItems(wo?.line_items);
+    const material = (typeof r.material === 'string' && r.material.trim()) || materialShortFromLineItems(wo?.line_items);
     if (depotId && material) rows.push({ depot_id: depotId, material, sacks: Number(r.sacks_blown) });
   }
   return rows;

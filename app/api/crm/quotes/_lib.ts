@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { CONSTRUCTION_VALUES_WITH_EMPTY } from '@/lib/domains/crm/constructions';
 import { ROT_HOUSE_WORK_TYPES } from '@/lib/domains/fortnox/types';
 import { can, getEffectivePermissions } from '@/lib/auth/permissions';
 import { listCrmSellers } from '@/lib/domains/crm/customers';
@@ -25,7 +26,9 @@ const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Ogiltigt datum');
 const quoteTypeSchema = z.enum(['private', 'business']);
 const customerSourceKindSchema = z.enum(['prospect', 'local', 'fortnox']);
 const customerSyncIntentSchema = z.enum(['local_only', 'on_work_order', 'linked']);
-const lineItemConstructionSchema = z.enum(['vagg', 'snedtak', 'vind', '']);
+// Vokabulären kommer ur domänen — ett nytt värde här utan motsvarighet i CONSTRUCTION_SLUGS
+// (eller tvärtom) gör att raden tyst tappar sin placering, för fältet är .default('').
+const lineItemConstructionSchema = z.enum(CONSTRUCTION_VALUES_WITH_EMPTY);
 const lineItemPricingSchema = z.enum(['m3', 'item']);
 
 const customerSourceSchema = z.object({

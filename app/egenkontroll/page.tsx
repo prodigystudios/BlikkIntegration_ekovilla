@@ -20,6 +20,7 @@ import {
   mapBlikkProjectToEgenkontrollProject,
   type EgenkontrollProject,
 } from '@/lib/domains/egenkontroll/projectSource';
+import { finalSackEntriesFromEtappRows } from '@/lib/domains/egenkontroll/sackReport';
 
 // Reconstructed Egenkontroll form (migrated from historical root page)
 // NOTE: Consider refactoring into smaller components later for maintainability.
@@ -1217,6 +1218,59 @@ export default function EgenkontrollPage() {
                       text: isCrm ? 'Rapporten till arbetsordern misslyckades' : 'Kommentaren till Blikk misslyckades',
                       type: 'error',
                     });
+                  }
+
+                  // ── Dörr 1: säckarna in i huvudboken som final-rader ─────────────────
+                  // Bara för CRM-order. Ett Blikk-projekt går sin egen väg nedan
+                  // (planning_project_meta + consume-bags), som inte kan representera två besök.
+                  //
+                  // Före det här nådde en CRM-orders säckar ALDRIG fram som data: den strukturerade
+                  // skrivningen är villkorad på blikkProjectId, så ordern fick bara fritext-
+                  // kommentaren "Antal säckar: N" — prosa ingen fråga kan läsa.
+                  //
+                  // ⛔ INSTALLATÖREN SKA ALDRIG SE ETT FEL HÄRIFRÅN. Egenkontrollen är redan
+                  // arkiverad och kommenterad när vi kommer hit; bokföringen är en bonus ovanpå.
+                  // Ett oplanerat jobb svarar 200 med reason 'not_scheduled' just för att det inte
+                  // ÄR ett fel. Allt annat loggas och tigs ihjäl mot användaren.
+                  if (isCrm && foundProject.workOrderId) {
+                    try {
+                      const sackEntries = finalSackEntriesFromEtappRows(etapperOpen, etapperClosed, materialUsed);
+                      if (sackEntries.length > 0) {
+                        const sackRes = await fetch(`/api/crm/work-orders/${foundProject.workOrderId}/sack-reports/final`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ report_day: installationDate, entries: sackEntries }),
+                        });
+                        const sackPayload = await sackRes.json().catch(() => null);
+                        if (!sackRes.ok) {
+                          console.warn('Säckrapporteringen till arbetsordern misslyckades', sackPayload);
+                        } else {
+                          // ⚠️ SYNLIGT, INTE TYST. Ersättningen nycklas på ARBETSORDERN, så fyller
+                          // någon i en egenkontroll per etapp raderar den andra den förstas rader.
+                          // Det får inte hända bakom ryggen på den som sparar.
+                          const replaced = Number(sackPayload?.data?.replaced) || 0;
+                          if (sackPayload?.data?.replace_failed) {
+                            // ⚠️ De nya raderna ligger i boken men de gamla blev kvar, alltså står
+                            // jobbet nu på DUBBEL summa. Att i det läget säga "ersattes" vore att
+                            // intyga något som inte hände — och talet syns både på ordern och i
+                            // depåsaldot. Kontoret måste veta.
+                            setToast({
+                              text: 'Sparat, men de tidigare säckrapporterna kunde inte tas bort. Säg till kontoret — totalen är för hög tills de rensas.',
+                              type: 'error',
+                            });
+                          } else if (replaced > 0) {
+                            setToast({
+                              text: replaced === 1
+                                ? 'Sparat. En tidigare säckrapport på arbetsordern ersattes.'
+                                : `Sparat. ${replaced} tidigare säckrapporter på arbetsordern ersattes.`,
+                              type: 'success',
+                            });
+                          }
+                        }
+                      }
+                    } catch (e) {
+                      try { console.warn('Säckrapporteringen till arbetsordern misslyckades', e); } catch {}
+                    }
                   }
                   // Persist actual_bags_used to planning_project_meta so planner updates automatically.
                   // Legacy depot only: a CRM job's consumption belongs in the new depot ledger

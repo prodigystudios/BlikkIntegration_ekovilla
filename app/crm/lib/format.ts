@@ -53,3 +53,22 @@ export function isWorkOrderOverdue(date: string | null | undefined, status: stri
   const d = new Date(`${date}T23:59:59`);
   return !Number.isNaN(d.getTime()) && d.getTime() < Date.now();
 }
+
+// Säckantal: heltal utan decimalsvans, decimaler med svenskt komma. Kolumnen är numeric(10,2), så
+// ett halvt säckantal är möjligt även om det är ovanligt.
+export function formatSacks(value: number): string {
+  return Number.isInteger(value) ? String(value) : String(Math.round(value * 100) / 100).replace('.', ',');
+}
+
+// Säckinmatning från fältet → tal, eller null när rutan inte bär ett tal.
+//
+// ⚠️ NULL OCH INTE 0. `parseDecimal` faller tillbaka på 0, vilket i den här boken är ett PÅSTÅENDE
+// ("vi var här, inget gick åt") och inte en avsaknad. Skrivs "abv" eller lämnas rutan tom ska
+// sparningen blockeras, inte skriva en nollrad som fältet sedan inte kan rätta — huvudboken är
+// append-only och besättningen har ingen raderingsrätt.
+export function parseSackInput(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (!/^\d+([.,]\d{1,2})?$/.test(trimmed)) return null;
+  const parsed = Number(trimmed.replace(',', '.'));
+  return Number.isFinite(parsed) ? parsed : null;
+}

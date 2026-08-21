@@ -43,3 +43,7 @@ USER_FEEDBACK.md
 FORTNOX_INTEGRATION.md
 TIC_INTEGRATION.md
 mockups/planning-board.html
+
+# VS Code-tillägget Counter skriver en ny tidsstämplad mapp per körning (36 filer efter
+# två körningar). Ren lokal verktygsutdata — den beskriver koden, den är inte kod.
+.VSCodeCounter/
