@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { createServerComponentClient } from '@supabase/auth-helpers-nextjs';
 import type { ReactNode } from 'react';
 import { getUserProfile } from '@/lib/getUserProfile';
+import { toEffectiveRole } from '@/lib/roles';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,7 +19,7 @@ export default async function CrmLayout({ children }: { children: ReactNode }) {
   if (!session) redirect('/auth/sign-in');
 
   const profile = await getUserProfile();
-  const effectiveRole = profile?.role === 'konsult' ? 'sales' : profile?.role || null;
+  const effectiveRole = toEffectiveRole(profile?.role);
 
   if (!(effectiveRole === 'sales' || effectiveRole === 'admin')) {
     redirect('/');
